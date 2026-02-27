@@ -28,6 +28,7 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/customers', require('./routes/customers'));
+app.use('/api/products', require('./routes/products'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 
 // ─── Socket.IO with Auth ──

@@ -5,7 +5,7 @@ import { getInitials, avatarColor } from '../lib/utils';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
-  Hammer, Truck, Wrench, Heart, Inbox
+  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -14,6 +14,8 @@ const nav = [
   { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
   { to: '/projects', icon: FolderKanban, label: 'Dự án' },
   { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV' },
+  { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
+  { to: '/products', icon: Package, label: 'Sản phẩm' },
 ];
 
 const workflow = [

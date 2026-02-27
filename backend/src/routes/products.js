@@ -1,0 +1,231 @@
+const { Router } = require('express');
+const { supabase } = require('../config/supabase');
+const { auth } = require('../middleware/auth');
+
+const r = Router();
+r.use(auth);
+
+// ═══════════════════════════════════════════
+// PRODUCT CATEGORIES (Loại sản phẩm)
+// ═══════════════════════════════════════════
+
+r.get('/categories', async (req, res) => {
+  try {
+    const { data } = await supabase.from('product_categories').select('*').order('order_index');
+    res.json({ categories: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/categories', async (req, res) => {
+  try {
+    const b = req.body;
+    const slug = b.slug || b.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const { data, error } = await supabase.from('product_categories').insert({
+      name: b.name, slug, description: b.description || null,
+      parent_id: b.parent_id || null, image_url: b.image_url || null, order_index: b.order_index || 0,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json({ category: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.put('/categories/:id', async (req, res) => {
+  try {
+    const b = req.body;
+    const update = {};
+    ['name', 'description', 'parent_id', 'image_url', 'order_index', 'is_active'].forEach(f => {
+      if (b[f] !== undefined) update[f] = b[f];
+    });
+    const { data, error } = await supabase.from('product_categories').update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ category: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/categories/:id', async (req, res) => {
+  try {
+    const { count } = await supabase.from('products').select('id', { count: 'exact', head: true }).eq('category_id', req.params.id);
+    if (count > 0) return res.status(400).json({ error: `Không thể xóa — danh mục có ${count} sản phẩm` });
+    await supabase.from('product_categories').delete().eq('id', req.params.id);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══════════════════════════════════════════
+// PRODUCTS (Sản phẩm)
+// ═══════════════════════════════════════════
+
+r.get('/', async (req, res) => {
+  try {
+    const { search, category_id, status, page = 1, limit = 50 } = req.query;
+    let q = supabase.from('products').select('*, category:product_categories(id,name,slug)', { count: 'exact' });
+    if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,sku.ilike.%${search}%`);
+    if (category_id) q = q.eq('category_id', category_id);
+    if (status && status !== 'all') q = q.eq('status', status);
+    const p = +page, l = +limit;
+    q = q.order('created_at', { ascending: false }).range((p - 1) * l, p * l - 1);
+    const { data, count, error } = await q;
+    if (error) throw error;
+    res.json({ products: data, total: count });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.get('/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('products').select('*, category:product_categories(id,name,slug)')
+      .eq('id', req.params.id).single();
+    if (error) throw error;
+
+    // BOM (cấu trúc sản phẩm)
+    const { data: structures } = await supabase.from('product_structures')
+      .select('*, component:product_components(id,code,name,unit,unit_price,material,category)')
+      .eq('product_id', req.params.id).order('order_index');
+
+    // Tính tổng chi phí BOM
+    let bomCost = 0;
+    structures?.forEach(s => {
+      if (s.component?.unit_price && s.quantity) bomCost += s.component.unit_price * s.quantity;
+    });
+
+    res.json({ product: { ...data, structures: structures || [], bomCost } });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/', async (req, res) => {
+  try {
+    const b = req.body;
+    // Auto-gen code
+    const { count } = await supabase.from('products').select('id', { count: 'exact', head: true });
+    const code = b.code || `SP-${String((count || 0) + 1).padStart(4, '0')}`;
+    const { data, error } = await supabase.from('products').insert({
+      code, name: b.name, description: b.description || null,
+      category_id: b.category_id || null, sku: b.sku || null, unit: b.unit || 'cái',
+      base_price: b.base_price || 0, cost_price: b.cost_price || 0,
+      image_url: b.image_url || null, dimensions: b.dimensions || null,
+      material: b.material || null, color: b.color || null, finish: b.finish || null,
+      specifications: b.specifications || null, status: 'active',
+      stock_quantity: b.stock_quantity || 0, min_stock: b.min_stock || 0, tags: b.tags || [],
+    }).select('*, category:product_categories(id,name)').single();
+    if (error) throw error;
+    res.status(201).json({ product: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.put('/:id', async (req, res) => {
+  try {
+    const b = req.body;
+    const update = { updated_at: new Date().toISOString() };
+    const fields = ['name', 'description', 'category_id', 'sku', 'unit', 'base_price', 'cost_price',
+      'image_url', 'dimensions', 'material', 'color', 'finish', 'specifications', 'status',
+      'stock_quantity', 'min_stock', 'tags'];
+    fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+    const { data, error } = await supabase.from('products').update(update).eq('id', req.params.id)
+      .select('*, category:product_categories(id,name)').single();
+    if (error) throw error;
+    res.json({ product: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:id', async (req, res) => {
+  try {
+    await supabase.from('product_structures').delete().eq('product_id', req.params.id);
+    await supabase.from('project_products').delete().eq('product_id', req.params.id);
+    await supabase.from('products').delete().eq('id', req.params.id);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══════════════════════════════════════════
+// PRODUCT COMPONENTS (Thành phần / vật tư)
+// ═══════════════════════════════════════════
+
+r.get('/components/list', async (req, res) => {
+  try {
+    const { search, category, page = 1, limit = 50 } = req.query;
+    let q = supabase.from('product_components').select('*', { count: 'exact' });
+    if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
+    if (category) q = q.eq('category', category);
+    const p = +page, l = +limit;
+    q = q.order('name').range((p - 1) * l, p * l - 1);
+    const { data, count, error } = await q;
+    if (error) throw error;
+    res.json({ components: data, total: count });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/components', async (req, res) => {
+  try {
+    const b = req.body;
+    const { count } = await supabase.from('product_components').select('id', { count: 'exact', head: true });
+    const code = b.code || `VT-${String((count || 0) + 1).padStart(4, '0')}`;
+    const { data, error } = await supabase.from('product_components').insert({
+      code, name: b.name, description: b.description || null, category: b.category || 'other',
+      unit: b.unit || 'cái', unit_price: b.unit_price || 0,
+      supplier: b.supplier || null, supplier_code: b.supplier_code || null,
+      material: b.material || null, specifications: b.specifications || null,
+      stock_quantity: b.stock_quantity || 0, min_stock: b.min_stock || 5,
+      image_url: b.image_url || null,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json({ component: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.put('/components/:id', async (req, res) => {
+  try {
+    const b = req.body;
+    const update = { updated_at: new Date().toISOString() };
+    const fields = ['name', 'description', 'category', 'unit', 'unit_price', 'supplier', 'supplier_code',
+      'material', 'specifications', 'stock_quantity', 'min_stock', 'image_url', 'is_active'];
+    fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+    const { data, error } = await supabase.from('product_components').update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ component: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/components/:id', async (req, res) => {
+  try {
+    const { count } = await supabase.from('product_structures').select('id', { count: 'exact', head: true }).eq('component_id', req.params.id);
+    if (count > 0) return res.status(400).json({ error: `Không thể xóa — vật tư đang dùng trong ${count} sản phẩm` });
+    await supabase.from('product_components').delete().eq('id', req.params.id);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══════════════════════════════════════════
+// PRODUCT STRUCTURES (BOM - Cấu trúc sản phẩm)
+// ═══════════════════════════════════════════
+
+r.post('/:id/structures', async (req, res) => {
+  try {
+    const b = req.body;
+    const { data, error } = await supabase.from('product_structures').insert({
+      product_id: req.params.id, component_id: b.component_id,
+      quantity: b.quantity || 1, unit: b.unit || null, notes: b.notes || null, order_index: b.order_index || 0,
+    }).select('*, component:product_components(id,code,name,unit,unit_price,material,category)').single();
+    if (error) throw error;
+    res.status(201).json({ structure: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.put('/:productId/structures/:structId', async (req, res) => {
+  try {
+    const b = req.body;
+    const update = {};
+    ['quantity', 'unit', 'notes', 'order_index'].forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+    const { data, error } = await supabase.from('product_structures').update(update).eq('id', req.params.structId)
+      .select('*, component:product_components(id,code,name,unit,unit_price,material,category)').single();
+    if (error) throw error;
+    res.json({ structure: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:productId/structures/:structId', async (req, res) => {
+  try {
+    await supabase.from('product_structures').delete().eq('id', req.params.structId);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+module.exports = r;

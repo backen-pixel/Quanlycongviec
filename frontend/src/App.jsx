@@ -9,6 +9,9 @@ import ProjectDetail from './pages/ProjectDetail';
 import Tasks from './pages/Tasks';
 import StageView from './pages/StageView';
 import UsersPage from './pages/UsersPage';
+import CustomersPage from './pages/CustomersPage';
+import CustomerDetail from './pages/CustomerDetail';
+import ProductsPage from './pages/ProductsPage';
 import { Settings } from 'lucide-react';
 
 function ProtectedLayout() {
@@ -57,6 +60,9 @@ export default function App() {
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/stage/:slug" element={<StageView />} />
             <Route path="/users" element={<UsersPage />} />
+            <Route path="/customers" element={<CustomersPage />} />
+            <Route path="/customers/:id" element={<CustomerDetail />} />
+            <Route path="/products" element={<ProductsPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
                 <div className="text-center">
