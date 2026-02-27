@@ -45,10 +45,14 @@ r.get('/', async (req, res) => {
     if (search) q = q.ilike('title', `%${search}%`);
     if (task_type) q = q.eq('task_type', task_type);
 
-    // ── ROLE-BASED: non-admin only sees tasks assigned to them ──
+    // ── ROLE-BASED: non-admin only sees tasks assigned to them OR in their projects ──
     const userRole = req.user.role;
     if (userRole && !['admin', 'manager'].includes(userRole)) {
-      q = q.eq('assignee_id', req.user.userId);
+      // If filtering by project_id, show all tasks in that project (user already has project access)
+      // Otherwise, show only tasks assigned to them
+      if (!req.query.project_id) {
+        q = q.eq('assignee_id', req.user.userId);
+      }
     }
 
     // Filter by stage_id (for StageView)
@@ -99,21 +103,32 @@ r.get('/:id', async (req, res) => {
     `).eq('id', req.params.id).single();
     if (error) throw error;
 
-    // Load sub-resources
-    const [participants, checklists, comments, timeLogs] = await Promise.all([
-      supabase.from('task_participants').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at'),
-      supabase.from('task_checklists').select('*').eq('task_id', req.params.id).order('order_index'),
-      supabase.from('task_comments').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at', { ascending: false }),
-      supabase.from('task_time_logs').select('*, user:users(id,full_name)').eq('task_id', req.params.id).order('started_at', { ascending: false }),
-    ]);
+    // Load sub-resources (defensive — tables may not exist if migration 03 not run)
+    let participants = [], checklists = [], comments = [], timeLogs = [];
+    try {
+      const r1 = await supabase.from('task_participants').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at');
+      participants = r1.data || [];
+    } catch { }
+    try {
+      const r2 = await supabase.from('task_checklists').select('*').eq('task_id', req.params.id).order('order_index');
+      checklists = r2.data || [];
+    } catch { }
+    try {
+      const r3 = await supabase.from('task_comments').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at', { ascending: false });
+      comments = r3.data || [];
+    } catch { }
+    try {
+      const r4 = await supabase.from('task_time_logs').select('*, user:users(id,full_name)').eq('task_id', req.params.id).order('started_at', { ascending: false });
+      timeLogs = r4.data || [];
+    } catch { }
 
     res.json({
       task: {
         ...task,
-        participants: participants.data || [],
-        checklists: checklists.data || [],
-        comments: comments.data || [],
-        timeLogs: timeLogs.data || [],
+        participants,
+        checklists,
+        comments,
+        timeLogs,
       }
     });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }

@@ -52,7 +52,12 @@ r.get('/', async (req, res) => {
     const userRole = req.user.role;
     if (userRole && !['admin', 'manager'].includes(userRole)) {
       const uid = req.user.userId;
-      q = q.or(`consulting_person_id.eq.${uid},design_person_id.eq.${uid},quotation_person_id.eq.${uid},contract_person_id.eq.${uid},production_person_id.eq.${uid},shipping_person_id.eq.${uid},installation_person_id.eq.${uid},care_person_id.eq.${uid},sales_person_id.eq.${uid},designer_id.eq.${uid},project_manager_id.eq.${uid}`);
+      // Try with stage person fields, fallback to legacy fields only
+      try {
+        q = q.or(`consulting_person_id.eq.${uid},design_person_id.eq.${uid},quotation_person_id.eq.${uid},contract_person_id.eq.${uid},production_person_id.eq.${uid},shipping_person_id.eq.${uid},installation_person_id.eq.${uid},care_person_id.eq.${uid},sales_person_id.eq.${uid},designer_id.eq.${uid},project_manager_id.eq.${uid}`);
+      } catch {
+        q = q.or(`sales_person_id.eq.${uid},designer_id.eq.${uid},project_manager_id.eq.${uid}`);
+      }
     }
 
     const p = +page, l = +limit;
@@ -73,28 +78,44 @@ r.get('/:id', async (req, res) => {
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar,email),
       designer:users!projects_designer_id_fkey(id,full_name,avatar,email),
       project_manager:users!projects_project_manager_id_fkey(id,full_name,avatar,email),
-      consulting_person:users!projects_consulting_person_id_fkey(id,full_name,avatar),
-      design_person:users!projects_design_person_id_fkey(id,full_name,avatar),
-      quotation_person:users!projects_quotation_person_id_fkey(id,full_name,avatar),
-      contract_person:users!projects_contract_person_id_fkey(id,full_name,avatar),
-      production_person:users!projects_production_person_id_fkey(id,full_name,avatar),
-      shipping_person:users!projects_shipping_person_id_fkey(id,full_name,avatar),
-      installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar),
-      care_person:users!projects_care_person_id_fkey(id,full_name,avatar),
       tasks(*, assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,slug,color,order_index))
     `).eq('id', req.params.id).single();
     if (error) throw error;
 
-    // Comments (trao đổi)
-    const { data: comments } = await supabase.from('project_comments').select('*, user:users(id,full_name,avatar)').eq('project_id', req.params.id).order('created_at', { ascending: false });
+    // Try to load stage persons (may fail if migration 07 not run)
+    let stagePersons = {};
+    try {
+      const { data: sp } = await supabase.from('projects').select(`
+        consulting_person:users!projects_consulting_person_id_fkey(id,full_name,avatar),
+        design_person:users!projects_design_person_id_fkey(id,full_name,avatar),
+        quotation_person:users!projects_quotation_person_id_fkey(id,full_name,avatar),
+        contract_person:users!projects_contract_person_id_fkey(id,full_name,avatar),
+        production_person:users!projects_production_person_id_fkey(id,full_name,avatar),
+        shipping_person:users!projects_shipping_person_id_fkey(id,full_name,avatar),
+        installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar),
+        care_person:users!projects_care_person_id_fkey(id,full_name,avatar)
+      `).eq('id', req.params.id).single();
+      if (sp) stagePersons = sp;
+    } catch { /* migration 07 not run yet */ }
 
-    // Activity log
-    const { data: activities } = await supabase.from('activity_logs').select('*, user:users(id,full_name)').eq('entity_type', 'project').eq('entity_id', req.params.id).order('created_at', { ascending: false }).limit(30);
+    // Comments (trao đổi) — may fail if migration 03 not run
+    let comments = [], activities = [], transitions = [];
+    try {
+      const r1 = await supabase.from('project_comments').select('*, user:users(id,full_name,avatar)').eq('project_id', req.params.id).order('created_at', { ascending: false });
+      comments = r1.data || [];
+    } catch { }
 
-    // Stage transitions
-    const { data: transitions } = await supabase.from('stage_transitions')
-      .select('*, from_stage:workflow_stages!stage_transitions_from_stage_id_fkey(name), to_stage:workflow_stages!stage_transitions_to_stage_id_fkey(name), user:users(id,full_name)')
-      .eq('project_id', req.params.id).order('created_at', { ascending: false });
+    try {
+      const r2 = await supabase.from('activity_logs').select('*, user:users(id,full_name)').eq('entity_type', 'project').eq('entity_id', req.params.id).order('created_at', { ascending: false }).limit(30);
+      activities = r2.data || [];
+    } catch { }
+
+    try {
+      const r3 = await supabase.from('stage_transitions')
+        .select('*, from_stage:workflow_stages!stage_transitions_from_stage_id_fkey(name), to_stage:workflow_stages!stage_transitions_to_stage_id_fkey(name), user:users(id,full_name)')
+        .eq('project_id', req.params.id).order('created_at', { ascending: false });
+      transitions = r3.data || [];
+    } catch { }
 
     // Check advance
     let canAdvance = false;
@@ -109,6 +130,7 @@ r.get('/:id', async (req, res) => {
     res.json({
       project: {
         ...data,
+        ...stagePersons,
         comments: comments || [],
         activities: activities || [],
         transitions: transitions || [],

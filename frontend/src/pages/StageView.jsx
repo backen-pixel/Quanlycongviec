@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import TaskDetailModal from '../components/TaskDetailModal';
@@ -9,12 +9,18 @@ import {
 } from '../lib/utils';
 import {
   Plus, FolderKanban, CheckSquare, Lock, Filter, ChevronDown, X,
-  Clock, AlertTriangle, Paperclip, MessageSquare
+  Clock, AlertTriangle, MessageSquare, RefreshCw
 } from 'lucide-react';
 
 const STAGE_NAMES = {
   consulting: 'Tư vấn', design: 'Thiết kế', quotation: 'Báo giá', contract: 'Hợp đồng',
   production: 'Sản xuất', shipping: 'Vận chuyển', installation: 'Lắp đặt', 'customer-care': 'Chăm sóc KH',
+};
+
+const STAGE_STATUS_MAP = {
+  consulting: 'consulting', design: 'designing', quotation: 'quoting',
+  contract: 'contract_signed', production: 'producing', shipping: 'shipping',
+  installation: 'installing', 'customer-care': 'warranty',
 };
 
 export default function StageView() {
@@ -24,6 +30,7 @@ export default function StageView() {
   const [tasks, setTasks] = useState([]);
   const [stageInfo, setStageInfo] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [filterProject, setFilterProject] = useState('all');
@@ -31,37 +38,84 @@ export default function StageView() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const [projRes, stageRes] = await Promise.all([
-        api.get('/projects', { params: { stage_slug: slug } }),
-        api.get('/users/stages'),
-      ]);
+      // Step 1: Load projects for this stage
+      let projRes;
+      try {
+        projRes = await api.get('/projects', { params: { stage_slug: slug } });
+      } catch (e) {
+        console.error('Load projects error:', e);
+        projRes = { data: { projects: [] } };
+      }
       const projs = projRes.data.projects || [];
       setProjects(projs);
-      const stage = stageRes.data.stages?.find(s => s.slug === slug);
-      setStageInfo(stage);
 
-      if (stage && projs.length) {
-        // Load tasks with checklists for this stage
-        const taskPromises = projs.map(p =>
-          api.get(`/tasks`, { params: { project_id: p.id, stage_id: stage.id } })
-            .then(r => r.data.tasks || [])
-        );
-        const allTasks = (await Promise.all(taskPromises)).flat();
-
-        // Load checklists for each task
-        const withChecklists = await Promise.all(allTasks.map(async (t) => {
-          try {
-            const { data } = await api.get(`/tasks/${t.id}`);
-            return { ...t, checklists: data.task?.checklists || [], comments: data.task?.comments || [] };
-          } catch { return { ...t, checklists: [], comments: [] }; }
-        }));
-
-        setTasks(withChecklists);
-      } else {
-        setTasks([]);
+      // Step 2: Get stage info (try /users/stages first, fallback to hardcoded)
+      let stage = null;
+      try {
+        const stageRes = await api.get('/users/stages');
+        stage = stageRes.data.stages?.find(s => s.slug === slug);
+      } catch (e) {
+        console.warn('Stages endpoint failed, using fallback');
       }
-    } catch { }
+      setStageInfo(stage || { slug, name: STAGE_NAMES[slug], color: '#3b82f6' });
+
+      if (projs.length === 0) {
+        setTasks([]);
+        setLoading(false);
+        return;
+      }
+
+      // Step 3: Load ALL tasks for these projects
+      let allTasks = [];
+      for (const p of projs) {
+        try {
+          // Try with stage_id filter first
+          const params = { project_id: p.id };
+          if (stage?.id) params.stage_id = stage.id;
+          const { data } = await api.get('/tasks', { params });
+          const ptasks = data.tasks || [];
+          // If stage_id filter returned nothing, try without filter
+          if (ptasks.length === 0 && stage?.id) {
+            const { data: all } = await api.get('/tasks', { params: { project_id: p.id } });
+            allTasks.push(...(all.tasks || []));
+          } else {
+            allTasks.push(...ptasks);
+          }
+        } catch (e) {
+          console.warn(`Failed to load tasks for project ${p.id}:`, e);
+        }
+      }
+
+      // Remove duplicates
+      const seen = new Set();
+      allTasks = allTasks.filter(t => {
+        if (seen.has(t.id)) return false;
+        seen.add(t.id);
+        return true;
+      });
+
+      // Step 4: Load checklists for each task
+      const withChecklists = await Promise.all(allTasks.map(async (t) => {
+        try {
+          const { data } = await api.get(`/tasks/${t.id}`);
+          return {
+            ...t,
+            checklists: data.task?.checklists || [],
+            comments: data.task?.comments || [],
+            assignee: data.task?.assignee || t.assignee,
+          };
+        } catch {
+          return { ...t, checklists: [], comments: [] };
+        }
+      }));
+
+      setTasks(withChecklists);
+    } catch (e) {
+      console.error('StageView loadData error:', e);
+      setError('Không thể tải dữ liệu. Vui lòng thử lại.');
+    }
     setLoading(false);
   }, [slug]);
 
@@ -69,7 +123,6 @@ export default function StageView() {
 
   // Toggle checklist item
   const toggleCheckItem = async (taskId, clId, isCompleted) => {
-    // Optimistic update
     setTasks(prev => prev.map(t => {
       if (t.id !== taskId) return t;
       return {
@@ -81,9 +134,7 @@ export default function StageView() {
     }));
     try {
       await api.patch(`/tasks/${taskId}/checklists/${clId}`, { is_completed: !isCompleted });
-    } catch {
-      loadData();
-    }
+    } catch { loadData(); }
   };
 
   // Mark entire task as done
@@ -91,9 +142,7 @@ export default function StageView() {
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'done' } : t));
     try {
       await api.patch(`/tasks/${taskId}/status`, { status: 'done' });
-    } catch {
-      loadData();
-    }
+    } catch { loadData(); }
   };
 
   // Mark task in progress
@@ -101,9 +150,7 @@ export default function StageView() {
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'in_progress' } : t));
     try {
       await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' });
-    } catch {
-      loadData();
-    }
+    } catch { loadData(); }
   };
 
   if (loading) {
@@ -114,7 +161,7 @@ export default function StageView() {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
           </svg>
-          <span className="text-sm text-gray-400">Đang tải...</span>
+          <span className="text-sm text-gray-400">Đang tải {STAGE_NAMES[slug]}...</span>
         </div>
       </div>
     );
@@ -138,8 +185,19 @@ export default function StageView() {
 
   return (
     <div className="space-y-4">
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
+          <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
+          <p className="text-sm text-red-700 flex-1">{error}</p>
+          <button onClick={loadData} className="h-8 px-3 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 cursor-pointer flex items-center gap-1">
+            <RefreshCw className="h-3.5 w-3.5" /> Thử lại
+          </button>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }} />
@@ -151,33 +209,43 @@ export default function StageView() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Refresh */}
+          <button onClick={loadData} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer text-gray-400 hover:text-gray-600">
+            <RefreshCw className="h-4 w-4" />
+          </button>
+
           {/* Project filter */}
-          <div className="relative">
-            <button onClick={() => setShowFilter(!showFilter)}
-              className="h-9 px-3 bg-white border rounded-lg text-sm flex items-center gap-2 hover:bg-gray-50 cursor-pointer">
-              <Filter className="h-4 w-4 text-gray-400" />
-              <span className="text-gray-700">
-                {filterProject === 'all' ? 'Tất cả dự án' : projects.find(p => p.id === filterProject)?.code || 'Lọc'}
-              </span>
-              <ChevronDown className="h-3 w-3 text-gray-400" />
-            </button>
-            {showFilter && (
-              <div className="absolute right-0 top-full mt-1 w-64 bg-white rounded-xl shadow-lg border z-50 py-1 max-h-60 overflow-y-auto">
-                <button onClick={() => { setFilterProject('all'); setShowFilter(false); }}
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer ${filterProject === 'all' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'}`}>
-                  Tất cả dự án
-                </button>
-                {projects.map(p => (
-                  <button key={p.id} onClick={() => { setFilterProject(p.id); setShowFilter(false); }}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer ${filterProject === p.id ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'}`}>
-                    <span className="font-medium text-blue-600">{p.code}</span>
-                    <span className="ml-2">{p.name}</span>
-                    <span className="ml-2 text-xs text-gray-400">{p.customers?.full_name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {projects.length > 1 && (
+            <div className="relative">
+              <button onClick={() => setShowFilter(!showFilter)}
+                className="h-9 px-3 bg-white border rounded-lg text-sm flex items-center gap-2 hover:bg-gray-50 cursor-pointer">
+                <Filter className="h-4 w-4 text-gray-400" />
+                <span className="text-gray-700 max-w-[200px] truncate">
+                  {filterProject === 'all' ? 'Tất cả dự án' : projects.find(p => p.id === filterProject)?.code || 'Lọc'}
+                </span>
+                <ChevronDown className="h-3 w-3 text-gray-400" />
+              </button>
+              {showFilter && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowFilter(false)} />
+                  <div className="absolute right-0 top-full mt-1 w-72 bg-white rounded-xl shadow-lg border z-50 py-1 max-h-60 overflow-y-auto">
+                    <button onClick={() => { setFilterProject('all'); setShowFilter(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer ${filterProject === 'all' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'}`}>
+                      Tất cả dự án ({projects.length})
+                    </button>
+                    {projects.map(p => (
+                      <button key={p.id} onClick={() => { setFilterProject(p.id); setShowFilter(false); }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer ${filterProject === p.id ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'}`}>
+                        <span className="font-medium text-blue-600">{p.code}</span>
+                        <span className="ml-2 text-gray-700">{p.name}</span>
+                        {p.customers?.full_name && <span className="ml-2 text-xs text-gray-400">({p.customers.full_name})</span>}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           <button onClick={() => setShowCreateTask(true)}
             className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
@@ -217,14 +285,14 @@ export default function StageView() {
 
       {/* ═══ KANBAN: Columns = Tasks, Cards = Checklists ═══ */}
       {sortedTasks.length > 0 ? (
-        <div className="flex gap-4 overflow-x-auto pb-6">
+        <div className="flex gap-4 overflow-x-auto pb-6" style={{ minHeight: '300px' }}>
           {sortedTasks.map((task, taskIdx) => {
             const checksDone = task.checklists?.filter(c => c.is_completed)?.length || 0;
             const checksTotal = task.checklists?.length || 0;
             const allChecksDone = checksTotal > 0 && checksDone === checksTotal;
             const isTaskDone = task.status === 'done';
 
-            // Check if previous tasks are all done (sequential unlock)
+            // Sequential unlock: previous task must be done
             const prevAllDone = sortedTasks.slice(0, taskIdx).every(t => t.status === 'done');
             const isLocked = taskIdx > 0 && !prevAllDone;
             const isActive = !isLocked && !isTaskDone;
@@ -249,15 +317,15 @@ export default function StageView() {
                       className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
                         isTaskDone ? 'bg-emerald-500 border-emerald-500 text-white'
                         : allChecksDone ? 'border-emerald-400 hover:bg-emerald-50 cursor-pointer animate-pulse'
-                        : 'border-gray-300 cursor-not-allowed'
+                        : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 cursor-not-allowed'
                       }`}>
                       {isTaskDone && <CheckSquare className="h-3.5 w-3.5" />}
                     </button>
 
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-0.5">
+                      <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                         <span className="text-[10px] font-bold text-gray-400">#{taskIdx + 1}</span>
-                        {proj && <span className="text-[10px] text-blue-600 font-medium">{proj.code}</span>}
+                        {proj && <Link to={`/projects/${proj.id}`} className="text-[10px] text-blue-600 font-medium hover:underline">{proj.code}</Link>}
                         <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
                       </div>
                       <h3 className={`text-sm font-semibold leading-tight ${isTaskDone ? 'text-emerald-700 line-through' : 'text-gray-900'}`}>
@@ -292,7 +360,6 @@ export default function StageView() {
                         <MessageSquare className="h-3 w-3" />{task.comments.length}
                       </span>
                     )}
-                    {/* Checklist progress */}
                     <span className={`text-[10px] font-medium ${allChecksDone && checksTotal > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
                       ✓ {checksDone}/{checksTotal}
                     </span>
@@ -316,7 +383,7 @@ export default function StageView() {
                   {isLocked ? (
                     <div className="flex flex-col items-center justify-center h-24 text-gray-400">
                       <Lock className="h-6 w-6 mb-1 opacity-40" />
-                      <p className="text-xs">Hoàn thành NV #{taskIdx} trước</p>
+                      <p className="text-xs text-center">Hoàn thành NV #{taskIdx} trước</p>
                     </div>
                   ) : task.checklists?.length > 0 ? (
                     task.checklists.map((cl, clIdx) => (
@@ -338,7 +405,7 @@ export default function StageView() {
                             {cl.title}
                           </span>
                           {cl.completed_at && (
-                            <p className="text-[10px] text-gray-400 mt-0.5">✓ {formatDate(cl.completed_at)}</p>
+                            <p className="text-[10px] text-emerald-500 mt-0.5">✓ {formatDate(cl.completed_at)}</p>
                           )}
                         </div>
                         <span className="text-[10px] text-gray-300 font-mono shrink-0">{clIdx + 1}</span>
@@ -346,37 +413,35 @@ export default function StageView() {
                     ))
                   ) : (
                     <div className="flex items-center justify-center h-16 text-xs text-gray-400">
-                      Chưa có checklist
+                      Chưa có checklist — thêm bên dưới
                     </div>
                   )}
 
-                  {/* Quick add checklist (if not locked) */}
+                  {/* Quick add checklist */}
                   {!isLocked && !isTaskDone && (
                     <QuickAddChecklist taskId={task.id} onAdded={loadData} />
                   )}
                 </div>
 
-                {/* Start task button */}
-                {!isLocked && !isTaskDone && task.status === 'pending' && (
-                  <button onClick={() => startTask(task.id)}
-                    className="mt-1 w-full h-8 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 cursor-pointer flex items-center justify-center gap-1">
-                    ▶ Bắt đầu làm
+                {/* Action buttons */}
+                <div className="flex gap-1 mt-1">
+                  {!isLocked && !isTaskDone && task.status === 'pending' && (
+                    <button onClick={() => startTask(task.id)}
+                      className="flex-1 h-8 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 cursor-pointer flex items-center justify-center gap-1">
+                      ▶ Bắt đầu
+                    </button>
+                  )}
+                  {!isLocked && !isTaskDone && allChecksDone && checksTotal > 0 && (
+                    <button onClick={() => markTaskDone(task.id)}
+                      className="flex-1 h-8 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-medium hover:bg-emerald-100 cursor-pointer flex items-center justify-center gap-1 animate-pulse">
+                      ✓ Hoàn thành
+                    </button>
+                  )}
+                  <button onClick={() => setSelectedTask(task.id)}
+                    className="flex-1 h-8 text-gray-400 bg-white border rounded-lg text-xs hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 cursor-pointer flex items-center justify-center gap-1">
+                    Chi tiết →
                   </button>
-                )}
-
-                {/* Done button (when all checklists done) */}
-                {!isLocked && !isTaskDone && allChecksDone && checksTotal > 0 && (
-                  <button onClick={() => markTaskDone(task.id)}
-                    className="mt-1 w-full h-8 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-medium hover:bg-emerald-100 cursor-pointer flex items-center justify-center gap-1 animate-pulse">
-                    ✓ Hoàn thành nhiệm vụ
-                  </button>
-                )}
-
-                {/* View detail button */}
-                <button onClick={() => setSelectedTask(task.id)}
-                  className="mt-1 w-full h-7 text-gray-400 rounded-lg text-xs hover:text-blue-600 hover:bg-blue-50 cursor-pointer flex items-center justify-center gap-1">
-                  Chi tiết →
-                </button>
+                </div>
               </div>
             );
           })}
@@ -384,13 +449,18 @@ export default function StageView() {
       ) : projects.length > 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border">
           <CheckSquare className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-          <p className="text-sm text-gray-400 mb-1">Chưa có nhiệm vụ ở giai đoạn {stageName}</p>
-          <p className="text-xs text-gray-400">Tạo task hoặc chuyển giai đoạn để tự động tạo nhiệm vụ</p>
+          <p className="text-sm text-gray-500 mb-2">Chưa có nhiệm vụ ở giai đoạn <strong>{stageName}</strong></p>
+          <p className="text-xs text-gray-400 mb-4">Tạo task mới hoặc chuyển giai đoạn từ trang dự án để tự động tạo nhiệm vụ</p>
+          <button onClick={() => setShowCreateTask(true)}
+            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
+            <Plus className="h-4 w-4" /> Tạo nhiệm vụ đầu tiên
+          </button>
         </div>
       ) : (
         <div className="text-center py-16">
           <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-          <p className="text-sm text-gray-400">Không có dự án ở giai đoạn {stageName}</p>
+          <p className="text-sm text-gray-500 mb-1">Không có dự án ở giai đoạn <strong>{stageName}</strong></p>
+          <p className="text-xs text-gray-400">Tạo dự án mới từ trang "Dự án" — dự án sẽ bắt đầu ở giai đoạn Tư vấn</p>
         </div>
       )}
 

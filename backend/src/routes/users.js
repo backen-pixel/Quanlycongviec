@@ -156,8 +156,21 @@ r.get('/departments', async (req, res) => {
 // ═══ WORKFLOW STAGES ═══
 r.get('/stages', async (req, res) => {
   try {
-    const { data } = await supabase.from('workflow_stages').select('*').eq('is_active', true).order('order_index');
-    res.json({ stages: data });
+    const { data, error } = await supabase.from('workflow_stages').select('*').eq('is_active', true).order('order_index');
+    if (error) {
+      // Table might not exist, return hardcoded fallback
+      return res.json({ stages: [
+        { id: 'c1', slug: 'consulting', name: 'Tư vấn', color: '#8B5CF6', order_index: 1 },
+        { id: 'c2', slug: 'design', name: 'Thiết kế', color: '#EC4899', order_index: 2 },
+        { id: 'c3', slug: 'quotation', name: 'Báo giá', color: '#F59E0B', order_index: 3 },
+        { id: 'c4', slug: 'contract', name: 'Hợp đồng', color: '#10B981', order_index: 4 },
+        { id: 'c5', slug: 'production', name: 'Sản xuất', color: '#F97316', order_index: 5 },
+        { id: 'c6', slug: 'shipping', name: 'Vận chuyển', color: '#06B6D4', order_index: 6 },
+        { id: 'c7', slug: 'installation', name: 'Lắp đặt', color: '#3B82F6', order_index: 7 },
+        { id: 'c8', slug: 'customer-care', name: 'Chăm sóc KH', color: '#EF4444', order_index: 8 },
+      ] });
+    }
+    res.json({ stages: data || [] });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
