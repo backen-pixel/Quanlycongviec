@@ -47,6 +47,14 @@ r.get('/', async (req, res) => {
       if (mappedStatus) q = q.eq('status', mappedStatus);
     }
 
+    // ── ROLE-BASED FILTERING ──
+    // Non-admin/manager users only see projects where they are assigned to a stage
+    const userRole = req.user.role;
+    if (userRole && !['admin', 'manager'].includes(userRole)) {
+      const uid = req.user.userId;
+      q = q.or(`consulting_person_id.eq.${uid},design_person_id.eq.${uid},quotation_person_id.eq.${uid},contract_person_id.eq.${uid},production_person_id.eq.${uid},shipping_person_id.eq.${uid},installation_person_id.eq.${uid},care_person_id.eq.${uid},sales_person_id.eq.${uid},designer_id.eq.${uid},project_manager_id.eq.${uid}`);
+    }
+
     const p = +page, l = +limit;
     q = q.order('created_at', { ascending: false }).range((p-1)*l, p*l-1);
     const { data, count, error } = await q;

@@ -45,6 +45,15 @@ r.get('/', async (req, res) => {
     if (search) q = q.ilike('title', `%${search}%`);
     if (task_type) q = q.eq('task_type', task_type);
 
+    // ── ROLE-BASED: non-admin only sees tasks assigned to them ──
+    const userRole = req.user.role;
+    if (userRole && !['admin', 'manager'].includes(userRole)) {
+      q = q.eq('assignee_id', req.user.userId);
+    }
+
+    // Filter by stage_id (for StageView)
+    if (req.query.stage_id) q = q.eq('stage_id', req.query.stage_id);
+
     const { data, error } = await q;
     if (error) throw error;
 

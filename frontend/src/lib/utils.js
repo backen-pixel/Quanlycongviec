@@ -85,3 +85,22 @@ export const avatarColor = (name) => {
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
 };
+
+// ── ROLE → STAGE MAPPING (frontend fallback) ──
+export const ROLE_LABELS = {
+  admin: 'Quản trị viên', manager: 'Quản lý', sales: 'Kinh doanh',
+  designer: 'Thiết kế', production: 'Sản xuất', driver: 'Vận chuyển',
+  installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên',
+};
+
+export const ROLE_STAGE_MAP = {
+  admin: ['consulting','design','quotation','contract','production','shipping','installation','customer-care'],
+  manager: ['consulting','design','quotation','contract','production','shipping','installation','customer-care'],
+  sales: ['consulting','quotation','contract'],
+  designer: ['design'],
+  production: ['production'],
+  driver: ['shipping'],
+  installer: ['installation'],
+  customer_care: ['customer-care'],
+  staff: ['consulting'],
+};

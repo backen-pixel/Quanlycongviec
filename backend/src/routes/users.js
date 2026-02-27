@@ -161,4 +161,22 @@ r.get('/stages', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
+// ═══ ROLE → STAGE ACCESS ═══
+r.get('/my-stages', async (req, res) => {
+  try {
+    const role = req.user.role;
+    // Admin/manager see all
+    if (['admin', 'manager'].includes(role)) {
+      const { data } = await supabase.from('workflow_stages').select('*').eq('is_active', true).order('order_index');
+      return res.json({ stages: data, allAccess: true });
+    }
+    // Others: check role_stage_access table
+    const { data: access } = await supabase.from('role_stage_access').select('stage_slug').eq('role', role);
+    const slugs = (access || []).map(a => a.stage_slug);
+    if (slugs.length === 0) return res.json({ stages: [], allAccess: false });
+    const { data: stages } = await supabase.from('workflow_stages').select('*').eq('is_active', true).in('slug', slugs).order('order_index');
+    res.json({ stages: stages || [], allAccess: false });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
 module.exports = r;

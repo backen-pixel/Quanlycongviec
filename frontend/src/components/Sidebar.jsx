@@ -1,13 +1,13 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import NotificationCenter from './NotificationCenter';
-import { getInitials, avatarColor } from '../lib/utils';
+import { getInitials, avatarColor, ROLE_STAGE_MAP, ROLE_LABELS } from '../lib/utils';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
   Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -19,18 +19,18 @@ const nav = [
   { to: '/products', icon: Package, label: 'Sản phẩm' },
 ];
 
-const workflow = [
-  { to: '/stage/consulting', icon: MessageSquare, label: 'Tư vấn', dot: '#8B5CF6' },
-  { to: '/stage/design', icon: Palette, label: 'Thiết kế', dot: '#EC4899' },
-  { to: '/stage/quotation', icon: Calculator, label: 'Báo giá', dot: '#F59E0B' },
-  { to: '/stage/contract', icon: FileText, label: 'Hợp đồng', dot: '#10B981' },
-  { to: '/stage/production', icon: Hammer, label: 'Sản xuất', dot: '#F97316' },
-  { to: '/stage/shipping', icon: Truck, label: 'Vận chuyển', dot: '#06B6D4' },
-  { to: '/stage/installation', icon: Wrench, label: 'Lắp đặt', dot: '#3B82F6' },
-  { to: '/stage/customer-care', icon: Heart, label: 'CSKH', dot: '#EF4444' },
+const allWorkflow = [
+  { to: '/stage/consulting', icon: MessageSquare, label: 'Tư vấn', dot: '#8B5CF6', slug: 'consulting' },
+  { to: '/stage/design', icon: Palette, label: 'Thiết kế', dot: '#EC4899', slug: 'design' },
+  { to: '/stage/quotation', icon: Calculator, label: 'Báo giá', dot: '#F59E0B', slug: 'quotation' },
+  { to: '/stage/contract', icon: FileText, label: 'Hợp đồng', dot: '#10B981', slug: 'contract' },
+  { to: '/stage/production', icon: Hammer, label: 'Sản xuất', dot: '#F97316', slug: 'production' },
+  { to: '/stage/shipping', icon: Truck, label: 'Vận chuyển', dot: '#06B6D4', slug: 'shipping' },
+  { to: '/stage/installation', icon: Wrench, label: 'Lắp đặt', dot: '#3B82F6', slug: 'installation' },
+  { to: '/stage/customer-care', icon: Heart, label: 'CSKH', dot: '#EF4444', slug: 'customer-care' },
 ];
 
-const tools = [
+const adminTools = [
   { to: '/users', icon: Users, label: 'Nhân viên' },
   { to: '/templates', icon: ClipboardList, label: 'NV mẫu' },
   { to: '/settings', icon: Settings, label: 'Cài đặt' },
@@ -81,6 +81,27 @@ export default function Sidebar() {
   const { user, logout, socket } = useAuth();
   const navigate = useNavigate();
 
+  const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+  const allowedSlugs = ROLE_STAGE_MAP[user?.role] || [];
+
+  // Filter workflow stages by role
+  const workflow = useMemo(() => {
+    if (isAdmin) return allWorkflow;
+    return allWorkflow.filter(w => allowedSlugs.includes(w.slug));
+  }, [user?.role]);
+
+  // Filter tools — only admin/manager see Nhân viên + NV mẫu
+  const tools = useMemo(() => {
+    if (isAdmin) return adminTools;
+    return adminTools.filter(t => t.to === '/settings');
+  }, [user?.role]);
+
+  // Filter nav — non-admin don't see "Tất cả CV", "Khách hàng", "Sản phẩm"
+  const filteredNav = useMemo(() => {
+    if (isAdmin) return nav;
+    return nav.filter(n => !['/tasks', '/customers', '/products'].includes(n.to));
+  }, [user?.role]);
+
   const doLogout = () => {
     logout();
     navigate('/login');
@@ -112,9 +133,9 @@ export default function Sidebar() {
 
       {/* Nav */}
       <div className="flex-1 overflow-y-auto py-2">
-        <Section title="Tổng quan" items={nav} collapsed={collapsed} />
+        <Section title="Tổng quan" items={filteredNav} collapsed={collapsed} />
         <Section title="Quy trình" items={workflow} collapsed={collapsed} />
-        <Section title="Hệ thống" items={tools} collapsed={collapsed} />
+        {tools.length > 0 && <Section title="Hệ thống" items={tools} collapsed={collapsed} />}
       </div>
 
       {/* User + collapse */}
@@ -129,7 +150,7 @@ export default function Sidebar() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-white truncate">{user.fullName}</p>
-              <p className="text-[10px] text-[var(--color-sidebar-text)] truncate">{user.email}</p>
+              <p className="text-[10px] text-[var(--color-sidebar-text)] truncate">{ROLE_LABELS[user.role] || user.role}</p>
             </div>
             <button
               onClick={doLogout}
