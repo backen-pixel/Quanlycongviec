@@ -1,19 +1,25 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import Modal from './Modal';
-import { Plus, Trash2, Package } from 'lucide-react';
-import { formatVND } from '../lib/utils';
+import { FileUploadButton, FilePreview } from './FileUpload';
+import { Plus } from 'lucide-react';
+
+const STAGE_ASSIGNS = [
+  { key: 'consulting_person_id', label: 'Tư vấn' },
+  { key: 'design_person_id', label: 'Thiết kế' },
+  { key: 'quotation_person_id', label: 'Báo giá' },
+  { key: 'contract_person_id', label: 'Hợp đồng' },
+  { key: 'production_person_id', label: 'Sản xuất' },
+  { key: 'shipping_person_id', label: 'Vận chuyển' },
+  { key: 'installation_person_id', label: 'Lắp đặt' },
+  { key: 'care_person_id', label: 'CSKH' },
+];
 
 export default function ProjectCreateModal({ open, onClose, onCreated }) {
-  const [form, setForm] = useState({
-    name: '', description: '', customer_id: '', kitchen_type: '', material: '',
-    install_address: '', estimated_value: '', priority: 'medium',
-    sales_person_id: '', designer_id: '', project_manager_id: '',
-  });
+  const [form, setForm] = useState({});
   const [customers, setCustomers] = useState([]);
   const [users, setUsers] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [selectedProducts, setSelectedProducts] = useState([]);
+  const [quotationFiles, setQuotationFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCust, setNewCust] = useState({ full_name: '', phone: '', email: '', city: '' });
@@ -22,9 +28,15 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
     if (open) {
       api.get('/customers').then(r => setCustomers(r.data.customers || []));
       api.get('/users').then(r => setUsers(r.data.users || []));
-      api.get('/products', { params: { limit: 200 } }).then(r => setProducts(r.data.products || []));
-      setForm({ name: '', description: '', customer_id: '', kitchen_type: '', material: '', install_address: '', estimated_value: '', priority: 'medium', sales_person_id: '', designer_id: '', project_manager_id: '' });
-      setSelectedProducts([]);
+      setForm({
+        name: '', description: '', customer_id: '', kitchen_type: '', material: '',
+        install_address: '', estimated_value: '', priority: 'medium',
+        sales_person_id: '', designer_id: '', project_manager_id: '',
+        consulting_person_id: '', design_person_id: '', quotation_person_id: '',
+        contract_person_id: '', production_person_id: '', shipping_person_id: '',
+        installation_person_id: '', care_person_id: '',
+      });
+      setQuotationFiles([]);
     }
   }, [open]);
 
@@ -36,42 +48,21 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
       const { data } = await api.post('/customers', newCust);
       setCustomers(c => [data.customer, ...c]);
       setForm(f => ({ ...f, customer_id: data.customer.id }));
-      setShowNewCustomer(false);
-      setNewCust({ full_name: '', phone: '', email: '', city: '' });
+      setShowNewCustomer(false); setNewCust({ full_name: '', phone: '', email: '', city: '' });
     } catch { }
   };
-
-  const addProduct = (productId) => {
-    if (!productId || selectedProducts.find(p => p.product_id === productId)) return;
-    const prod = products.find(p => p.id === productId);
-    if (prod) setSelectedProducts(sp => [...sp, { product_id: prod.id, product: prod, quantity: 1, custom_price: prod.base_price }]);
-  };
-
-  const updateProduct = (i, field, value) => {
-    setSelectedProducts(sp => sp.map((p, j) => j === i ? { ...p, [field]: value } : p));
-  };
-
-  const removeProduct = (i) => setSelectedProducts(sp => sp.filter((_, j) => j !== i));
-
-  const totalProductValue = selectedProducts.reduce((s, p) => s + (p.custom_price || 0) * (p.quantity || 0), 0);
 
   const submit = async (e) => {
     e.preventDefault();
     if (!form.name.trim() || !form.customer_id) return;
     setLoading(true);
     try {
-      await api.post('/projects', {
-        ...form,
-        estimated_value: form.estimated_value ? +form.estimated_value : totalProductValue || null,
-        sales_person_id: form.sales_person_id || null,
-        designer_id: form.designer_id || null,
-        project_manager_id: form.project_manager_id || null,
-        products: selectedProducts.map(p => ({
-          product_id: p.product_id, quantity: p.quantity, custom_price: p.custom_price,
-        })),
-      });
-      onCreated?.();
-      onClose();
+      const payload = { ...form, quotation_files: quotationFiles };
+      payload.estimated_value = payload.estimated_value ? +payload.estimated_value : null;
+      // Nullify empty strings
+      Object.keys(payload).forEach(k => { if (payload[k] === '') payload[k] = null; });
+      await api.post('/projects', payload);
+      onCreated?.(); onClose();
     } catch { }
     setLoading(false);
   };
@@ -89,7 +80,7 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
 
   return (
     <Modal open={open} onClose={onClose} title="Tạo dự án mới" size="lg">
-      <form onSubmit={submit} className="space-y-5 max-h-[75vh] overflow-y-auto pr-1">
+      <form onSubmit={submit} className="space-y-5 max-h-[78vh] overflow-y-auto pr-1">
         {/* Customer */}
         <div className="bg-gray-50 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -108,12 +99,12 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
                 <input value={newCust.city} onChange={e => setNewCust(c => ({...c, city: e.target.value}))} placeholder="Thành phố" className="input" />
               </div>
               <div className="flex gap-2">
-                <button type="button" onClick={createCustomer} className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 cursor-pointer">Tạo KH</button>
+                <button type="button" onClick={createCustomer} className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium cursor-pointer">Tạo KH</button>
                 <button type="button" onClick={() => setShowNewCustomer(false)} className="h-8 px-3 bg-gray-100 text-gray-600 rounded-lg text-xs cursor-pointer">Hủy</button>
               </div>
             </div>
           ) : (
-            <select value={form.customer_id} onChange={e => set('customer_id', e.target.value)} required className="input">
+            <select value={form.customer_id || ''} onChange={e => set('customer_id', e.target.value)} required className="input">
               <option value="">— Chọn khách hàng —</option>
               {customers.map(c => <option key={c.id} value={c.id}>{c.full_name} — {c.phone}</option>)}
             </select>
@@ -121,130 +112,85 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
         </div>
 
         {/* Project info */}
-        <Field label="Tên dự án *">
-          <input value={form.name} onChange={e => set('name', e.target.value)} required className="input" placeholder="VD: Tủ bếp chữ L anh Minh" />
-        </Field>
-        <Field label="Mô tả">
-          <textarea value={form.description} onChange={e => set('description', e.target.value)} className="input min-h-[60px]" placeholder="Mô tả dự án..." />
-        </Field>
+        <div><label className="block text-sm font-medium mb-1">Tên dự án *</label>
+          <input value={form.name || ''} onChange={e => set('name', e.target.value)} required className="input" placeholder="VD: Tủ bếp chữ L anh Minh" /></div>
+        <div><label className="block text-sm font-medium mb-1">Mô tả</label>
+          <textarea value={form.description || ''} onChange={e => set('description', e.target.value)} className="input min-h-[50px]" /></div>
 
         <div className="grid grid-cols-3 gap-4">
-          <Field label="Loại tủ bếp">
-            <select value={form.kitchen_type} onChange={e => set('kitchen_type', e.target.value)} className="input">
+          <div><label className="block text-sm font-medium mb-1">Loại tủ bếp</label>
+            <select value={form.kitchen_type || ''} onChange={e => set('kitchen_type', e.target.value)} className="input">
               <option value="">— Chọn —</option>{kitchenTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Chất liệu">
-            <select value={form.material} onChange={e => set('material', e.target.value)} className="input">
+            </select></div>
+          <div><label className="block text-sm font-medium mb-1">Chất liệu</label>
+            <select value={form.material || ''} onChange={e => set('material', e.target.value)} className="input">
               <option value="">— Chọn —</option>{materials.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Độ ưu tiên">
-            <select value={form.priority} onChange={e => set('priority', e.target.value)} className="input">
+            </select></div>
+          <div><label className="block text-sm font-medium mb-1">Độ ưu tiên</label>
+            <select value={form.priority || 'medium'} onChange={e => set('priority', e.target.value)} className="input">
               <option value="low">Thấp</option><option value="medium">Trung bình</option>
               <option value="high">Cao</option><option value="urgent">Gấp</option>
-            </select>
-          </Field>
+            </select></div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Giá trị ước tính (VNĐ)">
-            <input type="number" value={form.estimated_value} onChange={e => set('estimated_value', e.target.value)} className="input" placeholder={totalProductValue ? `Auto: ${totalProductValue.toLocaleString('vi-VN')}` : 'VD: 85000000'} />
-          </Field>
-          <Field label="Địa chỉ lắp đặt">
-            <input value={form.install_address} onChange={e => set('install_address', e.target.value)} className="input" placeholder="Địa chỉ..." />
-          </Field>
+          <div><label className="block text-sm font-medium mb-1">Giá trị ước tính (VNĐ)</label>
+            <input type="number" value={form.estimated_value || ''} onChange={e => set('estimated_value', e.target.value)} className="input" /></div>
+          <div><label className="block text-sm font-medium mb-1">Địa chỉ lắp đặt</label>
+            <input value={form.install_address || ''} onChange={e => set('install_address', e.target.value)} className="input" /></div>
         </div>
 
-        {/* ═══ PRODUCTS SECTION ═══ */}
-        <div className="bg-blue-50 rounded-xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-              <Package className="h-4 w-4 text-blue-600" /> Sản phẩm
-            </h3>
-            {totalProductValue > 0 && (
-              <span className="text-sm font-bold text-blue-600">{formatVND(totalProductValue)}</span>
-            )}
-          </div>
-
-          <div className="flex gap-2">
-            <select onChange={e => { addProduct(e.target.value); e.target.value = ''; }} defaultValue="" className="input flex-1">
-              <option value="">— Chọn sản phẩm —</option>
-              {products.filter(p => !selectedProducts.find(sp => sp.product_id === p.id)).map(p => (
-                <option key={p.id} value={p.id}>{p.code} — {p.name} ({formatVND(p.base_price)})</option>
-              ))}
-            </select>
-          </div>
-
-          {selectedProducts.length > 0 && (
-            <div className="space-y-2">
-              {selectedProducts.map((sp, i) => (
-                <div key={sp.product_id} className="bg-white rounded-lg border p-3 flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-blue-600">{sp.product?.code}</span>
-                      <span className="text-sm font-medium text-gray-900">{sp.product?.name}</span>
-                    </div>
-                    {sp.product?.material && <span className="text-[10px] text-gray-400">{sp.product.material}</span>}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-16">
-                      <label className="text-[10px] text-gray-500">SL</label>
-                      <input type="number" min="1" value={sp.quantity} onChange={e => updateProduct(i, 'quantity', +e.target.value || 1)}
-                        className="input text-center !py-1" />
-                    </div>
-                    <div className="w-28">
-                      <label className="text-[10px] text-gray-500">Đơn giá</label>
-                      <input type="number" value={sp.custom_price} onChange={e => updateProduct(i, 'custom_price', +e.target.value || 0)}
-                        className="input !py-1" />
-                    </div>
-                    <div className="text-right w-24">
-                      <label className="text-[10px] text-gray-500">Thành tiền</label>
-                      <p className="text-sm font-bold">{formatVND(sp.quantity * sp.custom_price)}</p>
-                    </div>
-                    <button type="button" onClick={() => removeProduct(i)} className="text-gray-400 hover:text-red-500 cursor-pointer">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+        {/* Quotation files */}
+        <div className="bg-amber-50 rounded-xl p-4 space-y-2">
+          <h3 className="text-sm font-semibold text-gray-900">📄 File báo giá sản phẩm</h3>
+          <p className="text-xs text-gray-500">Upload file báo giá, bản vẽ, catalog sản phẩm...</p>
+          <FileUploadButton onFilesUploaded={(f) => setQuotationFiles(qf => [...qf, ...f])} />
+          <FilePreview files={quotationFiles} onRemove={(i) => setQuotationFiles(f => f.filter((_, j) => j !== i))} />
         </div>
 
-        {/* Assign people */}
+        {/* Main assignments */}
         <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-900">Phân công</h3>
+          <h3 className="text-sm font-semibold text-gray-900">👤 Quản lý chung</h3>
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Sales">
-              <select value={form.sales_person_id} onChange={e => set('sales_person_id', e.target.value)} className="input">
-                <option value="">— Chọn —</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select>
-            </Field>
-            <Field label="Thiết kế">
-              <select value={form.designer_id} onChange={e => set('designer_id', e.target.value)} className="input">
-                <option value="">— Chọn —</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select>
-            </Field>
-            <Field label="Quản lý DA">
-              <select value={form.project_manager_id} onChange={e => set('project_manager_id', e.target.value)} className="input">
-                <option value="">— Chọn —</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select>
-            </Field>
+            <div><label className="block text-xs font-medium mb-1">Sales chính</label>
+              <select value={form.sales_person_id || ''} onChange={e => set('sales_person_id', e.target.value)} className="input">
+                <option value="">—</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+              </select></div>
+            <div><label className="block text-xs font-medium mb-1">Thiết kế chính</label>
+              <select value={form.designer_id || ''} onChange={e => set('designer_id', e.target.value)} className="input">
+                <option value="">—</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+              </select></div>
+            <div><label className="block text-xs font-medium mb-1">Quản lý DA</label>
+              <select value={form.project_manager_id || ''} onChange={e => set('project_manager_id', e.target.value)} className="input">
+                <option value="">—</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+              </select></div>
+          </div>
+        </div>
+
+        {/* Per-stage assignments */}
+        <div className="bg-blue-50 rounded-xl p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-900">🔄 Phân công theo quy trình</h3>
+          <p className="text-xs text-gray-500">Gán người chịu trách nhiệm cho từng giai đoạn</p>
+          <div className="grid grid-cols-4 gap-3">
+            {STAGE_ASSIGNS.map(sa => (
+              <div key={sa.key}>
+                <label className="block text-[11px] font-medium text-gray-600 mb-1">{sa.label}</label>
+                <select value={form[sa.key] || ''} onChange={e => set(sa.key, e.target.value)} className="input text-xs !py-1.5">
+                  <option value="">— Chọn —</option>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                </select>
+              </div>
+            ))}
           </div>
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
-          <button type="button" onClick={onClose} className="h-10 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer">Hủy</button>
-          <button type="submit" disabled={loading} className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 cursor-pointer">
+          <button type="button" onClick={onClose} className="h-10 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
+          <button type="submit" disabled={loading} className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50">
             {loading ? 'Đang tạo...' : 'Tạo dự án'}
           </button>
         </div>
       </form>
     </Modal>
   );
-}
-
-function Field({ label, children }) {
-  return <div><label className="block text-sm font-medium text-gray-700 mb-1.5">{label}</label>{children}</div>;
 }

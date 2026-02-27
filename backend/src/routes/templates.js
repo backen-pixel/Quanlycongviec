@@ -79,4 +79,13 @@ r.delete('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
+// ═══ ACTIVATE ALL TEMPLATES ═══
+r.post('/activate-all', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('task_templates').update({ is_active: true }).eq('is_active', false).select('id');
+    if (error) throw error;
+    res.json({ message: `Đã kích hoạt ${data?.length || 0} nhiệm vụ mẫu`, count: data?.length });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
 module.exports = r;

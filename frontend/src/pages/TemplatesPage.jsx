@@ -33,6 +33,13 @@ export default function TemplatesPage() {
   };
 
   const totalTemplates = stages.reduce((s, st) => s + (st.templates?.length || 0), 0);
+  const inactiveCount = stages.reduce((s, st) => s + (st.templates?.filter(t => !t.is_active)?.length || 0), 0);
+
+  const activateAll = async () => {
+    if (!confirm('Kích hoạt tất cả nhiệm vụ mẫu?')) return;
+    await api.post('/templates/activate-all');
+    load();
+  };
 
   return (
     <div className="space-y-5 max-w-5xl">
@@ -43,10 +50,18 @@ export default function TemplatesPage() {
             Quản lý nhiệm vụ mẫu cho từng quy trình — {totalTemplates} mẫu · {stages.length} giai đoạn
           </p>
         </div>
-        <button onClick={() => { setEditTemplate(null); setCreateStageId(null); setShowCreate(true); }}
-          className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
-          <Plus className="h-4 w-4" /> Thêm mẫu
-        </button>
+        <div className="flex items-center gap-2">
+          {totalTemplates > 0 && (
+            <button onClick={activateAll}
+              className="h-9 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-emerald-700 cursor-pointer">
+              ⚡ Kích hoạt tất cả
+            </button>
+          )}
+          <button onClick={() => { setEditTemplate(null); setCreateStageId(null); setShowCreate(true); }}
+            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
+            <Plus className="h-4 w-4" /> Thêm mẫu
+          </button>
+        </div>
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">

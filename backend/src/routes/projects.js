@@ -65,17 +65,50 @@ r.get('/:id', async (req, res) => {
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar,email),
       designer:users!projects_designer_id_fkey(id,full_name,avatar,email),
       project_manager:users!projects_project_manager_id_fkey(id,full_name,avatar,email),
-      tasks(*, assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,color))
+      consulting_person:users!projects_consulting_person_id_fkey(id,full_name,avatar),
+      design_person:users!projects_design_person_id_fkey(id,full_name,avatar),
+      quotation_person:users!projects_quotation_person_id_fkey(id,full_name,avatar),
+      contract_person:users!projects_contract_person_id_fkey(id,full_name,avatar),
+      production_person:users!projects_production_person_id_fkey(id,full_name,avatar),
+      shipping_person:users!projects_shipping_person_id_fkey(id,full_name,avatar),
+      installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar),
+      care_person:users!projects_care_person_id_fkey(id,full_name,avatar),
+      tasks(*, assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,slug,color,order_index))
     `).eq('id', req.params.id).single();
     if (error) throw error;
 
-    // Comments
+    // Comments (trao đổi)
     const { data: comments } = await supabase.from('project_comments').select('*, user:users(id,full_name,avatar)').eq('project_id', req.params.id).order('created_at', { ascending: false });
 
     // Activity log
-    const { data: activities } = await supabase.from('activity_logs').select('*, user:users(id,full_name)').eq('entity_type', 'project').eq('entity_id', req.params.id).order('created_at', { ascending: false }).limit(20);
+    const { data: activities } = await supabase.from('activity_logs').select('*, user:users(id,full_name)').eq('entity_type', 'project').eq('entity_id', req.params.id).order('created_at', { ascending: false }).limit(30);
 
-    res.json({ project: { ...data, comments: comments || [], activities: activities || [] } });
+    // Stage transitions
+    const { data: transitions } = await supabase.from('stage_transitions')
+      .select('*, from_stage:workflow_stages!stage_transitions_from_stage_id_fkey(name), to_stage:workflow_stages!stage_transitions_to_stage_id_fkey(name), user:users(id,full_name)')
+      .eq('project_id', req.params.id).order('created_at', { ascending: false });
+
+    // Check advance
+    let canAdvance = false;
+    let stageTasksDone = 0, stageTasksTotal = 0;
+    if (data.current_stage_id) {
+      const stageTasks = (data.tasks || []).filter(t => t.stage_id === data.current_stage_id);
+      stageTasksTotal = stageTasks.length;
+      stageTasksDone = stageTasks.filter(t => t.status === 'done').length;
+      canAdvance = stageTasksTotal > 0 && stageTasksDone === stageTasksTotal;
+    }
+
+    res.json({
+      project: {
+        ...data,
+        comments: comments || [],
+        activities: activities || [],
+        transitions: transitions || [],
+        canAdvance,
+        stageTasksDone,
+        stageTasksTotal,
+      }
+    });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -106,6 +139,17 @@ r.post('/', async (req, res) => {
       sales_person_id: b.sales_person_id || null,
       designer_id: b.designer_id || null,
       project_manager_id: b.project_manager_id || null,
+      // Per-stage responsible persons
+      consulting_person_id: b.consulting_person_id || b.sales_person_id || null,
+      design_person_id: b.design_person_id || b.designer_id || null,
+      quotation_person_id: b.quotation_person_id || b.sales_person_id || null,
+      contract_person_id: b.contract_person_id || b.sales_person_id || null,
+      production_person_id: b.production_person_id || null,
+      shipping_person_id: b.shipping_person_id || null,
+      installation_person_id: b.installation_person_id || null,
+      care_person_id: b.care_person_id || null,
+      // Quotation files
+      quotation_files: b.quotation_files || [],
       consult_date: new Date().toISOString(),
     }).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single();
     if (error) throw error;
@@ -114,29 +158,26 @@ r.post('/', async (req, res) => {
     await logActivity(req.user.userId, 'created', 'project', data.id, `Tạo dự án ${code}: ${b.name}`);
 
     // ── THÔNG BÁO cho tất cả người được phân công ──
-    const assignees = [
+    const allAssignees = [
       { id: b.sales_person_id, role: 'Sales' },
       { id: b.designer_id, role: 'Thiết kế' },
       { id: b.project_manager_id, role: 'Quản lý DA' },
+      { id: b.consulting_person_id, role: 'Tư vấn' },
+      { id: b.design_person_id, role: 'Thiết kế' },
+      { id: b.quotation_person_id, role: 'Báo giá' },
+      { id: b.contract_person_id, role: 'Hợp đồng' },
+      { id: b.production_person_id, role: 'Sản xuất' },
+      { id: b.shipping_person_id, role: 'Vận chuyển' },
+      { id: b.installation_person_id, role: 'Lắp đặt' },
+      { id: b.care_person_id, role: 'CSKH' },
     ];
-    for (const a of assignees) {
-      if (a.id) {
+    const notifiedIds = new Set();
+    for (const a of allAssignees) {
+      if (a.id && !notifiedIds.has(a.id)) {
+        notifiedIds.add(a.id);
         await createNotification(req, a.id, 'project_assigned',
           '📋 Dự án mới', `Bạn được phân công vai trò ${a.role} cho dự án ${code}: ${b.name}`, 'project', data.id);
       }
-    }
-
-    // ── Lưu sản phẩm vào dự án ──
-    if (b.products?.length) {
-      await supabase.from('project_products').insert(
-        b.products.map(p => ({
-          project_id: data.id,
-          product_id: p.product_id,
-          quantity: p.quantity || 1,
-          custom_price: p.custom_price || null,
-          notes: p.notes || null,
-        }))
-      );
     }
 
     // Auto-create default tasks for consulting stage
@@ -162,7 +203,7 @@ r.put('/:id', async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
 
     const { data: old } = await supabase.from('projects').select('status,name').eq('id', req.params.id).single();
@@ -190,16 +231,26 @@ r.put('/:id', async (req, res) => {
 // ─── ADVANCE PROJECT STAGE ──
 r.put('/:id/stage', async (req, res) => {
   try {
-    const { stage_slug, new_status } = req.body;
+    const { stage_slug, new_status, notes, attachments } = req.body;
     const { data: stage } = await supabase.from('workflow_stages').select('id,name').eq('slug', stage_slug).single();
     if (!stage) return res.status(404).json({ error: 'Stage không tồn tại' });
 
-    const { data: old } = await supabase.from('projects').select('status,current_stage_id,name').eq('id', req.params.id).single();
+    const { data: old } = await supabase.from('projects').select('status,current_stage_id,name,code').eq('id', req.params.id).single();
 
     const { data, error } = await supabase.from('projects').update({
       current_stage_id: stage.id, status: new_status, updated_at: new Date().toISOString(),
     }).eq('id', req.params.id).select(`*, customers(id,full_name), current_stage:workflow_stages(id,name,slug,color)`).single();
     if (error) throw error;
+
+    // Save stage transition record
+    await supabase.from('stage_transitions').insert({
+      project_id: data.id,
+      from_stage_id: old?.current_stage_id || null,
+      to_stage_id: stage.id,
+      notes: notes || null,
+      attachments: attachments || [],
+      transitioned_by: req.user.userId,
+    });
 
     // Auto-create stage tasks from TEMPLATES (if available) or fallback defaults
     const { data: templates } = await supabase.from('task_templates')
