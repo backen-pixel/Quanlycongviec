@@ -1,17 +1,19 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor } from '../lib/utils';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
-  Hammer, Truck, Wrench, Heart
+  Hammer, Truck, Wrench, Heart, Inbox
 } from 'lucide-react';
 import { useState } from 'react';
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
   { to: '/projects', icon: FolderKanban, label: 'Dự án' },
-  { to: '/tasks', icon: CheckSquare, label: 'Công việc' },
+  { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV' },
 ];
 
 const workflow = [
@@ -34,6 +36,7 @@ function SideLink({ to, icon: Icon, label, dot, collapsed }) {
   return (
     <NavLink
       to={to}
+      end={to === '/'}
       className={({ isActive }) =>
         `flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all ${
           isActive
@@ -71,7 +74,7 @@ function Section({ title, items, collapsed }) {
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, logout, socket } = useAuth();
   const navigate = useNavigate();
 
   const doLogout = () => {
@@ -91,15 +94,20 @@ export default function Sidebar() {
           🏠
         </div>
         {!collapsed && (
-          <div>
+          <div className="flex-1">
             <h1 className="text-sm font-bold text-white leading-tight">TuBep Pro</h1>
             <p className="text-[10px] text-[var(--color-sidebar-text)] leading-tight">Quản lý công việc</p>
           </div>
         )}
       </div>
 
+      {/* Notification bell */}
+      <div className="px-2 pt-3 pb-1">
+        <NotificationCenter socket={socket} />
+      </div>
+
       {/* Nav */}
-      <div className="flex-1 overflow-y-auto py-4">
+      <div className="flex-1 overflow-y-auto py-2">
         <Section title="Tổng quan" items={nav} collapsed={collapsed} />
         <Section title="Quy trình" items={workflow} collapsed={collapsed} />
         <Section title="Hệ thống" items={tools} collapsed={collapsed} />

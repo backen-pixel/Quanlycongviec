@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './lib/auth';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import MyTasks from './pages/MyTasks';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
 import Tasks from './pages/Tasks';
@@ -50,6 +51,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedLayout />}>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/my-tasks" element={<MyTasks />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />
             <Route path="/tasks" element={<Tasks />} />
