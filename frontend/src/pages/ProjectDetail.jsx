@@ -63,15 +63,28 @@ export default function ProjectDetail() {
   const nextStage = currentStageIdx >= 0 && currentStageIdx < STAGE_FLOW.length - 1 ? STAGE_FLOW[currentStageIdx + 1] : null;
   const canAdvance = project.canAdvance;
 
-  // Group tasks by stage
-  const tasksByStage = {};
-  const stageOrder = {};
-  project.tasks?.forEach(t => {
-    const key = t.stage?.name || 'Chung';
-    if (!tasksByStage[key]) { tasksByStage[key] = []; stageOrder[key] = t.stage?.order_index ?? 999; }
-    tasksByStage[key].push(t);
+  // Group tasks by stage in correct workflow order
+  const stageTaskGroups = [];
+  const allStages = [...new Set((project.tasks || []).map(t => t.stage_id).filter(Boolean))];
+
+  // Build ordered stage groups from STAGE_FLOW
+  STAGE_FLOW.forEach(sf => {
+    const stageTasks = (project.tasks || []).filter(t => t.stage?.slug === sf.slug);
+    if (stageTasks.length > 0) {
+      const allDone = stageTasks.every(t => t.status === 'done');
+      const stageIdx = STAGE_FLOW.findIndex(s => s.slug === sf.slug);
+      const isCurrent = sf.status === project.status;
+      const isPast = stageIdx < currentStageIdx;
+      const isFuture = stageIdx > currentStageIdx;
+      stageTaskGroups.push({
+        slug: sf.slug, label: sf.label, tasks: stageTasks, allDone, isCurrent, isPast, isFuture,
+        stageId: stageTasks[0]?.stage?.id,
+      });
+    }
   });
-  const sortedStages = Object.entries(tasksByStage).sort((a, b) => (stageOrder[a[0]] || 0) - (stageOrder[b[0]] || 0));
+  // Ungrouped tasks
+  const ungrouped = (project.tasks || []).filter(t => !t.stage_id);
+  if (ungrouped.length) stageTaskGroups.push({ slug: 'general', label: 'Chung', tasks: ungrouped, allDone: false, isCurrent: false, isPast: false, isFuture: false });
 
   const totalTasks = project.tasks?.length || 0;
   const doneTasks = project.tasks?.filter(t => t.status === 'done').length || 0;
@@ -212,31 +225,53 @@ export default function ProjectDetail() {
               <Plus className="h-4 w-4" /> Thêm công việc
             </button>
           </div>
-          {sortedStages.map(([stageName, tasks]) => {
-            const done = tasks.filter(t => t.status === 'done').length;
-            const isCurrent = tasks[0]?.stage?.id === project.current_stage_id;
+          {stageTaskGroups.map((group) => {
+            const done = group.tasks.filter(t => t.status === 'done').length;
+            // Determine if this group should show tasks
+            // Future stages only show if ALL previous stage tasks are done
+            let prevAllDone = true;
+            if (group.isFuture) {
+              for (const prev of stageTaskGroups) {
+                if (prev.slug === group.slug) break;
+                if (!prev.allDone) { prevAllDone = false; break; }
+              }
+            }
+            const showTasks = !group.isFuture || prevAllDone;
+
             return (
-              <div key={stageName}>
-                <h4 className={`text-sm font-semibold mb-2 flex items-center gap-2 ${isCurrent ? 'text-blue-600' : 'text-gray-700'}`}>
-                  <span className={`w-2 h-2 rounded-full ${isCurrent ? 'bg-blue-600 animate-pulse' : done === tasks.length ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-                  {stageName}
-                  <span className="text-xs text-gray-400 font-normal">{done}/{tasks.length}</span>
-                  {done === tasks.length && tasks.length > 0 && <span className="text-[10px] text-emerald-600">✓ hoàn thành</span>}
+              <div key={group.slug}>
+                <h4 className={`text-sm font-semibold mb-2 flex items-center gap-2 ${
+                  group.isCurrent ? 'text-blue-600' : group.allDone ? 'text-emerald-600' : group.isFuture ? 'text-gray-400' : 'text-gray-700'
+                }`}>
+                  <span className={`w-2.5 h-2.5 rounded-full ${
+                    group.isCurrent ? 'bg-blue-600 animate-pulse' : group.allDone ? 'bg-emerald-500' : group.isFuture ? 'bg-gray-300' : 'bg-gray-400'
+                  }`} />
+                  {group.label}
+                  <span className="text-xs text-gray-400 font-normal">{done}/{group.tasks.length}</span>
+                  {group.allDone && group.tasks.length > 0 && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">✓ Hoàn thành</span>}
+                  {group.isFuture && !prevAllDone && <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">🔒 Chờ quy trình trước</span>}
                 </h4>
-                <div className="space-y-1">
-                  {tasks.map(t => (
-                    <div key={t.id} onClick={() => setSelectedTask(t.id)}
-                      className="flex items-center gap-3 bg-white rounded-lg border p-3 hover:shadow-sm hover:border-gray-300 cursor-pointer">
-                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
-                      <span className="flex-1 text-sm font-medium text-gray-800">{t.title}</span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
-                      {t.assignee && <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
-                        style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>{getInitials(t.assignee.full_name)}</div>}
-                      {t.due_date && <span className={`text-[11px] ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
-                      <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
-                    </div>
-                  ))}
-                </div>
+
+                {showTasks ? (
+                  <div className="space-y-1">
+                    {group.tasks.map(t => (
+                      <div key={t.id} onClick={() => setSelectedTask(t.id)}
+                        className="flex items-center gap-3 bg-white rounded-lg border p-3 hover:shadow-sm hover:border-gray-300 cursor-pointer">
+                        <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
+                        <span className="flex-1 text-sm font-medium text-gray-800">{t.title}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
+                        {t.assignee && <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
+                          style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>{getInitials(t.assignee.full_name)}</div>}
+                        {t.due_date && <span className={`text-[11px] ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
+                        <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 rounded-lg p-4 text-center text-xs text-gray-400 border border-dashed">
+                    🔒 Hoàn thành tất cả nhiệm vụ ở quy trình trước để mở khóa
+                  </div>
+                )}
               </div>
             );
           })}

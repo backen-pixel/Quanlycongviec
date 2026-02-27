@@ -32,6 +32,10 @@ export default function TemplatesPage() {
     await api.delete(`/templates/${id}`); load();
   };
 
+  const toggleTemplate = async (id) => {
+    await api.patch(`/templates/${id}/toggle`); load();
+  };
+
   const totalTemplates = stages.reduce((s, st) => s + (st.templates?.length || 0), 0);
   const inactiveCount = stages.reduce((s, st) => s + (st.templates?.filter(t => !t.is_active)?.length || 0), 0);
 
@@ -80,7 +84,10 @@ export default function TemplatesPage() {
                 {expandedStages[stage.id] ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
                 <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: stage.color || '#3b82f6' }} />
                 <span className="text-sm font-semibold text-gray-900 flex-1 text-left">{stage.name}</span>
-                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{stage.templates?.length || 0} mẫu</span>
+                <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">{stage.templates?.filter(t => t.is_active)?.length || 0} hoạt động</span>
+                {stage.templates?.filter(t => !t.is_active)?.length > 0 && (
+                  <span className="text-xs bg-gray-200 text-gray-500 px-2 py-0.5 rounded-full">{stage.templates.filter(t => !t.is_active).length} tắt</span>
+                )}
                 <button onClick={(e) => { e.stopPropagation(); setCreateStageId(stage.id); setEditTemplate(null); setShowCreate(true); }}
                   className="h-7 px-2 bg-blue-50 text-blue-600 rounded-lg text-xs hover:bg-blue-100 cursor-pointer flex items-center gap-1">
                   <Plus className="h-3 w-3" /> Thêm
@@ -91,15 +98,23 @@ export default function TemplatesPage() {
               {expandedStages[stage.id] && (
                 <div className="border-t divide-y">
                   {stage.templates?.length > 0 ? stage.templates.map((t, i) => (
-                    <div key={t.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group">
+                    <div key={t.id} className={`flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group ${!t.is_active ? 'opacity-60 bg-gray-50/50' : ''}`}>
                       <GripVertical className="h-4 w-4 text-gray-300 shrink-0" />
                       <span className="text-xs text-gray-400 font-mono w-5">{i + 1}</span>
+                      {/* Toggle active/inactive */}
+                      <button onClick={() => toggleTemplate(t.id)} title={t.is_active ? 'Đang kích hoạt' : 'Chưa kích hoạt'}
+                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                          t.is_active ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 hover:border-blue-400'
+                        }`}>
+                        {t.is_active && <CheckSquare className="h-3 w-3" />}
+                      </button>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-900">{t.title}</span>
+                          <span className={`text-sm font-medium ${t.is_active ? 'text-gray-900' : 'text-gray-400 line-through'}`}>{t.title}</span>
                           <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
                           {t.estimated_hours && <span className="text-[10px] text-gray-400">{t.estimated_hours}h</span>}
                           {t.assignee_role && <span className="text-[10px] bg-purple-50 text-purple-600 px-2 py-0.5 rounded">→ {t.assignee_role}</span>}
+                          {!t.is_active && <span className="text-[10px] bg-red-50 text-red-500 px-2 py-0.5 rounded">Chưa kích hoạt</span>}
                         </div>
                         {t.description && <p className="text-xs text-gray-500 mt-0.5">{t.description}</p>}
                         {t.checklist_items?.length > 0 && (

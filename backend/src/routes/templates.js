@@ -11,7 +11,7 @@ r.get('/', async (req, res) => {
     const { stage_id } = req.query;
     let q = supabase.from('task_templates')
       .select('*, stage:workflow_stages(id,name,slug,color), creator:users!task_templates_created_by_fkey(id,full_name)')
-      .eq('is_active', true).order('order_index');
+      .order('order_index');
     if (stage_id) q = q.eq('stage_id', stage_id);
     const { data, error } = await q;
     if (error) throw error;
@@ -23,7 +23,7 @@ r.get('/', async (req, res) => {
 r.get('/by-stage', async (req, res) => {
   try {
     const { data: stages } = await supabase.from('workflow_stages').select('*').eq('is_active', true).order('order_index');
-    const { data: templates } = await supabase.from('task_templates').select('*').eq('is_active', true).order('order_index');
+    const { data: templates } = await supabase.from('task_templates').select('*').order('order_index');
 
     const grouped = (stages || []).map(s => ({
       ...s,
@@ -76,6 +76,17 @@ r.delete('/:id', async (req, res) => {
   try {
     await supabase.from('task_templates').update({ is_active: false }).eq('id', req.params.id);
     res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══ TOGGLE TEMPLATE ACTIVE/INACTIVE ═══
+r.patch('/:id/toggle', async (req, res) => {
+  try {
+    const { data: current } = await supabase.from('task_templates').select('is_active').eq('id', req.params.id).single();
+    const { data, error } = await supabase.from('task_templates')
+      .update({ is_active: !current?.is_active }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ template: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 

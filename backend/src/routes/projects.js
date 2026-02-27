@@ -180,18 +180,58 @@ r.post('/', async (req, res) => {
       }
     }
 
-    // Auto-create default tasks for consulting stage
+    // Auto-create tasks for consulting stage from TEMPLATES or defaults
+    const consultingPersonId = b.consulting_person_id || b.sales_person_id || null;
     if (stage?.id) {
-      const defaultTasks = [
-        { title: 'Tiếp nhận yêu cầu khách hàng', priority: 'high' },
-        { title: 'Khảo sát hiện trạng', priority: 'medium' },
-        { title: 'Tư vấn phương án', priority: 'medium' },
-      ];
-      await supabase.from('tasks').insert(defaultTasks.map((t, i) => ({
-        project_id: data.id, stage_id: stage.id, title: t.title,
-        priority: t.priority, status: 'pending', created_by_id: req.user.userId,
-        order_index: i, assignee_id: b.sales_person_id || null,
-      })));
+      const { data: templates } = await supabase.from('task_templates')
+        .select('*').eq('stage_id', stage.id).eq('is_active', true).order('order_index');
+
+      let createdTasks = [];
+      if (templates?.length) {
+        const { data: inserted } = await supabase.from('tasks').insert(templates.map((t, i) => ({
+          project_id: data.id, stage_id: stage.id, title: t.title,
+          description: t.description || null,
+          priority: t.priority || 'medium', status: 'pending',
+          created_by_id: req.user.userId, order_index: i,
+          assignee_id: consultingPersonId,
+          estimated_hours: t.estimated_hours || null,
+          task_type: 'project',
+        }))).select();
+        createdTasks = inserted || [];
+        // Create checklists from template
+        for (const tmpl of templates) {
+          if (tmpl.checklist_items?.length) {
+            const newTask = createdTasks.find(t => t.title === tmpl.title);
+            if (newTask) {
+              await supabase.from('task_checklists').insert(
+                tmpl.checklist_items.map((c, j) => ({
+                  task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j,
+                }))
+              );
+            }
+          }
+        }
+      } else {
+        const defaultTasks = [
+          { title: 'Tiếp nhận yêu cầu khách hàng', priority: 'high' },
+          { title: 'Khảo sát hiện trạng', priority: 'medium' },
+          { title: 'Tư vấn phương án', priority: 'medium' },
+        ];
+        const { data: inserted } = await supabase.from('tasks').insert(defaultTasks.map((t, i) => ({
+          project_id: data.id, stage_id: stage.id, title: t.title,
+          priority: t.priority, status: 'pending', created_by_id: req.user.userId,
+          order_index: i, assignee_id: consultingPersonId,
+          task_type: 'project',
+        }))).select();
+        createdTasks = inserted || [];
+      }
+
+      // Notify consulting person about auto-created tasks
+      if (consultingPersonId && createdTasks.length) {
+        await createNotification(req, consultingPersonId, 'task_assigned',
+          '📌 Nhiệm vụ tự động', `${createdTasks.length} nhiệm vụ giai đoạn "Tư vấn" đã được tạo cho dự án ${code}`,
+          'project', data.id);
+      }
     }
 
     res.status(201).json({ project: data });
@@ -252,26 +292,44 @@ r.put('/:id/stage', async (req, res) => {
       transitioned_by: req.user.userId,
     });
 
+    // Get project with stage person assignments
+    const { data: fullProj } = await supabase.from('projects').select(
+      'consulting_person_id,design_person_id,quotation_person_id,contract_person_id,production_person_id,shipping_person_id,installation_person_id,care_person_id,sales_person_id,designer_id,project_manager_id,code,name'
+    ).eq('id', req.params.id).single();
+
+    // Map stage slug to person field
+    const stagePersonMap = {
+      consulting: fullProj?.consulting_person_id,
+      design: fullProj?.design_person_id,
+      quotation: fullProj?.quotation_person_id,
+      contract: fullProj?.contract_person_id,
+      production: fullProj?.production_person_id,
+      shipping: fullProj?.shipping_person_id,
+      installation: fullProj?.installation_person_id,
+      'customer-care': fullProj?.care_person_id,
+    };
+    const stageAssigneeId = stagePersonMap[stage_slug] || null;
+
     // Auto-create stage tasks from TEMPLATES (if available) or fallback defaults
     const { data: templates } = await supabase.from('task_templates')
       .select('*').eq('stage_id', stage.id).eq('is_active', true).order('order_index');
 
+    let createdTasks = [];
     if (templates?.length) {
-      // Use templates
-      await supabase.from('tasks').insert(templates.map((t, i) => ({
+      const { data: inserted } = await supabase.from('tasks').insert(templates.map((t, i) => ({
         project_id: data.id, stage_id: stage.id, title: t.title,
         description: t.description || null,
         priority: t.priority || 'medium', status: 'pending',
         created_by_id: req.user.userId, order_index: i,
+        assignee_id: stageAssigneeId,
         estimated_hours: t.estimated_hours || null,
         task_type: 'project',
-      })));
+      }))).select();
+      createdTasks = inserted || [];
       // Create checklists from template
       for (const tmpl of templates) {
         if (tmpl.checklist_items?.length) {
-          const { data: newTask } = await supabase.from('tasks')
-            .select('id').eq('project_id', data.id).eq('stage_id', stage.id)
-            .eq('title', tmpl.title).single();
+          const newTask = createdTasks.find(t => t.title === tmpl.title);
           if (newTask) {
             await supabase.from('task_checklists').insert(
               tmpl.checklist_items.map((c, j) => ({
@@ -323,11 +381,13 @@ r.put('/:id/stage', async (req, res) => {
       };
       const tasks = stageDefaultTasks[stage_slug];
       if (tasks) {
-        await supabase.from('tasks').insert(tasks.map((t, i) => ({
+        const { data: inserted } = await supabase.from('tasks').insert(tasks.map((t, i) => ({
           project_id: data.id, stage_id: stage.id, title: t.title,
           priority: t.priority, status: 'pending', created_by_id: req.user.userId,
-          order_index: i, task_type: 'project',
-        })));
+          order_index: i, assignee_id: stageAssigneeId,
+          task_type: 'project',
+        }))).select();
+        createdTasks = inserted || [];
       }
     }
 
@@ -336,14 +396,27 @@ r.put('/:id/stage', async (req, res) => {
       `Chuyển giai đoạn sang: ${stage.name}`,
       { status: old?.status }, { status: new_status, stage: stage.name });
 
-    // ── THÔNG BÁO chuyển giai đoạn cho cả team ──
-    const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,name,code').eq('id', req.params.id).single();
-    if (proj) {
-      const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
-      await notifyMultiple(req, teamIds, 'stage_changed',
+    // ── THÔNG BÁO chuyển giai đoạn ──
+    // Notify ALL stage persons + old team
+    if (fullProj) {
+      const allPersonIds = [
+        fullProj.consulting_person_id, fullProj.design_person_id, fullProj.quotation_person_id,
+        fullProj.contract_person_id, fullProj.production_person_id, fullProj.shipping_person_id,
+        fullProj.installation_person_id, fullProj.care_person_id,
+        fullProj.sales_person_id, fullProj.designer_id, fullProj.project_manager_id,
+      ].filter(Boolean);
+      await notifyMultiple(req, allPersonIds, 'stage_changed',
         `🔄 Chuyển giai đoạn: ${stage.name}`,
-        `Dự án ${proj.code} đã chuyển sang giai đoạn "${stage.name}"`,
+        `Dự án ${fullProj.code} đã chuyển sang giai đoạn "${stage.name}"`,
         'project', data.id);
+
+      // Notify stage person about their new tasks
+      if (stageAssigneeId && createdTasks.length) {
+        await createNotification(req, stageAssigneeId, 'task_assigned',
+          `📌 ${createdTasks.length} nhiệm vụ mới`,
+          `Giai đoạn "${stage.name}" bắt đầu — ${createdTasks.length} nhiệm vụ đã được giao cho bạn trong dự án ${fullProj.code}`,
+          'project', data.id);
+      }
     }
 
     const io = req.app.get('io');
