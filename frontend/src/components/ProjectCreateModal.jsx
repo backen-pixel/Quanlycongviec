@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
-import { Plus } from 'lucide-react';
+import { Plus, CheckSquare, ChevronDown, ChevronRight } from 'lucide-react';
+import { PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 
 const STAGE_ASSIGNS = [
   { key: 'consulting_person_id', label: 'Tư vấn' },
@@ -19,19 +20,21 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
   const [form, setForm] = useState({});
   const [customers, setCustomers] = useState([]);
   const [users, setUsers] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [quotationFiles, setQuotationFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCust, setNewCust] = useState({ full_name: '', phone: '', email: '', city: '' });
+  const [showTemplates, setShowTemplates] = useState(false);
 
   useEffect(() => {
     if (open) {
       api.get('/customers').then(r => setCustomers(r.data.customers || []));
       api.get('/users').then(r => setUsers(r.data.users || []));
+      api.get('/templates/by-stage').then(r => setTemplates(r.data.stages || []));
       setForm({
-        name: '', description: '', customer_id: '', kitchen_type: '', material: '',
+        name: '', description: '', customer_id: '',
         install_address: '', estimated_value: '', priority: 'medium',
-        sales_person_id: '', designer_id: '', project_manager_id: '',
         consulting_person_id: '', design_person_id: '', quotation_person_id: '',
         contract_person_id: '', production_person_id: '', shipping_person_id: '',
         installation_person_id: '', care_person_id: '',
@@ -59,7 +62,10 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
     try {
       const payload = { ...form, quotation_files: quotationFiles };
       payload.estimated_value = payload.estimated_value ? +payload.estimated_value : null;
-      // Nullify empty strings
+      // Map stage persons to legacy fields for backward compat
+      payload.sales_person_id = payload.consulting_person_id || null;
+      payload.designer_id = payload.design_person_id || null;
+      payload.project_manager_id = payload.consulting_person_id || null;
       Object.keys(payload).forEach(k => { if (payload[k] === '') payload[k] = null; });
       await api.post('/projects', payload);
       onCreated?.(); onClose();
@@ -67,16 +73,7 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
     setLoading(false);
   };
 
-  const kitchenTypes = [
-    { value: 'i-shape', label: 'Chữ I' }, { value: 'l-shape', label: 'Chữ L' },
-    { value: 'u-shape', label: 'Chữ U' }, { value: 'island', label: 'Bếp đảo' },
-    { value: 'parallel', label: 'Song song' },
-  ];
-  const materials = [
-    { value: 'mdf-paint', label: 'MDF sơn' }, { value: 'mdf-laminate', label: 'MDF Laminate' },
-    { value: 'acrylic', label: 'Acrylic' }, { value: 'natural-wood', label: 'Gỗ tự nhiên' },
-    { value: 'plywood', label: 'Plywood' }, { value: 'inox', label: 'Inox' },
-  ];
+  const activeTemplates = templates.filter(s => s.templates?.some(t => t.is_active));
 
   return (
     <Modal open={open} onClose={onClose} title="Tạo dự án mới" size="lg">
@@ -113,31 +110,20 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
 
         {/* Project info */}
         <div><label className="block text-sm font-medium mb-1">Tên dự án *</label>
-          <input value={form.name || ''} onChange={e => set('name', e.target.value)} required className="input" placeholder="VD: Tủ bếp chữ L anh Minh" /></div>
+          <input value={form.name || ''} onChange={e => set('name', e.target.value)} required className="input" placeholder="VD: Tủ bếp chữ L anh Minh — Q7" /></div>
         <div><label className="block text-sm font-medium mb-1">Mô tả</label>
-          <textarea value={form.description || ''} onChange={e => set('description', e.target.value)} className="input min-h-[50px]" /></div>
+          <textarea value={form.description || ''} onChange={e => set('description', e.target.value)} className="input min-h-[50px]" placeholder="Mô tả dự án, yêu cầu đặc biệt..." /></div>
 
-        <div className="grid grid-cols-3 gap-4">
-          <div><label className="block text-sm font-medium mb-1">Loại tủ bếp</label>
-            <select value={form.kitchen_type || ''} onChange={e => set('kitchen_type', e.target.value)} className="input">
-              <option value="">— Chọn —</option>{kitchenTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select></div>
-          <div><label className="block text-sm font-medium mb-1">Chất liệu</label>
-            <select value={form.material || ''} onChange={e => set('material', e.target.value)} className="input">
-              <option value="">— Chọn —</option>{materials.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select></div>
+        <div className="grid grid-cols-2 gap-4">
+          <div><label className="block text-sm font-medium mb-1">Giá trị ước tính (VNĐ)</label>
+            <input type="number" value={form.estimated_value || ''} onChange={e => set('estimated_value', e.target.value)} className="input" placeholder="VD: 85000000" /></div>
+          <div><label className="block text-sm font-medium mb-1">Địa chỉ lắp đặt</label>
+            <input value={form.install_address || ''} onChange={e => set('install_address', e.target.value)} className="input" placeholder="Số nhà, đường, quận..." /></div>
           <div><label className="block text-sm font-medium mb-1">Độ ưu tiên</label>
             <select value={form.priority || 'medium'} onChange={e => set('priority', e.target.value)} className="input">
               <option value="low">Thấp</option><option value="medium">Trung bình</option>
               <option value="high">Cao</option><option value="urgent">Gấp</option>
             </select></div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-sm font-medium mb-1">Giá trị ước tính (VNĐ)</label>
-            <input type="number" value={form.estimated_value || ''} onChange={e => set('estimated_value', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Địa chỉ lắp đặt</label>
-            <input value={form.install_address || ''} onChange={e => set('install_address', e.target.value)} className="input" /></div>
         </div>
 
         {/* Quotation files */}
@@ -146,25 +132,6 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
           <p className="text-xs text-gray-500">Upload file báo giá, bản vẽ, catalog sản phẩm...</p>
           <FileUploadButton onFilesUploaded={(f) => setQuotationFiles(qf => [...qf, ...f])} />
           <FilePreview files={quotationFiles} onRemove={(i) => setQuotationFiles(f => f.filter((_, j) => j !== i))} />
-        </div>
-
-        {/* Main assignments */}
-        <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-900">👤 Quản lý chung</h3>
-          <div className="grid grid-cols-3 gap-3">
-            <div><label className="block text-xs font-medium mb-1">Sales chính</label>
-              <select value={form.sales_person_id || ''} onChange={e => set('sales_person_id', e.target.value)} className="input">
-                <option value="">—</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select></div>
-            <div><label className="block text-xs font-medium mb-1">Thiết kế chính</label>
-              <select value={form.designer_id || ''} onChange={e => set('designer_id', e.target.value)} className="input">
-                <option value="">—</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select></div>
-            <div><label className="block text-xs font-medium mb-1">Quản lý DA</label>
-              <select value={form.project_manager_id || ''} onChange={e => set('project_manager_id', e.target.value)} className="input">
-                <option value="">—</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select></div>
-          </div>
         </div>
 
         {/* Per-stage assignments */}
@@ -182,6 +149,59 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Template preview */}
+        <div className="bg-green-50 rounded-xl p-4 space-y-3">
+          <button type="button" onClick={() => setShowTemplates(!showTemplates)}
+            className="flex items-center gap-2 w-full cursor-pointer">
+            {showTemplates ? <ChevronDown className="h-4 w-4 text-green-600" /> : <ChevronRight className="h-4 w-4 text-green-600" />}
+            <h3 className="text-sm font-semibold text-gray-900">📋 Nhiệm vụ mẫu sẽ được tạo tự động</h3>
+            <span className="text-xs text-green-600 ml-auto">
+              {activeTemplates.length > 0 ? `${activeTemplates.reduce((s, st) => s + st.templates.filter(t => t.is_active).length, 0)} nhiệm vụ` : 'Dùng mặc định'}
+            </span>
+          </button>
+
+          {showTemplates && (
+            <div className="space-y-3 mt-2">
+              {activeTemplates.length > 0 ? activeTemplates.map(stage => (
+                <div key={stage.id}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stage.color || '#3b82f6' }} />
+                    <span className="text-xs font-semibold text-gray-700">{stage.name}</span>
+                  </div>
+                  <div className="pl-4 space-y-1">
+                    {stage.templates.filter(t => t.is_active).map(t => (
+                      <div key={t.id} className="flex items-center gap-2 text-xs text-gray-600">
+                        <CheckSquare className="h-3 w-3 text-gray-400" />
+                        <span>{t.title}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
+                        {t.checklist_items?.length > 0 && (
+                          <span className="text-[9px] text-gray-400">({t.checklist_items.length} checklist)</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )) : (
+                <div className="text-xs text-gray-500">
+                  <p>Chưa có nhiệm vụ mẫu được kích hoạt. Hệ thống sẽ dùng mặc định:</p>
+                  <div className="mt-2 grid grid-cols-2 gap-1">
+                    {[
+                      'Tư vấn: Tiếp nhận KH, Khảo sát, Tư vấn phương án',
+                      'Thiết kế: Bản vẽ 2D, 3D render, Duyệt thiết kế',
+                      'Báo giá: Bóc tách vật tư, Lập & gửi báo giá',
+                      'Hợp đồng: Soạn HĐ, Ký HĐ, Thu cọc',
+                      'Sản xuất: Đặt vật tư, CNC, Lắp ráp, Sơn, KCS',
+                      'Vận chuyển: Đóng gói, Book xe, Giao hàng',
+                      'Lắp đặt: Chuẩn bị, Lắp đặt, Nghiệm thu',
+                      'CSKH: Hỏi thăm, Bảo hành, Thu tiền còn lại',
+                    ].map((s, i) => <p key={i} className="text-[10px]">• {s}</p>)}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
