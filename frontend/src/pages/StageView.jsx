@@ -67,25 +67,23 @@ export default function StageView() {
         return;
       }
 
-      // Step 3: Load ALL tasks for these projects
+      // Step 3: Load tasks for these projects — ONLY for this stage
       let allTasks = [];
       for (const p of projs) {
         try {
-          // Try with stage_id filter first
           const params = { project_id: p.id };
           if (stage?.id) params.stage_id = stage.id;
           const { data } = await api.get('/tasks', { params });
           const ptasks = data.tasks || [];
-          // If stage_id filter returned nothing, try without filter
-          if (ptasks.length === 0 && stage?.id) {
-            const { data: all } = await api.get('/tasks', { params: { project_id: p.id } });
-            allTasks.push(...(all.tasks || []));
-          } else {
-            allTasks.push(...ptasks);
-          }
+          allTasks.push(...ptasks);
         } catch (e) {
           console.warn(`Failed to load tasks for project ${p.id}:`, e);
         }
+      }
+
+      // If no stage_id available, filter client-side by stage slug
+      if (!stage?.id && slug) {
+        allTasks = allTasks.filter(t => t.stage?.slug === slug);
       }
 
       // Remove duplicates
