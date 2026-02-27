@@ -37,6 +37,16 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => console.log('❌ Disconnected:', socket.id));
 });
 
-server.listen(config.port, () => {
+server.listen(config.port, async () => {
   console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);
+
+  // Auto-fix seed passwords khi server khởi động
+  try {
+    const bcrypt = require('bcryptjs');
+    const { supabase } = require('./config/supabase');
+    const seedEmails = ['admin@tubep.vn','sales@tubep.vn','designer@tubep.vn','production@tubep.vn','installer@tubep.vn','manager@tubep.vn'];
+    const hash = await bcrypt.hash('admin123', 12);
+    await supabase.from('users').update({ password: hash }).in('email', seedEmails);
+    console.log('✅ Seed passwords đã được reset thành admin123');
+  } catch (e) { console.error('⚠️ Không thể reset seed passwords:', e.message); }
 });
