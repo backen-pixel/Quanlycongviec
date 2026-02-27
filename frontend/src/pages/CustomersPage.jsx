@@ -91,6 +91,10 @@ export default function CustomersPage() {
                   </div>
                   <div className="flex items-center gap-4 text-xs text-gray-500">
                     <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{c.phone}</span>
+                    {c.phone && <a href={`https://zalo.me/${c.phone?.replace(/^0/, '84')}`} target="_blank" rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-blue-600 hover:underline">
+                      <img src="https://page.zalo.me/favicon.ico" className="h-3 w-3" alt="" />Zalo
+                    </a>}
                     {c.email && <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{c.email}</span>}
                     {c.company && <span className="flex items-center gap-1"><Building2 className="h-3 w-3" />{c.company}</span>}
                     {c.city && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{c.city}</span>}

@@ -73,6 +73,12 @@ export default function CustomerDetail() {
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Liên hệ</h3>
           <div className="space-y-1.5 text-sm">
             <p className="flex items-center gap-2"><Phone className="h-4 w-4 text-gray-400" /><a href={`tel:${customer.phone}`} className="text-blue-600 hover:underline">{customer.phone}</a></p>
+            {customer.phone && (
+              <p className="flex items-center gap-2">
+                <img src="https://page.zalo.me/favicon.ico" className="h-4 w-4" alt="Zalo" />
+                <a href={`https://zalo.me/${customer.phone?.replace(/^0/, '84')}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Chat Zalo</a>
+              </p>
+            )}
             {customer.email && <p className="flex items-center gap-2"><Mail className="h-4 w-4 text-gray-400" /><a href={`mailto:${customer.email}`} className="text-blue-600 hover:underline">{customer.email}</a></p>}
             {customer.address && <p className="flex items-center gap-2"><MapPin className="h-4 w-4 text-gray-400" />{customer.address}</p>}
           </div>
