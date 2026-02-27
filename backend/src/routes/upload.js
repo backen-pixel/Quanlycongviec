@@ -1,72 +1,90 @@
 const { Router } = require('express');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const config = require('../config');
 
 const r = Router();
 r.use(auth);
 
-// Ensure uploads directory
-const uploadDir = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2,8)}${ext}`;
-    cb(null, name);
-  }
-});
-
+// Use memory storage → upload to Supabase Storage
 const upload = multer({
-  storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|zip|rar|mp4|mov/;
-    const extOk = allowed.test(path.extname(file.originalname).toLowerCase());
-    const mimeOk = allowed.test(file.mimetype) || file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('application/');
-    if (extOk || mimeOk) cb(null, true);
-    else cb(new Error('File không được hỗ trợ'));
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.test(ext) || file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('application/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('File không được hỗ trợ'));
+    }
   }
 });
 
-// Upload files (multiple)
+const BUCKET = 'attachments';
+
+// Upload files → Supabase Storage
 r.post('/', upload.array('files', 10), async (req, res) => {
   try {
     if (!req.files?.length) return res.status(400).json({ error: 'Không có file' });
 
     const { entity_type, entity_id } = req.body;
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const results = [];
 
-    const attachments = req.files.map(f => ({
-      entity_type: entity_type || 'task',
-      entity_id: entity_id || null,
-      file_name: f.originalname,
-      file_url: `${baseUrl}/uploads/${f.filename}`,
-      file_size: f.size,
-      mime_type: f.mimetype,
-      uploaded_by: req.user.userId,
-    }));
+    for (const file of req.files) {
+      const ext = path.extname(file.originalname);
+      const storagePath = `${entity_type || 'general'}/${Date.now()}-${Math.random().toString(36).slice(2,8)}${ext}`;
 
-    // Save to DB if entity_id provided
-    if (entity_id) {
-      const { data, error } = await supabase.from('file_attachments').insert(attachments).select();
-      if (error) throw error;
-      return res.status(201).json({ files: data });
+      // Upload to Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from(BUCKET)
+        .upload(storagePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError);
+        // Fallback: if bucket doesn't exist, use base64 data URL
+        const base64 = file.buffer.toString('base64');
+        const dataUrl = `data:${file.mimetype};base64,${base64}`;
+        results.push({
+          file_name: file.originalname,
+          file_url: dataUrl,
+          file_size: file.size,
+          mime_type: file.mimetype,
+          storage_path: null,
+        });
+        continue;
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
+
+      const attachment = {
+        file_name: file.originalname,
+        file_url: urlData.publicUrl,
+        file_size: file.size,
+        mime_type: file.mimetype,
+        storage_path: storagePath,
+      };
+
+      // Save to DB if entity_id provided
+      if (entity_id) {
+        await supabase.from('file_attachments').insert({
+          entity_type: entity_type || 'task',
+          entity_id,
+          ...attachment,
+          uploaded_by: req.user.userId,
+        });
+      }
+
+      results.push(attachment);
     }
 
-    // Return URLs without saving (for inline use)
-    res.status(201).json({
-      files: attachments.map(a => ({
-        file_name: a.file_name,
-        file_url: a.file_url,
-        file_size: a.file_size,
-        mime_type: a.mime_type,
-      }))
-    });
+    res.status(201).json({ files: results });
   } catch (e) {
     console.error('Upload error:', e);
     res.status(500).json({ error: e.message || 'Lỗi upload' });
@@ -88,16 +106,12 @@ r.get('/:entity_type/:entity_id', async (req, res) => {
 // Delete file
 r.delete('/:id', async (req, res) => {
   try {
-    const { data: file } = await supabase.from('file_attachments').select('file_url').eq('id', req.params.id).single();
-    if (file) {
-      // Delete physical file
-      const fileName = file.file_url.split('/uploads/')[1];
-      if (fileName) {
-        const filePath = path.join(uploadDir, fileName);
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      }
-      await supabase.from('file_attachments').delete().eq('id', req.params.id);
+    const { data: file } = await supabase.from('file_attachments')
+      .select('storage_path').eq('id', req.params.id).single();
+    if (file?.storage_path) {
+      await supabase.storage.from(BUCKET).remove([file.storage_path]);
     }
+    await supabase.from('file_attachments').delete().eq('id', req.params.id);
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });

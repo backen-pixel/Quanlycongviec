@@ -30,7 +30,7 @@ async function logActivity(userId, action, entityType, entityId, description, ol
 // ─── LIST TASKS (Kanban group_by=status / List / My tasks) ──
 r.get('/', async (req, res) => {
   try {
-    const { project_id, status, assignee_id, priority, search, group_by, view } = req.query;
+    const { project_id, status, assignee_id, priority, search, group_by, task_type } = req.query;
     let q = supabase.from('tasks').select(`
       *, projects(id,code,name),
       assignee:users!tasks_assignee_id_fkey(id,full_name,avatar),
@@ -43,11 +43,11 @@ r.get('/', async (req, res) => {
     if (assignee_id) q = q.eq('assignee_id', assignee_id);
     if (priority) q = q.eq('priority', priority);
     if (search) q = q.ilike('title', `%${search}%`);
+    if (task_type) q = q.eq('task_type', task_type);
 
     const { data, error } = await q;
     if (error) throw error;
 
-    // Kanban view
     if (group_by === 'status') {
       const cols = { pending: [], todo: [], in_progress: [], review: [], done: [], blocked: [], deferred: [] };
       data?.forEach(t => { if (cols[t.status]) cols[t.status].push(t); else if (cols.todo) cols.todo.push(t); });
@@ -115,7 +115,7 @@ r.post('/', async (req, res) => {
   try {
     const b = req.body;
     const { data, error } = await supabase.from('tasks').insert({
-      project_id: b.project_id,
+      project_id: b.project_id || null,
       stage_id: b.stage_id || null,
       title: b.title,
       description: b.description || null,
@@ -127,6 +127,7 @@ r.post('/', async (req, res) => {
       start_date: b.start_date || null,
       estimated_hours: b.estimated_hours || null,
       attachments: b.attachments || [],
+      task_type: b.task_type || 'project',
     }).select().single();
     if (error) throw error;
 
@@ -174,13 +175,15 @@ r.post('/', async (req, res) => {
         'task', data.id);
     }
 
-    // Notification — project team
-    const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,code').eq('id', b.project_id).single();
-    if (proj) {
-      const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
-      await notifyMultiple(req, [...teamIds, b.assignee_id], 'task_created',
-        '✅ Công việc mới', `Công việc "${b.title}" được tạo trong dự án ${proj.code}`,
-        'task', data.id);
+    // Notification — project team (only for project tasks)
+    if (b.project_id) {
+      const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,code').eq('id', b.project_id).single();
+      if (proj) {
+        const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
+        await notifyMultiple(req, [...teamIds, b.assignee_id], 'task_created',
+          '✅ Công việc mới', `Công việc "${b.title}" được tạo trong dự án ${proj.code}`,
+          'task', data.id);
+      }
     }
 
     await logActivity(req.user.userId, 'created', 'task', data.id, `Tạo task: ${b.title}`);
@@ -250,12 +253,31 @@ r.patch('/:id/status', async (req, res) => {
     // Auto notifications
     if (old && update.status !== old.status) {
       if (update.status === 'review' && old.created_by_id) {
-        await createNotification(req, old.created_by_id, 'task_updated', 'Chờ nghiệm thu', `Task "${old.title}" chờ kiểm tra`, 'task', data.id);
+        await createNotification(req, old.created_by_id, 'task_updated', '📋 Chờ nghiệm thu', `Task "${old.title}" chờ kiểm tra`, 'task', data.id);
       }
       if (update.status === 'done' && old.assignee_id) {
-        await createNotification(req, old.assignee_id, 'task_updated', 'Task hoàn thành', `Task "${old.title}" đã duyệt`, 'task', data.id);
+        await createNotification(req, old.assignee_id, 'task_updated', '✅ Task hoàn thành', `Task "${old.title}" đã duyệt`, 'task', data.id);
       }
       await logActivity(req.user.userId, 'status_changed', 'task', data.id, `${old.status} → ${update.status}`);
+
+      // ── CHECK AUTO-ADVANCE: if all stage tasks done → notify PM ──
+      if (update.status === 'done' && data.project_id && data.stage_id) {
+        const { data: stageTasks } = await supabase.from('tasks')
+          .select('id,status').eq('project_id', data.project_id).eq('stage_id', data.stage_id);
+        const allDone = stageTasks?.length > 0 && stageTasks.every(t => t.status === 'done');
+        if (allDone) {
+          const { data: proj } = await supabase.from('projects')
+            .select('code,name,sales_person_id,designer_id,project_manager_id,current_stage_id').eq('id', data.project_id).single();
+          const { data: stage } = await supabase.from('workflow_stages').select('name').eq('id', data.stage_id).single();
+          if (proj) {
+            const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
+            await notifyMultiple(req, teamIds, 'stage_changed',
+              `🎉 Hoàn thành giai đoạn "${stage?.name}"`,
+              `Tất cả công việc giai đoạn "${stage?.name}" của dự án ${proj.code} đã hoàn thành. Sẵn sàng chuyển giai đoạn tiếp theo!`,
+              'project', data.project_id);
+          }
+        }
+      }
     }
 
     const io = req.app.get('io');

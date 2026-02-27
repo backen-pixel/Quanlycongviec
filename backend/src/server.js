@@ -35,6 +35,7 @@ app.use('/api/customers', require('./routes/customers'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/upload', require('./routes/upload'));
+app.use('/api/templates', require('./routes/templates'));
 
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {

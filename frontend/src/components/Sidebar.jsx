@@ -5,13 +5,14 @@ import { getInitials, avatarColor } from '../lib/utils';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
-  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package
+  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus
 } from 'lucide-react';
 import { useState } from 'react';
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
+  { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
   { to: '/projects', icon: FolderKanban, label: 'Dự án' },
   { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV' },
   { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
@@ -31,6 +32,7 @@ const workflow = [
 
 const tools = [
   { to: '/users', icon: Users, label: 'Nhân viên' },
+  { to: '/templates', icon: ClipboardList, label: 'NV mẫu' },
   { to: '/settings', icon: Settings, label: 'Cài đặt' },
 ];
 

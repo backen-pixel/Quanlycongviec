@@ -201,52 +201,83 @@ r.put('/:id/stage', async (req, res) => {
     }).eq('id', req.params.id).select(`*, customers(id,full_name), current_stage:workflow_stages(id,name,slug,color)`).single();
     if (error) throw error;
 
-    // Auto-create stage tasks
-    const stageDefaultTasks = {
-      design: [
-        { title: 'Thiết kế bản vẽ 2D', priority: 'high' },
-        { title: 'Thiết kế 3D render', priority: 'medium' },
-        { title: 'Khách duyệt bản thiết kế', priority: 'high' },
-      ],
-      quotation: [
-        { title: 'Bóc tách vật tư', priority: 'high' },
-        { title: 'Lập báo giá chi tiết', priority: 'high' },
-        { title: 'Gửi báo giá cho khách', priority: 'medium' },
-      ],
-      contract: [
-        { title: 'Soạn hợp đồng', priority: 'high' },
-        { title: 'Khách ký hợp đồng', priority: 'high' },
-        { title: 'Thu tiền cọc', priority: 'urgent' },
-      ],
-      production: [
-        { title: 'Đặt mua vật tư', priority: 'high' },
-        { title: 'Gia công CNC', priority: 'high' },
-        { title: 'Lắp ráp', priority: 'medium' },
-        { title: 'Sơn / dán bề mặt', priority: 'medium' },
-        { title: 'Kiểm tra chất lượng', priority: 'high' },
-      ],
-      shipping: [
-        { title: 'Đóng gói sản phẩm', priority: 'medium' },
-        { title: 'Sắp xếp xe vận chuyển', priority: 'medium' },
-        { title: 'Giao hàng đến công trình', priority: 'high' },
-      ],
-      installation: [
-        { title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },
-        { title: 'Lắp đặt tại công trình', priority: 'high' },
-        { title: 'Nghiệm thu với khách hàng', priority: 'urgent' },
-      ],
-      'customer-care': [
-        { title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' },
-        { title: 'Xử lý bảo hành (nếu có)', priority: 'high' },
-      ],
-    };
+    // Auto-create stage tasks from TEMPLATES (if available) or fallback defaults
+    const { data: templates } = await supabase.from('task_templates')
+      .select('*').eq('stage_id', stage.id).eq('is_active', true).order('order_index');
 
-    const tasks = stageDefaultTasks[stage_slug];
-    if (tasks) {
-      await supabase.from('tasks').insert(tasks.map((t, i) => ({
+    if (templates?.length) {
+      // Use templates
+      await supabase.from('tasks').insert(templates.map((t, i) => ({
         project_id: data.id, stage_id: stage.id, title: t.title,
-        priority: t.priority, status: 'pending', created_by_id: req.user.userId, order_index: i,
+        description: t.description || null,
+        priority: t.priority || 'medium', status: 'pending',
+        created_by_id: req.user.userId, order_index: i,
+        estimated_hours: t.estimated_hours || null,
+        task_type: 'project',
       })));
+      // Create checklists from template
+      for (const tmpl of templates) {
+        if (tmpl.checklist_items?.length) {
+          const { data: newTask } = await supabase.from('tasks')
+            .select('id').eq('project_id', data.id).eq('stage_id', stage.id)
+            .eq('title', tmpl.title).single();
+          if (newTask) {
+            await supabase.from('task_checklists').insert(
+              tmpl.checklist_items.map((c, j) => ({
+                task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j,
+              }))
+            );
+          }
+        }
+      }
+    } else {
+      // Fallback to hardcoded defaults
+      const stageDefaultTasks = {
+        design: [
+          { title: 'Thiết kế bản vẽ 2D', priority: 'high' },
+          { title: 'Thiết kế 3D render', priority: 'medium' },
+          { title: 'Khách duyệt bản thiết kế', priority: 'high' },
+        ],
+        quotation: [
+          { title: 'Bóc tách vật tư', priority: 'high' },
+          { title: 'Lập báo giá chi tiết', priority: 'high' },
+          { title: 'Gửi báo giá cho khách', priority: 'medium' },
+        ],
+        contract: [
+          { title: 'Soạn hợp đồng', priority: 'high' },
+          { title: 'Khách ký hợp đồng', priority: 'high' },
+          { title: 'Thu tiền cọc', priority: 'urgent' },
+        ],
+        production: [
+          { title: 'Đặt mua vật tư', priority: 'high' },
+          { title: 'Gia công CNC', priority: 'high' },
+          { title: 'Lắp ráp', priority: 'medium' },
+          { title: 'Sơn / dán bề mặt', priority: 'medium' },
+          { title: 'Kiểm tra chất lượng', priority: 'high' },
+        ],
+        shipping: [
+          { title: 'Đóng gói sản phẩm', priority: 'medium' },
+          { title: 'Sắp xếp xe vận chuyển', priority: 'medium' },
+          { title: 'Giao hàng đến công trình', priority: 'high' },
+        ],
+        installation: [
+          { title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },
+          { title: 'Lắp đặt tại công trình', priority: 'high' },
+          { title: 'Nghiệm thu với khách hàng', priority: 'urgent' },
+        ],
+        'customer-care': [
+          { title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' },
+          { title: 'Xử lý bảo hành (nếu có)', priority: 'high' },
+        ],
+      };
+      const tasks = stageDefaultTasks[stage_slug];
+      if (tasks) {
+        await supabase.from('tasks').insert(tasks.map((t, i) => ({
+          project_id: data.id, stage_id: stage.id, title: t.title,
+          priority: t.priority, status: 'pending', created_by_id: req.user.userId,
+          order_index: i, task_type: 'project',
+        })));
+      }
     }
 
     // Log
@@ -287,6 +318,39 @@ r.delete('/:id', async (req, res) => {
 
     res.json({ message: 'Đã xóa dự án' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── AUTO-ADVANCE: Check if all stage tasks done → suggest/auto advance ──
+r.post('/:id/check-advance', async (req, res) => {
+  try {
+    const { data: project } = await supabase.from('projects')
+      .select('id,code,name,status,current_stage_id, current_stage:workflow_stages(id,name,slug,order_index)')
+      .eq('id', req.params.id).single();
+    if (!project) return res.status(404).json({ error: 'Dự án không tồn tại' });
+
+    // Get tasks for current stage
+    const { data: stageTasks } = await supabase.from('tasks')
+      .select('id,status').eq('project_id', project.id).eq('stage_id', project.current_stage_id);
+
+    const allDone = stageTasks?.length > 0 && stageTasks.every(t => t.status === 'done');
+
+    if (!allDone) {
+      const remaining = stageTasks?.filter(t => t.status !== 'done').length || 0;
+      return res.json({ canAdvance: false, remaining, message: `Còn ${remaining} công việc chưa hoàn thành` });
+    }
+
+    // Find next stage
+    const { data: stages } = await supabase.from('workflow_stages')
+      .select('*').eq('is_active', true).order('order_index');
+    const currentIdx = stages?.findIndex(s => s.id === project.current_stage_id);
+    const nextStage = currentIdx >= 0 && currentIdx < stages.length - 1 ? stages[currentIdx + 1] : null;
+
+    res.json({
+      canAdvance: true,
+      nextStage: nextStage ? { id: nextStage.id, name: nextStage.name, slug: nextStage.slug } : null,
+      message: nextStage ? `Có thể chuyển sang giai đoạn "${nextStage.name}"` : 'Đã hoàn thành tất cả giai đoạn',
+    });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
 // ─── PROJECT COMMENTS ──
