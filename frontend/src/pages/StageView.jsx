@@ -23,6 +23,22 @@ const STAGE_STATUS_MAP = {
   installation: 'installing', 'customer-care': 'warranty',
 };
 
+const STAGE_ORDER = ['consulting', 'design', 'quotation', 'contract', 'production', 'shipping', 'installation', 'customer-care'];
+
+function getStageIndex(slug) {
+  return STAGE_ORDER.indexOf(slug);
+}
+
+// Given project status, which stage slug is it on?
+function projectCurrentStageSlug(projectStatus) {
+  const reverseMap = {
+    consulting: 'consulting', designing: 'design', quoting: 'quotation',
+    contract_signed: 'contract', producing: 'production', shipping: 'shipping',
+    installing: 'installation', warranty: 'customer-care', completed: 'customer-care',
+  };
+  return reverseMap[projectStatus] || 'consulting';
+}
+
 export default function StageView() {
   const { slug } = useParams();
   const { user } = useAuth();
@@ -40,15 +56,15 @@ export default function StageView() {
     setLoading(true);
     setError(null);
     try {
-      // Step 1: Load projects for this stage
+      // Step 1: Load ALL projects (not just current stage) so we can show completed stage tasks too
       let projRes;
       try {
-        projRes = await api.get('/projects', { params: { stage_slug: slug } });
+        projRes = await api.get('/projects', { params: { limit: 200 } });
       } catch (e) {
         console.error('Load projects error:', e);
         projRes = { data: { projects: [] } };
       }
-      const projs = projRes.data.projects || [];
+      const allProjs = projRes.data.projects || [];
       setProjects(projs);
 
       // Step 2: Get stage info (try /users/stages first, fallback to hardcoded)
@@ -61,15 +77,16 @@ export default function StageView() {
       }
       setStageInfo(stage || { slug, name: STAGE_NAMES[slug], color: '#3b82f6' });
 
-      if (projs.length === 0) {
+      if (allProjs.length === 0) {
+        setProjects([]);
         setTasks([]);
         setLoading(false);
         return;
       }
 
-      // Step 3: Load tasks for these projects — ONLY for this stage
+      // Step 3: Load tasks for this stage across ALL projects
       let allTasks = [];
-      for (const p of projs) {
+      for (const p of allProjs) {
         try {
           const params = { project_id: p.id };
           if (stage?.id) params.stage_id = stage.id;
@@ -85,6 +102,11 @@ export default function StageView() {
       if (!stage?.id && slug) {
         allTasks = allTasks.filter(t => t.stage?.slug === slug);
       }
+
+      // Only keep projects that have tasks in this stage
+      const projectIdsWithTasks = new Set(allTasks.map(t => t.project_id));
+      const relevantProjs = allProjs.filter(p => projectIdsWithTasks.has(p.id));
+      setProjects(relevantProjs);
 
       // Remove duplicates
       const seen = new Set();
@@ -290,13 +312,30 @@ export default function StageView() {
             const allChecksDone = checksTotal > 0 && checksDone === checksTotal;
             const isTaskDone = task.status === 'done';
 
-            // Sequential unlock: previous task must be done
-            const prevAllDone = sortedTasks.slice(0, taskIdx).every(t => t.status === 'done');
-            const isLocked = taskIdx > 0 && !prevAllDone;
-            const isActive = !isLocked && !isTaskDone;
-
-            // Project info
+            // Check if this stage is reachable for the task's project
             const proj = projects.find(p => p.id === task.project_id);
+            const projCurrentSlug = proj ? projectCurrentStageSlug(proj.status) : slug;
+            const projStageIdx = getStageIndex(projCurrentSlug);
+            const thisStageIdx = getStageIndex(slug);
+            const isFutureStage = thisStageIdx > projStageIdx; // Project hasn't reached this stage yet
+
+            // Sequential unlock within stage: previous task must be done
+            // But only apply if stage is reachable
+            const prevAllDone = sortedTasks
+              .filter(t => t.project_id === task.project_id) // only same project
+              .filter((_, i, arr) => {
+                const idx = arr.findIndex(a => a.id === task.id);
+                return i < idx;
+              })
+              .every(t => t.status === 'done');
+            const taskIdxInProject = sortedTasks.filter(t => t.project_id === task.project_id).findIndex(t => t.id === task.id);
+            const isSequenceLocked = taskIdxInProject > 0 && !prevAllDone;
+            
+            const isLocked = isFutureStage || isSequenceLocked;
+            const isActive = !isLocked && !isTaskDone;
+            const lockReason = isFutureStage 
+              ? `Dự án ${proj?.code || ''} chưa tới quy trình ${STAGE_NAMES[slug]}`
+              : isSequenceLocked ? `Hoàn thành NV #${taskIdxInProject} trước` : '';
 
             return (
               <div key={task.id} className={`shrink-0 w-80 flex flex-col ${isLocked ? 'opacity-50' : ''}`}>
@@ -333,6 +372,9 @@ export default function StageView() {
                     </div>
 
                     {isLocked && <Lock className="h-4 w-4 text-gray-400 shrink-0 mt-1" />}
+                    {isFutureStage && (
+                      <span className="text-[9px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded shrink-0">Chờ</span>
+                    )}
                   </div>
 
                   {/* Task meta */}
@@ -378,28 +420,25 @@ export default function StageView() {
                   : isLocked ? 'bg-gray-50 border-gray-200'
                   : 'bg-gray-50/50 border-gray-200'
                 }`}>
-                  {isLocked ? (
-                    <div className="flex flex-col items-center justify-center h-24 text-gray-400">
-                      <Lock className="h-6 w-6 mb-1 opacity-40" />
-                      <p className="text-xs text-center">Hoàn thành NV #{taskIdx} trước</p>
-                    </div>
-                  ) : task.checklists?.length > 0 ? (
+                  {task.checklists?.length > 0 ? (
                     task.checklists.map((cl, clIdx) => (
                       <div key={cl.id}
                         className={`flex items-start gap-2 bg-white rounded-lg border p-2.5 transition-all ${
-                          cl.is_completed ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-200 hover:shadow-sm hover:border-gray-300'
+                          cl.is_completed ? 'border-emerald-200 bg-emerald-50/50'
+                          : isLocked ? 'border-gray-200 opacity-60' : 'border-gray-200 hover:shadow-sm hover:border-gray-300'
                         }`}>
                         <button
-                          onClick={() => toggleCheckItem(task.id, cl.id, cl.is_completed)}
-                          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 cursor-pointer transition-all ${
+                          onClick={() => !isLocked && toggleCheckItem(task.id, cl.id, cl.is_completed)}
+                          disabled={isLocked}
+                          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
                             cl.is_completed
                               ? 'bg-emerald-500 border-emerald-500 text-white'
-                              : 'border-gray-300 hover:border-blue-400'
+                              : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 hover:border-blue-400 cursor-pointer'
                           }`}>
                           {cl.is_completed && <CheckSquare className="h-3 w-3" />}
                         </button>
                         <div className="flex-1 min-w-0">
-                          <span className={`text-sm leading-tight ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
+                          <span className={`text-sm leading-tight ${cl.is_completed ? 'line-through text-gray-400' : isLocked ? 'text-gray-400' : 'text-gray-700'}`}>
                             {cl.title}
                           </span>
                           {cl.completed_at && (
@@ -411,7 +450,15 @@ export default function StageView() {
                     ))
                   ) : (
                     <div className="flex items-center justify-center h-16 text-xs text-gray-400">
-                      Chưa có checklist — thêm bên dưới
+                      {isLocked ? 'Chưa có checklist' : 'Chưa có checklist — thêm bên dưới'}
+                    </div>
+                  )}
+
+                  {/* Lock reason banner */}
+                  {isLocked && (
+                    <div className="flex items-center gap-1.5 mt-1 px-2 py-1.5 bg-gray-100 rounded-lg">
+                      <Lock className="h-3 w-3 text-gray-400 shrink-0" />
+                      <p className="text-[10px] text-gray-400">{lockReason || 'Chưa mở khóa'}</p>
                     </div>
                   )}
 
