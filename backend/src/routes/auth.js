@@ -40,6 +40,17 @@ r.post('/register', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
 });
 
+// Reset password cho tất cả seed users (gọi 1 lần rồi xóa)
+r.post('/reset-seed-passwords', async (req, res) => {
+  try {
+    const seedEmails = ['admin@tubep.vn','sales@tubep.vn','designer@tubep.vn','production@tubep.vn','installer@tubep.vn','manager@tubep.vn'];
+    const hash = await bcrypt.hash('admin123', 12);
+    const { error } = await supabase.from('users').update({ password: hash }).in('email', seedEmails);
+    if (error) throw error;
+    res.json({ ok: true, message: 'Đã reset password cho tất cả seed users thành admin123' });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
+});
+
 // Thông tin user hiện tại
 r.get('/me', auth, (req, res) => res.json({ user: req.user }));
 

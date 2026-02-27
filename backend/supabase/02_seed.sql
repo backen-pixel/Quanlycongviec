@@ -19,13 +19,15 @@ INSERT INTO departments (name,slug,description,color) VALUES
 ('Đội Lắp đặt','installation','Lắp đặt','#3B82F6'),
 ('Phòng CSKH','customer-care','Chăm sóc','#EF4444');
 
+-- Password cho tất cả: admin123
+-- Hash tạo bởi bcryptjs.hash('admin123', 12)
 INSERT INTO users (email,password,full_name,phone,role) VALUES
-('admin@tubep.vn','$2a$12$LQv3c1yqBo9SkvXS7QTJPOoGqKmRP1Y/XMlyrQqAkJyH9.vy5JzHi','Admin','0901234567','admin'),
-('sales@tubep.vn','$2a$12$LQv3c1yqBo9SkvXS7QTJPOoGqKmRP1Y/XMlyrQqAkJyH9.vy5JzHi','Nguyễn Văn Bán','0912345001','sales'),
-('designer@tubep.vn','$2a$12$LQv3c1yqBo9SkvXS7QTJPOoGqKmRP1Y/XMlyrQqAkJyH9.vy5JzHi','Trần Thị Thiết Kế','0912345002','designer'),
-('production@tubep.vn','$2a$12$LQv3c1yqBo9SkvXS7QTJPOoGqKmRP1Y/XMlyrQqAkJyH9.vy5JzHi','Lê Văn Sản Xuất','0912345003','production'),
-('installer@tubep.vn','$2a$12$LQv3c1yqBo9SkvXS7QTJPOoGqKmRP1Y/XMlyrQqAkJyH9.vy5JzHi','Hoàng Văn Lắp','0912345005','installer'),
-('manager@tubep.vn','$2a$12$LQv3c1yqBo9SkvXS7QTJPOoGqKmRP1Y/XMlyrQqAkJyH9.vy5JzHi','Vũ Văn Quản Lý','0912345007','manager');
+('admin@tubep.vn','$2a$12$oer35.D6Qtx1cp/BLaq7Ve.XJtEk5gFzPyo9tqzZcW86Jzwgl7JUi','Admin','0901234567','admin'),
+('sales@tubep.vn','$2a$12$oer35.D6Qtx1cp/BLaq7Ve.XJtEk5gFzPyo9tqzZcW86Jzwgl7JUi','Nguyễn Văn Bán','0912345001','sales'),
+('designer@tubep.vn','$2a$12$oer35.D6Qtx1cp/BLaq7Ve.XJtEk5gFzPyo9tqzZcW86Jzwgl7JUi','Trần Thị Thiết Kế','0912345002','designer'),
+('production@tubep.vn','$2a$12$oer35.D6Qtx1cp/BLaq7Ve.XJtEk5gFzPyo9tqzZcW86Jzwgl7JUi','Lê Văn Sản Xuất','0912345003','production'),
+('installer@tubep.vn','$2a$12$oer35.D6Qtx1cp/BLaq7Ve.XJtEk5gFzPyo9tqzZcW86Jzwgl7JUi','Hoàng Văn Lắp','0912345005','installer'),
+('manager@tubep.vn','$2a$12$oer35.D6Qtx1cp/BLaq7Ve.XJtEk5gFzPyo9tqzZcW86Jzwgl7JUi','Vũ Văn Quản Lý','0912345007','manager');
 
 INSERT INTO customers (full_name,phone,email,address,city,source) VALUES
 ('Nguyễn Văn Minh','0901234567','minh@gmail.com','123 Nguyễn Hữu Thọ, Q.7','TP.HCM','facebook'),
