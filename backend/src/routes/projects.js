@@ -5,6 +5,26 @@ const { auth } = require('../middleware/auth');
 const r = Router();
 r.use(auth);
 
+// ─── HELPER ──
+async function createNotification(req, userId, type, title, message, entityType, entityId) {
+  if (!userId || userId === req.user.userId) return;
+  const { data } = await supabase.from('notifications').insert({
+    user_id: userId, type, title, message, entity_type: entityType, entity_id: entityId,
+  }).select().single();
+  const pushFn = req.app.get('pushNotification');
+  if (pushFn && data) pushFn(userId, data);
+  return data;
+}
+
+async function notifyMultiple(req, userIds, type, title, message, entityType, entityId) {
+  const unique = [...new Set(userIds.filter(id => id && id !== req.user.userId))];
+  for (const uid of unique) await createNotification(req, uid, type, title, message, entityType, entityId);
+}
+
+async function logActivity(userId, action, entityType, entityId, description, oldValues, newValues) {
+  await supabase.from('activity_logs').insert({ user_id: userId, action, entity_type: entityType, entity_id: entityId, description, old_values: oldValues, new_values: newValues });
+}
+
 // ─── LIST PROJECTS ──
 r.get('/', async (req, res) => {
   try {
@@ -91,10 +111,33 @@ r.post('/', async (req, res) => {
     if (error) throw error;
 
     // Activity log
-    await supabase.from('activity_logs').insert({
-      user_id: req.user.userId, action: 'created', entity_type: 'project', entity_id: data.id,
-      description: `Tạo dự án ${code}: ${b.name}`,
-    });
+    await logActivity(req.user.userId, 'created', 'project', data.id, `Tạo dự án ${code}: ${b.name}`);
+
+    // ── THÔNG BÁO cho tất cả người được phân công ──
+    const assignees = [
+      { id: b.sales_person_id, role: 'Sales' },
+      { id: b.designer_id, role: 'Thiết kế' },
+      { id: b.project_manager_id, role: 'Quản lý DA' },
+    ];
+    for (const a of assignees) {
+      if (a.id) {
+        await createNotification(req, a.id, 'project_assigned',
+          '📋 Dự án mới', `Bạn được phân công vai trò ${a.role} cho dự án ${code}: ${b.name}`, 'project', data.id);
+      }
+    }
+
+    // ── Lưu sản phẩm vào dự án ──
+    if (b.products?.length) {
+      await supabase.from('project_products').insert(
+        b.products.map(p => ({
+          project_id: data.id,
+          product_id: p.product_id,
+          quantity: p.quantity || 1,
+          custom_price: p.custom_price || null,
+          notes: p.notes || null,
+        }))
+      );
+    }
 
     // Auto-create default tasks for consulting stage
     if (stage?.id) {
@@ -127,13 +170,17 @@ r.put('/:id', async (req, res) => {
     const { data, error } = await supabase.from('projects').update(update).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single();
     if (error) throw error;
 
-    // Log
+    // Log & Notify
     if (old && update.status && update.status !== old.status) {
-      await supabase.from('activity_logs').insert({
-        user_id: req.user.userId, action: 'status_changed', entity_type: 'project', entity_id: data.id,
-        description: `Chuyển trạng thái: ${old.status} → ${update.status}`,
-        old_values: { status: old.status }, new_values: { status: update.status },
-      });
+      await logActivity(req.user.userId, 'status_changed', 'project', data.id,
+        `Chuyển trạng thái: ${old.status} → ${update.status}`,
+        { status: old.status }, { status: update.status });
+
+      // Notify team
+      const teamIds = [data.sales_person_id, data.designer_id, data.project_manager_id].filter(Boolean);
+      await notifyMultiple(req, teamIds, 'project_updated',
+        '📋 Cập nhật dự án', `Dự án ${data.code || data.name} chuyển từ "${old.status}" → "${update.status}"`,
+        'project', data.id);
     }
 
     res.json({ project: data });
@@ -203,11 +250,19 @@ r.put('/:id/stage', async (req, res) => {
     }
 
     // Log
-    await supabase.from('activity_logs').insert({
-      user_id: req.user.userId, action: 'stage_changed', entity_type: 'project', entity_id: data.id,
-      description: `Chuyển giai đoạn sang: ${stage.name}`,
-      old_values: { status: old?.status }, new_values: { status: new_status, stage: stage.name },
-    });
+    await logActivity(req.user.userId, 'stage_changed', 'project', data.id,
+      `Chuyển giai đoạn sang: ${stage.name}`,
+      { status: old?.status }, { status: new_status, stage: stage.name });
+
+    // ── THÔNG BÁO chuyển giai đoạn cho cả team ──
+    const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,name,code').eq('id', req.params.id).single();
+    if (proj) {
+      const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
+      await notifyMultiple(req, teamIds, 'stage_changed',
+        `🔄 Chuyển giai đoạn: ${stage.name}`,
+        `Dự án ${proj.code} đã chuyển sang giai đoạn "${stage.name}"`,
+        'project', data.id);
+    }
 
     const io = req.app.get('io');
     if (io) io.emit('project:stage_changed', data);
@@ -248,7 +303,48 @@ r.post('/:id/comments', async (req, res) => {
       project_id: req.params.id, user_id: req.user.userId, content: req.body.content,
     }).select('*, user:users(id,full_name,avatar)').single();
     if (error) throw error;
+
+    // Notify project team
+    const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,code').eq('id', req.params.id).single();
+    if (proj) {
+      const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
+      await notifyMultiple(req, teamIds, 'comment_added',
+        '💬 Bình luận dự án', `${req.user.fullName} bình luận trong dự án ${proj.code}`,
+        'project', req.params.id);
+    }
+
     res.status(201).json({ comment: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── PROJECT PRODUCTS ──
+r.get('/:id/products', async (req, res) => {
+  try {
+    const { data } = await supabase.from('project_products')
+      .select('*, product:products(id,code,name,base_price,material,unit)')
+      .eq('project_id', req.params.id);
+    res.json({ products: data || [] });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/:id/products', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_products').insert({
+      project_id: req.params.id,
+      product_id: req.body.product_id,
+      quantity: req.body.quantity || 1,
+      custom_price: req.body.custom_price || null,
+      notes: req.body.notes || null,
+    }).select('*, product:products(id,code,name,base_price,material,unit)').single();
+    if (error) throw error;
+    res.status(201).json({ item: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:id/products/:ppId', async (req, res) => {
+  try {
+    await supabase.from('project_products').delete().eq('id', req.params.ppId);
+    res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 

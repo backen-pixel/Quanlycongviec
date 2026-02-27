@@ -9,14 +9,18 @@ r.use(auth);
 function notify(io, event, data) { if (io) io.emit(event, data); }
 
 async function createNotification(req, userId, type, title, message, entityType, entityId) {
-  if (!userId) return;
+  if (!userId || userId === req.user.userId) return;
   const { data, error } = await supabase.from('notifications').insert({
     user_id: userId, type, title, message, entity_type: entityType, entity_id: entityId,
   }).select().single();
-  // Push realtime via Socket.IO
   const pushFn = req.app.get('pushNotification');
   if (pushFn && data) pushFn(userId, data);
   return data;
+}
+
+async function notifyMultiple(req, userIds, type, title, message, entityType, entityId) {
+  const unique = [...new Set(userIds.filter(id => id && id !== req.user.userId))];
+  for (const uid of unique) await createNotification(req, uid, type, title, message, entityType, entityId);
 }
 
 async function logActivity(userId, action, entityType, entityId, description, oldValues, newValues) {
@@ -122,6 +126,7 @@ r.post('/', async (req, res) => {
       due_date: b.due_date || null,
       start_date: b.start_date || null,
       estimated_hours: b.estimated_hours || null,
+      attachments: b.attachments || [],
     }).select().single();
     if (error) throw error;
 
@@ -130,26 +135,57 @@ r.post('/', async (req, res) => {
       await supabase.from('task_participants').insert(
         b.participants.map(p => ({ task_id: data.id, user_id: p.user_id, role: p.role || 'participant' }))
       );
+      // Notify participants
+      for (const p of b.participants) {
+        if (p.user_id !== req.user.userId) {
+          const role = p.role === 'observer' ? 'quan sát' : 'hỗ trợ';
+          await createNotification(req, p.user_id, 'task_assigned', '👥 Thêm vào công việc',
+            `Bạn được thêm vào "${b.title}" với vai trò ${role}`, 'task', data.id);
+        }
+      }
     }
 
     // Add checklists
     if (b.checklists?.length) {
       await supabase.from('task_checklists').insert(
-        b.checklists.map((c, i) => ({ task_id: data.id, title: c.title || c, order_index: i }))
+        b.checklists.map((c, i) => ({
+          task_id: data.id, title: c.title || c, order_index: i,
+          attachments: c.attachments || [],
+        }))
       );
     }
 
-    // Notification
-    if (b.assignee_id && b.assignee_id !== req.user.userId) {
-      await createNotification(req, b.assignee_id, 'task_assigned', 'Công việc mới', `Bạn được giao: ${b.title}`, 'task', data.id);
+    // Save file attachments to DB
+    if (b.attachments?.length) {
+      await supabase.from('file_attachments').insert(
+        b.attachments.map(f => ({
+          entity_type: 'task', entity_id: data.id,
+          file_name: f.file_name, file_url: f.file_url,
+          file_size: f.file_size, mime_type: f.mime_type,
+          uploaded_by: req.user.userId,
+        }))
+      );
     }
 
-    // Activity log
-    await logActivity(req.user.userId, 'created', 'task', data.id, `Tạo task: ${b.title}`);
+    // Notification — giao việc
+    if (b.assignee_id && b.assignee_id !== req.user.userId) {
+      await createNotification(req, b.assignee_id, 'task_assigned', '📌 Công việc mới',
+        `Bạn được giao: "${b.title}"${b.due_date ? ` — Hạn: ${new Date(b.due_date).toLocaleDateString('vi-VN')}` : ''}`,
+        'task', data.id);
+    }
 
+    // Notification — project team
+    const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,code').eq('id', b.project_id).single();
+    if (proj) {
+      const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
+      await notifyMultiple(req, [...teamIds, b.assignee_id], 'task_created',
+        '✅ Công việc mới', `Công việc "${b.title}" được tạo trong dự án ${proj.code}`,
+        'task', data.id);
+    }
+
+    await logActivity(req.user.userId, 'created', 'task', data.id, `Tạo task: ${b.title}`);
     const io = req.app.get('io');
     notify(io, 'task:created', data);
-
     res.status(201).json({ task: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -254,6 +290,7 @@ r.post('/:id/checklists', async (req, res) => {
   try {
     const { data, error } = await supabase.from('task_checklists').insert({
       task_id: req.params.id, title: req.body.title, order_index: req.body.order_index || 0,
+      attachments: req.body.attachments || [],
     }).select().single();
     if (error) throw error;
     res.status(201).json({ checklist: data });
@@ -296,16 +333,29 @@ r.post('/:id/comments', async (req, res) => {
   try {
     const { data, error } = await supabase.from('task_comments').insert({
       task_id: req.params.id, user_id: req.user.userId, content: req.body.content,
+      attachments: req.body.attachments || [],
     }).select('*, user:users(id,full_name,avatar)').single();
     if (error) throw error;
 
-    // Notify assignee & creator
+    // Save file attachments
+    if (req.body.attachments?.length) {
+      await supabase.from('file_attachments').insert(
+        req.body.attachments.map(f => ({
+          entity_type: 'comment', entity_id: data.id,
+          file_name: f.file_name, file_url: f.file_url,
+          file_size: f.file_size, mime_type: f.mime_type,
+          uploaded_by: req.user.userId,
+        }))
+      );
+    }
+
+    // Notify assignee, creator & all participants
     const { data: task } = await supabase.from('tasks').select('assignee_id,created_by_id,title').eq('id', req.params.id).single();
+    const { data: participants } = await supabase.from('task_participants').select('user_id').eq('task_id', req.params.id);
     if (task) {
-      const targets = new Set([task.assignee_id, task.created_by_id].filter(id => id && id !== req.user.userId));
-      for (const uid of targets) {
-        await createNotification(req, uid, 'comment_added', 'Bình luận mới', `${req.user.fullName} bình luận task "${task.title}"`, 'task', req.params.id);
-      }
+      const allIds = [task.assignee_id, task.created_by_id, ...(participants || []).map(p => p.user_id)];
+      await notifyMultiple(req, allIds, 'comment_added',
+        '💬 Bình luận mới', `${req.user.fullName} bình luận: "${task.title}"`, 'task', req.params.id);
     }
 
     const io = req.app.get('io');
