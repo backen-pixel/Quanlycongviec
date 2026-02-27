@@ -5,95 +5,385 @@ const { auth } = require('../middleware/auth');
 const r = Router();
 r.use(auth);
 
-// Danh sách task (group_by=status cho Kanban)
+// ─── HELPER ──────────────────────────────────────────────
+function notify(io, event, data) { if (io) io.emit(event, data); }
+
+async function createNotification(userId, type, title, message, entityType, entityId) {
+  if (!userId) return;
+  await supabase.from('notifications').insert({ user_id: userId, type, title, message, entity_type: entityType, entity_id: entityId });
+}
+
+async function logActivity(userId, action, entityType, entityId, description, oldValues, newValues) {
+  await supabase.from('activity_logs').insert({ user_id: userId, action, entity_type: entityType, entity_id: entityId, description, old_values: oldValues, new_values: newValues });
+}
+
+// ─── LIST TASKS (Kanban group_by=status / List / My tasks) ──
 r.get('/', async (req, res) => {
   try {
-    const { project_id, status, assignee_id, priority, search, group_by } = req.query;
-    let q = supabase.from('tasks').select('*, projects(id,code,name), assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,color)').order('order_index');
+    const { project_id, status, assignee_id, priority, search, group_by, view } = req.query;
+    let q = supabase.from('tasks').select(`
+      *, projects(id,code,name),
+      assignee:users!tasks_assignee_id_fkey(id,full_name,avatar),
+      creator:users!tasks_created_by_id_fkey(id,full_name),
+      stage:workflow_stages(id,name,color)
+    `).order('order_index').order('created_at', { ascending: false });
+
     if (project_id) q = q.eq('project_id', project_id);
     if (status) q = q.eq('status', status);
     if (assignee_id) q = q.eq('assignee_id', assignee_id);
     if (priority) q = q.eq('priority', priority);
     if (search) q = q.ilike('title', `%${search}%`);
+
     const { data, error } = await q;
     if (error) throw error;
 
+    // Kanban view
     if (group_by === 'status') {
-      const cols = { todo: [], in_progress: [], review: [], done: [], blocked: [] };
-      data?.forEach(t => { if (cols[t.status]) cols[t.status].push(t); });
+      const cols = { pending: [], todo: [], in_progress: [], review: [], done: [], blocked: [], deferred: [] };
+      data?.forEach(t => { if (cols[t.status]) cols[t.status].push(t); else if (cols.todo) cols.todo.push(t); });
       return res.json({ columns: cols, total: data?.length });
     }
-    res.json({ tasks: data });
+
+    res.json({ tasks: data, total: data?.length });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// Task của tôi
+// ─── MY TASKS ──
 r.get('/my', async (req, res) => {
   try {
-    const { data } = await supabase.from('tasks').select('*, projects(id,code,name), stage:workflow_stages(id,name,color)').eq('assignee_id', req.user.userId).neq('status','done').order('due_date');
+    const { data } = await supabase.from('tasks').select(`
+      *, projects(id,code,name), stage:workflow_stages(id,name,color)
+    `).eq('assignee_id', req.user.userId).neq('status', 'done').order('due_date');
     res.json({ tasks: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// Task quá hạn
+// ─── OVERDUE TASKS ──
 r.get('/overdue', async (req, res) => {
   try {
-    const { data } = await supabase.from('tasks').select('*, projects(id,code,name), assignee:users!tasks_assignee_id_fkey(id,full_name)').lt('due_date', new Date().toISOString()).neq('status','done').order('due_date');
+    const { data } = await supabase.from('tasks').select(`
+      *, projects(id,code,name),
+      assignee:users!tasks_assignee_id_fkey(id,full_name)
+    `).lt('due_date', new Date().toISOString()).neq('status', 'done').order('due_date');
     res.json({ tasks: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// Chi tiết task
+// ─── GET TASK DETAIL ──
 r.get('/:id', async (req, res) => {
   try {
-    const { data } = await supabase.from('tasks').select('*, projects(id,code,name), assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,color)').eq('id', req.params.id).single();
-    res.json({ task: data });
-  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+    const { data: task, error } = await supabase.from('tasks').select(`
+      *, projects(id,code,name),
+      assignee:users!tasks_assignee_id_fkey(id,full_name,avatar,email),
+      creator:users!tasks_created_by_id_fkey(id,full_name,avatar),
+      stage:workflow_stages(id,name,color)
+    `).eq('id', req.params.id).single();
+    if (error) throw error;
+
+    // Load sub-resources
+    const [participants, checklists, comments, timeLogs] = await Promise.all([
+      supabase.from('task_participants').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at'),
+      supabase.from('task_checklists').select('*').eq('task_id', req.params.id).order('order_index'),
+      supabase.from('task_comments').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at', { ascending: false }),
+      supabase.from('task_time_logs').select('*, user:users(id,full_name)').eq('task_id', req.params.id).order('started_at', { ascending: false }),
+    ]);
+
+    res.json({
+      task: {
+        ...task,
+        participants: participants.data || [],
+        checklists: checklists.data || [],
+        comments: comments.data || [],
+        timeLogs: timeLogs.data || [],
+      }
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// Tạo task
+// ─── CREATE TASK ──
 r.post('/', async (req, res) => {
   try {
     const b = req.body;
-    const { data, error } = await supabase.from('tasks').insert({ project_id: b.project_id, stage_id: b.stage_id, title: b.title, description: b.description, priority: b.priority||'medium', assignee_id: b.assignee_id, created_by_id: req.user.userId, due_date: b.due_date, start_date: b.start_date, estimated_hours: b.estimated_hours, status: 'todo' }).select().single();
+    const { data, error } = await supabase.from('tasks').insert({
+      project_id: b.project_id,
+      stage_id: b.stage_id || null,
+      title: b.title,
+      description: b.description || null,
+      priority: b.priority || 'medium',
+      status: b.status || 'pending',
+      assignee_id: b.assignee_id || null,
+      created_by_id: req.user.userId,
+      due_date: b.due_date || null,
+      start_date: b.start_date || null,
+      estimated_hours: b.estimated_hours || null,
+    }).select().single();
     if (error) throw error;
-    if (b.assignee_id) {
-      await supabase.from('notifications').insert({ user_id: b.assignee_id, type: 'task_assigned', title: 'Công việc mới', message: `Bạn được phân công: ${b.title}`, entity_type: 'task', entity_id: data.id });
+
+    // Add participants & observers
+    if (b.participants?.length) {
+      await supabase.from('task_participants').insert(
+        b.participants.map(p => ({ task_id: data.id, user_id: p.user_id, role: p.role || 'participant' }))
+      );
     }
+
+    // Add checklists
+    if (b.checklists?.length) {
+      await supabase.from('task_checklists').insert(
+        b.checklists.map((c, i) => ({ task_id: data.id, title: c.title || c, order_index: i }))
+      );
+    }
+
+    // Notification
+    if (b.assignee_id && b.assignee_id !== req.user.userId) {
+      await createNotification(b.assignee_id, 'task_assigned', 'Công việc mới', `Bạn được giao: ${b.title}`, 'task', data.id);
+    }
+
+    // Activity log
+    await logActivity(req.user.userId, 'created', 'task', data.id, `Tạo task: ${b.title}`);
+
+    const io = req.app.get('io');
+    notify(io, 'task:created', data);
+
     res.status(201).json({ task: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// Cập nhật task
+// ─── UPDATE TASK ──
 r.put('/:id', async (req, res) => {
   try {
-    const u = { ...req.body, updated_at: new Date().toISOString() };
-    if (u.status === 'done') u.completed_at = new Date().toISOString();
-    const { data, error } = await supabase.from('tasks').update(u).eq('id', req.params.id).select().single();
+    const b = req.body;
+    const update = { updated_at: new Date().toISOString() };
+
+    // Pick allowed fields
+    const fields = ['title','description','status','priority','assignee_id','due_date','start_date','estimated_hours','actual_hours','stage_id','order_index'];
+    fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+
+    if (update.status === 'done') update.completed_at = new Date().toISOString();
+    if (update.status === 'in_progress' && !b.start_date) update.start_date = new Date().toISOString();
+
+    // Get old values
+    const { data: old } = await supabase.from('tasks').select('status,assignee_id,title').eq('id', req.params.id).single();
+
+    const { data, error } = await supabase.from('tasks').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
+
+    // Notifications on status change
+    if (old && update.status && update.status !== old.status) {
+      // Nếu chuyển sang review → thông báo cho người tạo
+      if (update.status === 'review' && data.created_by_id) {
+        await createNotification(data.created_by_id, 'task_updated', 'Chờ nghiệm thu', `Task "${old.title}" đã hoàn thành, chờ bạn kiểm tra`, 'task', data.id);
+      }
+      // Nếu người giao duyệt xong → thông báo cho người thực hiện
+      if (update.status === 'done' && data.assignee_id) {
+        await createNotification(data.assignee_id, 'task_updated', 'Task đã duyệt', `Task "${old.title}" đã được nghiệm thu`, 'task', data.id);
+      }
+      await logActivity(req.user.userId, 'status_changed', 'task', data.id, `Chuyển trạng thái: ${old.status} → ${update.status}`, { status: old.status }, { status: update.status });
+    }
+
+    // Notification on reassign
+    if (update.assignee_id && update.assignee_id !== old?.assignee_id) {
+      await createNotification(update.assignee_id, 'task_assigned', 'Được giao task', `Bạn được giao: ${data.title}`, 'task', data.id);
+    }
+
+    const io = req.app.get('io');
+    notify(io, 'task:updated', data);
+
     res.json({ task: data });
-  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// Kanban drag: đổi status
+// ─── KANBAN: CHANGE STATUS ──
 r.patch('/:id/status', async (req, res) => {
   try {
-    const u = { status: req.body.status, updated_at: new Date().toISOString() };
-    if (req.body.order_index !== undefined) u.order_index = req.body.order_index;
-    if (u.status === 'done') u.completed_at = new Date().toISOString();
-    const { data, error } = await supabase.from('tasks').update(u).eq('id', req.params.id).select().single();
+    const update = { status: req.body.status, updated_at: new Date().toISOString() };
+    if (req.body.order_index !== undefined) update.order_index = req.body.order_index;
+    if (update.status === 'done') update.completed_at = new Date().toISOString();
+    if (update.status === 'in_progress') update.start_date = update.start_date || new Date().toISOString();
+
+    const { data: old } = await supabase.from('tasks').select('status,title,created_by_id,assignee_id').eq('id', req.params.id).single();
+
+    const { data, error } = await supabase.from('tasks').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
-    // Emit socket event
+
+    // Auto notifications
+    if (old && update.status !== old.status) {
+      if (update.status === 'review' && old.created_by_id) {
+        await createNotification(old.created_by_id, 'task_updated', 'Chờ nghiệm thu', `Task "${old.title}" chờ kiểm tra`, 'task', data.id);
+      }
+      if (update.status === 'done' && old.assignee_id) {
+        await createNotification(old.assignee_id, 'task_updated', 'Task hoàn thành', `Task "${old.title}" đã duyệt`, 'task', data.id);
+      }
+      await logActivity(req.user.userId, 'status_changed', 'task', data.id, `${old.status} → ${update.status}`);
+    }
+
     const io = req.app.get('io');
-    if (io) io.emit('task:updated', data);
+    notify(io, 'task:updated', data);
     res.json({ task: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── DELETE TASK ──
+r.delete('/:id', async (req, res) => {
+  try {
+    const { data: task } = await supabase.from('tasks').select('title').eq('id', req.params.id).single();
+    await supabase.from('tasks').delete().eq('id', req.params.id);
+    await logActivity(req.user.userId, 'deleted', 'task', req.params.id, `Xóa task: ${task?.title}`);
+    res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// Xóa task
-r.delete('/:id', async (req, res) => {
+// ═══════════════════════════════════════════════════════════
+// SUB-RESOURCES: Checklist, Comments, Time Tracking, Participants
+// ═══════════════════════════════════════════════════════════
+
+// ─── CHECKLISTS ──
+r.get('/:id/checklists', async (req, res) => {
   try {
-    await supabase.from('tasks').delete().eq('id', req.params.id);
+    const { data } = await supabase.from('task_checklists').select('*').eq('task_id', req.params.id).order('order_index');
+    res.json({ checklists: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/:id/checklists', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('task_checklists').insert({
+      task_id: req.params.id, title: req.body.title, order_index: req.body.order_index || 0,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json({ checklist: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.patch('/:taskId/checklists/:clId', async (req, res) => {
+  try {
+    const update = {};
+    if (req.body.title !== undefined) update.title = req.body.title;
+    if (req.body.is_completed !== undefined) {
+      update.is_completed = req.body.is_completed;
+      update.completed_by = req.body.is_completed ? req.user.userId : null;
+      update.completed_at = req.body.is_completed ? new Date().toISOString() : null;
+    }
+    if (req.body.order_index !== undefined) update.order_index = req.body.order_index;
+
+    const { data, error } = await supabase.from('task_checklists').update(update).eq('id', req.params.clId).select().single();
+    if (error) throw error;
+    res.json({ checklist: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:taskId/checklists/:clId', async (req, res) => {
+  try {
+    await supabase.from('task_checklists').delete().eq('id', req.params.clId);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── COMMENTS ──
+r.get('/:id/comments', async (req, res) => {
+  try {
+    const { data } = await supabase.from('task_comments').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at', { ascending: false });
+    res.json({ comments: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/:id/comments', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('task_comments').insert({
+      task_id: req.params.id, user_id: req.user.userId, content: req.body.content,
+    }).select('*, user:users(id,full_name,avatar)').single();
+    if (error) throw error;
+
+    // Notify assignee & creator
+    const { data: task } = await supabase.from('tasks').select('assignee_id,created_by_id,title').eq('id', req.params.id).single();
+    if (task) {
+      const targets = new Set([task.assignee_id, task.created_by_id].filter(id => id && id !== req.user.userId));
+      for (const uid of targets) {
+        await createNotification(uid, 'comment_added', 'Bình luận mới', `${req.user.fullName} bình luận task "${task.title}"`, 'task', req.params.id);
+      }
+    }
+
+    const io = req.app.get('io');
+    notify(io, 'task:comment', { taskId: req.params.id, comment: data });
+    res.status(201).json({ comment: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:taskId/comments/:commentId', async (req, res) => {
+  try {
+    await supabase.from('task_comments').delete().eq('id', req.params.commentId).eq('user_id', req.user.userId);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── TIME TRACKING ──
+r.get('/:id/time-logs', async (req, res) => {
+  try {
+    const { data } = await supabase.from('task_time_logs').select('*, user:users(id,full_name)').eq('task_id', req.params.id).order('started_at', { ascending: false });
+    res.json({ timeLogs: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/:id/time-logs', async (req, res) => {
+  try {
+    const b = req.body;
+    const entry = {
+      task_id: req.params.id,
+      user_id: req.user.userId,
+      started_at: b.started_at || new Date().toISOString(),
+      ended_at: b.ended_at || null,
+      duration_minutes: b.duration_minutes || null,
+      description: b.description || null,
+    };
+    // Auto calc duration
+    if (entry.ended_at && entry.started_at && !entry.duration_minutes) {
+      entry.duration_minutes = Math.round((new Date(entry.ended_at) - new Date(entry.started_at)) / 60000);
+    }
+    const { data, error } = await supabase.from('task_time_logs').insert(entry).select().single();
+    if (error) throw error;
+
+    // Update actual_hours on task
+    const { data: logs } = await supabase.from('task_time_logs').select('duration_minutes').eq('task_id', req.params.id).not('duration_minutes', 'is', null);
+    const totalMinutes = logs?.reduce((s, l) => s + (l.duration_minutes || 0), 0) || 0;
+    await supabase.from('tasks').update({ actual_hours: Math.round(totalMinutes / 6) / 10 }).eq('id', req.params.id);
+
+    res.status(201).json({ timeLog: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:taskId/time-logs/:logId', async (req, res) => {
+  try {
+    await supabase.from('task_time_logs').delete().eq('id', req.params.logId).eq('user_id', req.user.userId);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── PARTICIPANTS (Người hỗ trợ & Quan sát) ──
+r.get('/:id/participants', async (req, res) => {
+  try {
+    const { data } = await supabase.from('task_participants').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id);
+    res.json({ participants: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/:id/participants', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('task_participants').insert({
+      task_id: req.params.id, user_id: req.body.user_id, role: req.body.role || 'participant',
+    }).select('*, user:users(id,full_name,avatar)').single();
+    if (error) throw error;
+
+    if (req.body.user_id !== req.user.userId) {
+      const role = req.body.role === 'observer' ? 'quan sát' : 'hỗ trợ';
+      await createNotification(req.body.user_id, 'task_assigned', `Bạn được thêm vào task`, `Vai trò: ${role}`, 'task', req.params.id);
+    }
+
+    res.status(201).json({ participant: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:taskId/participants/:userId', async (req, res) => {
+  try {
+    await supabase.from('task_participants').delete().eq('task_id', req.params.taskId).eq('user_id', req.params.userId);
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });

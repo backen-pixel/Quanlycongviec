@@ -36,19 +36,23 @@ export const PRIORITY_COLORS = {
 };
 
 export const TASK_STATUS = {
+  pending: 'Đang chờ',
   todo: 'Chờ xử lý',
   in_progress: 'Đang làm',
-  review: 'Chờ duyệt',
+  review: 'Chờ kiểm tra',
   done: 'Hoàn thành',
   blocked: 'Bị chặn',
+  deferred: 'Tạm hoãn',
 };
 
 export const TASK_COLORS = {
-  todo: 'bg-gray-400',
+  pending: 'bg-gray-400',
+  todo: 'bg-slate-400',
   in_progress: 'bg-blue-500',
   review: 'bg-amber-500',
   done: 'bg-emerald-500',
   blocked: 'bg-red-500',
+  deferred: 'bg-purple-400',
 };
 
 export const formatVND = (n) => {
