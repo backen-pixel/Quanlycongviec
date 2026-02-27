@@ -17,7 +17,8 @@ app.use(cors({ origin: config.corsOrigins, credentials: true }));
 app.use(morgan('dev'));
 app.use(express.json());
 
-// Health
+// Root + Health (Render health check gọi GET /)
+app.get('/', (_, res) => res.json({ app: 'TuBep Pro API', status: 'ok' }));
 app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 // Routes
