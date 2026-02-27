@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
@@ -7,15 +7,36 @@ import Projects from './pages/Projects';
 import Tasks from './pages/Tasks';
 import StageView from './pages/StageView';
 import UsersPage from './pages/UsersPage';
+import { Settings } from 'lucide-react';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Đang tải...</div>;
-  if (!user) return <Navigate to="/login" />;
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--color-page-bg)]">
+        <div className="flex flex-col items-center gap-3">
+          <svg className="animate-spin h-8 w-8 text-[var(--color-primary-600)]" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          <p className="text-sm text-gray-500">Đang tải...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <Navigate to="/login" state={{ from: location }} />;
+
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-[var(--color-page-bg)]">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto p-6"><Outlet /></main>
+      <div className="flex-1 flex flex-col min-w-0">
+        <main className="flex-1 overflow-y-auto p-6">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }
@@ -32,7 +53,14 @@ export default function App() {
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/stage/:slug" element={<StageView />} />
             <Route path="/users" element={<UsersPage />} />
-            <Route path="/settings" element={<div className="text-gray-400">Cài đặt — coming soon</div>} />
+            <Route path="/settings" element={
+              <div className="flex items-center justify-center h-64 text-gray-400">
+                <div className="text-center">
+                  <Settings className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">Cài đặt — sắp ra mắt</p>
+                </div>
+              </div>
+            } />
           </Route>
         </Routes>
       </BrowserRouter>
