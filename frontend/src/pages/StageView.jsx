@@ -56,68 +56,39 @@ export default function StageView() {
     setLoading(true);
     setError(null);
     try {
-      // Step 1: Load ALL projects (not just current stage) so we can show completed stage tasks too
-      let projRes;
-      try {
-        projRes = await api.get('/projects', { params: { limit: 200 } });
-      } catch (e) {
-        console.error('Load projects error:', e);
-        projRes = { data: { projects: [] } };
-      }
-      const allProjs = projRes.data.projects || [];
-      setProjects(projs);
+      // Step 1: Get stages + all projects in parallel
+      const [stageRes, projRes] = await Promise.all([
+        api.get('/users/stages').catch(() => ({ data: { stages: [] } })),
+        api.get('/projects', { params: { limit: 200 } }).catch(() => ({ data: { projects: [] } })),
+      ]);
 
-      // Step 2: Get stage info (try /users/stages first, fallback to hardcoded)
-      let stage = null;
-      try {
-        const stageRes = await api.get('/users/stages');
-        stage = stageRes.data.stages?.find(s => s.slug === slug);
-      } catch (e) {
-        console.warn('Stages endpoint failed, using fallback');
-      }
+      const stage = stageRes.data.stages?.find(s => s.slug === slug) || null;
       setStageInfo(stage || { slug, name: STAGE_NAMES[slug], color: '#3b82f6' });
+      const allProjs = projRes.data.projects || [];
 
-      if (allProjs.length === 0) {
-        setProjects([]);
+      if (!allProjs.length || !stage?.id) {
+        setProjects(allProjs);
         setTasks([]);
         setLoading(false);
         return;
       }
 
-      // Step 3: Load tasks for this stage across ALL projects
-      let allTasks = [];
-      for (const p of allProjs) {
-        try {
-          const params = { project_id: p.id };
-          if (stage?.id) params.stage_id = stage.id;
-          const { data } = await api.get('/tasks', { params });
-          const ptasks = data.tasks || [];
-          allTasks.push(...ptasks);
-        } catch (e) {
-          console.warn(`Failed to load tasks for project ${p.id}:`, e);
-        }
-      }
+      // Step 2: Load tasks for this stage — ONE batch call with stage_id only
+      const { data: taskData } = await api.get('/tasks', { params: { stage_id: stage.id } })
+        .catch(() => ({ data: { tasks: [] } }));
+      let stageTasks = taskData.tasks || [];
 
-      // If no stage_id available, filter client-side by stage slug
-      if (!stage?.id && slug) {
-        allTasks = allTasks.filter(t => t.stage?.slug === slug);
-      }
+      // Build project lookup
+      const projMap = {};
+      allProjs.forEach(p => { projMap[p.id] = p; });
 
       // Only keep projects that have tasks in this stage
-      const projectIdsWithTasks = new Set(allTasks.map(t => t.project_id));
+      const projectIdsWithTasks = new Set(stageTasks.map(t => t.project_id));
       const relevantProjs = allProjs.filter(p => projectIdsWithTasks.has(p.id));
       setProjects(relevantProjs);
 
-      // Remove duplicates
-      const seen = new Set();
-      allTasks = allTasks.filter(t => {
-        if (seen.has(t.id)) return false;
-        seen.add(t.id);
-        return true;
-      });
-
-      // Step 4: Load checklists for each task
-      const withChecklists = await Promise.all(allTasks.map(async (t) => {
+      // Step 3: Load checklists for each task — parallel batch
+      const withChecklists = await Promise.all(stageTasks.map(async (t) => {
         try {
           const { data } = await api.get(`/tasks/${t.id}`);
           return {
