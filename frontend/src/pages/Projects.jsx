@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import ProjectCreateModal from '../components/ProjectCreateModal';
-import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User } from 'lucide-react';
-import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate } from '../lib/utils';
+import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List } from 'lucide-react';
+import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 
 const TIME_FILTERS = [
   { id: 'all', label: 'Tất cả' },
@@ -36,10 +36,23 @@ function filterByTime(items, tf, dFrom, dTo) {
   return items.filter(i => { const d = i.created_at ? new Date(i.created_at) : null; return d && d >= start; });
 }
 
+const KANBAN_STAGES = [
+  { slug: 'consulting', status: 'consulting', label: 'Tư vấn', color: '#8B5CF6', path: '/stages/consulting' },
+  { slug: 'design', status: 'designing', label: 'Thiết kế', color: '#EC4899', path: '/stages/design' },
+  { slug: 'quotation', status: 'quoting', label: 'Báo giá', color: '#F59E0B', path: '/stages/quotation' },
+  { slug: 'contract', status: 'contract_signed', label: 'Hợp đồng', color: '#10B981', path: '/stages/contract' },
+  { slug: 'production', status: 'producing', label: 'Sản xuất', color: '#F97316', path: '/stages/production' },
+  { slug: 'shipping', status: 'shipping', label: 'Vận chuyển', color: '#06B6D4', path: '/stages/shipping' },
+  { slug: 'installation', status: 'installing', label: 'Lắp đặt', color: '#3B82F6', path: '/stages/installation' },
+  { slug: 'customer-care', status: 'warranty', label: 'CSKH', color: '#EF4444', path: '/stages/customer-care' },
+];
+
 export default function Projects() {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban'
   const [filterTime, setFilterTime] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -109,17 +122,26 @@ export default function Projects() {
   return (
     <div className="space-y-5 max-w-7xl">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dự Án</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {filtered.length} dự án{hasActiveFilters ? ' (đã lọc)' : ''}
-          </p>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Dự Án</h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{filtered.length} dự án{hasActiveFilters ? ' (đã lọc)' : ''}</p>
         </div>
-        <button onClick={() => setShowCreate(true)}
-          className="h-9 px-4 bg-[var(--color-primary-600)] text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-[var(--color-primary-700)] transition-colors cursor-pointer">
-          <Plus className="h-4 w-4" /> Tạo dự án
-        </button>
+        <div className="flex items-center gap-2">
+          {/* View toggle */}
+          <div className="flex bg-gray-100 rounded-lg p-0.5">
+            <button onClick={() => setViewMode('kanban')} className={`h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-medium cursor-pointer ${viewMode === 'kanban' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
+              <LayoutGrid className="h-3.5 w-3.5" /> Kanban
+            </button>
+            <button onClick={() => setViewMode('list')} className={`h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-medium cursor-pointer ${viewMode === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
+              <List className="h-3.5 w-3.5" /> Danh sách
+            </button>
+          </div>
+          <button onClick={() => setShowCreate(true)}
+            className="h-9 px-3 sm:px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
+            <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Tạo dự án</span>
+          </button>
+        </div>
       </div>
 
       {/* Search + Status */}
@@ -203,7 +225,7 @@ export default function Projects() {
         </div>
       )}
 
-      {/* Project list */}
+      {/* Project views */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24">
@@ -215,15 +237,58 @@ export default function Projects() {
         <div className="text-center py-16">
           <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
           <p className="text-sm text-gray-400">{hasActiveFilters ? 'Không có dự án phù hợp bộ lọc' : 'Chưa có dự án nào'}</p>
-          {hasActiveFilters && (
-            <button onClick={() => { setFilterTime('all'); setDateFrom(''); setDateTo(''); setFilterCompany('all'); setFilterCustomer('all'); setFilterPerson('all'); }}
-              className="mt-2 text-xs text-blue-600 hover:text-blue-700 cursor-pointer">Xóa bộ lọc</button>
-          )}
-          <button onClick={() => setShowCreate(true)} className="mt-3 block mx-auto text-sm text-blue-600 hover:text-blue-700 font-medium cursor-pointer">
-            + Tạo dự án
-          </button>
+          <button onClick={() => setShowCreate(true)} className="mt-3 text-sm text-blue-600 font-medium cursor-pointer">+ Tạo dự án</button>
+        </div>
+      ) : viewMode === 'kanban' ? (
+        /* ═══ KANBAN VIEW: cột = quy trình, thẻ = dự án ═══ */
+        <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: '400px' }}>
+          {KANBAN_STAGES.map(stage => {
+            const stageProjects = filtered.filter(p => p.status === stage.status);
+            return (
+              <div key={stage.slug} className="shrink-0 w-64 sm:w-72 flex flex-col">
+                {/* Column header */}
+                <div className="rounded-t-xl p-3 border border-b-0 flex items-center gap-2" style={{ backgroundColor: stage.color + '15', borderColor: stage.color + '30' }}>
+                  <div className="w-2.5 h-8 rounded-full" style={{ backgroundColor: stage.color }} />
+                  <div className="flex-1 min-w-0">
+                    <Link to={stage.path} className="text-sm font-bold text-gray-900 hover:text-blue-600">{stage.label}</Link>
+                    <p className="text-[10px] text-gray-500">{stageProjects.length} dự án</p>
+                  </div>
+                  <span className="text-lg font-bold" style={{ color: stage.color }}>{stageProjects.length}</span>
+                </div>
+
+                {/* Cards */}
+                <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto max-h-[65vh]" style={{ borderColor: stage.color + '30' }}>
+                  {stageProjects.length > 0 ? stageProjects.map(p => (
+                    <div key={p.id} onClick={() => navigate(stage.path)}
+                      className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md hover:border-blue-300 cursor-pointer transition-all group">
+                      {/* Project name — BIG */}
+                      <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-tight mb-1.5 group-hover:text-blue-600">{p.name}</h3>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className="text-xs font-bold text-blue-600">{p.code}</span>
+                        {p.priority && <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[p.priority]}`}>{PRIORITY_LABELS[p.priority]}</span>}
+                      </div>
+                      {p.customers?.full_name && <p className="text-xs text-gray-600 mb-1">👤 {p.customers.full_name}</p>}
+                      {p.company && <p className="text-[10px] text-indigo-600 font-medium mb-1">🏢 {p.company.short_name || p.company.name}</p>}
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                        {p.estimated_value ? <span className="text-xs font-bold text-emerald-600">{formatVND(p.estimated_value)}</span> : <span />}
+                        {p.sales_person && (
+                          <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                            style={{ backgroundColor: avatarColor(p.sales_person.full_name) }} title={p.sales_person.full_name}>
+                            {getInitials(p.sales_person.full_name)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="flex items-center justify-center h-20 text-xs text-gray-400">Trống</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : (
+        /* ═══ LIST VIEW ═══ */
         <div className="grid gap-3">
           {filtered.map((p, i) => (
             <Link to={`/projects/${p.id}`} key={p.id}
@@ -247,7 +312,7 @@ export default function Projects() {
                       </span>
                     )}
                   </div>
-                  <h3 className="text-sm font-semibold text-gray-900 mb-1">{p.name}</h3>
+                  <h3 className="text-base font-bold text-gray-900 mb-1">{p.name}</h3>
                   <div className="flex items-center gap-4 text-xs text-gray-500 flex-wrap">
                     {p.company && <span className="flex items-center gap-1 text-indigo-600 font-medium">🏢 {p.company.short_name || p.company.name}</span>}
                     {p.customers?.full_name && <span>👤 {p.customers.full_name}</span>}
