@@ -391,6 +391,18 @@ r.put('/:id/stage', async (req, res) => {
       notes: notes || null,
       attachments: attachments || [],
       transitioned_by: req.user.userId,
+    }).catch(() => {}); // ignore if table doesn't exist
+
+    // Auto-update customer status based on stage mapping
+    if (data.customer_id) {
+      try {
+        const { data: mapping } = await supabase.from('stage_customer_status_map')
+          .select('customer_status_id').eq('stage_id', stage.id).single();
+        if (mapping?.customer_status_id) {
+          await supabase.from('customers').update({ status_id: mapping.customer_status_id }).eq('id', data.customer_id);
+        }
+      } catch (_) { /* table may not exist */ }
+    }
     });
 
     // Get project with stage person assignments
