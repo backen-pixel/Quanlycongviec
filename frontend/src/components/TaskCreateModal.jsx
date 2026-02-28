@@ -3,9 +3,14 @@ import api from '../lib/api';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
 
+const STAGE_NAMES = { consulting:'Tư vấn', design:'Thiết kế', quotation:'Báo giá', contract:'Hợp đồng', production:'Sản xuất', shipping:'Vận chuyển', installation:'Lắp đặt', 'customer-care':'Chăm sóc KH' };
+
 export default function TaskCreateModal({ open, onClose, onCreated, projectId, stageId }) {
-  const [form, setForm] = useState({ title: '', description: '', priority: 'medium', assignee_id: '', due_date: '', estimated_hours: '' });
+  const [form, setForm] = useState({ title: '', description: '', priority: 'medium', assignee_id: '', due_date: '', estimated_hours: '', workflow_line_id: '' });
   const [users, setUsers] = useState([]);
+  const [stages, setStages] = useState([]);
+  const [workflowLines, setWorkflowLines] = useState([]);
+  const [selectedStageId, setSelectedStageId] = useState(stageId || '');
   const [checklists, setChecklists] = useState([]);
   const [newCheck, setNewCheck] = useState('');
   const [files, setFiles] = useState([]);
@@ -14,11 +19,19 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
   useEffect(() => {
     if (open) {
       api.get('/users').then(r => setUsers(r.data.users || []));
-      setForm({ title: '', description: '', priority: 'medium', assignee_id: '', due_date: '', estimated_hours: '' });
+      api.get('/users/stages').then(r => setStages(r.data.stages || [])).catch(() => {});
+      setForm({ title: '', description: '', priority: 'medium', assignee_id: '', due_date: '', estimated_hours: '', workflow_line_id: '' });
+      setSelectedStageId(stageId || '');
       setChecklists([]);
       setFiles([]);
+      setWorkflowLines([]);
+
+      // Load workflow lines if project
+      if (projectId) {
+        api.get(`/projects/${projectId}/workflow-lines`).then(r => setWorkflowLines(r.data.lines || [])).catch(() => {});
+      }
     }
-  }, [open]);
+  }, [open, projectId, stageId]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -28,6 +41,13 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
     setNewCheck('');
   };
 
+  // Get stage slug for selected stageId
+  const selectedStage = stages.find(s => s.id === selectedStageId);
+  const selectedStageSlug = selectedStage?.slug || '';
+
+  // Filter workflow lines for the selected stage
+  const stageLines = workflowLines.filter(l => l.stage_slug === selectedStageSlug);
+
   const submit = async (e) => {
     e.preventDefault();
     if (!form.title.trim()) return;
@@ -36,7 +56,8 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
       await api.post('/tasks', {
         ...form,
         project_id: projectId,
-        stage_id: stageId || null,
+        stage_id: selectedStageId || stageId || null,
+        workflow_line_id: form.workflow_line_id || null,
         assignee_id: form.assignee_id || null,
         due_date: form.due_date || null,
         estimated_hours: form.estimated_hours ? +form.estimated_hours : null,
@@ -59,6 +80,32 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
         <Field label="Mô tả">
           <textarea value={form.description} onChange={e => set('description', e.target.value)} className="input min-h-[80px]" placeholder="Mô tả chi tiết..." />
         </Field>
+
+        {/* Stage + Workflow Line selectors */}
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Giai đoạn (quy trình)">
+            <select value={selectedStageId} onChange={e => { setSelectedStageId(e.target.value); set('workflow_line_id', ''); }}
+              className="input">
+              <option value="">— Chọn giai đoạn —</option>
+              {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </Field>
+          {stageLines.length > 0 && (
+            <Field label="Bộ phận (workflow line)">
+              <select value={form.workflow_line_id} onChange={e => {
+                set('workflow_line_id', e.target.value);
+                // Auto-set assignee from line
+                const line = stageLines.find(l => l.id === e.target.value);
+                if (line?.assignee_id && !form.assignee_id) set('assignee_id', line.assignee_id);
+              }} className="input">
+                <option value="">— Tất cả —</option>
+                {stageLines.map(l => (
+                  <option key={l.id} value={l.id}>{l.label}{l.assignee ? ` (${l.assignee.full_name})` : ''}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 gap-4">
           <Field label="Người thực hiện">
