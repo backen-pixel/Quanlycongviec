@@ -14,6 +14,7 @@ import CustomerDetail from './pages/CustomerDetail';
 import ProductsPage from './pages/ProductsPage';
 import TemplatesPage from './pages/TemplatesPage';
 import PersonalTasks from './pages/PersonalTasks';
+import CompaniesPage from './pages/CompaniesPage';
 import { Settings } from 'lucide-react';
 
 function ProtectedLayout() {
@@ -66,6 +67,7 @@ export default function App() {
             <Route path="/customers/:id" element={<CustomerDetail />} />
             <Route path="/products" element={<ProductsPage />} />
             <Route path="/templates" element={<TemplatesPage />} />
+            <Route path="/companies" element={<CompaniesPage />} />
             <Route path="/personal-tasks" element={<PersonalTasks />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
