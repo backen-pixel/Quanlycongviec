@@ -333,12 +333,15 @@ export default function StageView() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                         <span className="text-[10px] font-bold text-gray-400">#{taskIdx + 1}</span>
-                        {proj && <Link to={`/projects/${proj.id}`} className="text-[10px] text-blue-600 font-medium hover:underline">{proj.code}</Link>}
+                        {proj && <Link to={`/projects/${proj.id}`} className="text-[10px] text-blue-600 font-medium hover:underline">{proj.code} — {proj.name}</Link>}
                         <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
                       </div>
                       <h3 className={`text-sm font-semibold leading-tight ${isTaskDone ? 'text-emerald-700 line-through' : 'text-gray-900'}`}>
                         {task.title}
                       </h3>
+                      {proj?.customers?.full_name && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">👤 KH: {proj.customers.full_name}</p>
+                      )}
                       {task.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>}
                     </div>
 

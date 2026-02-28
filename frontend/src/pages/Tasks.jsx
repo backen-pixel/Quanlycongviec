@@ -1,12 +1,101 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import TaskDetailModal from '../components/TaskDetailModal';
 import TaskCreateModal from '../components/TaskCreateModal';
-import { Plus, Clock, List, Columns, Search, CheckSquare } from 'lucide-react';
+import { Plus, Clock, List, Columns, Search, CheckSquare, GripVertical } from 'lucide-react';
 import {
   TASK_STATUS, TASK_COLORS, PRIORITY_COLORS, PRIORITY_LABELS,
   formatDate, getInitials, avatarColor
 } from '../lib/utils';
+import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// ═══ Sortable Task Card ═══
+function SortableTaskCard({ task, onClick }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <TaskCard task={task} onClick={onClick} dragListeners={listeners} />
+    </div>
+  );
+}
+
+// ═══ Task Card — with project name, stage, assignee ═══
+function TaskCard({ task: t, onClick, dragListeners }) {
+  return (
+    <div onClick={() => onClick(t.id)}
+      className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md hover:border-gray-300 transition-all cursor-pointer group">
+      {/* Top row: drag handle + project code + stage */}
+      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+        {dragListeners && (
+          <span {...dragListeners} className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 -ml-1">
+            <GripVertical className="h-3.5 w-3.5" />
+          </span>
+        )}
+        {t.projects && <span className="text-[10px] font-bold text-blue-600">{t.projects.code}</span>}
+        {t.stage && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full text-white font-medium" style={{ backgroundColor: t.stage.color }}>
+            {t.stage.name}
+          </span>
+        )}
+        {t.priority && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${PRIORITY_COLORS[t.priority]}`}>{PRIORITY_LABELS[t.priority]}</span>}
+      </div>
+
+      {/* Title */}
+      <h4 className="text-sm font-medium text-gray-800 mb-1">{t.title}</h4>
+
+      {/* Project name */}
+      {t.projects?.name && (
+        <p className="text-[10px] text-gray-400 mb-1.5 truncate">📁 {t.projects.name}</p>
+      )}
+
+      {/* Bottom: due date + assignee */}
+      <div className="flex items-center justify-between">
+        {t.due_date ? (
+          <span className={`text-[11px] flex items-center gap-1 ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+            <Clock className="h-3 w-3" />{formatDate(t.due_date)}
+          </span>
+        ) : <span />}
+        {t.assignee && (
+          <div className="flex items-center gap-1.5">
+            <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
+              style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>
+              {getInitials(t.assignee.full_name)}
+            </div>
+            <span className="text-[10px] text-gray-500 hidden sm:inline">{t.assignee.full_name}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══ Droppable Column ═══
+function DroppableColumn({ status, label, tasks, onTaskClick, onAdd }) {
+  const taskIds = tasks.map(t => t.id);
+  return (
+    <div className="shrink-0 w-80">
+      <div className="flex items-center gap-2 mb-3 px-1">
+        <div className={`w-2.5 h-2.5 rounded-full ${TASK_COLORS[status]}`} />
+        <h3 className="text-sm font-semibold text-gray-700">{label}</h3>
+        <span className="text-[11px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">{tasks.length}</span>
+      </div>
+      <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+        <div className="space-y-2 min-h-[200px] p-2 rounded-xl bg-gray-100/60" data-status={status}>
+          {tasks.map(t => (
+            <SortableTaskCard key={t.id} task={t} onClick={onTaskClick} />
+          ))}
+          <button onClick={onAdd}
+            className="w-full flex items-center justify-center gap-2 p-2.5 rounded-lg border-2 border-dashed border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-500 text-sm transition-colors cursor-pointer">
+            <Plus className="h-4 w-4" /> Thêm
+          </button>
+        </div>
+      </SortableContext>
+    </div>
+  );
+}
 
 export default function Tasks() {
   const [columns, setColumns] = useState({});
@@ -19,6 +108,9 @@ export default function Tasks() {
   const [search, setSearch] = useState('');
   const [projects, setProjects] = useState([]);
   const [filterProject, setFilterProject] = useState('');
+  const [activeTask, setActiveTask] = useState(null);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const load = () => {
     setLoading(true);
@@ -30,9 +122,7 @@ export default function Tasks() {
       .then(r => {
         setColumns(r.data.columns || {});
         setTotal(r.data.total || 0);
-        // Flatten for list view
-        const flat = Object.values(r.data.columns || {}).flat();
-        setAllTasks(flat);
+        setAllTasks(Object.values(r.data.columns || {}).flat());
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -45,11 +135,58 @@ export default function Tasks() {
 
   useEffect(load, [filterProject]);
 
-  const moveTask = async (taskId, newStatus) => {
+  // DnD handlers
+  const findColumn = (taskId) => {
+    for (const [status, tasks] of Object.entries(columns)) {
+      if (tasks.find(t => t.id === taskId)) return status;
+    }
+    return null;
+  };
+
+  const handleDragStart = (event) => {
+    const task = allTasks.find(t => t.id === event.active.id);
+    setActiveTask(task || null);
+  };
+
+  const handleDragOver = (event) => {
+    const { active, over } = event;
+    if (!over) return;
+
+    const activeStatus = findColumn(active.id);
+    // Check if over a column directly or a task in a column
+    let overStatus = findColumn(over.id);
+    if (!overStatus) {
+      // over.id might be a status key (column container)
+      overStatus = over.id;
+    }
+
+    if (activeStatus && overStatus && activeStatus !== overStatus && columns[overStatus]) {
+      setColumns(prev => {
+        const updated = { ...prev };
+        const task = updated[activeStatus].find(t => t.id === active.id);
+        if (!task) return prev;
+        updated[activeStatus] = updated[activeStatus].filter(t => t.id !== active.id);
+        updated[overStatus] = [...updated[overStatus], { ...task, status: overStatus }];
+        return updated;
+      });
+    }
+  };
+
+  const handleDragEnd = async (event) => {
+    const { active } = event;
+    setActiveTask(null);
+    if (!active) return;
+
+    const newStatus = findColumn(active.id);
+    const task = allTasks.find(t => t.id === active.id);
+    if (!task || !newStatus || task.status === newStatus) return;
+
     try {
-      await api.patch(`/tasks/${taskId}/status`, { status: newStatus });
+      await api.patch(`/tasks/${active.id}/status`, { status: newStatus });
       load();
-    } catch { }
+    } catch {
+      load(); // revert on error
+    }
   };
 
   if (loading) {
@@ -101,67 +238,31 @@ export default function Tasks() {
         </select>
       </div>
 
-      {/* Kanban view */}
+      {/* Kanban view with DnD */}
       {view === 'kanban' ? (
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {Object.entries(TASK_STATUS).map(([key, label]) => {
-            const tasks = columns[key] || [];
-            return (
-              <div key={key} className="shrink-0 w-72">
-                <div className="flex items-center gap-2 mb-3 px-1">
-                  <div className={`w-2.5 h-2.5 rounded-full ${TASK_COLORS[key]}`} />
-                  <h3 className="text-sm font-semibold text-gray-700">{label}</h3>
-                  <span className="text-[11px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">{tasks.length}</span>
-                </div>
-                <div className="space-y-2 min-h-[200px] p-2 rounded-xl bg-gray-100/60">
-                  {tasks.map(t => (
-                    <div key={t.id} onClick={() => setSelectedTask(t.id)}
-                      className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md hover:border-gray-300 transition-all cursor-pointer group">
-                      <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                        {t.projects && <span className="text-[10px] text-gray-400 font-medium">{t.projects.code}</span>}
-                        {t.priority && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${PRIORITY_COLORS[t.priority]}`}>{PRIORITY_LABELS[t.priority]}</span>}
-                      </div>
-                      <h4 className="text-sm font-medium text-gray-800 mb-2">{t.title}</h4>
-                      <div className="flex items-center justify-between">
-                        {t.due_date ? (
-                          <span className={`text-[11px] flex items-center gap-1 ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
-                            <Clock className="h-3 w-3" />{formatDate(t.due_date)}
-                          </span>
-                        ) : <span />}
-                        {t.assignee && (
-                          <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
-                            style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>
-                            {getInitials(t.assignee.full_name)}
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-wrap">
-                        {Object.keys(TASK_STATUS).filter(s => s !== t.status).map(s => (
-                          <button key={s} onClick={(e) => { e.stopPropagation(); moveTask(t.id, s); }}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 hover:bg-blue-100 hover:text-blue-700 text-gray-500 cursor-pointer">
-                            → {TASK_STATUS[s]}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  <button onClick={() => setShowCreate(true)}
-                    className="w-full flex items-center justify-center gap-2 p-2.5 rounded-lg border-2 border-dashed border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-500 text-sm transition-colors cursor-pointer">
-                    <Plus className="h-4 w-4" /> Thêm
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCorners}
+          onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+          <div className="flex gap-4 overflow-x-auto pb-4">
+            {Object.entries(TASK_STATUS).map(([key, label]) => (
+              <DroppableColumn key={key} status={key} label={label}
+                tasks={columns[key] || []}
+                onTaskClick={setSelectedTask}
+                onAdd={() => setShowCreate(true)} />
+            ))}
+          </div>
+          <DragOverlay>
+            {activeTask && <TaskCard task={activeTask} onClick={() => {}} />}
+          </DragOverlay>
+        </DndContext>
       ) : (
-        /* List view */
+        /* List view — with project name, stage, assignee */
         <div className="bg-white rounded-xl border overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Task</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Dự án</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Giai đoạn</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Trạng thái</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Người thực hiện</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Ưu tiên</th>
@@ -171,15 +272,35 @@ export default function Tasks() {
             <tbody className="divide-y divide-gray-100">
               {allTasks.map(t => (
                 <tr key={t.id} onClick={() => setSelectedTask(t.id)} className="hover:bg-gray-50 cursor-pointer">
-                  <td className="px-4 py-3 font-medium text-gray-900">{t.title}</td>
-                  <td className="px-4 py-3 text-xs text-blue-600 font-medium">{t.projects?.code}</td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-gray-900">{t.title}</p>
+                    {t.projects?.name && <p className="text-[10px] text-gray-400 mt-0.5">{t.projects.name}</p>}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-blue-600 font-bold">{t.projects?.code || '—'}</td>
+                  <td className="px-4 py-3">
+                    {t.stage ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full text-white font-medium" style={{ backgroundColor: t.stage.color }}>
+                        {t.stage.name}
+                      </span>
+                    ) : <span className="text-xs text-gray-400">—</span>}
+                  </td>
                   <td className="px-4 py-3">
                     <span className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${TASK_COLORS[t.status]}`} />
                       <span className="text-xs">{TASK_STATUS[t.status]}</span>
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-600">{t.assignee?.full_name || '—'}</td>
+                  <td className="px-4 py-3">
+                    {t.assignee ? (
+                      <div className="flex items-center gap-1.5">
+                        <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                          style={{ backgroundColor: avatarColor(t.assignee.full_name) }}>
+                          {getInitials(t.assignee.full_name)}
+                        </div>
+                        <span className="text-xs text-gray-600">{t.assignee.full_name}</span>
+                      </div>
+                    ) : <span className="text-xs text-gray-400">—</span>}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority]}`}>{PRIORITY_LABELS[t.priority]}</span>
                   </td>

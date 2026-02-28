@@ -141,10 +141,20 @@ export default function DepartmentsPage() {
                     )}
                   </button>
                   {isAdmin && (
-                    <button onClick={() => { setEditDept(deptDetail.department); setShowCreate(true); }}
-                      className="h-8 px-3 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-200 cursor-pointer flex items-center gap-1">
-                      <Edit className="h-3 w-3" /> Sửa
-                    </button>
+                    <>
+                      <button onClick={() => { setEditDept(deptDetail.department); setShowCreate(true); }}
+                        className="h-8 px-3 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-200 cursor-pointer flex items-center gap-1">
+                        <Edit className="h-3 w-3" /> Sửa
+                      </button>
+                      <button onClick={async () => {
+                        if (!confirm(`Vô hiệu hóa phòng ban "${deptDetail.department.name}"?`)) return;
+                        await api.delete(`/departments/${selectedDept}`);
+                        setSelectedDept(null); setDeptDetail(null); load();
+                      }}
+                        className="h-8 px-3 bg-red-50 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 cursor-pointer flex items-center gap-1">
+                        <Trash2 className="h-3 w-3" /> Xóa
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

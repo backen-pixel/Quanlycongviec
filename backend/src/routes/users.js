@@ -80,7 +80,8 @@ r.get('/', async (req, res) => {
     `);
     if (!include_inactive) q = q.eq('is_active', true);
     if (role) q = q.eq('role', role);
-    if (department_id) q = q.eq('department_id', department_id);
+    if (department_id === 'none') q = q.is('department_id', null);
+    else if (department_id) q = q.eq('department_id', department_id);
     if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`);
     const { data, error } = await q.order('full_name');
     if (error) throw error;
