@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, ChevronDown } from 'lucide-react';
 import { getInitials, avatarColor } from '../lib/utils';
 
@@ -7,6 +7,23 @@ import { getInitials, avatarColor } from '../lib/utils';
 export default function UserSelect({ value, onChange, users, placeholder, className, size }) {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 240 });
+
+  useEffect(() => {
+    if (open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const dropH = 240; // max dropdown height
+      const spaceBelow = window.innerHeight - r.bottom - 8;
+      const showAbove = spaceBelow < dropH && r.top > dropH;
+      setPos({
+        top: showAbove ? r.top - dropH - 4 : r.bottom + 4,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - 252)),
+        width: Math.max(240, r.width),
+      });
+    }
+  }, [open]);
+
   const filtered = useMemo(() => {
     if (!search.trim()) return users;
     const q = search.toLowerCase();
@@ -17,7 +34,7 @@ export default function UserSelect({ value, onChange, users, placeholder, classN
 
   return (
     <div className={`relative ${className || ''}`}>
-      <button type="button" onClick={() => setOpen(!open)}
+      <button ref={btnRef} type="button" onClick={() => setOpen(!open)}
         className={`w-full ${sm ? 'h-7' : 'h-8'} px-2 text-xs border rounded-md bg-white flex items-center gap-1.5 text-left cursor-pointer hover:border-blue-300`}>
         {selected ? (
           <>
@@ -30,9 +47,10 @@ export default function UserSelect({ value, onChange, users, placeholder, classN
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setSearch(''); }} />
-          <div className="absolute left-0 top-full mt-1 w-60 bg-white rounded-lg shadow-lg border z-50 max-h-56 overflow-hidden flex flex-col">
-            <div className="p-1.5 border-b">
+          <div className="fixed inset-0 z-[9998]" onClick={() => { setOpen(false); setSearch(''); }} />
+          <div className="fixed z-[9999] bg-white rounded-lg shadow-xl border max-h-60 overflow-hidden flex flex-col"
+            style={{ top: pos.top, left: pos.left, width: pos.width }}>
+            <div className="p-1.5 border-b shrink-0">
               <div className="flex items-center gap-1.5 px-2 bg-gray-50 rounded-md">
                 <Search className="h-3 w-3 text-gray-400" />
                 <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm nhân viên..."

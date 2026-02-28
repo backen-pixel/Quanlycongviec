@@ -231,7 +231,7 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
             const lines = linesByStage[stage.slug] || [];
             const obs = observers[stage.slug] || [];
             return (
-              <div key={stage.slug} className="bg-white rounded-lg border overflow-hidden">
+              <div key={stage.slug} className="bg-white rounded-lg border">
                 <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ backgroundColor: stage.color + '10' }}>
                   <span className="text-sm">{stage.icon}</span>
                   <span className="text-xs sm:text-sm font-semibold" style={{ color: stage.color }}>{stage.label}</span>
