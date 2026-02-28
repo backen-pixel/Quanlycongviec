@@ -25,7 +25,7 @@ export default function WorkflowSettings() {
     setLoading(true);
     try {
       const [sr, csr, mr] = await Promise.all([
-        api.get('/stages').catch(() => ({ data: { stages: [] } })),
+        api.get('/stages').catch(() => api.get('/users/stages').catch(() => ({ data: { stages: [] } }))),
         api.get('/stages/customer-statuses').catch(() => ({ data: { statuses: [] } })),
         api.get('/stages/status-mapping').catch(() => ({ data: { mappings: [] } })),
       ]);

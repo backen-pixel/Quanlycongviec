@@ -38,31 +38,26 @@ function filterByTime(items, tf, dFrom, dTo) {
 
 // Fallback stages (used if API hasn't loaded yet)
 const DEFAULT_KANBAN_STAGES = [
-  { slug: 'consulting', status: 'consulting', label: 'Tư vấn', color: '#8B5CF6', path: '/stages/consulting' },
-  { slug: 'design', status: 'designing', label: 'Thiết kế', color: '#EC4899', path: '/stages/design' },
-  { slug: 'quotation', status: 'quoting', label: 'Báo giá', color: '#F59E0B', path: '/stages/quotation' },
-  { slug: 'contract', status: 'contract_signed', label: 'Hợp đồng', color: '#10B981', path: '/stages/contract' },
-  { slug: 'production', status: 'producing', label: 'Sản xuất', color: '#F97316', path: '/stages/production' },
-  { slug: 'shipping', status: 'shipping', label: 'Vận chuyển', color: '#06B6D4', path: '/stages/shipping' },
-  { slug: 'installation', status: 'installing', label: 'Lắp đặt', color: '#3B82F6', path: '/stages/installation' },
-  { slug: 'customer-care', status: 'warranty', label: 'CSKH', color: '#EF4444', path: '/stages/customer-care' },
+  { slug: 'consulting', label: 'Tư vấn', color: '#8B5CF6', path: '/stages/consulting' },
+  { slug: 'design', label: 'Thiết kế', color: '#EC4899', path: '/stages/design' },
+  { slug: 'quotation', label: 'Báo giá', color: '#F59E0B', path: '/stages/quotation' },
+  { slug: 'contract', label: 'Hợp đồng', color: '#10B981', path: '/stages/contract' },
+  { slug: 'production', label: 'Sản xuất', color: '#F97316', path: '/stages/production' },
+  { slug: 'shipping', label: 'Vận chuyển', color: '#06B6D4', path: '/stages/shipping' },
+  { slug: 'installation', label: 'Lắp đặt', color: '#3B82F6', path: '/stages/installation' },
+  { slug: 'customer-care', label: 'CSKH', color: '#EF4444', path: '/stages/customer-care' },
 ];
 
-// Map status tab value → stage slug
-const STATUS_TO_SLUG = {
-  consulting: 'consulting', designing: 'design', quoting: 'quotation',
-  contract_signed: 'contract', producing: 'production', shipping: 'shipping',
-  installing: 'installation', completed: 'customer-care',
-};
-// Reverse: slug → project status value
-const STATUS_TO_SLUG_REVERSE = {};
-Object.entries(STATUS_TO_SLUG).forEach(([status, slug]) => { STATUS_TO_SLUG_REVERSE[slug] = status; });
+// Helper: get current_stage slug from project
+function projStageSlug(p) {
+  return p.current_stage?.slug || '';
+}
 
 export default function Projects() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterStage, setFilterStage] = useState('all'); // 'all' | stage slug
   const [viewMode, setViewMode] = useState('kanban');
   const [stageTasks, setStageTasks] = useState([]); // tasks for selected stage tab // 'list' | 'kanban'
   const [filterTime, setFilterTime] = useState('all');
@@ -78,16 +73,16 @@ export default function Projects() {
 
   const load = () => {
     setLoading(true);
-    api.get('/projects', { params: { status: filterStatus, search: search || undefined, limit: 200 } })
+    api.get('/projects', { params: { search: search || undefined, limit: 500 } })
       .then(r => setProjects(r.data.projects || []))
       .catch(() => setProjects([]))
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, [filterStatus]);
+  useEffect(load, []);
 
   // Load stages from API (for dynamic workflow)
-  const [stageMap, setStageMap] = useState({}); // { slug: { id, name, color, slug, order_index } }
+  const [stageMap, setStageMap] = useState({});
   const [KANBAN_STAGES, setKanbanStages] = useState(DEFAULT_KANBAN_STAGES);
   useEffect(() => {
     api.get('/users/stages').then(r => {
@@ -98,7 +93,6 @@ export default function Projects() {
       if (stages.length > 0) {
         setKanbanStages(stages.map(s => ({
           slug: s.slug,
-          status: STATUS_TO_SLUG_REVERSE[s.slug] || s.slug,
           label: s.name,
           color: s.color || '#3B82F6',
           path: `/stages/${s.slug}`,
@@ -108,15 +102,15 @@ export default function Projects() {
     }).catch(() => {});
   }, []);
 
+  // Load tasks for specific stage tab
   useEffect(() => {
-    if (filterStatus === 'all') { setStageTasks([]); return; }
-    const slug = STATUS_TO_SLUG[filterStatus];
-    const stage = stageMap[slug];
-    if (!slug || !stage?.id) { setStageTasks([]); return; }
+    if (filterStage === 'all') { setStageTasks([]); return; }
+    const stage = stageMap[filterStage];
+    if (!stage?.id) { setStageTasks([]); return; }
     api.get('/tasks', { params: { stage_id: stage.id, limit: 500 } })
       .then(r => setStageTasks(r.data.tasks || []))
       .catch(() => setStageTasks([]));
-  }, [filterStatus, stageMap]);
+  }, [filterStage, stageMap]);
   useEffect(() => {
     // Load companies — try full list first (admin), fallback to my companies
     api.get('/companies').then(r => setCompanies(r.data.companies || []))
@@ -133,13 +127,17 @@ export default function Projects() {
   const STAGE_TABS = useMemo(() => {
     const tabs = [{ id: 'all', label: 'Tất cả' }];
     KANBAN_STAGES.forEach(s => {
-      tabs.push({ id: s.status, label: s.label, color: s.color });
+      tabs.push({ id: s.slug, label: s.label, color: s.color });
     });
     return tabs;
   }, [KANBAN_STAGES]);
 
   // Apply client-side filters
   let filtered = filterByTime(projects, filterTime, dateFrom, dateTo);
+  // Filter by stage slug (using current_stage.slug)
+  if (filterStage !== 'all') {
+    filtered = filtered.filter(p => projStageSlug(p) === filterStage);
+  }
   if (filterCompany !== 'all') filtered = filtered.filter(p => p.company_id === filterCompany);
   if (filterCustomer !== 'all') filtered = filtered.filter(p => p.customer_id === filterCustomer);
   if (filterPerson !== 'all') filtered = filtered.filter(p =>
@@ -213,11 +211,11 @@ export default function Projects() {
       {/* Stage tabs */}
       <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5 overflow-x-auto no-scrollbar">
         {STAGE_TABS.map(s => {
-          const count = s.id === 'all' ? filtered.length : filtered.filter(p => p.status === s.id).length;
+          const count = s.id === 'all' ? filtered.length : filtered.filter(p => projStageSlug(p) === s.id).length;
           return (
             <button key={s.id} onClick={() => setFilterStatus(s.id)}
               className={`h-8 px-2.5 sm:px-3 rounded-md text-[11px] sm:text-xs font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
-                filterStatus === s.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                filterStage === s.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}>
               {s.color && <span className="w-1.5 h-1.5 rounded-full hidden sm:inline-block" style={{ backgroundColor: s.color }} />}
               {s.label}
@@ -294,12 +292,12 @@ export default function Projects() {
           <p className="text-sm text-gray-400">{hasActiveFilters ? 'Không có dự án phù hợp' : 'Chưa có dự án nào'}</p>
           <button onClick={() => setShowCreate(true)} className="mt-3 text-sm text-blue-600 font-medium cursor-pointer">+ Tạo dự án</button>
         </div>
-      ) : filterStatus === 'all' ? (
+      ) : filterStage === 'all' ? (
         /* ═══ TAB TẤT CẢ: Kanban overview / List ═══ */
         viewMode === 'kanban' ? (
           <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: '400px' }}>
             {KANBAN_STAGES.map(stage => {
-              const stageProjects = filtered.filter(p => p.status === stage.status);
+              const stageProjects = filtered.filter(p => projStageSlug(p) === stage.slug);
               return (
                 <div key={stage.slug} className="shrink-0 w-60 sm:w-72 flex flex-col">
                   <div className="rounded-t-xl p-2.5 sm:p-3 border border-b-0 flex items-center gap-2" style={{ backgroundColor: stage.color + '15', borderColor: stage.color + '30' }}>
@@ -367,8 +365,8 @@ export default function Projects() {
       ) : (
         /* ═══ TAB QUY TRÌNH CỤ THỂ: cột = nhiệm vụ (gộp cùng tên), thẻ = DA ═══ */
         (() => {
-          const currentStage = KANBAN_STAGES.find(s => s.status === filterStatus);
-          const stageProjects = filtered.filter(p => p.status === filterStatus);
+          const currentStage = KANBAN_STAGES.find(s => s.slug === filterStage);
+          const stageProjects = filtered.filter(p => projStageSlug(p) === filterStage);
           const projMap = {};
           stageProjects.forEach(p => { projMap[p.id] = p; });
 
@@ -412,7 +410,7 @@ export default function Projects() {
               <div className="flex items-center gap-3">
                 <div className="w-3 h-10 rounded-full" style={{ backgroundColor: currentStage?.color || '#3b82f6' }} />
                 <div>
-                  <h2 className="text-lg font-bold text-gray-900">{currentStage?.label || filterStatus}</h2>
+                  <h2 className="text-lg font-bold text-gray-900">{currentStage?.label || filterStage}</h2>
                   <p className="text-xs text-gray-500">{stageProjects.length} dự án · {stageTasks.length} nhiệm vụ · {columns.filter(c => c.isTemplate).length} NV mẫu</p>
                 </div>
                 <Link to={currentStage?.path || '#'} className="ml-auto h-8 px-3 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-blue-100 cursor-pointer">
