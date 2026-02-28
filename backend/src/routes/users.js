@@ -72,18 +72,47 @@ r.get('/departments', async (req, res) => {
 r.get('/', async (req, res) => {
   try {
     const { role, department_id, search, include_inactive } = req.query;
-    let q = supabase.from('users').select(`
-      id,email,full_name,phone,avatar,role,position,department_id,
-      date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,
-      is_active,last_login_at,created_at,
-      department:departments(id,name,color)
-    `);
+
+    // Try full select (needs migration 06 columns), fallback to basic
+    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments(id,name,color)`;
+    const basicCols = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at,department:departments(id,name,color)`;
+    const basicColsNoDept = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at`;
+
+    let data = null, error = null;
+
+    // Attempt 1: full columns + department join
+    let q = supabase.from('users').select(fullCols);
     if (!include_inactive) q = q.eq('is_active', true);
     if (role) q = q.eq('role', role);
     if (department_id === 'none') q = q.is('department_id', null);
     else if (department_id) q = q.eq('department_id', department_id);
     if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`);
-    const { data, error } = await q.order('full_name');
+    ({ data, error } = await q.order('full_name'));
+
+    // Attempt 2: basic columns + department join
+    if (error) {
+      console.warn('Users full select failed, trying basic+dept:', error.message);
+      let q2 = supabase.from('users').select(basicCols);
+      if (!include_inactive) q2 = q2.eq('is_active', true);
+      if (role) q2 = q2.eq('role', role);
+      if (department_id === 'none') q2 = q2.is('department_id', null);
+      else if (department_id) q2 = q2.eq('department_id', department_id);
+      if (search) q2 = q2.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`);
+      ({ data, error } = await q2.order('full_name'));
+    }
+
+    // Attempt 3: basic columns without department join
+    if (error) {
+      console.warn('Users basic+dept select failed, trying no-dept:', error.message);
+      let q3 = supabase.from('users').select(basicColsNoDept);
+      if (!include_inactive) q3 = q3.eq('is_active', true);
+      if (role) q3 = q3.eq('role', role);
+      if (department_id === 'none') q3 = q3.is('department_id', null);
+      else if (department_id) q3 = q3.eq('department_id', department_id);
+      if (search) q3 = q3.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`);
+      ({ data, error } = await q3.order('full_name'));
+    }
+
     if (error) throw error;
 
     const all = data || [];
@@ -99,31 +128,44 @@ r.get('/', async (req, res) => {
 // ═══ GET STAFF DETAIL ═══
 r.get('/:id', async (req, res) => {
   try {
-    const { data: user, error } = await supabase.from('users').select(`
+    // Defensive: try full columns, fallback to basic
+    let user = null;
+    const { data: u1, error: e1 } = await supabase.from('users').select(`
       id,email,full_name,phone,avatar,role,position,department_id,
       date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,
       is_active,last_login_at,created_at,
       department:departments(id,name,color)
     `).eq('id', req.params.id).single();
-    if (error) throw error;
+    if (!e1) { user = u1; }
+    else {
+      const { data: u2, error: e2 } = await supabase.from('users').select(`
+        id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at
+      `).eq('id', req.params.id).single();
+      if (e2) throw e2;
+      user = u2;
+    }
 
-    const [assigned, created] = await Promise.all([
-      supabase.from('tasks').select('id,status', { count: 'exact' }).eq('assignee_id', req.params.id),
-      supabase.from('tasks').select('id', { count: 'exact' }).eq('created_by_id', req.params.id),
-    ]);
-    const taskStats = {
-      assigned: assigned.count || 0,
-      done: (assigned.data || []).filter(t => t.status === 'done').length,
-      in_progress: (assigned.data || []).filter(t => t.status === 'in_progress').length,
-      created: created.count || 0,
-    };
+    let taskStats = { assigned: 0, done: 0, in_progress: 0, created: 0 };
+    let recentTasks = [];
+    try {
+      const [assigned, created] = await Promise.all([
+        supabase.from('tasks').select('id,status', { count: 'exact' }).eq('assignee_id', req.params.id),
+        supabase.from('tasks').select('id', { count: 'exact' }).eq('created_by_id', req.params.id),
+      ]);
+      taskStats = {
+        assigned: assigned.count || 0,
+        done: (assigned.data || []).filter(t => t.status === 'done').length,
+        in_progress: (assigned.data || []).filter(t => t.status === 'in_progress').length,
+        created: created.count || 0,
+      };
+      const { data: rt } = await supabase.from('tasks')
+        .select('id,title,status,priority,due_date,projects(id,code,name)')
+        .eq('assignee_id', req.params.id).neq('status', 'done')
+        .order('due_date').limit(10);
+      recentTasks = rt || [];
+    } catch { }
 
-    const { data: recentTasks } = await supabase.from('tasks')
-      .select('id,title,status,priority,due_date,projects(id,code,name)')
-      .eq('assignee_id', req.params.id).neq('status', 'done')
-      .order('due_date').limit(10);
-
-    res.json({ user: { ...user, taskStats, recentTasks: recentTasks || [] } });
+    res.json({ user: { ...user, taskStats, recentTasks } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -137,16 +179,31 @@ r.post('/', async (req, res) => {
     }
     const password = b.password || 'tubep123';
     const hash = await bcrypt.hash(password, 12);
-    const { data, error } = await supabase.from('users').insert({
+
+    // Build insert object — only include fields that exist
+    const insertObj = {
       email: b.email, password: hash, full_name: b.full_name,
       phone: b.phone || null, role: b.role || 'staff',
-      position: b.position || null, department_id: b.department_id || null,
-      date_of_birth: b.date_of_birth || null, hire_date: b.hire_date || null,
-      address: b.address || null, emergency_contact: b.emergency_contact || null,
-      salary: b.salary || null, notes: b.notes || null, skills: b.skills || [],
-    }).select('id,email,full_name,phone,role,position,department_id,is_active,created_at').single();
+      department_id: b.department_id || null,
+    };
+    // Optional fields (need migration 06)
+    ['position','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills'].forEach(f => {
+      if (b[f] !== undefined) insertObj[f] = b[f] || null;
+    });
+
+    const { data, error } = await supabase.from('users').insert(insertObj)
+      .select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
     if (error) {
       if (error.code === '23505') return res.status(400).json({ error: 'Email đã tồn tại' });
+      // If column doesn't exist, retry with basic fields
+      if (error.message?.includes('column')) {
+        const { data: d2, error: e2 } = await supabase.from('users').insert({
+          email: b.email, password: hash, full_name: b.full_name,
+          phone: b.phone || null, role: b.role || 'staff', department_id: b.department_id || null,
+        }).select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
+        if (e2) throw e2;
+        return res.status(201).json({ user: d2 });
+      }
       throw error;
     }
     res.status(201).json({ user: data });
@@ -161,8 +218,20 @@ r.put('/:id', async (req, res) => {
     const fields = ['full_name','phone','role','position','department_id','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills','is_active','avatar'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     if (b.password) update.password = await bcrypt.hash(b.password, 12);
-    const { data, error } = await supabase.from('users').update(update).eq('id', req.params.id)
-      .select('id,email,full_name,phone,role,position,department_id,is_active,created_at').single();
+
+    // Try update, fallback to basic fields if columns don't exist
+    let { data, error } = await supabase.from('users').update(update).eq('id', req.params.id)
+      .select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
+    if (error && error.message?.includes('column')) {
+      const safeUpdate = {};
+      ['full_name','phone','role','department_id','is_active','avatar'].forEach(f => {
+        if (update[f] !== undefined) safeUpdate[f] = update[f];
+      });
+      if (update.password) safeUpdate.password = update.password;
+      safeUpdate.updated_at = update.updated_at;
+      ({ data, error } = await supabase.from('users').update(safeUpdate).eq('id', req.params.id)
+        .select('id,email,full_name,phone,role,department_id,is_active,created_at').single());
+    }
     if (error) throw error;
     res.json({ user: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
