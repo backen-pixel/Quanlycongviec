@@ -49,6 +49,7 @@ r.post('/', async (req, res) => {
       order_index: b.order_index || 0,
       checklist_items: b.checklist_items || [],
       assignee_role: b.assignee_role || null,
+      assignee_id: b.assignee_id || null,
       created_by: req.user.userId,
     }).select('*, stage:workflow_stages(id,name,slug,color)').single();
     if (error) throw error;
@@ -61,7 +62,7 @@ r.put('/:id', async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['title','description','priority','estimated_hours','order_index','checklist_items','assignee_role','stage_id','is_active'];
+    const fields = ['title','description','priority','estimated_hours','order_index','checklist_items','assignee_role','assignee_id','stage_id','is_active'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
 
     const { data, error } = await supabase.from('task_templates').update(update).eq('id', req.params.id)
