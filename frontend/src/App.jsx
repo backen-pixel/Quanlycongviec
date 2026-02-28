@@ -16,6 +16,7 @@ import TemplatesPage from './pages/TemplatesPage';
 import PersonalTasks from './pages/PersonalTasks';
 import CompaniesPage from './pages/CompaniesPage';
 import DepartmentsPage from './pages/DepartmentsPage';
+import WorkflowSettings from './pages/WorkflowSettings';
 import DepartmentChat from './pages/DepartmentChat';
 import { Settings } from 'lucide-react';
 
@@ -73,6 +74,7 @@ export default function App() {
             <Route path="/departments" element={<DepartmentsPage />} />
             <Route path="/departments/:id/chat" element={<DepartmentChat />} />
             <Route path="/personal-tasks" element={<PersonalTasks />} />
+            <Route path="/workflow-settings" element={<WorkflowSettings />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
                 <div className="text-center">

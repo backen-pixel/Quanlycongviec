@@ -2,12 +2,18 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor, ROLE_STAGE_MAP, ROLE_LABELS } from '../lib/utils';
+import api from '../lib/api';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
   Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2, Building, MessageCircle
 } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+
+const ICON_MAP = {
+  MessageSquare, Palette, Calculator, FileText, Hammer, Truck, Wrench, Heart,
+  ClipboardList, Package, Settings, Users, Building, Inbox, FolderKanban, CheckSquare,
+};
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -20,7 +26,8 @@ const nav = [
   { to: '/products', icon: Package, label: 'Sản phẩm' },
 ];
 
-const allWorkflow = [
+// Fallback hardcoded stages (used if API fails)
+const FALLBACK_WORKFLOW = [
   { to: '/stage/consulting', icon: MessageSquare, label: 'Tư vấn', dot: '#8B5CF6', slug: 'consulting' },
   { to: '/stage/design', icon: Palette, label: 'Thiết kế', dot: '#EC4899', slug: 'design' },
   { to: '/stage/quotation', icon: Calculator, label: 'Báo giá', dot: '#F59E0B', slug: 'quotation' },
@@ -36,7 +43,7 @@ const adminTools = [
   { to: '/departments', icon: Building, label: 'Phòng ban' },
   { to: '/users', icon: Users, label: 'Nhân viên' },
   { to: '/templates', icon: ClipboardList, label: 'NV mẫu' },
-  { to: '/settings', icon: Settings, label: 'Cài đặt' },
+  { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
 ];
 
 function SideLink({ to, icon: Icon, label, dot, collapsed }) {
@@ -87,15 +94,33 @@ export default function Sidebar() {
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
   const allowedSlugs = ROLE_STAGE_MAP[user?.role] || [];
 
-  // ALL roles see ALL workflow stages (but interact only with their own)
-  const workflow = useMemo(() => {
-    return allWorkflow;
-  }, [user?.role]);
+  // Load stages from API dynamically
+  const [dbStages, setDbStages] = useState([]);
+  useEffect(() => {
+    api.get('/users/stages').then(r => {
+      const stages = r.data.stages || [];
+      if (stages.length > 0) setDbStages(stages);
+    }).catch(() => {});
+  }, []);
 
-  // Filter tools — only admin/manager see Nhân viên + NV mẫu
+  // Build workflow menu from DB stages (fallback to hardcoded)
+  const workflow = useMemo(() => {
+    if (dbStages.length > 0) {
+      return dbStages.map(s => ({
+        to: `/stage/${s.slug}`,
+        icon: ICON_MAP[s.icon] || FolderKanban,
+        label: s.name,
+        dot: s.color || '#3B82F6',
+        slug: s.slug,
+      }));
+    }
+    return FALLBACK_WORKFLOW;
+  }, [dbStages]);
+
+  // Filter tools — only admin/manager see full tools
   const tools = useMemo(() => {
     if (isAdmin) return adminTools;
-    return adminTools.filter(t => t.to === '/settings');
+    return adminTools.filter(t => t.to === '/workflow-settings');
   }, [user?.role]);
 
   // Filter nav — non-admin don't see "Tất cả CV", "Khách hàng", "Sản phẩm"

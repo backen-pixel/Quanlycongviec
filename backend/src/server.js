@@ -38,6 +38,7 @@ app.use('/api/upload', require('./routes/upload'));
 app.use('/api/templates', require('./routes/templates'));
 app.use('/api/companies', require('./routes/companies'));
 app.use('/api/departments', require('./routes/departments'));
+app.use('/api/stages', require('./routes/stages'));
 
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {

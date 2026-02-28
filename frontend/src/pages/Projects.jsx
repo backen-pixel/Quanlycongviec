@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import ProjectCreateModal from '../components/ProjectCreateModal';
@@ -36,7 +36,8 @@ function filterByTime(items, tf, dFrom, dTo) {
   return items.filter(i => { const d = i.created_at ? new Date(i.created_at) : null; return d && d >= start; });
 }
 
-const KANBAN_STAGES = [
+// Fallback stages (used if API hasn't loaded yet)
+const DEFAULT_KANBAN_STAGES = [
   { slug: 'consulting', status: 'consulting', label: 'Tư vấn', color: '#8B5CF6', path: '/stages/consulting' },
   { slug: 'design', status: 'designing', label: 'Thiết kế', color: '#EC4899', path: '/stages/design' },
   { slug: 'quotation', status: 'quoting', label: 'Báo giá', color: '#F59E0B', path: '/stages/quotation' },
@@ -53,6 +54,9 @@ const STATUS_TO_SLUG = {
   contract_signed: 'contract', producing: 'production', shipping: 'shipping',
   installing: 'installation', completed: 'customer-care',
 };
+// Reverse: slug → project status value
+const STATUS_TO_SLUG_REVERSE = {};
+Object.entries(STATUS_TO_SLUG).forEach(([status, slug]) => { STATUS_TO_SLUG_REVERSE[slug] = status; });
 
 export default function Projects() {
   const navigate = useNavigate();
@@ -82,13 +86,25 @@ export default function Projects() {
 
   useEffect(load, [filterStatus]);
 
-  // Load tasks for specific stage tab (need stage UUID from /users/stages)
-  const [stageMap, setStageMap] = useState({}); // { slug: { id, name, color } }
+  // Load stages from API (for dynamic workflow)
+  const [stageMap, setStageMap] = useState({}); // { slug: { id, name, color, slug, order_index } }
+  const [KANBAN_STAGES, setKanbanStages] = useState(DEFAULT_KANBAN_STAGES);
   useEffect(() => {
     api.get('/users/stages').then(r => {
       const m = {};
-      (r.data.stages || []).forEach(s => { m[s.slug] = s; });
+      const stages = (r.data.stages || []).sort((a, b) => a.order_index - b.order_index);
+      stages.forEach(s => { m[s.slug] = s; });
       setStageMap(m);
+      if (stages.length > 0) {
+        setKanbanStages(stages.map(s => ({
+          slug: s.slug,
+          status: STATUS_TO_SLUG_REVERSE[s.slug] || s.slug,
+          label: s.name,
+          color: s.color || '#3B82F6',
+          path: `/stages/${s.slug}`,
+          id: s.id,
+        })));
+      }
     }).catch(() => {});
   }, []);
 
@@ -114,17 +130,13 @@ export default function Projects() {
     try { await api.delete(`/projects/${id}`); load(); } catch { }
   };
 
-  const STAGE_TABS = [
-    { id: 'all', label: 'Tất cả' },
-    { id: 'consulting', label: 'Tư vấn' },
-    { id: 'designing', label: 'Thiết kế' },
-    { id: 'quoting', label: 'Báo giá' },
-    { id: 'contract_signed', label: 'Hợp đồng' },
-    { id: 'producing', label: 'Sản xuất' },
-    { id: 'shipping', label: 'Vận chuyển' },
-    { id: 'installing', label: 'Lắp đặt' },
-    { id: 'warranty', label: 'CSKH' },
-  ];
+  const STAGE_TABS = useMemo(() => {
+    const tabs = [{ id: 'all', label: 'Tất cả' }];
+    KANBAN_STAGES.forEach(s => {
+      tabs.push({ id: s.status, label: s.label, color: s.color });
+    });
+    return tabs;
+  }, [KANBAN_STAGES]);
 
   // Apply client-side filters
   let filtered = filterByTime(projects, filterTime, dateFrom, dateTo);
@@ -202,13 +214,12 @@ export default function Projects() {
       <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5 overflow-x-auto no-scrollbar">
         {STAGE_TABS.map(s => {
           const count = s.id === 'all' ? filtered.length : filtered.filter(p => p.status === s.id).length;
-          const stageInfo = s.id !== 'all' ? KANBAN_STAGES.find(ks => ks.status === s.id) : null;
           return (
             <button key={s.id} onClick={() => setFilterStatus(s.id)}
               className={`h-8 px-2.5 sm:px-3 rounded-md text-[11px] sm:text-xs font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
                 filterStatus === s.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}>
-              {stageInfo && <span className="w-1.5 h-1.5 rounded-full hidden sm:inline-block" style={{ backgroundColor: stageInfo.color }} />}
+              {s.color && <span className="w-1.5 h-1.5 rounded-full hidden sm:inline-block" style={{ backgroundColor: s.color }} />}
               {s.label}
               {count > 0 && <span className="text-[9px] bg-gray-200 text-gray-600 px-1 rounded-full">{count}</span>}
             </button>
