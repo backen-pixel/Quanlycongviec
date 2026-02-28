@@ -403,7 +403,6 @@ r.put('/:id/stage', async (req, res) => {
         }
       } catch (_) { /* table may not exist */ }
     }
-    });
 
     // Get project with stage person assignments
     const { data: fullProj } = await supabase.from('projects').select(
