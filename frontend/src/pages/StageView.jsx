@@ -6,276 +6,658 @@ import TaskDetailModal from '../components/TaskDetailModal';
 import TaskCreateModal from '../components/TaskCreateModal';
 import Modal from '../components/Modal';
 import { FileUploadButton, FilePreview } from '../components/FileUpload';
-import { PRIORITY_LABELS, PRIORITY_COLORS, formatDate, getInitials, avatarColor } from '../lib/utils';
-import { Plus, FolderKanban, CheckSquare, Lock, X, Clock, AlertTriangle, RefreshCw, Calendar, Edit3, Check, Layers, Building2, ArrowRightCircle, Send } from 'lucide-react';
+import {
+  PRIORITY_LABELS, PRIORITY_COLORS, formatDate, getInitials, avatarColor, ROLE_LABELS,
+} from '../lib/utils';
+import {
+  Plus, FolderKanban, CheckSquare, Lock, Filter, ChevronDown, X,
+  Clock, AlertTriangle, MessageSquare, RefreshCw, Calendar, Building2,
+  ArrowRightCircle, Send
+} from 'lucide-react';
 
-const SN = { consulting:'Tư vấn', design:'Thiết kế', quotation:'Báo giá', contract:'Hợp đồng', production:'Sản xuất', shipping:'Vận chuyển', installation:'Lắp đặt', 'customer-care':'Chăm sóc KH' };
-const SO = ['consulting','design','quotation','contract','production','shipping','installation','customer-care'];
+const STAGE_NAMES = {
+  consulting: 'Tư vấn', design: 'Thiết kế', quotation: 'Báo giá', contract: 'Hợp đồng',
+  production: 'Sản xuất', shipping: 'Vận chuyển', installation: 'Lắp đặt', 'customer-care': 'Chăm sóc KH',
+};
+
+const STAGE_STATUS_MAP = {
+  consulting: 'consulting', design: 'designing', quotation: 'quoting',
+  contract: 'contract_signed', production: 'producing', shipping: 'shipping',
+  installation: 'installing', 'customer-care': 'warranty',
+};
+
+const STAGE_ORDER = ['consulting', 'design', 'quotation', 'contract', 'production', 'shipping', 'installation', 'customer-care'];
+
 const NEXT_STATUS = { consulting:'designing', design:'quoting', quotation:'contract_signed', contract:'producing', production:'shipping', shipping:'installing', installation:'warranty' };
 const NEXT_SLUG = { consulting:'design', design:'quotation', quotation:'contract', contract:'production', production:'shipping', shipping:'installation', installation:'customer-care' };
 const QT = [{id:'all',label:'Tất cả'},{id:'today',label:'Hôm nay'},{id:'week',label:'Tuần này'},{id:'month',label:'Tháng này'},{id:'custom',label:'Tùy chọn'}];
+function fmtD(d){return d.toISOString().slice(0,10)}
+function defRange(){const n=new Date();return{from:fmtD(new Date(n.getFullYear(),n.getMonth(),1)),to:fmtD(new Date(n.getFullYear(),n.getMonth()+1,0))}}
+function filterByDateRange(items,from,to){if(!from&&!to)return items;return items.filter(i=>{const d=i.created_at?new Date(i.created_at):null;if(!d)return false;if(from&&d<new Date(from))return false;if(to){const t=new Date(to);t.setHours(23,59,59,999);if(d>t)return false}return true})}
 
-function si(s){return SO.indexOf(s)}
-function pcs(st){const m={consulting:'consulting',designing:'design',quoting:'quotation',contract_signed:'contract',producing:'production',shipping:'shipping',installing:'installation',warranty:'customer-care',completed:'customer-care'};return m[st]||'consulting'}
-function fmt(d){return d.toISOString().slice(0,10)}
-function defRange(){const n=new Date();return{from:fmt(new Date(n.getFullYear(),n.getMonth(),1)),to:fmt(new Date(n.getFullYear(),n.getMonth()+1,0))}}
-function fdr(items,from,to,f='created_at'){if(!from&&!to)return items;return items.filter(i=>{const d=i[f]?new Date(i[f]):null;if(!d)return false;if(from&&d<new Date(from))return false;if(to){const t=new Date(to);t.setHours(23,59,59,999);if(d>t)return false}return true})}
+function getStageIndex(slug) {
+  return STAGE_ORDER.indexOf(slug);
+}
 
-export default function StageView(){
-  const{slug}=useParams();
-  const{user}=useAuth();
-  const[projects,setProjects]=useState([]);
-  const[tasks,setTasks]=useState([]);
-  const[wLines,setWLines]=useState([]);
-  const[stageInfo,setSI]=useState(null);
-  const[loading,setL]=useState(true);
-  const[error,setE]=useState(null);
-  const[selTask,setSelTask]=useState(null);
-  const[showCreate,setShowCreate]=useState(false);
-  const[fProj,setFProj]=useState('all');
-  const[fComp,setFComp]=useState('all');
-  const[fLine,setFLine]=useState('all');
-  const[qt,setQt]=useState('month');
-  const[dFrom,setDFrom]=useState(defRange().from);
-  const[dTo,setDTo]=useState(defRange().to);
-  const[editLn,setEditLn]=useState(null);
-  const[editNm,setEditNm]=useState('');
-  const[advProj,setAdvProj]=useState(null);
-  const[advNotes,setAdvNotes]=useState('');
-  const[advFiles,setAdvFiles]=useState([]);
-  const[advMode,setAdvMode]=useState('advance');
-  const[advL,setAdvL]=useState(false);
+// Given project status, which stage slug is it on?
+function projectCurrentStageSlug(projectStatus) {
+  const reverseMap = {
+    consulting: 'consulting', designing: 'design', quoting: 'quotation',
+    contract_signed: 'contract', producing: 'production', shipping: 'shipping',
+    installing: 'installation', warranty: 'customer-care', completed: 'customer-care',
+  };
+  return reverseMap[projectStatus] || 'consulting';
+}
 
-  useEffect(()=>{
-    const n=new Date();
-    if(qt==='all'){setDFrom('');setDTo('')}
-    else if(qt==='today'){const d=fmt(n);setDFrom(d);setDTo(d)}
-    else if(qt==='week'){const s=new Date(n);s.setDate(n.getDate()-n.getDay());setDFrom(fmt(s));setDTo(fmt(n))}
-    else if(qt==='month'){setDFrom(defRange().from);setDTo(defRange().to)}
-  },[qt]);
+export default function StageView() {
+  const { slug } = useParams();
+  const { user } = useAuth();
+  const [projects, setProjects] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [stageInfo, setStageInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [showCreateTask, setShowCreateTask] = useState(false);
+  const [filterProject, setFilterProject] = useState('all');
+  const [showFilter, setShowFilter] = useState(false);
+  // New filters
+  const [filterCompany, setFilterCompany] = useState('all');
+  const [quickTime, setQuickTime] = useState('month');
+  const [dateFrom, setDateFrom] = useState(defRange().from);
+  const [dateTo, setDateTo] = useState(defRange().to);
+  // Advance
+  const [advProj, setAdvProj] = useState(null);
+  const [advNotes, setAdvNotes] = useState('');
+  const [advFiles, setAdvFiles] = useState([]);
+  const [advMode, setAdvMode] = useState('advance');
+  const [advLoading, setAdvLoading] = useState(false);
 
-  const load=useCallback(async()=>{
-    setL(true);setE(null);
-    try{
-      const[sr,pr]=await Promise.all([
-        api.get('/users/stages').catch(()=>({data:{stages:[]}})),
-        api.get('/projects',{params:{limit:200}}).catch(()=>({data:{projects:[]}})),
+  // Quick time → date range
+  useEffect(() => {
+    const n = new Date();
+    if (quickTime === 'all') { setDateFrom(''); setDateTo(''); }
+    else if (quickTime === 'today') { const d = fmtD(n); setDateFrom(d); setDateTo(d); }
+    else if (quickTime === 'week') { const s = new Date(n); s.setDate(n.getDate()-n.getDay()); setDateFrom(fmtD(s)); setDateTo(fmtD(n)); }
+    else if (quickTime === 'month') { setDateFrom(defRange().from); setDateTo(defRange().to); }
+  }, [quickTime]);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Step 1: Get stages + all projects in parallel
+      const [stageRes, projRes] = await Promise.all([
+        api.get('/users/stages').catch(() => ({ data: { stages: [] } })),
+        api.get('/projects', { params: { limit: 200 } }).catch(() => ({ data: { projects: [] } })),
       ]);
-      const stage=sr.data.stages?.find(s=>s.slug===slug)||null;
-      setSI(stage||{slug,name:SN[slug],color:'#3b82f6'});
-      const ap=pr.data.projects||[];
-      if(!ap.length||!stage?.id){setProjects(ap);setTasks([]);setWLines([]);setL(false);return}
 
-      const{data:td}=await api.get('/tasks',{params:{stage_id:stage.id}}).catch(()=>({data:{tasks:[]}}));
-      let st=td.tasks||[];
-      const pids=new Set(st.map(t=>t.project_id));
-      const rp=ap.filter(p=>pids.has(p.id));
-      setProjects(rp);
+      const stage = stageRes.data.stages?.find(s => s.slug === slug) || null;
+      setStageInfo(stage || { slug, name: STAGE_NAMES[slug], color: '#3b82f6' });
+      const allProjs = projRes.data.projects || [];
 
-      let al=[];
-      for(const p of rp){try{const{data:ld}=await api.get(`/projects/${p.id}/workflow-lines`);const sl=(ld.lines||[]).filter(l=>l.stage_slug===slug);sl.forEach(l=>{l._pc=p.code;l._pn=p.name;l._pid=p.id;l._cid=p.company_id});al.push(...sl)}catch{}}
-      setWLines(al);
-
-      const wc=await Promise.all(st.map(async t=>{try{const{data}=await api.get(`/tasks/${t.id}`);return{...t,checklists:data.task?.checklists||[],assignee:data.task?.assignee||t.assignee}}catch{return{...t,checklists:[]}}}));
-      setTasks(wc);
-    }catch(e){console.error(e);setE('Không thể tải dữ liệu.')}
-    setL(false);
-  },[slug]);
-
-  useEffect(()=>{load()},[load]);
-
-  const togCk=async(tid,cid,d)=>{setTasks(p=>p.map(t=>t.id!==tid?t:{...t,checklists:t.checklists.map(c=>c.id===cid?{...c,is_completed:!d}:c)}));try{await api.patch(`/tasks/${tid}/checklists/${cid}`,{is_completed:!d})}catch{load()}};
-  const mkDone=async id=>{setTasks(p=>p.map(t=>t.id===id?{...t,status:'done'}:t));try{await api.patch(`/tasks/${id}/status`,{status:'done'});load()}catch{load()}};
-  const startT=async id=>{setTasks(p=>p.map(t=>t.id===id?{...t,status:'in_progress'}:t));try{await api.patch(`/tasks/${id}/status`,{status:'in_progress'})}catch{load()}};
-  const saveLn=async ln=>{if(!editNm.trim()){setEditLn(null);return}try{await api.put(`/projects/${ln._pid}/workflow-lines/${ln.id}`,{label:editNm.trim()});setWLines(p=>p.map(l=>l.id===ln.id?{...l,label:editNm.trim()}:l))}catch{}setEditLn(null)};
-
-  const doAdv=async()=>{
-    if(!advProj)return;setAdvL(true);
-    try{
-      const ns=NEXT_SLUG[slug],nst=NEXT_STATUS[slug];
-      if(advMode==='advance'&&ns&&nst){
-        await api.put(`/projects/${advProj.id}/stage`,{stage_slug:ns,new_status:nst,notes:advNotes||null,attachments:advFiles});
-      }else{
-        await api.post(`/projects/${advProj.id}/comments`,{content:`🔍 YÊU CẦU DUYỆT: ${SN[slug]} → ${SN[NEXT_SLUG[slug]]||'tiếp'}\n\n${advNotes||'(Không ghi chú)'}`,attachments:advFiles});
+      if (!allProjs.length || !stage?.id) {
+        setProjects(allProjs);
+        setTasks([]);
+        setLoading(false);
+        return;
       }
-      setAdvProj(null);setAdvNotes('');setAdvFiles([]);load();
-    }catch{}setAdvL(false);
+
+      // Step 2: Load tasks for this stage — ONE batch call with stage_id only
+      const { data: taskData } = await api.get('/tasks', { params: { stage_id: stage.id } })
+        .catch(() => ({ data: { tasks: [] } }));
+      let stageTasks = taskData.tasks || [];
+
+      // Build project lookup
+      const projMap = {};
+      allProjs.forEach(p => { projMap[p.id] = p; });
+
+      // Only keep projects that have tasks in this stage
+      const projectIdsWithTasks = new Set(stageTasks.map(t => t.project_id));
+      const relevantProjs = allProjs.filter(p => projectIdsWithTasks.has(p.id));
+      setProjects(relevantProjs);
+
+      // Step 3: Load checklists for each task — parallel batch
+      const withChecklists = await Promise.all(stageTasks.map(async (t) => {
+        try {
+          const { data } = await api.get(`/tasks/${t.id}`);
+          return {
+            ...t,
+            checklists: data.task?.checklists || [],
+            comments: data.task?.comments || [],
+            assignee: data.task?.assignee || t.assignee,
+          };
+        } catch {
+          return { ...t, checklists: [], comments: [] };
+        }
+      }));
+
+      setTasks(withChecklists);
+    } catch (e) {
+      console.error('StageView loadData error:', e);
+      setError('Không thể tải dữ liệu. Vui lòng thử lại.');
+    }
+    setLoading(false);
+  }, [slug]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // Toggle checklist item
+  const toggleCheckItem = async (taskId, clId, isCompleted) => {
+    setTasks(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      return {
+        ...t,
+        checklists: t.checklists.map(cl =>
+          cl.id === clId ? { ...cl, is_completed: !isCompleted } : cl
+        ),
+      };
+    }));
+    try {
+      await api.patch(`/tasks/${taskId}/checklists/${clId}`, { is_completed: !isCompleted });
+    } catch { loadData(); }
   };
 
-  if(loading)return<div className="flex items-center justify-center h-64"><svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>;
+  // Mark entire task as done
+  const markTaskDone = async (taskId) => {
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'done' } : t));
+    try {
+      await api.patch(`/tasks/${taskId}/status`, { status: 'done' });
+    } catch { loadData(); }
+  };
 
-  const name=SN[slug]||slug;
-  let ft=tasks;
-  if(fProj!=='all')ft=ft.filter(t=>t.project_id===fProj);
-  if(fComp!=='all'){const cp=new Set(projects.filter(p=>p.company_id===fComp).map(p=>p.id));ft=ft.filter(t=>cp.has(t.project_id))}
-  ft=fdr(ft,dFrom,dTo);
-  const sd=[...ft].sort((a,b)=>(a.order_index||0)-(b.order_index||0));
-  const tot=sd.length,dn=sd.filter(t=>t.status==='done').length;
-  const tc=sd.reduce((s,t)=>s+(t.checklists?.length||0),0),dc=sd.reduce((s,t)=>s+(t.checklists?.filter(c=>c.is_completed)?.length||0),0);
-  let vl=wLines;if(fComp!=='all')vl=vl.filter(l=>l._cid===fComp);if(fLine!=='all')vl=vl.filter(l=>l.id===fLine);
-  const hl=wLines.length>0;
-  const glt=ln=>sd.filter(t=>t.workflow_line_id?t.workflow_line_id===ln.id:t.project_id===ln._pid);
-  const pad={};projects.forEach(p=>{const pt=sd.filter(t=>t.project_id===p.id);pad[p.id]=pt.length>0&&pt.every(t=>t.status==='done')});
-  const pc=[];const sc=new Set();projects.forEach(p=>{if(p.company_id&&p.company&&!sc.has(p.company_id)){sc.add(p.company_id);pc.push({id:p.company_id,n:p.company.short_name||p.company.name})}});
-  const nsn=SN[NEXT_SLUG[slug]];
+  // Mark task in progress
+  const startTask = async (taskId) => {
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'in_progress' } : t));
+    try {
+      await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' });
+    } catch { loadData(); }
+  };
 
-  return(
+  // Stage advance / review
+  const doAdvance = async () => {
+    if (!advProj) return;
+    setAdvLoading(true);
+    try {
+      const ns = NEXT_SLUG[slug], nst = NEXT_STATUS[slug];
+      if (advMode === 'advance' && ns && nst) {
+        await api.put(`/projects/${advProj.id}/stage`, { stage_slug: ns, new_status: nst, notes: advNotes || null, attachments: advFiles });
+      } else {
+        await api.post(`/projects/${advProj.id}/comments`, {
+          content: `🔍 YÊU CẦU DUYỆT: ${STAGE_NAMES[slug]} → ${STAGE_NAMES[NEXT_SLUG[slug]] || 'tiếp'}\n\n${advNotes || '(Không ghi chú)'}`,
+          attachments: advFiles,
+        });
+      }
+      setAdvProj(null); setAdvNotes(''); setAdvFiles([]);
+      loadData();
+    } catch { }
+    setAdvLoading(false);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-2">
+          <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          <span className="text-sm text-gray-400">Đang tải {STAGE_NAMES[slug]}...</span>
+        </div>
+      </div>
+    );
+  }
+
+  const stageName = STAGE_NAMES[slug] || slug;
+
+  // Filter tasks by project + company + date range
+  let filteredTasks = filterProject === 'all' ? tasks : tasks.filter(t => t.project_id === filterProject);
+  if (filterCompany !== 'all') {
+    const compProjIds = new Set(projects.filter(p => p.company_id === filterCompany).map(p => p.id));
+    filteredTasks = filteredTasks.filter(t => compProjIds.has(t.project_id));
+  }
+  filteredTasks = filterByDateRange(filteredTasks, dateFrom, dateTo);
+
+  // Sort tasks by order_index
+  const sortedTasks = [...filteredTasks].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+
+  // Unique companies from projects
+  const projCompanies = [];
+  const seenC = new Set();
+  projects.forEach(p => { if (p.company_id && p.company && !seenC.has(p.company_id)) { seenC.add(p.company_id); projCompanies.push({ id: p.company_id, name: p.company.short_name || p.company.name }); } });
+
+  // Check which projects have ALL tasks done (for advance banner)
+  const projectsAllDone = {};
+  projects.forEach(p => { const pt = sortedTasks.filter(t => t.project_id === p.id); projectsAllDone[p.id] = pt.length > 0 && pt.every(t => t.status === 'done'); });
+  const nextStageName = STAGE_NAMES[NEXT_SLUG[slug]];
+
+  // Stats
+  const totalTasks = sortedTasks.length;
+  const doneTasks = sortedTasks.filter(t => t.status === 'done').length;
+  const totalChecks = sortedTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
+  const doneChecks = sortedTasks.reduce((s, t) => s + (t.checklists?.filter(c => c.is_completed)?.length || 0), 0);
+
+  return (
     <div className="space-y-4">
-      {error&&<div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3"><AlertTriangle className="h-5 w-5 text-red-500"/><p className="text-sm text-red-700 flex-1">{error}</p><button onClick={load} className="h-8 px-3 bg-red-100 text-red-700 rounded-lg text-xs cursor-pointer"><RefreshCw className="h-3.5 w-3.5 inline mr-1"/>Thử lại</button></div>}
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
+          <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
+          <p className="text-sm text-red-700 flex-1">{error}</p>
+          <button onClick={loadData} className="h-8 px-3 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 cursor-pointer flex items-center gap-1">
+            <RefreshCw className="h-3.5 w-3.5" /> Thử lại
+          </button>
+        </div>
+      )}
 
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor:stageInfo?.color||'#3b82f6'}}/><h1 className="text-2xl font-bold text-gray-900">{name}</h1></div>
-          <p className="text-sm text-gray-500 mt-0.5">{projects.length} DA · {tot} NV ({dn} xong) · {dc}/{tc} CL</p>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }} />
+            <h1 className="text-2xl font-bold text-gray-900">{stageName}</h1>
+            {user && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">{ROLE_LABELS[user.role] || user.role}</span>}
+          </div>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {projects.length} dự án · {totalTasks} nhiệm vụ ({doneTasks} xong) · {doneChecks}/{totalChecks} checklist
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer text-gray-400"><RefreshCw className="h-4 w-4"/></button>
-          <button onClick={()=>setShowCreate(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4"/> Thêm NV</button>
+          {/* Refresh */}
+          <button onClick={loadData} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer text-gray-400 hover:text-gray-600">
+            <RefreshCw className="h-4 w-4" />
+          </button>
+
+          {/* Project filter */}
+          {projects.length > 1 && (
+            <div className="relative">
+              <button onClick={() => setShowFilter(!showFilter)}
+                className="h-9 px-3 bg-white border rounded-lg text-sm flex items-center gap-2 hover:bg-gray-50 cursor-pointer">
+                <Filter className="h-4 w-4 text-gray-400" />
+                <span className="text-gray-700 max-w-[200px] truncate">
+                  {filterProject === 'all' ? 'Tất cả dự án' : projects.find(p => p.id === filterProject)?.code || 'Lọc'}
+                </span>
+                <ChevronDown className="h-3 w-3 text-gray-400" />
+              </button>
+              {showFilter && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowFilter(false)} />
+                  <div className="absolute right-0 top-full mt-1 w-72 bg-white rounded-xl shadow-lg border z-50 py-1 max-h-60 overflow-y-auto">
+                    <button onClick={() => { setFilterProject('all'); setShowFilter(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer ${filterProject === 'all' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'}`}>
+                      Tất cả dự án ({projects.length})
+                    </button>
+                    {projects.map(p => (
+                      <button key={p.id} onClick={() => { setFilterProject(p.id); setShowFilter(false); }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer ${filterProject === p.id ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'}`}>
+                        <span className="font-medium text-blue-600">{p.code}</span>
+                        <span className="ml-2 text-gray-700">{p.name}</span>
+                        {p.customers?.full_name && <span className="ml-2 text-xs text-gray-400">({p.customers.full_name})</span>}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          <button onClick={() => setShowCreateTask(true)}
+            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
+            <Plus className="h-4 w-4" /> Thêm NV
+          </button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-xl border p-3 space-y-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
-            <Calendar className="h-3.5 w-3.5 text-gray-400 self-center ml-2"/>
-            {QT.map(t=><button key={t.id} onClick={()=>setQt(t.id)} className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${qt===t.id?'bg-white shadow-sm text-gray-900':'text-gray-500'}`}>{t.label}</button>)}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <input type="date" value={dFrom} onChange={e=>{setDFrom(e.target.value);setQt('custom')}} className="h-7 px-2 border rounded text-xs bg-white"/>
-            <span className="text-xs text-gray-400">→</span>
-            <input type="date" value={dTo} onChange={e=>{setDTo(e.target.value);setQt('custom')}} className="h-7 px-2 border rounded text-xs bg-white"/>
-          </div>
+      {/* Filter active badge */}
+      {filterProject !== 'all' && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-medium flex items-center gap-1">
+            <Filter className="h-3 w-3" />
+            {projects.find(p => p.id === filterProject)?.code} — {projects.find(p => p.id === filterProject)?.name}
+            <button onClick={() => setFilterProject('all')} className="ml-1 hover:text-blue-900 cursor-pointer"><X className="h-3 w-3" /></button>
+          </span>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {pc.length>0&&<div className="flex items-center gap-1"><Building2 className="h-3.5 w-3.5 text-gray-400"/><select value={fComp} onChange={e=>setFComp(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white"><option value="all">Tất cả CTy</option>{pc.map(c=><option key={c.id} value={c.id}>{c.n}</option>)}</select></div>}
-          {projects.length>1&&<select value={fProj} onChange={e=>setFProj(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white"><option value="all">Tất cả DA</option>{projects.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select>}
-          {hl&&<div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5"><Layers className="h-3.5 w-3.5 text-gray-400 self-center ml-2"/><button onClick={()=>setFLine('all')} className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${fLine==='all'?'bg-white shadow-sm text-gray-900':'text-gray-500'}`}>Tất cả</button>{wLines.map(l=><button key={l.id} onClick={()=>setFLine(fLine===l.id?'all':l.id)} className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer max-w-[130px] truncate ${fLine===l.id?'bg-white shadow-sm text-gray-900':'text-gray-500'}`}>{l.label}</button>)}</div>}
-        </div>
-      </div>
+      )}
 
-      {tot>0&&<div className="bg-white rounded-xl border p-3"><div className="flex justify-between text-xs mb-1"><span className="font-medium text-gray-700">Tiến độ</span><span className="font-bold">{Math.round((dn/tot)*100)}%</span></div><div className="w-full h-2 bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full transition-all" style={{width:`${(dn/tot)*100}%`}}/></div></div>}
+      {/* Date + Company filters */}
+      <div className="bg-white rounded-xl border p-3 flex items-center gap-3 flex-wrap">
+        <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+          <Calendar className="h-3.5 w-3.5 text-gray-400 self-center ml-2" />
+          {QT.map(t => <button key={t.id} onClick={() => setQuickTime(t.id)} className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${quickTime === t.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{t.label}</button>)}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setQuickTime('custom'); }} className="h-7 px-2 border rounded text-xs bg-white" />
+          <span className="text-xs text-gray-400">→</span>
+          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setQuickTime('custom'); }} className="h-7 px-2 border rounded text-xs bg-white" />
+        </div>
+        {projCompanies.length > 0 && (
+          <div className="flex items-center gap-1">
+            <Building2 className="h-3.5 w-3.5 text-gray-400" />
+            <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white">
+              <option value="all">Tất cả CTy</option>
+              {projCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
 
       {/* Advance banners */}
-      {nsn&&projects.filter(p=>pad[p.id]).map(p=>(
+      {nextStageName && projects.filter(p => projectsAllDone[p.id]).map(p => (
         <div key={p.id} className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center gap-3 flex-wrap">
-          <CheckSquare className="h-5 w-5 text-emerald-600"/>
-          <div className="flex-1 min-w-0"><p className="text-sm font-semibold text-emerald-800">✅ {p.code} — {p.name}: Hoàn thành!</p><p className="text-xs text-emerald-600">Tất cả NV ở {name} đã xong.</p></div>
-          <button onClick={()=>{setAdvProj(p);setAdvMode('advance');setAdvNotes('');setAdvFiles([])}} className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700"><ArrowRightCircle className="h-3.5 w-3.5"/> Chuyển → {nsn}</button>
-          <button onClick={()=>{setAdvProj(p);setAdvMode('review');setAdvNotes('');setAdvFiles([])}} className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600"><Send className="h-3.5 w-3.5"/> Chờ duyệt</button>
+          <CheckSquare className="h-5 w-5 text-emerald-600" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-emerald-800">✅ {p.code} — {p.name}: Hoàn thành!</p>
+            <p className="text-xs text-emerald-600">Tất cả NV ở {stageName} đã xong.</p>
+          </div>
+          <button onClick={() => { setAdvProj(p); setAdvMode('advance'); setAdvNotes(''); setAdvFiles([]); }}
+            className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
+            <ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển → {nextStageName}
+          </button>
+          <button onClick={() => { setAdvProj(p); setAdvMode('review'); setAdvNotes(''); setAdvFiles([]); }}
+            className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600">
+            <Send className="h-3.5 w-3.5" /> Chờ duyệt
+          </button>
         </div>
       ))}
 
-      {/* Kanban */}
-      {!hl?(
-        <KB tasks={sd} projects={projects} slug={slug} onTC={togCk} onMD={mkDone} onST={startT} onSel={setSelTask} onAdd={()=>setShowCreate(true)} reload={load}/>
-      ):(
-        <div className="space-y-6">{vl.map(ln=>{const lt=glt(ln);return(
-          <div key={ln.id} className="space-y-2">
-            <div className="flex items-center gap-3 bg-white rounded-xl border px-4 py-3">
-              <div className="w-2 h-8 rounded-full" style={{backgroundColor:stageInfo?.color||'#3b82f6'}}/>
-              <div className="flex-1 min-w-0">
-                {editLn===ln.id?(<div className="flex items-center gap-2"><input value={editNm} onChange={e=>setEditNm(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')saveLn(ln);if(e.key==='Escape')setEditLn(null)}} className="h-8 px-2 border rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-400" autoFocus/><button onClick={()=>saveLn(ln)} className="w-7 h-7 rounded bg-emerald-50 text-emerald-600 flex items-center justify-center cursor-pointer"><Check className="h-3.5 w-3.5"/></button><button onClick={()=>setEditLn(null)} className="w-7 h-7 rounded bg-gray-100 text-gray-500 flex items-center justify-center cursor-pointer"><X className="h-3.5 w-3.5"/></button></div>):(<div className="flex items-center gap-2"><h2 className="text-base font-bold text-gray-900">{ln.label}</h2><button onClick={()=>{setEditLn(ln.id);setEditNm(ln.label)}} className="w-6 h-6 rounded hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 cursor-pointer"><Edit3 className="h-3 w-3"/></button></div>)}
-                <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5"><span className="text-blue-600 font-medium">{ln._pc}</span>{ln.assignee&&<span className="flex items-center gap-1"><span className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold" style={{backgroundColor:avatarColor(ln.assignee.full_name)}}>{getInitials(ln.assignee.full_name)}</span>{ln.assignee.full_name}</span>}<span>{lt.length} NV · {lt.filter(t=>t.status==='done').length} xong</span></div>
-              </div>
-            </div>
-            {lt.length>0?<KB tasks={lt} projects={projects} slug={slug} onTC={togCk} onMD={mkDone} onST={startT} onSel={setSelTask} onAdd={()=>setShowCreate(true)} reload={load} compact/>:<div className="text-center py-4 text-xs text-gray-400 bg-gray-50 rounded-lg border border-dashed">Chưa có NV</div>}
+      {/* Progress bar */}
+      {totalTasks > 0 && (
+        <div className="bg-white rounded-xl border p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700">Tiến độ giai đoạn</span>
+            <span className="text-sm font-bold text-gray-900">{totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0}%</span>
           </div>
-        )})}</div>
+          <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+              style={{ width: `${totalTasks > 0 ? (doneTasks / totalTasks) * 100 : 0}%` }} />
+          </div>
+          <div className="flex items-center justify-between mt-2 text-xs text-gray-400">
+            <span>{doneTasks}/{totalTasks} nhiệm vụ hoàn thành</span>
+            <span>{doneChecks}/{totalChecks} checklist items</span>
+          </div>
+        </div>
       )}
 
-      {sd.length===0&&projects.length>0&&<div className="text-center py-16 bg-white rounded-xl border"><CheckSquare className="h-12 w-12 mx-auto text-gray-300 mb-3"/><p className="text-sm text-gray-500">Chưa có NV ở <strong>{name}</strong></p></div>}
-      {sd.length===0&&projects.length===0&&<div className="text-center py-16"><FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3"/><p className="text-sm text-gray-500">Không có DA ở <strong>{name}</strong></p></div>}
+      {/* ═══ KANBAN: Columns = Tasks, Cards = Checklists ═══ */}
+      {sortedTasks.length > 0 ? (
+        <div className="flex gap-4 overflow-x-auto pb-6" style={{ minHeight: '300px' }}>
+          {sortedTasks.map((task, taskIdx) => {
+            const checksDone = task.checklists?.filter(c => c.is_completed)?.length || 0;
+            const checksTotal = task.checklists?.length || 0;
+            const allChecksDone = checksTotal > 0 && checksDone === checksTotal;
+            const isTaskDone = task.status === 'done';
 
-      {/* Advance Modal */}
-      <Modal open={!!advProj} onClose={()=>setAdvProj(null)} title={advMode==='advance'?`Chuyển: ${advProj?.code} → ${nsn}`:`Yêu cầu duyệt: ${advProj?.code}`} size="md">
+            // Check if this stage is reachable for the task's project
+            const proj = projects.find(p => p.id === task.project_id);
+            const projCurrentSlug = proj ? projectCurrentStageSlug(proj.status) : slug;
+            const projStageIdx = getStageIndex(projCurrentSlug);
+            const thisStageIdx = getStageIndex(slug);
+            const isFutureStage = thisStageIdx > projStageIdx; // Project hasn't reached this stage yet
+
+            // Sequential unlock within stage: previous task must be done
+            // But only apply if stage is reachable
+            const prevAllDone = sortedTasks
+              .filter(t => t.project_id === task.project_id) // only same project
+              .filter((_, i, arr) => {
+                const idx = arr.findIndex(a => a.id === task.id);
+                return i < idx;
+              })
+              .every(t => t.status === 'done');
+            const taskIdxInProject = sortedTasks.filter(t => t.project_id === task.project_id).findIndex(t => t.id === task.id);
+            const isSequenceLocked = taskIdxInProject > 0 && !prevAllDone;
+            
+            const isLocked = isFutureStage || isSequenceLocked;
+            const isActive = !isLocked && !isTaskDone;
+            const lockReason = isFutureStage 
+              ? `Dự án ${proj?.code || ''} chưa tới quy trình ${STAGE_NAMES[slug]}`
+              : isSequenceLocked ? `Hoàn thành NV #${taskIdxInProject} trước` : '';
+
+            return (
+              <div key={task.id} className={`shrink-0 w-80 flex flex-col ${isLocked ? 'opacity-50' : ''}`}>
+                {/* Column header = Task */}
+                <div className={`rounded-t-xl p-3 border border-b-0 ${
+                  isTaskDone ? 'bg-emerald-50 border-emerald-200'
+                  : isActive ? 'bg-white border-gray-200'
+                  : 'bg-gray-50 border-gray-200'
+                }`}>
+                  <div className="flex items-start gap-2">
+                    {/* Task done checkbox */}
+                    <button
+                      onClick={() => !isLocked && !isTaskDone && allChecksDone && markTaskDone(task.id)}
+                      disabled={isLocked || isTaskDone || !allChecksDone}
+                      title={isTaskDone ? 'Đã hoàn thành' : allChecksDone ? 'Bấm để hoàn thành nhiệm vụ' : 'Hoàn thành tất cả checklist trước'}
+                      className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                        isTaskDone ? 'bg-emerald-500 border-emerald-500 text-white'
+                        : allChecksDone ? 'border-emerald-400 hover:bg-emerald-50 cursor-pointer animate-pulse'
+                        : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 cursor-not-allowed'
+                      }`}>
+                      {isTaskDone && <CheckSquare className="h-3.5 w-3.5" />}
+                    </button>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                        <span className="text-[10px] font-bold text-gray-400">#{taskIdx + 1}</span>
+                        {proj && <Link to={`/projects/${proj.id}`} className="text-[10px] text-blue-600 font-medium hover:underline">{proj.code} — {proj.name}</Link>}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
+                      </div>
+                      <h3 className={`text-sm font-semibold leading-tight ${isTaskDone ? 'text-emerald-700 line-through' : 'text-gray-900'}`}>
+                        {task.title}
+                      </h3>
+                      {proj?.customers?.full_name && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">👤 KH: {proj.customers.full_name}</p>
+                      )}
+                      {task.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>}
+                    </div>
+
+                    {isLocked && <Lock className="h-4 w-4 text-gray-400 shrink-0 mt-1" />}
+                    {isFutureStage && (
+                      <span className="text-[9px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded shrink-0">Chờ</span>
+                    )}
+                  </div>
+
+                  {/* Task meta */}
+                  <div className="flex items-center gap-3 mt-2 flex-wrap">
+                    {task.assignee && (
+                      <div className="flex items-center gap-1">
+                        <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                          style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>
+                          {getInitials(task.assignee.full_name)}
+                        </div>
+                        <span className="text-[10px] text-gray-500">{task.assignee.full_name}</span>
+                      </div>
+                    )}
+                    {task.due_date && (
+                      <span className={`text-[10px] flex items-center gap-0.5 ${
+                        new Date(task.due_date) < new Date() && !isTaskDone ? 'text-red-500 font-medium' : 'text-gray-400'
+                      }`}>
+                        <Clock className="h-3 w-3" />{formatDate(task.due_date)}
+                      </span>
+                    )}
+                    {task.comments?.length > 0 && (
+                      <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
+                        <MessageSquare className="h-3 w-3" />{task.comments.length}
+                      </span>
+                    )}
+                    <span className={`text-[10px] font-medium ${allChecksDone && checksTotal > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                      ✓ {checksDone}/{checksTotal}
+                    </span>
+                  </div>
+
+                  {/* Progress bar */}
+                  {checksTotal > 0 && (
+                    <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                      <div className={`h-full rounded-full transition-all duration-300 ${isTaskDone ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                        style={{ width: `${(checksDone / checksTotal) * 100}%` }} />
+                    </div>
+                  )}
+                </div>
+
+                {/* Checklist cards */}
+                <div className={`flex-1 rounded-b-xl border p-2 space-y-1.5 min-h-[100px] ${
+                  isTaskDone ? 'bg-emerald-50/50 border-emerald-200'
+                  : isLocked ? 'bg-gray-50 border-gray-200'
+                  : 'bg-gray-50/50 border-gray-200'
+                }`}>
+                  {task.checklists?.length > 0 ? (
+                    task.checklists.map((cl, clIdx) => (
+                      <div key={cl.id}
+                        className={`flex items-start gap-2 bg-white rounded-lg border p-2.5 transition-all ${
+                          cl.is_completed ? 'border-emerald-200 bg-emerald-50/50'
+                          : isLocked ? 'border-gray-200 opacity-60' : 'border-gray-200 hover:shadow-sm hover:border-gray-300'
+                        }`}>
+                        <button
+                          onClick={() => !isLocked && toggleCheckItem(task.id, cl.id, cl.is_completed)}
+                          disabled={isLocked}
+                          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                            cl.is_completed
+                              ? 'bg-emerald-500 border-emerald-500 text-white'
+                              : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 hover:border-blue-400 cursor-pointer'
+                          }`}>
+                          {cl.is_completed && <CheckSquare className="h-3 w-3" />}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-sm leading-tight ${cl.is_completed ? 'line-through text-gray-400' : isLocked ? 'text-gray-400' : 'text-gray-700'}`}>
+                            {cl.title}
+                          </span>
+                          {cl.completed_at && (
+                            <p className="text-[10px] text-emerald-500 mt-0.5">✓ {formatDate(cl.completed_at)}</p>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-gray-300 font-mono shrink-0">{clIdx + 1}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex items-center justify-center h-16 text-xs text-gray-400">
+                      {isLocked ? 'Chưa có checklist' : 'Chưa có checklist — thêm bên dưới'}
+                    </div>
+                  )}
+
+                  {/* Lock reason banner */}
+                  {isLocked && (
+                    <div className="flex items-center gap-1.5 mt-1 px-2 py-1.5 bg-gray-100 rounded-lg">
+                      <Lock className="h-3 w-3 text-gray-400 shrink-0" />
+                      <p className="text-[10px] text-gray-400">{lockReason || 'Chưa mở khóa'}</p>
+                    </div>
+                  )}
+
+                  {/* Quick add checklist */}
+                  {!isLocked && !isTaskDone && (
+                    <QuickAddChecklist taskId={task.id} onAdded={loadData} />
+                  )}
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex gap-1 mt-1">
+                  {!isLocked && !isTaskDone && task.status === 'pending' && (
+                    <button onClick={() => startTask(task.id)}
+                      className="flex-1 h-8 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 cursor-pointer flex items-center justify-center gap-1">
+                      ▶ Bắt đầu
+                    </button>
+                  )}
+                  {!isLocked && !isTaskDone && allChecksDone && checksTotal > 0 && (
+                    <button onClick={() => markTaskDone(task.id)}
+                      className="flex-1 h-8 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-medium hover:bg-emerald-100 cursor-pointer flex items-center justify-center gap-1 animate-pulse">
+                      ✓ Hoàn thành
+                    </button>
+                  )}
+                  <button onClick={() => setSelectedTask(task.id)}
+                    className="flex-1 h-8 text-gray-400 bg-white border rounded-lg text-xs hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 cursor-pointer flex items-center justify-center gap-1">
+                    Chi tiết →
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : projects.length > 0 ? (
+        <div className="text-center py-16 bg-white rounded-xl border">
+          <CheckSquare className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+          <p className="text-sm text-gray-500 mb-2">Chưa có nhiệm vụ ở giai đoạn <strong>{stageName}</strong></p>
+          <p className="text-xs text-gray-400 mb-4">Tạo task mới hoặc chuyển giai đoạn từ trang dự án để tự động tạo nhiệm vụ</p>
+          <button onClick={() => setShowCreateTask(true)}
+            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
+            <Plus className="h-4 w-4" /> Tạo nhiệm vụ đầu tiên
+          </button>
+        </div>
+      ) : (
+        <div className="text-center py-16">
+          <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+          <p className="text-sm text-gray-500 mb-1">Không có dự án ở giai đoạn <strong>{stageName}</strong></p>
+          <p className="text-xs text-gray-400">Tạo dự án mới từ trang "Dự án" — dự án sẽ bắt đầu ở giai đoạn Tư vấn</p>
+        </div>
+      )}
+
+      {/* Modals */}
+      <TaskDetailModal taskId={selectedTask} open={!!selectedTask}
+        onClose={() => setSelectedTask(null)} onUpdated={loadData} />
+      <TaskCreateModal open={showCreateTask}
+        onClose={() => setShowCreateTask(false)} onCreated={loadData}
+        stageId={stageInfo?.id}
+        projectId={filterProject !== 'all' ? filterProject : projects[0]?.id} />
+
+      {/* Advance / Review Modal */}
+      <Modal open={!!advProj} onClose={() => setAdvProj(null)}
+        title={advMode === 'advance' ? `Chuyển: ${advProj?.code} → ${nextStageName}` : `Yêu cầu duyệt: ${advProj?.code}`} size="md">
         <div className="space-y-4">
-          <div className={`${advMode==='advance'?'bg-emerald-50 border-emerald-200':'bg-amber-50 border-amber-200'} border rounded-xl p-4`}>
-            <p className={`text-sm ${advMode==='advance'?'text-emerald-800':'text-amber-800'}`}>{advMode==='advance'?`✅ Chuyển "${advProj?.name}" → "${nsn}". Hệ thống tự tạo NV mới.`:`🔍 Gửi yêu cầu duyệt cho "${advProj?.name}" đến người quản lý DA.`}</p>
+          <div className={`${advMode === 'advance' ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'} border rounded-xl p-4`}>
+            <p className={`text-sm ${advMode === 'advance' ? 'text-emerald-800' : 'text-amber-800'}`}>
+              {advMode === 'advance'
+                ? `✅ Chuyển "${advProj?.name}" → "${nextStageName}". Hệ thống sẽ tự tạo NV mới.`
+                : `🔍 Gửi yêu cầu duyệt "${advProj?.name}" đến người quản lý DA.`}
+            </p>
           </div>
-          <div><label className="block text-sm font-medium mb-1">Ghi chú</label><textarea value={advNotes} onChange={e=>setAdvNotes(e.target.value)} className="w-full h-20 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400" placeholder="Ghi chú chuyển giao..."/></div>
-          <div><label className="block text-sm font-medium mb-1">Đính kèm</label><FileUploadButton onFilesUploaded={f=>setAdvFiles(p=>[...p,...f])}/><FilePreview files={advFiles} onRemove={i=>setAdvFiles(f=>f.filter((_,j)=>j!==i))}/></div>
-          <div className="flex justify-end gap-2"><button onClick={()=>setAdvProj(null)} className="h-9 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button><button onClick={doAdv} disabled={advL} className={`h-9 px-4 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${advMode==='advance'?'bg-emerald-600':'bg-amber-500'}`}>{advL?'...':advMode==='advance'?<><ArrowRightCircle className="h-3.5 w-3.5"/> Chuyển GĐ</>:<><Send className="h-3.5 w-3.5"/> Gửi duyệt</>}</button></div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Ghi chú</label>
+            <textarea value={advNotes} onChange={e => setAdvNotes(e.target.value)}
+              className="w-full h-20 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+              placeholder="Ghi chú chuyển giao..." />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Đính kèm</label>
+            <FileUploadButton onFilesUploaded={f => setAdvFiles(prev => [...prev, ...f])} />
+            <FilePreview files={advFiles} onRemove={i => setAdvFiles(f => f.filter((_, j) => j !== i))} />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setAdvProj(null)} className="h-9 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button>
+            <button onClick={doAdvance} disabled={advLoading}
+              className={`h-9 px-4 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${advMode === 'advance' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
+              {advLoading ? 'Đang xử lý...' : advMode === 'advance' ? <><ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển GĐ</> : <><Send className="h-3.5 w-3.5" /> Gửi duyệt</>}
+            </button>
+          </div>
         </div>
       </Modal>
-
-      <TaskDetailModal taskId={selTask} open={!!selTask} onClose={()=>setSelTask(null)} onUpdated={load}/>
-      <TaskCreateModal open={showCreate} onClose={()=>setShowCreate(false)} onCreated={load} stageId={stageInfo?.id} projectId={fProj!=='all'?fProj:projects[0]?.id}/>
     </div>
   );
 }
 
-// ═══ KANBAN ═══
-function KB({tasks,projects,slug,onTC,onMD,onST,onSel,onAdd,reload,compact}){
-  const sd=[...tasks].sort((a,b)=>(a.order_index||0)-(b.order_index||0));
-  if(!sd.length)return null;
-  return(
-    <div className="flex gap-4 overflow-x-auto pb-4" style={{minHeight:compact?'180px':'280px'}}>
-      {sd.map((t,i)=><TC key={t.id} task={t} idx={i} tasks={sd} projects={projects} slug={slug} onTC={onTC} onMD={onMD} onST={onST} onSel={onSel} reload={reload} compact={compact}/>)}
-      <div className="shrink-0 w-60 flex items-start pt-8"><button onClick={onAdd} className="w-full flex items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-500 text-sm cursor-pointer"><Plus className="h-4 w-4"/>Thêm NV</button></div>
+// ═══ Quick Add Checklist ═══
+function QuickAddChecklist({ taskId, onAdded }) {
+  const [text, setText] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  const add = async () => {
+    if (!text.trim()) return;
+    setAdding(true);
+    try {
+      await api.post(`/tasks/${taskId}/checklists`, { title: text.trim() });
+      setText('');
+      onAdded?.();
+    } catch { }
+    setAdding(false);
+  };
+
+  return (
+    <div className="flex gap-1 mt-1">
+      <input value={text} onChange={e => setText(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && add()}
+        placeholder="+ Thêm checklist..."
+        className="flex-1 h-7 px-2 bg-white border border-dashed border-gray-300 rounded text-xs outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200" />
+      {text && (
+        <button onClick={add} disabled={adding}
+          className="h-7 px-2 bg-blue-600 text-white rounded text-xs cursor-pointer hover:bg-blue-700 disabled:opacity-50">
+          {adding ? '...' : '+'}
+        </button>
+      )}
     </div>
   );
-}
-
-// ═══ TASK COLUMN ═══
-function TC({task,idx,tasks,projects,slug,onTC,onMD,onST,onSel,reload,compact}){
-  const ckD=task.checklists?.filter(c=>c.is_completed)?.length||0;
-  const ckT=task.checklists?.length||0;
-  const allD=ckT>0&&ckD===ckT;
-  const isDn=task.status==='done';
-  const proj=projects.find(p=>p.id===task.project_id);
-  const pSlug=proj?pcs(proj.status):slug;
-  const isFut=si(slug)>si(pSlug);
-  const spt=tasks.filter(t=>t.project_id===task.project_id);
-  const ti=spt.findIndex(t=>t.id===task.id);
-  const seqL=ti>0&&!spt.filter((_,i)=>i<ti).every(t=>t.status==='done');
-  const lk=isFut||seqL;
-  const act=!lk&&!isDn;
-
-  return(
-    <div className={`shrink-0 ${compact?'w-72':'w-80'} flex flex-col ${lk?'opacity-50':''}`}>
-      <div className={`rounded-t-xl p-3 border border-b-0 ${isDn?'bg-emerald-50 border-emerald-200':act?'bg-white border-gray-200':'bg-gray-50 border-gray-200'}`}>
-        <div className="flex items-start gap-2">
-          <button onClick={()=>!lk&&!isDn&&allD&&onMD(task.id)} disabled={lk||isDn||!allD} className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${isDn?'bg-emerald-500 border-emerald-500 text-white':allD?'border-emerald-400 hover:bg-emerald-50 cursor-pointer animate-pulse':lk?'border-gray-200 cursor-not-allowed':'border-gray-300 cursor-not-allowed'}`}>{isDn&&<CheckSquare className="h-3.5 w-3.5"/>}</button>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-              <span className="text-[10px] font-bold text-gray-400">#{idx+1}</span>
-              {proj&&<Link to={`/projects/${proj.id}`} className="text-[10px] text-blue-600 font-medium hover:underline">{proj.code}{!compact?` — ${proj.name}`:''}</Link>}
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
-            </div>
-            <h3 className={`text-sm font-semibold leading-tight ${isDn?'text-emerald-700 line-through':'text-gray-900'}`}>{task.title}</h3>
-          </div>
-          {lk&&<Lock className="h-4 w-4 text-gray-400 shrink-0 mt-1"/>}
-        </div>
-        <div className="flex items-center gap-3 mt-2 flex-wrap">
-          {task.assignee&&<div className="flex items-center gap-1"><div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{backgroundColor:avatarColor(task.assignee.full_name)}}>{getInitials(task.assignee.full_name)}</div><span className="text-[10px] text-gray-500">{task.assignee.full_name}</span></div>}
-          {task.due_date&&<span className={`text-[10px] flex items-center gap-0.5 ${new Date(task.due_date)<new Date()&&!isDn?'text-red-500':'text-gray-400'}`}><Clock className="h-3 w-3"/>{formatDate(task.due_date)}</span>}
-          <span className={`text-[10px] font-medium ${allD&&ckT>0?'text-emerald-600':'text-gray-400'}`}>✓ {ckD}/{ckT}</span>
-        </div>
-        {ckT>0&&<div className="w-full h-1.5 bg-gray-200 rounded-full mt-2"><div className={`h-full rounded-full transition-all ${isDn?'bg-emerald-500':'bg-blue-500'}`} style={{width:`${(ckD/ckT)*100}%`}}/></div>}
-      </div>
-      <div className={`flex-1 rounded-b-xl border p-2 space-y-1.5 min-h-[60px] ${isDn?'bg-emerald-50/50 border-emerald-200':lk?'bg-gray-50 border-gray-200':'bg-gray-50/50 border-gray-200'}`}>
-        {task.checklists?.map(cl=>(
-          <div key={cl.id} className={`flex items-start gap-2 bg-white rounded-lg border p-2 ${cl.is_completed?'border-emerald-200 bg-emerald-50/50':lk?'border-gray-200 opacity-60':'border-gray-200 hover:shadow-sm'}`}>
-            <button onClick={()=>!lk&&onTC(task.id,cl.id,cl.is_completed)} disabled={lk} className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 ${cl.is_completed?'bg-emerald-500 border-emerald-500 text-white':lk?'border-gray-200 cursor-not-allowed':'border-gray-300 hover:border-blue-400 cursor-pointer'}`}>{cl.is_completed&&<CheckSquare className="h-3 w-3"/>}</button>
-            <span className={`text-sm ${cl.is_completed?'line-through text-gray-400':lk?'text-gray-400':'text-gray-700'}`}>{cl.title}</span>
-          </div>
-        ))}
-        {!task.checklists?.length&&<div className="flex items-center justify-center h-12 text-xs text-gray-400">Chưa có checklist</div>}
-        {!lk&&!isDn&&<QA taskId={task.id} onAdded={reload}/>}
-      </div>
-      <div className="flex gap-1 mt-1">
-        {!lk&&!isDn&&task.status==='pending'&&<button onClick={()=>onST(task.id)} className="flex-1 h-7 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
-        {!lk&&!isDn&&allD&&ckT>0&&<button onClick={()=>onMD(task.id)} className="flex-1 h-7 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-medium hover:bg-emerald-100 cursor-pointer animate-pulse">✓ Xong</button>}
-        <button onClick={()=>onSel(task.id)} className="flex-1 h-7 text-gray-400 bg-white border rounded-lg text-xs hover:text-blue-600 cursor-pointer">Chi tiết →</button>
-      </div>
-    </div>
-  );
-}
-
-function QA({taskId,onAdded}){
-  const[t,setT]=useState('');
-  const[a,setA]=useState(false);
-  const add=async()=>{if(!t.trim())return;setA(true);try{await api.post(`/tasks/${taskId}/checklists`,{title:t.trim()});setT('');onAdded?.()}catch{}setA(false)};
-  return<div className="flex gap-1 mt-1"><input value={t} onChange={e=>setT(e.target.value)} onKeyDown={e=>e.key==='Enter'&&add()} placeholder="+ Thêm CL..." className="flex-1 h-7 px-2 bg-white border border-dashed rounded text-xs outline-none focus:border-blue-400"/>{t&&<button onClick={add} disabled={a} className="h-7 px-2 bg-blue-600 text-white rounded text-xs cursor-pointer">{a?'...':'+'}</button>}</div>;
 }

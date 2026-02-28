@@ -61,7 +61,9 @@ export default function Projects() {
 
   useEffect(load, [filterStatus]);
   useEffect(() => {
-    api.get('/companies/my/list').then(r => setCompanies(r.data.companies || [])).catch(() => {});
+    // Load companies — try full list first (admin), fallback to my companies
+    api.get('/companies').then(r => setCompanies(r.data.companies || []))
+      .catch(() => api.get('/companies/my/list').then(r => setCompanies(r.data.companies || [])).catch(() => {}));
   }, []);
 
   const deleteProject = async (e, id, code) => {
