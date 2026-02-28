@@ -356,10 +356,18 @@ r.patch('/:taskId/checklists/:clId', async (req, res) => {
     if (req.body.notes !== undefined) update.notes = req.body.notes;
     if (req.body.attachments !== undefined) update.attachments = req.body.attachments;
 
-    const { data, error } = await supabase.from('task_checklists').update(update).eq('id', req.params.clId).select().single();
+    // Try full update first; if column doesn't exist, retry without notes/attachments
+    let data, error;
+    ({ data, error } = await supabase.from('task_checklists').update(update).eq('id', req.params.clId).select().single());
+    if (error && error.message && error.message.includes('column')) {
+      const safeUpdate = { ...update };
+      delete safeUpdate.notes;
+      delete safeUpdate.attachments;
+      ({ data, error } = await supabase.from('task_checklists').update(safeUpdate).eq('id', req.params.clId).select().single());
+    }
     if (error) throw error;
     res.json({ checklist: data });
-  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) { console.error('checklist patch', e); res.status(500).json({ error: e.message || 'Lỗi' }); }
 });
 
 r.delete('/:taskId/checklists/:clId', async (req, res) => {

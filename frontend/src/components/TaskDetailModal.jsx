@@ -177,20 +177,36 @@ export default function TaskDetailModal({ taskId, open, onClose, onUpdated }) {
                 </div>
               )}
               {task.checklists?.map(cl => (
-                <div key={cl.id} className="flex items-start gap-2 group">
-                  <button onClick={() => toggleCheckItem(cl.id, cl.is_completed)}
-                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 cursor-pointer ${
-                      cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 hover:border-blue-400'
-                    }`}>
-                    {cl.is_completed && <CheckSquare className="h-3 w-3" />}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <span className={`text-sm ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{cl.title}</span>
-                    <FileList files={cl.attachments || []} />
+                <div key={cl.id} className="group">
+                  <div className="flex items-start gap-2">
+                    <button onClick={() => toggleCheckItem(cl.id, cl.is_completed)}
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 cursor-pointer ${
+                        cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 hover:border-blue-400'
+                      }`}>
+                      {cl.is_completed && <CheckSquare className="h-3 w-3" />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{cl.title}</span>
+                        {(cl.notes || cl.attachments?.length > 0) && (
+                          <button onClick={() => {
+                            const el = document.getElementById(`cl-detail-${cl.id}`);
+                            if (el) el.classList.toggle('hidden');
+                          }} className="text-gray-300 hover:text-blue-500 cursor-pointer" title="Xem ghi chú/file">
+                            <Paperclip className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                      {/* Notes + files detail (hidden by default, toggle) */}
+                      <div id={`cl-detail-${cl.id}`} className="hidden mt-1.5 ml-0 space-y-1.5">
+                        {cl.notes && <p className="text-xs text-gray-600 bg-amber-50 rounded p-2 border border-amber-100">{cl.notes}</p>}
+                        {cl.attachments?.length > 0 && <FileList files={cl.attachments} />}
+                      </div>
+                    </div>
+                    <button onClick={() => deleteCheckItem(cl.id)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
-                  <button onClick={() => deleteCheckItem(cl.id)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
                 </div>
               ))}
               <div className="mt-3 space-y-2">
