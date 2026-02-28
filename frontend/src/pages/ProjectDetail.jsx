@@ -182,24 +182,62 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* People — all stages */}
+      {/* People — workflow lines (new) or stage persons (old) */}
       <div className="bg-white rounded-xl border p-4">
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Nhân sự dự án</h3>
-        <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
-          {STAGE_FLOW.map(s => {
-            const person = project[s.personKey];
-            return (
-              <div key={s.slug} className="text-center">
-                <div className="h-9 w-9 mx-auto rounded-full flex items-center justify-center text-white text-[10px] font-bold mb-1"
-                  style={{ backgroundColor: person ? avatarColor(person.full_name) : '#d1d5db' }}>
-                  {person ? getInitials(person.full_name) : '?'}
+        {project.workflowLines?.length > 0 ? (
+          /* New: Workflow lines */
+          <div className="space-y-3">
+            {(() => {
+              const byStage = {};
+              project.workflowLines.forEach(l => {
+                if (!byStage[l.stage_slug]) byStage[l.stage_slug] = [];
+                byStage[l.stage_slug].push(l);
+              });
+              return STAGE_FLOW.map(s => {
+                const lines = byStage[s.slug] || [];
+                if (!lines.length) return null;
+                return (
+                  <div key={s.slug}>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">{s.label} ({lines.length})</p>
+                    <div className="flex flex-wrap gap-2">
+                      {lines.map(line => (
+                        <div key={line.id} className="flex items-center gap-2 bg-gray-50 rounded-lg px-2.5 py-1.5">
+                          <div className="h-7 w-7 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
+                            style={{ backgroundColor: line.assignee ? avatarColor(line.assignee.full_name) : '#d1d5db' }}>
+                            {line.assignee ? getInitials(line.assignee.full_name) : '?'}
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium text-gray-900">{line.label}</p>
+                            <p className="text-[10px] text-gray-500">{line.assignee?.full_name || 'Chưa phân công'}</p>
+                            {line.description && <p className="text-[9px] text-gray-400">{line.description}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        ) : (
+          /* Old: Fixed 8 stage persons */
+          <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
+            {STAGE_FLOW.map(s => {
+              const person = project[s.personKey];
+              return (
+                <div key={s.slug} className="text-center">
+                  <div className="h-9 w-9 mx-auto rounded-full flex items-center justify-center text-white text-[10px] font-bold mb-1"
+                    style={{ backgroundColor: person ? avatarColor(person.full_name) : '#d1d5db' }}>
+                    {person ? getInitials(person.full_name) : '?'}
+                  </div>
+                  <p className="text-[10px] font-medium text-gray-900 truncate">{person?.full_name || '—'}</p>
+                  <p className="text-[9px] text-gray-400">{s.label}</p>
                 </div>
-                <p className="text-[10px] font-medium text-gray-900 truncate">{person?.full_name || '—'}</p>
-                <p className="text-[9px] text-gray-400">{s.label}</p>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Tabs */}

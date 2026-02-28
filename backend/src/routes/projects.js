@@ -129,6 +129,15 @@ r.get('/:id', async (req, res) => {
       canAdvance = stageTasksTotal > 0 && stageTasksDone === stageTasksTotal;
     }
 
+    // Load workflow lines
+    let workflowLines = [];
+    try {
+      const { data: wl } = await supabase.from('project_workflow_lines')
+        .select('*, assignee:users!project_workflow_lines_assignee_id_fkey(id,full_name,avatar,role)')
+        .eq('project_id', req.params.id).order('order_index');
+      workflowLines = wl || [];
+    } catch { }
+
     res.json({
       project: {
         ...data,
@@ -136,6 +145,7 @@ r.get('/:id', async (req, res) => {
         comments: comments || [],
         activities: activities || [],
         transitions: transitions || [],
+        workflowLines,
         canAdvance,
         stageTasksDone,
         stageTasksTotal,
@@ -265,6 +275,23 @@ r.post('/', async (req, res) => {
           '📌 Nhiệm vụ tự động', `${createdTasks.length} nhiệm vụ giai đoạn "Tư vấn" đã được tạo cho dự án ${code}`,
           'project', data.id);
       }
+    }
+
+    // ── CREATE WORKFLOW LINES from payload ──
+    if (b.workflow_lines?.length) {
+      try {
+        await supabase.from('project_workflow_lines').insert(
+          b.workflow_lines.map((line, i) => ({
+            project_id: data.id,
+            stage_slug: line.stage_slug,
+            label: line.label || line.stage_slug,
+            assignee_id: line.assignee_id || null,
+            description: line.description || null,
+            order_index: line.order_index ?? i,
+            color: line.color || null,
+          }))
+        );
+      } catch (e) { console.warn('Workflow lines insert failed (table may not exist):', e.message); }
     }
 
     res.status(201).json({ project: data });
@@ -566,6 +593,74 @@ r.delete('/:id/products/:ppId', async (req, res) => {
   try {
     await supabase.from('project_products').delete().eq('id', req.params.ppId);
     res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══════════════════════════════════════════════
+// WORKFLOW LINES — Luồng phân công linh hoạt
+// ═══════════════════════════════════════════════
+
+// GET lines for a project
+r.get('/:id/workflow-lines', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_workflow_lines')
+      .select('*, assignee:users!project_workflow_lines_assignee_id_fkey(id,full_name,avatar,role)')
+      .eq('project_id', req.params.id).order('order_index');
+    if (error) throw error;
+    res.json({ lines: data || [] });
+  } catch (e) { res.json({ lines: [] }); }
+});
+
+// ADD line
+r.post('/:id/workflow-lines', async (req, res) => {
+  try {
+    const b = req.body;
+    const { data, error } = await supabase.from('project_workflow_lines').insert({
+      project_id: req.params.id,
+      stage_slug: b.stage_slug,
+      label: b.label || b.stage_slug,
+      assignee_id: b.assignee_id || null,
+      description: b.description || null,
+      order_index: b.order_index ?? 0,
+      color: b.color || null,
+    }).select('*, assignee:users!project_workflow_lines_assignee_id_fkey(id,full_name,avatar,role)').single();
+    if (error) throw error;
+    res.status(201).json({ line: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// UPDATE line
+r.put('/:id/workflow-lines/:lineId', async (req, res) => {
+  try {
+    const b = req.body;
+    const update = { updated_at: new Date().toISOString() };
+    ['label','assignee_id','description','order_index','status','color','stage_slug'].forEach(f => {
+      if (b[f] !== undefined) update[f] = b[f];
+    });
+    const { data, error } = await supabase.from('project_workflow_lines')
+      .update(update).eq('id', req.params.lineId)
+      .select('*, assignee:users!project_workflow_lines_assignee_id_fkey(id,full_name,avatar,role)').single();
+    if (error) throw error;
+    res.json({ line: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// DELETE line
+r.delete('/:id/workflow-lines/:lineId', async (req, res) => {
+  try {
+    await supabase.from('project_workflow_lines').delete().eq('id', req.params.lineId);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// REORDER lines
+r.put('/:id/workflow-lines-order', async (req, res) => {
+  try {
+    const { lines } = req.body; // [{id, order_index}]
+    for (const l of (lines || [])) {
+      await supabase.from('project_workflow_lines').update({ order_index: l.order_index }).eq('id', l.id);
+    }
+    res.json({ message: 'OK' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
