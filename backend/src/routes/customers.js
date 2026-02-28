@@ -8,12 +8,14 @@ r.use(auth);
 // ─── LIST CUSTOMERS (CRM) ──
 r.get('/', async (req, res) => {
   try {
-    const { search, status, assigned_to, source, page = 1, limit = 50 } = req.query;
+    const { search, status, status_id, assigned_to, source, page = 1, limit = 50 } = req.query;
     let q = supabase.from('customers').select(`
-      *, assigned_user:users!customers_assigned_to_fkey(id,full_name,avatar)
+      *, assigned_user:users!customers_assigned_to_fkey(id,full_name,avatar),
+      customer_status:customer_statuses(id,name,slug,color,icon)
     `, { count: 'exact' });
     if (search) q = q.or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%,company.ilike.%${search}%`);
-    if (status && status !== 'all') q = q.eq('status', status);
+    if (status_id && status_id !== 'all') q = q.eq('status_id', status_id);
+    else if (status && status !== 'all') q = q.eq('status', status);
     if (assigned_to) q = q.eq('assigned_to', assigned_to);
     if (source) q = q.eq('source', source);
     const p = +page, l = +limit;
@@ -21,10 +23,18 @@ r.get('/', async (req, res) => {
     const { data, count, error } = await q;
     if (error) throw error;
 
-    // Stats
-    const { data: all } = await supabase.from('customers').select('status');
-    const stats = { total: all?.length || 0 };
-    all?.forEach(c => { stats[c.status] = (stats[c.status] || 0) + 1; });
+    // Stats by status_id
+    let stats = { total: 0 };
+    try {
+      const { data: all } = await supabase.from('customers').select('status_id');
+      stats.total = all?.length || 0;
+      all?.forEach(c => { if (c.status_id) stats[c.status_id] = (stats[c.status_id] || 0) + 1; });
+    } catch (_) {
+      // Fallback: count by old status field
+      const { data: all } = await supabase.from('customers').select('status');
+      stats.total = all?.length || 0;
+      all?.forEach(c => { stats[c.status] = (stats[c.status] || 0) + 1; });
+    }
 
     res.json({ customers: data, total: count, stats });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
@@ -67,6 +77,7 @@ r.post('/', async (req, res) => {
       company: b.company || null, tax_code: b.tax_code || null,
       gender: b.gender || null, birthday: b.birthday || null,
       assigned_to: b.assigned_to || null, status: b.status || 'new',
+      status_id: b.status_id || null,
       tags: b.tags || [],
     }).select().single();
     if (error) throw error;
@@ -80,7 +91,7 @@ r.put('/:id', async (req, res) => {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     const fields = ['full_name', 'phone', 'email', 'address', 'district', 'city', 'notes', 'source',
-      'company', 'tax_code', 'gender', 'birthday', 'assigned_to', 'status', 'tags', 'total_revenue'];
+      'company', 'tax_code', 'gender', 'birthday', 'assigned_to', 'status', 'status_id', 'tags', 'total_revenue'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     const { data, error } = await supabase.from('customers').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
