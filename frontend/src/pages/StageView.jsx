@@ -421,9 +421,9 @@ export default function StageView() {
                     <div className="flex items-center gap-3 bg-white rounded-xl border px-4 py-3 mb-2">
                       <div className="w-2 h-8 rounded-full" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }} />
                       <div className="flex-1 min-w-0">
-                        <h2 className="text-base font-bold text-gray-900">{line?.label || (proj ? `${proj.code} — ${proj.name}` : `Nhóm ${gi + 1}`)}</h2>
+                        <h2 className="text-base sm:text-lg font-bold text-gray-900">{line?.label || (proj ? proj.name : `Nhóm ${gi + 1}`)}</h2>
                         <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
-                          {proj && <span className="text-blue-600 font-medium">{proj.code}</span>}
+                          {proj && <span className="text-blue-600 font-bold text-sm">{proj.code}</span>}
                           {line?.assignee && <span className="flex items-center gap-1"><span className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold" style={{ backgroundColor: avatarColor(line.assignee.full_name) }}>{getInitials(line.assignee.full_name)}</span>{line.assignee.full_name}</span>}
                           <span>{lineTasks.length} NV · {lineTasks.filter(t => t.status === 'done').length} xong</span>
                         </div>
@@ -458,13 +458,19 @@ export default function StageView() {
                                 {isTaskDone && <CheckSquare className="h-3.5 w-3.5" />}
                               </button>
                               <div className="flex-1 min-w-0">
+                                {/* Project name — BIG and clear */}
+                                {tProj && (
+                                  <Link to={`/projects/${tProj.id}`} className="block text-sm sm:text-base font-bold text-blue-700 hover:text-blue-800 hover:underline leading-tight mb-1 truncate">
+                                    {tProj.name}
+                                  </Link>
+                                )}
                                 <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                                   <span className="text-[10px] font-bold text-gray-400">#{taskIdx + 1}</span>
-                                  {tProj && <Link to={`/projects/${tProj.id}`} className="text-[10px] text-blue-600 font-medium hover:underline">{tProj.code} — {tProj.name}</Link>}
+                                  {tProj && <span className="text-[10px] text-blue-500 font-semibold">{tProj.code}</span>}
                                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
                                 </div>
-                                <h3 className={`text-sm font-semibold leading-tight ${isTaskDone ? 'text-emerald-700 line-through' : 'text-gray-900'}`}>{task.title}</h3>
-                                {tProj?.customers?.full_name && <p className="text-[10px] text-gray-400 mt-0.5">👤 {tProj.customers.full_name}</p>}
+                                <h3 className={`text-xs sm:text-sm font-semibold leading-tight ${isTaskDone ? 'text-emerald-700 line-through' : 'text-gray-900'}`}>{task.title}</h3>
+                                {tProj?.customers?.full_name && <p className="text-[10px] text-gray-500 mt-0.5">👤 {tProj.customers.full_name}</p>}
                               </div>
                               {isLocked && <Lock className="h-4 w-4 text-gray-400 shrink-0 mt-1" />}
                             </div>
