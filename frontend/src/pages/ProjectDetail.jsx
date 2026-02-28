@@ -6,7 +6,7 @@ import TaskCreateModal from '../components/TaskCreateModal';
 import Modal from '../components/Modal';
 import { FileUploadButton, FilePreview, FileList } from '../components/FileUpload';
 import {
-  ArrowLeft, Plus, Send, Trash2, ChevronRight, Phone, MapPin,
+  ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle,
   Paperclip, FileText
 } from 'lucide-react';
@@ -38,6 +38,7 @@ export default function ProjectDetail() {
   const [newComment, setNewComment] = useState('');
   const [commentFiles, setCommentFiles] = useState([]);
   const [showAdvance, setShowAdvance] = useState(false);
+  const [showPeople, setShowPeople] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -159,9 +160,14 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* People — workflow lines (new) or stage persons (old) */}
-      <div className="bg-white rounded-xl border p-4">
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Nhân sự dự án</h3>
+      {/* People — collapsible */}
+      <div className="bg-white rounded-xl border">
+        <button onClick={() => setShowPeople(!showPeople)} className="w-full flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Nhân sự dự án</h3>
+          <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${showPeople ? 'rotate-180' : ''}`} />
+        </button>
+        {showPeople && (
+          <div className="px-4 pb-4">
         {project.workflowLines?.length > 0 ? (
           /* New: Workflow lines */
           <div className="space-y-3">
@@ -213,6 +219,8 @@ export default function ProjectDetail() {
                 </div>
               );
             })}
+          </div>
+        )}
           </div>
         )}
       </div>
