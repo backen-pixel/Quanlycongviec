@@ -120,4 +120,20 @@ r.delete('/:companyId/employees/:userId', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
+// ═══ DELETE COMPANY ═══
+r.delete('/:id', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    const { data: company } = await supabase.from('companies').select('name').eq('id', req.params.id).single();
+    // Remove all employee links
+    await supabase.from('user_companies').delete().eq('company_id', req.params.id);
+    // Unlink projects
+    await supabase.from('projects').update({ company_id: null }).eq('company_id', req.params.id);
+    // Delete company
+    const { error } = await supabase.from('companies').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ message: `Đã xóa công ty ${company?.name}` });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
 module.exports = r;
