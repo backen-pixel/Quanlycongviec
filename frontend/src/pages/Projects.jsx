@@ -47,12 +47,20 @@ const KANBAN_STAGES = [
   { slug: 'customer-care', status: 'warranty', label: 'CSKH', color: '#EF4444', path: '/stages/customer-care' },
 ];
 
+// Map status tab value → stage slug
+const STATUS_TO_SLUG = {
+  consulting: 'consulting', designing: 'design', quoting: 'quotation',
+  contract_signed: 'contract', producing: 'production', shipping: 'shipping',
+  installing: 'installation', completed: 'customer-care',
+};
+
 export default function Projects() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban'
+  const [viewMode, setViewMode] = useState('kanban');
+  const [stageTasks, setStageTasks] = useState([]); // tasks for selected stage tab // 'list' | 'kanban'
   const [filterTime, setFilterTime] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -73,6 +81,26 @@ export default function Projects() {
   };
 
   useEffect(load, [filterStatus]);
+
+  // Load tasks for specific stage tab (need stage UUID from /users/stages)
+  const [stageMap, setStageMap] = useState({}); // { slug: { id, name, color } }
+  useEffect(() => {
+    api.get('/users/stages').then(r => {
+      const m = {};
+      (r.data.stages || []).forEach(s => { m[s.slug] = s; });
+      setStageMap(m);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (filterStatus === 'all') { setStageTasks([]); return; }
+    const slug = STATUS_TO_SLUG[filterStatus];
+    const stage = stageMap[slug];
+    if (!slug || !stage?.id) { setStageTasks([]); return; }
+    api.get('/tasks', { params: { stage_id: stage.id, limit: 500 } })
+      .then(r => setStageTasks(r.data.tasks || []))
+      .catch(() => setStageTasks([]));
+  }, [filterStatus, stageMap]);
   useEffect(() => {
     // Load companies — try full list first (admin), fallback to my companies
     api.get('/companies').then(r => setCompanies(r.data.companies || []))
@@ -86,7 +114,17 @@ export default function Projects() {
     try { await api.delete(`/projects/${id}`); load(); } catch { }
   };
 
-  const statuses = ['all', 'consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'installing', 'completed'];
+  const STAGE_TABS = [
+    { id: 'all', label: 'Tất cả' },
+    { id: 'consulting', label: 'Tư vấn' },
+    { id: 'designing', label: 'Thiết kế' },
+    { id: 'quoting', label: 'Báo giá' },
+    { id: 'contract_signed', label: 'Hợp đồng' },
+    { id: 'producing', label: 'Sản xuất' },
+    { id: 'shipping', label: 'Vận chuyển' },
+    { id: 'installing', label: 'Lắp đặt' },
+    { id: 'warranty', label: 'CSKH' },
+  ];
 
   // Apply client-side filters
   let filtered = filterByTime(projects, filterTime, dateFrom, dateTo);
@@ -160,16 +198,22 @@ export default function Projects() {
         </button>
       </div>
 
-      {/* Status tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5 overflow-x-auto">
-        {statuses.map(s => (
-          <button key={s} onClick={() => setFilterStatus(s)}
-            className={`h-8 px-3 rounded-md text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-              filterStatus === s ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}>
-            {s === 'all' ? 'Tất cả' : STATUS_LABELS[s] || s}
-          </button>
-        ))}
+      {/* Stage tabs */}
+      <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5 overflow-x-auto no-scrollbar">
+        {STAGE_TABS.map(s => {
+          const count = s.id === 'all' ? filtered.length : filtered.filter(p => p.status === s.id).length;
+          const stageInfo = s.id !== 'all' ? KANBAN_STAGES.find(ks => ks.status === s.id) : null;
+          return (
+            <button key={s.id} onClick={() => setFilterStatus(s.id)}
+              className={`h-8 px-2.5 sm:px-3 rounded-md text-[11px] sm:text-xs font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                filterStatus === s.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}>
+              {stageInfo && <span className="w-1.5 h-1.5 rounded-full hidden sm:inline-block" style={{ backgroundColor: stageInfo.color }} />}
+              {s.label}
+              {count > 0 && <span className="text-[9px] bg-gray-200 text-gray-600 px-1 rounded-full">{count}</span>}
+            </button>
+          );
+        })}
       </div>
 
       {/* Advanced filters panel */}
@@ -236,102 +280,185 @@ export default function Projects() {
       ) : filtered.length === 0 ? (
         <div className="text-center py-16">
           <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-          <p className="text-sm text-gray-400">{hasActiveFilters ? 'Không có dự án phù hợp bộ lọc' : 'Chưa có dự án nào'}</p>
+          <p className="text-sm text-gray-400">{hasActiveFilters ? 'Không có dự án phù hợp' : 'Chưa có dự án nào'}</p>
           <button onClick={() => setShowCreate(true)} className="mt-3 text-sm text-blue-600 font-medium cursor-pointer">+ Tạo dự án</button>
         </div>
-      ) : viewMode === 'kanban' ? (
-        /* ═══ KANBAN VIEW: cột = quy trình, thẻ = dự án ═══ */
-        <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: '400px' }}>
-          {KANBAN_STAGES.map(stage => {
-            const stageProjects = filtered.filter(p => p.status === stage.status);
-            return (
-              <div key={stage.slug} className="shrink-0 w-64 sm:w-72 flex flex-col">
-                {/* Column header */}
-                <div className="rounded-t-xl p-3 border border-b-0 flex items-center gap-2" style={{ backgroundColor: stage.color + '15', borderColor: stage.color + '30' }}>
-                  <div className="w-2.5 h-8 rounded-full" style={{ backgroundColor: stage.color }} />
-                  <div className="flex-1 min-w-0">
-                    <Link to={stage.path} className="text-sm font-bold text-gray-900 hover:text-blue-600">{stage.label}</Link>
-                    <p className="text-[10px] text-gray-500">{stageProjects.length} dự án</p>
+      ) : filterStatus === 'all' ? (
+        /* ═══ TAB TẤT CẢ: Kanban overview / List ═══ */
+        viewMode === 'kanban' ? (
+          <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: '400px' }}>
+            {KANBAN_STAGES.map(stage => {
+              const stageProjects = filtered.filter(p => p.status === stage.status);
+              return (
+                <div key={stage.slug} className="shrink-0 w-60 sm:w-72 flex flex-col">
+                  <div className="rounded-t-xl p-2.5 sm:p-3 border border-b-0 flex items-center gap-2" style={{ backgroundColor: stage.color + '15', borderColor: stage.color + '30' }}>
+                    <div className="w-2 h-8 rounded-full" style={{ backgroundColor: stage.color }} />
+                    <div className="flex-1 min-w-0">
+                      <Link to={stage.path} className="text-xs sm:text-sm font-bold text-gray-900 hover:text-blue-600">{stage.label}</Link>
+                      <p className="text-[10px] text-gray-500">{stageProjects.length} DA</p>
+                    </div>
+                    <span className="text-lg font-bold" style={{ color: stage.color }}>{stageProjects.length}</span>
                   </div>
-                  <span className="text-lg font-bold" style={{ color: stage.color }}>{stageProjects.length}</span>
+                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto max-h-[65vh]" style={{ borderColor: stage.color + '30' }}>
+                    {stageProjects.length > 0 ? stageProjects.map(p => (
+                      <Link to={`/projects/${p.id}`} key={p.id}
+                        className="block bg-white rounded-lg border p-3 hover:shadow-md hover:border-blue-300 transition-all">
+                        <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-tight mb-1">{p.name}</h3>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-xs font-bold text-blue-600">{p.code}</span>
+                          {p.priority && <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${PRIORITY_COLORS[p.priority]}`}>{PRIORITY_LABELS[p.priority]}</span>}
+                        </div>
+                        {p.customers?.full_name && <p className="text-xs text-gray-600">👤 {p.customers.full_name}</p>}
+                        {p.company && <p className="text-[10px] text-indigo-600 font-medium">🏢 {p.company.short_name || p.company.name}</p>}
+                        {p.estimated_value && <p className="text-xs font-bold text-emerald-600 mt-1">{formatVND(p.estimated_value)}</p>}
+                      </Link>
+                    )) : (
+                      <div className="flex items-center justify-center h-16 text-xs text-gray-400">Trống</div>
+                    )}
+                  </div>
                 </div>
+              );
+            })}
+          </div>
+        ) : (
+          /* List view for Tất cả */
+          <div className="grid gap-3">
+            {filtered.map((p, i) => (
+              <Link to={`/projects/${p.id}`} key={p.id}
+                className="bg-white rounded-xl border p-4 sm:p-5 hover:shadow-md hover:border-gray-300 transition-all group">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-sm font-bold text-blue-600">{p.code}</span>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] || ''}`}>{STATUS_LABELS[p.status] || p.status}</span>
+                      {p.priority && <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[p.priority]}`}>{PRIORITY_LABELS[p.priority]}</span>}
+                    </div>
+                    <h3 className="text-base font-bold text-gray-900 mb-1">{p.name}</h3>
+                    <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+                      {p.company && <span className="text-indigo-600 font-medium">🏢 {p.company.short_name || p.company.name}</span>}
+                      {p.customers?.full_name && <span>👤 {p.customers.full_name}</span>}
+                      {p.customers?.phone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{p.customers.phone}</span>}
+                      {p.created_at && <span><Calendar className="h-3 w-3 inline" /> {formatDate(p.created_at)}</span>}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0 flex items-start gap-2">
+                    <p className="text-base font-bold text-gray-900">{formatVND(p.estimated_value)}</p>
+                    <button onClick={(e) => deleteProject(e, p.id, p.code)}
+                      className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )
+      ) : (
+        /* ═══ TAB QUY TRÌNH CỤ THỂ: Kanban cột = nhiệm vụ, thẻ = dự án ═══ */
+        (() => {
+          const currentStage = KANBAN_STAGES.find(s => s.status === filterStatus);
+          const stageProjects = filtered.filter(p => p.status === filterStatus);
+          // Group tasks by title (unique task titles become columns)
+          const taskColumns = {};
+          stageTasks.forEach(t => {
+            const col = t.title || 'Khác';
+            if (!taskColumns[col]) taskColumns[col] = { title: col, projects: new Set(), tasks: [] };
+            taskColumns[col].tasks.push(t);
+            if (t.project_id) taskColumns[col].projects.add(t.project_id);
+          });
+          const columns = Object.values(taskColumns);
+          // Build project map
+          const projMap = {};
+          stageProjects.forEach(p => { projMap[p.id] = p; });
+          // Projects with NO tasks in this stage
+          const projectsWithTasks = new Set();
+          stageTasks.forEach(t => projectsWithTasks.add(t.project_id));
+          const orphanProjects = stageProjects.filter(p => !projectsWithTasks.has(p.id));
 
-                {/* Cards */}
-                <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto max-h-[65vh]" style={{ borderColor: stage.color + '30' }}>
-                  {stageProjects.length > 0 ? stageProjects.map(p => (
-                    <div key={p.id} onClick={() => navigate(stage.path)}
-                      className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md hover:border-blue-300 cursor-pointer transition-all group">
-                      {/* Project name — BIG */}
-                      <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-tight mb-1.5 group-hover:text-blue-600">{p.name}</h3>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <span className="text-xs font-bold text-blue-600">{p.code}</span>
-                        {p.priority && <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[p.priority]}`}>{PRIORITY_LABELS[p.priority]}</span>}
-                      </div>
-                      {p.customers?.full_name && <p className="text-xs text-gray-600 mb-1">👤 {p.customers.full_name}</p>}
-                      {p.company && <p className="text-[10px] text-indigo-600 font-medium mb-1">🏢 {p.company.short_name || p.company.name}</p>}
-                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
-                        {p.estimated_value ? <span className="text-xs font-bold text-emerald-600">{formatVND(p.estimated_value)}</span> : <span />}
-                        {p.sales_person && (
-                          <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
-                            style={{ backgroundColor: avatarColor(p.sales_person.full_name) }} title={p.sales_person.full_name}>
-                            {getInitials(p.sales_person.full_name)}
+          return (
+            <div className="space-y-3">
+              {/* Stage header */}
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-10 rounded-full" style={{ backgroundColor: currentStage?.color || '#3b82f6' }} />
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{currentStage?.label || filterStatus}</h2>
+                  <p className="text-xs text-gray-500">{stageProjects.length} dự án · {stageTasks.length} nhiệm vụ</p>
+                </div>
+                <Link to={currentStage?.path || '#'} className="ml-auto h-8 px-3 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-blue-100 cursor-pointer">
+                  Mở quy trình →
+                </Link>
+              </div>
+
+              {columns.length > 0 ? (
+                <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: '300px' }}>
+                  {columns.map((col, ci) => {
+                    const colProjects = [...col.projects].map(pid => projMap[pid]).filter(Boolean);
+                    return (
+                      <div key={ci} className="shrink-0 w-64 sm:w-72 flex flex-col">
+                        {/* Column header = Task name */}
+                        <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderColor: currentStage?.color + '30' }}>
+                          <h3 className="text-sm font-bold text-gray-900 leading-tight">{col.title}</h3>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] text-gray-500">{colProjects.length} DA</span>
+                            <span className="text-[10px] text-gray-400">·</span>
+                            <span className="text-[10px] text-gray-500">{col.tasks.filter(t => t.status === 'done').length}/{col.tasks.length} xong</span>
                           </div>
-                        )}
+                        </div>
+                        {/* Cards = Projects doing this task */}
+                        <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto max-h-[60vh]" style={{ borderColor: currentStage?.color + '30' }}>
+                          {colProjects.length > 0 ? colProjects.map(p => {
+                            const pTask = col.tasks.find(t => t.project_id === p.id);
+                            return (
+                              <Link to={`/projects/${p.id}`} key={p.id}
+                                className="block bg-white rounded-lg border p-3 hover:shadow-md hover:border-blue-300 transition-all">
+                                <h4 className="text-sm sm:text-base font-bold text-gray-900 leading-tight mb-1">{p.name}</h4>
+                                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                  <span className="text-xs font-bold text-blue-600">{p.code}</span>
+                                  {pTask && <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${
+                                    pTask.status === 'done' ? 'bg-emerald-100 text-emerald-700' :
+                                    pTask.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                                  }`}>{pTask.status === 'done' ? '✓ Xong' : pTask.status === 'in_progress' ? '▶ Đang làm' : '⏳ Chờ'}</span>}
+                                </div>
+                                {p.customers?.full_name && <p className="text-xs text-gray-600">👤 {p.customers.full_name}</p>}
+                                {pTask?.assignee && <p className="text-[10px] text-gray-500 mt-0.5">🔧 {pTask.assignee.full_name}</p>}
+                              </Link>
+                            );
+                          }) : (
+                            <div className="flex items-center justify-center h-12 text-xs text-gray-400">Trống</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {/* Orphan projects (no tasks) */}
+                  {orphanProjects.length > 0 && (
+                    <div className="shrink-0 w-64 sm:w-72 flex flex-col">
+                      <div className="rounded-t-xl p-3 border border-b-0 bg-amber-50" style={{ borderColor: '#f59e0b30' }}>
+                        <h3 className="text-sm font-bold text-amber-700">Chưa có nhiệm vụ</h3>
+                        <p className="text-[10px] text-amber-500">{orphanProjects.length} DA chưa tạo NV</p>
+                      </div>
+                      <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-amber-50/30 overflow-y-auto max-h-[60vh]" style={{ borderColor: '#f59e0b30' }}>
+                        {orphanProjects.map(p => (
+                          <Link to={`/projects/${p.id}`} key={p.id}
+                            className="block bg-white rounded-lg border p-3 hover:shadow-md transition-all">
+                            <h4 className="text-sm font-bold text-gray-900 mb-0.5">{p.name}</h4>
+                            <span className="text-xs text-blue-600 font-bold">{p.code}</span>
+                            {p.customers?.full_name && <p className="text-xs text-gray-500">👤 {p.customers.full_name}</p>}
+                          </Link>
+                        ))}
                       </div>
                     </div>
-                  )) : (
-                    <div className="flex items-center justify-center h-20 text-xs text-gray-400">Trống</div>
                   )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        /* ═══ LIST VIEW ═══ */
-        <div className="grid gap-3">
-          {filtered.map((p, i) => (
-            <Link to={`/projects/${p.id}`} key={p.id}
-              className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md hover:border-gray-300 transition-all animate-fade-in group"
-              style={{ animationDelay: `${i * 30}ms` }}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                    <span className="text-sm font-bold text-blue-600">{p.code}</span>
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] || ''}`}>
-                      {STATUS_LABELS[p.status] || p.status}
-                    </span>
-                    {p.priority && (
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[p.priority] || ''}`}>
-                        {PRIORITY_LABELS[p.priority]}
-                      </span>
-                    )}
-                    {p.current_stage && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full text-white font-medium" style={{ backgroundColor: p.current_stage.color }}>
-                        {p.current_stage.name}
-                      </span>
-                    )}
-                  </div>
-                  <h3 className="text-base font-bold text-gray-900 mb-1">{p.name}</h3>
-                  <div className="flex items-center gap-4 text-xs text-gray-500 flex-wrap">
-                    {p.company && <span className="flex items-center gap-1 text-indigo-600 font-medium">🏢 {p.company.short_name || p.company.name}</span>}
-                    {p.customers?.full_name && <span>👤 {p.customers.full_name}</span>}
-                    {p.customers?.phone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{p.customers.phone}</span>}
-                    {p.created_at && <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{formatDate(p.created_at)}</span>}
-                    {p.sales_person && <span>Sales: {p.sales_person.full_name}</span>}
-                  </div>
+              ) : (
+                <div className="text-center py-10 text-gray-400">
+                  <p className="text-sm">Chưa có nhiệm vụ nào cho quy trình này</p>
+                  <Link to={currentStage?.path || '#'} className="mt-2 inline-block text-sm text-blue-600 font-medium">Mở quy trình để tạo →</Link>
                 </div>
-                <div className="text-right shrink-0 flex items-start gap-2">
-                  <p className="text-base font-bold text-gray-900">{formatVND(p.estimated_value)}</p>
-                  <button onClick={(e) => deleteProject(e, p.id, p.code)}
-                    className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer transition-all">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
+              )}
+            </div>
+          );
+        })()
       )}
 
       <ProjectCreateModal open={showCreate} onClose={() => setShowCreate(false)} onCreated={load} />
