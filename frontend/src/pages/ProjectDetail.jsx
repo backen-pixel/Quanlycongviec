@@ -57,11 +57,6 @@ export default function ProjectDetail() {
     setNewComment(''); setCommentFiles([]); load();
   };
 
-  const deleteTask = async (taskId) => {
-    if (!confirm('Xóa công việc này?')) return;
-    try { await api.delete(`/tasks/${taskId}`); load(); } catch {}
-  };
-
   if (loading) return <div className="flex items-center justify-center h-64"><svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>;
   if (!project) return <div className="text-center py-16 text-gray-400">Dự án không tồn tại</div>;
 
@@ -332,7 +327,7 @@ export default function ProjectDetail() {
                           </div>
                           <div className="space-y-1">
                             {lineTasks.map(t => (
-                              <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} onDelete={deleteTask} />
+                              <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} />
                             ))}
                           </div>
                         </div>
@@ -342,7 +337,7 @@ export default function ProjectDetail() {
                     {stageTasks.filter(t => !t.workflow_line_id).length > 0 && (
                       <div className="space-y-1">
                         {stageTasks.filter(t => !t.workflow_line_id).map(t => (
-                          <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} onDelete={deleteTask} />
+                          <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} />
                         ))}
                       </div>
                     )}
@@ -358,7 +353,7 @@ export default function ProjectDetail() {
                   ) : (
                     <div className="space-y-1">
                       {stageTasks.map(t => (
-                        <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} onDelete={deleteTask} />
+                        <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} />
                       ))}
                       {!stageTasks.length && (
                         <div className="text-xs text-gray-300 py-2 text-center">—</div>
@@ -469,22 +464,17 @@ export default function ProjectDetail() {
 }
 
 // ═══ Task Row (reusable) ═══
-function TaskRow({ task: t, isLocked, onSelect, onDelete }) {
+function TaskRow({ task: t, isLocked, onSelect }) {
   return (
-    <div className={`flex items-center gap-3 bg-white rounded-lg border p-3 group ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-sm hover:border-gray-300'}`}>
-      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
-      <span onClick={() => !isLocked && onSelect(t.id)} className={`flex-1 text-sm font-medium text-gray-800 ${!isLocked ? 'cursor-pointer hover:text-blue-600' : ''}`}>{t.title}</span>
-      <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
-      {t.assignee && <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
+    <div onClick={() => !isLocked && onSelect(t.id)}
+      className={`flex items-center gap-2 sm:gap-3 bg-white rounded-lg border p-2 sm:p-3 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-sm hover:border-gray-300 cursor-pointer'}`}>
+      <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
+      <span className="flex-1 text-xs sm:text-sm font-medium text-gray-800 truncate">{t.title}</span>
+      <span className={`text-[10px] px-1.5 py-0.5 rounded-full hidden sm:inline ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
+      {t.assignee && <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold shrink-0"
         style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>{getInitials(t.assignee.full_name)}</div>}
-      {t.due_date && <span className={`text-[11px] ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
+      {t.due_date && <span className={`text-[10px] hidden sm:inline ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
       <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
-      {!isLocked && onDelete && (
-        <button onClick={(e) => { e.stopPropagation(); onDelete(t.id); }}
-          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer shrink-0" title="Xóa">
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      )}
     </div>
   );
 }
