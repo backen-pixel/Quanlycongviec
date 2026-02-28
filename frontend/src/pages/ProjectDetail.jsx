@@ -57,6 +57,11 @@ export default function ProjectDetail() {
     setNewComment(''); setCommentFiles([]); load();
   };
 
+  const deleteTask = async (taskId) => {
+    if (!confirm('Xóa công việc này?')) return;
+    try { await api.delete(`/tasks/${taskId}`); load(); } catch {}
+  };
+
   if (loading) return <div className="flex items-center justify-center h-64"><svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>;
   if (!project) return <div className="text-center py-16 text-gray-400">Dự án không tồn tại</div>;
 
@@ -152,13 +157,37 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {/* Quotation files */}
-      {project.quotation_files?.length > 0 && (
-        <div className="bg-amber-50 rounded-xl border border-amber-200 p-4">
-          <h3 className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> File báo giá</h3>
-          <FileList files={project.quotation_files} />
+      {/* Quotation files — list with add/delete */}
+      <div className="bg-white rounded-xl border p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> File báo giá</h3>
+          <FileUploadButton compact onFilesUploaded={async (files) => {
+            const existing = project.quotation_files || [];
+            await api.put(`/projects/${id}`, { quotation_files: [...existing, ...files] });
+            load();
+          }} />
         </div>
-      )}
+        {project.quotation_files?.length > 0 ? (
+          <div className="space-y-1.5">
+            {project.quotation_files.map((f, fi) => (
+              <div key={fi} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 group">
+                <Paperclip className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                <a href={f.file_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline flex-1 truncate">{f.file_name || `File ${fi + 1}`}</a>
+                {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(0)}KB</span>}
+                <button onClick={async () => {
+                  const updated = (project.quotation_files || []).filter((_, j) => j !== fi);
+                  await api.put(`/projects/${id}`, { quotation_files: updated });
+                  load();
+                }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400 text-center py-3">Chưa có file báo giá — bấm nút Upload để thêm</p>
+        )}
+      </div>
 
       {/* People — collapsible */}
       <div className="bg-white rounded-xl border">
@@ -303,7 +332,7 @@ export default function ProjectDetail() {
                           </div>
                           <div className="space-y-1">
                             {lineTasks.map(t => (
-                              <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} />
+                              <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} onDelete={deleteTask} />
                             ))}
                           </div>
                         </div>
@@ -313,7 +342,7 @@ export default function ProjectDetail() {
                     {stageTasks.filter(t => !t.workflow_line_id).length > 0 && (
                       <div className="space-y-1">
                         {stageTasks.filter(t => !t.workflow_line_id).map(t => (
-                          <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} />
+                          <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} onDelete={deleteTask} />
                         ))}
                       </div>
                     )}
@@ -329,7 +358,7 @@ export default function ProjectDetail() {
                   ) : (
                     <div className="space-y-1">
                       {stageTasks.map(t => (
-                        <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} />
+                        <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} onDelete={deleteTask} />
                       ))}
                       {!stageTasks.length && (
                         <div className="text-xs text-gray-300 py-2 text-center">—</div>
@@ -440,17 +469,22 @@ export default function ProjectDetail() {
 }
 
 // ═══ Task Row (reusable) ═══
-function TaskRow({ task: t, isLocked, onSelect }) {
+function TaskRow({ task: t, isLocked, onSelect, onDelete }) {
   return (
-    <div onClick={() => !isLocked && onSelect(t.id)}
-      className={`flex items-center gap-3 bg-white rounded-lg border p-3 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-sm hover:border-gray-300 cursor-pointer'}`}>
+    <div className={`flex items-center gap-3 bg-white rounded-lg border p-3 group ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-sm hover:border-gray-300'}`}>
       <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
-      <span className="flex-1 text-sm font-medium text-gray-800">{t.title}</span>
+      <span onClick={() => !isLocked && onSelect(t.id)} className={`flex-1 text-sm font-medium text-gray-800 ${!isLocked ? 'cursor-pointer hover:text-blue-600' : ''}`}>{t.title}</span>
       <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
       {t.assignee && <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
         style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>{getInitials(t.assignee.full_name)}</div>}
       {t.due_date && <span className={`text-[11px] ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
       <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
+      {!isLocked && onDelete && (
+        <button onClick={(e) => { e.stopPropagation(); onDelete(t.id); }}
+          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer shrink-0" title="Xóa">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }

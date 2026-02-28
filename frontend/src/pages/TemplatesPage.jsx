@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import Modal from '../components/Modal';
-import { Plus, Trash2, Edit, FileText, GripVertical, CheckSquare, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Edit, FileText, GripVertical, CheckSquare, ChevronDown, ChevronRight, User } from 'lucide-react';
 import { PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 
 export default function TemplatesPage() {
@@ -11,16 +11,31 @@ export default function TemplatesPage() {
   const [editTemplate, setEditTemplate] = useState(null);
   const [createStageId, setCreateStageId] = useState(null);
   const [expandedStages, setExpandedStages] = useState({});
+  const [users, setUsers] = useState([]);
+  const [stageAssignees, setStageAssignees] = useState({}); // { stageId: userId }
 
   const load = () => {
     setLoading(true);
-    api.get('/templates/by-stage').then(r => {
-      const s = r.data.stages || [];
+    Promise.all([
+      api.get('/templates/by-stage'),
+      api.get('/users'),
+    ]).then(([tRes, uRes]) => {
+      const s = tRes.data.stages || [];
       setStages(s);
-      // Expand all by default
+      setUsers(uRes.data.users || []);
       const ex = {};
       s.forEach(st => { ex[st.id] = true; });
       setExpandedStages(ex);
+      // Build stage assignees from templates (if all templates in stage have same assignee_id)
+      const sa = {};
+      s.forEach(st => {
+        const tpls = st.templates || [];
+        if (tpls.length > 0) {
+          const firstA = tpls[0]?.assignee_id;
+          if (firstA && tpls.every(t => t.assignee_id === firstA)) sa[st.id] = firstA;
+        }
+      });
+      setStageAssignees(sa);
     }).finally(() => setLoading(false));
   };
   useEffect(load, []);
@@ -36,8 +51,19 @@ export default function TemplatesPage() {
     await api.patch(`/templates/${id}/toggle`); load();
   };
 
+  // Set assignee for ALL templates in a stage
+  const setStageDefaultAssignee = async (stageId, userId) => {
+    setStageAssignees(sa => ({ ...sa, [stageId]: userId }));
+    const stage = stages.find(s => s.id === stageId);
+    if (!stage?.templates?.length) return;
+    // Update all templates in this stage
+    for (const t of stage.templates) {
+      try { await api.put(`/templates/${t.id}`, { assignee_id: userId || null }); } catch {}
+    }
+    load();
+  };
+
   const totalTemplates = stages.reduce((s, st) => s + (st.templates?.length || 0), 0);
-  const inactiveCount = stages.reduce((s, st) => s + (st.templates?.filter(t => !t.is_active)?.length || 0), 0);
 
   const activateAll = async () => {
     if (!confirm('Kích hoạt tất cả nhiệm vụ mẫu?')) return;
@@ -94,6 +120,21 @@ export default function TemplatesPage() {
                 </button>
               </button>
 
+              {/* Stage-level default assignee */}
+              {expandedStages[stage.id] && (
+                <div className="border-t bg-blue-50/50 px-4 py-2 flex items-center gap-2">
+                  <User className="h-3.5 w-3.5 text-blue-500" />
+                  <span className="text-xs font-medium text-blue-700">NV mặc định cho quy trình:</span>
+                  <select value={stageAssignees[stage.id] || ''} onClick={e => e.stopPropagation()}
+                    onChange={e => setStageDefaultAssignee(stage.id, e.target.value)}
+                    className="h-7 px-2 border rounded text-xs bg-white text-gray-700 min-w-[180px]">
+                    <option value="">— Chưa chỉ định —</option>
+                    {users.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
+                  </select>
+                  <span className="text-[10px] text-blue-400">Áp dụng cho tất cả NV mẫu trong quy trình này</span>
+                </div>
+              )}
+
               {/* Templates */}
               {expandedStages[stage.id] && (
                 <div className="border-t divide-y">
@@ -114,6 +155,7 @@ export default function TemplatesPage() {
                           <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
                           {t.estimated_hours && <span className="text-[10px] text-gray-400">{t.estimated_hours}h</span>}
                           {t.assignee_role && <span className="text-[10px] bg-purple-50 text-purple-600 px-2 py-0.5 rounded">→ {t.assignee_role}</span>}
+                          {t.assignee_id && <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded">👤 {users.find(u => u.id === t.assignee_id)?.full_name || 'NV'}</span>}
                           {!t.is_active && <span className="text-[10px] bg-red-50 text-red-500 px-2 py-0.5 rounded">Chưa kích hoạt</span>}
                         </div>
                         {t.description && <p className="text-xs text-gray-500 mt-0.5">{t.description}</p>}
