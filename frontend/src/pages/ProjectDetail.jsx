@@ -8,7 +8,7 @@ import { FileUploadButton, FilePreview, FileList } from '../components/FileUploa
 import {
   ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle,
-  Paperclip, FileText
+  Paperclip, FileText, Edit, UserPlus, X
 } from 'lucide-react';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
@@ -39,12 +39,15 @@ export default function ProjectDetail() {
   const [commentFiles, setCommentFiles] = useState([]);
   const [showAdvance, setShowAdvance] = useState(false);
   const [showPeople, setShowPeople] = useState(false);
+  const [editingLines, setEditingLines] = useState(false);
+  const [allUsers, setAllUsers] = useState([]);
+  const [addLineStage, setAddLineStage] = useState('');
 
   const load = () => {
     setLoading(true);
     api.get(`/projects/${id}`).then(r => setProject(r.data.project)).catch(() => {}).finally(() => setLoading(false));
   };
-  useEffect(load, [id]);
+  useEffect(() => { load(); api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}); }, [id]);
 
   const deleteProject = async () => {
     if (!confirm('Xóa dự án này?')) return;
@@ -55,6 +58,20 @@ export default function ProjectDetail() {
     if (!newComment.trim() && !commentFiles.length) return;
     await api.post(`/projects/${id}/comments`, { content: newComment, attachments: commentFiles });
     setNewComment(''); setCommentFiles([]); load();
+  };
+
+  // Workflow line CRUD
+  const updateLine = async (lineId, data) => {
+    try { await api.put(`/projects/${id}/workflow-lines/${lineId}`, data); load(); } catch {}
+  };
+  const deleteLine = async (lineId) => {
+    if (!confirm('Xóa bộ phận này?')) return;
+    try { await api.delete(`/projects/${id}/workflow-lines/${lineId}`); load(); } catch {}
+  };
+  const addLine = async (stageSlug) => {
+    const label = prompt('Tên bộ phận mới:');
+    if (!label?.trim()) return;
+    try { await api.post(`/projects/${id}/workflow-lines`, { stage_slug: stageSlug, label: label.trim() }); load(); } catch {}
   };
 
   if (loading) return <div className="flex items-center justify-center h-64"><svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>;
@@ -184,16 +201,23 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      {/* People — collapsible */}
+      {/* People — collapsible + editable */}
       <div className="bg-white rounded-xl border">
-        <button onClick={() => setShowPeople(!showPeople)} className="w-full flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50">
+        <button onClick={() => setShowPeople(!showPeople)} className="w-full flex items-center justify-between p-3 sm:p-4 cursor-pointer hover:bg-gray-50">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Nhân sự dự án</h3>
-          <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${showPeople ? 'rotate-180' : ''}`} />
+          <div className="flex items-center gap-2">
+            {showPeople && (
+              <button onClick={(e) => { e.stopPropagation(); setEditingLines(!editingLines); }}
+                className={`h-6 px-2 rounded text-[10px] font-medium flex items-center gap-1 cursor-pointer ${editingLines ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-blue-50'}`}>
+                <Edit className="h-3 w-3" /> {editingLines ? 'Xong' : 'Sửa'}
+              </button>
+            )}
+            <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${showPeople ? 'rotate-180' : ''}`} />
+          </div>
         </button>
         {showPeople && (
-          <div className="px-4 pb-4">
+          <div className="px-3 sm:px-4 pb-4">
         {project.workflowLines?.length > 0 ? (
-          /* New: Workflow lines */
           <div className="space-y-3">
             {(() => {
               const byStage = {};
@@ -203,25 +227,29 @@ export default function ProjectDetail() {
               });
               return STAGE_FLOW.map(s => {
                 const lines = byStage[s.slug] || [];
-                if (!lines.length) return null;
                 return (
                   <div key={s.slug}>
-                    <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">{s.label} ({lines.length})</p>
-                    <div className="flex flex-wrap gap-2">
-                      {lines.map(line => (
-                        <div key={line.id} className="flex items-center gap-2 bg-gray-50 rounded-lg px-2.5 py-1.5">
-                          <div className="h-7 w-7 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
-                            style={{ backgroundColor: line.assignee ? avatarColor(line.assignee.full_name) : '#d1d5db' }}>
-                            {line.assignee ? getInitials(line.assignee.full_name) : '?'}
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-gray-900">{line.label}</p>
-                            <p className="text-[10px] text-gray-500">{line.assignee?.full_name || 'Chưa phân công'}</p>
-                            {line.description && <p className="text-[9px] text-gray-400">{line.description}</p>}
-                          </div>
-                        </div>
-                      ))}
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase flex-1">{s.label} ({lines.length})</p>
+                      {editingLines && (
+                        <button onClick={() => addLine(s.slug)}
+                          className="h-5 px-1.5 bg-blue-50 text-blue-600 rounded text-[9px] font-medium flex items-center gap-0.5 cursor-pointer hover:bg-blue-100">
+                          <Plus className="h-2.5 w-2.5" /> Thêm
+                        </button>
+                      )}
                     </div>
+                    {lines.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {lines.map(line => (
+                          <WorkflowLineRow key={line.id} line={line} editing={editingLines}
+                            users={allUsers} onUpdate={updateLine} onDelete={deleteLine} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-gray-300 py-1">
+                        {editingLines ? <button onClick={() => addLine(s.slug)} className="text-blue-500 hover:underline cursor-pointer">+ Thêm bộ phận</button> : '—'}
+                      </div>
+                    )}
                   </div>
                 );
               });
@@ -229,20 +257,27 @@ export default function ProjectDetail() {
           </div>
         ) : (
           /* Old: Fixed 8 stage persons */
-          <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
-            {STAGE_FLOW.map(s => {
-              const person = project[s.personKey];
-              return (
-                <div key={s.slug} className="text-center">
-                  <div className="h-9 w-9 mx-auto rounded-full flex items-center justify-center text-white text-[10px] font-bold mb-1"
-                    style={{ backgroundColor: person ? avatarColor(person.full_name) : '#d1d5db' }}>
-                    {person ? getInitials(person.full_name) : '?'}
+          <div className="space-y-3">
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 sm:gap-3">
+              {STAGE_FLOW.map(s => {
+                const person = project[s.personKey];
+                return (
+                  <div key={s.slug} className="text-center">
+                    <div className="h-8 w-8 sm:h-9 sm:w-9 mx-auto rounded-full flex items-center justify-center text-white text-[9px] sm:text-[10px] font-bold mb-1"
+                      style={{ backgroundColor: person ? avatarColor(person.full_name) : '#d1d5db' }}>
+                      {person ? getInitials(person.full_name) : '?'}
+                    </div>
+                    <p className="text-[9px] sm:text-[10px] font-medium text-gray-900 truncate">{person?.full_name || '—'}</p>
+                    <p className="text-[8px] sm:text-[9px] text-gray-400">{s.label}</p>
                   </div>
-                  <p className="text-[10px] font-medium text-gray-900 truncate">{person?.full_name || '—'}</p>
-                  <p className="text-[9px] text-gray-400">{s.label}</p>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+            {editingLines && (
+              <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2">
+                💡 Dự án này dùng phân công cũ (8 vai trò cố định). Bấm "Thêm" ở từng quy trình để chuyển sang phân công bộ phận linh hoạt.
+              </p>
+            )}
           </div>
         )}
           </div>
@@ -464,6 +499,50 @@ export default function ProjectDetail() {
 }
 
 // ═══ Task Row (reusable) ═══
+// ═══ Workflow Line Row (view + edit mode) ═══
+function WorkflowLineRow({ line, editing, users, onUpdate, onDelete }) {
+  const [editLabel, setEditLabel] = useState(false);
+  const [label, setLabel] = useState(line.label);
+
+  return (
+    <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-2.5 py-2 group">
+      <div className="h-7 w-7 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+        style={{ backgroundColor: line.assignee ? avatarColor(line.assignee.full_name) : '#d1d5db' }}>
+        {line.assignee ? getInitials(line.assignee.full_name) : '?'}
+      </div>
+      <div className="flex-1 min-w-0">
+        {editLabel ? (
+          <div className="flex items-center gap-1">
+            <input value={label} onChange={e => setLabel(e.target.value)}
+              className="h-6 px-1.5 border rounded text-xs bg-white w-full" autoFocus
+              onKeyDown={e => { if (e.key === 'Enter') { onUpdate(line.id, { label }); setEditLabel(false); } }}
+              onBlur={() => { onUpdate(line.id, { label }); setEditLabel(false); }} />
+          </div>
+        ) : (
+          <p className="text-xs font-medium text-gray-900 cursor-pointer" onClick={() => editing && setEditLabel(true)}>
+            {line.label} {editing && <Edit className="h-2.5 w-2.5 inline text-gray-300 ml-0.5" />}
+          </p>
+        )}
+        {editing ? (
+          <select value={line.assignee_id || ''} onChange={e => onUpdate(line.id, { assignee_id: e.target.value || null })}
+            className="h-6 px-1 border rounded text-[10px] bg-white mt-0.5 w-full max-w-[200px]">
+            <option value="">— Chưa phân công —</option>
+            {users.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
+          </select>
+        ) : (
+          <p className="text-[10px] text-gray-500">{line.assignee?.full_name || 'Chưa phân công'}</p>
+        )}
+      </div>
+      {editing && (
+        <button onClick={() => onDelete(line.id)}
+          className="text-gray-300 hover:text-red-500 cursor-pointer shrink-0 opacity-0 group-hover:opacity-100">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function TaskRow({ task: t, isLocked, onSelect }) {
   return (
     <div onClick={() => !isLocked && onSelect(t.id)}
