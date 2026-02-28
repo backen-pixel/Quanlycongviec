@@ -38,14 +38,14 @@ function filterByTime(items, tf, dFrom, dTo) {
 
 // Fallback stages (used if API hasn't loaded yet)
 const DEFAULT_KANBAN_STAGES = [
-  { slug: 'consulting', label: 'Tư vấn', color: '#8B5CF6', path: '/stages/consulting' },
-  { slug: 'design', label: 'Thiết kế', color: '#EC4899', path: '/stages/design' },
-  { slug: 'quotation', label: 'Báo giá', color: '#F59E0B', path: '/stages/quotation' },
-  { slug: 'contract', label: 'Hợp đồng', color: '#10B981', path: '/stages/contract' },
-  { slug: 'production', label: 'Sản xuất', color: '#F97316', path: '/stages/production' },
-  { slug: 'shipping', label: 'Vận chuyển', color: '#06B6D4', path: '/stages/shipping' },
-  { slug: 'installation', label: 'Lắp đặt', color: '#3B82F6', path: '/stages/installation' },
-  { slug: 'customer-care', label: 'CSKH', color: '#EF4444', path: '/stages/customer-care' },
+  { slug: 'consulting', label: 'Tư vấn', color: '#8B5CF6', path: '/stage/consulting' },
+  { slug: 'design', label: 'Thiết kế', color: '#EC4899', path: '/stage/design' },
+  { slug: 'quotation', label: 'Báo giá', color: '#F59E0B', path: '/stage/quotation' },
+  { slug: 'contract', label: 'Hợp đồng', color: '#10B981', path: '/stage/contract' },
+  { slug: 'production', label: 'Sản xuất', color: '#F97316', path: '/stage/production' },
+  { slug: 'shipping', label: 'Vận chuyển', color: '#06B6D4', path: '/stage/shipping' },
+  { slug: 'installation', label: 'Lắp đặt', color: '#3B82F6', path: '/stage/installation' },
+  { slug: 'customer-care', label: 'CSKH', color: '#EF4444', path: '/stage/customer-care' },
 ];
 
 // Helper: get current_stage slug from project
@@ -95,7 +95,7 @@ export default function Projects() {
           slug: s.slug,
           label: s.name,
           color: s.color || '#3B82F6',
-          path: `/stages/${s.slug}`,
+          path: `/stage/${s.slug}`,
           id: s.id,
         })));
       }
@@ -213,7 +213,7 @@ export default function Projects() {
         {STAGE_TABS.map(s => {
           const count = s.id === 'all' ? filtered.length : filtered.filter(p => projStageSlug(p) === s.id).length;
           return (
-            <button key={s.id} onClick={() => setFilterStatus(s.id)}
+            <button key={s.id} onClick={() => setFilterStage(s.id)}
               className={`h-8 px-2.5 sm:px-3 rounded-md text-[11px] sm:text-xs font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
                 filterStage === s.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}>
