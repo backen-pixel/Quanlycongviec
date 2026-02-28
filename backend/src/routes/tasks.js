@@ -353,6 +353,8 @@ r.patch('/:taskId/checklists/:clId', async (req, res) => {
       update.completed_at = req.body.is_completed ? new Date().toISOString() : null;
     }
     if (req.body.order_index !== undefined) update.order_index = req.body.order_index;
+    if (req.body.notes !== undefined) update.notes = req.body.notes;
+    if (req.body.attachments !== undefined) update.attachments = req.body.attachments;
 
     const { data, error } = await supabase.from('task_checklists').update(update).eq('id', req.params.clId).select().single();
     if (error) throw error;
