@@ -102,6 +102,9 @@ export default function ProjectDetail() {
               {project.priority && <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[project.priority] || ''}`}>{PRIORITY_LABELS[project.priority]}</span>}
             </div>
             <h1 className="text-xl font-bold text-gray-900">{project.name}</h1>
+            {project.company && (
+              <p className="text-xs text-indigo-600 font-medium flex items-center gap-1 mt-0.5">🏢 {project.company.name}{project.company.short_name ? ` (${project.company.short_name})` : ''}</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
