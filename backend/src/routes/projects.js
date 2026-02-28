@@ -31,6 +31,7 @@ r.get('/', async (req, res) => {
     const { status, search, stage_slug, page = 1, limit = 50 } = req.query;
     let q = supabase.from('projects').select(`
       *, customers(id,full_name,phone,email,city),
+      company:companies(id,name,short_name),
       current_stage:workflow_stages(id,name,slug,color,icon),
       sales_person:users!projects_sales_person_id_fkey(id,full_name),
       designer:users!projects_designer_id_fkey(id,full_name),
@@ -74,6 +75,7 @@ r.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase.from('projects').select(`
       *, customers(*),
+      company:companies(id,name,short_name),
       current_stage:workflow_stages(*),
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar,email),
       designer:users!projects_designer_id_fkey(id,full_name,avatar,email),
@@ -159,6 +161,7 @@ r.post('/', async (req, res) => {
       name: b.name,
       description: b.description || null,
       customer_id: b.customer_id,
+      company_id: b.company_id || null,
       status: 'consulting',
       current_stage_id: stage?.id || null,
       kitchen_type: b.kitchen_type || null,

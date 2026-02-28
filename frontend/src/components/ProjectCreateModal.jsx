@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
-import { Plus, CheckSquare, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, CheckSquare, ChevronDown, ChevronRight, Building2 } from 'lucide-react';
 import { PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 
 const STAGE_ASSIGNS = [
@@ -19,7 +19,9 @@ const STAGE_ASSIGNS = [
 export default function ProjectCreateModal({ open, onClose, onCreated }) {
   const [form, setForm] = useState({});
   const [customers, setCustomers] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [companyEmployees, setCompanyEmployees] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [quotationFiles, setQuotationFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -29,21 +31,46 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
 
   useEffect(() => {
     if (open) {
-      api.get('/customers').then(r => setCustomers(r.data.customers || []));
-      api.get('/users').then(r => setUsers(r.data.users || []));
-      api.get('/templates/by-stage').then(r => setTemplates(r.data.stages || []));
+      Promise.all([
+        api.get('/customers').then(r => setCustomers(r.data.customers || [])).catch(() => {}),
+        api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}),
+        api.get('/companies').then(r => setCompanies(r.data.companies || [])).catch(() => setCompanies([])),
+        api.get('/templates/by-stage').then(r => setTemplates(r.data.stages || [])).catch(() => {}),
+      ]);
       setForm({
-        name: '', description: '', customer_id: '',
+        name: '', description: '', customer_id: '', company_id: '',
         install_address: '', estimated_value: '', priority: 'medium',
         consulting_person_id: '', design_person_id: '', quotation_person_id: '',
         contract_person_id: '', production_person_id: '', shipping_person_id: '',
         installation_person_id: '', care_person_id: '',
       });
       setQuotationFiles([]);
+      setCompanyEmployees([]);
     }
   }, [open]);
 
+  // Load employees when company changes
+  useEffect(() => {
+    if (form.company_id) {
+      api.get(`/companies/${form.company_id}/employees`)
+        .then(r => setCompanyEmployees(r.data.employees || []))
+        .catch(() => setCompanyEmployees([]));
+      // Clear all person assignments when company changes
+      setForm(f => ({
+        ...f,
+        consulting_person_id: '', design_person_id: '', quotation_person_id: '',
+        contract_person_id: '', production_person_id: '', shipping_person_id: '',
+        installation_person_id: '', care_person_id: '',
+      }));
+    } else {
+      setCompanyEmployees([]);
+    }
+  }, [form.company_id]);
+
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Employees to show in dropdowns: company employees if company selected, otherwise all users
+  const assignableUsers = form.company_id ? companyEmployees : allUsers;
 
   const createCustomer = async () => {
     if (!newCust.full_name || !newCust.phone) return;
@@ -62,7 +89,6 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
     try {
       const payload = { ...form, quotation_files: quotationFiles };
       payload.estimated_value = payload.estimated_value ? +payload.estimated_value : null;
-      // Map stage persons to legacy fields for backward compat
       payload.sales_person_id = payload.consulting_person_id || null;
       payload.designer_id = payload.design_person_id || null;
       payload.project_manager_id = payload.consulting_person_id || null;
@@ -78,6 +104,27 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
   return (
     <Modal open={open} onClose={onClose} title="Tạo dự án mới" size="lg">
       <form onSubmit={submit} className="space-y-5 max-h-[78vh] overflow-y-auto pr-1">
+
+        {/* Company selector */}
+        <div className="bg-indigo-50 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-indigo-600" />
+            <h3 className="text-sm font-semibold text-gray-900">Công ty thực hiện</h3>
+          </div>
+          <select value={form.company_id || ''} onChange={e => set('company_id', e.target.value)} className="input">
+            <option value="">— Chọn công ty —</option>
+            {companies.map(c => (
+              <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
+            ))}
+          </select>
+          {form.company_id && companyEmployees.length > 0 && (
+            <p className="text-xs text-indigo-600">✓ {companyEmployees.length} nhân viên thuộc công ty này</p>
+          )}
+          {form.company_id && companyEmployees.length === 0 && (
+            <p className="text-xs text-amber-600">⚠ Chưa có nhân viên nào thuộc công ty này. Vào Quản lý công ty để thêm.</p>
+          )}
+        </div>
+
         {/* Customer */}
         <div className="bg-gray-50 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -134,17 +181,23 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
           <FilePreview files={quotationFiles} onRemove={(i) => setQuotationFiles(f => f.filter((_, j) => j !== i))} />
         </div>
 
-        {/* Per-stage assignments */}
+        {/* Per-stage assignments — filtered by company */}
         <div className="bg-blue-50 rounded-xl p-4 space-y-3">
           <h3 className="text-sm font-semibold text-gray-900">🔄 Phân công theo quy trình</h3>
-          <p className="text-xs text-gray-500">Gán người chịu trách nhiệm cho từng giai đoạn</p>
+          <p className="text-xs text-gray-500">
+            {form.company_id
+              ? `Chỉ hiển thị nhân viên thuộc công ty đã chọn (${companyEmployees.length} người)`
+              : 'Chọn công ty ở trên để lọc nhân viên theo công ty'}
+          </p>
           <div className="grid grid-cols-4 gap-3">
             {STAGE_ASSIGNS.map(sa => (
               <div key={sa.key}>
                 <label className="block text-[11px] font-medium text-gray-600 mb-1">{sa.label}</label>
                 <select value={form[sa.key] || ''} onChange={e => set(sa.key, e.target.value)} className="input text-xs !py-1.5">
                   <option value="">— Chọn —</option>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                  {assignableUsers.map(u => (
+                    <option key={u.id} value={u.id}>{u.full_name} {u.role ? `(${u.role})` : ''}</option>
+                  ))}
                 </select>
               </div>
             ))}
@@ -161,7 +214,6 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
               {activeTemplates.length > 0 ? `${activeTemplates.reduce((s, st) => s + st.templates.filter(t => t.is_active).length, 0)} nhiệm vụ` : 'Dùng mặc định'}
             </span>
           </button>
-
           {showTemplates && (
             <div className="space-y-3 mt-2">
               {activeTemplates.length > 0 ? activeTemplates.map(stage => (
@@ -176,29 +228,12 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
                         <CheckSquare className="h-3 w-3 text-gray-400" />
                         <span>{t.title}</span>
                         <span className={`text-[9px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
-                        {t.checklist_items?.length > 0 && (
-                          <span className="text-[9px] text-gray-400">({t.checklist_items.length} checklist)</span>
-                        )}
                       </div>
                     ))}
                   </div>
                 </div>
               )) : (
-                <div className="text-xs text-gray-500">
-                  <p>Chưa có nhiệm vụ mẫu được kích hoạt. Hệ thống sẽ dùng mặc định:</p>
-                  <div className="mt-2 grid grid-cols-2 gap-1">
-                    {[
-                      'Tư vấn: Tiếp nhận KH, Khảo sát, Tư vấn phương án',
-                      'Thiết kế: Bản vẽ 2D, 3D render, Duyệt thiết kế',
-                      'Báo giá: Bóc tách vật tư, Lập & gửi báo giá',
-                      'Hợp đồng: Soạn HĐ, Ký HĐ, Thu cọc',
-                      'Sản xuất: Đặt vật tư, CNC, Lắp ráp, Sơn, KCS',
-                      'Vận chuyển: Đóng gói, Book xe, Giao hàng',
-                      'Lắp đặt: Chuẩn bị, Lắp đặt, Nghiệm thu',
-                      'CSKH: Hỏi thăm, Bảo hành, Thu tiền còn lại',
-                    ].map((s, i) => <p key={i} className="text-[10px]">• {s}</p>)}
-                  </div>
-                </div>
+                <p className="text-xs text-gray-500">Chưa có nhiệm vụ mẫu kích hoạt. Hệ thống sẽ dùng mặc định.</p>
               )}
             </div>
           )}

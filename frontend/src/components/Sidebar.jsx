@@ -5,7 +5,7 @@ import { getInitials, avatarColor, ROLE_STAGE_MAP, ROLE_LABELS } from '../lib/ut
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
-  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus
+  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2
 } from 'lucide-react';
 import { useState, useMemo } from 'react';
 
@@ -31,6 +31,7 @@ const allWorkflow = [
 ];
 
 const adminTools = [
+  { to: '/companies', icon: Building2, label: 'Công ty' },
   { to: '/users', icon: Users, label: 'Nhân viên' },
   { to: '/templates', icon: ClipboardList, label: 'NV mẫu' },
   { to: '/settings', icon: Settings, label: 'Cài đặt' },
