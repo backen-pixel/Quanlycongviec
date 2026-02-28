@@ -87,10 +87,9 @@ export default function Sidebar() {
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
   const allowedSlugs = ROLE_STAGE_MAP[user?.role] || [];
 
-  // Filter workflow stages by role
+  // ALL roles see ALL workflow stages (but interact only with their own)
   const workflow = useMemo(() => {
-    if (isAdmin) return allWorkflow;
-    return allWorkflow.filter(w => allowedSlugs.includes(w.slug));
+    return allWorkflow;
   }, [user?.role]);
 
   // Filter tools — only admin/manager see Nhân viên + NV mẫu

@@ -7,12 +7,12 @@ import TaskCreateModal from '../components/TaskCreateModal';
 import Modal from '../components/Modal';
 import { FileUploadButton, FilePreview } from '../components/FileUpload';
 import {
-  PRIORITY_LABELS, PRIORITY_COLORS, formatDate, getInitials, avatarColor, ROLE_LABELS,
+  PRIORITY_LABELS, PRIORITY_COLORS, formatDate, getInitials, avatarColor, ROLE_LABELS, ROLE_STAGE_MAP,
 } from '../lib/utils';
 import {
   Plus, FolderKanban, CheckSquare, Lock, Filter, ChevronDown, X,
   Clock, AlertTriangle, MessageSquare, RefreshCw, Calendar, Building2,
-  ArrowRightCircle, Send
+  ArrowRightCircle, Send, Paperclip, Eye, EyeOff
 } from 'lucide-react';
 
 const STAGE_NAMES = {
@@ -63,9 +63,12 @@ export default function StageView() {
   const [showFilter, setShowFilter] = useState(false);
   // New filters
   const [filterCompany, setFilterCompany] = useState('all');
+  const [filterEmployee, setFilterEmployee] = useState('all');
+  const [filterLine, setFilterLine] = useState('all');
   const [quickTime, setQuickTime] = useState('month');
   const [dateFrom, setDateFrom] = useState(defRange().from);
   const [dateTo, setDateTo] = useState(defRange().to);
+  const [workflowLines, setWorkflowLines] = useState([]);
   // Advance
   const [advProj, setAdvProj] = useState(null);
   const [advNotes, setAdvNotes] = useState('');
@@ -116,6 +119,18 @@ export default function StageView() {
       const projectIdsWithTasks = new Set(stageTasks.map(t => t.project_id));
       const relevantProjs = allProjs.filter(p => projectIdsWithTasks.has(p.id));
       setProjects(relevantProjs);
+
+      // Load workflow lines for relevant projects
+      let allLines = [];
+      for (const p of relevantProjs) {
+        try {
+          const { data: ld } = await api.get(`/projects/${p.id}/workflow-lines`);
+          const sl = (ld.lines || []).filter(l => l.stage_slug === slug);
+          sl.forEach(l => { l._pc = p.code; l._pn = p.name; l._pid = p.id; l._cid = p.company_id; });
+          allLines.push(...sl);
+        } catch { }
+      }
+      setWorkflowLines(allLines);
 
       // Step 3: Load checklists for each task — parallel batch
       const withChecklists = await Promise.all(stageTasks.map(async (t) => {
@@ -210,12 +225,14 @@ export default function StageView() {
 
   const stageName = STAGE_NAMES[slug] || slug;
 
-  // Filter tasks by project + company + date range
+  // Filter tasks by project + company + employee + line + date range
   let filteredTasks = filterProject === 'all' ? tasks : tasks.filter(t => t.project_id === filterProject);
   if (filterCompany !== 'all') {
     const compProjIds = new Set(projects.filter(p => p.company_id === filterCompany).map(p => p.id));
     filteredTasks = filteredTasks.filter(t => compProjIds.has(t.project_id));
   }
+  if (filterEmployee !== 'all') filteredTasks = filteredTasks.filter(t => t.assignee_id === filterEmployee);
+  if (filterLine !== 'all') filteredTasks = filteredTasks.filter(t => t.workflow_line_id === filterLine);
   filteredTasks = filterByDateRange(filteredTasks, dateFrom, dateTo);
 
   // Sort tasks by order_index
@@ -225,6 +242,21 @@ export default function StageView() {
   const projCompanies = [];
   const seenC = new Set();
   projects.forEach(p => { if (p.company_id && p.company && !seenC.has(p.company_id)) { seenC.add(p.company_id); projCompanies.push({ id: p.company_id, name: p.company.short_name || p.company.name }); } });
+
+  // Unique employees from tasks
+  const projEmployees = [];
+  const seenE = new Set();
+  tasks.forEach(t => { if (t.assignee?.id && !seenE.has(t.assignee.id)) { seenE.add(t.assignee.id); projEmployees.push({ id: t.assignee.id, name: t.assignee.full_name }); } });
+
+  // Workflow lines for current filter
+  let visibleLines = workflowLines;
+  if (filterCompany !== 'all') visibleLines = visibleLines.filter(l => l._cid === filterCompany);
+  if (filterProject !== 'all') visibleLines = visibleLines.filter(l => l._pid === filterProject);
+
+  // Read-only check: role vs stage
+  const allowedSlugs = ROLE_STAGE_MAP[user?.role] || [];
+  const isAdmin = ['admin', 'manager'].includes(user?.role);
+  const canInteract = isAdmin || allowedSlugs.includes(slug);
 
   // Check which projects have ALL tasks done (for advance banner)
   const projectsAllDone = {};
@@ -301,10 +333,10 @@ export default function StageView() {
             </div>
           )}
 
-          <button onClick={() => setShowCreateTask(true)}
+          {canInteract && <button onClick={() => setShowCreateTask(true)}
             className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
             <Plus className="h-4 w-4" /> Thêm NV
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -319,26 +351,56 @@ export default function StageView() {
         </div>
       )}
 
-      {/* Date + Company filters */}
-      <div className="bg-white rounded-xl border p-3 flex items-center gap-3 flex-wrap">
-        <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
-          <Calendar className="h-3.5 w-3.5 text-gray-400 self-center ml-2" />
-          {QT.map(t => <button key={t.id} onClick={() => setQuickTime(t.id)} className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${quickTime === t.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{t.label}</button>)}
+      {/* Read-only banner */}
+      {!canInteract && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2">
+          <Lock className="h-4 w-4 text-amber-500" />
+          <p className="text-sm text-amber-700">Chỉ xem — bạn không có quyền thao tác ở giai đoạn <strong>{stageName}</strong></p>
         </div>
-        <div className="flex items-center gap-1.5">
-          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setQuickTime('custom'); }} className="h-7 px-2 border rounded text-xs bg-white" />
-          <span className="text-xs text-gray-400">→</span>
-          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setQuickTime('custom'); }} className="h-7 px-2 border rounded text-xs bg-white" />
-        </div>
-        {projCompanies.length > 0 && (
-          <div className="flex items-center gap-1">
-            <Building2 className="h-3.5 w-3.5 text-gray-400" />
-            <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white">
-              <option value="all">Tất cả CTy</option>
-              {projCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+      )}
+
+      {/* Date + Company + Employee + Line filters */}
+      <div className="bg-white rounded-xl border p-3 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+            <Calendar className="h-3.5 w-3.5 text-gray-400 self-center ml-2" />
+            {QT.map(t => <button key={t.id} onClick={() => setQuickTime(t.id)} className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${quickTime === t.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{t.label}</button>)}
           </div>
-        )}
+          <div className="flex items-center gap-1.5">
+            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setQuickTime('custom'); }} className="h-7 px-2 border rounded text-xs bg-white" />
+            <span className="text-xs text-gray-400">→</span>
+            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setQuickTime('custom'); }} className="h-7 px-2 border rounded text-xs bg-white" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {projCompanies.length > 0 && (
+            <div className="flex items-center gap-1">
+              <Building2 className="h-3.5 w-3.5 text-gray-400" />
+              <select value={filterCompany} onChange={e => { setFilterCompany(e.target.value); setFilterProject('all'); setFilterLine('all'); }} className="h-7 px-2 border rounded text-xs bg-white">
+                <option value="all">Tất cả CTy</option>
+                {projCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+          {projects.length > 1 && (
+            <select value={filterProject} onChange={e => { setFilterProject(e.target.value); setFilterLine('all'); }} className="h-7 px-2 border rounded text-xs bg-white">
+              <option value="all">Tất cả DA ({projects.length})</option>
+              {projects.filter(p => filterCompany === 'all' || p.company_id === filterCompany).map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+            </select>
+          )}
+          {projEmployees.length > 1 && (
+            <select value={filterEmployee} onChange={e => setFilterEmployee(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white">
+              <option value="all">Tất cả NV</option>
+              {projEmployees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+          )}
+          {visibleLines.length > 1 && (
+            <select value={filterLine} onChange={e => setFilterLine(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white">
+              <option value="all">Tất cả bộ phận ({visibleLines.length})</option>
+              {visibleLines.map(l => <option key={l.id} value={l.id}>{l.label} ({l._pc})</option>)}
+            </select>
+          )}
+        </div>
       </div>
 
       {/* Advance banners */}
@@ -406,7 +468,7 @@ export default function StageView() {
             const taskIdxInProject = sortedTasks.filter(t => t.project_id === task.project_id).findIndex(t => t.id === task.id);
             const isSequenceLocked = taskIdxInProject > 0 && !prevAllDone;
             
-            const isLocked = isFutureStage || isSequenceLocked;
+            const isLocked = isFutureStage || isSequenceLocked || !canInteract;
             const isActive = !isLocked && !isTaskDone;
             const lockReason = isFutureStage 
               ? `Dự án ${proj?.code || ''} chưa tới quy trình ${STAGE_NAMES[slug]}`
@@ -500,31 +562,8 @@ export default function StageView() {
                 }`}>
                   {task.checklists?.length > 0 ? (
                     task.checklists.map((cl, clIdx) => (
-                      <div key={cl.id}
-                        className={`flex items-start gap-2 bg-white rounded-lg border p-2.5 transition-all ${
-                          cl.is_completed ? 'border-emerald-200 bg-emerald-50/50'
-                          : isLocked ? 'border-gray-200 opacity-60' : 'border-gray-200 hover:shadow-sm hover:border-gray-300'
-                        }`}>
-                        <button
-                          onClick={() => !isLocked && toggleCheckItem(task.id, cl.id, cl.is_completed)}
-                          disabled={isLocked}
-                          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
-                            cl.is_completed
-                              ? 'bg-emerald-500 border-emerald-500 text-white'
-                              : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 hover:border-blue-400 cursor-pointer'
-                          }`}>
-                          {cl.is_completed && <CheckSquare className="h-3 w-3" />}
-                        </button>
-                        <div className="flex-1 min-w-0">
-                          <span className={`text-sm leading-tight ${cl.is_completed ? 'line-through text-gray-400' : isLocked ? 'text-gray-400' : 'text-gray-700'}`}>
-                            {cl.title}
-                          </span>
-                          {cl.completed_at && (
-                            <p className="text-[10px] text-emerald-500 mt-0.5">✓ {formatDate(cl.completed_at)}</p>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-gray-300 font-mono shrink-0">{clIdx + 1}</span>
-                      </div>
+                      <ChecklistCard key={cl.id} cl={cl} clIdx={clIdx} isLocked={isLocked}
+                        onToggle={() => !isLocked && toggleCheckItem(task.id, cl.id, cl.is_completed)} />
                     ))
                   ) : (
                     <div className="flex items-center justify-center h-16 text-xs text-gray-400">
@@ -626,6 +665,68 @@ export default function StageView() {
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+// ═══ Checklist Card with notes/files toggle ═══
+function ChecklistCard({ cl, clIdx, isLocked, onToggle }) {
+  const [showDetail, setShowDetail] = useState(false);
+  const hasNotes = cl.notes || cl.description;
+  const hasFiles = cl.attachments?.length > 0;
+  const hasExtra = hasNotes || hasFiles;
+
+  return (
+    <div className={`bg-white rounded-lg border p-2.5 transition-all ${
+      cl.is_completed ? 'border-emerald-200 bg-emerald-50/50'
+      : isLocked ? 'border-gray-200 opacity-60' : 'border-gray-200 hover:shadow-sm hover:border-gray-300'
+    }`}>
+      <div className="flex items-start gap-2">
+        <button onClick={onToggle} disabled={isLocked}
+          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+            cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white'
+            : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 hover:border-blue-400 cursor-pointer'
+          }`}>
+          {cl.is_completed && <CheckSquare className="h-3 w-3" />}
+        </button>
+        <div className="flex-1 min-w-0">
+          <span className={`text-sm leading-tight ${cl.is_completed ? 'line-through text-gray-400' : isLocked ? 'text-gray-400' : 'text-gray-700'}`}>
+            {cl.title}
+          </span>
+          {cl.completed_at && <p className="text-[10px] text-emerald-500 mt-0.5">✓ {formatDate(cl.completed_at)}</p>}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {hasFiles && <Paperclip className="h-3 w-3 text-gray-300" />}
+          {hasExtra && (
+            <button onClick={() => setShowDetail(!showDetail)} className="text-gray-300 hover:text-gray-500 cursor-pointer">
+              {showDetail ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </button>
+          )}
+          <span className="text-[10px] text-gray-300 font-mono ml-1">{clIdx + 1}</span>
+        </div>
+      </div>
+      {showDetail && hasExtra && (
+        <div className="mt-2 ml-7 space-y-1">
+          {hasNotes && <p className="text-xs text-gray-500 bg-gray-50 rounded p-2">{cl.notes || cl.description}</p>}
+          {hasFiles && (
+            <div className="space-y-1">
+              {cl.attachments.map((f, fi) => {
+                const isImg = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_url || f.file_name || '');
+                return isImg ? (
+                  <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer">
+                    <img src={f.file_url} alt={f.file_name} className="max-h-32 rounded border object-cover" />
+                  </a>
+                ) : (
+                  <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline">
+                    <Paperclip className="h-3 w-3" />{f.file_name || 'file'}
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

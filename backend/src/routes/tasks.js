@@ -45,12 +45,11 @@ r.get('/', async (req, res) => {
     if (search) q = q.ilike('title', `%${search}%`);
     if (task_type) q = q.eq('task_type', task_type);
 
-    // ── ROLE-BASED: non-admin only sees tasks assigned to them OR in their projects ──
+    // ── ROLE-BASED: non-admin sees all tasks in a stage/project (view-only enforced frontend) ──
+    // Only restrict to assignee if no stage_id and no project_id (e.g. general task list)
     const userRole = req.user.role;
     if (userRole && !['admin', 'manager'].includes(userRole)) {
-      // If filtering by project_id, show all tasks in that project (user already has project access)
-      // Otherwise, show only tasks assigned to them
-      if (!req.query.project_id) {
+      if (!req.query.project_id && !req.query.stage_id) {
         q = q.eq('assignee_id', req.user.userId);
       }
     }

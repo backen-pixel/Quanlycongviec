@@ -155,14 +155,16 @@ function TemplateFormModal({ open, onClose, onSaved, editTemplate, preStageId, s
   const [checkItems, setCheckItems] = useState([]);
   const [newCheck, setNewCheck] = useState('');
   const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState([]);
 
   useEffect(() => {
     if (!open) return;
+    api.get('/users').then(r => setUsers(r.data.users || [])).catch(() => {});
     if (editTemplate) {
       setForm({ ...editTemplate });
       setCheckItems(editTemplate.checklist_items || []);
     } else {
-      setForm({ title: '', description: '', priority: 'medium', stage_id: preStageId || '', estimated_hours: '', assignee_role: '' });
+      setForm({ title: '', description: '', priority: 'medium', stage_id: preStageId || '', estimated_hours: '', assignee_role: '', assignee_id: '' });
       setCheckItems([]);
     }
   }, [open, editTemplate, preStageId]);
@@ -203,6 +205,11 @@ function TemplateFormModal({ open, onClose, onSaved, editTemplate, preStageId, s
               <option value="sales">Sales</option><option value="designer">Thiết kế</option>
               <option value="production">Sản xuất</option><option value="installer">Lắp đặt</option>
               <option value="customer_care">CSKH</option><option value="manager">Quản lý</option>
+            </select></div>
+          <div className="col-span-2"><label className="block text-sm font-medium mb-1">Nhân viên phân công mặc định</label>
+            <select value={form.assignee_id || ''} onChange={e => set('assignee_id', e.target.value)} className="input">
+              <option value="">— Theo vai trò / chưa chỉ định —</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
             </select></div>
         </div>
         <div><label className="block text-sm font-medium mb-1">Mô tả</label><textarea value={form.description || ''} onChange={e => set('description', e.target.value)} className="input min-h-[50px]" /></div>
