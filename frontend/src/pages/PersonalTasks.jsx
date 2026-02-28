@@ -90,12 +90,24 @@ export default function PersonalTasks() {
                       <div className="flex items-center gap-1.5 mb-1">
                         {t.priority && <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[t.priority]}`}>{PRIORITY_LABELS[t.priority]}</span>}
                       </div>
-                      <h4 className="text-sm font-medium text-gray-800 mb-2">{t.title}</h4>
+                      <h4 className="text-sm font-medium text-gray-800 mb-1.5">{t.title}</h4>
+                      {/* Assignee name */}
+                      {t.assignee && (
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                            style={{ backgroundColor: avatarColor(t.assignee.full_name) }}>
+                            {getInitials(t.assignee.full_name)}
+                          </div>
+                          <span className="text-[10px] text-gray-500">{t.assignee.full_name}</span>
+                        </div>
+                      )}
+                      {/* Creator */}
+                      {t.creator && t.creator.id !== t.assignee?.id && (
+                        <p className="text-[10px] text-gray-400 mb-1">Giao bởi: {t.creator.full_name}</p>
+                      )}
                       <div className="flex items-center justify-between">
-                        {t.due_date && <span className={`text-[11px] flex items-center gap-1 ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>
-                          <Clock className="h-3 w-3" />{formatDate(t.due_date)}</span>}
-                        {t.assignee && <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
-                          style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>{getInitials(t.assignee.full_name)}</div>}
+                        {t.due_date ? <span className={`text-[11px] flex items-center gap-1 ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>
+                          <Clock className="h-3 w-3" />{formatDate(t.due_date)}</span> : <span />}
                       </div>
                       <div className="mt-2 flex gap-1 opacity-0 group-hover:opacity-100 flex-wrap">
                         {Object.keys(TASK_STATUS).filter(s => s !== t.status).slice(0, 3).map(s => (

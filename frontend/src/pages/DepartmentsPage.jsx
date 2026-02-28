@@ -21,6 +21,7 @@ export default function DepartmentsPage() {
   const [deptDetail, setDeptDetail] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
   const [addUserId, setAddUserId] = useState('');
+  const [menuDept, setMenuDept] = useState(null);
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -57,6 +58,14 @@ export default function DepartmentsPage() {
     if (!confirm('Xóa nhân viên khỏi phòng ban?')) return;
     await api.delete(`/departments/${selectedDept}/members/${userId}`);
     loadDetail(selectedDept); load();
+  };
+
+  const deleteDept = async (id, name) => {
+    if (!confirm(`Vô hiệu hóa phòng ban "${name}"?`)) return;
+    await api.delete(`/departments/${id}`);
+    if (selectedDept === id) { setSelectedDept(null); setDeptDetail(null); }
+    setMenuDept(null);
+    load();
   };
 
   const isAdmin = ['admin', 'manager'].includes(user?.role);
@@ -97,11 +106,42 @@ export default function DepartmentsPage() {
                     <span className="flex items-center gap-1"><Users className="h-3 w-3" />{d.member_count || 0} người</span>
                   </div>
                 </div>
+
+                {/* Chat button */}
                 <button onClick={(e) => { e.stopPropagation(); navigate(`/departments/${d.id}/chat`); }}
                   className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-gray-400 hover:text-blue-500 cursor-pointer"
                   title="Trao đổi">
                   <MessageCircle className="h-4 w-4" />
                 </button>
+
+                {/* 3-dot menu */}
+                {isAdmin && (
+                  <div className="relative">
+                    <button onClick={(e) => { e.stopPropagation(); setMenuDept(menuDept === d.id ? null : d.id); }}
+                      className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 cursor-pointer">
+                      <MoreVertical className="h-4 w-4" />
+                    </button>
+                    {menuDept === d.id && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setMenuDept(null); }} />
+                        <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border z-50 py-1">
+                          <button onClick={(e) => { e.stopPropagation(); setMenuDept(null); setEditDept(d); setShowCreate(true); }}
+                            className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700">
+                            <Edit className="h-3 w-3" /> Chỉnh sửa
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); navigate(`/departments/${d.id}/chat`); }}
+                            className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700">
+                            <MessageCircle className="h-3 w-3" /> Trao đổi
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); deleteDept(d.id, d.name); }}
+                            className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-600">
+                            <Trash2 className="h-3 w-3" /> Xóa phòng ban
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}
