@@ -5,7 +5,7 @@ import { getInitials, avatarColor, ROLE_STAGE_MAP, ROLE_LABELS } from '../lib/ut
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
-  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2
+  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2, Building, MessageCircle
 } from 'lucide-react';
 import { useState, useMemo } from 'react';
 
@@ -13,6 +13,7 @@ const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
   { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
+  { to: '/departments', icon: MessageCircle, label: 'Trao đổi PB' },
   { to: '/projects', icon: FolderKanban, label: 'Dự án' },
   { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV' },
   { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
@@ -32,6 +33,7 @@ const allWorkflow = [
 
 const adminTools = [
   { to: '/companies', icon: Building2, label: 'Công ty' },
+  { to: '/departments', icon: Building, label: 'Phòng ban' },
   { to: '/users', icon: Users, label: 'Nhân viên' },
   { to: '/templates', icon: ClipboardList, label: 'NV mẫu' },
   { to: '/settings', icon: Settings, label: 'Cài đặt' },
