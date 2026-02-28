@@ -63,29 +63,6 @@ export default function ProjectDetail() {
   const nextStage = currentStageIdx >= 0 && currentStageIdx < STAGE_FLOW.length - 1 ? STAGE_FLOW[currentStageIdx + 1] : null;
   const canAdvance = project.canAdvance;
 
-  // Group tasks by stage in correct workflow order
-  const stageTaskGroups = [];
-  const allStages = [...new Set((project.tasks || []).map(t => t.stage_id).filter(Boolean))];
-
-  // Build ordered stage groups from STAGE_FLOW
-  STAGE_FLOW.forEach(sf => {
-    const stageTasks = (project.tasks || []).filter(t => t.stage?.slug === sf.slug);
-    if (stageTasks.length > 0) {
-      const allDone = stageTasks.every(t => t.status === 'done');
-      const stageIdx = STAGE_FLOW.findIndex(s => s.slug === sf.slug);
-      const isCurrent = sf.status === project.status;
-      const isPast = stageIdx < currentStageIdx;
-      const isFuture = stageIdx > currentStageIdx;
-      stageTaskGroups.push({
-        slug: sf.slug, label: sf.label, tasks: stageTasks, allDone, isCurrent, isPast, isFuture,
-        stageId: stageTasks[0]?.stage?.id,
-      });
-    }
-  });
-  // Ungrouped tasks
-  const ungrouped = (project.tasks || []).filter(t => !t.stage_id);
-  if (ungrouped.length) stageTaskGroups.push({ slug: 'general', label: 'Chung', tasks: ungrouped, allDone: false, isCurrent: false, isPast: false, isFuture: false });
-
   const totalTasks = project.tasks?.length || 0;
   const doneTasks = project.tasks?.filter(t => t.status === 'done').length || 0;
 
@@ -266,52 +243,91 @@ export default function ProjectDetail() {
               <Plus className="h-4 w-4" /> Thêm công việc
             </button>
           </div>
-          {stageTaskGroups.map((group) => {
-            const done = group.tasks.filter(t => t.status === 'done').length;
-            // Determine if this group should show tasks
-            // Future stages only show if ALL previous stage tasks are done
+          {/* Show ALL stage groups — future stages visible but locked */}
+          {STAGE_FLOW.map((sf) => {
+            const stageTasks = (project.tasks || []).filter(t => t.stage?.slug === sf.slug);
+            const stageIdx = STAGE_FLOW.findIndex(s => s.slug === sf.slug);
+            const isCurrent = sf.status === project.status;
+            const isPast = stageIdx < currentStageIdx;
+            const isFuture = stageIdx > currentStageIdx;
+            const allDone = stageTasks.length > 0 && stageTasks.every(t => t.status === 'done');
+            const done = stageTasks.filter(t => t.status === 'done').length;
+
+            // Check if previous stages all done
             let prevAllDone = true;
-            if (group.isFuture) {
-              for (const prev of stageTaskGroups) {
-                if (prev.slug === group.slug) break;
-                if (!prev.allDone) { prevAllDone = false; break; }
+            if (isFuture) {
+              for (let pi = 0; pi < stageIdx; pi++) {
+                const prevTasks = (project.tasks || []).filter(t => t.stage?.slug === STAGE_FLOW[pi].slug);
+                if (prevTasks.length > 0 && !prevTasks.every(t => t.status === 'done')) { prevAllDone = false; break; }
               }
             }
-            const showTasks = !group.isFuture || prevAllDone;
+            const isLocked = isFuture && !prevAllDone;
+
+            // Group by workflow line if present
+            const wlForStage = (project.workflowLines || []).filter(l => l.stage_slug === sf.slug);
 
             return (
-              <div key={group.slug}>
+              <div key={sf.slug}>
                 <h4 className={`text-sm font-semibold mb-2 flex items-center gap-2 ${
-                  group.isCurrent ? 'text-blue-600' : group.allDone ? 'text-emerald-600' : group.isFuture ? 'text-gray-400' : 'text-gray-700'
+                  isCurrent ? 'text-blue-600' : allDone ? 'text-emerald-600' : isFuture ? 'text-gray-400' : 'text-gray-700'
                 }`}>
                   <span className={`w-2.5 h-2.5 rounded-full ${
-                    group.isCurrent ? 'bg-blue-600 animate-pulse' : group.allDone ? 'bg-emerald-500' : group.isFuture ? 'bg-gray-300' : 'bg-gray-400'
+                    isCurrent ? 'bg-blue-600 animate-pulse' : allDone ? 'bg-emerald-500' : isFuture ? 'bg-gray-300' : 'bg-gray-400'
                   }`} />
-                  {group.label}
-                  <span className="text-xs text-gray-400 font-normal">{done}/{group.tasks.length}</span>
-                  {group.allDone && group.tasks.length > 0 && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">✓ Hoàn thành</span>}
-                  {group.isFuture && !prevAllDone && <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">🔒 Chờ quy trình trước</span>}
+                  {sf.label}
+                  <span className="text-xs text-gray-400 font-normal">{done}/{stageTasks.length}</span>
+                  {allDone && stageTasks.length > 0 && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">✓ Hoàn thành</span>}
+                  {isLocked && <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">🔒 Chờ quy trình trước</span>}
                 </h4>
 
-                {showTasks ? (
-                  <div className="space-y-1">
-                    {group.tasks.map(t => (
-                      <div key={t.id} onClick={() => setSelectedTask(t.id)}
-                        className="flex items-center gap-3 bg-white rounded-lg border p-3 hover:shadow-sm hover:border-gray-300 cursor-pointer">
-                        <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
-                        <span className="flex-1 text-sm font-medium text-gray-800">{t.title}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
-                        {t.assignee && <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
-                          style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>{getInitials(t.assignee.full_name)}</div>}
-                        {t.due_date && <span className={`text-[11px] ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
-                        <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
+                {/* Sub-group by workflow lines */}
+                {wlForStage.length > 1 && stageTasks.length > 0 && (
+                  <div className="ml-3 space-y-3">
+                    {wlForStage.map(line => {
+                      const lineTasks = stageTasks.filter(t => t.workflow_line_id ? t.workflow_line_id === line.id : false);
+                      if (!lineTasks.length) return null;
+                      return (
+                        <div key={line.id}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className="w-1.5 h-4 rounded-full" style={{ backgroundColor: line.color || '#6b7280' }} />
+                            <span className="text-xs font-medium text-gray-600">{line.label}</span>
+                            {line.assignee && <span className="text-[10px] text-gray-400">{line.assignee.full_name}</span>}
+                          </div>
+                          <div className="space-y-1">
+                            {lineTasks.map(t => (
+                              <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} />
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {/* Tasks without workflow_line_id */}
+                    {stageTasks.filter(t => !t.workflow_line_id).length > 0 && (
+                      <div className="space-y-1">
+                        {stageTasks.filter(t => !t.workflow_line_id).map(t => (
+                          <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} />
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                ) : (
-                  <div className="bg-gray-50 rounded-lg p-4 text-center text-xs text-gray-400 border border-dashed">
-                    🔒 Hoàn thành tất cả nhiệm vụ ở quy trình trước để mở khóa
-                  </div>
+                )}
+
+                {/* No workflow sub-groups or only 1 line */}
+                {(wlForStage.length <= 1 || !stageTasks.length) && (
+                  isLocked ? (
+                    <div className="bg-gray-50 rounded-lg p-4 text-center text-xs text-gray-400 border border-dashed">
+                      🔒 Hoàn thành tất cả nhiệm vụ ở quy trình trước để mở khóa
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {stageTasks.map(t => (
+                        <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} />
+                      ))}
+                      {!stageTasks.length && (
+                        <div className="text-xs text-gray-300 py-2 text-center">—</div>
+                      )}
+                    </div>
+                  )
                 )}
               </div>
             );
@@ -332,20 +348,49 @@ export default function ProjectDetail() {
             </div>
             <FilePreview files={commentFiles} onRemove={(i) => setCommentFiles(f => f.filter((_, j) => j !== i))} small />
           </div>
-          {project.comments?.map(c => (
-            <div key={c.id} className="flex gap-3">
-              <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
-                style={{ backgroundColor: avatarColor(c.user?.full_name) }}>{getInitials(c.user?.full_name)}</div>
-              <div className="flex-1 bg-white rounded-xl border p-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-medium">{c.user?.full_name}</span>
-                  <span className="text-xs text-gray-400">{formatDateTime(c.created_at)}</span>
+          {project.comments?.map(c => {
+            const atts = c.attachments || [];
+            const images = atts.filter(f => f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(f.file_url || f.file_name || ''));
+            const otherFiles = atts.filter(f => !images.includes(f));
+            return (
+              <div key={c.id} className="flex gap-3">
+                <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
+                  style={{ backgroundColor: avatarColor(c.user?.full_name) }}>{getInitials(c.user?.full_name)}</div>
+                <div className="flex-1 bg-white rounded-xl border p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-medium">{c.user?.full_name}</span>
+                    <span className="text-xs text-gray-400">{formatDateTime(c.created_at)}</span>
+                  </div>
+                  {c.content && <p className="text-sm text-gray-700 whitespace-pre-wrap">{c.content}</p>}
+                  {/* Inline images */}
+                  {images.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {images.map((img, ii) => (
+                        <a key={ii} href={img.file_url} target="_blank" rel="noopener noreferrer" className="block">
+                          <img src={img.file_url} alt={img.file_name || 'image'} className="max-h-48 max-w-xs rounded-lg border object-cover hover:opacity-80 transition-opacity" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {/* Other files */}
+                  {otherFiles.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {otherFiles.map((f, fi) => (
+                        <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 hover:bg-gray-100 transition-colors">
+                          <Paperclip className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                          <span className="text-xs text-blue-600 truncate flex-1">{f.file_name || 'file'}</span>
+                          {f.file_size && <span className="text-[10px] text-gray-400 shrink-0">{(f.file_size / 1024).toFixed(0)} KB</span>}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {/* Legacy: FileList fallback */}
+                  {!atts.length && <FileList files={[]} />}
                 </div>
-                <p className="text-sm text-gray-700">{c.content}</p>
-                <FileList files={c.attachments || []} />
               </div>
-            </div>
-          ))}
+            );
+          })}
           {!project.comments?.length && <p className="text-sm text-gray-400 text-center py-6">Chưa có trao đổi</p>}
         </div>
       )}
@@ -382,6 +427,22 @@ export default function ProjectDetail() {
       <TaskDetailModal taskId={selectedTask} open={!!selectedTask} onClose={() => setSelectedTask(null)} onUpdated={load} />
       <TaskCreateModal open={showCreateTask} onClose={() => setShowCreateTask(false)} onCreated={load} projectId={id} stageId={project.current_stage?.id} />
       <AdvanceStageModal open={showAdvance} onClose={() => setShowAdvance(false)} project={project} nextStage={nextStage} onAdvanced={load} />
+    </div>
+  );
+}
+
+// ═══ Task Row (reusable) ═══
+function TaskRow({ task: t, isLocked, onSelect }) {
+  return (
+    <div onClick={() => !isLocked && onSelect(t.id)}
+      className={`flex items-center gap-3 bg-white rounded-lg border p-3 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-sm hover:border-gray-300 cursor-pointer'}`}>
+      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
+      <span className="flex-1 text-sm font-medium text-gray-800">{t.title}</span>
+      <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
+      {t.assignee && <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
+        style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>{getInitials(t.assignee.full_name)}</div>}
+      {t.due_date && <span className={`text-[11px] ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
+      <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
     </div>
   );
 }

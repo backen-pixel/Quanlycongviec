@@ -141,6 +141,7 @@ r.post('/', async (req, res) => {
     const { data, error } = await supabase.from('tasks').insert({
       project_id: b.project_id || null,
       stage_id: b.stage_id || null,
+      workflow_line_id: b.workflow_line_id || null,
       title: b.title,
       description: b.description || null,
       priority: b.priority || 'medium',
