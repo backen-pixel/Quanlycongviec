@@ -113,6 +113,7 @@ export default function Projects() {
                   </div>
                   <h3 className="text-sm font-semibold text-gray-900 mb-1">{p.name}</h3>
                   <div className="flex items-center gap-4 text-xs text-gray-500">
+                    {p.company && <span className="flex items-center gap-1 text-indigo-600 font-medium">🏢 {p.company.short_name || p.company.name}</span>}
                     {p.customers?.full_name && <span>{p.customers.full_name}</span>}
                     {p.customers?.phone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{p.customers.phone}</span>}
                     {p.created_at && <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{formatDate(p.created_at)}</span>}
