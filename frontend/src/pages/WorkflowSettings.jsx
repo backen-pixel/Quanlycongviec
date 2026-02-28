@@ -4,6 +4,21 @@ import { Plus, GripVertical, Pencil, Trash2, Power, PowerOff, ChevronDown, Chevr
 
 const ICONS = ['💬','🎨','💰','📝','🏭','🚛','🔧','❤️','📋','🔍','📦','🛡️','⭐','📊','🔔','✅','❌','🏗️','🔄','📌'];
 
+// Map Lucide icon names (stored in DB) to emoji for display
+const ICON_NAME_TO_EMOJI = {
+  MessageSquare: '💬', Palette: '🎨', Calculator: '💰', FileText: '📝',
+  Hammer: '🏭', Truck: '🚛', Wrench: '🔧', Heart: '❤️',
+  ClipboardList: '📋', Package: '📦', Settings: '⚙️', Users: '👥',
+};
+
+function stageIcon(s) {
+  if (!s?.icon) return '📋';
+  // If it's already an emoji (starts with non-ASCII), return as-is
+  if (s.icon.charCodeAt(0) > 127) return s.icon;
+  // Otherwise map from Lucide name
+  return ICON_NAME_TO_EMOJI[s.icon] || '📋';
+}
+
 function slugify(str) {
   return str.toLowerCase().replace(/[àáạảãâầấậẩẫăằắặẳẵ]/g,'a').replace(/[èéẹẻẽêềếệểễ]/g,'e')
     .replace(/[ìíịỉĩ]/g,'i').replace(/[òóọỏõôồốộổỗơờớợởỡ]/g,'o')
@@ -162,7 +177,7 @@ export default function WorkflowSettings() {
 
                 {/* Color bar + icon */}
                 <div className="w-2 h-12 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
-                <span className="text-lg shrink-0">{s.icon || '📋'}</span>
+                <span className="text-lg shrink-0">{stageIcon(s)}</span>
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
@@ -243,7 +258,7 @@ export default function WorkflowSettings() {
               return (
                 <div key={s.id} className="flex items-center gap-3 p-3 bg-white rounded-xl border">
                   <div className="w-2 h-10 rounded-full" style={{ backgroundColor: s.color }} />
-                  <span className="text-base">{s.icon || '📋'}</span>
+                  <span className="text-base">{stageIcon(s)}</span>
                   <div className="w-32 sm:w-40 shrink-0">
                     <h3 className="text-sm font-bold text-gray-900">{s.name}</h3>
                     <p className="text-[10px] text-gray-400">{s.slug}</p>
@@ -274,7 +289,11 @@ export default function WorkflowSettings() {
 
 // ═══ Stage edit form ═══
 function StageForm({ stage, onSave, onCancel, icons }) {
-  const [f, setF] = useState({ ...stage });
+  // Convert Lucide icon name to emoji for editing
+  const initIcon = stage.icon && stage.icon.charCodeAt(0) <= 127
+    ? (ICON_NAME_TO_EMOJI[stage.icon] || '📋')
+    : (stage.icon || '📋');
+  const [f, setF] = useState({ ...stage, icon: initIcon });
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
       <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()}>
