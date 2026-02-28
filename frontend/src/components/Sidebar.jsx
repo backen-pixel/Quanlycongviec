@@ -46,7 +46,7 @@ const adminTools = [
   { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
 ];
 
-function SideLink({ to, icon: Icon, label, dot, collapsed }) {
+function SideLink({ to, icon: Icon, emoji, label, dot, collapsed }) {
   return (
     <NavLink
       to={to}
@@ -61,11 +61,13 @@ function SideLink({ to, icon: Icon, label, dot, collapsed }) {
     >
       {dot ? (
         <span className="flex items-center justify-center w-5 h-5">
-          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dot }} />
+          {emoji ? <span className="text-sm">{emoji}</span> : <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dot }} />}
         </span>
-      ) : (
+      ) : emoji ? (
+        <span className="flex items-center justify-center w-5 h-5 text-sm">{emoji}</span>
+      ) : Icon ? (
         <Icon className="h-[18px] w-[18px] shrink-0" />
-      )}
+      ) : null}
       {!collapsed && <span>{label}</span>}
     </NavLink>
   );
@@ -106,13 +108,17 @@ export default function Sidebar() {
   // Build workflow menu from DB stages (fallback to hardcoded)
   const workflow = useMemo(() => {
     if (dbStages.length > 0) {
-      return dbStages.map(s => ({
-        to: `/stage/${s.slug}`,
-        icon: ICON_MAP[s.icon] || FolderKanban,
-        label: s.name,
-        dot: s.color || '#3B82F6',
-        slug: s.slug,
-      }));
+      return dbStages.map(s => {
+        const isEmoji = s.icon && s.icon.charCodeAt(0) > 127;
+        return {
+          to: `/stage/${s.slug}`,
+          icon: isEmoji ? null : (ICON_MAP[s.icon] || FolderKanban),
+          emoji: isEmoji ? s.icon : null,
+          label: s.name,
+          dot: s.color || '#3B82F6',
+          slug: s.slug,
+        };
+      });
     }
     return FALLBACK_WORKFLOW;
   }, [dbStages]);

@@ -1,6 +1,6 @@
 const { Router } = require('express');
-const { supabase } = require('../supabase');
-const auth = require('../middleware/auth');
+const { supabase } = require('../config/supabase');
+const { auth } = require('../middleware/auth');
 const r = Router();
 
 // ═══════════════════════════════════════════
