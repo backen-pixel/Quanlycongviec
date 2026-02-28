@@ -69,6 +69,7 @@ export default function UsersPage() {
         </div>
         <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="h-9 px-3 border rounded-lg text-sm bg-white">
           <option value="">Tất cả phòng ban</option>
+          <option value="none">Chưa có phòng ban</option>
           {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
       </div>
@@ -95,9 +96,14 @@ export default function UsersPage() {
                   <span className="flex items-center gap-1 truncate"><Mail className="h-3 w-3 shrink-0" />{u.email}</span>
                   {u.phone && <span className="flex items-center gap-1 shrink-0"><Phone className="h-3 w-3" />{u.phone}</span>}
                 </div>
-                {(u.position || u.department?.name) && (
-                  <p className="text-[10px] text-gray-400 mt-0.5">{u.position}{u.position && u.department?.name ? ' · ' : ''}{u.department?.name}</p>
-                )}
+                <p className="text-[10px] text-gray-400 mt-0.5">
+                  {u.position || ''}{u.position && (u.department?.name || ' ') ? ' · ' : ''}
+                  {u.department?.name ? (
+                    <span style={{ color: u.department.color }}>{u.department.name}</span>
+                  ) : (
+                    <span className="text-amber-500">Chưa có phòng ban</span>
+                  )}
+                </p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={(e) => { e.stopPropagation(); setEditUser(u); setShowCreate(true); }}
