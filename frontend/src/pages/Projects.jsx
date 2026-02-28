@@ -354,26 +354,34 @@ export default function Projects() {
           </div>
         )
       ) : (
-        /* ═══ TAB QUY TRÌNH CỤ THỂ: Kanban cột = nhiệm vụ, thẻ = dự án ═══ */
+        /* ═══ TAB QUY TRÌNH CỤ THỂ: mỗi DA hiện 1 lần, bên trong liệt kê NV ═══ */
         (() => {
           const currentStage = KANBAN_STAGES.find(s => s.status === filterStatus);
           const stageProjects = filtered.filter(p => p.status === filterStatus);
-          // Group tasks by title (unique task titles become columns)
-          const taskColumns = {};
+          // Build project → tasks map
+          const projTasksMap = {}; // { projectId: [task, ...] }
           stageTasks.forEach(t => {
-            const col = t.title || 'Khác';
-            if (!taskColumns[col]) taskColumns[col] = { title: col, projects: new Set(), tasks: [] };
-            taskColumns[col].tasks.push(t);
-            if (t.project_id) taskColumns[col].projects.add(t.project_id);
+            if (!t.project_id) return;
+            if (!projTasksMap[t.project_id]) projTasksMap[t.project_id] = [];
+            projTasksMap[t.project_id].push(t);
           });
-          const columns = Object.values(taskColumns);
-          // Build project map
-          const projMap = {};
-          stageProjects.forEach(p => { projMap[p.id] = p; });
-          // Projects with NO tasks in this stage
-          const projectsWithTasks = new Set();
-          stageTasks.forEach(t => projectsWithTasks.add(t.project_id));
-          const orphanProjects = stageProjects.filter(p => !projectsWithTasks.has(p.id));
+          // Find unique task titles (NV mẫu = appears in >50% of projects, NV thêm = rare)
+          const titleCount = {};
+          Object.values(projTasksMap).forEach(tasks => {
+            const seen = new Set();
+            tasks.forEach(t => { if (!seen.has(t.title)) { seen.add(t.title); titleCount[t.title] = (titleCount[t.title] || 0) + 1; } });
+          });
+          const totalProjects = Object.keys(projTasksMap).length || 1;
+          const templateTitles = new Set(Object.entries(titleCount).filter(([, c]) => c >= totalProjects * 0.5).map(([t]) => t));
+
+          // Sort projects by progress
+          const projWithProgress = stageProjects.map(p => {
+            const tasks = projTasksMap[p.id] || [];
+            const done = tasks.filter(t => t.status === 'done').length;
+            const total = tasks.length;
+            return { ...p, tasks, done, total, pct: total > 0 ? Math.round(done / total * 100) : 0 };
+          });
+          projWithProgress.sort((a, b) => a.pct - b.pct); // least progress first
 
           return (
             <div className="space-y-3">
@@ -389,71 +397,104 @@ export default function Projects() {
                 </Link>
               </div>
 
-              {columns.length > 0 ? (
-                <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: '300px' }}>
-                  {columns.map((col, ci) => {
-                    const colProjects = [...col.projects].map(pid => projMap[pid]).filter(Boolean);
-                    return (
-                      <div key={ci} className="shrink-0 w-64 sm:w-72 flex flex-col">
-                        {/* Column header = Task name */}
-                        <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderColor: currentStage?.color + '30' }}>
-                          <h3 className="text-sm font-bold text-gray-900 leading-tight">{col.title}</h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] text-gray-500">{colProjects.length} DA</span>
-                            <span className="text-[10px] text-gray-400">·</span>
-                            <span className="text-[10px] text-gray-500">{col.tasks.filter(t => t.status === 'done').length}/{col.tasks.length} xong</span>
+              {projWithProgress.length > 0 ? (
+                viewMode === 'kanban' ? (
+                  /* Kanban: mỗi thẻ = 1 DA, bên trong hiện NV */
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                    {projWithProgress.map(p => (
+                      <Link to={`/projects/${p.id}`} key={p.id}
+                        className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg hover:border-blue-300 transition-all flex flex-col">
+                        {/* Project name — BIG */}
+                        <h3 className="text-base font-bold text-gray-900 leading-tight mb-1">{p.name}</h3>
+                        <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                          <span className="text-xs font-bold text-blue-600">{p.code}</span>
+                          {p.priority && <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${PRIORITY_COLORS[p.priority]}`}>{PRIORITY_LABELS[p.priority]}</span>}
+                          {p.customers?.full_name && <span className="text-[10px] text-gray-500">👤 {p.customers.full_name}</span>}
+                        </div>
+
+                        {/* Progress bar */}
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all" style={{
+                              width: `${p.pct}%`,
+                              backgroundColor: p.pct === 100 ? '#10b981' : p.pct >= 50 ? '#3b82f6' : currentStage?.color || '#6b7280'
+                            }} />
+                          </div>
+                          <span className={`text-[10px] font-bold ${p.pct === 100 ? 'text-emerald-600' : 'text-gray-500'}`}>{p.done}/{p.total}</span>
+                        </div>
+
+                        {/* Task list inside card */}
+                        {p.tasks.length > 0 ? (
+                          <div className="space-y-1 flex-1">
+                            {p.tasks.map(t => {
+                              const isTemplate = templateTitles.has(t.title);
+                              return (
+                                <div key={t.id} className="flex items-center gap-1.5 text-[11px]">
+                                  <span className={`shrink-0 ${t.status === 'done' ? 'text-emerald-500' : t.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`}>
+                                    {t.status === 'done' ? '✓' : t.status === 'in_progress' ? '▶' : '○'}
+                                  </span>
+                                  <span className={`flex-1 truncate ${t.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{t.title}</span>
+                                  {!isTemplate && <span className="shrink-0 text-[8px] bg-amber-100 text-amber-600 px-1 rounded">thêm</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-amber-500 italic">⚠ Chưa có nhiệm vụ</p>
+                        )}
+
+                        {/* Footer: assignee */}
+                        {p.tasks[0]?.assignee && (
+                          <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
+                            <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                              style={{ backgroundColor: avatarColor(p.tasks[0].assignee.full_name) }}>
+                              {getInitials(p.tasks[0].assignee.full_name)}
+                            </div>
+                            <span className="text-[10px] text-gray-500">{p.tasks[0].assignee.full_name}</span>
+                          </div>
+                        )}
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  /* List view for stage tab */
+                  <div className="grid gap-3">
+                    {projWithProgress.map(p => (
+                      <Link to={`/projects/${p.id}`} key={p.id}
+                        className="bg-white rounded-xl border p-4 hover:shadow-md hover:border-gray-300 transition-all group">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              <span className="text-sm font-bold text-blue-600">{p.code}</span>
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium`} style={{ backgroundColor: currentStage?.color + '20', color: currentStage?.color }}>{currentStage?.label}</span>
+                              <span className={`text-[10px] font-bold ${p.pct === 100 ? 'text-emerald-600' : 'text-gray-500'}`}>{p.done}/{p.total} NV</span>
+                            </div>
+                            <h3 className="text-base font-bold text-gray-900 mb-0.5">{p.name}</h3>
+                            <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+                              {p.customers?.full_name && <span>👤 {p.customers.full_name}</span>}
+                              {p.company && <span className="text-indigo-600 font-medium">🏢 {p.company.short_name || p.company.name}</span>}
+                            </div>
+                          </div>
+                          <div className="flex-1 max-w-[200px] hidden sm:block">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div className="h-full rounded-full" style={{
+                                  width: `${p.pct}%`,
+                                  backgroundColor: p.pct === 100 ? '#10b981' : currentStage?.color || '#3b82f6'
+                                }} />
+                              </div>
+                              <span className="text-xs font-bold text-gray-600">{p.pct}%</span>
+                            </div>
                           </div>
                         </div>
-                        {/* Cards = Projects doing this task */}
-                        <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto max-h-[60vh]" style={{ borderColor: currentStage?.color + '30' }}>
-                          {colProjects.length > 0 ? colProjects.map(p => {
-                            const pTask = col.tasks.find(t => t.project_id === p.id);
-                            return (
-                              <Link to={`/projects/${p.id}`} key={p.id}
-                                className="block bg-white rounded-lg border p-3 hover:shadow-md hover:border-blue-300 transition-all">
-                                <h4 className="text-sm sm:text-base font-bold text-gray-900 leading-tight mb-1">{p.name}</h4>
-                                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                                  <span className="text-xs font-bold text-blue-600">{p.code}</span>
-                                  {pTask && <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${
-                                    pTask.status === 'done' ? 'bg-emerald-100 text-emerald-700' :
-                                    pTask.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                                  }`}>{pTask.status === 'done' ? '✓ Xong' : pTask.status === 'in_progress' ? '▶ Đang làm' : '⏳ Chờ'}</span>}
-                                </div>
-                                {p.customers?.full_name && <p className="text-xs text-gray-600">👤 {p.customers.full_name}</p>}
-                                {pTask?.assignee && <p className="text-[10px] text-gray-500 mt-0.5">🔧 {pTask.assignee.full_name}</p>}
-                              </Link>
-                            );
-                          }) : (
-                            <div className="flex items-center justify-center h-12 text-xs text-gray-400">Trống</div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {/* Orphan projects (no tasks) */}
-                  {orphanProjects.length > 0 && (
-                    <div className="shrink-0 w-64 sm:w-72 flex flex-col">
-                      <div className="rounded-t-xl p-3 border border-b-0 bg-amber-50" style={{ borderColor: '#f59e0b30' }}>
-                        <h3 className="text-sm font-bold text-amber-700">Chưa có nhiệm vụ</h3>
-                        <p className="text-[10px] text-amber-500">{orphanProjects.length} DA chưa tạo NV</p>
-                      </div>
-                      <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-amber-50/30 overflow-y-auto max-h-[60vh]" style={{ borderColor: '#f59e0b30' }}>
-                        {orphanProjects.map(p => (
-                          <Link to={`/projects/${p.id}`} key={p.id}
-                            className="block bg-white rounded-lg border p-3 hover:shadow-md transition-all">
-                            <h4 className="text-sm font-bold text-gray-900 mb-0.5">{p.name}</h4>
-                            <span className="text-xs text-blue-600 font-bold">{p.code}</span>
-                            {p.customers?.full_name && <p className="text-xs text-gray-500">👤 {p.customers.full_name}</p>}
-                          </Link>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                      </Link>
+                    ))}
+                  </div>
+                )
               ) : (
                 <div className="text-center py-10 text-gray-400">
-                  <p className="text-sm">Chưa có nhiệm vụ nào cho quy trình này</p>
-                  <Link to={currentStage?.path || '#'} className="mt-2 inline-block text-sm text-blue-600 font-medium">Mở quy trình để tạo →</Link>
+                  <p className="text-sm">Chưa có dự án nào trong quy trình này</p>
+                  <Link to={currentStage?.path || '#'} className="mt-2 inline-block text-sm text-blue-600 font-medium">Mở quy trình →</Link>
                 </div>
               )}
             </div>
