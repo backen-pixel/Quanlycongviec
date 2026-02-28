@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import api from '../lib/api';
 import Modal from './Modal';
+import UserSelect from './UserSelect';
 import { FileUploadButton, FilePreview } from './FileUpload';
-import { Plus, CheckSquare, ChevronDown, ChevronRight, Building2, GripVertical, Trash2, Copy, Search, AlertTriangle, Eye } from 'lucide-react';
+import { Plus, CheckSquare, ChevronDown, ChevronRight, Building2, GripVertical, Trash2, Copy, AlertTriangle, Eye } from 'lucide-react';
 import { getInitials, avatarColor } from '../lib/utils';
 
 const STAGES = [
@@ -18,62 +19,6 @@ const STAGES = [
 
 let lineIdCounter = 0;
 function newLineId() { return `new_${++lineIdCounter}_${Date.now()}`; }
-
-// ═══ Searchable User Select ═══
-function UserSelect({ value, onChange, users, placeholder, className }) {
-  const [search, setSearch] = useState('');
-  const [open, setOpen] = useState(false);
-  const filtered = useMemo(() => {
-    if (!search.trim()) return users;
-    const q = search.toLowerCase();
-    return users.filter(u => u.full_name?.toLowerCase().includes(q) || u.role?.toLowerCase().includes(q));
-  }, [users, search]);
-  const selected = users.find(u => u.id === value);
-
-  return (
-    <div className={`relative ${className || ''}`}>
-      <button type="button" onClick={() => setOpen(!open)}
-        className="w-full h-8 px-2 text-xs border rounded-md bg-white flex items-center gap-1.5 text-left cursor-pointer hover:border-blue-300">
-        {selected ? (
-          <><div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[7px] font-bold shrink-0"
-            style={{ backgroundColor: avatarColor(selected.full_name) }}>{getInitials(selected.full_name)}</div>
-          <span className="truncate flex-1">{selected.full_name}</span></>
-        ) : <span className="text-gray-400 flex-1 truncate">{placeholder || '— Chọn NV —'}</span>}
-        <ChevronDown className="h-3 w-3 text-gray-400 shrink-0" />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setSearch(''); }} />
-          <div className="absolute left-0 top-full mt-1 w-60 bg-white rounded-lg shadow-lg border z-50 max-h-52 overflow-hidden flex flex-col">
-            <div className="p-1.5 border-b">
-              <div className="flex items-center gap-1.5 px-2 bg-gray-50 rounded-md">
-                <Search className="h-3 w-3 text-gray-400" />
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm nhân viên..."
-                  className="flex-1 h-7 text-xs bg-transparent outline-none" autoFocus />
-              </div>
-            </div>
-            <div className="overflow-y-auto flex-1">
-              <button type="button" onClick={() => { onChange(''); setOpen(false); setSearch(''); }}
-                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 cursor-pointer ${!value ? 'bg-blue-50 text-blue-600' : 'text-gray-500'}`}>
-                — Chưa chỉ định —
-              </button>
-              {filtered.map(u => (
-                <button type="button" key={u.id} onClick={() => { onChange(u.id); setOpen(false); setSearch(''); }}
-                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 cursor-pointer flex items-center gap-2 ${value === u.id ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'}`}>
-                  <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[7px] font-bold shrink-0"
-                    style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
-                  <span className="flex-1 truncate">{u.full_name}</span>
-                  <span className="text-[10px] text-gray-400">{u.role}</span>
-                </button>
-              ))}
-              {filtered.length === 0 && <p className="text-xs text-gray-400 text-center py-3">Không tìm thấy</p>}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 export default function ProjectCreateModal({ open, onClose, onCreated }) {
   const [form, setForm] = useState({});

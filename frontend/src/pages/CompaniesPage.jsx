@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import Modal from '../components/Modal';
+import UserSelect from '../components/UserSelect';
 import { Plus, Building2, Search, Users, Trash2, Edit, FolderKanban, UserPlus, X } from 'lucide-react';
 import { getInitials, avatarColor, ROLE_LABELS } from '../lib/utils';
 
@@ -35,6 +36,7 @@ export default function CompaniesPage() {
   };
 
   const [addUserIds, setAddUserIds] = useState([]);
+  const [addPickId, setAddPickId] = useState('');
 
   const addEmployees = async () => {
     if (!addUserIds.length || !selectedCompany) return;
@@ -43,6 +45,7 @@ export default function CompaniesPage() {
         await api.post(`/companies/${selectedCompany}/employees`, { user_id: uid });
       }
       setAddUserIds([]);
+      setAddPickId('');
       loadDetail(selectedCompany);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
@@ -151,29 +154,35 @@ export default function CompaniesPage() {
                   <Users className="h-4 w-4" /> Nhân viên ({companyDetail.members?.length || 0})
                 </h3>
 
-                {/* Add employees — multi-select */}
+                {/* Add employees — search + pick */}
                 <div className="space-y-2 mb-3">
-                  <div className="max-h-32 overflow-y-auto border rounded-lg divide-y">
-                    {allUsers
-                      .filter(u => !companyDetail.members?.find(m => m.id === u.id))
-                      .map(u => (
-                        <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
-                          <input type="checkbox" checked={addUserIds.includes(u.id)}
-                            onChange={e => setAddUserIds(prev => e.target.checked ? [...prev, u.id] : prev.filter(x => x !== u.id))}
-                            className="rounded border-gray-300" />
-                          <span className="flex-1 truncate">{u.full_name}</span>
-                          <span className="text-[10px] text-gray-400">{ROLE_LABELS[u.role] || u.role}</span>
-                        </label>
-                      ))}
-                    {allUsers.filter(u => !companyDetail.members?.find(m => m.id === u.id)).length === 0 && (
-                      <p className="text-xs text-gray-400 text-center py-2">Tất cả NV đã trong công ty</p>
-                    )}
+                  <div className="flex gap-2">
+                    <UserSelect value={addPickId} onChange={v => {
+                      if (v && !addUserIds.includes(v)) setAddUserIds(prev => [...prev, v]);
+                      setAddPickId('');
+                    }} users={allUsers.filter(u => !companyDetail.members?.find(m => m.id === u.id) && !addUserIds.includes(u.id))}
+                      placeholder="🔍 Tìm và chọn NV..." className="flex-1" />
                   </div>
                   {addUserIds.length > 0 && (
-                    <button onClick={addEmployees}
-                      className="w-full h-9 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center justify-center gap-1">
-                      <UserPlus className="h-4 w-4" /> Thêm {addUserIds.length} nhân viên
-                    </button>
+                    <div className="space-y-1">
+                      {addUserIds.map(uid => {
+                        const u = allUsers.find(x => x.id === uid);
+                        return u ? (
+                          <div key={uid} className="flex items-center gap-2 bg-blue-50 rounded-lg px-2 py-1.5">
+                            <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[7px] font-bold"
+                              style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
+                            <span className="text-xs flex-1">{u.full_name}</span>
+                            <span className="text-[10px] text-gray-400">{ROLE_LABELS[u.role] || u.role}</span>
+                            <button onClick={() => setAddUserIds(prev => prev.filter(x => x !== uid))}
+                              className="text-gray-400 hover:text-red-500 cursor-pointer"><X className="h-3 w-3" /></button>
+                          </div>
+                        ) : null;
+                      })}
+                      <button onClick={addEmployees}
+                        className="w-full h-9 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center justify-center gap-1">
+                        <UserPlus className="h-4 w-4" /> Thêm {addUserIds.length} nhân viên
+                      </button>
+                    </div>
                   )}
                 </div>
 

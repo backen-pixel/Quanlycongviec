@@ -10,6 +10,7 @@ import {
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle,
   Paperclip, FileText, Edit, UserPlus, X
 } from 'lucide-react';
+import UserSelect from '../components/UserSelect';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
   TASK_STATUS, TASK_COLORS, formatVND, formatDate, formatDateTime,
@@ -524,11 +525,8 @@ function WorkflowLineRow({ line, editing, users, onUpdate, onDelete }) {
           </p>
         )}
         {editing ? (
-          <select value={line.assignee_id || ''} onChange={e => onUpdate(line.id, { assignee_id: e.target.value || null })}
-            className="h-6 px-1 border rounded text-[10px] bg-white mt-0.5 w-full max-w-[200px]">
-            <option value="">— Chưa phân công —</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
-          </select>
+          <UserSelect value={line.assignee_id || ''} onChange={v => onUpdate(line.id, { assignee_id: v || null })}
+            users={users} placeholder="— Chọn NV —" className="w-full max-w-[200px] mt-0.5" size="sm" />
         ) : (
           <p className="text-[10px] text-gray-500">{line.assignee?.full_name || 'Chưa phân công'}</p>
         )}

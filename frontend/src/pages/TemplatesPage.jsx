@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import Modal from '../components/Modal';
+import UserSelect from '../components/UserSelect';
 import { Plus, Trash2, Edit, FileText, GripVertical, CheckSquare, ChevronDown, ChevronRight, User } from 'lucide-react';
 import { PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 
@@ -124,12 +125,8 @@ export default function TemplatesPage() {
                 <div className="border-t bg-blue-50/50 px-3 sm:px-4 py-2 flex items-center gap-2 flex-wrap">
                   <User className="h-3.5 w-3.5 text-blue-500 shrink-0" />
                   <span className="text-[11px] sm:text-xs font-medium text-blue-700 whitespace-nowrap">NV mặc định:</span>
-                  <select value={stageAssignees[stage.id] || ''} onClick={e => e.stopPropagation()}
-                    onChange={e => setStageDefaultAssignee(stage.id, e.target.value)}
-                    className="h-7 px-2 border rounded text-xs bg-white text-gray-700 flex-1 min-w-[140px] max-w-[250px]">
-                    <option value="">— Chưa chỉ định —</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
-                  </select>
+                  <UserSelect value={stageAssignees[stage.id] || ''} onChange={v => setStageDefaultAssignee(stage.id, v)}
+                    users={users} placeholder="— Chưa chỉ định —" className="flex-1 min-w-[140px] max-w-[250px]" size="sm" />
                   <span className="text-[10px] text-blue-400 hidden sm:inline">→ áp dụng cho tất cả NV mẫu</span>
                 </div>
               )}
@@ -248,10 +245,7 @@ function TemplateFormModal({ open, onClose, onSaved, editTemplate, preStageId, s
               <option value="customer_care">CSKH</option><option value="manager">Quản lý</option>
             </select></div>
           <div className="col-span-2"><label className="block text-sm font-medium mb-1">Nhân viên phân công mặc định</label>
-            <select value={form.assignee_id || ''} onChange={e => set('assignee_id', e.target.value)} className="input">
-              <option value="">— Theo vai trò / chưa chỉ định —</option>
-              {users.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
-            </select></div>
+            <UserSelect value={form.assignee_id || ''} onChange={v => set('assignee_id', v)} users={users} placeholder="— Theo vai trò / chưa chỉ định —" /></div>
         </div>
         <div><label className="block text-sm font-medium mb-1">Mô tả</label><textarea value={form.description || ''} onChange={e => set('description', e.target.value)} className="input min-h-[50px]" /></div>
         {/* Checklist template */}
