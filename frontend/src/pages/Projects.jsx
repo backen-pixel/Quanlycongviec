@@ -5,10 +5,31 @@ import ProjectCreateModal from '../components/ProjectCreateModal';
 import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2 } from 'lucide-react';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate } from '../lib/utils';
 
+const TIME_FILTERS = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'today', label: 'Hôm nay' },
+  { id: 'week', label: 'Tuần này' },
+  { id: 'month', label: 'Tháng này' },
+  { id: 'quarter', label: 'Quý này' },
+  { id: 'year', label: 'Năm nay' },
+];
+
+function filterByTime(items, tf) {
+  if (tf === 'all') return items;
+  const now = new Date(), start = new Date();
+  if (tf === 'today') start.setHours(0,0,0,0);
+  else if (tf === 'week') { start.setDate(now.getDate()-now.getDay()); start.setHours(0,0,0,0); }
+  else if (tf === 'month') { start.setDate(1); start.setHours(0,0,0,0); }
+  else if (tf === 'quarter') { start.setMonth(Math.floor(now.getMonth()/3)*3,1); start.setHours(0,0,0,0); }
+  else if (tf === 'year') { start.setMonth(0,1); start.setHours(0,0,0,0); }
+  return items.filter(i => { const d = i.created_at ? new Date(i.created_at) : null; return d && d >= start; });
+}
+
 export default function Projects() {
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  const [filterTime, setFilterTime] = useState('all');
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
 
@@ -59,7 +80,18 @@ export default function Projects() {
             className="w-full h-9 pl-10 pr-3 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all"
           />
         </div>
-        <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5 overflow-x-auto">
+        {/* Time filter */}
+        <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+          <Calendar className="h-3.5 w-3.5 text-gray-400 self-center ml-2" />
+          {TIME_FILTERS.map(tf => (
+            <button key={tf.id} onClick={() => setFilterTime(tf.id)}
+              className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${filterTime === tf.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+              {tf.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5 overflow-x-auto">
           {statuses.map(s => (
             <button key={s} onClick={() => setFilter(s)}
               className={`h-8 px-3 rounded-md text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
@@ -79,17 +111,17 @@ export default function Projects() {
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
           </svg>
         </div>
-      ) : projects.length === 0 ? (
+      ) : filterByTime(projects, filterTime).length === 0 ? (
         <div className="text-center py-16">
           <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-          <p className="text-sm text-gray-400">Chưa có dự án nào</p>
+          <p className="text-sm text-gray-400">{filterTime !== 'all' ? `Không có dự án trong ${TIME_FILTERS.find(t=>t.id===filterTime)?.label?.toLowerCase()}` : 'Chưa có dự án nào'}</p>
           <button onClick={() => setShowCreate(true)} className="mt-3 text-sm text-blue-600 hover:text-blue-700 font-medium cursor-pointer">
             + Tạo dự án đầu tiên
           </button>
         </div>
       ) : (
         <div className="grid gap-3">
-          {projects.map((p, i) => (
+          {filterByTime(projects, filterTime).map((p, i) => (
             <Link to={`/projects/${p.id}`} key={p.id}
               className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md hover:border-gray-300 transition-all animate-fade-in group"
               style={{ animationDelay: `${i * 30}ms` }}>
