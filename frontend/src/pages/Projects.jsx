@@ -11,17 +11,28 @@ const TIME_FILTERS = [
   { id: 'week', label: 'Tuần này' },
   { id: 'month', label: 'Tháng này' },
   { id: 'quarter', label: 'Quý này' },
-  { id: 'year', label: 'Năm nay' },
+  { id: 'custom', label: 'Tùy chọn' },
 ];
 
-function filterByTime(items, tf) {
-  if (tf === 'all') return items;
+function fmtD(d) { return d.toISOString().slice(0,10); }
+function defRange() { const n=new Date(); return { from: fmtD(new Date(n.getFullYear(),n.getMonth(),1)), to: fmtD(new Date(n.getFullYear(),n.getMonth()+1,0)) }; }
+
+function filterByTime(items, tf, dFrom, dTo) {
+  if (tf === 'all' && !dFrom && !dTo) return items;
+  if (tf === 'custom' || (dFrom || dTo)) {
+    return items.filter(i => {
+      const d = i.created_at ? new Date(i.created_at) : null;
+      if (!d) return false;
+      if (dFrom && d < new Date(dFrom)) return false;
+      if (dTo) { const t = new Date(dTo); t.setHours(23,59,59,999); if (d > t) return false; }
+      return true;
+    });
+  }
   const now = new Date(), start = new Date();
   if (tf === 'today') start.setHours(0,0,0,0);
   else if (tf === 'week') { start.setDate(now.getDate()-now.getDay()); start.setHours(0,0,0,0); }
   else if (tf === 'month') { start.setDate(1); start.setHours(0,0,0,0); }
   else if (tf === 'quarter') { start.setMonth(Math.floor(now.getMonth()/3)*3,1); start.setHours(0,0,0,0); }
-  else if (tf === 'year') { start.setMonth(0,1); start.setHours(0,0,0,0); }
   return items.filter(i => { const d = i.created_at ? new Date(i.created_at) : null; return d && d >= start; });
 }
 
@@ -30,6 +41,8 @@ export default function Projects() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTime, setFilterTime] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [filterCompany, setFilterCompany] = useState('all');
   const [filterCustomer, setFilterCustomer] = useState('all');
   const [filterPerson, setFilterPerson] = useState('all');
@@ -61,7 +74,7 @@ export default function Projects() {
   const statuses = ['all', 'consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'installing', 'completed'];
 
   // Apply client-side filters
-  let filtered = filterByTime(projects, filterTime);
+  let filtered = filterByTime(projects, filterTime, dateFrom, dateTo);
   if (filterCompany !== 'all') filtered = filtered.filter(p => p.company_id === filterCompany);
   if (filterCustomer !== 'all') filtered = filtered.filter(p => p.customer_id === filterCustomer);
   if (filterPerson !== 'all') filtered = filtered.filter(p =>
@@ -89,7 +102,7 @@ export default function Projects() {
     });
   });
 
-  const hasActiveFilters = filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all';
+  const hasActiveFilters = filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all' || dateFrom || dateTo;
 
   return (
     <div className="space-y-5 max-w-7xl">
@@ -141,7 +154,7 @@ export default function Projects() {
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-700">Bộ lọc nâng cao</h3>
             {hasActiveFilters && (
-              <button onClick={() => { setFilterTime('all'); setFilterCompany('all'); setFilterCustomer('all'); setFilterPerson('all'); }}
+              <button onClick={() => { setFilterTime('all'); setDateFrom(''); setDateTo(''); setFilterCompany('all'); setFilterCustomer('all'); setFilterPerson('all'); }}
                 className="text-xs text-red-500 hover:text-red-600 cursor-pointer flex items-center gap-1"><X className="h-3 w-3" /> Xóa bộ lọc</button>
             )}
           </div>
@@ -149,9 +162,16 @@ export default function Projects() {
             {/* Time */}
             <div>
               <label className="block text-[11px] font-medium text-gray-500 mb-1"><Calendar className="h-3 w-3 inline mr-1" />Thời gian</label>
-              <select value={filterTime} onChange={e => setFilterTime(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
+              <select value={filterTime} onChange={e => { setFilterTime(e.target.value); if (e.target.value !== 'custom') { setDateFrom(''); setDateTo(''); } }} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
                 {TIME_FILTERS.map(tf => <option key={tf.id} value={tf.id}>{tf.label}</option>)}
               </select>
+              {(filterTime === 'custom' || dateFrom || dateTo) && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setFilterTime('custom'); }} className="flex-1 h-7 px-2 border rounded text-xs bg-white" />
+                  <span className="text-xs text-gray-400">→</span>
+                  <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setFilterTime('custom'); }} className="flex-1 h-7 px-2 border rounded text-xs bg-white" />
+                </div>
+              )}
             </div>
             {/* Company */}
             <div>
@@ -194,7 +214,7 @@ export default function Projects() {
           <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
           <p className="text-sm text-gray-400">{hasActiveFilters ? 'Không có dự án phù hợp bộ lọc' : 'Chưa có dự án nào'}</p>
           {hasActiveFilters && (
-            <button onClick={() => { setFilterTime('all'); setFilterCompany('all'); setFilterCustomer('all'); setFilterPerson('all'); }}
+            <button onClick={() => { setFilterTime('all'); setDateFrom(''); setDateTo(''); setFilterCompany('all'); setFilterCustomer('all'); setFilterPerson('all'); }}
               className="mt-2 text-xs text-blue-600 hover:text-blue-700 cursor-pointer">Xóa bộ lọc</button>
           )}
           <button onClick={() => setShowCreate(true)} className="mt-3 block mx-auto text-sm text-blue-600 hover:text-blue-700 font-medium cursor-pointer">
