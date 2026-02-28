@@ -122,6 +122,12 @@ export default function CompaniesPage() {
                 <button onClick={() => setEditCompany(companyDetail.company)} className="h-8 px-3 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-200 cursor-pointer flex items-center gap-1">
                   <Edit className="h-3 w-3" /> Sửa
                 </button>
+                <button onClick={async () => {
+                  if (!confirm(`Xóa công ty "${companyDetail.company.name}"? Dự án sẽ bị gỡ liên kết.`)) return;
+                  try { await api.delete(`/companies/${companyDetail.company.id}`); setSelectedCompany(null); setCompanyDetail(null); load(); } catch {}
+                }} className="h-8 px-3 bg-red-50 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 cursor-pointer flex items-center gap-1">
+                  <Trash2 className="h-3 w-3" /> Xóa
+                </button>
               </div>
 
               {/* Stats */}
