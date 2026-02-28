@@ -13,7 +13,6 @@ export default function CompaniesPage() {
   const [selectedCompany, setSelectedCompany] = useState(null);
   const [companyDetail, setCompanyDetail] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
-  const [addUserId, setAddUserId] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -35,11 +34,15 @@ export default function CompaniesPage() {
     } catch { }
   };
 
-  const addEmployee = async () => {
-    if (!addUserId || !selectedCompany) return;
+  const [addUserIds, setAddUserIds] = useState([]);
+
+  const addEmployees = async () => {
+    if (!addUserIds.length || !selectedCompany) return;
     try {
-      await api.post(`/companies/${selectedCompany}/employees`, { user_id: addUserId });
-      setAddUserId('');
+      for (const uid of addUserIds) {
+        await api.post(`/companies/${selectedCompany}/employees`, { user_id: uid });
+      }
+      setAddUserIds([]);
       loadDetail(selectedCompany);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
@@ -148,18 +151,30 @@ export default function CompaniesPage() {
                   <Users className="h-4 w-4" /> Nhân viên ({companyDetail.members?.length || 0})
                 </h3>
 
-                {/* Add employee */}
-                <div className="flex gap-2 mb-3">
-                  <select value={addUserId} onChange={e => setAddUserId(e.target.value)} className="flex-1 h-9 px-3 border rounded-lg text-sm bg-white">
-                    <option value="">— Thêm nhân viên —</option>
+                {/* Add employees — multi-select */}
+                <div className="space-y-2 mb-3">
+                  <div className="max-h-32 overflow-y-auto border rounded-lg divide-y">
                     {allUsers
                       .filter(u => !companyDetail.members?.find(m => m.id === u.id))
-                      .map(u => <option key={u.id} value={u.id}>{u.full_name} ({ROLE_LABELS[u.role] || u.role})</option>)}
-                  </select>
-                  <button onClick={addEmployee} disabled={!addUserId}
-                    className="h-9 px-3 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1">
-                    <UserPlus className="h-4 w-4" /> Thêm
-                  </button>
+                      .map(u => (
+                        <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                          <input type="checkbox" checked={addUserIds.includes(u.id)}
+                            onChange={e => setAddUserIds(prev => e.target.checked ? [...prev, u.id] : prev.filter(x => x !== u.id))}
+                            className="rounded border-gray-300" />
+                          <span className="flex-1 truncate">{u.full_name}</span>
+                          <span className="text-[10px] text-gray-400">{ROLE_LABELS[u.role] || u.role}</span>
+                        </label>
+                      ))}
+                    {allUsers.filter(u => !companyDetail.members?.find(m => m.id === u.id)).length === 0 && (
+                      <p className="text-xs text-gray-400 text-center py-2">Tất cả NV đã trong công ty</p>
+                    )}
+                  </div>
+                  {addUserIds.length > 0 && (
+                    <button onClick={addEmployees}
+                      className="w-full h-9 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center justify-center gap-1">
+                      <UserPlus className="h-4 w-4" /> Thêm {addUserIds.length} nhân viên
+                    </button>
+                  )}
                 </div>
 
                 <div className="space-y-1">

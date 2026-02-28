@@ -431,7 +431,7 @@ export default function StageView() {
                     </div>
                   )}
                   {/* Horizontal Kanban for this line */}
-                  <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: '280px' }}>
+                  <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-4" style={{ minHeight: '250px' }}>
                     {lineTasks.map((task, taskIdx) => {
                       const checksDone = task.checklists?.filter(c => c.is_completed)?.length || 0;
                       const checksTotal = task.checklists?.length || 0;
@@ -448,7 +448,7 @@ export default function StageView() {
                       const isActive = !isLocked && !isTaskDone;
 
                       return (
-                        <div key={task.id} className={`shrink-0 w-80 flex flex-col ${isLocked ? 'opacity-50' : ''}`}>
+                        <div key={task.id} className={`shrink-0 w-64 sm:w-80 flex flex-col ${isLocked ? 'opacity-50' : ''}`}>
                           {/* Column header = Task */}
                           <div className={`rounded-t-xl p-3 border border-b-0 ${isTaskDone ? 'bg-emerald-50 border-emerald-200' : isActive ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-200'}`}>
                             <div className="flex items-start gap-2">
@@ -565,75 +565,71 @@ export default function StageView() {
 function ChecklistCard({ cl, clIdx, isLocked, taskId, onToggle, onUpdated, canInteract }) {
   const [showDetail, setShowDetail] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [noteText, setNoteText] = useState(cl.notes || cl.description || '');
+  const [noteText, setNoteText] = useState('');
+  const [noteFiles, setNoteFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const hasNotes = cl.notes || cl.description;
   const hasFiles = cl.attachments?.length > 0;
   const hasExtra = hasNotes || hasFiles;
 
-  const saveNote = async () => {
+  const startEdit = () => {
+    setNoteText(cl.notes || cl.description || '');
+    setNoteFiles(cl.attachments || []);
+    setEditing(true);
+  };
+
+  const saveBoth = async () => {
     setSaving(true);
     try {
-      await api.patch(`/tasks/${taskId}/checklists/${cl.id}`, { notes: noteText });
+      await api.patch(`/tasks/${taskId}/checklists/${cl.id}`, { notes: noteText, attachments: noteFiles });
       setEditing(false);
       onUpdated?.();
     } catch { }
     setSaving(false);
   };
 
-  const uploadFile = async (files) => {
-    if (!files?.length) return;
-    setSaving(true);
-    try {
-      const existing = cl.attachments || [];
-      await api.patch(`/tasks/${taskId}/checklists/${cl.id}`, { attachments: [...existing, ...files] });
-      onUpdated?.();
-    } catch { }
-    setSaving(false);
-  };
-
   return (
-    <div className={`bg-white rounded-lg border p-2.5 transition-all ${
+    <div className={`bg-white rounded-lg border p-2 transition-all ${
       cl.is_completed ? 'border-emerald-200 bg-emerald-50/50'
       : isLocked ? 'border-gray-200 opacity-60' : 'border-gray-200 hover:shadow-sm hover:border-gray-300'
     }`}>
-      <div className="flex items-start gap-2">
+      <div className="flex items-start gap-1.5">
         <button onClick={onToggle} disabled={isLocked}
-          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+          className={`w-4 h-4 sm:w-5 sm:h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
             cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white'
             : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 hover:border-blue-400 cursor-pointer'
           }`}>
-          {cl.is_completed && <CheckSquare className="h-3 w-3" />}
+          {cl.is_completed && <CheckSquare className="h-2.5 w-2.5 sm:h-3 sm:w-3" />}
         </button>
-        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => !isLocked && canInteract ? setEditing(!editing) : setShowDetail(!showDetail)}>
-          <span className={`text-sm leading-tight ${cl.is_completed ? 'line-through text-gray-400' : isLocked ? 'text-gray-400' : 'text-gray-700'}`}>
+        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => !isLocked && canInteract ? startEdit() : hasExtra && setShowDetail(!showDetail)}>
+          <span className={`text-xs sm:text-sm leading-tight ${cl.is_completed ? 'line-through text-gray-400' : isLocked ? 'text-gray-400' : 'text-gray-700'}`}>
             {cl.title}
           </span>
-          {cl.completed_at && <p className="text-[10px] text-emerald-500 mt-0.5">✓ {formatDate(cl.completed_at)}</p>}
+          {cl.completed_at && <p className="text-[9px] sm:text-[10px] text-emerald-500 mt-0.5">✓ {formatDate(cl.completed_at)}</p>}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0">
           {hasFiles && <Paperclip className="h-3 w-3 text-blue-400" />}
           {hasNotes && <MessageSquare className="h-3 w-3 text-amber-400" />}
           {hasExtra && (
-            <button onClick={() => setShowDetail(!showDetail)} className="text-gray-300 hover:text-gray-500 cursor-pointer">
-              {showDetail ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            <button onClick={() => { setShowDetail(!showDetail); if (editing) setEditing(false); }} className="text-gray-300 hover:text-gray-500 cursor-pointer">
+              {showDetail ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
             </button>
           )}
-          <span className="text-[10px] text-gray-300 font-mono ml-1">{clIdx + 1}</span>
         </div>
       </div>
 
-      {/* Editing form: notes + upload */}
+      {/* Editing form: notes + files → save together */}
       {editing && canInteract && !isLocked && (
-        <div className="mt-2 ml-7 space-y-2 bg-blue-50/50 rounded-lg p-2 border border-blue-100">
+        <div className="mt-2 ml-5 sm:ml-7 space-y-2 bg-blue-50/50 rounded-lg p-2 border border-blue-100">
           <textarea value={noteText} onChange={e => setNoteText(e.target.value)}
-            className="w-full h-16 px-2 py-1 border rounded text-xs outline-none focus:ring-1 focus:ring-blue-300 bg-white"
-            placeholder="Ghi chú cho checklist này..." />
-          <div className="flex items-center gap-2">
-            <FileUploadButton compact onFilesUploaded={uploadFile} />
-            <button onClick={saveNote} disabled={saving}
+            className="w-full h-14 px-2 py-1 border rounded text-xs outline-none focus:ring-1 focus:ring-blue-300 bg-white"
+            placeholder="Ghi chú..." />
+          <FilePreview files={noteFiles} onRemove={(i) => setNoteFiles(f => f.filter((_, j) => j !== i))} small />
+          <div className="flex items-center gap-2 flex-wrap">
+            <FileUploadButton compact onFilesUploaded={(files) => setNoteFiles(prev => [...prev, ...files])} />
+            <button onClick={saveBoth} disabled={saving}
               className="h-7 px-3 bg-blue-600 text-white rounded text-xs font-medium cursor-pointer disabled:opacity-50">
-              {saving ? '...' : 'Lưu'}
+              {saving ? '...' : '💾 Lưu'}
             </button>
             <button onClick={() => setEditing(false)} className="h-7 px-2 text-gray-500 text-xs cursor-pointer">Đóng</button>
           </div>
@@ -642,7 +638,7 @@ function ChecklistCard({ cl, clIdx, isLocked, taskId, onToggle, onUpdated, canIn
 
       {/* View saved notes + files (toggle) */}
       {showDetail && hasExtra && !editing && (
-        <div className="mt-2 ml-7 space-y-1">
+        <div className="mt-1.5 ml-5 sm:ml-7 space-y-1">
           {hasNotes && <p className="text-xs text-gray-600 bg-amber-50 rounded p-2 border border-amber-100">{cl.notes || cl.description}</p>}
           {hasFiles && (
             <div className="space-y-1">
@@ -650,11 +646,11 @@ function ChecklistCard({ cl, clIdx, isLocked, taskId, onToggle, onUpdated, canIn
                 const isImg = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_url || f.file_name || '');
                 return isImg ? (
                   <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer">
-                    <img src={f.file_url} alt={f.file_name} className="max-h-32 rounded border object-cover" />
+                    <img src={f.file_url} alt={f.file_name} className="max-h-24 rounded border object-cover" />
                   </a>
                 ) : (
                   <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline bg-gray-50 rounded px-2 py-1">
+                    className="flex items-center gap-1 text-xs text-blue-600 hover:underline bg-gray-50 rounded px-2 py-1">
                     <Paperclip className="h-3 w-3" />{f.file_name || 'file'}
                   </a>
                 );
