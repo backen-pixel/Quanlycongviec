@@ -98,11 +98,47 @@ r.post('/levels', async (req, res) => {
     if (!['admin'].includes(req.user.role))
       return res.status(403).json({ error: 'Chỉ admin' });
     const { name, slug, depth, description, icon, color } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Tên cấp bậc là bắt buộc' });
     const { data, error } = await supabase.from('ecosystem_levels')
-      .insert({ name, slug, depth: depth || 0, description, icon, color })
+      .insert({ name: name.trim(), slug: slug || name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'), depth: depth ?? 0, description: description || null, icon: icon || '📋', color: color || '#6b7280' })
       .select().single();
     if (error) throw error;
     res.json({ level: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT update level
+r.put('/levels/:id', async (req, res) => {
+  try {
+    if (!['admin'].includes(req.user.role))
+      return res.status(403).json({ error: 'Chỉ admin' });
+    const { name, slug, depth, description, icon, color } = req.body;
+    const update = {};
+    if (name !== undefined) update.name = name;
+    if (slug !== undefined) update.slug = slug;
+    if (depth !== undefined) update.depth = depth;
+    if (description !== undefined) update.description = description || null;
+    if (icon !== undefined) update.icon = icon;
+    if (color !== undefined) update.color = color;
+    const { data, error } = await supabase.from('ecosystem_levels')
+      .update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ level: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE level
+r.delete('/levels/:id', async (req, res) => {
+  try {
+    if (!['admin'].includes(req.user.role))
+      return res.status(403).json({ error: 'Chỉ admin' });
+    // Check if any units use this level
+    const { data: units } = await supabase.from('ecosystem_units')
+      .select('id').eq('level_id', req.params.id).eq('is_active', true).limit(1);
+    if (units?.length > 0) return res.status(400).json({ error: 'Không thể xóa — đang có đơn vị sử dụng cấp bậc này' });
+    const { error } = await supabase.from('ecosystem_levels').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

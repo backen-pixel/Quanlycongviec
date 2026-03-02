@@ -6,7 +6,7 @@ import api from '../lib/api';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
-  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2, Building, MessageCircle, Network
+  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2, Building, MessageCircle, Network, Layers
 } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 
@@ -40,6 +40,7 @@ const FALLBACK_WORKFLOW = [
 
 const adminTools = [
   { to: '/ecosystem', icon: Network, label: 'Hệ sinh thái' },
+  { to: '/ecosystem-levels', icon: Layers, label: 'Cấp bậc HST' },
   { to: '/companies', icon: Building2, label: 'Công ty' },
   { to: '/departments', icon: Building, label: 'Phòng ban' },
   { to: '/users', icon: Users, label: 'Nhân viên' },
