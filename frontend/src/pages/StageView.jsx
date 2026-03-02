@@ -76,7 +76,16 @@ export default function StageView() {
 
       const { data: taskData } = await api.get('/tasks', { params: { stage_id: stage.id } })
         .catch(() => ({ data: { tasks: [] } }));
-      const stageTasks = taskData.tasks || [];
+      let stageTasks = taskData.tasks || [];
+
+      // Load checklists for each task (parallel)
+      const withChecklists = await Promise.all(stageTasks.map(async (t) => {
+        try {
+          const { data } = await api.get(`/tasks/${t.id}`);
+          return { ...t, checklists: data.task?.checklists || [], assignee: data.task?.assignee || t.assignee };
+        } catch { return { ...t, checklists: [] }; }
+      }));
+      stageTasks = withChecklists;
 
       const allProjs = projRes.data.projects || [];
       const projectIdsWithTasks = new Set(stageTasks.map(t => t.project_id));
@@ -123,6 +132,14 @@ export default function StageView() {
 
   const startTask = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' }); loadData(); } catch {} };
   const markTaskDone = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'done' }); loadData(); } catch {} };
+  const toggleCheckItem = async (taskId, clId, isCompleted) => {
+    // Optimistic update
+    setTasks(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      return { ...t, checklists: t.checklists.map(cl => cl.id === clId ? { ...cl, is_completed: !isCompleted } : cl) };
+    }));
+    try { await api.patch(`/tasks/${taskId}/checklists/${clId}`, { is_completed: !isCompleted }); } catch { loadData(); }
+  };
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
@@ -367,10 +384,15 @@ export default function StageView() {
                     const projTasks = tasksByProject[projectId] || [];
                     const pDone = projTasks.filter(t => t.status === 'done').length;
                     const pTotal = projTasks.length;
+                    const checklists = task.checklists || [];
+                    const clDone = checklists.filter(c => c.is_completed).length;
+                    const clTotal = checklists.length;
+                    const allClDone = clTotal > 0 && clDone === clTotal;
 
                     return (
-                      <div key={projectId} className={`bg-white rounded-lg border p-3 hover:shadow-md transition-all ${isDone ? 'border-emerald-200 bg-emerald-50/50' : isActive ? 'border-blue-200' : 'border-gray-200'}`}>
-                        <Link to={`/projects/${proj.id}`} className="block">
+                      <div key={projectId} className={`bg-white rounded-lg border p-3 transition-all ${isDone ? 'border-emerald-200 bg-emerald-50/50' : isActive ? 'border-blue-200' : 'border-gray-200'}`}>
+                        {/* Project header */}
+                        <Link to={`/projects/${proj.id}`} className="block hover:opacity-80">
                           <div className="flex items-start justify-between mb-1">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5 mb-0.5">
@@ -385,6 +407,7 @@ export default function StageView() {
                           </div>
                         </Link>
 
+                        {/* Assignee + progress */}
                         <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
                           <div className="flex items-center gap-1">
                             {task.assignee && (
@@ -395,15 +418,36 @@ export default function StageView() {
                             )}
                           </div>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-gray-400">{pDone}/{pTotal}</span>
-                            {task.due_date && <span className={`text-[10px] flex items-center gap-0.5 ${new Date(task.due_date) < new Date() && !isDone ? 'text-red-500' : 'text-gray-400'}`}><Clock className="h-3 w-3" />{formatDate(task.due_date)}</span>}
+                            <span className="text-[10px] text-gray-400">{pDone}/{pTotal} NV</span>
+                            {clTotal > 0 && <span className={`text-[10px] font-medium ${allClDone ? 'text-emerald-600' : 'text-gray-400'}`}>✓ {clDone}/{clTotal}</span>}
                           </div>
                         </div>
 
+                        {/* Checklist items — interactive */}
+                        {clTotal > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {clTotal > 0 && <div className="w-full h-1 bg-gray-100 rounded-full mb-1"><div className={`h-full rounded-full transition-all ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(clDone/clTotal)*100}%` }} /></div>}
+                            {checklists.map(cl => (
+                              <div key={cl.id} className="flex items-start gap-1.5">
+                                <button
+                                  onClick={() => canInteract && toggleCheckItem(task.id, cl.id, cl.is_completed)}
+                                  disabled={!canInteract}
+                                  className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                                    cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : canInteract ? 'border-gray-300 hover:border-blue-400 cursor-pointer' : 'border-gray-200'
+                                  }`}>
+                                  {cl.is_completed && <CheckSquare className="h-2.5 w-2.5" />}
+                                </button>
+                                <span className={`text-[11px] leading-tight ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{cl.title}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Action buttons */}
                         {canInteract && !isDone && (
                           <div className="flex gap-1 mt-2">
                             {task.status === 'pending' && <button onClick={e => { e.preventDefault(); startTask(task.id); }} className="flex-1 h-6 bg-blue-50 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
-                            {isActive && <button onClick={e => { e.preventDefault(); markTaskDone(task.id); }} className="flex-1 h-6 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer">✓ Hoàn thành</button>}
+                            {isActive && allClDone && <button onClick={e => { e.preventDefault(); markTaskDone(task.id); }} className="flex-1 h-6 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer animate-pulse">✓ Hoàn thành</button>}
                             <button onClick={e => { e.preventDefault(); setSelectedTask(task.id); }} className="flex-1 h-6 text-gray-400 bg-white border rounded text-[10px] hover:text-blue-600 cursor-pointer">Chi tiết</button>
                           </div>
                         )}
