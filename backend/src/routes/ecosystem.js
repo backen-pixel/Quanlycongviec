@@ -1,0 +1,449 @@
+const { Router } = require('express');
+const { supabase } = require('../config/supabase');
+const { auth } = require('../middleware/auth');
+
+const r = Router();
+r.use(auth);
+
+// ─── HELPER: Check ecosystem permission ──
+// User can manage a unit if:
+// 1. User is admin/manager (global)
+// 2. User is director/manager of THIS unit
+// 3. User is director/manager of a PARENT unit (higher level)
+async function canManageUnit(userId, userRole, unitId) {
+  if (['admin', 'manager'].includes(userRole)) return true;
+
+  // Get unit and its ancestors
+  const { data: unit } = await supabase.from('ecosystem_units')
+    .select('id, parent_id, level_id').eq('id', unitId).single();
+  if (!unit) return false;
+
+  // Check direct membership
+  const { data: membership } = await supabase.from('ecosystem_unit_members')
+    .select('unit_role, can_manage_children')
+    .eq('unit_id', unitId).eq('user_id', userId).single();
+  if (membership && ['director', 'manager'].includes(membership.unit_role)) return true;
+
+  // Check parent chain
+  let parentId = unit.parent_id;
+  while (parentId) {
+    const { data: parentMember } = await supabase.from('ecosystem_unit_members')
+      .select('unit_role, can_manage_children')
+      .eq('unit_id', parentId).eq('user_id', userId).single();
+    if (parentMember && ['director', 'manager'].includes(parentMember.unit_role) && parentMember.can_manage_children) {
+      return true;
+    }
+    const { data: parent } = await supabase.from('ecosystem_units')
+      .select('parent_id').eq('id', parentId).single();
+    parentId = parent?.parent_id || null;
+  }
+  return false;
+}
+
+// Get all units user has access to (their units + child units)
+async function getUserAccessibleUnits(userId, userRole) {
+  if (['admin', 'manager'].includes(userRole)) {
+    const { data } = await supabase.from('ecosystem_units').select('id').eq('is_active', true);
+    return (data || []).map(u => u.id);
+  }
+
+  // Get direct memberships
+  const { data: memberships } = await supabase.from('ecosystem_unit_members')
+    .select('unit_id, unit_role, can_manage_children').eq('user_id', userId);
+  if (!memberships?.length) return [];
+
+  const unitIds = new Set(memberships.map(m => m.unit_id));
+
+  // For directors/managers with can_manage_children, add all descendants
+  const managingUnits = memberships.filter(m =>
+    ['director', 'manager'].includes(m.unit_role) && m.can_manage_children
+  );
+
+  for (const m of managingUnits) {
+    const children = await getDescendantUnits(m.unit_id);
+    children.forEach(id => unitIds.add(id));
+  }
+
+  return Array.from(unitIds);
+}
+
+// Recursive get all descendant unit IDs
+async function getDescendantUnits(unitId) {
+  const { data: children } = await supabase.from('ecosystem_units')
+    .select('id').eq('parent_id', unitId).eq('is_active', true);
+  if (!children?.length) return [];
+  let ids = children.map(c => c.id);
+  for (const child of children) {
+    const grandChildren = await getDescendantUnits(child.id);
+    ids = [...ids, ...grandChildren];
+  }
+  return ids;
+}
+
+// ═══════════════════════════════════════════════
+// CẤP BẬC — ECOSYSTEM LEVELS
+// ═══════════════════════════════════════════════
+
+r.get('/levels', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('ecosystem_levels')
+      .select('*').order('depth');
+    if (error) throw error;
+    res.json({ levels: data || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/levels', async (req, res) => {
+  try {
+    if (!['admin'].includes(req.user.role))
+      return res.status(403).json({ error: 'Chỉ admin' });
+    const { name, slug, depth, description, icon, color } = req.body;
+    const { data, error } = await supabase.from('ecosystem_levels')
+      .insert({ name, slug, depth: depth || 0, description, icon, color })
+      .select().single();
+    if (error) throw error;
+    res.json({ level: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════
+// ĐƠN VỊ — ECOSYSTEM UNITS (Tree)
+// ═══════════════════════════════════════════════
+
+// GET tree structure
+r.get('/units', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('ecosystem_units')
+      .select(`
+        *,
+        level:ecosystem_levels(id,name,slug,depth,icon,color),
+        company:companies(id,name,short_name),
+        parent:ecosystem_units!ecosystem_units_parent_id_fkey(id,name,short_name)
+      `)
+      .eq('is_active', true)
+      .order('order_index');
+    if (error) throw error;
+
+    // Load members count + stage groups for each
+    const units = data || [];
+    for (const unit of units) {
+      const { count } = await supabase.from('ecosystem_unit_members')
+        .select('id', { count: 'exact', head: true }).eq('unit_id', unit.id);
+      unit.member_count = count || 0;
+
+      const { data: groups } = await supabase.from('ecosystem_unit_stage_groups')
+        .select('*, group:workflow_stage_groups(id,name,slug,color,icon)')
+        .eq('unit_id', unit.id);
+      unit.stage_groups = (groups || []).map(g => g.group);
+    }
+
+    // Build tree
+    const tree = buildTree(units);
+    res.json({ units, tree });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+function buildTree(units) {
+  const map = {};
+  units.forEach(u => { map[u.id] = { ...u, children: [] }; });
+  const roots = [];
+  units.forEach(u => {
+    if (u.parent_id && map[u.parent_id]) {
+      map[u.parent_id].children.push(map[u.id]);
+    } else {
+      roots.push(map[u.id]);
+    }
+  });
+  return roots;
+}
+
+// GET single unit with details
+r.get('/units/:id', async (req, res) => {
+  try {
+    const { data: unit, error } = await supabase.from('ecosystem_units')
+      .select(`
+        *,
+        level:ecosystem_levels(id,name,slug,depth,icon,color),
+        company:companies(id,name,short_name)
+      `)
+      .eq('id', req.params.id).single();
+    if (error) throw error;
+
+    // Members
+    const { data: members } = await supabase.from('ecosystem_unit_members')
+      .select('*, user:users(id,full_name,email,avatar,role)')
+      .eq('unit_id', req.params.id).order('unit_role');
+
+    // Stage groups
+    const { data: stageGroups } = await supabase.from('ecosystem_unit_stage_groups')
+      .select('*, group:workflow_stage_groups(id,name,slug,color,icon)')
+      .eq('unit_id', req.params.id);
+
+    // Children
+    const { data: children } = await supabase.from('ecosystem_units')
+      .select('*, level:ecosystem_levels(id,name,slug,depth,icon,color)')
+      .eq('parent_id', req.params.id).eq('is_active', true).order('order_index');
+
+    // Projects
+    const { data: projects } = await supabase.from('project_units')
+      .select('*, project:projects(id,code,name,status)')
+      .eq('unit_id', req.params.id);
+
+    res.json({
+      unit,
+      members: members || [],
+      stage_groups: (stageGroups || []).map(g => g.group),
+      children: children || [],
+      projects: (projects || []).map(p => ({ ...p.project, role: p.role })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST create unit
+r.post('/units', async (req, res) => {
+  try {
+    const { name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index } = req.body;
+
+    // Permission check
+    if (parent_id) {
+      const hasAccess = await canManageUnit(req.user.userId, req.user.role, parent_id);
+      if (!hasAccess) return res.status(403).json({ error: 'Không có quyền tạo đơn vị con' });
+    } else if (!['admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Chỉ admin tạo được đơn vị gốc' });
+    }
+
+    const { data, error } = await supabase.from('ecosystem_units')
+      .insert({ name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index: order_index || 0 })
+      .select('*, level:ecosystem_levels(id,name,slug,depth,icon,color)').single();
+    if (error) throw error;
+
+    res.json({ unit: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT update unit
+r.put('/units/:id', async (req, res) => {
+  try {
+    const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.id);
+    if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
+
+    const { name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index, is_active } = req.body;
+    const update = { updated_at: new Date().toISOString() };
+    if (name !== undefined) update.name = name;
+    if (short_name !== undefined) update.short_name = short_name;
+    if (code !== undefined) update.code = code;
+    if (level_id !== undefined) update.level_id = level_id;
+    if (parent_id !== undefined) update.parent_id = parent_id;
+    if (company_id !== undefined) update.company_id = company_id;
+    if (department_id !== undefined) update.department_id = department_id;
+    if (description !== undefined) update.description = description;
+    if (logo_url !== undefined) update.logo_url = logo_url;
+    if (address !== undefined) update.address = address;
+    if (phone !== undefined) update.phone = phone;
+    if (email !== undefined) update.email = email;
+    if (order_index !== undefined) update.order_index = order_index;
+    if (is_active !== undefined) update.is_active = is_active;
+
+    const { data, error } = await supabase.from('ecosystem_units')
+      .update(update).eq('id', req.params.id)
+      .select('*, level:ecosystem_levels(id,name,slug,depth,icon,color)').single();
+    if (error) throw error;
+    res.json({ unit: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE unit
+r.delete('/units/:id', async (req, res) => {
+  try {
+    const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.id);
+    if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
+    await supabase.from('ecosystem_units').update({ is_active: false }).eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════
+// THÀNH VIÊN — UNIT MEMBERS
+// ═══════════════════════════════════════════════
+
+r.post('/units/:id/members', async (req, res) => {
+  try {
+    const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.id);
+    if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
+
+    const { user_id, unit_role, can_manage_children, is_primary } = req.body;
+    const { data, error } = await supabase.from('ecosystem_unit_members')
+      .insert({ unit_id: req.params.id, user_id, unit_role: unit_role || 'member', can_manage_children: can_manage_children || false, is_primary: is_primary || false })
+      .select('*, user:users(id,full_name,email,avatar,role)').single();
+    if (error) throw error;
+    res.json({ member: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/units/:unitId/members/:memberId', async (req, res) => {
+  try {
+    const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.unitId);
+    if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
+
+    const { unit_role, can_manage_children, is_primary } = req.body;
+    const update = {};
+    if (unit_role !== undefined) update.unit_role = unit_role;
+    if (can_manage_children !== undefined) update.can_manage_children = can_manage_children;
+    if (is_primary !== undefined) update.is_primary = is_primary;
+
+    const { data, error } = await supabase.from('ecosystem_unit_members')
+      .update(update).eq('id', req.params.memberId)
+      .select('*, user:users(id,full_name,email,avatar,role)').single();
+    if (error) throw error;
+    res.json({ member: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.delete('/units/:unitId/members/:memberId', async (req, res) => {
+  try {
+    const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.unitId);
+    if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
+    await supabase.from('ecosystem_unit_members').delete().eq('id', req.params.memberId);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════
+// NHÓM QUY TRÌNH — STAGE GROUPS
+// ═══════════════════════════════════════════════
+
+r.get('/stage-groups', async (req, res) => {
+  try {
+    const { data: groups, error } = await supabase.from('workflow_stage_groups')
+      .select('*').eq('is_active', true).order('order_index');
+    if (error) throw error;
+
+    // Load stages for each group
+    for (const g of (groups || [])) {
+      const { data: items } = await supabase.from('workflow_stage_group_items')
+        .select('*, stage:workflow_stages(id,name,slug,color,icon,order_index)')
+        .eq('group_id', g.id).order('order_index');
+      g.stages = (items || []).map(i => i.stage);
+    }
+
+    res.json({ groups: groups || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/stage-groups', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role))
+      return res.status(403).json({ error: 'Không có quyền' });
+    const { name, slug, description, color, icon, order_index } = req.body;
+    const { data, error } = await supabase.from('workflow_stage_groups')
+      .insert({ name, slug, description, color, icon, order_index: order_index || 0 })
+      .select().single();
+    if (error) throw error;
+    res.json({ group: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/stage-groups/:id', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role))
+      return res.status(403).json({ error: 'Không có quyền' });
+    const { name, slug, description, color, icon, order_index, is_active } = req.body;
+    const update = {};
+    if (name !== undefined) update.name = name;
+    if (slug !== undefined) update.slug = slug;
+    if (description !== undefined) update.description = description;
+    if (color !== undefined) update.color = color;
+    if (icon !== undefined) update.icon = icon;
+    if (order_index !== undefined) update.order_index = order_index;
+    if (is_active !== undefined) update.is_active = is_active;
+
+    const { data, error } = await supabase.from('workflow_stage_groups')
+      .update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ group: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Add/remove stages from group
+r.post('/stage-groups/:id/stages', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role))
+      return res.status(403).json({ error: 'Không có quyền' });
+    const { stage_ids } = req.body; // array of stage IDs
+    // Clear existing
+    await supabase.from('workflow_stage_group_items').delete().eq('group_id', req.params.id);
+    // Insert new
+    if (stage_ids?.length) {
+      await supabase.from('workflow_stage_group_items').insert(
+        stage_ids.map((sid, i) => ({ group_id: req.params.id, stage_id: sid, order_index: i }))
+      );
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Assign stage groups to unit
+r.post('/units/:id/stage-groups', async (req, res) => {
+  try {
+    const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.id);
+    if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
+
+    const { group_ids } = req.body;
+    // Clear existing
+    await supabase.from('ecosystem_unit_stage_groups').delete().eq('unit_id', req.params.id);
+    // Insert new
+    if (group_ids?.length) {
+      await supabase.from('ecosystem_unit_stage_groups').insert(
+        group_ids.map((gid, i) => ({ unit_id: req.params.id, group_id: gid, is_primary: i === 0 }))
+      );
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════
+// PHÂN QUYỀN — PERMISSIONS CHECK
+// ═══════════════════════════════════════════════
+
+// GET my accessible units (for current user)
+r.get('/my-units', async (req, res) => {
+  try {
+    const { data: memberships } = await supabase.from('ecosystem_unit_members')
+      .select(`
+        *,
+        unit:ecosystem_units(id,name,short_name,code,
+          level:ecosystem_levels(id,name,slug,depth,icon,color)
+        )
+      `)
+      .eq('user_id', req.user.userId);
+
+    const accessibleIds = await getUserAccessibleUnits(req.user.userId, req.user.role);
+
+    res.json({
+      memberships: memberships || [],
+      accessible_unit_ids: accessibleIds,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET check if user can manage a specific unit
+r.get('/can-manage/:unitId', async (req, res) => {
+  try {
+    const canManage = await canManageUnit(req.user.userId, req.user.role, req.params.unitId);
+    res.json({ can_manage: canManage });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Assign project to units
+r.post('/projects/:projectId/units', async (req, res) => {
+  try {
+    const { unit_id, role } = req.body;
+    const { data, error } = await supabase.from('project_units')
+      .insert({ project_id: req.params.projectId, unit_id, role: role || 'owner' })
+      .select('*, unit:ecosystem_units(id,name,short_name)').single();
+    if (error) throw error;
+    res.json({ assignment: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+module.exports = r;

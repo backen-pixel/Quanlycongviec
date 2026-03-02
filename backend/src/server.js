@@ -40,6 +40,7 @@ app.use('/api/companies', require('./routes/companies'));
 app.use('/api/departments', require('./routes/departments'));
 app.use('/api/stages', require('./routes/stages'));
 app.use('/api/approvals', require('./routes/approvals'));
+app.use('/api/ecosystem', require('./routes/ecosystem'));
 
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {
