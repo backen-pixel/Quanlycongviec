@@ -25,6 +25,176 @@ async function logActivity(userId, action, entityType, entityId, description, ol
   await supabase.from('activity_logs').insert({ user_id: userId, action, entity_type: entityType, entity_id: entityId, description, old_values: oldValues, new_values: newValues });
 }
 
+// ═══ ADVANCE PROJECT STAGE HELPER ═══
+// Reusable function to advance project to next stage + create tasks
+async function advanceProjectStage(req, projectId, nextStageSlug, nextStatus, notes, attachments) {
+  try {
+    const { data: stage } = await supabase.from('workflow_stages')
+      .select('id,name').eq('slug', nextStageSlug).single();
+    if (!stage) return;
+
+    const { data: old } = await supabase.from('projects')
+      .select('status,current_stage_id,code,name').eq('id', projectId).single();
+
+    // Update project
+    await supabase.from('projects').update({
+      current_stage_id: stage.id, status: nextStatus, updated_at: new Date().toISOString(),
+    }).eq('id', projectId);
+
+    // Save stage transition
+    await supabase.from('stage_transitions').insert({
+      project_id: projectId,
+      from_stage_id: old?.current_stage_id || null,
+      to_stage_id: stage.id,
+      notes: notes || null,
+      attachments: attachments || [],
+      transitioned_by: req.user.userId,
+    }).catch(() => {});
+
+    // Auto-update customer status
+    const { data: proj } = await supabase.from('projects')
+      .select('customer_id').eq('id', projectId).single();
+    if (proj?.customer_id) {
+      try {
+        const { data: mapping } = await supabase.from('stage_customer_status_map')
+          .select('customer_status_id').eq('stage_id', stage.id).single();
+        if (mapping?.customer_status_id) {
+          await supabase.from('customers').update({ status_id: mapping.customer_status_id }).eq('id', proj.customer_id);
+        }
+      } catch {}
+    }
+
+    // Get project's person assignments
+    const { data: fullProj } = await supabase.from('projects').select(
+      'consulting_person_id,design_person_id,quotation_person_id,contract_person_id,production_person_id,shipping_person_id,installation_person_id,care_person_id,sales_person_id,designer_id,project_manager_id,code'
+    ).eq('id', projectId).single();
+
+    const stagePersonMap = {
+      consulting: fullProj?.consulting_person_id, design: fullProj?.design_person_id,
+      quotation: fullProj?.quotation_person_id, contract: fullProj?.contract_person_id,
+      production: fullProj?.production_person_id, shipping: fullProj?.shipping_person_id,
+      installation: fullProj?.installation_person_id, 'customer-care': fullProj?.care_person_id,
+    };
+    const stageAssigneeId = stagePersonMap[nextStageSlug] || null;
+
+    // Load workflow lines for new stage
+    let stageLines = [];
+    try {
+      const { data: wlData } = await supabase.from('project_workflow_lines')
+        .select('*').eq('project_id', projectId).eq('stage_slug', nextStageSlug).order('order_index');
+      stageLines = wlData || [];
+    } catch {}
+
+    // Load templates
+    const { data: templates } = await supabase.from('task_templates')
+      .select('*').eq('stage_id', stage.id).eq('is_active', true).order('order_index');
+
+    const stageDefaultTasks = {
+      design: [{ title: 'Thiết kế bản vẽ 2D', priority: 'high' },{ title: 'Thiết kế 3D render', priority: 'medium' },{ title: 'Khách duyệt bản thiết kế', priority: 'high' }],
+      quotation: [{ title: 'Bóc tách vật tư', priority: 'high' },{ title: 'Lập báo giá chi tiết', priority: 'high' },{ title: 'Gửi báo giá cho khách', priority: 'medium' }],
+      contract: [{ title: 'Soạn hợp đồng', priority: 'high' },{ title: 'Khách ký hợp đồng', priority: 'high' },{ title: 'Thu tiền cọc', priority: 'urgent' }],
+      production: [{ title: 'Đặt mua vật tư', priority: 'high' },{ title: 'Gia công CNC', priority: 'high' },{ title: 'Lắp ráp', priority: 'medium' },{ title: 'Sơn / dán bề mặt', priority: 'medium' },{ title: 'Kiểm tra chất lượng', priority: 'high' }],
+      shipping: [{ title: 'Đóng gói sản phẩm', priority: 'medium' },{ title: 'Sắp xếp xe vận chuyển', priority: 'medium' },{ title: 'Giao hàng đến công trình', priority: 'high' }],
+      installation: [{ title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },{ title: 'Lắp đặt tại công trình', priority: 'high' },{ title: 'Nghiệm thu với khách hàng', priority: 'urgent' }],
+      'customer-care': [{ title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' },{ title: 'Xử lý bảo hành (nếu có)', priority: 'high' }],
+    };
+
+    let createdTasks = [];
+
+    if (stageLines.length > 0) {
+      for (const line of stageLines) {
+        const lineAssignee = line.assignee_id || stageAssigneeId;
+        const taskList = templates?.length ? templates : (stageDefaultTasks[nextStageSlug] || []);
+        if (taskList.length) {
+          const { data: ins } = await supabase.from('tasks').insert(taskList.map((t, i) => ({
+            project_id: projectId, stage_id: stage.id,
+            title: `${t.title} — ${line.label}`,
+            description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+            created_by_id: req.user.userId, order_index: i, assignee_id: lineAssignee,
+            estimated_hours: t.estimated_hours || null, task_type: 'project', workflow_line_id: line.id,
+          }))).select();
+          createdTasks.push(...(ins || []));
+
+          // Create checklists from templates
+          if (templates?.length) {
+            for (const tmpl of templates) {
+              if (tmpl.checklist_items?.length) {
+                const newTask = (ins || []).find(t2 => t2.title === `${tmpl.title} — ${line.label}`);
+                if (newTask) {
+                  await supabase.from('task_checklists').insert(
+                    tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
+                  );
+                }
+              }
+            }
+          }
+
+          if (lineAssignee) {
+            const lineTaskCount = (ins || []).length;
+            if (lineTaskCount) {
+              await createNotification(req, lineAssignee, 'task_assigned',
+                `📌 ${lineTaskCount} NV "${line.label}"`, `GĐ "${stage.name}" — DA ${fullProj?.code}`, 'project', projectId);
+            }
+          }
+        }
+      }
+    } else {
+      // Legacy single person
+      const taskList = templates?.length ? templates : (stageDefaultTasks[nextStageSlug] || []);
+      if (taskList.length) {
+        const { data: ins } = await supabase.from('tasks').insert(taskList.map((t, i) => ({
+          project_id: projectId, stage_id: stage.id, title: t.title,
+          description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+          created_by_id: req.user.userId, order_index: i, assignee_id: stageAssigneeId,
+          estimated_hours: t.estimated_hours || null, task_type: 'project',
+        }))).select();
+        createdTasks = ins || [];
+
+        if (templates?.length) {
+          for (const tmpl of templates) {
+            if (tmpl.checklist_items?.length) {
+              const newTask = createdTasks.find(t2 => t2.title === tmpl.title);
+              if (newTask) {
+                await supabase.from('task_checklists').insert(
+                  tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
+                );
+              }
+            }
+          }
+        }
+
+        if (stageAssigneeId && createdTasks.length) {
+          await createNotification(req, stageAssigneeId, 'task_assigned',
+            `📌 ${createdTasks.length} nhiệm vụ mới`, `GĐ "${stage.name}" — DA ${fullProj?.code}`, 'project', projectId);
+        }
+      }
+    }
+
+    // Notify all team
+    if (fullProj) {
+      const allPersonIds = [
+        fullProj.consulting_person_id, fullProj.design_person_id, fullProj.quotation_person_id,
+        fullProj.contract_person_id, fullProj.production_person_id, fullProj.shipping_person_id,
+        fullProj.installation_person_id, fullProj.care_person_id,
+        fullProj.sales_person_id, fullProj.designer_id, fullProj.project_manager_id,
+      ].filter(Boolean);
+      await notifyMultiple(req, allPersonIds, 'project_stage_changed',
+        `🔄 Chuyển giai đoạn: ${stage.name}`,
+        `Dự án ${fullProj.code} đã chuyển sang giai đoạn "${stage.name}"`,
+        'project', projectId);
+    }
+
+    await logActivity(req.user.userId, 'stage_changed', 'project', projectId,
+      `Chuyển giai đoạn sang: ${stage.name}`, { status: old?.status }, { status: nextStatus, stage: stage.name });
+
+    const io = req.app.get('io');
+    if (io) io.emit('project:stage_changed', { project_id: projectId });
+
+  } catch (e) {
+    console.error('advanceProjectStage error:', e);
+  }
+}
+
 // ═══════════════════════════════════════════════
 // QUY TẮC DUYỆT — APPROVAL RULES
 // ═══════════════════════════════════════════════
@@ -164,6 +334,11 @@ r.post('/project/:projectId/request', async (req, res) => {
         await logActivity(req.user.userId, 'auto_approved', 'project', projectId,
           `Tự động duyệt giai đoạn: ${autoResult.reason}`);
 
+        // ═══ TỰ ĐỘNG CHUYỂN GIAI ĐOẠN KHI AUTO-APPROVED ═══
+        if (next_stage_slug && next_status) {
+          await advanceProjectStage(req, projectId, next_stage_slug, next_status, notes, attachments);
+        }
+
         return res.json({ approval, auto_approved: true });
       }
     }
@@ -265,6 +440,11 @@ r.post('/:approvalId/decide', async (req, res) => {
 
       await logActivity(req.user.userId, 'approval_approved', 'project', approval.project_id,
         `Duyệt giai đoạn "${approval.stage?.name}"`);
+
+      // ═══ TỰ ĐỘNG CHUYỂN GIAI ĐOẠN SAU KHI DUYỆT ═══
+      if (approval.next_stage_slug && approval.next_status) {
+        await advanceProjectStage(req, approval.project_id, approval.next_stage_slug, approval.next_status, approval.notes, approval.attachments);
+      }
 
     } else {
       // Notify requester: rejected with reason
