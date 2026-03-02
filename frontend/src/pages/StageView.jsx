@@ -12,7 +12,7 @@ import {
 import {
   Plus, FolderKanban, CheckSquare, Lock,
   Clock, AlertTriangle, RefreshCw, Calendar, Building2,
-  ArrowRightCircle, Send, Paperclip
+  ArrowRightCircle, Send, Paperclip, MessageSquare, Eye, EyeOff, Save
 } from 'lucide-react';
 
 const STAGE_NAMES = {
@@ -133,12 +133,21 @@ export default function StageView() {
   const startTask = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' }); loadData(); } catch {} };
   const markTaskDone = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'done' }); loadData(); } catch {} };
   const toggleCheckItem = async (taskId, clId, isCompleted) => {
-    // Optimistic update
     setTasks(prev => prev.map(t => {
       if (t.id !== taskId) return t;
       return { ...t, checklists: t.checklists.map(cl => cl.id === clId ? { ...cl, is_completed: !isCompleted } : cl) };
     }));
     try { await api.patch(`/tasks/${taskId}/checklists/${clId}`, { is_completed: !isCompleted }); } catch { loadData(); }
+  };
+  const saveChecklistNote = async (taskId, clId, notes, attachments) => {
+    try {
+      await api.patch(`/tasks/${taskId}/checklists/${clId}`, { notes, attachments });
+      // Update local state
+      setTasks(prev => prev.map(t => {
+        if (t.id !== taskId) return t;
+        return { ...t, checklists: t.checklists.map(cl => cl.id === clId ? { ...cl, notes, attachments } : cl) };
+      }));
+    } catch { loadData(); }
   };
 
   if (loading) return (
@@ -423,22 +432,14 @@ export default function StageView() {
                           </div>
                         </div>
 
-                        {/* Checklist items — interactive */}
+                        {/* Checklist items — interactive with notes/files */}
                         {clTotal > 0 && (
                           <div className="mt-2 space-y-1">
                             {clTotal > 0 && <div className="w-full h-1 bg-gray-100 rounded-full mb-1"><div className={`h-full rounded-full transition-all ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(clDone/clTotal)*100}%` }} /></div>}
                             {checklists.map(cl => (
-                              <div key={cl.id} className="flex items-start gap-1.5">
-                                <button
-                                  onClick={() => canInteract && toggleCheckItem(task.id, cl.id, cl.is_completed)}
-                                  disabled={!canInteract}
-                                  className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
-                                    cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : canInteract ? 'border-gray-300 hover:border-blue-400 cursor-pointer' : 'border-gray-200'
-                                  }`}>
-                                  {cl.is_completed && <CheckSquare className="h-2.5 w-2.5" />}
-                                </button>
-                                <span className={`text-[11px] leading-tight ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{cl.title}</span>
-                              </div>
+                              <ChecklistCard key={cl.id} cl={cl} taskId={task.id} canInteract={canInteract}
+                                onToggle={() => canInteract && toggleCheckItem(task.id, cl.id, cl.is_completed)}
+                                onSaveNote={(notes, files) => saveChecklistNote(task.id, cl.id, notes, files)} />
                             ))}
                           </div>
                         )}
@@ -509,6 +510,109 @@ export default function StageView() {
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+// ═══ Checklist Card — inline notes + file upload ═══
+function ChecklistCard({ cl, taskId, canInteract, onToggle, onSaveNote }) {
+  const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [noteFiles, setNoteFiles] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  const hasNotes = !!cl.notes;
+  const hasFiles = cl.attachments?.length > 0;
+  const hasExtra = hasNotes || hasFiles;
+
+  const startEdit = (e) => {
+    e.stopPropagation();
+    setNoteText(cl.notes || '');
+    setNoteFiles(cl.attachments || []);
+    setEditing(true);
+    setExpanded(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    await onSaveNote(noteText, noteFiles);
+    setEditing(false);
+    setSaving(false);
+  };
+
+  return (
+    <div className="group">
+      <div className="flex items-start gap-1.5">
+        <button onClick={onToggle} disabled={!canInteract}
+          className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+            cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : canInteract ? 'border-gray-300 hover:border-blue-400 cursor-pointer' : 'border-gray-200'
+          }`}>
+          {cl.is_completed && <CheckSquare className="h-2.5 w-2.5" />}
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1">
+            <span className={`text-[11px] leading-tight flex-1 ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{cl.title}</span>
+            <div className="flex items-center gap-0.5 shrink-0">
+              {hasFiles && <Paperclip className="h-2.5 w-2.5 text-blue-400" />}
+              {hasNotes && <MessageSquare className="h-2.5 w-2.5 text-amber-400" />}
+              {hasExtra && !editing && (
+                <button onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+                  className="text-gray-300 hover:text-blue-500 cursor-pointer p-0.5">
+                  {expanded ? <EyeOff className="h-2.5 w-2.5" /> : <Eye className="h-2.5 w-2.5" />}
+                </button>
+              )}
+              {canInteract && !editing && (
+                <button onClick={startEdit} className="text-gray-300 hover:text-blue-500 cursor-pointer p-0.5 opacity-0 group-hover:opacity-100">
+                  <MessageSquare className="h-2.5 w-2.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* View notes + files */}
+          {expanded && hasExtra && !editing && (
+            <div className="mt-1 space-y-1">
+              {hasNotes && <p className="text-[10px] text-gray-600 bg-amber-50 rounded px-2 py-1 border border-amber-100">{cl.notes}</p>}
+              {hasFiles && (
+                <div className="flex flex-wrap gap-1">
+                  {cl.attachments.map((f, fi) => {
+                    const isImg = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_url || f.file_name || '');
+                    return isImg ? (
+                      <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer">
+                        <img src={f.file_url} alt={f.file_name} className="h-10 w-10 rounded border object-cover hover:opacity-80" />
+                      </a>
+                    ) : (
+                      <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-0.5 text-[9px] text-blue-600 bg-blue-50 rounded px-1.5 py-0.5 hover:bg-blue-100">
+                        <Paperclip className="h-2 w-2" />{f.file_name || 'file'}
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Edit form */}
+          {editing && (
+            <div className="mt-1 space-y-1.5 bg-blue-50/50 rounded p-2 border border-blue-100" onClick={e => e.stopPropagation()}>
+              <textarea value={noteText} onChange={e => setNoteText(e.target.value)}
+                className="w-full h-12 px-2 py-1 border rounded text-[11px] outline-none focus:ring-1 focus:ring-blue-300 bg-white"
+                placeholder="Ghi chú..." autoFocus />
+              <FilePreview files={noteFiles} onRemove={i => setNoteFiles(f => f.filter((_, j) => j !== i))} small />
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <FileUploadButton compact onFilesUploaded={files => setNoteFiles(prev => [...prev, ...files])} />
+                <button onClick={save} disabled={saving}
+                  className="h-5 px-2 bg-blue-600 text-white rounded text-[10px] font-medium cursor-pointer disabled:opacity-50 flex items-center gap-0.5">
+                  <Save className="h-2.5 w-2.5" />{saving ? '...' : 'Lưu'}
+                </button>
+                <button onClick={() => setEditing(false)} className="h-5 px-1.5 text-gray-500 bg-gray-100 rounded text-[10px] cursor-pointer">Hủy</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
