@@ -569,6 +569,197 @@ r.put('/:id/stage', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
+// ─── REQUEST APPROVAL (Chờ duyệt) ──
+r.post('/:id/request-approval', async (req, res) => {
+  try {
+    const { notes, attachments, next_stage_slug, next_status } = req.body;
+    const { data: proj } = await supabase.from('projects').select(
+      'id,code,name,project_manager_id,sales_person_id,created_by_id,current_stage_id,status'
+    ).eq('id', req.params.id).single();
+    if (!proj) return res.status(404).json({ error: 'Dự án không tồn tại' });
+
+    // Determine who to notify: project_manager > sales_person > created_by
+    const approverId = proj.project_manager_id || proj.sales_person_id || proj.created_by_id;
+    if (!approverId) return res.status(400).json({ error: 'Không tìm được người duyệt' });
+
+    const { data: nextStage } = await supabase.from('workflow_stages').select('id,name').eq('slug', next_stage_slug).single();
+    const { data: curStage } = await supabase.from('workflow_stages').select('id,name').eq('id', proj.current_stage_id).single();
+
+    // Save approval request as a special notification with metadata
+    const metadata = {
+      type: 'approval_request',
+      project_id: proj.id,
+      project_code: proj.code,
+      project_name: proj.name,
+      from_stage: curStage?.name || '',
+      to_stage: nextStage?.name || '',
+      next_stage_slug,
+      next_status,
+      notes: notes || '',
+      attachments: attachments || [],
+      requested_by: req.user.userId,
+      requested_by_name: req.user.fullName,
+      status: 'pending', // pending | approved | rejected
+    };
+
+    const { data: notif, error } = await supabase.from('notifications').insert({
+      user_id: approverId,
+      type: 'approval_request',
+      title: `🔍 Yêu cầu duyệt: ${proj.code}`,
+      message: `${req.user.fullName} yêu cầu chuyển "${curStage?.name}" → "${nextStage?.name}"${notes ? `\nGhi chú: ${notes}` : ''}`,
+      entity_type: 'project',
+      entity_id: proj.id,
+      metadata,
+    }).select().single();
+    if (error) throw error;
+
+    // Push realtime
+    const pushFn = req.app.get('pushNotification');
+    if (pushFn && notif) pushFn(approverId, notif);
+
+    // Log activity
+    await logActivity(req.user.userId, 'approval_requested', 'project', proj.id,
+      `Yêu cầu duyệt chuyển ${curStage?.name} → ${nextStage?.name}`);
+
+    res.json({ ok: true, notification_id: notif.id, approver_id: approverId });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── APPROVE / REJECT ADVANCE ──
+r.post('/:id/approve-advance', async (req, res) => {
+  try {
+    const { notification_id, action, reject_reason } = req.body; // action: 'approve' | 'reject'
+
+    // Get the notification with metadata
+    const { data: notif } = await supabase.from('notifications').select('*').eq('id', notification_id).single();
+    if (!notif || notif.metadata?.type !== 'approval_request') {
+      return res.status(400).json({ error: 'Yêu cầu không hợp lệ' });
+    }
+    const meta = notif.metadata;
+
+    // Update notification status
+    await supabase.from('notifications').update({
+      metadata: { ...meta, status: action === 'approve' ? 'approved' : 'rejected', decided_by: req.user.userId, decided_at: new Date().toISOString(), reject_reason },
+      is_read: true, read_at: new Date().toISOString(),
+    }).eq('id', notification_id);
+
+    if (action === 'approve') {
+      // Actually advance the stage
+      const { data: stage } = await supabase.from('workflow_stages').select('id,name').eq('slug', meta.next_stage_slug).single();
+      if (!stage) return res.status(400).json({ error: 'Stage không tồn tại' });
+
+      const { data: old } = await supabase.from('projects').select('status,current_stage_id,code,name').eq('id', req.params.id).single();
+
+      await supabase.from('projects').update({
+        current_stage_id: stage.id, status: meta.next_status, updated_at: new Date().toISOString(),
+      }).eq('id', req.params.id);
+
+      // Save transition record
+      await supabase.from('stage_transitions').insert({
+        project_id: req.params.id,
+        from_stage_id: old?.current_stage_id || null,
+        to_stage_id: stage.id,
+        notes: meta.notes || null,
+        attachments: meta.attachments || [],
+        transitioned_by: req.user.userId,
+      }).catch(() => {});
+
+      // Notify requester: approved
+      await createNotification(req, meta.requested_by, 'stage_changed',
+        `✅ Đã duyệt: ${meta.project_code}`,
+        `${req.user.fullName} đã duyệt chuyển "${meta.from_stage}" → "${meta.to_stage}"`,
+        'project', req.params.id);
+
+      await logActivity(req.user.userId, 'approval_approved', 'project', req.params.id,
+        `Duyệt chuyển ${meta.from_stage} → ${meta.to_stage}`);
+
+      // Auto-create tasks for new stage (reuse existing logic from /stage endpoint)
+      // Get stage person
+      const { data: fullProj } = await supabase.from('projects').select(
+        'consulting_person_id,design_person_id,quotation_person_id,contract_person_id,production_person_id,shipping_person_id,installation_person_id,care_person_id,code'
+      ).eq('id', req.params.id).single();
+
+      const stagePersonMap = {
+        consulting: fullProj?.consulting_person_id, design: fullProj?.design_person_id,
+        quotation: fullProj?.quotation_person_id, contract: fullProj?.contract_person_id,
+        production: fullProj?.production_person_id, shipping: fullProj?.shipping_person_id,
+        installation: fullProj?.installation_person_id, 'customer-care': fullProj?.care_person_id,
+      };
+      const stageAssigneeId = stagePersonMap[meta.next_stage_slug] || null;
+
+      // Load workflow lines
+      let stageLines = [];
+      try {
+        const { data: wlData } = await supabase.from('project_workflow_lines')
+          .select('*').eq('project_id', req.params.id).eq('stage_slug', meta.next_stage_slug).order('order_index');
+        stageLines = wlData || [];
+      } catch { }
+
+      // Load templates
+      const { data: templates } = await supabase.from('task_templates')
+        .select('*').eq('stage_id', stage.id).eq('is_active', true).order('order_index');
+
+      const stageDefaultTasks = {
+        design: [{ title: 'Thiết kế bản vẽ 2D', priority: 'high' },{ title: 'Thiết kế 3D render', priority: 'medium' },{ title: 'Khách duyệt bản thiết kế', priority: 'high' }],
+        quotation: [{ title: 'Bóc tách vật tư', priority: 'high' },{ title: 'Lập báo giá chi tiết', priority: 'high' },{ title: 'Gửi báo giá cho khách', priority: 'medium' }],
+        contract: [{ title: 'Soạn hợp đồng', priority: 'high' },{ title: 'Khách ký hợp đồng', priority: 'high' },{ title: 'Thu tiền cọc', priority: 'urgent' }],
+        production: [{ title: 'Đặt mua vật tư', priority: 'high' },{ title: 'Gia công CNC', priority: 'high' },{ title: 'Lắp ráp', priority: 'medium' },{ title: 'Sơn / dán bề mặt', priority: 'medium' },{ title: 'Kiểm tra chất lượng', priority: 'high' }],
+        shipping: [{ title: 'Đóng gói sản phẩm', priority: 'medium' },{ title: 'Sắp xếp xe vận chuyển', priority: 'medium' },{ title: 'Giao hàng đến công trình', priority: 'high' }],
+        installation: [{ title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },{ title: 'Lắp đặt tại công trình', priority: 'high' },{ title: 'Nghiệm thu với khách hàng', priority: 'urgent' }],
+        'customer-care': [{ title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' },{ title: 'Xử lý bảo hành (nếu có)', priority: 'high' }],
+      };
+
+      if (stageLines.length > 0) {
+        for (const line of stageLines) {
+          const lineAssignee = line.assignee_id || stageAssigneeId;
+          const taskList = templates?.length ? templates : (stageDefaultTasks[meta.next_stage_slug] || []);
+          const { data: ins } = await supabase.from('tasks').insert(taskList.map((t, i) => ({
+            project_id: req.params.id, stage_id: stage.id,
+            title: templates?.length ? `${t.title} — ${line.label}` : `${t.title} — ${line.label}`,
+            description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+            created_by_id: req.user.userId, order_index: i, assignee_id: lineAssignee,
+            estimated_hours: t.estimated_hours || null, task_type: 'project', workflow_line_id: line.id,
+          }))).select();
+          if (lineAssignee && ins?.length) {
+            await createNotification(req, lineAssignee, 'task_assigned',
+              `📌 ${ins.length} NV "${line.label}"`, `GĐ "${stage.name}" — DA ${fullProj?.code}`, 'project', req.params.id);
+          }
+        }
+      } else {
+        const taskList = templates?.length ? templates : (stageDefaultTasks[meta.next_stage_slug] || []);
+        if (taskList.length) {
+          const { data: ins } = await supabase.from('tasks').insert(taskList.map((t, i) => ({
+            project_id: req.params.id, stage_id: stage.id, title: t.title,
+            description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+            created_by_id: req.user.userId, order_index: i, assignee_id: stageAssigneeId,
+            estimated_hours: t.estimated_hours || null, task_type: 'project',
+          }))).select();
+          if (stageAssigneeId && ins?.length) {
+            await createNotification(req, stageAssigneeId, 'task_assigned',
+              `📌 ${ins.length} nhiệm vụ mới`, `GĐ "${stage.name}" — DA ${fullProj?.code}`, 'project', req.params.id);
+          }
+        }
+      }
+
+      const io = req.app.get('io');
+      if (io) io.emit('project:stage_changed', { project_id: req.params.id });
+
+      return res.json({ ok: true, action: 'approved' });
+    } else {
+      // Rejected
+      await createNotification(req, meta.requested_by, 'system',
+        `❌ Từ chối: ${meta.project_code}`,
+        `${req.user.fullName} từ chối chuyển "${meta.from_stage}" → "${meta.to_stage}"${reject_reason ? `\nLý do: ${reject_reason}` : ''}`,
+        'project', req.params.id);
+
+      await logActivity(req.user.userId, 'approval_rejected', 'project', req.params.id,
+        `Từ chối chuyển ${meta.from_stage} → ${meta.to_stage}${reject_reason ? ': ' + reject_reason : ''}`);
+
+      return res.json({ ok: true, action: 'rejected' });
+    }
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
 // ─── DELETE PROJECT ──
 r.delete('/:id', async (req, res) => {
   try {
