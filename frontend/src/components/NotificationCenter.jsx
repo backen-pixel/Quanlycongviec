@@ -96,25 +96,25 @@ export default function NotificationCenter({ socket }) {
     } catch { }
   };
 
+  const [approvalForm, setApprovalForm] = useState(null); // { notifId, action, reason }
+
   // Handle approval action
-  const handleApproval = async (notif, action) => {
-    const meta = notif.metadata;
+  const handleApproval = async (notifId, action, reason) => {
+    const notif = notifications.find(n => n.id === notifId);
+    const meta = notif?.metadata;
     if (!meta?.project_id) return;
-    let rejectReason = '';
-    if (action === 'reject') {
-      rejectReason = prompt('Lý do từ chối (tùy chọn):') || '';
-    }
+    if (!reason?.trim()) { alert('Vui lòng nhập lý do!'); return; }
     try {
       await api.post(`/projects/${meta.project_id}/approve-advance`, {
-        notification_id: notif.id,
+        notification_id: notifId,
         action,
-        reject_reason: rejectReason,
+        reject_reason: reason.trim(),
       });
-      // Update local state
       setNotifications(prev => prev.map(n =>
-        n.id === notif.id ? { ...n, is_read: true, metadata: { ...n.metadata, status: action === 'approve' ? 'approved' : 'rejected' } } : n
+        n.id === notifId ? { ...n, is_read: true, metadata: { ...n.metadata, status: action === 'approve' ? 'approved' : 'rejected' } } : n
       ));
       setUnreadCount(c => Math.max(0, c - 1));
+      setApprovalForm(null);
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
     }
@@ -225,16 +225,39 @@ export default function NotificationCenter({ socket }) {
                         )}
 
                         {/* Approval action buttons */}
-                        {isApproval && approvalStatus === 'pending' && (
+                        {isApproval && approvalStatus === 'pending' && approvalForm?.notifId !== n.id && (
                           <div className="flex items-center gap-2 mt-2">
-                            <button onClick={(e) => { e.stopPropagation(); handleApproval(n, 'approve'); }}
+                            <button onClick={(e) => { e.stopPropagation(); setApprovalForm({ notifId: n.id, action: 'approve', reason: '' }); }}
                               className="h-7 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
                               <ThumbsUp className="h-3 w-3" /> Duyệt
                             </button>
-                            <button onClick={(e) => { e.stopPropagation(); handleApproval(n, 'reject'); }}
+                            <button onClick={(e) => { e.stopPropagation(); setApprovalForm({ notifId: n.id, action: 'reject', reason: '' }); }}
                               className="h-7 px-3 bg-red-100 text-red-600 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-red-200">
                               <ThumbsDown className="h-3 w-3" /> Từ chối
                             </button>
+                          </div>
+                        )}
+                        {/* Inline reason form */}
+                        {isApproval && approvalForm?.notifId === n.id && (
+                          <div className="mt-2 space-y-1.5" onClick={e => e.stopPropagation()}>
+                            <p className="text-[10px] font-semibold text-gray-700">
+                              {approvalForm.action === 'approve' ? '✅ Lý do duyệt:' : '❌ Lý do từ chối:'}
+                            </p>
+                            <textarea
+                              value={approvalForm.reason}
+                              onChange={e => setApprovalForm(f => ({ ...f, reason: e.target.value }))}
+                              className="w-full h-14 px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-300"
+                              placeholder={approvalForm.action === 'approve' ? 'Lý do duyệt (bắt buộc)...' : 'Lý do từ chối (bắt buộc)...'}
+                              autoFocus
+                            />
+                            <div className="flex gap-1.5">
+                              <button onClick={() => handleApproval(n.id, approvalForm.action, approvalForm.reason)}
+                                className={`h-6 px-2.5 text-white rounded text-[10px] font-medium cursor-pointer ${approvalForm.action === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-500 hover:bg-red-600'}`}>
+                                {approvalForm.action === 'approve' ? '✅ Xác nhận duyệt' : '❌ Xác nhận từ chối'}
+                              </button>
+                              <button onClick={() => setApprovalForm(null)}
+                                className="h-6 px-2 text-gray-500 bg-gray-100 rounded text-[10px] cursor-pointer">Hủy</button>
+                            </div>
                           </div>
                         )}
                         {isApproval && approvalStatus === 'approved' && (
