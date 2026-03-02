@@ -153,8 +153,7 @@ r.get('/units', async (req, res) => {
       .select(`
         *,
         level:ecosystem_levels(id,name,slug,depth,icon,color),
-        company:companies(id,name,short_name),
-        parent:ecosystem_units!ecosystem_units_parent_id_fkey(id,name,short_name)
+        company:companies(id,name,short_name)
       `)
       .eq('is_active', true)
       .order('order_index');
