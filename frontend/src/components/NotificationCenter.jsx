@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../lib/api';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 
 const ICON_MAP = {
@@ -9,6 +9,8 @@ const ICON_MAP = {
   task_overdue: AlertTriangle,
   comment_added: MessageSquare,
   project_stage_changed: FolderKanban,
+  stage_changed: FolderKanban,
+  approval_request: FolderKanban,
   deadline_reminder: Clock,
   system: Bell,
 };
@@ -19,6 +21,8 @@ const COLOR_MAP = {
   task_overdue: 'bg-red-100 text-red-600',
   comment_added: 'bg-purple-100 text-purple-600',
   project_stage_changed: 'bg-amber-100 text-amber-600',
+  stage_changed: 'bg-amber-100 text-amber-600',
+  approval_request: 'bg-orange-100 text-orange-600',
   deadline_reminder: 'bg-orange-100 text-orange-600',
   system: 'bg-gray-100 text-gray-600',
 };
@@ -28,10 +32,9 @@ export default function NotificationCenter({ socket }) {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState('all'); // 'all' | 'unread'
+  const [tab, setTab] = useState('all');
   const panelRef = useRef(null);
 
-  // Load notifications
   const load = async () => {
     setLoading(true);
     try {
@@ -42,7 +45,6 @@ export default function NotificationCenter({ socket }) {
     setLoading(false);
   };
 
-  // Load unread count
   const loadCount = async () => {
     try {
       const { data } = await api.get('/dashboard');
@@ -52,12 +54,10 @@ export default function NotificationCenter({ socket }) {
 
   useEffect(() => {
     loadCount();
-    // Poll mỗi 30s
     const interval = setInterval(loadCount, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Socket.IO realtime
   useEffect(() => {
     if (!socket) return;
     const handler = (notif) => {
@@ -72,7 +72,6 @@ export default function NotificationCenter({ socket }) {
     if (open) load();
   }, [open, tab]);
 
-  // Click outside to close
   useEffect(() => {
     const handler = (e) => {
       if (panelRef.current && !panelRef.current.contains(e.target)) setOpen(false);
@@ -97,9 +96,32 @@ export default function NotificationCenter({ socket }) {
     } catch { }
   };
 
+  // Handle approval action
+  const handleApproval = async (notif, action) => {
+    const meta = notif.metadata;
+    if (!meta?.project_id) return;
+    let rejectReason = '';
+    if (action === 'reject') {
+      rejectReason = prompt('Lý do từ chối (tùy chọn):') || '';
+    }
+    try {
+      await api.post(`/projects/${meta.project_id}/approve-advance`, {
+        notification_id: notif.id,
+        action,
+        reject_reason: rejectReason,
+      });
+      // Update local state
+      setNotifications(prev => prev.map(n =>
+        n.id === notif.id ? { ...n, is_read: true, metadata: { ...n.metadata, status: action === 'approve' ? 'approved' : 'rejected' } } : n
+      ));
+      setUnreadCount(c => Math.max(0, c - 1));
+    } catch (e) {
+      alert('Lỗi: ' + (e.response?.data?.error || e.message));
+    }
+  };
+
   return (
     <div className="relative" ref={panelRef}>
-      {/* Bell button */}
       <button
         onClick={() => setOpen(!open)}
         className="relative w-9 h-9 rounded-lg hover:bg-[var(--color-sidebar-hover)] flex items-center justify-center text-[var(--color-sidebar-text)] hover:text-white transition-colors cursor-pointer"
@@ -112,10 +134,8 @@ export default function NotificationCenter({ socket }) {
         )}
       </button>
 
-      {/* Panel */}
       {open && (
         <div className="absolute left-full ml-2 top-0 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 animate-fade-in overflow-hidden">
-          {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
             <h3 className="text-sm font-semibold text-gray-900">Thông báo</h3>
             <div className="flex items-center gap-2">
@@ -130,7 +150,6 @@ export default function NotificationCenter({ socket }) {
             </div>
           </div>
 
-          {/* Tabs */}
           <div className="flex border-b border-gray-100">
             <button onClick={() => setTab('all')}
               className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'all' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
@@ -142,7 +161,6 @@ export default function NotificationCenter({ socket }) {
             </button>
           </div>
 
-          {/* List */}
           <div className="max-h-[400px] overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center py-8">
@@ -160,24 +178,74 @@ export default function NotificationCenter({ socket }) {
               notifications.map(n => {
                 const Icon = ICON_MAP[n.type] || Bell;
                 const color = COLOR_MAP[n.type] || 'bg-gray-100 text-gray-600';
+                const isApproval = n.metadata?.type === 'approval_request';
+                const approvalStatus = n.metadata?.status; // pending | approved | rejected
+
                 return (
                   <div
                     key={n.id}
-                    onClick={() => !n.is_read && markRead(n.id)}
-                    className={`flex gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 transition-colors ${!n.is_read ? 'bg-blue-50/40' : ''}`}
+                    onClick={() => !n.is_read && !isApproval && markRead(n.id)}
+                    className={`px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 transition-colors ${!n.is_read ? 'bg-blue-50/40' : ''}`}
                   >
-                    <div className={`w-8 h-8 rounded-lg ${color} flex items-center justify-center shrink-0`}>
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className={`text-sm ${!n.is_read ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
-                          {n.title}
-                        </p>
-                        {!n.is_read && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />}
+                    <div className="flex gap-3">
+                      <div className={`w-8 h-8 rounded-lg ${isApproval ? 'bg-orange-100 text-orange-600' : color} flex items-center justify-center shrink-0`}>
+                        <Icon className="h-4 w-4" />
                       </div>
-                      <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.message}</p>
-                      <p className="text-[10px] text-gray-400 mt-1">{formatDateTime(n.created_at)}</p>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className={`text-sm ${!n.is_read ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
+                            {n.title}
+                          </p>
+                          {!n.is_read && !isApproval && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-2 whitespace-pre-line">{n.message}</p>
+
+                        {/* Approval: show notes + files */}
+                        {isApproval && n.metadata?.notes && (
+                          <div className="mt-1.5 bg-amber-50 border border-amber-100 rounded-lg p-2">
+                            <p className="text-xs text-amber-800">📝 {n.metadata.notes}</p>
+                          </div>
+                        )}
+                        {isApproval && n.metadata?.attachments?.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {n.metadata.attachments.map((f, fi) => {
+                              const isImg = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_url || f.file_name || '');
+                              return isImg ? (
+                                <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer">
+                                  <img src={f.file_url} alt={f.file_name} className="h-12 w-12 rounded border object-cover" />
+                                </a>
+                              ) : (
+                                <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
+                                  className="flex items-center gap-1 text-[10px] text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">
+                                  <Paperclip className="h-2.5 w-2.5" />{f.file_name || 'file'}
+                                </a>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Approval action buttons */}
+                        {isApproval && approvalStatus === 'pending' && (
+                          <div className="flex items-center gap-2 mt-2">
+                            <button onClick={(e) => { e.stopPropagation(); handleApproval(n, 'approve'); }}
+                              className="h-7 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
+                              <ThumbsUp className="h-3 w-3" /> Duyệt
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); handleApproval(n, 'reject'); }}
+                              className="h-7 px-3 bg-red-100 text-red-600 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-red-200">
+                              <ThumbsDown className="h-3 w-3" /> Từ chối
+                            </button>
+                          </div>
+                        )}
+                        {isApproval && approvalStatus === 'approved' && (
+                          <p className="text-[10px] text-emerald-600 font-medium mt-1">✅ Đã duyệt</p>
+                        )}
+                        {isApproval && approvalStatus === 'rejected' && (
+                          <p className="text-[10px] text-red-500 font-medium mt-1">❌ Đã từ chối</p>
+                        )}
+
+                        <p className="text-[10px] text-gray-400 mt-1">{formatDateTime(n.created_at)}</p>
+                      </div>
                     </div>
                   </div>
                 );

@@ -10,9 +10,9 @@ import {
   PRIORITY_LABELS, PRIORITY_COLORS, formatDate, getInitials, avatarColor, ROLE_LABELS, ROLE_STAGE_MAP,
 } from '../lib/utils';
 import {
-  Plus, FolderKanban, CheckSquare, Lock, Filter, ChevronDown, X,
-  Clock, AlertTriangle, MessageSquare, RefreshCw, Calendar, Building2,
-  ArrowRightCircle, Send, Paperclip, Eye, EyeOff
+  Plus, FolderKanban, CheckSquare, Lock,
+  Clock, AlertTriangle, RefreshCw, Calendar, Building2,
+  ArrowRightCircle, Send, Paperclip
 } from 'lucide-react';
 
 const STAGE_NAMES = {
@@ -20,34 +20,12 @@ const STAGE_NAMES = {
   production: 'Sản xuất', shipping: 'Vận chuyển', installation: 'Lắp đặt', 'customer-care': 'Chăm sóc KH',
 };
 
-const STAGE_STATUS_MAP = {
-  consulting: 'consulting', design: 'designing', quotation: 'quoting',
-  contract: 'contract_signed', production: 'producing', shipping: 'shipping',
-  installation: 'installing', 'customer-care': 'warranty',
-};
-
-const STAGE_ORDER = ['consulting', 'design', 'quotation', 'contract', 'production', 'shipping', 'installation', 'customer-care'];
-
 const NEXT_STATUS = { consulting:'designing', design:'quoting', quotation:'contract_signed', contract:'producing', production:'shipping', shipping:'installing', installation:'warranty' };
 const NEXT_SLUG = { consulting:'design', design:'quotation', quotation:'contract', contract:'production', production:'shipping', shipping:'installation', installation:'customer-care' };
+
 const QT = [{id:'all',label:'Tất cả'},{id:'today',label:'Hôm nay'},{id:'week',label:'Tuần này'},{id:'month',label:'Tháng này'},{id:'custom',label:'Tùy chọn'}];
 function fmtD(d){return d.toISOString().slice(0,10)}
 function defRange(){const n=new Date();return{from:fmtD(new Date(n.getFullYear(),n.getMonth(),1)),to:fmtD(new Date(n.getFullYear(),n.getMonth()+1,0))}}
-function filterByDateRange(items,from,to){if(!from&&!to)return items;return items.filter(i=>{const d=i.created_at?new Date(i.created_at):null;if(!d)return false;if(from&&d<new Date(from))return false;if(to){const t=new Date(to);t.setHours(23,59,59,999);if(d>t)return false}return true})}
-
-function getStageIndex(slug) {
-  return STAGE_ORDER.indexOf(slug);
-}
-
-// Given project status, which stage slug is it on?
-function projectCurrentStageSlug(projectStatus) {
-  const reverseMap = {
-    consulting: 'consulting', designing: 'design', quoting: 'quotation',
-    contract_signed: 'contract', producing: 'production', shipping: 'shipping',
-    installing: 'installation', warranty: 'customer-care', completed: 'customer-care',
-  };
-  return reverseMap[projectStatus] || 'consulting';
-}
 
 export default function StageView() {
   const { slug } = useParams();
@@ -60,23 +38,17 @@ export default function StageView() {
   const [selectedTask, setSelectedTask] = useState(null);
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [filterProject, setFilterProject] = useState('all');
-  const [showFilter, setShowFilter] = useState(false);
-  // New filters
   const [filterCompany, setFilterCompany] = useState('all');
   const [filterEmployee, setFilterEmployee] = useState('all');
-  const [filterLine, setFilterLine] = useState('all');
-  const [quickTime, setQuickTime] = useState('month');
-  const [dateFrom, setDateFrom] = useState(defRange().from);
-  const [dateTo, setDateTo] = useState(defRange().to);
-  const [workflowLines, setWorkflowLines] = useState([]);
-  // Advance
+  const [quickTime, setQuickTime] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [advProj, setAdvProj] = useState(null);
   const [advNotes, setAdvNotes] = useState('');
   const [advFiles, setAdvFiles] = useState([]);
   const [advMode, setAdvMode] = useState('advance');
   const [advLoading, setAdvLoading] = useState(false);
 
-  // Quick time → date range
   useEffect(() => {
     const n = new Date();
     if (quickTime === 'all') { setDateFrom(''); setDateTo(''); }
@@ -89,7 +61,6 @@ export default function StageView() {
     setLoading(true);
     setError(null);
     try {
-      // Step 1: Get stages + all projects in parallel
       const [stageRes, projRes] = await Promise.all([
         api.get('/users/stages').catch(() => ({ data: { stages: [] } })),
         api.get('/projects', { params: { limit: 200 } }).catch(() => ({ data: { projects: [] } })),
@@ -97,99 +68,26 @@ export default function StageView() {
 
       const stage = stageRes.data.stages?.find(s => s.slug === slug) || null;
       setStageInfo(stage || { slug, name: STAGE_NAMES[slug], color: '#3b82f6' });
-      const allProjs = projRes.data.projects || [];
 
-      if (!allProjs.length || !stage?.id) {
-        setProjects(allProjs);
-        setTasks([]);
-        setLoading(false);
-        return;
-      }
+      if (!stage?.id) { setProjects([]); setTasks([]); setLoading(false); return; }
 
-      // Step 2: Load tasks for this stage — ONE batch call with stage_id only
       const { data: taskData } = await api.get('/tasks', { params: { stage_id: stage.id } })
         .catch(() => ({ data: { tasks: [] } }));
-      let stageTasks = taskData.tasks || [];
+      const stageTasks = taskData.tasks || [];
 
-      // Build project lookup
-      const projMap = {};
-      allProjs.forEach(p => { projMap[p.id] = p; });
-
-      // Only keep projects that have tasks in this stage
+      const allProjs = projRes.data.projects || [];
       const projectIdsWithTasks = new Set(stageTasks.map(t => t.project_id));
-      const relevantProjs = allProjs.filter(p => projectIdsWithTasks.has(p.id));
-      setProjects(relevantProjs);
-
-      // Load workflow lines for relevant projects
-      let allLines = [];
-      for (const p of relevantProjs) {
-        try {
-          const { data: ld } = await api.get(`/projects/${p.id}/workflow-lines`);
-          const sl = (ld.lines || []).filter(l => l.stage_slug === slug);
-          sl.forEach(l => { l._pc = p.code; l._pn = p.name; l._pid = p.id; l._cid = p.company_id; });
-          allLines.push(...sl);
-        } catch { }
-      }
-      setWorkflowLines(allLines);
-
-      // Step 3: Load checklists for each task — parallel batch
-      const withChecklists = await Promise.all(stageTasks.map(async (t) => {
-        try {
-          const { data } = await api.get(`/tasks/${t.id}`);
-          return {
-            ...t,
-            checklists: data.task?.checklists || [],
-            comments: data.task?.comments || [],
-            assignee: data.task?.assignee || t.assignee,
-          };
-        } catch {
-          return { ...t, checklists: [], comments: [] };
-        }
-      }));
-
-      setTasks(withChecklists);
+      setProjects(allProjs.filter(p => projectIdsWithTasks.has(p.id)));
+      setTasks(stageTasks.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
     } catch (e) {
       console.error('StageView loadData error:', e);
-      setError('Không thể tải dữ liệu. Vui lòng thử lại.');
+      setError('Không thể tải dữ liệu.');
     }
     setLoading(false);
   }, [slug]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Toggle checklist item
-  const toggleCheckItem = async (taskId, clId, isCompleted) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      return {
-        ...t,
-        checklists: t.checklists.map(cl =>
-          cl.id === clId ? { ...cl, is_completed: !isCompleted } : cl
-        ),
-      };
-    }));
-    try {
-      await api.patch(`/tasks/${taskId}/checklists/${clId}`, { is_completed: !isCompleted });
-    } catch { loadData(); }
-  };
-
-  // Mark entire task as done
-  const markTaskDone = async (taskId) => {
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'done' } : t));
-    try {
-      await api.patch(`/tasks/${taskId}/status`, { status: 'done' });
-    } catch { loadData(); }
-  };
-
-  // Mark task in progress
-  const startTask = async (taskId) => {
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'in_progress' } : t));
-    try {
-      await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' });
-    } catch { loadData(); }
-  };
-
-  // Stage advance / review
   const doAdvance = async () => {
     if (!advProj) return;
     setAdvLoading(true);
@@ -197,88 +95,122 @@ export default function StageView() {
       const ns = NEXT_SLUG[slug], nst = NEXT_STATUS[slug];
       if (advMode === 'advance' && ns && nst) {
         await api.put(`/projects/${advProj.id}/stage`, { stage_slug: ns, new_status: nst, notes: advNotes || null, attachments: advFiles });
-      } else {
-        await api.post(`/projects/${advProj.id}/comments`, {
-          content: `🔍 YÊU CẦU DUYỆT: ${STAGE_NAMES[slug]} → ${STAGE_NAMES[NEXT_SLUG[slug]] || 'tiếp'}\n\n${advNotes || '(Không ghi chú)'}`,
-          attachments: advFiles,
+      } else if (advMode === 'review' && ns && nst) {
+        await api.post(`/projects/${advProj.id}/request-approval`, {
+          next_stage_slug: ns, next_status: nst, notes: advNotes || null, attachments: advFiles,
         });
+        alert('✅ Đã gửi yêu cầu duyệt!');
       }
       setAdvProj(null); setAdvNotes(''); setAdvFiles([]);
       loadData();
-    } catch { }
+    } catch (e) { alert('Lỗi: ' + (e.response?.data?.error || e.message)); }
     setAdvLoading(false);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex flex-col items-center gap-2">
-          <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
-          </svg>
-          <span className="text-sm text-gray-400">Đang tải {STAGE_NAMES[slug]}...</span>
-        </div>
+  const startTask = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' }); loadData(); } catch {} };
+  const markTaskDone = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'done' }); loadData(); } catch {} };
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-64">
+      <div className="flex flex-col items-center gap-2">
+        <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+        <span className="text-sm text-gray-400">Đang tải {STAGE_NAMES[slug]}...</span>
       </div>
-    );
-  }
+    </div>
+  );
 
   const stageName = STAGE_NAMES[slug] || slug;
+  const allowedSlugs = ROLE_STAGE_MAP[user?.role] || [];
+  const isAdmin = ['admin', 'manager'].includes(user?.role);
+  const canInteract = isAdmin || allowedSlugs.includes(slug);
+  const nextStageName = STAGE_NAMES[NEXT_SLUG[slug]];
 
-  // Filter tasks by project + company + employee + line + date range
-  let filteredTasks = filterProject === 'all' ? tasks : tasks.filter(t => t.project_id === filterProject);
-  if (filterCompany !== 'all') {
-    const compProjIds = new Set(projects.filter(p => p.company_id === filterCompany).map(p => p.id));
-    filteredTasks = filteredTasks.filter(t => compProjIds.has(t.project_id));
+  // ═══ FILTERS ═══
+  let filteredProjects = [...projects];
+  if (filterCompany !== 'all') filteredProjects = filteredProjects.filter(p => p.company_id === filterCompany);
+  if (filterProject !== 'all') filteredProjects = filteredProjects.filter(p => p.id === filterProject);
+  if (dateFrom || dateTo) {
+    filteredProjects = filteredProjects.filter(p => {
+      const d = p.created_at ? new Date(p.created_at) : null;
+      if (!d) return false;
+      if (dateFrom && d < new Date(dateFrom)) return false;
+      if (dateTo) { const t = new Date(dateTo); t.setHours(23,59,59,999); if (d > t) return false; }
+      return true;
+    });
   }
+  const filtProjIds = new Set(filteredProjects.map(p => p.id));
+
+  let filteredTasks = tasks.filter(t => filtProjIds.has(t.project_id));
   if (filterEmployee !== 'all') filteredTasks = filteredTasks.filter(t => t.assignee_id === filterEmployee);
-  if (filterLine !== 'all') filteredTasks = filteredTasks.filter(t => t.workflow_line_id === filterLine);
-  filteredTasks = filterByDateRange(filteredTasks, dateFrom, dateTo);
 
-  // Sort tasks by order_index
-  const sortedTasks = [...filteredTasks].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  // ═══ BUILD KANBAN: Columns = unique tasks by order_index, Cards = projects ═══
+  // Group tasks by project
+  const tasksByProject = {};
+  filteredTasks.forEach(t => {
+    if (!tasksByProject[t.project_id]) tasksByProject[t.project_id] = [];
+    tasksByProject[t.project_id].push(t);
+  });
 
-  // Unique companies from projects
+  // Determine column definitions from task order_index
+  const colMap = {};
+  filteredTasks.forEach(t => {
+    const idx = t.order_index ?? 0;
+    if (!colMap[idx]) colMap[idx] = { titles: [], tasks: [] };
+    colMap[idx].tasks.push(t);
+    // Strip " — LineLabel" suffix to get base title
+    const base = t.title.replace(/\s*—\s*.+$/, '');
+    colMap[idx].titles.push(base);
+  });
+
+  const columns = Object.keys(colMap).sort((a, b) => +a - +b).map(idx => {
+    const g = colMap[idx];
+    const titleCounts = {};
+    g.titles.forEach(t => titleCounts[t] = (titleCounts[t] || 0) + 1);
+    const baseTitle = Object.entries(titleCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || `NV ${+idx + 1}`;
+    return { orderIndex: +idx, title: baseTitle, tasks: g.tasks };
+  });
+
+  // For each project, find current task = first non-done task (by order_index)
+  const projectCurrentTask = {};
+  Object.entries(tasksByProject).forEach(([projId, projTasks]) => {
+    projTasks.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    const current = projTasks.find(t => t.status !== 'done');
+    projectCurrentTask[projId] = current || projTasks[projTasks.length - 1];
+  });
+
+  // Map project cards to columns
+  const columnCards = {};
+  columns.forEach(col => { columnCards[col.orderIndex] = []; });
+  Object.entries(projectCurrentTask).forEach(([projId, task]) => {
+    if (!task) return;
+    const idx = task.order_index ?? 0;
+    if (columnCards[idx]) columnCards[idx].push({ projectId: projId, task });
+  });
+
+  // All-done check per project
+  const projectsAllDone = {};
+  Object.entries(tasksByProject).forEach(([projId, pts]) => {
+    projectsAllDone[projId] = pts.length > 0 && pts.every(t => t.status === 'done');
+  });
+
+  const totalTasks = filteredTasks.length;
+  const doneTasks = filteredTasks.filter(t => t.status === 'done').length;
+
+  // Filter options
   const projCompanies = [];
   const seenC = new Set();
   projects.forEach(p => { if (p.company_id && p.company && !seenC.has(p.company_id)) { seenC.add(p.company_id); projCompanies.push({ id: p.company_id, name: p.company.short_name || p.company.name }); } });
-
-  // Unique employees from tasks
   const projEmployees = [];
   const seenE = new Set();
   tasks.forEach(t => { if (t.assignee?.id && !seenE.has(t.assignee.id)) { seenE.add(t.assignee.id); projEmployees.push({ id: t.assignee.id, name: t.assignee.full_name }); } });
 
-  // Workflow lines for current filter
-  let visibleLines = workflowLines;
-  if (filterCompany !== 'all') visibleLines = visibleLines.filter(l => l._cid === filterCompany);
-  if (filterProject !== 'all') visibleLines = visibleLines.filter(l => l._pid === filterProject);
-
-  // Read-only check: role vs stage
-  const allowedSlugs = ROLE_STAGE_MAP[user?.role] || [];
-  const isAdmin = ['admin', 'manager'].includes(user?.role);
-  const canInteract = isAdmin || allowedSlugs.includes(slug);
-
-  // Check which projects have ALL tasks done (for advance banner)
-  const projectsAllDone = {};
-  projects.forEach(p => { const pt = sortedTasks.filter(t => t.project_id === p.id); projectsAllDone[p.id] = pt.length > 0 && pt.every(t => t.status === 'done'); });
-  const nextStageName = STAGE_NAMES[NEXT_SLUG[slug]];
-
-  // Stats
-  const totalTasks = sortedTasks.length;
-  const doneTasks = sortedTasks.filter(t => t.status === 'done').length;
-  const totalChecks = sortedTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
-  const doneChecks = sortedTasks.reduce((s, t) => s + (t.checklists?.filter(c => c.is_completed)?.length || 0), 0);
-
   return (
     <div className="space-y-4">
-      {/* Error banner */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
           <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
           <p className="text-sm text-red-700 flex-1">{error}</p>
-          <button onClick={loadData} className="h-8 px-3 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 cursor-pointer flex items-center gap-1">
-            <RefreshCw className="h-3.5 w-3.5" /> Thử lại
-          </button>
+          <button onClick={loadData} className="h-8 px-3 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 cursor-pointer flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5" /> Thử lại</button>
         </div>
       )}
 
@@ -290,24 +222,14 @@ export default function StageView() {
             <h1 className="text-2xl font-bold text-gray-900">{stageName}</h1>
             {user && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">{ROLE_LABELS[user.role] || user.role}</span>}
           </div>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {projects.length} dự án · {totalTasks} nhiệm vụ ({doneTasks} xong) · {doneChecks}/{totalChecks} checklist
-          </p>
+          <p className="text-sm text-gray-500 mt-0.5">{filteredProjects.length} dự án · {totalTasks} nhiệm vụ ({doneTasks} xong)</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Refresh */}
-          <button onClick={loadData} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer text-gray-400 hover:text-gray-600">
-            <RefreshCw className="h-4 w-4" />
-          </button>
-
-          {canInteract && <button onClick={() => setShowCreateTask(true)}
-            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
-            <Plus className="h-4 w-4" /> Thêm NV
-          </button>}
+          <button onClick={loadData} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer text-gray-400"><RefreshCw className="h-4 w-4" /></button>
+          {canInteract && <button onClick={() => setShowCreateTask(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4" /> Thêm NV</button>}
         </div>
       </div>
 
-      {/* Read-only banner */}
       {!canInteract && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2">
           <Lock className="h-4 w-4 text-amber-500" />
@@ -315,39 +237,35 @@ export default function StageView() {
         </div>
       )}
 
-      {/* ═══ FILTERS (cascading: CTy → DA → Bộ phận) ═══ */}
+      {/* Filters */}
       <div className="bg-white rounded-xl border p-3 space-y-2">
-        {/* Row 1: Time */}
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
             <Calendar className="h-3.5 w-3.5 text-gray-400 self-center ml-2" />
             {QT.map(t => <button key={t.id} onClick={() => setQuickTime(t.id)} className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${quickTime === t.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{t.label}</button>)}
           </div>
-          <div className="flex items-center gap-1.5">
-            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setQuickTime('custom'); }} className="h-7 px-2 border rounded text-xs bg-white" />
-            <span className="text-xs text-gray-400">→</span>
-            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setQuickTime('custom'); }} className="h-7 px-2 border rounded text-xs bg-white" />
-          </div>
+          {quickTime === 'custom' && (
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white" />
+              <span className="text-xs text-gray-400">→</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white" />
+            </div>
+          )}
         </div>
-        {/* Row 2: CTy → DA → Bộ phận → NV */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1">
-            <Building2 className="h-3.5 w-3.5 text-gray-400" />
-            <select value={filterCompany} onChange={e => { setFilterCompany(e.target.value); setFilterProject('all'); setFilterLine('all'); }} className="h-7 px-2 border rounded text-xs bg-white">
-              <option value="all">Tất cả CTy</option>
-              {projCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          <select value={filterProject} onChange={e => { setFilterProject(e.target.value); setFilterLine('all'); }} className="h-7 px-2 border rounded text-xs bg-white font-medium">
+          {projCompanies.length > 0 && (
+            <div className="flex items-center gap-1">
+              <Building2 className="h-3.5 w-3.5 text-gray-400" />
+              <select value={filterCompany} onChange={e => { setFilterCompany(e.target.value); setFilterProject('all'); }} className="h-7 px-2 border rounded text-xs bg-white">
+                <option value="all">Tất cả CTy</option>
+                {projCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+          <select value={filterProject} onChange={e => setFilterProject(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white font-medium">
             <option value="all">Tất cả DA</option>
             {projects.filter(p => filterCompany === 'all' || p.company_id === filterCompany).map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
           </select>
-          {visibleLines.length > 0 && (
-            <select value={filterLine} onChange={e => setFilterLine(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white">
-              <option value="all">Tất cả bộ phận ({visibleLines.length})</option>
-              {visibleLines.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
-            </select>
-          )}
           {projEmployees.length > 1 && (
             <select value={filterEmployee} onChange={e => setFilterEmployee(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white">
               <option value="all">Tất cả NV</option>
@@ -358,7 +276,7 @@ export default function StageView() {
       </div>
 
       {/* Advance banners */}
-      {nextStageName && projects.filter(p => projectsAllDone[p.id]).map(p => (
+      {nextStageName && filteredProjects.filter(p => projectsAllDone[p.id]).map(p => (
         <div key={p.id} className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center gap-3 flex-wrap">
           <CheckSquare className="h-5 w-5 text-emerald-600" />
           <div className="flex-1 min-w-0">
@@ -376,178 +294,135 @@ export default function StageView() {
         </div>
       ))}
 
-      {/* Progress bar */}
+      {/* Progress */}
       {totalTasks > 0 && (
         <div className="bg-white rounded-xl border p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-gray-700">Tiến độ giai đoạn</span>
-            <span className="text-sm font-bold text-gray-900">{totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0}%</span>
+            <span className="text-sm font-bold text-gray-900">{Math.round((doneTasks / totalTasks) * 100)}%</span>
           </div>
           <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-              style={{ width: `${totalTasks > 0 ? (doneTasks / totalTasks) * 100 : 0}%` }} />
+            <div className="h-full bg-emerald-500 rounded-full transition-all duration-500" style={{ width: `${(doneTasks / totalTasks) * 100}%` }} />
           </div>
-          <div className="flex items-center justify-between mt-2 text-xs text-gray-400">
-            <span>{doneTasks}/{totalTasks} nhiệm vụ hoàn thành</span>
-            <span>{doneChecks}/{totalChecks} checklist items</span>
-          </div>
+          <p className="text-xs text-gray-400 mt-2">{doneTasks}/{totalTasks} nhiệm vụ hoàn thành</p>
         </div>
       )}
 
-      {/* ═══ KANBAN: Grouped by workflow line (vertical) ═══ */}
-      {sortedTasks.length > 0 ? (
-        <div className="space-y-6">
-          {(() => {
-            // Group tasks by workflow line (or 'default' if no line)
-            const lineGroups = [];
-            const byLine = {};
-            sortedTasks.forEach(t => {
-              const key = t.workflow_line_id || `proj_${t.project_id}`;
-              if (!byLine[key]) byLine[key] = { tasks: [], line: visibleLines.find(l => l.id === t.workflow_line_id) || null, projId: t.project_id };
-              byLine[key].tasks.push(t);
-            });
-            Object.values(byLine).forEach(g => lineGroups.push(g));
-
-            // If only 1 group (no multi-line), render single board
-            // If multiple groups, render each as separate labeled board (vertical)
-            return lineGroups.map((group, gi) => {
-              const lineTasks = group.tasks;
-              const line = group.line;
-              const proj = projects.find(p => p.id === group.projId);
-              return (
-                <div key={gi}>
-                  {/* Line header (only if multiple groups or has line label) */}
-                  {(lineGroups.length > 1 || line) && (
-                    <div className="flex items-center gap-3 bg-white rounded-xl border px-4 py-3 mb-2">
-                      <div className="w-2 h-8 rounded-full" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }} />
-                      <div className="flex-1 min-w-0">
-                        <h2 className="text-base sm:text-lg font-bold text-gray-900">{line?.label || (proj ? proj.name : `Nhóm ${gi + 1}`)}</h2>
-                        <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
-                          {proj && <span className="text-blue-600 font-bold text-sm">{proj.code}</span>}
-                          {line?.assignee && <span className="flex items-center gap-1"><span className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold" style={{ backgroundColor: avatarColor(line.assignee.full_name) }}>{getInitials(line.assignee.full_name)}</span>{line.assignee.full_name}</span>}
-                          <span>{lineTasks.length} NV · {lineTasks.filter(t => t.status === 'done').length} xong</span>
-                        </div>
-                      </div>
+      {/* ═══ KANBAN: Columns = Nhiệm vụ, Cards = Dự án ═══ */}
+      {columns.length > 0 ? (
+        <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-4" style={{ minHeight: '300px' }}>
+          {columns.map(col => {
+            const cards = columnCards[col.orderIndex] || [];
+            const colDone = col.tasks.filter(t => t.status === 'done').length;
+            return (
+              <div key={col.orderIndex} className="shrink-0 w-72 sm:w-80 flex flex-col">
+                {/* Column header */}
+                <div className="rounded-t-xl p-3 border border-b-0 bg-white border-gray-200">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-white w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }}>{col.orderIndex + 1}</span>
+                      <h3 className="text-sm font-bold text-gray-900">{col.title}</h3>
                     </div>
-                  )}
-                  {/* Horizontal Kanban for this line */}
-                  <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-4" style={{ minHeight: '250px' }}>
-                    {lineTasks.map((task, taskIdx) => {
-                      const checksDone = task.checklists?.filter(c => c.is_completed)?.length || 0;
-                      const checksTotal = task.checklists?.length || 0;
-                      const allChecksDone = checksTotal > 0 && checksDone === checksTotal;
-                      const isTaskDone = task.status === 'done';
-                      const tProj = projects.find(p => p.id === task.project_id);
-                      const projCurrentSlug = tProj ? projectCurrentStageSlug(tProj.status) : slug;
-                      const isFutureStage = getStageIndex(slug) > getStageIndex(projCurrentSlug);
-                      const sameTasks = lineTasks.filter(t => t.project_id === task.project_id);
-                      const tIdx = sameTasks.findIndex(t => t.id === task.id);
-                      const prevDone = sameTasks.filter((_, i) => i < tIdx).every(t => t.status === 'done');
-                      const isSequenceLocked = tIdx > 0 && !prevDone;
-                      const isLocked = isFutureStage || isSequenceLocked || !canInteract;
-                      const isActive = !isLocked && !isTaskDone;
-
-                      return (
-                        <div key={task.id} className={`shrink-0 w-64 sm:w-80 flex flex-col ${isLocked ? 'opacity-50' : ''}`}>
-                          {/* Column header = Task */}
-                          <div className={`rounded-t-xl p-3 border border-b-0 ${isTaskDone ? 'bg-emerald-50 border-emerald-200' : isActive ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-200'}`}>
-                            <div className="flex items-start gap-2">
-                              <button onClick={() => !isLocked && !isTaskDone && allChecksDone && markTaskDone(task.id)}
-                                disabled={isLocked || isTaskDone || !allChecksDone}
-                                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${isTaskDone ? 'bg-emerald-500 border-emerald-500 text-white' : allChecksDone ? 'border-emerald-400 hover:bg-emerald-50 cursor-pointer animate-pulse' : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 cursor-not-allowed'}`}>
-                                {isTaskDone && <CheckSquare className="h-3.5 w-3.5" />}
-                              </button>
-                              <div className="flex-1 min-w-0">
-                                {/* Project name — BIG and clear */}
-                                {tProj && (
-                                  <Link to={`/projects/${tProj.id}`} className="block text-sm sm:text-base font-bold text-blue-700 hover:text-blue-800 hover:underline leading-tight mb-1 truncate">
-                                    {tProj.name}
-                                  </Link>
-                                )}
-                                <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                                  <span className="text-[10px] font-bold text-gray-400">#{taskIdx + 1}</span>
-                                  {tProj && <span className="text-[10px] text-blue-500 font-semibold">{tProj.code}</span>}
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
-                                </div>
-                                <h3 className={`text-xs sm:text-sm font-semibold leading-tight ${isTaskDone ? 'text-emerald-700 line-through' : 'text-gray-900'}`}>{task.title}</h3>
-                                {tProj?.customers?.full_name && <p className="text-[10px] text-gray-500 mt-0.5">👤 {tProj.customers.full_name}</p>}
-                              </div>
-                              {isLocked && <Lock className="h-4 w-4 text-gray-400 shrink-0 mt-1" />}
-                            </div>
-                            <div className="flex items-center gap-3 mt-2 flex-wrap">
-                              {task.assignee && <div className="flex items-center gap-1"><div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>{getInitials(task.assignee.full_name)}</div><span className="text-[10px] text-gray-500">{task.assignee.full_name}</span></div>}
-                              {task.due_date && <span className={`text-[10px] flex items-center gap-0.5 ${new Date(task.due_date) < new Date() && !isTaskDone ? 'text-red-500' : 'text-gray-400'}`}><Clock className="h-3 w-3" />{formatDate(task.due_date)}</span>}
-                              <span className={`text-[10px] font-medium ${allChecksDone && checksTotal > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>✓ {checksDone}/{checksTotal}</span>
-                            </div>
-                            {checksTotal > 0 && <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2"><div className={`h-full rounded-full transition-all ${isTaskDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(checksDone / checksTotal) * 100}%` }} /></div>}
-                          </div>
-                          {/* Checklist cards */}
-                          <div className={`flex-1 rounded-b-xl border p-2 space-y-1.5 min-h-[80px] ${isTaskDone ? 'bg-emerald-50/50 border-emerald-200' : isLocked ? 'bg-gray-50 border-gray-200' : 'bg-gray-50/50 border-gray-200'}`}>
-                            {task.checklists?.length > 0 ? task.checklists.map((cl, clIdx) => (
-                              <ChecklistCard key={cl.id} cl={cl} clIdx={clIdx} isLocked={isLocked} taskId={task.id}
-                                onToggle={() => !isLocked && toggleCheckItem(task.id, cl.id, cl.is_completed)} onUpdated={loadData} canInteract={canInteract} />
-                            )) : (
-                              <div className="flex items-center justify-center h-12 text-xs text-gray-400">Chưa có checklist</div>
-                            )}
-                            {!isLocked && !isTaskDone && <QuickAddChecklist taskId={task.id} onAdded={loadData} />}
-                          </div>
-                          {/* Action buttons */}
-                          <div className="flex gap-1 mt-1">
-                            {!isLocked && !isTaskDone && task.status === 'pending' && <button onClick={() => startTask(task.id)} className="flex-1 h-7 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
-                            {!isLocked && !isTaskDone && allChecksDone && checksTotal > 0 && <button onClick={() => markTaskDone(task.id)} className="flex-1 h-7 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-medium hover:bg-emerald-100 cursor-pointer animate-pulse">✓ Xong</button>}
-                            <button onClick={() => setSelectedTask(task.id)} className="flex-1 h-7 text-gray-400 bg-white border rounded-lg text-xs hover:text-blue-600 cursor-pointer">Chi tiết →</button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    <span className="text-[10px] font-medium text-gray-400">{cards.length} DA</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-gray-100 rounded-full">
+                    <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${col.tasks.length > 0 ? (colDone / col.tasks.length) * 100 : 0}%` }} />
                   </div>
                 </div>
-              );
-            });
-          })()}
+
+                {/* Cards */}
+                <div className="flex-1 rounded-b-xl border p-2 space-y-2 min-h-[100px] bg-gray-50/50 border-gray-200 overflow-y-auto" style={{ maxHeight: '60vh' }}>
+                  {cards.length > 0 ? cards.map(({ projectId, task }) => {
+                    const proj = projects.find(p => p.id === projectId);
+                    if (!proj) return null;
+                    const isDone = task.status === 'done';
+                    const isActive = task.status === 'in_progress';
+                    const projTasks = tasksByProject[projectId] || [];
+                    const pDone = projTasks.filter(t => t.status === 'done').length;
+                    const pTotal = projTasks.length;
+
+                    return (
+                      <div key={projectId} className={`bg-white rounded-lg border p-3 hover:shadow-md transition-all ${isDone ? 'border-emerald-200 bg-emerald-50/50' : isActive ? 'border-blue-200' : 'border-gray-200'}`}>
+                        <Link to={`/projects/${proj.id}`} className="block">
+                          <div className="flex items-start justify-between mb-1">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="text-[10px] font-bold text-blue-600">{proj.code}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
+                              </div>
+                              <h4 className="text-sm font-semibold text-gray-900 leading-tight truncate">{proj.name}</h4>
+                              {proj.customers?.full_name && <p className="text-[10px] text-gray-500 mt-0.5">👤 {proj.customers.full_name}</p>}
+                              {proj.company && <p className="text-[10px] text-indigo-500">🏢 {proj.company.short_name || proj.company.name}</p>}
+                            </div>
+                            {isDone && <CheckSquare className="h-4 w-4 text-emerald-500 shrink-0" />}
+                          </div>
+                        </Link>
+
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                          <div className="flex items-center gap-1">
+                            {task.assignee && (
+                              <>
+                                <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>{getInitials(task.assignee.full_name)}</div>
+                                <span className="text-[10px] text-gray-500 max-w-[80px] truncate">{task.assignee.full_name}</span>
+                              </>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-gray-400">{pDone}/{pTotal}</span>
+                            {task.due_date && <span className={`text-[10px] flex items-center gap-0.5 ${new Date(task.due_date) < new Date() && !isDone ? 'text-red-500' : 'text-gray-400'}`}><Clock className="h-3 w-3" />{formatDate(task.due_date)}</span>}
+                          </div>
+                        </div>
+
+                        {canInteract && !isDone && (
+                          <div className="flex gap-1 mt-2">
+                            {task.status === 'pending' && <button onClick={e => { e.preventDefault(); startTask(task.id); }} className="flex-1 h-6 bg-blue-50 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
+                            {isActive && <button onClick={e => { e.preventDefault(); markTaskDone(task.id); }} className="flex-1 h-6 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer">✓ Hoàn thành</button>}
+                            <button onClick={e => { e.preventDefault(); setSelectedTask(task.id); }} className="flex-1 h-6 text-gray-400 bg-white border rounded text-[10px] hover:text-blue-600 cursor-pointer">Chi tiết</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }) : (
+                    <div className="flex items-center justify-center h-20 text-xs text-gray-400">Không có dự án</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
-      ) : projects.length > 0 ? (
+      ) : filteredProjects.length > 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border">
           <CheckSquare className="h-12 w-12 mx-auto text-gray-300 mb-3" />
           <p className="text-sm text-gray-500 mb-2">Chưa có nhiệm vụ ở giai đoạn <strong>{stageName}</strong></p>
-          <p className="text-xs text-gray-400 mb-4">Tạo task mới hoặc chuyển giai đoạn từ trang dự án để tự động tạo nhiệm vụ</p>
-          <button onClick={() => setShowCreateTask(true)}
-            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
-            <Plus className="h-4 w-4" /> Tạo nhiệm vụ đầu tiên
-          </button>
+          <button onClick={() => setShowCreateTask(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4" /> Tạo nhiệm vụ</button>
         </div>
       ) : (
         <div className="text-center py-16">
           <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-          <p className="text-sm text-gray-500 mb-1">Không có dự án ở giai đoạn <strong>{stageName}</strong></p>
-          <p className="text-xs text-gray-400">Tạo dự án mới từ trang "Dự án" — dự án sẽ bắt đầu ở giai đoạn Tư vấn</p>
+          <p className="text-sm text-gray-500">Không có dự án ở giai đoạn <strong>{stageName}</strong></p>
         </div>
       )}
 
       {/* Modals */}
-      <TaskDetailModal taskId={selectedTask} open={!!selectedTask}
-        onClose={() => setSelectedTask(null)} onUpdated={loadData} />
-      <TaskCreateModal open={showCreateTask}
-        onClose={() => setShowCreateTask(false)} onCreated={loadData}
-        stageId={stageInfo?.id}
-        projectId={filterProject !== 'all' ? filterProject : projects[0]?.id} />
+      <TaskDetailModal taskId={selectedTask} open={!!selectedTask} onClose={() => setSelectedTask(null)} onUpdated={loadData} />
+      <TaskCreateModal open={showCreateTask} onClose={() => setShowCreateTask(false)} onCreated={loadData} stageId={stageInfo?.id} projectId={filterProject !== 'all' ? filterProject : projects[0]?.id} />
 
       {/* Advance / Review Modal */}
       <Modal open={!!advProj} onClose={() => setAdvProj(null)}
-        title={advMode === 'advance' ? `Chuyển: ${advProj?.code} → ${nextStageName}` : `Yêu cầu duyệt: ${advProj?.code}`} size="md">
+        title={advMode === 'advance' ? `Chuyển: ${advProj?.code} → ${nextStageName}` : `Chờ duyệt: ${advProj?.code}`} size="md">
         <div className="space-y-4">
           <div className={`${advMode === 'advance' ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'} border rounded-xl p-4`}>
             <p className={`text-sm ${advMode === 'advance' ? 'text-emerald-800' : 'text-amber-800'}`}>
               {advMode === 'advance'
                 ? `✅ Chuyển "${advProj?.name}" → "${nextStageName}". Hệ thống sẽ tự tạo NV mới.`
-                : `🔍 Gửi yêu cầu duyệt "${advProj?.name}" đến người quản lý DA.`}
+                : `🔍 Gửi yêu cầu duyệt cho người chịu trách nhiệm chính / quản lý DA.`}
             </p>
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Ghi chú</label>
             <textarea value={advNotes} onChange={e => setAdvNotes(e.target.value)}
               className="w-full h-20 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
-              placeholder="Ghi chú chuyển giao..." />
+              placeholder={advMode === 'review' ? 'Ghi chú gửi kèm yêu cầu duyệt...' : 'Ghi chú chuyển giao...'} />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Đính kèm</label>
@@ -558,145 +433,11 @@ export default function StageView() {
             <button onClick={() => setAdvProj(null)} className="h-9 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button>
             <button onClick={doAdvance} disabled={advLoading}
               className={`h-9 px-4 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${advMode === 'advance' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
-              {advLoading ? 'Đang xử lý...' : advMode === 'advance' ? <><ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển GĐ</> : <><Send className="h-3.5 w-3.5" /> Gửi duyệt</>}
+              {advLoading ? 'Đang xử lý...' : advMode === 'advance' ? <><ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển GĐ</> : <><Send className="h-3.5 w-3.5" /> Gửi yêu cầu duyệt</>}
             </button>
           </div>
         </div>
       </Modal>
-    </div>
-  );
-}
-
-// ═══ Checklist Card: click to open notes+file form, toggle to view saved ═══
-function ChecklistCard({ cl, clIdx, isLocked, taskId, onToggle, onUpdated, canInteract }) {
-  const [showDetail, setShowDetail] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [noteText, setNoteText] = useState('');
-  const [noteFiles, setNoteFiles] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const hasNotes = cl.notes || cl.description;
-  const hasFiles = cl.attachments?.length > 0;
-  const hasExtra = hasNotes || hasFiles;
-
-  const startEdit = () => {
-    setNoteText(cl.notes || cl.description || '');
-    setNoteFiles(cl.attachments || []);
-    setEditing(true);
-  };
-
-  const saveBoth = async () => {
-    setSaving(true);
-    try {
-      await api.patch(`/tasks/${taskId}/checklists/${cl.id}`, { notes: noteText, attachments: noteFiles });
-      setEditing(false);
-      onUpdated?.();
-    } catch { }
-    setSaving(false);
-  };
-
-  return (
-    <div className={`bg-white rounded-lg border p-2 transition-all ${
-      cl.is_completed ? 'border-emerald-200 bg-emerald-50/50'
-      : isLocked ? 'border-gray-200 opacity-60' : 'border-gray-200 hover:shadow-sm hover:border-gray-300'
-    }`}>
-      <div className="flex items-start gap-1.5">
-        <button onClick={onToggle} disabled={isLocked}
-          className={`w-4 h-4 sm:w-5 sm:h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
-            cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white'
-            : isLocked ? 'border-gray-200 cursor-not-allowed' : 'border-gray-300 hover:border-blue-400 cursor-pointer'
-          }`}>
-          {cl.is_completed && <CheckSquare className="h-2.5 w-2.5 sm:h-3 sm:w-3" />}
-        </button>
-        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => !isLocked && canInteract ? startEdit() : hasExtra && setShowDetail(!showDetail)}>
-          <span className={`text-xs sm:text-sm leading-tight ${cl.is_completed ? 'line-through text-gray-400' : isLocked ? 'text-gray-400' : 'text-gray-700'}`}>
-            {cl.title}
-          </span>
-          {cl.completed_at && <p className="text-[9px] sm:text-[10px] text-emerald-500 mt-0.5">✓ {formatDate(cl.completed_at)}</p>}
-        </div>
-        <div className="flex items-center gap-0.5 shrink-0">
-          {hasFiles && <Paperclip className="h-3 w-3 text-blue-400" />}
-          {hasNotes && <MessageSquare className="h-3 w-3 text-amber-400" />}
-          {hasExtra && (
-            <button onClick={() => { setShowDetail(!showDetail); if (editing) setEditing(false); }} className="text-gray-300 hover:text-gray-500 cursor-pointer">
-              {showDetail ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Editing form: notes + files → save together */}
-      {editing && canInteract && !isLocked && (
-        <div className="mt-2 ml-5 sm:ml-7 space-y-2 bg-blue-50/50 rounded-lg p-2 border border-blue-100">
-          <textarea value={noteText} onChange={e => setNoteText(e.target.value)}
-            className="w-full h-14 px-2 py-1 border rounded text-xs outline-none focus:ring-1 focus:ring-blue-300 bg-white"
-            placeholder="Ghi chú..." />
-          <FilePreview files={noteFiles} onRemove={(i) => setNoteFiles(f => f.filter((_, j) => j !== i))} small />
-          <div className="flex items-center gap-2 flex-wrap">
-            <FileUploadButton compact onFilesUploaded={(files) => setNoteFiles(prev => [...prev, ...files])} />
-            <button onClick={saveBoth} disabled={saving}
-              className="h-7 px-3 bg-blue-600 text-white rounded text-xs font-medium cursor-pointer disabled:opacity-50">
-              {saving ? '...' : '💾 Lưu'}
-            </button>
-            <button onClick={() => setEditing(false)} className="h-7 px-2 text-gray-500 text-xs cursor-pointer">Đóng</button>
-          </div>
-        </div>
-      )}
-
-      {/* View saved notes + files (toggle) */}
-      {showDetail && hasExtra && !editing && (
-        <div className="mt-1.5 ml-5 sm:ml-7 space-y-1">
-          {hasNotes && <p className="text-xs text-gray-600 bg-amber-50 rounded p-2 border border-amber-100">{cl.notes || cl.description}</p>}
-          {hasFiles && (
-            <div className="space-y-1">
-              {cl.attachments.map((f, fi) => {
-                const isImg = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_url || f.file_name || '');
-                return isImg ? (
-                  <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer">
-                    <img src={f.file_url} alt={f.file_name} className="max-h-24 rounded border object-cover" />
-                  </a>
-                ) : (
-                  <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-xs text-blue-600 hover:underline bg-gray-50 rounded px-2 py-1">
-                    <Paperclip className="h-3 w-3" />{f.file_name || 'file'}
-                  </a>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══ Quick Add Checklist ═══
-function QuickAddChecklist({ taskId, onAdded }) {
-  const [text, setText] = useState('');
-  const [adding, setAdding] = useState(false);
-
-  const add = async () => {
-    if (!text.trim()) return;
-    setAdding(true);
-    try {
-      await api.post(`/tasks/${taskId}/checklists`, { title: text.trim() });
-      setText('');
-      onAdded?.();
-    } catch { }
-    setAdding(false);
-  };
-
-  return (
-    <div className="flex gap-1 mt-1">
-      <input value={text} onChange={e => setText(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && add()}
-        placeholder="+ Thêm checklist..."
-        className="flex-1 h-7 px-2 bg-white border border-dashed border-gray-300 rounded text-xs outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200" />
-      {text && (
-        <button onClick={add} disabled={adding}
-          className="h-7 px-2 bg-blue-600 text-white rounded text-xs cursor-pointer hover:bg-blue-700 disabled:opacity-50">
-          {adding ? '...' : '+'}
-        </button>
-      )}
     </div>
   );
 }
