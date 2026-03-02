@@ -39,6 +39,7 @@ export default function ProjectDetail() {
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [newComment, setNewComment] = useState('');
   const [commentFiles, setCommentFiles] = useState([]);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [showAdvance, setShowAdvance] = useState(false);
   const [showPeople, setShowPeople] = useState(false);
   const [editingLines, setEditingLines] = useState(false);
@@ -48,6 +49,11 @@ export default function ProjectDetail() {
   const load = () => {
     setLoading(true);
     api.get(`/projects/${id}`).then(r => setProject(r.data.project)).catch(() => {}).finally(() => setLoading(false));
+    // Load pending approval count
+    api.get(`/approvals/project/${id}`).then(r => {
+      const pending = (r.data.approvals || []).filter(a => a.status === 'pending').length;
+      setPendingApprovalCount(pending);
+    }).catch(() => {});
   };
   useEffect(() => { load(); api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}); }, [id]);
 
@@ -290,7 +296,7 @@ export default function ProjectDetail() {
       <div className="flex gap-1 border-b border-gray-200">
         {[
           { id: 'tasks', label: 'Công việc', icon: CheckSquare, count: totalTasks },
-          { id: 'approvals', label: 'Duyệt', icon: Shield },
+          { id: 'approvals', label: 'Duyệt', icon: Shield, count: pendingApprovalCount || undefined },
           { id: 'chat', label: 'Trao đổi', icon: MessageSquare, count: project.comments?.length },
           { id: 'history', label: 'Lịch sử', icon: Clock, count: project.activities?.length },
         ].map(t => (
