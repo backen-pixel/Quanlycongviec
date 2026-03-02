@@ -8,9 +8,10 @@ import { FileUploadButton, FilePreview, FileList } from '../components/FileUploa
 import {
   ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle,
-  Paperclip, FileText, Edit, UserPlus, X
+  Paperclip, FileText, Edit, UserPlus, X, Shield
 } from 'lucide-react';
 import UserSelect from '../components/UserSelect';
+import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
   TASK_STATUS, TASK_COLORS, formatVND, formatDate, formatDateTime,
@@ -289,6 +290,7 @@ export default function ProjectDetail() {
       <div className="flex gap-1 border-b border-gray-200">
         {[
           { id: 'tasks', label: 'Công việc', icon: CheckSquare, count: totalTasks },
+          { id: 'approvals', label: 'Duyệt', icon: Shield },
           { id: 'chat', label: 'Trao đổi', icon: MessageSquare, count: project.comments?.length },
           { id: 'history', label: 'Lịch sử', icon: Clock, count: project.activities?.length },
         ].map(t => (
@@ -402,6 +404,11 @@ export default function ProjectDetail() {
           })}
           {totalTasks === 0 && <div className="text-center py-10 text-gray-400"><CheckSquare className="h-10 w-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Chưa có công việc</p></div>}
         </div>
+      )}
+
+      {/* ─── Approvals (Duyệt) Tab ─── */}
+      {activeTab === 'approvals' && (
+        <ProjectApprovalsTab projectId={id} project={project} onUpdated={load} />
       )}
 
       {/* ─── Chat (Trao đổi) Tab ─── */}

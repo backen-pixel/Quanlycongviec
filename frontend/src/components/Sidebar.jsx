@@ -44,6 +44,7 @@ const adminTools = [
   { to: '/users', icon: Users, label: 'Nhân viên' },
   { to: '/templates', icon: ClipboardList, label: 'NV mẫu' },
   { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
+  { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
 ];
 
 function SideLink({ to, icon: Icon, emoji, label, dot, collapsed }) {
