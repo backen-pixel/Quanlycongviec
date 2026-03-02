@@ -203,10 +203,14 @@ r.get('/units/:id', async (req, res) => {
 r.post('/units', async (req, res) => {
   try {
     const { name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index } = req.body;
-    // Sanitize: empty string → null for UUID fields
-    const clean = (v) => (v && v.trim && v.trim() !== '') ? v : null;
+    // Sanitize: empty string → null for OPTIONAL UUID/string fields
+    const opt = (v) => (v && typeof v === 'string' && v.trim() !== '') ? v.trim() : null;
 
-    const pid = clean(parent_id);
+    // Validate required fields
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Tên đơn vị là bắt buộc' });
+    if (!level_id || (typeof level_id === 'string' && !level_id.trim())) return res.status(400).json({ error: 'Cấp bậc là bắt buộc' });
+
+    const pid = opt(parent_id);
     // Permission check
     if (pid) {
       const hasAccess = await canManageUnit(req.user.userId, req.user.role, pid);
@@ -217,11 +221,18 @@ r.post('/units', async (req, res) => {
 
     const { data, error } = await supabase.from('ecosystem_units')
       .insert({
-        name, short_name: clean(short_name), code: clean(code),
-        level_id: clean(level_id), parent_id: pid,
-        company_id: clean(company_id), department_id: clean(department_id),
-        description: clean(description), logo_url: clean(logo_url),
-        address: clean(address), phone: clean(phone), email: clean(email),
+        name: name.trim(),
+        short_name: opt(short_name),
+        code: opt(code),
+        level_id: level_id.trim(),  // required — already validated
+        parent_id: pid,
+        company_id: opt(company_id),
+        department_id: opt(department_id),
+        description: opt(description),
+        logo_url: opt(logo_url),
+        address: opt(address),
+        phone: opt(phone),
+        email: opt(email),
         order_index: order_index || 0,
       })
       .select('*, level:ecosystem_levels(id,name,slug,depth,icon,color)').single();
@@ -238,20 +249,20 @@ r.put('/units/:id', async (req, res) => {
     if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
 
     const { name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index, is_active } = req.body;
-    const clean = (v) => (v && v.trim && v.trim() !== '') ? v : null;
+    const opt = (v) => (v && typeof v === 'string' && v.trim() !== '') ? v.trim() : null;
     const update = { updated_at: new Date().toISOString() };
-    if (name !== undefined) update.name = name;
-    if (short_name !== undefined) update.short_name = clean(short_name);
-    if (code !== undefined) update.code = clean(code);
-    if (level_id !== undefined) update.level_id = clean(level_id);
-    if (parent_id !== undefined) update.parent_id = clean(parent_id);
-    if (company_id !== undefined) update.company_id = clean(company_id);
-    if (department_id !== undefined) update.department_id = clean(department_id);
-    if (description !== undefined) update.description = clean(description);
-    if (logo_url !== undefined) update.logo_url = clean(logo_url);
-    if (address !== undefined) update.address = clean(address);
-    if (phone !== undefined) update.phone = clean(phone);
-    if (email !== undefined) update.email = clean(email);
+    if (name !== undefined && name) update.name = name.trim();
+    if (short_name !== undefined) update.short_name = opt(short_name);
+    if (code !== undefined) update.code = opt(code);
+    if (level_id !== undefined && level_id && (typeof level_id !== 'string' || level_id.trim())) update.level_id = typeof level_id === 'string' ? level_id.trim() : level_id;
+    if (parent_id !== undefined) update.parent_id = opt(parent_id);
+    if (company_id !== undefined) update.company_id = opt(company_id);
+    if (department_id !== undefined) update.department_id = opt(department_id);
+    if (description !== undefined) update.description = opt(description);
+    if (logo_url !== undefined) update.logo_url = opt(logo_url);
+    if (address !== undefined) update.address = opt(address);
+    if (phone !== undefined) update.phone = opt(phone);
+    if (email !== undefined) update.email = opt(email);
     if (order_index !== undefined) update.order_index = order_index;
     if (is_active !== undefined) update.is_active = is_active;
 
@@ -283,8 +294,10 @@ r.post('/units/:id/members', async (req, res) => {
     if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
 
     const { user_id, unit_role, can_manage_children, is_primary } = req.body;
+    if (!user_id || (typeof user_id === 'string' && !user_id.trim())) return res.status(400).json({ error: 'Chọn nhân viên' });
+
     const { data, error } = await supabase.from('ecosystem_unit_members')
-      .insert({ unit_id: req.params.id, user_id, unit_role: unit_role || 'member', can_manage_children: can_manage_children || false, is_primary: is_primary || false })
+      .insert({ unit_id: req.params.id, user_id: user_id.trim ? user_id.trim() : user_id, unit_role: unit_role || 'member', can_manage_children: can_manage_children || false, is_primary: is_primary || false })
       .select('*, user:users(id,full_name,email,avatar,role)').single();
     if (error) throw error;
     res.json({ member: data });
@@ -346,8 +359,10 @@ r.post('/stage-groups', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
     const { name, slug, description, color, icon, order_index } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Tên nhóm là bắt buộc' });
+    if (!slug || !slug.trim()) return res.status(400).json({ error: 'Slug là bắt buộc' });
     const { data, error } = await supabase.from('workflow_stage_groups')
-      .insert({ name, slug, description, color, icon, order_index: order_index || 0 })
+      .insert({ name: name.trim(), slug: slug.trim(), description: description || null, color: color || '#6366F1', icon: icon || null, order_index: order_index || 0 })
       .select().single();
     if (error) throw error;
     res.json({ group: data });
