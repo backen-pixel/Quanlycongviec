@@ -130,6 +130,29 @@ export default function StageView() {
     setAdvLoading(false);
   };
 
+  // Collect all checklist notes + files for a project at current stage
+  const collectChecklistSummary = (projectId) => {
+    const projTasks = (tasksByProject || {})[projectId] || [];
+    let allNotes = [];
+    let allFiles = [];
+    projTasks.forEach(t => {
+      const cls = t.checklists || [];
+      cls.forEach(cl => {
+        if (cl.notes) allNotes.push(`[${t.title.replace(/\s*—\s*.+$/, '')}] ${cl.title}: ${cl.notes}`);
+        if (cl.attachments?.length) allFiles.push(...cl.attachments);
+      });
+    });
+    return { notes: allNotes.join('\n'), files: allFiles };
+  };
+
+  const openAdvanceModal = (proj, mode) => {
+    const summary = collectChecklistSummary(proj.id);
+    setAdvProj(proj);
+    setAdvMode(mode);
+    setAdvNotes(summary.notes);
+    setAdvFiles([...summary.files]);
+  };
+
   const startTask = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' }); loadData(); } catch {} };
   const markTaskDone = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'done' }); loadData(); } catch {} };
   const toggleCheckItem = async (taskId, clId, isCompleted) => {
@@ -333,11 +356,11 @@ export default function StageView() {
               </div>
               {!isPending && (
                 <>
-                  <button onClick={() => { setAdvProj(p); setAdvMode('advance'); setAdvNotes(''); setAdvFiles([]); }}
+                  <button onClick={() => openAdvanceModal(p, 'advance')}
                     className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
                     <ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển → {nextStageName}
                   </button>
-                  <button onClick={() => { setAdvProj(p); setAdvMode('review'); setAdvNotes(''); setAdvFiles([]); }}
+                  <button onClick={() => openAdvanceModal(p, 'review')}
                     className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600">
                     <Send className="h-3.5 w-3.5" /> Chờ duyệt
                   </button>
@@ -481,7 +504,7 @@ export default function StageView() {
 
       {/* Advance / Review Modal */}
       <Modal open={!!advProj} onClose={() => setAdvProj(null)}
-        title={advMode === 'advance' ? `Chuyển: ${advProj?.code} → ${nextStageName}` : `Chờ duyệt: ${advProj?.code}`} size="md">
+        title={advMode === 'advance' ? `Chuyển: ${advProj?.code} → ${nextStageName}` : `Chờ duyệt: ${advProj?.code}`} size="lg">
         <div className="space-y-4">
           <div className={`${advMode === 'advance' ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'} border rounded-xl p-4`}>
             <p className={`text-sm ${advMode === 'advance' ? 'text-emerald-800' : 'text-amber-800'}`}>
@@ -490,14 +513,45 @@ export default function StageView() {
                 : `🔍 Gửi yêu cầu duyệt cho người chịu trách nhiệm chính / quản lý DA.`}
             </p>
           </div>
+
+          {/* Tổng hợp từ checklist */}
+          {(advNotes || advFiles.length > 0) && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <h4 className="text-xs font-semibold text-blue-700 uppercase mb-2">📋 Tổng hợp từ checklist</h4>
+              {advNotes && (
+                <div className="bg-white rounded-lg p-3 border border-blue-100 mb-2 max-h-40 overflow-y-auto">
+                  <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans">{advNotes}</pre>
+                </div>
+              )}
+              {advFiles.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {advFiles.map((f, fi) => {
+                    const isImg = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_url || f.file_name || '');
+                    return isImg ? (
+                      <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer">
+                        <img src={f.file_url} alt={f.file_name} className="h-14 w-14 rounded border object-cover hover:opacity-80" />
+                      </a>
+                    ) : (
+                      <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-[10px] text-blue-600 bg-white rounded px-2 py-1 border hover:bg-blue-50">
+                        <Paperclip className="h-3 w-3" />{f.file_name || 'file'}
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="text-[10px] text-blue-500 mt-2">Ghi chú + file từ checklist được tổng hợp tự động. Bạn có thể chỉnh sửa bên dưới.</p>
+            </div>
+          )}
+
           <div>
-            <label className="block text-sm font-medium mb-1">Ghi chú</label>
+            <label className="block text-sm font-medium mb-1">Ghi chú {advNotes ? '(đã tổng hợp, có thể sửa)' : ''}</label>
             <textarea value={advNotes} onChange={e => setAdvNotes(e.target.value)}
-              className="w-full h-20 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+              className="w-full h-24 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
               placeholder={advMode === 'review' ? 'Ghi chú gửi kèm yêu cầu duyệt...' : 'Ghi chú chuyển giao...'} />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Đính kèm</label>
+            <label className="block text-sm font-medium mb-1">Đính kèm thêm file</label>
             <FileUploadButton onFilesUploaded={f => setAdvFiles(prev => [...prev, ...f])} />
             <FilePreview files={advFiles} onRemove={i => setAdvFiles(f => f.filter((_, j) => j !== i))} />
           </div>
