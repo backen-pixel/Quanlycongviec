@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import UserSelect from '../components/UserSelect';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
+import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
   TASK_STATUS, TASK_COLORS, formatVND, formatDate, formatDateTime,
@@ -40,7 +41,9 @@ export default function ProjectDetail() {
   const [newComment, setNewComment] = useState('');
   const [commentFiles, setCommentFiles] = useState([]);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  const [approvalRule, setApprovalRule] = useState(null); // { mode: 'auto'|'manual' }
   const [showAdvance, setShowAdvance] = useState(false);
+  const [showApprovalRequest, setShowApprovalRequest] = useState(false);
   const [showPeople, setShowPeople] = useState(false);
   const [editingLines, setEditingLines] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
@@ -53,6 +56,10 @@ export default function ProjectDetail() {
     api.get(`/approvals/project/${id}`).then(r => {
       const pending = (r.data.approvals || []).filter(a => a.status === 'pending').length;
       setPendingApprovalCount(pending);
+    }).catch(() => {});
+    // Load approval rule for current stage
+    api.get(`/approvals/check-auto/${id}`).then(r => {
+      setApprovalRule(r.data);
     }).catch(() => {});
   };
   useEffect(() => { load(); api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}); }, [id]);
@@ -111,10 +118,16 @@ export default function ProjectDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {canAdvance && nextStage && (
+          {canAdvance && nextStage && approvalRule?.mode === 'auto' && (
             <button onClick={() => setShowAdvance(true)}
               className="h-9 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 cursor-pointer flex items-center gap-1 animate-pulse">
               <ArrowRightCircle className="h-4 w-4" /> Chuyển → {nextStage.label}
+            </button>
+          )}
+          {canAdvance && nextStage && approvalRule?.mode !== 'auto' && (
+            <button onClick={() => { setActiveTab('approvals'); setShowApprovalRequest(true); }}
+              className="h-9 px-4 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 cursor-pointer flex items-center gap-1 animate-pulse">
+              <Shield className="h-4 w-4" /> Chờ duyệt → {nextStage.label}
             </button>
           )}
           {!canAdvance && nextStage && project.stageTasksTotal > 0 && (
@@ -296,6 +309,7 @@ export default function ProjectDetail() {
       <div className="flex gap-1 border-b border-gray-200">
         {[
           { id: 'tasks', label: 'Công việc', icon: CheckSquare, count: totalTasks },
+          { id: 'documents', label: 'Tài liệu', icon: FileText },
           { id: 'approvals', label: 'Duyệt', icon: Shield, count: pendingApprovalCount || undefined },
           { id: 'chat', label: 'Trao đổi', icon: MessageSquare, count: project.comments?.length },
           { id: 'history', label: 'Lịch sử', icon: Clock, count: project.activities?.length },
@@ -414,7 +428,12 @@ export default function ProjectDetail() {
 
       {/* ─── Approvals (Duyệt) Tab ─── */}
       {activeTab === 'approvals' && (
-        <ProjectApprovalsTab projectId={id} project={project} onUpdated={load} />
+        <ProjectApprovalsTab projectId={id} project={project} onUpdated={load} autoShowRequest={showApprovalRequest} onRequestShown={() => setShowApprovalRequest(false)} />
+      )}
+
+      {/* ─── Documents (Tài liệu) Tab ─── */}
+      {activeTab === 'documents' && (
+        <ProjectDocumentsTab projectId={id} project={project} />
       )}
 
       {/* ─── Chat (Trao đổi) Tab ─── */}

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 
-export default function ProjectApprovalsTab({ projectId, project, onUpdated }) {
+export default function ProjectApprovalsTab({ projectId, project, onUpdated, autoShowRequest, onRequestShown }) {
   const { user } = useAuth();
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -16,6 +16,14 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated }) {
   const [expandedId, setExpandedId] = useState(null);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+
+  // Auto-show request form when triggered from header button
+  useEffect(() => {
+    if (autoShowRequest && !loading) {
+      setShowRequest(true);
+      onRequestShown?.();
+    }
+  }, [autoShowRequest, loading]);
 
   const load = useCallback(async () => {
     try {
