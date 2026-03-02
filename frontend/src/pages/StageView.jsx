@@ -51,6 +51,7 @@ export default function StageView() {
   const [advMode, setAdvMode] = useState('advance');
   const [advLoading, setAdvLoading] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState({}); // { projectId: true }
+  const [approvalRules, setApprovalRules] = useState({}); // { stageId: rule }
 
   useEffect(() => {
     const n = new Date();
@@ -97,11 +98,26 @@ export default function StageView() {
         const projIds = Array.from(projectIdsWithTasks);
         const pendingMap = {};
         if (projIds.length > 0) {
+          // Check via project_approvals table
+          const { data: pendData } = await api.get('/approvals/pending').catch(() => ({ data: { approvals: [] } }));
+          (pendData.approvals || []).forEach(a => {
+            if (projIds.includes(a.project_id)) pendingMap[a.project_id] = true;
+          });
+          // Also check via legacy notifications
           const { data: approvals } = await api.get('/projects/pending-approvals', { params: { project_ids: projIds.join(',') } }).catch(() => ({ data: { approvals: {} } }));
           Object.assign(pendingMap, approvals.approvals || {});
         }
         setPendingApprovals(pendingMap);
       } catch { setPendingApprovals({}); }
+
+      // Load approval rules
+      try {
+        const { data: rulesData } = await api.get('/approvals/rules');
+        const rulesMap = {};
+        (rulesData.rules || []).forEach(r => { rulesMap[r.stage_id] = r; });
+        setApprovalRules(rulesMap);
+      } catch { setApprovalRules({}); }
+
     } catch (e) {
       console.error('StageView loadData error:', e);
       setError('Không thể tải dữ liệu.');
@@ -119,10 +135,11 @@ export default function StageView() {
       if (advMode === 'advance' && ns && nst) {
         await api.put(`/projects/${advProj.id}/stage`, { stage_slug: ns, new_status: nst, notes: advNotes || null, attachments: advFiles });
       } else if (advMode === 'review' && ns && nst) {
-        await api.post(`/projects/${advProj.id}/request-approval`, {
+        // Use new approvals API — creates proper approval record for tab Duyệt
+        await api.post(`/approvals/project/${advProj.id}/request`, {
           next_stage_slug: ns, next_status: nst, notes: advNotes || null, attachments: advFiles,
         });
-        alert('✅ Đã gửi yêu cầu duyệt!');
+        alert('✅ Đã gửi yêu cầu duyệt! Quản lý sẽ nhận thông báo.');
       }
       setAdvProj(null); setAdvNotes(''); setAdvFiles([]);
       loadData();
@@ -355,6 +372,9 @@ export default function StageView() {
         .filter(p => projectsAllDone[p.id] && p.status === SLUG_TO_STATUS[slug])
         .map(p => {
           const isPending = pendingApprovals[p.id];
+          // Check approval rule for current stage
+          const currentRule = stageInfo?.id ? approvalRules[stageInfo.id] : null;
+          const isAutoApproval = currentRule?.approval_mode === 'auto';
           return (
             <div key={p.id} className={`${isPending ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} border rounded-xl p-4 flex items-center gap-3 flex-wrap`}>
               <CheckSquare className={`h-5 w-5 ${isPending ? 'text-amber-600' : 'text-emerald-600'}`} />
@@ -366,17 +386,17 @@ export default function StageView() {
                   {isPending ? 'Yêu cầu duyệt đã được gửi, đang chờ phê duyệt.' : `Tất cả NV ở ${stageName} đã xong.`}
                 </p>
               </div>
-              {!isPending && (
-                <>
-                  <button onClick={() => openAdvanceModal(p, 'advance')}
-                    className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
-                    <ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển → {nextStageName}
-                  </button>
-                  <button onClick={() => openAdvanceModal(p, 'review')}
-                    className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600">
-                    <Send className="h-3.5 w-3.5" /> Chờ duyệt
-                  </button>
-                </>
+              {!isPending && isAutoApproval && (
+                <button onClick={() => openAdvanceModal(p, 'advance')}
+                  className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
+                  <ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển → {nextStageName}
+                </button>
+              )}
+              {!isPending && !isAutoApproval && (
+                <button onClick={() => openAdvanceModal(p, 'review')}
+                  className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600">
+                  <Send className="h-3.5 w-3.5" /> Chờ duyệt → {nextStageName}
+                </button>
               )}
             </div>
           );
