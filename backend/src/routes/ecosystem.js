@@ -203,17 +203,27 @@ r.get('/units/:id', async (req, res) => {
 r.post('/units', async (req, res) => {
   try {
     const { name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index } = req.body;
+    // Sanitize: empty string → null for UUID fields
+    const clean = (v) => (v && v.trim && v.trim() !== '') ? v : null;
 
+    const pid = clean(parent_id);
     // Permission check
-    if (parent_id) {
-      const hasAccess = await canManageUnit(req.user.userId, req.user.role, parent_id);
+    if (pid) {
+      const hasAccess = await canManageUnit(req.user.userId, req.user.role, pid);
       if (!hasAccess) return res.status(403).json({ error: 'Không có quyền tạo đơn vị con' });
     } else if (!['admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin tạo được đơn vị gốc' });
     }
 
     const { data, error } = await supabase.from('ecosystem_units')
-      .insert({ name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index: order_index || 0 })
+      .insert({
+        name, short_name: clean(short_name), code: clean(code),
+        level_id: clean(level_id), parent_id: pid,
+        company_id: clean(company_id), department_id: clean(department_id),
+        description: clean(description), logo_url: clean(logo_url),
+        address: clean(address), phone: clean(phone), email: clean(email),
+        order_index: order_index || 0,
+      })
       .select('*, level:ecosystem_levels(id,name,slug,depth,icon,color)').single();
     if (error) throw error;
 
@@ -228,19 +238,20 @@ r.put('/units/:id', async (req, res) => {
     if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
 
     const { name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index, is_active } = req.body;
+    const clean = (v) => (v && v.trim && v.trim() !== '') ? v : null;
     const update = { updated_at: new Date().toISOString() };
     if (name !== undefined) update.name = name;
-    if (short_name !== undefined) update.short_name = short_name;
-    if (code !== undefined) update.code = code;
-    if (level_id !== undefined) update.level_id = level_id;
-    if (parent_id !== undefined) update.parent_id = parent_id;
-    if (company_id !== undefined) update.company_id = company_id;
-    if (department_id !== undefined) update.department_id = department_id;
-    if (description !== undefined) update.description = description;
-    if (logo_url !== undefined) update.logo_url = logo_url;
-    if (address !== undefined) update.address = address;
-    if (phone !== undefined) update.phone = phone;
-    if (email !== undefined) update.email = email;
+    if (short_name !== undefined) update.short_name = clean(short_name);
+    if (code !== undefined) update.code = clean(code);
+    if (level_id !== undefined) update.level_id = clean(level_id);
+    if (parent_id !== undefined) update.parent_id = clean(parent_id);
+    if (company_id !== undefined) update.company_id = clean(company_id);
+    if (department_id !== undefined) update.department_id = clean(department_id);
+    if (description !== undefined) update.description = clean(description);
+    if (logo_url !== undefined) update.logo_url = clean(logo_url);
+    if (address !== undefined) update.address = clean(address);
+    if (phone !== undefined) update.phone = clean(phone);
+    if (email !== undefined) update.email = clean(email);
     if (order_index !== undefined) update.order_index = order_index;
     if (is_active !== undefined) update.is_active = is_active;
 
