@@ -473,12 +473,12 @@ export default function StageView() {
                           </div>
                         </div>
 
-                        {/* Checklist items — interactive (show for all, but only interact on current) */}
+                        {/* Checklist items — interactive (notes/files editable for all, tick only for current) */}
                         {clTotal > 0 && (
                           <div className="mt-2 space-y-1">
                             <div className="w-full h-1 bg-gray-100 rounded-full mb-1"><div className={`h-full rounded-full transition-all ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(clDone/clTotal)*100}%` }} /></div>
                             {checklists.map(cl => (
-                              <ChecklistCard key={cl.id} cl={cl} taskId={task.id} canInteract={canInteract && isCurrent}
+                              <ChecklistCard key={cl.id} cl={cl} taskId={task.id} canInteract={canInteract} canToggle={canInteract && isCurrent}
                                 onToggle={() => canInteract && isCurrent && toggleCheckItem(task.id, cl.id, cl.is_completed)}
                                 onSaveNote={(notes, files) => saveChecklistNote(task.id, cl.id, notes, files)} />
                             ))}
@@ -587,7 +587,7 @@ export default function StageView() {
 }
 
 // ═══ Checklist Card — inline notes + file upload ═══
-function ChecklistCard({ cl, taskId, canInteract, onToggle, onSaveNote }) {
+function ChecklistCard({ cl, taskId, canInteract, canToggle, onToggle, onSaveNote }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [noteText, setNoteText] = useState('');
@@ -616,9 +616,9 @@ function ChecklistCard({ cl, taskId, canInteract, onToggle, onSaveNote }) {
   return (
     <div className="group">
       <div className="flex items-start gap-1.5">
-        <button onClick={onToggle} disabled={!canInteract}
+        <button onClick={onToggle} disabled={!canToggle}
           className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
-            cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : canInteract ? 'border-gray-300 hover:border-blue-400 cursor-pointer' : 'border-gray-200'
+            cl.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : canToggle ? 'border-gray-300 hover:border-blue-400 cursor-pointer' : 'border-gray-200'
           }`}>
           {cl.is_completed && <CheckSquare className="h-2.5 w-2.5" />}
         </button>
