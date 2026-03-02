@@ -206,8 +206,15 @@ r.get('/rules', async (req, res) => {
       .select('*, stage:workflow_stages(id,name,slug,color,icon,order_index)')
       .order('created_at');
     if (error) throw error;
-    // Sort by stage order_index
-    const sorted = (data || []).sort((a, b) => (a.stage?.order_index || 0) - (b.stage?.order_index || 0));
+    // Sort by stage order_index + parse auto_condition to array
+    const sorted = (data || [])
+      .sort((a, b) => (a.stage?.order_index || 0) - (b.stage?.order_index || 0))
+      .map(r => {
+        let conditions = [];
+        try { conditions = JSON.parse(r.auto_condition); } catch { conditions = [r.auto_condition || 'all_tasks_done']; }
+        if (!Array.isArray(conditions)) conditions = [conditions];
+        return { ...r, auto_conditions: conditions };
+      });
     res.json({ rules: sorted });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -218,10 +225,16 @@ r.put('/rules/:stageId', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
-    const { approval_mode, auto_condition, description } = req.body;
+    const { approval_mode, auto_condition, auto_conditions, description } = req.body;
     const update = { updated_at: new Date().toISOString() };
     if (approval_mode !== undefined) update.approval_mode = approval_mode;
-    if (auto_condition !== undefined) update.auto_condition = auto_condition;
+    // Support both single (auto_condition) and multiple (auto_conditions) 
+    if (auto_conditions !== undefined) {
+      // Save as JSON string for VARCHAR column compatibility
+      update.auto_condition = JSON.stringify(auto_conditions);
+    } else if (auto_condition !== undefined) {
+      update.auto_condition = auto_condition;
+    }
     if (description !== undefined) update.description = description;
 
     // Upsert: update if exists, insert if not
@@ -512,75 +525,94 @@ r.post('/:approvalId/re-request', async (req, res) => {
 });
 
 // ─── Auto-approval checker ──
-async function checkAutoApproval(projectId, stageId, condition) {
+// Supports both single condition (string) and multiple conditions (array)
+// When multiple: ALL conditions must pass (AND logic)
+async function checkAutoApproval(projectId, stageId, conditionInput) {
   try {
+    // Normalize: string → array
+    let conditions = [];
+    if (Array.isArray(conditionInput)) {
+      conditions = conditionInput;
+    } else if (typeof conditionInput === 'string') {
+      try { conditions = JSON.parse(conditionInput); } catch { conditions = [conditionInput]; }
+    }
+    if (!conditions.length) conditions = ['all_tasks_done'];
+
     // Get all tasks for this project+stage
     const { data: tasks } = await supabase.from('tasks')
       .select('id,status').eq('project_id', projectId).eq('stage_id', stageId);
 
     if (!tasks?.length) return { approved: false, reason: 'Không có tasks' };
 
-    // Check all tasks done first
+    // Check all tasks done first (always required)
     const allDone = tasks.every(t => t.status === 'done');
     if (!allDone) return { approved: false, reason: 'Còn tasks chưa hoàn thành' };
 
-    switch (condition) {
-      case 'all_tasks_done':
-        return { approved: true, reason: 'Tất cả tasks đã hoàn thành' };
+    // If only 'all_tasks_done', pass immediately
+    if (conditions.length === 1 && conditions[0] === 'all_tasks_done') {
+      return { approved: true, reason: 'Tất cả tasks đã hoàn thành' };
+    }
 
-      case 'checklist_complete': {
-        // Check all checklists across all tasks are completed
-        const taskIds = tasks.map(t => t.id);
-        const { data: checklists } = await supabase.from('task_checklists')
-          .select('id,is_completed').in('task_id', taskIds);
-        if (!checklists?.length) return { approved: true, reason: 'Không có checklist — tự động duyệt' };
-        const allChecked = checklists.every(c => c.is_completed);
-        return allChecked
-          ? { approved: true, reason: 'Tất cả checklist đã hoàn thành' }
-          : { approved: false, reason: `${checklists.filter(c => !c.is_completed).length} checklist chưa tick` };
+    const taskIds = tasks.map(t => t.id);
+    const failedConditions = [];
+    const passedConditions = [];
+
+    for (const condition of conditions) {
+      if (condition === 'all_tasks_done') {
+        passedConditions.push('Tất cả tasks hoàn thành');
+        continue;
       }
 
-      case 'checklist_has_files': {
-        const taskIds = tasks.map(t => t.id);
-        const { data: checklists } = await supabase.from('task_checklists')
-          .select('id,is_completed,attachments').in('task_id', taskIds);
-        if (!checklists?.length) return { approved: true, reason: 'Không có checklist' };
-        const allHaveFiles = checklists.every(c => {
-          const atts = c.attachments || [];
-          return atts.length > 0;
-        });
-        return allHaveFiles
-          ? { approved: true, reason: 'Tất cả checklist có file đính kèm' }
-          : { approved: false, reason: 'Một số checklist chưa có file đính kèm' };
-      }
+      switch (condition) {
+        case 'checklist_complete': {
+          const { data: checklists } = await supabase.from('task_checklists')
+            .select('id,is_completed').in('task_id', taskIds);
+          if (!checklists?.length) { passedConditions.push('Không có checklist'); break; }
+          const allChecked = checklists.every(c => c.is_completed);
+          if (allChecked) passedConditions.push('Checklist đã tick hết');
+          else failedConditions.push(`${checklists.filter(c => !c.is_completed).length} checklist chưa tick`);
+          break;
+        }
 
-      case 'checklist_has_notes': {
-        const taskIds = tasks.map(t => t.id);
-        const { data: checklists } = await supabase.from('task_checklists')
-          .select('id,is_completed,notes').in('task_id', taskIds);
-        if (!checklists?.length) return { approved: true, reason: 'Không có checklist' };
-        const allHaveNotes = checklists.every(c => c.notes?.trim());
-        return allHaveNotes
-          ? { approved: true, reason: 'Tất cả checklist có ghi chú' }
-          : { approved: false, reason: 'Một số checklist chưa có ghi chú' };
-      }
+        case 'checklist_has_files': {
+          const { data: checklists } = await supabase.from('task_checklists')
+            .select('id,attachments').in('task_id', taskIds);
+          if (!checklists?.length) { passedConditions.push('Không có checklist'); break; }
+          const allHave = checklists.every(c => (c.attachments || []).length > 0);
+          if (allHave) passedConditions.push('Checklist có file');
+          else failedConditions.push('Một số checklist chưa có file');
+          break;
+        }
 
-      case 'checklist_has_files_or_notes': {
-        const taskIds = tasks.map(t => t.id);
-        const { data: checklists } = await supabase.from('task_checklists')
-          .select('id,is_completed,attachments,notes').in('task_id', taskIds);
-        if (!checklists?.length) return { approved: true, reason: 'Không có checklist' };
-        const allHave = checklists.every(c => {
-          const atts = c.attachments || [];
-          return atts.length > 0 || c.notes?.trim();
-        });
-        return allHave
-          ? { approved: true, reason: 'Tất cả checklist có file hoặc ghi chú' }
-          : { approved: false, reason: 'Một số checklist chưa có file hoặc ghi chú' };
-      }
+        case 'checklist_has_notes': {
+          const { data: checklists } = await supabase.from('task_checklists')
+            .select('id,notes').in('task_id', taskIds);
+          if (!checklists?.length) { passedConditions.push('Không có checklist'); break; }
+          const allHave = checklists.every(c => c.notes?.trim());
+          if (allHave) passedConditions.push('Checklist có ghi chú');
+          else failedConditions.push('Một số checklist chưa có ghi chú');
+          break;
+        }
 
-      default:
-        return { approved: false, reason: `Điều kiện không hợp lệ: ${condition}` };
+        case 'checklist_has_files_or_notes': {
+          const { data: checklists } = await supabase.from('task_checklists')
+            .select('id,attachments,notes').in('task_id', taskIds);
+          if (!checklists?.length) { passedConditions.push('Không có checklist'); break; }
+          const allHave = checklists.every(c => (c.attachments || []).length > 0 || c.notes?.trim());
+          if (allHave) passedConditions.push('Checklist có file hoặc ghi chú');
+          else failedConditions.push('Một số checklist chưa có file hoặc ghi chú');
+          break;
+        }
+
+        default:
+          failedConditions.push(`Điều kiện không hợp lệ: ${condition}`);
+      }
+    }
+
+    if (failedConditions.length === 0) {
+      return { approved: true, reason: passedConditions.join(' + ') };
+    } else {
+      return { approved: false, reason: failedConditions.join('; ') };
     }
   } catch (e) {
     console.error('Auto-approval check error:', e);
@@ -600,12 +632,17 @@ r.get('/check-auto/:projectId', async (req, res) => {
 
     if (!rule) return res.json({ mode: 'manual', auto_check: null });
 
+    // Parse conditions
+    let conditions = [];
+    try { conditions = JSON.parse(rule.auto_condition); } catch { conditions = [rule.auto_condition || 'all_tasks_done']; }
+    if (!Array.isArray(conditions)) conditions = [conditions];
+
     if (rule.approval_mode === 'auto') {
-      const result = await checkAutoApproval(req.params.projectId, proj.current_stage_id, rule.auto_condition);
-      return res.json({ mode: 'auto', rule, auto_check: result });
+      const result = await checkAutoApproval(req.params.projectId, proj.current_stage_id, conditions);
+      return res.json({ mode: 'auto', rule: { ...rule, auto_conditions: conditions }, auto_check: result });
     }
 
-    res.json({ mode: rule.approval_mode, rule, auto_check: null });
+    res.json({ mode: rule.approval_mode, rule: { ...rule, auto_conditions: conditions }, auto_check: null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

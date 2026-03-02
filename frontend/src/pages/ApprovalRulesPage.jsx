@@ -16,11 +16,11 @@ function stageIcon(s) {
 
 const MODE_OPTIONS = [
   { value: 'manual', label: 'Chờ duyệt thủ công', desc: 'Bắt buộc quản lý duyệt trước khi chuyển giai đoạn', icon: ShieldAlert, color: 'text-amber-600 bg-amber-50' },
-  { value: 'auto', label: 'Tự động duyệt', desc: 'Hệ thống tự duyệt khi thỏa điều kiện', icon: ShieldCheck, color: 'text-emerald-600 bg-emerald-50' },
+  { value: 'auto', label: 'Tự động duyệt', desc: 'Hệ thống tự duyệt khi thỏa TẤT CẢ điều kiện đã chọn', icon: ShieldCheck, color: 'text-emerald-600 bg-emerald-50' },
 ];
 
 const CONDITION_OPTIONS = [
-  { value: 'all_tasks_done', label: 'Tất cả tasks hoàn thành', desc: 'Duyệt khi mọi công việc ở giai đoạn này đều "Done"', icon: CheckCircle2 },
+  { value: 'all_tasks_done', label: 'Tất cả tasks hoàn thành', desc: 'Mọi công việc ở giai đoạn này đều "Done"', icon: CheckCircle2 },
   { value: 'checklist_complete', label: 'Checklist đã tick hết', desc: 'Tất cả mục checklist phải được tick hoàn thành', icon: CheckCircle2 },
   { value: 'checklist_has_files', label: 'Checklist có file đính kèm', desc: 'Mỗi mục checklist phải có ít nhất 1 file', icon: FileText },
   { value: 'checklist_has_notes', label: 'Checklist có ghi chú', desc: 'Mỗi mục checklist phải có ghi chú', icon: StickyNote },
@@ -32,7 +32,7 @@ export default function ApprovalRulesPage() {
   const [stages, setStages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState({});
-  const [editRule, setEditRule] = useState(null); // stageId being edited
+  const [editRule, setEditRule] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -49,12 +49,12 @@ export default function ApprovalRulesPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const saveRule = async (stageId, mode, condition, description) => {
+  const saveRule = async (stageId, mode, conditions, description) => {
     setSaving(prev => ({ ...prev, [stageId]: true }));
     try {
       await api.put(`/approvals/rules/${stageId}`, {
         approval_mode: mode,
-        auto_condition: condition,
+        auto_conditions: conditions,
         description,
       });
       await load();
@@ -71,13 +71,12 @@ export default function ApprovalRulesPage() {
     </div>
   );
 
-  // Merge stages with rules
   const activeStages = stages.filter(s => s.is_active !== false);
   const stageRules = activeStages.map(s => {
     const rule = rules.find(r => r.stage_id === s.id);
     return {
       stage: s,
-      rule: rule || { approval_mode: 'manual', auto_condition: 'all_tasks_done', description: '' },
+      rule: rule || { approval_mode: 'manual', auto_conditions: ['all_tasks_done'], description: '' },
     };
   });
 
@@ -88,7 +87,7 @@ export default function ApprovalRulesPage() {
           <Shield className="h-6 w-6 text-blue-600" /> Quy Tắc Duyệt Tự Động
         </h1>
         <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-          Cấu hình cách duyệt cho từng giai đoạn: tự động duyệt khi đủ điều kiện hoặc chờ quản lý phê duyệt
+          Cấu hình cách duyệt cho từng giai đoạn · Có thể chọn nhiều điều kiện (tất cả phải thỏa mãn)
         </p>
       </div>
 
@@ -109,7 +108,8 @@ export default function ApprovalRulesPage() {
         {stageRules.map(({ stage, rule }) => {
           const isEditing = editRule === stage.id;
           const isManual = rule.approval_mode === 'manual';
-          const currentCondition = CONDITION_OPTIONS.find(c => c.value === rule.auto_condition);
+          const conditions = rule.auto_conditions || ['all_tasks_done'];
+          const conditionLabels = conditions.map(c => CONDITION_OPTIONS.find(o => o.value === c)?.label || c);
 
           return (
             <div key={stage.id} className={`bg-white rounded-xl border transition-all ${isEditing ? 'ring-2 ring-blue-300 shadow-lg' : ''}`}>
@@ -135,15 +135,24 @@ export default function ApprovalRulesPage() {
                 )}
               </div>
 
-              {/* Description */}
+              {/* Description + conditions summary */}
               {!isEditing && (
                 <div className="px-4 pb-3">
                   <p className="text-xs text-gray-500">
                     {rule.description || (isManual
                       ? 'Bắt buộc quản lý duyệt trước khi chuyển giai đoạn tiếp theo'
-                      : `Tự động duyệt khi: ${currentCondition?.label || rule.auto_condition}`
+                      : `Tự động duyệt khi thỏa tất cả:`
                     )}
                   </p>
+                  {!isManual && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {conditionLabels.map((label, i) => (
+                        <span key={i} className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full">
+                          ✓ {label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -174,8 +183,18 @@ export default function ApprovalRulesPage() {
 
 function RuleEditForm({ rule, stageId, saving, onSave, onCancel }) {
   const [mode, setMode] = useState(rule.approval_mode || 'manual');
-  const [condition, setCondition] = useState(rule.auto_condition || 'all_tasks_done');
+  const [conditions, setConditions] = useState(rule.auto_conditions || ['all_tasks_done']);
   const [description, setDescription] = useState(rule.description || '');
+
+  const toggleCondition = (value) => {
+    setConditions(prev => {
+      if (prev.includes(value)) {
+        const next = prev.filter(c => c !== value);
+        return next.length > 0 ? next : ['all_tasks_done']; // Must have at least 1
+      }
+      return [...prev, value];
+    });
+  };
 
   return (
     <div className="px-4 pb-4 space-y-4 border-t border-gray-100 pt-3">
@@ -201,34 +220,43 @@ function RuleEditForm({ rule, stageId, saving, onSave, onCancel }) {
         </div>
       </div>
 
-      {/* Auto condition (only when mode=auto) */}
+      {/* Auto conditions — CHECKBOXES (multi-select) */}
       {mode === 'auto' && (
         <div>
-          <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-2">Điều kiện tự động duyệt</label>
+          <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">
+            Điều kiện tự động duyệt
+          </label>
+          <p className="text-[10px] text-gray-400 mb-2">Chọn nhiều điều kiện — tất cả phải thỏa mãn mới tự động duyệt (AND)</p>
           <div className="space-y-1.5">
-            {CONDITION_OPTIONS.map(opt => (
-              <label
-                key={opt.value}
-                className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                  condition === opt.value ? 'border-emerald-400 bg-emerald-50/50' : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="condition"
-                  value={opt.value}
-                  checked={condition === opt.value}
-                  onChange={() => setCondition(opt.value)}
-                  className="accent-emerald-600"
-                />
-                <opt.icon className={`h-4 w-4 shrink-0 ${condition === opt.value ? 'text-emerald-600' : 'text-gray-400'}`} />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-800">{opt.label}</p>
-                  <p className="text-[10px] text-gray-500">{opt.desc}</p>
-                </div>
-              </label>
-            ))}
+            {CONDITION_OPTIONS.map(opt => {
+              const checked = conditions.includes(opt.value);
+              return (
+                <label
+                  key={opt.value}
+                  className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                    checked ? 'border-emerald-400 bg-emerald-50/50' : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleCondition(opt.value)}
+                    className="accent-emerald-600 h-4 w-4 rounded"
+                  />
+                  <opt.icon className={`h-4 w-4 shrink-0 ${checked ? 'text-emerald-600' : 'text-gray-400'}`} />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-800">{opt.label}</p>
+                    <p className="text-[10px] text-gray-500">{opt.desc}</p>
+                  </div>
+                </label>
+              );
+            })}
           </div>
+          {conditions.length > 1 && (
+            <div className="mt-2 bg-blue-50 rounded-lg p-2 text-[10px] text-blue-700 flex items-center gap-1.5">
+              💡 <strong>{conditions.length} điều kiện</strong> — hệ thống kiểm tra TẤT CẢ trước khi tự động duyệt
+            </div>
+          )}
         </div>
       )}
 
@@ -247,7 +275,7 @@ function RuleEditForm({ rule, stageId, saving, onSave, onCancel }) {
       <div className="flex justify-end gap-2 pt-1">
         <button onClick={onCancel} className="h-8 px-3 border rounded-lg text-xs text-gray-600 cursor-pointer hover:bg-gray-50">Hủy</button>
         <button
-          onClick={() => onSave(stageId, mode, condition, description)}
+          onClick={() => onSave(stageId, mode, conditions, description)}
           disabled={saving}
           className="h-8 px-4 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5"
         >
