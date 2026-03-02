@@ -74,8 +74,8 @@ r.get('/', async (req, res) => {
     const { role, department_id, search, include_inactive } = req.query;
 
     // Try full select (needs migration 06 columns), fallback to basic
-    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments(id,name,color)`;
-    const basicCols = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at,department:departments(id,name,color)`;
+    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color)`;
+    const basicCols = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color)`;
     const basicColsNoDept = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at`;
 
     let data = null, error = null;
@@ -134,7 +134,7 @@ r.get('/:id', async (req, res) => {
       id,email,full_name,phone,avatar,role,position,department_id,
       date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,
       is_active,last_login_at,created_at,
-      department:departments(id,name,color)
+      department:departments!users_department_id_fkey(id,name,color)
     `).eq('id', req.params.id).single();
     if (!e1) { user = u1; }
     else {
