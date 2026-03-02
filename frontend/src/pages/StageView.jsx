@@ -78,14 +78,14 @@ export default function StageView() {
         .catch(() => ({ data: { tasks: [] } }));
       let stageTasks = taskData.tasks || [];
 
-      // Load checklists for each task (parallel)
-      const withChecklists = await Promise.all(stageTasks.map(async (t) => {
-        try {
-          const { data } = await api.get(`/tasks/${t.id}`);
-          return { ...t, checklists: data.task?.checklists || [], assignee: data.task?.assignee || t.assignee };
-        } catch { return { ...t, checklists: [] }; }
-      }));
-      stageTasks = withChecklists;
+      // Load checklists for all tasks in parallel (batch)
+      const checklistPromises = stageTasks.map(t =>
+        api.get(`/tasks/${t.id}/checklists`).then(r => ({ taskId: t.id, checklists: r.data.checklists || [] })).catch(() => ({ taskId: t.id, checklists: [] }))
+      );
+      const checklistResults = await Promise.all(checklistPromises);
+      const clMap = {};
+      checklistResults.forEach(r => { clMap[r.taskId] = r.checklists; });
+      stageTasks = stageTasks.map(t => ({ ...t, checklists: clMap[t.id] || [] }));
 
       const allProjs = projRes.data.projects || [];
       const projectIdsWithTasks = new Set(stageTasks.map(t => t.project_id));
@@ -153,8 +153,18 @@ export default function StageView() {
     setAdvFiles([...summary.files]);
   };
 
-  const startTask = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' }); loadData(); } catch {} };
-  const markTaskDone = async (taskId) => { try { await api.patch(`/tasks/${taskId}/status`, { status: 'done' }); loadData(); } catch {} };
+  const startTask = async (taskId) => {
+    // Optimistic update
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'in_progress' } : t));
+    try { await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' }); } catch { }
+    loadData();
+  };
+  const markTaskDone = async (taskId) => {
+    // Optimistic update — thẻ dự án sẽ nhảy sang cột tiếp theo ngay lập tức
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'done' } : t));
+    try { await api.patch(`/tasks/${taskId}/status`, { status: 'done' }); } catch { }
+    loadData();
+  };
   const toggleCheckItem = async (taskId, clId, isCompleted) => {
     setTasks(prev => prev.map(t => {
       if (t.id !== taskId) return t;
