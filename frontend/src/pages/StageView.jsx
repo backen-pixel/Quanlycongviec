@@ -426,6 +426,9 @@ export default function StageView() {
                     const isDone = task.status === 'done';
                     const isActive = task.status === 'in_progress';
                     const isPending = task.status === 'pending';
+                    // Dự án đã chuyển sang quy trình khác → chỉ xem
+                    const projStillHere = proj.status === SLUG_TO_STATUS[slug];
+                    const canEdit = canInteract && projStillHere;
                     const projTasks = tasksByProject[projectId] || [];
                     const pDone = projTasks.filter(t => t.status === 'done').length;
                     const pTotal = projTasks.length;
@@ -453,7 +456,8 @@ export default function StageView() {
                               {proj.company && <p className="text-[10px] text-indigo-500">🏢 {proj.company.short_name || proj.company.name}</p>}
                             </div>
                             {isDone && <CheckSquare className="h-4 w-4 text-emerald-500 shrink-0" />}
-                            {isCurrent && !isDone && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium shrink-0">Đang làm</span>}
+                            {isCurrent && !isDone && projStillHere && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium shrink-0">Đang làm</span>}
+                            {!projStillHere && <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium shrink-0">Đã chuyển</span>}
                           </div>
                         </Link>
 
@@ -478,15 +482,15 @@ export default function StageView() {
                           <div className="mt-2 space-y-1">
                             <div className="w-full h-1 bg-gray-100 rounded-full mb-1"><div className={`h-full rounded-full transition-all ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(clDone/clTotal)*100}%` }} /></div>
                             {checklists.map(cl => (
-                              <ChecklistCard key={cl.id} cl={cl} taskId={task.id} canInteract={canInteract} canToggle={canInteract && isCurrent}
-                                onToggle={() => canInteract && isCurrent && toggleCheckItem(task.id, cl.id, cl.is_completed)}
+                              <ChecklistCard key={cl.id} cl={cl} taskId={task.id} canInteract={canEdit} canToggle={canEdit && isCurrent}
+                                onToggle={() => canEdit && isCurrent && toggleCheckItem(task.id, cl.id, cl.is_completed)}
                                 onSaveNote={(notes, files) => saveChecklistNote(task.id, cl.id, notes, files)} />
                             ))}
                           </div>
                         )}
 
-                        {/* Action buttons — only for current task, not done */}
-                        {canInteract && isCurrent && !isDone && (
+                        {/* Action buttons — only for current task, project still at this stage */}
+                        {canEdit && isCurrent && !isDone && (
                           <div className="flex gap-1 mt-2">
                             {task.status === 'pending' && <button onClick={e => { e.preventDefault(); startTask(task.id); }} className="flex-1 h-6 bg-blue-50 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
                             {isActive && allClDone && <button onClick={e => { e.preventDefault(); markTaskDone(task.id); }} className="flex-1 h-6 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer animate-pulse">✓ Hoàn thành</button>}
