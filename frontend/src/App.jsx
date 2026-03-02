@@ -18,6 +18,8 @@ import CompaniesPage from './pages/CompaniesPage';
 import DepartmentsPage from './pages/DepartmentsPage';
 import WorkflowSettings from './pages/WorkflowSettings';
 import ApprovalRulesPage from './pages/ApprovalRulesPage';
+import EcosystemPage from './pages/EcosystemPage';
+import StageGroupsPage from './pages/StageGroupsPage';
 import DepartmentChat from './pages/DepartmentChat';
 import { Settings } from 'lucide-react';
 
@@ -77,6 +79,8 @@ export default function App() {
             <Route path="/personal-tasks" element={<PersonalTasks />} />
             <Route path="/workflow-settings" element={<WorkflowSettings />} />
             <Route path="/approval-rules" element={<ApprovalRulesPage />} />
+            <Route path="/ecosystem" element={<EcosystemPage />} />
+            <Route path="/stage-groups" element={<StageGroupsPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
                 <div className="text-center">
