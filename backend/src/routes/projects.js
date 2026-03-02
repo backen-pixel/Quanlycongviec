@@ -654,6 +654,7 @@ r.post('/:id/request-approval', async (req, res) => {
 r.post('/:id/approve-advance', async (req, res) => {
   try {
     const { notification_id, action, reject_reason } = req.body; // action: 'approve' | 'reject'
+    if (!reject_reason?.trim()) return res.status(400).json({ error: 'Vui lòng nhập lý do' });
 
     // Get the notification with metadata
     const { data: notif } = await supabase.from('notifications').select('*').eq('id', notification_id).single();
@@ -692,7 +693,7 @@ r.post('/:id/approve-advance', async (req, res) => {
       // Notify requester: approved
       await createNotification(req, meta.requested_by, 'stage_changed',
         `✅ Đã duyệt: ${meta.project_code}`,
-        `${req.user.fullName} đã duyệt chuyển "${meta.from_stage}" → "${meta.to_stage}"`,
+        `${req.user.fullName} đã duyệt chuyển "${meta.from_stage}" → "${meta.to_stage}"\nLý do: ${reject_reason}`,
         'project', req.params.id);
 
       await logActivity(req.user.userId, 'approval_approved', 'project', req.params.id,
