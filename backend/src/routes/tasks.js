@@ -295,7 +295,7 @@ r.patch('/:id/status', async (req, res) => {
           const { data: stage } = await supabase.from('workflow_stages').select('name').eq('id', data.stage_id).single();
           if (proj) {
             const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
-            await notifyMultiple(req, teamIds, 'stage_changed',
+            await notifyMultiple(req, teamIds, 'project_stage_changed',
               `🎉 Hoàn thành giai đoạn "${stage?.name}"`,
               `Tất cả công việc giai đoạn "${stage?.name}" của dự án ${proj.code} đã hoàn thành. Sẵn sàng chuyển giai đoạn tiếp theo!`,
               'project', data.project_id);

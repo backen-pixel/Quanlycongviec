@@ -176,9 +176,9 @@ export default function NotificationCenter({ socket }) {
               </div>
             ) : (
               notifications.map(n => {
-                const Icon = ICON_MAP[n.type] || Bell;
-                const color = COLOR_MAP[n.type] || 'bg-gray-100 text-gray-600';
                 const isApproval = n.metadata?.type === 'approval_request';
+                const Icon = isApproval ? FolderKanban : (ICON_MAP[n.type] || Bell);
+                const color = isApproval ? 'bg-orange-100 text-orange-600' : (COLOR_MAP[n.type] || 'bg-gray-100 text-gray-600');
                 const approvalStatus = n.metadata?.status; // pending | approved | rejected
 
                 return (
