@@ -36,13 +36,13 @@ r.get('/pending-approvals', async (req, res) => {
     // Query all approval_request notifications
     const { data: notifs } = await supabase.from('notifications')
       .select('id,metadata')
-      .eq('type', 'approval_request')
+      .eq('type', 'system')
       .order('created_at', { ascending: false })
       .limit(200);
 
     const approvals = {};
     (notifs || []).forEach(n => {
-      if (n.metadata?.status === 'pending' && n.metadata?.project_id && ids.includes(n.metadata.project_id)) {
+      if (n.metadata?.type === 'approval_request' && n.metadata?.status === 'pending' && n.metadata?.project_id && ids.includes(n.metadata.project_id)) {
         approvals[n.metadata.project_id] = true;
       }
     });
@@ -581,7 +581,7 @@ r.put('/:id/stage', async (req, res) => {
         fullProj.installation_person_id, fullProj.care_person_id,
         fullProj.sales_person_id, fullProj.designer_id, fullProj.project_manager_id,
       ].filter(Boolean);
-      await notifyMultiple(req, allPersonIds, 'stage_changed',
+      await notifyMultiple(req, allPersonIds, 'project_stage_changed',
         `🔄 Chuyển giai đoạn: ${stage.name}`,
         `Dự án ${fullProj.code} đã chuyển sang giai đoạn "${stage.name}"`,
         'project', data.id);
@@ -598,21 +598,25 @@ r.put('/:id/stage', async (req, res) => {
 r.post('/:id/request-approval', async (req, res) => {
   try {
     const { notes, attachments, next_stage_slug, next_status } = req.body;
-    const { data: proj } = await supabase.from('projects').select(
-      'id,code,name,project_manager_id,sales_person_id,created_by_id,current_stage_id,status'
-    ).eq('id', req.params.id).single();
-    if (!proj) return res.status(404).json({ error: 'Dự án không tồn tại' });
 
-    // Determine who to notify: project_manager > sales_person > created_by
-    const approverId = proj.project_manager_id || proj.sales_person_id || proj.created_by_id;
-    if (!approverId) return res.status(400).json({ error: 'Không tìm được người duyệt' });
+    // Try with created_by_id, fallback without it
+    let proj;
+    const { data: p1, error: e1 } = await supabase.from('projects').select(
+      'id,code,name,project_manager_id,sales_person_id,current_stage_id,status'
+    ).eq('id', req.params.id).single();
+    proj = p1;
+    if (e1 || !proj) return res.status(404).json({ error: 'Dự án không tồn tại' });
+
+    // Determine who to notify: project_manager > sales_person > current user as fallback
+    const approverId = proj.project_manager_id || proj.sales_person_id;
+    if (!approverId) return res.status(400).json({ error: 'Không tìm được người duyệt. Hãy gán Quản lý DA hoặc Sales cho dự án.' });
 
     const { data: nextStage } = await supabase.from('workflow_stages').select('id,name').eq('slug', next_stage_slug).single();
     const { data: curStage } = await supabase.from('workflow_stages').select('id,name').eq('id', proj.current_stage_id).single();
 
     // Save approval request as a special notification with metadata
     const metadata = {
-      type: 'approval_request',
+      type: 'system',
       project_id: proj.id,
       project_code: proj.code,
       project_name: proj.name,
@@ -629,9 +633,9 @@ r.post('/:id/request-approval', async (req, res) => {
 
     const { data: notif, error } = await supabase.from('notifications').insert({
       user_id: approverId,
-      type: 'approval_request',
-      title: `🔍 Yêu cầu duyệt: ${proj.code}`,
-      message: `${req.user.fullName} yêu cầu chuyển "${curStage?.name}" → "${nextStage?.name}"${notes ? `\nGhi chú: ${notes}` : ''}`,
+      type: 'system',
+      title: `🔍 Yêu cầu duyệt: ${proj.code} — ${proj.name}`,
+      message: `${req.user.fullName} yêu cầu chuyển "${curStage?.name}" → "${nextStage?.name}"${notes ? `\n\n📝 Nội dung:\n${notes}` : ''}${attachments?.length ? `\n\n📎 ${attachments.length} file đính kèm` : ''}`,
       entity_type: 'project',
       entity_id: proj.id,
       metadata,
@@ -691,7 +695,7 @@ r.post('/:id/approve-advance', async (req, res) => {
       }).catch(() => {});
 
       // Notify requester: approved
-      await createNotification(req, meta.requested_by, 'stage_changed',
+      await createNotification(req, meta.requested_by, 'project_stage_changed',
         `✅ Đã duyệt: ${meta.project_code}`,
         `${req.user.fullName} đã duyệt chuyển "${meta.from_stage}" → "${meta.to_stage}"\nLý do: ${reject_reason}`,
         'project', req.params.id);
