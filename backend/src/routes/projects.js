@@ -25,6 +25,31 @@ async function logActivity(userId, action, entityType, entityId, description, ol
   await supabase.from('activity_logs').insert({ user_id: userId, action, entity_type: entityType, entity_id: entityId, description, old_values: oldValues, new_values: newValues });
 }
 
+// ─── CHECK PENDING APPROVALS ──
+r.get('/pending-approvals', async (req, res) => {
+  try {
+    const { project_ids } = req.query;
+    if (!project_ids) return res.json({ approvals: {} });
+    const ids = project_ids.split(',').filter(Boolean);
+    if (!ids.length) return res.json({ approvals: {} });
+
+    // Query all approval_request notifications
+    const { data: notifs } = await supabase.from('notifications')
+      .select('id,metadata')
+      .eq('type', 'approval_request')
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    const approvals = {};
+    (notifs || []).forEach(n => {
+      if (n.metadata?.status === 'pending' && n.metadata?.project_id && ids.includes(n.metadata.project_id)) {
+        approvals[n.metadata.project_id] = true;
+      }
+    });
+    res.json({ approvals });
+  } catch (e) { console.error(e); res.json({ approvals: {} }); }
+});
+
 // ─── LIST PROJECTS ──
 r.get('/', async (req, res) => {
   try {

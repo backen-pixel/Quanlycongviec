@@ -22,6 +22,8 @@ const STAGE_NAMES = {
 
 const NEXT_STATUS = { consulting:'designing', design:'quoting', quotation:'contract_signed', contract:'producing', production:'shipping', shipping:'installing', installation:'warranty' };
 const NEXT_SLUG = { consulting:'design', design:'quotation', quotation:'contract', contract:'production', production:'shipping', shipping:'installation', installation:'customer-care' };
+// slug → project status khi đang ở giai đoạn đó
+const SLUG_TO_STATUS = { consulting:'consulting', design:'designing', quotation:'quoting', contract:'contract_signed', production:'producing', shipping:'shipping', installation:'installing', 'customer-care':'warranty' };
 
 const QT = [{id:'all',label:'Tất cả'},{id:'today',label:'Hôm nay'},{id:'week',label:'Tuần này'},{id:'month',label:'Tháng này'},{id:'custom',label:'Tùy chọn'}];
 function fmtD(d){return d.toISOString().slice(0,10)}
@@ -48,6 +50,7 @@ export default function StageView() {
   const [advFiles, setAdvFiles] = useState([]);
   const [advMode, setAdvMode] = useState('advance');
   const [advLoading, setAdvLoading] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState({}); // { projectId: true }
 
   useEffect(() => {
     const n = new Date();
@@ -79,6 +82,17 @@ export default function StageView() {
       const projectIdsWithTasks = new Set(stageTasks.map(t => t.project_id));
       setProjects(allProjs.filter(p => projectIdsWithTasks.has(p.id)));
       setTasks(stageTasks.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
+
+      // Check for pending approval requests for visible projects
+      try {
+        const projIds = Array.from(projectIdsWithTasks);
+        const pendingMap = {};
+        if (projIds.length > 0) {
+          const { data: approvals } = await api.get('/projects/pending-approvals', { params: { project_ids: projIds.join(',') } }).catch(() => ({ data: { approvals: {} } }));
+          Object.assign(pendingMap, approvals.approvals || {});
+        }
+        setPendingApprovals(pendingMap);
+      } catch { setPendingApprovals({}); }
     } catch (e) {
       console.error('StageView loadData error:', e);
       setError('Không thể tải dữ liệu.');
@@ -275,24 +289,37 @@ export default function StageView() {
         </div>
       </div>
 
-      {/* Advance banners */}
-      {nextStageName && filteredProjects.filter(p => projectsAllDone[p.id]).map(p => (
-        <div key={p.id} className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center gap-3 flex-wrap">
-          <CheckSquare className="h-5 w-5 text-emerald-600" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-emerald-800">✅ {p.code} — {p.name}: Hoàn thành!</p>
-            <p className="text-xs text-emerald-600">Tất cả NV ở {stageName} đã xong.</p>
-          </div>
-          <button onClick={() => { setAdvProj(p); setAdvMode('advance'); setAdvNotes(''); setAdvFiles([]); }}
-            className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
-            <ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển → {nextStageName}
-          </button>
-          <button onClick={() => { setAdvProj(p); setAdvMode('review'); setAdvNotes(''); setAdvFiles([]); }}
-            className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600">
-            <Send className="h-3.5 w-3.5" /> Chờ duyệt
-          </button>
-        </div>
-      ))}
+      {/* Advance banners — only show for projects currently AT this stage and all tasks done */}
+      {nextStageName && filteredProjects
+        .filter(p => projectsAllDone[p.id] && p.status === SLUG_TO_STATUS[slug])
+        .map(p => {
+          const isPending = pendingApprovals[p.id];
+          return (
+            <div key={p.id} className={`${isPending ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} border rounded-xl p-4 flex items-center gap-3 flex-wrap`}>
+              <CheckSquare className={`h-5 w-5 ${isPending ? 'text-amber-600' : 'text-emerald-600'}`} />
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-semibold ${isPending ? 'text-amber-800' : 'text-emerald-800'}`}>
+                  {isPending ? `⏳ ${p.code} — ${p.name}: Đang chờ duyệt` : `✅ ${p.code} — ${p.name}: Hoàn thành!`}
+                </p>
+                <p className={`text-xs ${isPending ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {isPending ? 'Yêu cầu duyệt đã được gửi, đang chờ phê duyệt.' : `Tất cả NV ở ${stageName} đã xong.`}
+                </p>
+              </div>
+              {!isPending && (
+                <>
+                  <button onClick={() => { setAdvProj(p); setAdvMode('advance'); setAdvNotes(''); setAdvFiles([]); }}
+                    className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
+                    <ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển → {nextStageName}
+                  </button>
+                  <button onClick={() => { setAdvProj(p); setAdvMode('review'); setAdvNotes(''); setAdvFiles([]); }}
+                    className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600">
+                    <Send className="h-3.5 w-3.5" /> Chờ duyệt
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
 
       {/* Progress */}
       {totalTasks > 0 && (
