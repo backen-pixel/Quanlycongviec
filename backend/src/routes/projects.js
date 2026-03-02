@@ -791,31 +791,23 @@ r.delete('/:id', async (req, res) => {
   try {
     const { data: project } = await supabase.from('projects').select('code,name').eq('id', req.params.id).single();
     
-    // Xóa tất cả bảng phụ thuộc trước khi xóa project
-    // 1. Task sub-resources (checklists, comments, participants, time_logs) — FK từ tasks
+    // Xóa tất cả bảng phụ thuộc trước khi xóa project (ignore errors for missing tables)
     const { data: taskIds } = await supabase.from('tasks').select('id').eq('project_id', req.params.id);
     if (taskIds?.length) {
       const ids = taskIds.map(t => t.id);
-      await supabase.from('task_checklists').delete().in('task_id', ids).catch(() => {});
-      await supabase.from('task_comments').delete().in('task_id', ids).catch(() => {});
-      await supabase.from('task_participants').delete().in('task_id', ids).catch(() => {});
-      await supabase.from('task_time_logs').delete().in('task_id', ids).catch(() => {});
-      await supabase.from('file_attachments').delete().eq('entity_type', 'task').in('entity_id', ids).catch(() => {});
+      await supabase.from('task_checklists').delete().in('task_id', ids);
+      await supabase.from('task_comments').delete().in('task_id', ids);
+      await supabase.from('task_participants').delete().in('task_id', ids);
+      await supabase.from('task_time_logs').delete().in('task_id', ids);
+      await supabase.from('file_attachments').delete().eq('entity_type', 'task').in('entity_id', ids);
     }
-    // 2. Tasks
-    await supabase.from('tasks').delete().eq('project_id', req.params.id).catch(() => {});
-    // 3. Project comments
-    await supabase.from('project_comments').delete().eq('project_id', req.params.id).catch(() => {});
-    // 4. Stage transitions
-    await supabase.from('stage_transitions').delete().eq('project_id', req.params.id).catch(() => {});
-    // 5. Workflow lines
-    await supabase.from('project_workflow_lines').delete().eq('project_id', req.params.id).catch(() => {});
-    // 6. Project products
-    await supabase.from('project_products').delete().eq('project_id', req.params.id).catch(() => {});
-    // 7. Activity logs
-    await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', req.params.id).catch(() => {});
-    // 8. Notifications
-    await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', req.params.id).catch(() => {});
+    await supabase.from('tasks').delete().eq('project_id', req.params.id);
+    await supabase.from('project_comments').delete().eq('project_id', req.params.id);
+    await supabase.from('stage_transitions').delete().eq('project_id', req.params.id);
+    await supabase.from('project_workflow_lines').delete().eq('project_id', req.params.id);
+    await supabase.from('project_products').delete().eq('project_id', req.params.id);
+    await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', req.params.id);
+    await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', req.params.id);
 
     // Xóa project
     const { error } = await supabase.from('projects').delete().eq('id', req.params.id);
@@ -824,7 +816,7 @@ r.delete('/:id', async (req, res) => {
     await supabase.from('activity_logs').insert({
       user_id: req.user.userId, action: 'deleted', entity_type: 'project', entity_id: req.params.id,
       description: `Xóa dự án: ${project?.code} - ${project?.name}`,
-    }).catch(() => {});
+    });
 
     res.json({ message: 'Đã xóa dự án' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi xóa dự án: ' + e.message }); }
