@@ -60,6 +60,12 @@ export default function Login() {
             <h2 className="text-xl font-bold text-gray-900 mb-1">Đăng nhập</h2>
             <p className="text-sm text-gray-500 mb-6">Vui lòng nhập thông tin tài khoản</p>
 
+            {typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('expired') === '1' && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg animate-fade-in flex items-center gap-2">
+                ⏰ Phiên đăng nhập đã hết hạn do không hoạt động. Vui lòng đăng nhập lại.
+              </div>
+            )}
+
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg animate-fade-in">
                 {error}

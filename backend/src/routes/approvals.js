@@ -29,17 +29,18 @@ async function logActivity(userId, action, entityType, entityId, description, ol
 // Reusable function to advance project to next stage + create tasks
 async function advanceProjectStage(req, projectId, nextStageSlug, nextStatus, notes, attachments) {
   try {
-    const { data: stage } = await supabase.from('workflow_stages')
+    const { data: stage, error: stageErr } = await supabase.from('workflow_stages')
       .select('id,name').eq('slug', nextStageSlug).single();
-    if (!stage) return;
+    if (stageErr || !stage) { console.error('advanceProjectStage: stage not found', nextStageSlug, stageErr); return; }
 
     const { data: old } = await supabase.from('projects')
       .select('status,current_stage_id,code,name').eq('id', projectId).single();
 
     // Update project
-    await supabase.from('projects').update({
+    const { error: updErr } = await supabase.from('projects').update({
       current_stage_id: stage.id, status: nextStatus, updated_at: new Date().toISOString(),
     }).eq('id', projectId);
+    if (updErr) console.error('advanceProjectStage: update project error', updErr);
 
     // Save stage transition
     await supabase.from('stage_transitions').insert({
@@ -347,6 +348,42 @@ r.post('/project/:projectId/request', async (req, res) => {
         await logActivity(req.user.userId, 'auto_approved', 'project', projectId,
           `Tự động duyệt giai đoạn: ${autoResult.reason}`);
 
+        // ═══ THÔNG BÁO: TỰ ĐỘNG DUYỆT ═══
+        const { data: curStageAuto } = await supabase.from('workflow_stages')
+          .select('name').eq('id', proj.current_stage_id).single();
+
+        // Notify requester
+        await supabase.from('notifications').insert({
+          user_id: req.user.userId,
+          type: 'approval_auto',
+          title: `⚡ Tự động duyệt: ${proj.code}`,
+          message: `Giai đoạn "${curStageAuto?.name}" đã được tự động duyệt.\n✅ ${autoResult.reason}`,
+          entity_type: 'project', entity_id: projectId,
+          metadata: { approval_id: approval.id, project_id: projectId, nav_tab: 'approvals', type: 'approval_auto', stage_name: curStageAuto?.name },
+        });
+
+        // Notify project manager + all admin/managers
+        const { data: projFullAuto } = await supabase.from('projects')
+          .select('project_manager_id,sales_person_id').eq('id', projectId).single();
+        const { data: adminsAuto } = await supabase.from('users')
+          .select('id').in('role', ['admin', 'manager']).eq('is_active', true);
+        const notifyIdsAuto = new Set([
+          ...(adminsAuto || []).map(a => a.id),
+          projFullAuto?.project_manager_id,
+          projFullAuto?.sales_person_id,
+        ].filter(id => id && id !== req.user.userId));
+        for (const uid of notifyIdsAuto) {
+          const { data: nData } = await supabase.from('notifications').insert({
+            user_id: uid, type: 'approval_auto',
+            title: `⚡ Tự động duyệt: ${proj.code}`,
+            message: `${req.user.fullName} — GĐ "${curStageAuto?.name}" tự động duyệt.\n✅ ${autoResult.reason}`,
+            entity_type: 'project', entity_id: projectId,
+            metadata: { approval_id: approval.id, project_id: projectId, nav_tab: 'approvals', type: 'approval_auto' },
+          }).select().single();
+          const pushFn = req.app.get('pushNotification');
+          if (pushFn && nData) pushFn(uid, nData);
+        }
+
         // ═══ TỰ ĐỘNG CHUYỂN GIAI ĐOẠN KHI AUTO-APPROVED ═══
         if (next_stage_slug && next_status) {
           await advanceProjectStage(req, projectId, next_stage_slug, next_status, notes, attachments);
@@ -373,28 +410,54 @@ r.post('/project/:projectId/request', async (req, res) => {
     `).single();
     if (error) throw error;
 
-    // Notify managers/approvers
+    // ═══ THÔNG BÁO: CHỜ DUYỆT ═══
     const approverId = proj.project_manager_id || proj.sales_person_id;
     const { data: curStage } = await supabase.from('workflow_stages')
       .select('name').eq('id', proj.current_stage_id).single();
 
-    if (approverId) {
-      await createNotification(req, approverId, 'system',
-        `🔍 Chờ duyệt: ${proj.code}`,
-        `${req.user.fullName} yêu cầu duyệt giai đoạn "${curStage?.name}" — DA ${proj.code}${notes ? `\n📝 ${notes}` : ''}`,
-        'project', projectId);
+    const approvalMeta = {
+      approval_id: approval.id, project_id: projectId, nav_tab: 'approvals',
+      type: 'approval_request', stage_name: curStage?.name,
+      notes: notes || null, attachments: attachments || [],
+    };
+
+    // Notify project manager
+    if (approverId && approverId !== req.user.userId) {
+      const { data: nData } = await supabase.from('notifications').insert({
+        user_id: approverId, type: 'approval_request',
+        title: `🔍 Chờ duyệt: ${proj.code}`,
+        message: `${req.user.fullName} yêu cầu duyệt GĐ "${curStage?.name}" — DA ${proj.code}${notes ? `\n📝 ${notes}` : ''}`,
+        entity_type: 'project', entity_id: projectId, metadata: approvalMeta,
+      }).select().single();
+      const pushFn = req.app.get('pushNotification');
+      if (pushFn && nData) pushFn(approverId, nData);
     }
 
-    // Also notify all admin/managers
+    // Notify all admin/managers
     const { data: admins } = await supabase.from('users')
       .select('id').in('role', ['admin', 'manager']).eq('is_active', true);
     if (admins?.length) {
-      const adminIds = admins.map(a => a.id).filter(id => id !== approverId);
-      await notifyMultiple(req, adminIds, 'system',
-        `🔍 Chờ duyệt: ${proj.code}`,
-        `${req.user.fullName} yêu cầu duyệt giai đoạn "${curStage?.name}" — DA ${proj.code}`,
-        'project', projectId);
+      const adminIds = admins.map(a => a.id).filter(id => id && id !== approverId && id !== req.user.userId);
+      for (const uid of adminIds) {
+        const { data: nData } = await supabase.from('notifications').insert({
+          user_id: uid, type: 'approval_request',
+          title: `🔍 Chờ duyệt: ${proj.code}`,
+          message: `${req.user.fullName} yêu cầu duyệt GĐ "${curStage?.name}" — DA ${proj.code}`,
+          entity_type: 'project', entity_id: projectId, metadata: approvalMeta,
+        }).select().single();
+        const pushFn = req.app.get('pushNotification');
+        if (pushFn && nData) pushFn(uid, nData);
+      }
     }
+
+    // Confirm to requester
+    await supabase.from('notifications').insert({
+      user_id: req.user.userId, type: 'approval_request',
+      title: `📤 Đã gửi yêu cầu duyệt: ${proj.code}`,
+      message: `Yêu cầu duyệt GĐ "${curStage?.name}" đã được gửi. Chờ quản lý phê duyệt.`,
+      entity_type: 'project', entity_id: projectId,
+      metadata: { approval_id: approval.id, project_id: projectId, nav_tab: 'approvals', type: 'approval_sent' },
+    });
 
     await logActivity(req.user.userId, 'approval_requested', 'project', projectId,
       `Yêu cầu duyệt giai đoạn "${curStage?.name}"`);
@@ -442,14 +505,49 @@ r.post('/:approvalId/decide', async (req, res) => {
 
     // Get project info for notifications
     const { data: proj } = await supabase.from('projects')
-      .select('id,code,name').eq('id', approval.project_id).single();
+      .select('id,code,name,project_manager_id,sales_person_id').eq('id', approval.project_id).single();
+
+    const decideMeta = {
+      approval_id: approval.id, project_id: approval.project_id,
+      nav_tab: 'approvals', stage_name: approval.stage?.name,
+    };
 
     if (action === 'approve') {
-      // Notify requester: approved
-      await createNotification(req, approval.requested_by, 'project_stage_changed',
-        `✅ Đã duyệt: ${proj?.code}`,
-        `${req.user.fullName} đã duyệt giai đoạn "${approval.stage?.name}"${approve_notes ? `\n📝 ${approve_notes}` : ''}`,
-        'project', approval.project_id);
+      // ═══ THÔNG BÁO: ĐÃ DUYỆT ═══
+      // Notify requester
+      const { data: n1 } = await supabase.from('notifications').insert({
+        user_id: approval.requested_by, type: 'approval_approved',
+        title: `✅ Đã duyệt: ${proj?.code}`,
+        message: `${req.user.fullName} đã duyệt GĐ "${approval.stage?.name}" — DA ${proj?.code}${approve_notes ? `\n📝 ${approve_notes}` : ''}`,
+        entity_type: 'project', entity_id: approval.project_id,
+        metadata: { ...decideMeta, type: 'approval_approved' },
+      }).select().single();
+      const pushFn1 = req.app.get('pushNotification');
+      if (pushFn1 && n1) pushFn1(approval.requested_by, n1);
+
+      // Notify all team members
+      const { data: projTeam } = await supabase.from('projects').select(
+        'consulting_person_id,design_person_id,quotation_person_id,contract_person_id,production_person_id,shipping_person_id,installation_person_id,care_person_id,sales_person_id,designer_id,project_manager_id'
+      ).eq('id', approval.project_id).single();
+      if (projTeam) {
+        const teamIds = new Set([
+          projTeam.consulting_person_id, projTeam.design_person_id, projTeam.quotation_person_id,
+          projTeam.contract_person_id, projTeam.production_person_id, projTeam.shipping_person_id,
+          projTeam.installation_person_id, projTeam.care_person_id,
+          projTeam.sales_person_id, projTeam.designer_id, projTeam.project_manager_id,
+        ].filter(id => id && id !== req.user.userId && id !== approval.requested_by));
+        for (const uid of teamIds) {
+          const { data: nData } = await supabase.from('notifications').insert({
+            user_id: uid, type: 'approval_approved',
+            title: `✅ Duyệt xong: ${proj?.code}`,
+            message: `GĐ "${approval.stage?.name}" đã được duyệt bởi ${req.user.fullName}`,
+            entity_type: 'project', entity_id: approval.project_id,
+            metadata: { ...decideMeta, type: 'approval_approved' },
+          }).select().single();
+          const pushFn = req.app.get('pushNotification');
+          if (pushFn && nData) pushFn(uid, nData);
+        }
+      }
 
       await logActivity(req.user.userId, 'approval_approved', 'project', approval.project_id,
         `Duyệt giai đoạn "${approval.stage?.name}"`);
@@ -460,11 +558,31 @@ r.post('/:approvalId/decide', async (req, res) => {
       }
 
     } else {
-      // Notify requester: rejected with reason
-      await createNotification(req, approval.requested_by, 'system',
-        `❌ Từ chối: ${proj?.code}`,
-        `${req.user.fullName} từ chối duyệt "${approval.stage?.name}"\n📝 Lý do: ${reject_reason}`,
-        'project', approval.project_id);
+      // ═══ THÔNG BÁO: TỪ CHỐI ═══
+      // Notify requester with reject reason
+      const { data: n2 } = await supabase.from('notifications').insert({
+        user_id: approval.requested_by, type: 'approval_rejected',
+        title: `❌ Từ chối duyệt: ${proj?.code}`,
+        message: `${req.user.fullName} từ chối GĐ "${approval.stage?.name}"\n📝 Lý do: ${reject_reason}`,
+        entity_type: 'project', entity_id: approval.project_id,
+        metadata: { ...decideMeta, type: 'approval_rejected', reject_reason },
+      }).select().single();
+      const pushFn2 = req.app.get('pushNotification');
+      if (pushFn2 && n2) pushFn2(approval.requested_by, n2);
+
+      // Notify project manager too
+      const pmId = proj?.project_manager_id || proj?.sales_person_id;
+      if (pmId && pmId !== req.user.userId && pmId !== approval.requested_by) {
+        const { data: nPm } = await supabase.from('notifications').insert({
+          user_id: pmId, type: 'approval_rejected',
+          title: `❌ Từ chối duyệt: ${proj?.code}`,
+          message: `GĐ "${approval.stage?.name}" bị từ chối — Lý do: ${reject_reason}`,
+          entity_type: 'project', entity_id: approval.project_id,
+          metadata: { ...decideMeta, type: 'approval_rejected', reject_reason },
+        }).select().single();
+        const pushFn = req.app.get('pushNotification');
+        if (pushFn && nPm) pushFn(pmId, nPm);
+      }
 
       await logActivity(req.user.userId, 'approval_rejected', 'project', approval.project_id,
         `Từ chối duyệt "${approval.stage?.name}": ${reject_reason}`);
@@ -507,17 +625,44 @@ r.post('/:approvalId/re-request', async (req, res) => {
     `).single();
     if (error) throw error;
 
-    // Notify managers
+    // ═══ THÔNG BÁO: GỬI LẠI YÊU CẦU DUYỆT ═══
     const { data: proj } = await supabase.from('projects')
       .select('id,code,project_manager_id,sales_person_id')
       .eq('id', old.project_id).single();
 
+    const reRequestMeta = {
+      approval_id: approval.id, project_id: old.project_id,
+      nav_tab: 'approvals', type: 'approval_re_request', stage_name: approval.stage?.name,
+    };
+
+    // Notify project manager
     const approverId = proj?.project_manager_id || proj?.sales_person_id;
-    if (approverId) {
-      await createNotification(req, approverId, 'system',
-        `🔄 Gửi lại yêu cầu duyệt: ${proj?.code}`,
-        `${req.user.fullName} gửi lại yêu cầu duyệt giai đoạn "${approval.stage?.name}"`,
-        'project', old.project_id);
+    if (approverId && approverId !== req.user.userId) {
+      const { data: nData } = await supabase.from('notifications').insert({
+        user_id: approverId, type: 'approval_request',
+        title: `🔄 Gửi lại yêu cầu: ${proj?.code}`,
+        message: `${req.user.fullName} gửi lại yêu cầu duyệt GĐ "${approval.stage?.name}" — DA ${proj?.code}`,
+        entity_type: 'project', entity_id: old.project_id, metadata: reRequestMeta,
+      }).select().single();
+      const pushFn = req.app.get('pushNotification');
+      if (pushFn && nData) pushFn(approverId, nData);
+    }
+
+    // Notify all admin/managers
+    const { data: adminsRe } = await supabase.from('users')
+      .select('id').in('role', ['admin', 'manager']).eq('is_active', true);
+    if (adminsRe?.length) {
+      for (const a of adminsRe) {
+        if (a.id === approverId || a.id === req.user.userId) continue;
+        const { data: nData } = await supabase.from('notifications').insert({
+          user_id: a.id, type: 'approval_request',
+          title: `🔄 Gửi lại yêu cầu: ${proj?.code}`,
+          message: `${req.user.fullName} gửi lại yêu cầu duyệt GĐ "${approval.stage?.name}"`,
+          entity_type: 'project', entity_id: old.project_id, metadata: reRequestMeta,
+        }).select().single();
+        const pushFn = req.app.get('pushNotification');
+        if (pushFn && nData) pushFn(a.id, nData);
+      }
     }
 
     res.json({ approval });

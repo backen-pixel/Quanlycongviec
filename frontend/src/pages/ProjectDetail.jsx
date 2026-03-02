@@ -368,6 +368,18 @@ export default function ProjectDetail() {
                   <span className="text-xs text-gray-400 font-normal">{done}/{stageTasks.length}</span>
                   {allDone && stageTasks.length > 0 && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">✓ Hoàn thành</span>}
                   {isLocked && <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">🔒 Chờ quy trình trước</span>}
+                  {stageTasks.length === 0 && !isLocked && (isCurrent || isPast) && (
+                    <button onClick={async () => {
+                      if (!confirm(`Tạo nhiệm vụ mẫu cho "${sf.label}"?`)) return;
+                      try {
+                        const { data } = await api.post(`/projects/${id}/generate-tasks`, { stage_slug: sf.slug });
+                        alert(`✅ Đã tạo ${data.count} nhiệm vụ cho "${data.stage}"`);
+                        load();
+                      } catch (e) { alert(e.response?.data?.error || 'Lỗi tạo nhiệm vụ'); }
+                    }} className="text-[10px] text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 cursor-pointer font-normal">
+                      + Tạo NV mẫu
+                    </button>
+                  )}
                 </h4>
 
                 {/* Sub-group by workflow lines */}

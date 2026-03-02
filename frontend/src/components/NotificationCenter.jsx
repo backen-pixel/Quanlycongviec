@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 
 const ICON_MAP = {
@@ -10,7 +11,10 @@ const ICON_MAP = {
   comment_added: MessageSquare,
   project_stage_changed: FolderKanban,
   stage_changed: FolderKanban,
-  approval_request: FolderKanban,
+  approval_request: Shield,
+  approval_approved: ShieldCheck,
+  approval_rejected: XCircle,
+  approval_auto: ShieldCheck,
   deadline_reminder: Clock,
   system: Bell,
 };
@@ -23,11 +27,15 @@ const COLOR_MAP = {
   project_stage_changed: 'bg-amber-100 text-amber-600',
   stage_changed: 'bg-amber-100 text-amber-600',
   approval_request: 'bg-orange-100 text-orange-600',
+  approval_approved: 'bg-emerald-100 text-emerald-600',
+  approval_rejected: 'bg-red-100 text-red-600',
+  approval_auto: 'bg-emerald-100 text-emerald-600',
   deadline_reminder: 'bg-orange-100 text-orange-600',
   system: 'bg-gray-100 text-gray-600',
 };
 
 export default function NotificationCenter({ socket }) {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
