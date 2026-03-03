@@ -3,331 +3,499 @@ import api from '../lib/api';
 import Modal from './Modal';
 import UserSelect from './UserSelect';
 import { FileUploadButton, FilePreview } from './FileUpload';
-import { Plus, CheckSquare, ChevronDown, ChevronRight, Building2, GripVertical, Trash2, Copy, AlertTriangle, Eye } from 'lucide-react';
+import {
+  Plus, CheckSquare, ChevronDown, ChevronRight, Building2, Trash2,
+  AlertTriangle, GitBranch, ArrowRight, Clock, User, ClipboardList, Star
+} from 'lucide-react';
 import { getInitials, avatarColor } from '../lib/utils';
 
-const STAGES = [
-  { slug: 'consulting', label: 'Tư vấn', color: '#8B5CF6', icon: '💬' },
-  { slug: 'design', label: 'Thiết kế', color: '#EC4899', icon: '🎨' },
-  { slug: 'quotation', label: 'Báo giá', color: '#F59E0B', icon: '💰' },
-  { slug: 'contract', label: 'Hợp đồng', color: '#10B981', icon: '📝' },
-  { slug: 'production', label: 'Sản xuất', color: '#F97316', icon: '🏭' },
-  { slug: 'shipping', label: 'Vận chuyển', color: '#06B6D4', icon: '🚛' },
-  { slug: 'installation', label: 'Lắp đặt', color: '#3B82F6', icon: '🔧' },
-  { slug: 'customer-care', label: 'CSKH', color: '#EF4444', icon: '❤️' },
+const PRIORITIES = [
+  { value: 'low', label: 'Thấp' },
+  { value: 'medium', label: 'TB' },
+  { value: 'high', label: 'Cao' },
+  { value: 'urgent', label: 'Gấp' },
 ];
 
-let lineIdCounter = 0;
-function newLineId() { return `new_${++lineIdCounter}_${Date.now()}`; }
-
 export default function ProjectCreateModal({ open, onClose, onCreated }) {
+  // ═══ STATE ═══
+  const [step, setStep] = useState(1); // wizard step: 1=KH+Luồng, 2=Chọn Cty+Mẫu, 3=Preview+Info
   const [form, setForm] = useState({});
   const [customers, setCustomers] = useState([]);
-  const [companies, setCompanies] = useState([]);
-  const [companyEmployees, setCompanyEmployees] = useState([]);
-  const [allUsers, setAllUsers] = useState([]);
-  const [templates, setTemplates] = useState([]);
+  const [flows, setFlows] = useState([]);
+  const [selectedFlow, setSelectedFlow] = useState(null);
+  const [flowAssignments, setFlowAssignments] = useState([]); // per-step: { division_unit_id, company_unit_id, template_set_id }
+  const [stepCompanies, setStepCompanies] = useState({}); // division_id → [companies]
+  const [stepTemplateSets, setStepTemplateSets] = useState({}); // division_id → [template_sets]
+  const [stepTemplateTasks, setStepTemplateTasks] = useState({}); // template_set_id → [tasks]
   const [quotationFiles, setQuotationFiles] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCust, setNewCust] = useState({ full_name: '', phone: '', email: '', city: '' });
-  const [showTemplates, setShowTemplates] = useState(false);
-  const [workflowLines, setWorkflowLines] = useState([]);
-  const [observers, setObservers] = useState({});
+  const [expandedSteps, setExpandedSteps] = useState({});
 
+  // ═══ LOAD DATA ═══
   useEffect(() => {
     if (!open) return;
-    let tplData = [];
+    setStep(1);
+    setForm({ name: '', description: '', customer_id: '', install_address: '', estimated_value: '', priority: 'medium' });
+    setSelectedFlow(null);
+    setFlowAssignments([]);
+    setStepCompanies({});
+    setStepTemplateSets({});
+    setStepTemplateTasks({});
+    setQuotationFiles([]);
+    setExpandedSteps({});
+
     Promise.all([
       api.get('/customers').then(r => setCustomers(r.data.customers || [])).catch(() => {}),
+      api.get('/flows').then(r => setFlows(r.data.flows || [])).catch(() => setFlows([])),
       api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}),
-      api.get('/companies').then(r => setCompanies(r.data.companies || [])).catch(() => setCompanies([])),
-      api.get('/templates/by-stage').then(r => { tplData = r.data.stages || []; setTemplates(tplData); }).catch(() => {}),
-    ]).then(() => {
-      // Auto-fill from template assignees
-      const lines = STAGES.map((s, i) => {
-        const stageTpls = tplData.find(st => st.slug === s.slug);
-        const firstActive = stageTpls?.templates?.find(t => t.is_active && t.assignee_id);
-        return {
-          _id: newLineId(), stage_slug: s.slug, label: s.label,
-          assignee_id: firstActive?.assignee_id || '', _from_template: !!firstActive?.assignee_id,
-          description: '', order_index: i,
-        };
-      });
-      setWorkflowLines(lines);
-    });
-    setForm({ name: '', description: '', customer_id: '', company_id: '', install_address: '', estimated_value: '', priority: 'medium' });
-    setQuotationFiles([]); setCompanyEmployees([]); setObservers({});
+    ]);
   }, [open]);
 
-  useEffect(() => {
-    if (form.company_id) {
-      api.get(`/companies/${form.company_id}/employees`).then(r => setCompanyEmployees(r.data.employees || [])).catch(() => setCompanyEmployees([]));
-    } else { setCompanyEmployees([]); }
-  }, [form.company_id]);
-
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const assignableUsers = form.company_id ? companyEmployees : allUsers;
 
-  const updateLine = (lineId, key, value) => {
-    setWorkflowLines(prev => prev.map(l => l._id === lineId ? { ...l, [key]: value, _from_template: key === 'assignee_id' ? false : l._from_template } : l));
-  };
-  const addLine = (stageSlug) => {
-    const stage = STAGES.find(s => s.slug === stageSlug);
-    const count = workflowLines.filter(l => l.stage_slug === stageSlug).length;
-    setWorkflowLines(prev => {
-      const lastIdx = prev.reduce((a, l, i) => l.stage_slug === stageSlug ? i : a, -1);
-      const n = { _id: newLineId(), stage_slug: stageSlug, label: `${stage?.label} ${count + 1}`, assignee_id: '', description: '', order_index: lastIdx + 1 };
-      const arr = [...prev]; arr.splice(lastIdx + 1, 0, n);
-      return arr.map((l, i) => ({ ...l, order_index: i }));
-    });
-  };
-  const removeLine = (lineId) => {
-    setWorkflowLines(prev => {
-      const line = prev.find(l => l._id === lineId);
-      if (prev.filter(l => l.stage_slug === line?.stage_slug).length <= 1) return prev;
-      return prev.filter(l => l._id !== lineId).map((l, i) => ({ ...l, order_index: i }));
-    });
-  };
-  const duplicateLine = (lineId) => {
-    setWorkflowLines(prev => {
-      const idx = prev.findIndex(l => l._id === lineId);
-      if (idx < 0) return prev;
-      const copy = { ...prev[idx], _id: newLineId(), label: prev[idx].label + ' (Copy)', assignee_id: '' };
-      const arr = [...prev]; arr.splice(idx + 1, 0, copy);
-      return arr.map((l, i) => ({ ...l, order_index: i }));
-    });
-  };
-  const addObserver = (slug, uid) => { if (!uid) return; setObservers(p => ({ ...p, [slug]: [...(p[slug] || []).filter(x => x !== uid), uid] })); };
-  const removeObserver = (slug, uid) => { setObservers(p => ({ ...p, [slug]: (p[slug] || []).filter(x => x !== uid) })); };
+  // ═══ FLOW SELECTION ═══
+  const selectFlow = async (flow) => {
+    setSelectedFlow(flow);
+    const assignments = (flow.steps || []).map((s, i) => ({
+      division_unit_id: s.division_unit_id,
+      division: s.division,
+      company_unit_id: '',
+      template_set_id: '',
+      order_index: i,
+    }));
+    setFlowAssignments(assignments);
 
+    // Load companies + template sets for each division
+    const compMap = {};
+    const tplMap = {};
+    for (const s of (flow.steps || [])) {
+      try {
+        // Get company units under this division
+        const { data } = await api.get('/ecosystem/units');
+        const units = data.units || [];
+        const divChildren = units.filter(u => u.parent_id === s.division_unit_id);
+        compMap[s.division_unit_id] = divChildren;
+
+        // Get template sets for all companies under this division
+        const sets = [];
+        for (const comp of divChildren) {
+          try {
+            const { data: sData } = await api.get(`/company-templates/units/${comp.id}/template-sets`);
+            sets.push(...(sData.sets || []).map(ts => ({ ...ts, company_name: comp.short_name || comp.name })));
+          } catch {}
+        }
+        tplMap[s.division_unit_id] = sets;
+      } catch {}
+    }
+    setStepCompanies(compMap);
+    setStepTemplateSets(tplMap);
+  };
+
+  // ═══ TEMPLATE SET SELECTION → load tasks ═══
+  const selectTemplateSet = async (divId, setId, compId) => {
+    setFlowAssignments(prev => prev.map(a =>
+      a.division_unit_id === divId ? { ...a, template_set_id: setId, company_unit_id: compId } : a
+    ));
+
+    if (setId && !stepTemplateTasks[setId]) {
+      try {
+        const { data } = await api.get(`/company-templates/template-sets/${setId}/tasks`);
+        setStepTemplateTasks(prev => ({ ...prev, [setId]: data.tasks || [] }));
+      } catch {}
+    }
+  };
+
+  // ═══ CREATE CUSTOMER ═══
   const createCustomer = async () => {
     if (!newCust.full_name || !newCust.phone) return;
     try {
       const { data } = await api.post('/customers', newCust);
       setCustomers(c => [data.customer, ...c]);
       setForm(f => ({ ...f, customer_id: data.customer.id }));
-      setShowNewCustomer(false); setNewCust({ full_name: '', phone: '', email: '', city: '' });
-    } catch { }
+      setShowNewCustomer(false);
+      setNewCust({ full_name: '', phone: '', email: '', city: '' });
+    } catch {}
   };
 
-  const missingStages = STAGES.filter(s => workflowLines.filter(l => l.stage_slug === s.slug).every(l => !l.assignee_id));
+  // ═══ SUBMIT ═══
+  const submit = async () => {
+    if (!form.name?.trim()) return alert('Nhập tên dự án');
+    if (!form.customer_id) return alert('Chọn khách hàng');
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!form.name.trim() || !form.customer_id) return;
-    if (missingStages.length > 0) {
-      if (!confirm(`⚠️ Chưa phân công NV cho: ${missingStages.map(s => s.label).join(', ')}\n\nVẫn tạo dự án?`)) return;
-    }
     setLoading(true);
     try {
-      const pf = {};
-      STAGES.forEach(s => {
-        const fl = workflowLines.find(l => l.stage_slug === s.slug);
-        const k = s.slug === 'customer-care' ? 'care_person_id' : `${s.slug.replace('-','_')}_person_id`;
-        pf[k] = fl?.assignee_id || null;
-      });
       const payload = {
-        ...form, ...pf, quotation_files: quotationFiles, observers,
-        workflow_lines: workflowLines.map(l => ({ stage_slug: l.stage_slug, label: l.label, assignee_id: l.assignee_id || null, description: l.description || null, order_index: l.order_index })),
+        name: form.name.trim(),
+        description: form.description || null,
+        customer_id: form.customer_id,
+        install_address: form.install_address || null,
+        estimated_value: form.estimated_value ? +form.estimated_value : null,
+        priority: form.priority || 'medium',
+        flow_id: selectedFlow?.id || null,
+        flow_assignments: flowAssignments.filter(a => a.company_unit_id && a.template_set_id).map(a => ({
+          division_unit_id: a.division_unit_id,
+          company_unit_id: a.company_unit_id,
+          template_set_id: a.template_set_id,
+          order_index: a.order_index,
+        })),
+        quotation_files: quotationFiles,
       };
-      payload.estimated_value = payload.estimated_value ? +payload.estimated_value : null;
-      payload.sales_person_id = pf.consulting_person_id || null;
-      payload.designer_id = pf.design_person_id || null;
-      payload.project_manager_id = pf.consulting_person_id || null;
-      Object.keys(payload).forEach(k => { if (payload[k] === '') payload[k] = null; });
-      await api.post('/projects', payload);
-      onCreated?.(); onClose();
-    } catch { }
+
+      await api.post('/projects/create-with-flow', payload);
+      onCreated?.();
+      onClose();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi tạo dự án');
+    }
     setLoading(false);
   };
 
-  const linesByStage = {};
-  STAGES.forEach(s => { linesByStage[s.slug] = workflowLines.filter(l => l.stage_slug === s.slug); });
-  const activeTemplates = templates.filter(s => s.templates?.some(t => t.is_active));
+  // ═══ COMPUTED ═══
+  const totalTasks = flowAssignments.reduce((sum, a) => {
+    const tasks = stepTemplateTasks[a.template_set_id] || [];
+    return sum + tasks.length;
+  }, 0);
+
+  const defaultFlow = flows.find(f => f.is_default);
+  const toggleStep = (divId) => setExpandedSteps(p => ({ ...p, [divId]: !p[divId] }));
 
   return (
     <Modal open={open} onClose={onClose} title="Tạo dự án mới" size="xl">
-      <form onSubmit={submit} className="space-y-4 max-h-[82vh] overflow-y-auto pr-1">
-        {/* Company */}
-        <div className="bg-indigo-50 rounded-xl p-3 space-y-2">
-          <div className="flex items-center gap-2"><Building2 className="h-4 w-4 text-indigo-600" /><h3 className="text-sm font-semibold text-gray-900">Công ty</h3></div>
-          <select value={form.company_id || ''} onChange={e => set('company_id', e.target.value)} className="input">
-            <option value="">— Chọn công ty —</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>)}
-          </select>
-          {form.company_id && companyEmployees.length > 0 && <p className="text-xs text-indigo-600">✓ {companyEmployees.length} nhân viên</p>}
+      <div className="max-h-[82vh] overflow-y-auto pr-1 space-y-4">
+
+        {/* ═══ STEP INDICATOR ═══ */}
+        <div className="flex items-center gap-2 pb-2 border-b">
+          {[
+            { n: 1, label: 'Khách hàng & Luồng' },
+            { n: 2, label: 'Chọn công ty & Mẫu' },
+            { n: 3, label: 'Xác nhận & Tạo' },
+          ].map(s => (
+            <button key={s.n} onClick={() => {
+              if (s.n === 1) setStep(1);
+              else if (s.n === 2 && form.customer_id && selectedFlow) setStep(2);
+              else if (s.n === 3 && flowAssignments.some(a => a.template_set_id)) setStep(3);
+            }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer transition-all ${
+                step === s.n ? 'bg-indigo-600 text-white' :
+                step > s.n ? 'bg-green-100 text-green-700' :
+                'bg-gray-100 text-gray-400'
+              }`}
+            >
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border border-current">
+                {step > s.n ? '✓' : s.n}
+              </span>
+              <span className="hidden sm:inline">{s.label}</span>
+            </button>
+          ))}
         </div>
 
-        {/* Customer */}
-        <div className="bg-gray-50 rounded-xl p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900">Khách hàng</h3>
-            <button type="button" onClick={() => setShowNewCustomer(!showNewCustomer)} className="text-xs text-blue-600 font-medium cursor-pointer flex items-center gap-1"><Plus className="h-3 w-3" /> Thêm mới</button>
-          </div>
-          {showNewCustomer ? (
-            <div className="bg-white rounded-lg p-3 border space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <input value={newCust.full_name} onChange={e => setNewCust(c => ({...c, full_name: e.target.value}))} placeholder="Họ tên *" className="input" />
-                <input value={newCust.phone} onChange={e => setNewCust(c => ({...c, phone: e.target.value}))} placeholder="SĐT *" className="input" />
-                <input value={newCust.email} onChange={e => setNewCust(c => ({...c, email: e.target.value}))} placeholder="Email" className="input" />
-                <input value={newCust.city} onChange={e => setNewCust(c => ({...c, city: e.target.value}))} placeholder="Thành phố" className="input" />
+        {/* ═══ STEP 1: KHÁCH HÀNG + LUỒNG ═══ */}
+        {step === 1 && (
+          <div className="space-y-4">
+            {/* Customer */}
+            <div className="bg-gray-50 rounded-xl p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900">👤 Khách hàng *</h3>
+                <button type="button" onClick={() => setShowNewCustomer(!showNewCustomer)} className="text-xs text-blue-600 font-medium cursor-pointer flex items-center gap-1"><Plus className="h-3 w-3" /> Thêm mới</button>
               </div>
-              <div className="flex gap-2">
-                <button type="button" onClick={createCustomer} className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium cursor-pointer">Tạo KH</button>
-                <button type="button" onClick={() => setShowNewCustomer(false)} className="h-8 px-3 bg-gray-100 rounded-lg text-xs cursor-pointer">Hủy</button>
-              </div>
+              {showNewCustomer ? (
+                <div className="bg-white rounded-lg p-3 border space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input value={newCust.full_name} onChange={e => setNewCust(c => ({ ...c, full_name: e.target.value }))} placeholder="Họ tên *" className="input" />
+                    <input value={newCust.phone} onChange={e => setNewCust(c => ({ ...c, phone: e.target.value }))} placeholder="SĐT *" className="input" />
+                    <input value={newCust.email} onChange={e => setNewCust(c => ({ ...c, email: e.target.value }))} placeholder="Email" className="input" />
+                    <input value={newCust.city} onChange={e => setNewCust(c => ({ ...c, city: e.target.value }))} placeholder="Thành phố" className="input" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={createCustomer} className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium cursor-pointer">Tạo KH</button>
+                    <button type="button" onClick={() => setShowNewCustomer(false)} className="h-8 px-3 bg-gray-100 rounded-lg text-xs cursor-pointer">Hủy</button>
+                  </div>
+                </div>
+              ) : (
+                <select value={form.customer_id || ''} onChange={e => set('customer_id', e.target.value)} className="input">
+                  <option value="">— Chọn khách hàng —</option>
+                  {customers.map(c => <option key={c.id} value={c.id}>{c.full_name} — {c.phone}</option>)}
+                </select>
+              )}
             </div>
-          ) : (
-            <select value={form.customer_id || ''} onChange={e => set('customer_id', e.target.value)} required className="input">
-              <option value="">— Chọn khách hàng —</option>
-              {customers.map(c => <option key={c.id} value={c.id}>{c.full_name} — {c.phone}</option>)}
-            </select>
-          )}
-        </div>
 
-        {/* Project info */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="sm:col-span-2"><label className="block text-xs font-medium mb-1">Tên dự án *</label>
-            <input value={form.name || ''} onChange={e => set('name', e.target.value)} required className="input" placeholder="VD: Tủ bếp anh Minh — Q7" /></div>
-          <div className="sm:col-span-2"><label className="block text-xs font-medium mb-1">Mô tả</label>
-            <textarea value={form.description || ''} onChange={e => set('description', e.target.value)} className="input min-h-[40px]" /></div>
-          <div><label className="block text-xs font-medium mb-1">Giá trị (VNĐ)</label>
-            <input type="number" value={form.estimated_value || ''} onChange={e => set('estimated_value', e.target.value)} className="input" /></div>
-          <div><label className="block text-xs font-medium mb-1">Địa chỉ lắp đặt</label>
-            <input value={form.install_address || ''} onChange={e => set('install_address', e.target.value)} className="input" /></div>
-          <div><label className="block text-xs font-medium mb-1">Ưu tiên</label>
-            <select value={form.priority || 'medium'} onChange={e => set('priority', e.target.value)} className="input">
-              <option value="low">Thấp</option><option value="medium">TB</option><option value="high">Cao</option><option value="urgent">Gấp</option>
-            </select></div>
-        </div>
+            {/* Flow selection */}
+            <div className="bg-indigo-50 rounded-xl p-3 space-y-3">
+              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                <GitBranch className="h-4 w-4 text-indigo-600" /> Chọn luồng *
+              </h3>
 
-        {/* Quotation files */}
-        <div className="bg-amber-50 rounded-xl p-3 space-y-2">
-          <h3 className="text-sm font-semibold text-gray-900">📄 File báo giá</h3>
-          <FileUploadButton onFilesUploaded={(f) => setQuotationFiles(qf => [...qf, ...f])} />
-          <FilePreview files={quotationFiles} onRemove={(i) => setQuotationFiles(f => f.filter((_, j) => j !== i))} />
-        </div>
+              {flows.length === 0 ? (
+                <p className="text-xs text-gray-500 italic">Chưa có luồng nào. Tạo trong Quản lý luồng trước.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {flows.map(f => (
+                    <button key={f.id} type="button" onClick={() => selectFlow(f)}
+                      className={`p-3 rounded-xl border-2 text-left cursor-pointer transition-all ${
+                        selectedFlow?.id === f.id
+                          ? 'border-indigo-500 bg-white shadow-sm'
+                          : 'border-transparent bg-white/50 hover:bg-white hover:shadow-sm'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{f.icon || '🔄'}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 flex items-center gap-1">
+                            {f.name}
+                            {f.is_default && <Star className="h-3 w-3 text-amber-500" />}
+                          </p>
+                          <div className="flex items-center gap-0.5 mt-1 flex-wrap">
+                            {(f.steps || []).map((s, i) => (
+                              <span key={s.id} className="flex items-center gap-0.5">
+                                {i > 0 && <ArrowRight className="h-2.5 w-2.5 text-gray-300" />}
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full"
+                                  style={{ backgroundColor: (s.division?.level?.color || '#6b7280') + '20', color: s.division?.level?.color || '#6b7280' }}>
+                                  {s.division?.short_name || s.division?.name}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        {selectedFlow?.id === f.id && <span className="text-indigo-600 text-lg">✓</span>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
-        {/* Missing warning */}
-        {missingStages.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-amber-800">Chưa phân công NV</p>
-              <p className="text-[11px] text-amber-600 mt-0.5">{missingStages.map(s => s.label).join(', ')}</p>
+            <div className="flex justify-end">
+              <button type="button" onClick={() => {
+                if (!form.customer_id) return alert('Chọn khách hàng');
+                if (!selectedFlow) return alert('Chọn luồng');
+                setStep(2);
+              }}
+                className="h-9 px-6 bg-indigo-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-indigo-700">
+                Tiếp theo →
+              </button>
             </div>
           </div>
         )}
 
-        {/* ═══ WORKFLOW BUILDER ═══ */}
-        <div className="bg-blue-50 rounded-xl p-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900">🔄 Phân công nhân sự</h3>
-            <span className="text-xs text-blue-600">{workflowLines.length} bộ phận</span>
-          </div>
-
-          {STAGES.map(stage => {
-            const lines = linesByStage[stage.slug] || [];
-            const obs = observers[stage.slug] || [];
-            return (
-              <div key={stage.slug} className="bg-white rounded-lg border">
-                <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ backgroundColor: stage.color + '10' }}>
-                  <span className="text-sm">{stage.icon}</span>
-                  <span className="text-xs sm:text-sm font-semibold" style={{ color: stage.color }}>{stage.label}</span>
-                  {lines.every(l => l.assignee_id) ? <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1.5 rounded-full">✓</span>
-                    : <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 rounded-full">⚠</span>}
-                  <div className="flex-1" />
-                  <button type="button" onClick={() => addLine(stage.slug)}
-                    className="text-[10px] px-1.5 py-0.5 rounded hover:bg-white/50 flex items-center gap-0.5 cursor-pointer font-medium" style={{ color: stage.color }}>
-                    <Plus className="h-3 w-3" /> Thêm
-                  </button>
-                </div>
-
-                <div className="divide-y">
-                  {lines.map((line, li) => (
-                    <div key={line._id} className="px-2 sm:px-3 py-2 hover:bg-gray-50/50">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] text-gray-400 font-mono w-3">#{li+1}</span>
-                        <input value={line.label} onChange={e => updateLine(line._id, 'label', e.target.value)}
-                          className="flex-1 min-w-[80px] h-7 px-2 text-xs border rounded-md bg-white focus:ring-1 focus:ring-blue-400 outline-none" />
-                        <UserSelect value={line.assignee_id || ''} onChange={v => updateLine(line._id, 'assignee_id', v)}
-                          users={assignableUsers} className="w-36 sm:w-44" />
-                        {line._from_template && line.assignee_id && <span className="text-[8px] bg-green-100 text-green-700 px-1 rounded hidden sm:inline">mẫu</span>}
-                        <button type="button" onClick={() => duplicateLine(line._id)} className="w-6 h-6 rounded hover:bg-blue-50 flex items-center justify-center text-gray-400 hover:text-blue-500 cursor-pointer"><Copy className="h-3 w-3" /></button>
-                        {lines.length > 1 && <button type="button" onClick={() => removeLine(line._id)} className="w-6 h-6 rounded hover:bg-red-50 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>}
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Observers */}
-                  <div className="px-2 sm:px-3 py-2 bg-gray-50/50">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <Eye className="h-3 w-3 text-gray-400 shrink-0" />
-                      <span className="text-[10px] text-gray-500 font-medium shrink-0">Quan sát:</span>
-                      {obs.map(uid => {
-                        const u = [...assignableUsers, ...allUsers].find(x => x.id === uid);
-                        return u ? (
-                          <span key={uid} className="flex items-center gap-1 bg-white border rounded px-1.5 py-0.5 text-[10px]">
-                            <div className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[6px] font-bold"
-                              style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
-                            <span className="max-w-[60px] truncate">{u.full_name}</span>
-                            <button type="button" onClick={() => removeObserver(stage.slug, uid)} className="text-gray-400 hover:text-red-500 cursor-pointer">×</button>
-                          </span>
-                        ) : null;
-                      })}
-                      <UserSelect value="" onChange={v => addObserver(stage.slug, v)}
-                        users={[...assignableUsers, ...allUsers.filter(u => !assignableUsers.find(a => a.id === u.id))].filter(u => !obs.includes(u.id))}
-                        placeholder="+ Thêm" className="w-24 sm:w-28" />
-                    </div>
-                  </div>
-                </div>
+        {/* ═══ STEP 2: CHỌN CÔNG TY + MẪU CHO MỖI KHỐI ═══ */}
+        {step === 2 && selectedFlow && (
+          <div className="space-y-4">
+            <div className="bg-indigo-50 rounded-xl p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <GitBranch className="h-4 w-4 text-indigo-600" />
+                <h3 className="text-sm font-semibold text-gray-900">Luồng: {selectedFlow.icon} {selectedFlow.name}</h3>
               </div>
-            );
-          })}
-        </div>
+              <p className="text-xs text-gray-500">Chọn công ty và dự án mẫu cho từng khối trong luồng</p>
+            </div>
 
-        {/* Template preview */}
-        <div className="bg-green-50 rounded-xl p-3 space-y-2">
-          <button type="button" onClick={() => setShowTemplates(!showTemplates)} className="flex items-center gap-2 w-full cursor-pointer">
-            {showTemplates ? <ChevronDown className="h-4 w-4 text-green-600" /> : <ChevronRight className="h-4 w-4 text-green-600" />}
-            <h3 className="text-sm font-semibold text-gray-900">📋 Nhiệm vụ mẫu</h3>
-            <span className="text-xs text-green-600 ml-auto">
-              {activeTemplates.length > 0 ? `${activeTemplates.reduce((s, st) => s + st.templates.filter(t => t.is_active).length, 0)} NV` : 'Mặc định'}
-            </span>
-          </button>
-          {showTemplates && (
-            <div className="space-y-2 mt-1">
-              {activeTemplates.length > 0 ? activeTemplates.map(stage => (
-                <div key={stage.id}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stage.color || '#3b82f6' }} />
-                    <span className="text-xs font-semibold text-gray-700">{stage.name}</span>
+            {flowAssignments.map((assignment, idx) => {
+              const div = assignment.division;
+              const companies = stepCompanies[assignment.division_unit_id] || [];
+              const templateSets = stepTemplateSets[assignment.division_unit_id] || [];
+              const selectedSetId = assignment.template_set_id;
+              const tasks = stepTemplateTasks[selectedSetId] || [];
+              const isExpanded = expandedSteps[assignment.division_unit_id];
+              const divColor = div?.level?.color || '#6b7280';
+
+              return (
+                <div key={assignment.division_unit_id} className="bg-white rounded-xl border overflow-hidden">
+                  {/* Header */}
+                  <div className="flex items-center gap-3 p-4" style={{ borderLeft: `4px solid ${divColor}` }}>
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0" style={{ backgroundColor: divColor }}>
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-bold text-gray-900">
+                        {div?.level?.icon} {div?.name || 'Khối'}
+                      </h4>
+                    </div>
+                    {selectedSetId && (
+                      <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                        ✓ {tasks.length} NV
+                      </span>
+                    )}
+                    {idx < flowAssignments.length - 1 && (
+                      <ArrowRight className="h-4 w-4 text-gray-300 shrink-0" />
+                    )}
                   </div>
-                  <div className="pl-4 space-y-0.5">
-                    {stage.templates.filter(t => t.is_active).map(t => (
-                      <div key={t.id} className="flex items-center gap-2 text-xs text-gray-600">
-                        <CheckSquare className="h-3 w-3 text-gray-400" />
-                        <span className="flex-1">{t.title}</span>
-                        {t.assignee_id && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 rounded">
-                          {allUsers.find(u => u.id === t.assignee_id)?.full_name || 'NV'}
-                        </span>}
+
+                  {/* Selection area */}
+                  <div className="px-4 pb-4 space-y-3">
+                    {/* Select template set (grouped by company) */}
+                    <div>
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">Dự án mẫu *</label>
+                      {templateSets.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic">Chưa có dự án mẫu cho khối này</p>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {templateSets.map(ts => {
+                            const isSelected = selectedSetId === ts.id;
+                            return (
+                              <button key={ts.id} type="button"
+                                onClick={() => selectTemplateSet(assignment.division_unit_id, ts.id, ts.unit_id)}
+                                className={`p-2.5 rounded-lg border-2 text-left cursor-pointer transition-all ${
+                                  isSelected ? 'border-indigo-500 bg-indigo-50/50' : 'border-gray-200 hover:border-gray-300'
+                                }`}
+                              >
+                                <p className="text-xs font-semibold text-gray-900 flex items-center gap-1">
+                                  <ClipboardList className="h-3 w-3 text-indigo-500" />
+                                  {ts.name}
+                                  {ts.is_default && <Star className="h-2.5 w-2.5 text-amber-500" />}
+                                </p>
+                                <p className="text-[10px] text-gray-400 mt-0.5">
+                                  {ts.company_name} · {ts.task_count || 0} NV
+                                  {ts.project_type && ` · ${ts.project_type}`}
+                                </p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Preview tasks from selected template */}
+                    {selectedSetId && tasks.length > 0 && (
+                      <div>
+                        <button type="button" onClick={() => toggleStep(assignment.division_unit_id)}
+                          className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 cursor-pointer">
+                          {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                          Xem {tasks.length} nhiệm vụ mẫu
+                        </button>
+
+                        {isExpanded && (
+                          <div className="mt-2 bg-gray-50 rounded-lg p-2 space-y-1 max-h-[200px] overflow-y-auto">
+                            {tasks.map(t => (
+                              <div key={t.id} className="flex items-center gap-2 py-1 px-2 bg-white rounded">
+                                <CheckSquare className="h-3 w-3 text-gray-300 shrink-0" />
+                                <span className="text-xs text-gray-800 flex-1 truncate">{t.title}</span>
+                                {t.default_assignee && (
+                                  <span className="text-[8px] bg-blue-50 text-blue-600 px-1 rounded flex items-center gap-0.5 shrink-0">
+                                    <User className="h-2 w-2" />
+                                    {t.default_assignee.full_name?.split(' ').pop()}
+                                  </span>
+                                )}
+                                {(t.deadline_days > 0 || t.deadline_hours > 0) && (
+                                  <span className="text-[8px] bg-orange-50 text-orange-600 px-1 rounded flex items-center gap-0.5 shrink-0">
+                                    <Clock className="h-2 w-2" />
+                                    {t.deadline_days > 0 && `${t.deadline_days}d`}{t.deadline_hours > 0 && `${t.deadline_hours}h`}
+                                  </span>
+                                )}
+                                <span className={`text-[8px] px-1 rounded ${
+                                  t.priority === 'urgent' ? 'bg-red-50 text-red-600' :
+                                  t.priority === 'high' ? 'bg-orange-50 text-orange-600' :
+                                  'bg-gray-50 text-gray-500'
+                                }`}>
+                                  {t.priority === 'urgent' ? 'Gấp' : t.priority === 'high' ? 'Cao' : t.priority === 'medium' ? 'TB' : 'Thấp'}
+                                </span>
+                                {t.checklists?.length > 0 && (
+                                  <span className="text-[8px] text-gray-400 shrink-0">📋{t.checklists.length}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
-              )) : <p className="text-xs text-gray-500">Chưa có NV mẫu.</p>}
-            </div>
-          )}
-        </div>
+              );
+            })}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" onClick={onClose} className="h-10 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
-          <button type="submit" disabled={loading} className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50">
-            {loading ? 'Đang tạo...' : 'Tạo dự án'}
-          </button>
-        </div>
-      </form>
+            <div className="flex justify-between">
+              <button type="button" onClick={() => setStep(1)}
+                className="h-9 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm cursor-pointer">← Quay lại</button>
+              <button type="button" onClick={() => {
+                if (!flowAssignments.some(a => a.template_set_id)) return alert('Chọn ít nhất 1 dự án mẫu');
+                setStep(3);
+              }}
+                className="h-9 px-6 bg-indigo-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-indigo-700">
+                Tiếp theo →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ═══ STEP 3: THÔNG TIN DỰ ÁN + XÁC NHẬN ═══ */}
+        {step === 3 && (
+          <div className="space-y-4">
+            {/* Project info */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium mb-1">Tên dự án *</label>
+                <input value={form.name || ''} onChange={e => set('name', e.target.value)} className="input" placeholder="VD: Tủ bếp anh Minh — Q7" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium mb-1">Mô tả</label>
+                <textarea value={form.description || ''} onChange={e => set('description', e.target.value)} className="input min-h-[40px]" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Giá trị (VNĐ)</label>
+                <input type="number" value={form.estimated_value || ''} onChange={e => set('estimated_value', e.target.value)} className="input" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Địa chỉ lắp đặt</label>
+                <input value={form.install_address || ''} onChange={e => set('install_address', e.target.value)} className="input" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Ưu tiên</label>
+                <select value={form.priority || 'medium'} onChange={e => set('priority', e.target.value)} className="input">
+                  {PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* Quotation files */}
+            <div className="bg-amber-50 rounded-xl p-3 space-y-2">
+              <h3 className="text-sm font-semibold text-gray-900">📄 File báo giá</h3>
+              <FileUploadButton onFilesUploaded={(f) => setQuotationFiles(qf => [...qf, ...f])} />
+              <FilePreview files={quotationFiles} onRemove={(i) => setQuotationFiles(f => f.filter((_, j) => j !== i))} />
+            </div>
+
+            {/* Summary */}
+            <div className="bg-green-50 rounded-xl p-3 space-y-2">
+              <h3 className="text-sm font-semibold text-gray-900">📋 Tóm tắt</h3>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div><span className="text-gray-500">Khách hàng:</span> <span className="font-medium">{customers.find(c => c.id === form.customer_id)?.full_name || '—'}</span></div>
+                <div><span className="text-gray-500">Luồng:</span> <span className="font-medium">{selectedFlow?.icon} {selectedFlow?.name || '—'}</span></div>
+                <div><span className="text-gray-500">Tổng NV mẫu:</span> <span className="font-bold text-indigo-600">{totalTasks}</span></div>
+                <div><span className="text-gray-500">Khối:</span> <span className="font-medium">{flowAssignments.filter(a => a.template_set_id).length}/{flowAssignments.length}</span></div>
+              </div>
+
+              {/* Flow preview */}
+              <div className="flex items-center flex-wrap gap-1 mt-2">
+                {flowAssignments.map((a, i) => {
+                  const tasks = stepTemplateTasks[a.template_set_id] || [];
+                  const tplSet = (stepTemplateSets[a.division_unit_id] || []).find(s => s.id === a.template_set_id);
+                  const divColor = a.division?.level?.color || '#6b7280';
+                  return (
+                    <span key={a.division_unit_id} className="flex items-center gap-1">
+                      {i > 0 && <ArrowRight className="h-3 w-3 text-gray-300" />}
+                      <span className="text-[10px] px-2 py-1 rounded-lg border" style={{ borderColor: divColor + '40', backgroundColor: divColor + '10', color: divColor }}>
+                        {a.division?.level?.icon} {a.division?.short_name || a.division?.name}
+                        {tplSet && <span className="ml-1 opacity-60">· {tplSet.name}</span>}
+                        {tasks.length > 0 && <span className="ml-1 font-bold">({tasks.length} NV)</span>}
+                      </span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-between pt-2">
+              <button type="button" onClick={() => setStep(2)}
+                className="h-9 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm cursor-pointer">← Quay lại</button>
+              <button type="button" onClick={submit} disabled={loading}
+                className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50">
+                {loading ? 'Đang tạo...' : `🚀 Tạo dự án (${totalTasks} NV)`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }
