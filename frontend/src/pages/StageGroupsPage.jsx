@@ -5,6 +5,7 @@ import { FolderKanban, Plus, Edit, Save, X, ChevronDown, ChevronRight, Trash2 } 
 export default function StageGroupsPage() {
   const [groups, setGroups] = useState([]);
   const [stages, setStages] = useState([]);
+  const [divisions, setDivisions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editId, setEditId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -12,8 +13,9 @@ export default function StageGroupsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [g, s] = await Promise.all([api.get('/ecosystem/stage-groups'), api.get('/stages')]);
+      const [g, s, u] = await Promise.all([api.get('/ecosystem/stage-groups'), api.get('/stages'), api.get('/ecosystem/units').catch(() => ({ data: { units: [] } }))]);
       setGroups(g.data.groups || []); setStages(s.data.stages || []);
+      setDivisions((u.data.units || []).filter(un => un.level?.depth === 1));
     } catch {}
     setLoading(false);
   }, []);
@@ -31,11 +33,11 @@ export default function StageGroupsPage() {
         <button onClick={() => setShowCreate(true)} className="h-9 px-4 bg-indigo-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-indigo-700 cursor-pointer"><Plus className="h-4 w-4" /> Tạo nhóm</button>
       </div>
 
-      {showCreate && <GroupForm stages={stages} onSaved={() => { load(); setShowCreate(false); }} onCancel={() => setShowCreate(false)} />}
+      {showCreate && <GroupForm stages={stages} divisions={divisions} onSaved={() => { load(); setShowCreate(false); }} onCancel={() => setShowCreate(false)} />}
 
       <div className="space-y-3">
         {groups.map(g => (
-          <GroupCard key={g.id} group={g} stages={stages} isEditing={editId === g.id}
+          <GroupCard key={g.id} group={g} stages={stages} divisions={divisions} isEditing={editId === g.id}
             onEdit={() => setEditId(g.id)} onSaved={() => { load(); setEditId(null); }} onCancel={() => setEditId(null)} />
         ))}
       </div>
@@ -47,10 +49,11 @@ export default function StageGroupsPage() {
   );
 }
 
-function GroupCard({ group, stages, isEditing, onEdit, onSaved, onCancel }) {
+function GroupCard({ group, stages, divisions, isEditing, onEdit, onSaved, onCancel }) {
   const [expanded, setExpanded] = useState(false);
+  const div = divisions.find(d => d.id === group.division_unit_id);
 
-  if (isEditing) return <GroupForm group={group} stages={stages} onSaved={onSaved} onCancel={onCancel} />;
+  if (isEditing) return <GroupForm group={group} stages={stages} divisions={divisions} onSaved={onSaved} onCancel={onCancel} />;
 
   return (
     <div className="bg-white rounded-xl border overflow-hidden">
@@ -59,7 +62,7 @@ function GroupCard({ group, stages, isEditing, onEdit, onSaved, onCancel }) {
         <span className="text-lg shrink-0">{group.icon || '📋'}</span>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-bold text-gray-900">{group.name}</h3>
-          <p className="text-[10px] text-gray-400">{group.slug} · {group.stages?.length || 0} quy trình</p>
+          <p className="text-[10px] text-gray-400">{group.slug} · {group.stages?.length || 0} quy trình{div ? ` · ${div.level?.icon} ${div.name}` : ''}</p>
         </div>
         <div className="flex flex-wrap gap-1">
           {(group.stages || []).map(s => (
@@ -74,12 +77,13 @@ function GroupCard({ group, stages, isEditing, onEdit, onSaved, onCancel }) {
   );
 }
 
-function GroupForm({ group, stages, onSaved, onCancel }) {
+function GroupForm({ group, stages, divisions = [], onSaved, onCancel }) {
   const [name, setName] = useState(group?.name || '');
   const [slug, setSlug] = useState(group?.slug || '');
   const [desc, setDesc] = useState(group?.description || '');
   const [color, setColor] = useState(group?.color || '#6366F1');
   const [icon, setIcon] = useState(group?.icon || '📋');
+  const [divisionId, setDivisionId] = useState(group?.division_unit_id || '');
   const [selectedStages, setSelectedStages] = useState((group?.stages || []).map(s => s.id));
   const [saving, setSaving] = useState(false);
 
@@ -95,10 +99,10 @@ function GroupForm({ group, stages, onSaved, onCancel }) {
     setSaving(true);
     try {
       if (group?.id) {
-        await api.put(`/ecosystem/stage-groups/${group.id}`, { name, slug: s, description: desc, color, icon });
+        await api.put(`/ecosystem/stage-groups/${group.id}`, { name, slug: s, description: desc, color, icon, division_unit_id: divisionId || null });
         await api.post(`/ecosystem/stage-groups/${group.id}/stages`, { stage_ids: selectedStages });
       } else {
-        const { data } = await api.post('/ecosystem/stage-groups', { name, slug: s, description: desc, color, icon });
+        const { data } = await api.post('/ecosystem/stage-groups', { name, slug: s, description: desc, color, icon, division_unit_id: divisionId || null });
         if (selectedStages.length && data.group?.id) {
           await api.post(`/ecosystem/stage-groups/${data.group.id}/stages`, { stage_ids: selectedStages });
         }
@@ -117,6 +121,13 @@ function GroupForm({ group, stages, onSaved, onCancel }) {
         <div><label className="text-[11px] font-medium text-gray-600 block mb-1">Màu</label><input type="color" value={color} onChange={e => setColor(e.target.value)} className="w-full h-9 border rounded-lg cursor-pointer" /></div>
         <div><label className="text-[11px] font-medium text-gray-600 block mb-1">Icon</label><div className="flex flex-wrap gap-1">{ICONS.map(i => <button key={i} onClick={() => setIcon(i)} className={`w-7 h-7 rounded text-sm cursor-pointer ${icon === i ? 'bg-indigo-200 ring-2 ring-indigo-400' : 'bg-white border hover:bg-gray-50'}`}>{i}</button>)}</div></div>
         <div className="col-span-2"><label className="text-[11px] font-medium text-gray-600 block mb-1">Mô tả</label><input value={desc} onChange={e => setDesc(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm" /></div>
+        <div className="col-span-2">
+          <label className="text-[11px] font-medium text-gray-600 block mb-1">🔗 Thuộc Khối <span className="text-gray-400 font-normal">(Cty trong Khối này sẽ dùng nhóm QT này)</span></label>
+          <select value={divisionId} onChange={e => setDivisionId(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm">
+            <option value="">— Chung (tất cả Khối) —</option>
+            {divisions.map(d => <option key={d.id} value={d.id}>{d.level?.icon} {d.name}</option>)}
+          </select>
+        </div>
       </div>
 
       <div>
