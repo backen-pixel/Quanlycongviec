@@ -5,7 +5,7 @@ import { getInitials, avatarColor, ROLE_STAGE_MAP, ROLE_LABELS } from '../lib/ut
 import api from '../lib/api';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
-  ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
+  ChevronLeft, ChevronRight, ChevronDown, MessageSquare, Palette, Calculator, FileText,
   Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2, Building, MessageCircle, Network, Layers, GitBranch
 } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
@@ -40,15 +40,18 @@ const FALLBACK_WORKFLOW = [
 
 const adminTools = [
   { to: '/ecosystem', icon: Network, label: 'Hệ sinh thái' },
-  { to: '/ecosystem-levels', icon: Layers, label: 'Cấp bậc HST' },
+  { to: '/workflow-flows', icon: GitBranch, label: 'Quản lý luồng' },
   { to: '/companies', icon: Building2, label: 'Công ty' },
-  { to: '/departments', icon: Building, label: 'Phòng ban' },
   { to: '/teams', icon: Users, label: 'Team' },
   { to: '/users', icon: Users, label: 'Nhân viên' },
-  { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
+];
+
+const adminSettings = [
   { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
+  { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
   { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
-  { to: '/workflow-flows', icon: GitBranch, label: 'Quản lý luồng' },
+  { to: '/ecosystem-levels', icon: Layers, label: 'Cấp bậc HST' },
+  { to: '/departments', icon: Building, label: 'Phòng ban' },
   { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
 ];
 
@@ -96,6 +99,7 @@ function Section({ title, items, collapsed }) {
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const { user, logout, socket } = useAuth();
   const navigate = useNavigate();
 
@@ -132,7 +136,12 @@ export default function Sidebar() {
   // Filter tools — only admin/manager see full tools
   const tools = useMemo(() => {
     if (isAdmin) return adminTools;
-    return adminTools.filter(t => t.to === '/workflow-settings');
+    return [];
+  }, [user?.role]);
+
+  const settings = useMemo(() => {
+    if (isAdmin) return adminSettings;
+    return [];
   }, [user?.role]);
 
   // Filter nav — non-admin don't see "Tất cả CV", "Khách hàng", "Sản phẩm"
@@ -175,6 +184,22 @@ export default function Sidebar() {
         <Section title="Tổng quan" items={filteredNav} collapsed={collapsed} />
         <Section title="Quy trình" items={workflow} collapsed={collapsed} />
         {tools.length > 0 && <Section title="Hệ thống" items={tools} collapsed={collapsed} />}
+        {settings.length > 0 && (
+          <div className="mb-4">
+            {!collapsed && (
+              <button onClick={() => setShowSettings(!showSettings)}
+                className="w-full flex items-center justify-between px-4 py-1 text-[10px] font-semibold text-[var(--color-sidebar-text)] uppercase tracking-widest opacity-60 hover:opacity-100 cursor-pointer">
+                <span>Cài đặt</span>
+                {showSettings ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </button>
+            )}
+            {(showSettings || collapsed) && (
+              <nav className="space-y-0.5 px-2">
+                {settings.map(i => <SideLink key={i.to} {...i} collapsed={collapsed} />)}
+              </nav>
+            )}
+          </div>
+        )}
       </div>
 
       {/* User + collapse */}

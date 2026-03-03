@@ -196,8 +196,8 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
     } catch {}
   };
 
-  const loadTasks = async (setId) => {
-    if (!setId || tplTasksMap[setId]) return;
+  const loadTasks = async (setId, force) => {
+    if (!setId || (!force && tplTasksMap[setId])) return;
     try {
       const { data } = await api.get(`/company-templates/template-sets/${setId}/tasks`);
       setTplTasksMap(p => ({ ...p, [setId]: data.tasks || [] }));
@@ -351,25 +351,32 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
                     </div>
                   )}
 
-                  {/* Row 4: Tasks preview */}
-                  {step.template_set_id && tasks.length > 0 && (
+                  {/* Row 4: Tasks preview + inline add */}
+                  {step.template_set_id && (
                     <div>
                       <button type="button" onClick={() => setExpandedStep(isExpanded ? null : step._key)}
                         className="flex items-center gap-1 text-[10px] font-medium text-indigo-600 cursor-pointer">
                         {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                         {tasks.length} nhiệm vụ mẫu
+                        <span className="text-gray-400 font-normal ml-1">(bấm để xem/thêm)</span>
                       </button>
                       {isExpanded && (
-                        <div className="mt-1 bg-gray-50 rounded-lg p-2 space-y-0.5 max-h-[180px] overflow-y-auto">
-                          {tasks.map(t => (
-                            <div key={t.id} className="flex items-center gap-1.5 py-1 px-2 bg-white rounded text-[10px]">
-                              <CheckSquare className="h-2.5 w-2.5 text-gray-300 shrink-0" />
-                              <span className="flex-1 truncate text-gray-800">{t.title}</span>
-                              {t.default_assignee && <span className="bg-blue-50 text-blue-600 px-1 rounded shrink-0"><User className="h-2 w-2 inline" /> {t.default_assignee.full_name?.split(' ').pop()}</span>}
-                              {(t.deadline_days > 0 || t.deadline_hours > 0) && <span className="bg-orange-50 text-orange-600 px-1 rounded shrink-0"><Clock className="h-2 w-2 inline" /> {t.deadline_days > 0 ? `${t.deadline_days}d` : ''}{t.deadline_hours > 0 ? `${t.deadline_hours}h` : ''}</span>}
-                              {t.checklists?.length > 0 && <span className="text-gray-400 shrink-0">📋{t.checklists.length}</span>}
-                            </div>
-                          ))}
+                        <div className="mt-1 bg-gray-50 rounded-lg p-2 space-y-0.5">
+                          <div className="max-h-[220px] overflow-y-auto space-y-0.5">
+                            {tasks.map(t => (
+                              <div key={t.id} className="flex items-center gap-1.5 py-1 px-2 bg-white rounded text-[10px] group">
+                                <CheckSquare className="h-2.5 w-2.5 text-gray-300 shrink-0" />
+                                <span className="flex-1 truncate text-gray-800">{t.title}</span>
+                                {t.default_assignee && <span className="bg-blue-50 text-blue-600 px-1 rounded shrink-0"><User className="h-2 w-2 inline" /> {t.default_assignee.full_name?.split(' ').pop()}</span>}
+                                {(t.deadline_days > 0 || t.deadline_hours > 0) && <span className="bg-orange-50 text-orange-600 px-1 rounded shrink-0"><Clock className="h-2 w-2 inline" /> {t.deadline_days > 0 ? `${t.deadline_days}d` : ''}{t.deadline_hours > 0 ? `${t.deadline_hours}h` : ''}</span>}
+                                {t.checklists?.length > 0 && <span className="text-gray-400 shrink-0">📋{t.checklists.length}</span>}
+                                <button type="button" onClick={async () => { if(!confirm('Xóa NV mẫu này?')) return; try { await api.delete(`/company-templates/template-tasks/${t.id}`); loadTasks(step.template_set_id, true); } catch {} }}
+                                  className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 cursor-pointer shrink-0"><Trash2 className="h-2.5 w-2.5" /></button>
+                              </div>
+                            ))}
+                            {tasks.length === 0 && <p className="text-[10px] text-gray-400 italic py-2 text-center">Chưa có NV mẫu — thêm bên dưới</p>}
+                          </div>
+                          <InlineAddTask templateSetId={step.template_set_id} onAdded={() => loadTasks(step.template_set_id, true)} />
                         </div>
                       )}
                     </div>
@@ -423,6 +430,72 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
         <button type="button" onClick={save} disabled={saving}
           className="h-8 px-4 bg-indigo-600 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
           {saving ? 'Đang lưu...' : <><Save className="h-3.5 w-3.5" /> Lưu</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ═══ INLINE ADD TASK ═══ */
+function InlineAddTask({ templateSetId, onAdded }) {
+  const [show, setShow] = useState(false);
+  const [title, setTitle] = useState('');
+  const [deadlineDays, setDeadlineDays] = useState('');
+  const [deadlineHours, setDeadlineHours] = useState('');
+  const [priority, setPriority] = useState('medium');
+  const [adding, setAdding] = useState(false);
+
+  const add = async () => {
+    if (!title.trim()) return;
+    setAdding(true);
+    try {
+      // Need a stage_id — get from template set's existing tasks or first stage
+      const { data: stagesData } = await api.get('/stages');
+      const firstStage = (stagesData.stages || [])[0];
+      
+      await api.post(`/company-templates/template-sets/${templateSetId}/tasks`, {
+        title: title.trim(),
+        stage_id: firstStage?.id,
+        priority,
+        deadline_days: deadlineDays ? parseInt(deadlineDays) : 0,
+        deadline_hours: deadlineHours ? parseInt(deadlineHours) : 0,
+      });
+      setTitle('');
+      setDeadlineDays('');
+      setDeadlineHours('');
+      onAdded();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setAdding(false);
+  };
+
+  if (!show) {
+    return (
+      <button type="button" onClick={() => setShow(true)}
+        className="w-full py-1.5 border border-dashed rounded-lg text-[10px] text-gray-400 hover:text-indigo-600 hover:border-indigo-300 cursor-pointer flex items-center justify-center gap-1">
+        <Plus className="h-2.5 w-2.5" /> Thêm NV mẫu nhanh
+      </button>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-lg border p-2 space-y-1.5">
+      <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Tên nhiệm vụ..."
+        className="w-full h-7 px-2 border rounded text-[11px]" autoFocus
+        onKeyDown={e => { if (e.key === 'Enter') add(); if (e.key === 'Escape') setShow(false); }} />
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <select value={priority} onChange={e => setPriority(e.target.value)} className="h-6 px-1 border rounded text-[10px]">
+          <option value="low">Thấp</option><option value="medium">TB</option><option value="high">Cao</option><option value="urgent">Gấp</option>
+        </select>
+        <span className="text-[9px] text-gray-400">⏰</span>
+        <input type="number" min="0" value={deadlineDays} onChange={e => setDeadlineDays(e.target.value)} placeholder="0" className="w-10 h-6 px-1 border rounded text-[10px] text-center" />
+        <span className="text-[9px] text-gray-400">ngày</span>
+        <input type="number" min="0" value={deadlineHours} onChange={e => setDeadlineHours(e.target.value)} placeholder="0" className="w-10 h-6 px-1 border rounded text-[10px] text-center" />
+        <span className="text-[9px] text-gray-400">giờ</span>
+        <div className="flex-1" />
+        <button type="button" onClick={() => setShow(false)} className="h-6 px-2 text-[10px] text-gray-500 cursor-pointer">Hủy</button>
+        <button type="button" onClick={add} disabled={!title.trim() || adding}
+          className="h-6 px-2 bg-indigo-600 text-white rounded text-[10px] font-medium cursor-pointer disabled:opacity-50">
+          {adding ? '...' : '+ Thêm'}
         </button>
       </div>
     </div>
