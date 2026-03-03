@@ -268,37 +268,52 @@ function TeamFormModal({ open, team, companies, departments: allDepts, onClose, 
   );
 }
 
-/* ═══ ADD TEAM MEMBER — Hiện NV của PB để chọn ═══ */
+/* ═══ ADD TEAM MEMBER — Hiện NV của PB để chọn nhiều ═══ */
 function AddTeamMember({ teamId, existingIds, onAdded }) {
   const [deptUsers, setDeptUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [selectedUser, setSelectedUser] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
   const [adding, setAdding] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState('');
 
   const loadAvailable = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get(`/teams/${teamId}/available-members`);
-      setDeptUsers(data.users || []);
+      const [dRes, uRes] = await Promise.all([
+        api.get(`/teams/${teamId}/available-members`),
+        api.get('/users'),
+      ]);
+      setDeptUsers(dRes.data.users || []);
+      setAllUsers(uRes.data.users || []);
     } catch {}
     setLoading(false);
   };
 
   useEffect(() => {
-    if (showForm) loadAvailable();
+    if (showForm) { loadAvailable(); setSelectedIds([]); setSearch(''); }
   }, [showForm, teamId]);
 
   const available = deptUsers.filter(u => !existingIds.includes(u.id));
-  const inOtherTeam = available.filter(u => u.team_id && u.team_id !== teamId);
-  const noTeam = available.filter(u => !u.team_id);
+  const otherUsers = allUsers.filter(u => u.is_active && !existingIds.includes(u.id) && !deptUsers.find(d => d.id === u.id));
 
-  const addMember = async () => {
-    if (!selectedUser) return;
+  const filtered = (list) => {
+    if (!search.trim()) return list;
+    const q = search.toLowerCase();
+    return list.filter(u => u.full_name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q));
+  };
+
+  const toggle = (uid) => {
+    setSelectedIds(prev => prev.includes(uid) ? prev.filter(x => x !== uid) : [...prev, uid]);
+  };
+
+  const addMembers = async () => {
+    if (!selectedIds.length) return;
     setAdding(true);
     try {
-      await api.post(`/teams/${teamId}/members`, { user_id: selectedUser });
-      setSelectedUser('');
+      await api.post(`/teams/${teamId}/members`, { user_ids: selectedIds });
+      setSelectedIds([]);
       onAdded();
       loadAvailable();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
@@ -314,40 +329,98 @@ function AddTeamMember({ teamId, existingIds, onAdded }) {
     );
   }
 
+  const deptAvailable = filtered(available);
+  const otherFiltered = filtered(otherUsers);
+
   return (
     <div className="mt-3 bg-blue-50 rounded-xl border border-blue-200 p-3 space-y-2">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-bold text-blue-800 flex items-center gap-1.5">
-          <UserPlus className="h-3.5 w-3.5" /> Thêm NV từ phòng ban
+          <UserPlus className="h-3.5 w-3.5" /> Thêm NV vào team
+          {selectedIds.length > 0 && (
+            <span className="ml-1 bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full">{selectedIds.length} đã chọn</span>
+          )}
         </h4>
         <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="h-3.5 w-3.5" /></button>
       </div>
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          className="w-full h-8 pl-8 pr-3 border rounded-lg text-xs" placeholder="Tìm nhân viên..." />
+      </div>
+
       {loading ? (
         <div className="py-3 text-center"><div className="animate-spin h-4 w-4 border-2 border-blue-200 border-t-blue-600 rounded-full mx-auto" /></div>
-      ) : available.length === 0 ? (
-        <p className="text-xs text-gray-500 text-center py-2">Tất cả NV trong PB đã thuộc team này</p>
       ) : (
-        <>
-          <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm">
-            <option value="">— Chọn nhân viên —</option>
-            {noTeam.length > 0 && <optgroup label="Chưa có team">
-              {noTeam.map(u => <option key={u.id} value={u.id}>{u.full_name} · {u.email}{u.position ? ` · ${u.position}` : ''}</option>)}
-            </optgroup>}
-            {inOtherTeam.length > 0 && <optgroup label="Đang ở team khác (sẽ chuyển)">
-              {inOtherTeam.map(u => <option key={u.id} value={u.id}>⚠️ {u.full_name} · {u.email}</option>)}
-            </optgroup>}
-          </select>
+        <div className="max-h-[250px] overflow-y-auto space-y-0.5">
+          {/* NV cùng phòng ban */}
+          {deptAvailable.length > 0 && (
+            <>
+              <p className="text-[9px] font-semibold text-gray-500 uppercase px-1 pt-1">Cùng phòng ban ({deptAvailable.length})</p>
+              {deptAvailable.map(u => {
+                const sel = selectedIds.includes(u.id);
+                const inOther = u.team_id && u.team_id !== teamId;
+                return (
+                  <label key={u.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${sel ? 'bg-blue-100' : 'hover:bg-white'}`}>
+                    <input type="checkbox" checked={sel} onChange={() => toggle(u.id)} className="accent-blue-600 shrink-0" />
+                    <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                      style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-900 truncate">{u.full_name}</p>
+                      <p className="text-[10px] text-gray-400 truncate">{u.email}{u.position ? ` · ${u.position}` : ''}</p>
+                    </div>
+                    {inOther && <span className="text-[8px] bg-amber-100 text-amber-600 px-1 rounded shrink-0">team khác</span>}
+                  </label>
+                );
+              })}
+            </>
+          )}
 
-          <div className="flex justify-end gap-2">
-            <button onClick={addMember} disabled={!selectedUser || adding}
-              className="h-8 px-4 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
-              <UserPlus className="h-3 w-3" /> {adding ? '...' : 'Thêm vào team'}
+          {/* NV khác phòng ban */}
+          {otherFiltered.length > 0 && search.trim() && (
+            <>
+              <p className="text-[9px] font-semibold text-gray-500 uppercase px-1 pt-2">Nhân viên khác ({otherFiltered.length})</p>
+              {otherFiltered.slice(0, 20).map(u => {
+                const sel = selectedIds.includes(u.id);
+                return (
+                  <label key={u.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${sel ? 'bg-blue-100' : 'hover:bg-white'}`}>
+                    <input type="checkbox" checked={sel} onChange={() => toggle(u.id)} className="accent-blue-600 shrink-0" />
+                    <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                      style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-900 truncate">{u.full_name}</p>
+                      <p className="text-[10px] text-gray-400 truncate">{u.email}</p>
+                    </div>
+                    <span className="text-[8px] bg-gray-100 text-gray-500 px-1 rounded shrink-0">PB khác</span>
+                  </label>
+                );
+              })}
+              {otherFiltered.length > 20 && <p className="text-[9px] text-gray-400 text-center py-1">+{otherFiltered.length - 20} NV khác...</p>}
+            </>
+          )}
+
+          {deptAvailable.length === 0 && (!search.trim() || otherFiltered.length === 0) && (
+            <p className="text-xs text-gray-500 text-center py-3">
+              {search.trim() ? 'Không tìm thấy nhân viên' : 'Tất cả NV trong PB đã thuộc team này'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Actions */}
+      {selectedIds.length > 0 && (
+        <div className="flex items-center justify-between pt-1 border-t border-blue-200">
+          <p className="text-[10px] text-blue-600">{selectedIds.length} nhân viên được chọn</p>
+          <div className="flex gap-2">
+            <button onClick={() => setSelectedIds([])} className="h-7 px-2 text-[10px] text-gray-500 hover:text-gray-700 cursor-pointer">Bỏ chọn</button>
+            <button onClick={addMembers} disabled={adding}
+              className="h-7 px-4 bg-blue-600 text-white rounded-lg text-[10px] font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1">
+              <UserPlus className="h-3 w-3" /> {adding ? 'Đang thêm...' : `Thêm ${selectedIds.length} NV`}
             </button>
           </div>
-
-          <p className="text-[9px] text-blue-400">Hiện {available.length} NV trong PB · {noTeam.length} chưa có team</p>
-        </>
+        </div>
       )}
     </div>
   );
