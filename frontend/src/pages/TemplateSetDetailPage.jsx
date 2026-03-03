@@ -84,7 +84,7 @@ export default function TemplateSetDetailPage() {
   };
 
   const deleteTask = async (taskId) => {
-    if (!confirm('Xóa task mẫu này?')) return;
+    if (!confirm('Xóa nhiệm vụ mẫu này?')) return;
     try {
       await api.delete(`/company-templates/template-tasks/${taskId}`);
       setTasks(prev => prev.filter(t => t.id !== taskId));
@@ -123,8 +123,8 @@ export default function TemplateSetDetailPage() {
       <div className="flex items-center gap-3">
         <button onClick={() => navigate(-1)} className="h-9 w-9 rounded-lg border flex items-center justify-center hover:bg-gray-50 cursor-pointer"><ArrowLeft className="h-4 w-4" /></button>
         <div className="flex-1">
-          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2"><ClipboardList className="h-5 w-5 text-indigo-600" /> Bộ NV Mẫu</h1>
-          <p className="text-xs text-gray-500">{tasks.length} task mẫu · Được nhóm theo quy trình</p>
+          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2"><ClipboardList className="h-5 w-5 text-indigo-600" /> Dự Án Mẫu</h1>
+          <p className="text-xs text-gray-500">{tasks.length} nhiệm vụ mẫu · Được nhóm theo quy trình</p>
         </div>
         <button onClick={() => setShowAddTask(true)} className="h-9 px-4 bg-indigo-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-indigo-700 cursor-pointer"><Plus className="h-4 w-4" /> Thêm task</button>
       </div>
@@ -152,8 +152,8 @@ export default function TemplateSetDetailPage() {
       {tasks.length === 0 && !showAddTask && (
         <div className="text-center py-16 bg-white rounded-2xl border">
           <ClipboardList className="h-12 w-12 mx-auto mb-3 text-gray-200" />
-          <p className="text-sm text-gray-500">Chưa có task mẫu nào</p>
-          <p className="text-xs text-gray-400 mt-1">Bấm "Thêm task" để bắt đầu xây dựng bộ NV mẫu</p>
+          <p className="text-sm text-gray-500">Chưa có nhiệm vụ mẫu nào</p>
+          <p className="text-xs text-gray-400 mt-1">Bấm "Thêm task" để bắt đầu xây dựng dự án mẫu</p>
         </div>
       )}
     </div>
@@ -179,7 +179,7 @@ function AddTaskForm({ stages, onAdd, onCancel }) {
 
   return (
     <div className="bg-indigo-50 rounded-xl border border-indigo-200 p-4 space-y-3">
-      <h3 className="text-sm font-bold text-indigo-900">Thêm task mẫu mới</h3>
+      <h3 className="text-sm font-bold text-indigo-900">Thêm nhiệm vụ mẫu mới</h3>
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><label className="text-[11px] font-medium text-gray-600 block mb-1">Tiêu đề *</label><input value={title} onChange={e => setTitle(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm" placeholder="VD: Khảo sát hiện trạng" /></div>
         <div><label className="text-[11px] font-medium text-gray-600 block mb-1">Quy trình *</label>

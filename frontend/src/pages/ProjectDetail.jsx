@@ -380,7 +380,7 @@ export default function ProjectDetail() {
                         load();
                       } catch (e) { alert(e.response?.data?.error || 'Lỗi tạo nhiệm vụ'); }
                     }} className="text-[10px] text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 cursor-pointer font-normal">
-                      + Tạo NV mẫu
+                      + Tạo dự án mẫu
                     </button>
                   )}
                 </h4>
