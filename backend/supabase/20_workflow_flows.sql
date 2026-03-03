@@ -17,13 +17,14 @@ CREATE TABLE IF NOT EXISTS workflow_flows (
 );
 
 -- ═══ 2. CÁC BƯỚC TRONG LUỒNG (Flow Steps) ═══
--- Mỗi bước = 1 Khối (division) theo thứ tự
+-- Mỗi bước = 1 Khối (division) theo thứ tự + đã chọn sẵn công ty + mẫu
 CREATE TABLE IF NOT EXISTS workflow_flow_steps (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   flow_id UUID REFERENCES workflow_flows(id) ON DELETE CASCADE NOT NULL,
   division_unit_id UUID REFERENCES ecosystem_units(id) NOT NULL, -- Khối nào
+  company_unit_id UUID REFERENCES ecosystem_units(id),           -- Công ty đã chọn sẵn
+  template_set_id UUID REFERENCES company_template_sets(id),     -- Dự án mẫu đã chọn sẵn
   order_index INT DEFAULT 0,                 -- Thứ tự trong luồng
-  -- Thời gian setup: khi bước trước hoàn thành, chờ bao lâu mới bắt đầu bước này
   setup_days INT DEFAULT 0,                  -- Số ngày setup
   setup_hours INT DEFAULT 0,                 -- Số giờ setup thêm
   description TEXT,                           -- Ghi chú cho bước này
@@ -72,3 +73,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
   CREATE POLICY "allow_all" ON workflow_flow_steps FOR ALL USING (true) WITH CHECK (true);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- ═══ 8. Thêm cột company + template vào flow_steps (nếu bảng đã tạo trước) ═══
+DO $$ BEGIN ALTER TABLE workflow_flow_steps ADD COLUMN company_unit_id UUID REFERENCES ecosystem_units(id); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE workflow_flow_steps ADD COLUMN template_set_id UUID REFERENCES company_template_sets(id); EXCEPTION WHEN duplicate_column THEN NULL; END $$;

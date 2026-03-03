@@ -5,7 +5,49 @@ const { auth } = require('../middleware/auth');
 const r = Router();
 r.use(auth);
 
-// ═══ LIST all flows ═══
+// ═══ Helper: load full step data ═══
+async function loadStepDetails(steps) {
+  for (const step of steps) {
+    // Load companies under division
+    const { data: companyUnits } = await supabase.from('ecosystem_units')
+      .select('id,name,short_name,code')
+      .eq('parent_id', step.division_unit_id)
+      .eq('is_active', true);
+    step.companies = companyUnits || [];
+
+    // Load template sets for chosen company (or all companies in division)
+    const unitIds = step.company_unit_id
+      ? [step.company_unit_id]
+      : (companyUnits || []).map(u => u.id);
+
+    if (unitIds.length) {
+      const { data: sets } = await supabase.from('company_template_sets')
+        .select('*, unit:ecosystem_units!company_template_sets_unit_id_fkey(id,name,short_name)')
+        .in('unit_id', unitIds)
+        .eq('is_active', true)
+        .order('is_default', { ascending: false });
+      step.template_sets = sets || [];
+    } else {
+      step.template_sets = [];
+    }
+
+    // Load tasks for chosen template set
+    if (step.template_set_id) {
+      const { data: tasks } = await supabase.from('company_template_tasks')
+        .select(`*, checklists:company_template_checklists(*),
+          stage:workflow_stages(id,name,slug,color,icon),
+          default_assignee:users!company_template_tasks_default_assignee_id_fkey(id,full_name)`)
+        .eq('template_set_id', step.template_set_id)
+        .order('order_index');
+      step.tasks = tasks || [];
+    } else {
+      step.tasks = [];
+    }
+  }
+  return steps;
+}
+
+// ═══ LIST all flows (light) ═══
 r.get('/', async (req, res) => {
   try {
     const { data: flows, error } = await supabase.from('workflow_flows')
@@ -15,25 +57,37 @@ r.get('/', async (req, res) => {
       .order('created_at');
     if (error) throw error;
 
-    // Load steps for each flow
     for (const f of (flows || [])) {
       const { data: steps } = await supabase.from('workflow_flow_steps')
         .select(`*,
           division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name,short_name,code,
-            level:ecosystem_levels(id,name,icon,color),
-            stage_group:workflow_stage_groups(id,name,slug,icon,color)
-          )
+            level:ecosystem_levels(id,name,icon,color)
+          ),
+          company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name),
+          template_set:company_template_sets(id,name,project_type)
         `)
         .eq('flow_id', f.id)
         .order('order_index');
       f.steps = steps || [];
+
+      // Count tasks per step
+      for (const step of f.steps) {
+        if (step.template_set_id) {
+          const { count } = await supabase.from('company_template_tasks')
+            .select('id', { count: 'exact', head: true })
+            .eq('template_set_id', step.template_set_id);
+          step.task_count = count || 0;
+        } else {
+          step.task_count = 0;
+        }
+      }
     }
 
     res.json({ flows: flows || [] });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
-// ═══ GET single flow with details ═══
+// ═══ GET single flow with full details ═══
 r.get('/:id', async (req, res) => {
   try {
     const { data: flow, error } = await supabase.from('workflow_flows')
@@ -44,36 +98,15 @@ r.get('/:id', async (req, res) => {
     const { data: steps } = await supabase.from('workflow_flow_steps')
       .select(`*,
         division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name,short_name,code,
-          level:ecosystem_levels(id,name,icon,color),
-          stage_group:workflow_stage_groups(id,name,slug,icon,color)
-        )
+          level:ecosystem_levels(id,name,icon,color)
+        ),
+        company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name),
+        template_set:company_template_sets(id,name,project_type)
       `)
       .eq('flow_id', flow.id)
       .order('order_index');
-    flow.steps = steps || [];
 
-    // For each step's division, load available template sets (from companies under that division)
-    for (const step of flow.steps) {
-      // Get company units under this division
-      const { data: companyUnits } = await supabase.from('ecosystem_units')
-        .select('id,name,short_name')
-        .eq('parent_id', step.division_unit_id)
-        .eq('is_active', true);
-
-      const unitIds = (companyUnits || []).map(u => u.id);
-      let templateSets = [];
-      if (unitIds.length) {
-        const { data: sets } = await supabase.from('company_template_sets')
-          .select('*, unit:ecosystem_units!company_template_sets_unit_id_fkey(id,name,short_name)')
-          .in('unit_id', unitIds)
-          .eq('is_active', true)
-          .order('is_default', { ascending: false });
-        templateSets = sets || [];
-      }
-      step.companies = companyUnits || [];
-      step.template_sets = templateSets;
-    }
-
+    flow.steps = await loadStepDetails(steps || []);
     res.json({ flow });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
@@ -87,7 +120,6 @@ r.post('/', async (req, res) => {
     const { name, description, color, icon, is_default, steps } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Tên luồng là bắt buộc' });
 
-    // If setting as default, unset others
     if (is_default) {
       await supabase.from('workflow_flows').update({ is_default: false }).eq('is_default', true);
     }
@@ -104,18 +136,19 @@ r.post('/', async (req, res) => {
       .select().single();
     if (error) throw error;
 
-    // Create steps
     if (steps?.length) {
-      const { error: stepsErr } = await supabase.from('workflow_flow_steps')
+      const opt = v => (v && typeof v === 'string' && v.trim()) ? v.trim() : null;
+      await supabase.from('workflow_flow_steps')
         .insert(steps.map((s, i) => ({
           flow_id: flow.id,
           division_unit_id: s.division_unit_id,
+          company_unit_id: opt(s.company_unit_id),
+          template_set_id: opt(s.template_set_id),
           order_index: s.order_index ?? i,
           setup_days: s.setup_days || 0,
           setup_hours: s.setup_hours || 0,
           description: s.description || null,
         })));
-      if (stepsErr) console.error('Steps insert error:', stepsErr);
     }
 
     res.status(201).json({ flow });
@@ -135,7 +168,6 @@ r.put('/:id', async (req, res) => {
     if (color !== undefined) update.color = color;
     if (icon !== undefined) update.icon = icon;
     if (is_active !== undefined) update.is_active = is_active;
-
     if (is_default) {
       await supabase.from('workflow_flows').update({ is_default: false }).eq('is_default', true);
       update.is_default = true;
@@ -153,9 +185,7 @@ r.delete('/:id', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
-
-    await supabase.from('workflow_flows')
-      .update({ is_active: false }).eq('id', req.params.id);
+    await supabase.from('workflow_flows').update({ is_active: false }).eq('id', req.params.id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -169,29 +199,30 @@ r.put('/:id/steps', async (req, res) => {
     const { steps } = req.body;
     if (!Array.isArray(steps)) return res.status(400).json({ error: 'Cần mảng steps' });
 
-    // Delete existing steps
     await supabase.from('workflow_flow_steps').delete().eq('flow_id', req.params.id);
 
-    // Insert new steps
     if (steps.length) {
-      const { error } = await supabase.from('workflow_flow_steps')
+      const opt = v => (v && typeof v === 'string' && v.trim()) ? v.trim() : null;
+      await supabase.from('workflow_flow_steps')
         .insert(steps.map((s, i) => ({
           flow_id: req.params.id,
           division_unit_id: s.division_unit_id,
+          company_unit_id: opt(s.company_unit_id),
+          template_set_id: opt(s.template_set_id),
           order_index: s.order_index ?? i,
           setup_days: s.setup_days || 0,
           setup_hours: s.setup_hours || 0,
           description: s.description || null,
         })));
-      if (error) throw error;
     }
 
-    // Return updated flow
     const { data: flowSteps } = await supabase.from('workflow_flow_steps')
       .select(`*,
         division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name,short_name,code,
           level:ecosystem_levels(id,name,icon,color)
-        )
+        ),
+        company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name),
+        template_set:company_template_sets(id,name,project_type)
       `)
       .eq('flow_id', req.params.id)
       .order('order_index');
@@ -206,12 +237,10 @@ r.post('/:id/clone', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
-    // Get source flow
     const { data: src } = await supabase.from('workflow_flows')
       .select('*').eq('id', req.params.id).single();
     if (!src) return res.status(404).json({ error: 'Luồng không tồn tại' });
 
-    // Clone flow
     const { data: newFlow, error } = await supabase.from('workflow_flows')
       .insert({
         name: `${src.name} (bản sao)`,
@@ -224,7 +253,6 @@ r.post('/:id/clone', async (req, res) => {
       .select().single();
     if (error) throw error;
 
-    // Clone steps
     const { data: srcSteps } = await supabase.from('workflow_flow_steps')
       .select('*').eq('flow_id', req.params.id).order('order_index');
 
@@ -233,6 +261,8 @@ r.post('/:id/clone', async (req, res) => {
         .insert(srcSteps.map(s => ({
           flow_id: newFlow.id,
           division_unit_id: s.division_unit_id,
+          company_unit_id: s.company_unit_id,
+          template_set_id: s.template_set_id,
           order_index: s.order_index,
           setup_days: s.setup_days,
           setup_hours: s.setup_hours,
