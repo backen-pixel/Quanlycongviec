@@ -278,12 +278,15 @@ function DeptFormModal({ open, department, allUsers, onClose, onSaved }) {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState([]);
+  const [companies, setCompanies] = useState([]);
 
   useEffect(() => {
     if (open) {
-      setForm(department || { name: '', slug: '', description: '', color: '#6366F1', manager_id: '' });
+      setForm(department || { name: '', slug: '', description: '', color: '#6366F1', manager_id: '', company_id: '' });
       if (!allUsers.length) api.get('/users').then(r => setUsers(r.data.users || []));
       else setUsers(allUsers);
+      // Load companies
+      api.get('/companies').then(r => setCompanies(r.data.companies || [])).catch(() => {});
     }
   }, [open, department, allUsers]);
 
@@ -307,6 +310,17 @@ function DeptFormModal({ open, department, allUsers, onClose, onSaved }) {
       <form onSubmit={submit} className="space-y-4">
         <div><label className="block text-sm font-medium mb-1">Tên phòng ban *</label>
           <input value={form.name || ''} onChange={e => set('name', e.target.value)} required className="input" placeholder="Phòng Kinh doanh" /></div>
+
+        {/* Thuộc Công ty */}
+        <div>
+          <label className="block text-sm font-medium mb-1">🔗 Thuộc Công ty <span className="text-xs text-gray-400 font-normal">(auto thêm vào Hệ sinh thái)</span></label>
+          <select value={form.company_id || ''} onChange={e => set('company_id', e.target.value || null)} className="input">
+            <option value="">— Chưa gán Công ty —</option>
+            {companies.map(c => <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>)}
+          </select>
+          {form.company_id && <p className="text-[10px] text-green-600 mt-1">✓ Khi lưu sẽ tự động thêm vào cấu trúc tổ chức của Công ty</p>}
+        </div>
+
         <div><label className="block text-sm font-medium mb-1">Mô tả</label>
           <input value={form.description || ''} onChange={e => set('description', e.target.value)} className="input" placeholder="Mô tả ngắn..." /></div>
         <div><label className="block text-sm font-medium mb-1">Trưởng phòng</label>
