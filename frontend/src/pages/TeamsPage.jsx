@@ -4,7 +4,7 @@ import api from '../lib/api';
 import Modal from '../components/Modal';
 import { useAuth } from '../lib/auth';
 import { getInitials, avatarColor, ROLE_LABELS } from '../lib/utils';
-import { Plus, Search, Users, Trash2, Edit, Building, MoreVertical, UsersRound } from 'lucide-react';
+import { Plus, Search, Users, Trash2, Edit, Building, MoreVertical, UsersRound, UserPlus, X } from 'lucide-react';
 
 export default function TeamsPage() {
   const [teams, setTeams] = useState([]);
@@ -150,20 +150,33 @@ export default function TeamsPage() {
               </div>
 
               <div>
-                <h3 className="text-sm font-bold text-gray-900 mb-2">Thành viên ({teamDetail.members?.length || 0})</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-bold text-gray-900">Thành viên ({teamDetail.members?.length || 0})</h3>
+                </div>
                 <div className="space-y-2">
                   {(teamDetail.members || []).map(m => (
-                    <div key={m.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50">
+                    <div key={m.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 group">
                       <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
                         style={{ backgroundColor: avatarColor(m.full_name) }}>{getInitials(m.full_name)}</div>
                       <div className="flex-1">
                         <p className="text-sm font-medium">{m.full_name}</p>
                         <p className="text-xs text-gray-400">{m.email}{m.position ? ` · ${m.position}` : ''}</p>
                       </div>
+                      {isAdmin && (
+                        <button onClick={async () => {
+                          if (!confirm(`Xóa ${m.full_name} khỏi team?`)) return;
+                          try { await api.delete(`/teams/${selectedTeam}/members/${m.id}`); loadDetail(selectedTeam); load(); } catch {}
+                        }} className="w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-gray-300 hover:text-red-500 cursor-pointer opacity-0 group-hover:opacity-100">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   ))}
                   {teamDetail.members?.length === 0 && <p className="text-xs text-gray-400 text-center py-4">Chưa có thành viên</p>}
                 </div>
+
+                {/* Add member form */}
+                {isAdmin && selectedTeam && <AddTeamMember teamId={selectedTeam} existingIds={(teamDetail.members || []).map(m => m.id)} onAdded={() => { loadDetail(selectedTeam); load(); }} />}
               </div>
             </div>
           ) : (
@@ -252,5 +265,90 @@ function TeamFormModal({ open, team, companies, departments: allDepts, onClose, 
         </div>
       </form>
     </Modal>
+  );
+}
+
+/* ═══ ADD TEAM MEMBER — Hiện NV của PB để chọn ═══ */
+function AddTeamMember({ teamId, existingIds, onAdded }) {
+  const [deptUsers, setDeptUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedUser, setSelectedUser] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+
+  const loadAvailable = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/teams/${teamId}/available-members`);
+      setDeptUsers(data.users || []);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    if (showForm) loadAvailable();
+  }, [showForm, teamId]);
+
+  const available = deptUsers.filter(u => !existingIds.includes(u.id));
+  const inOtherTeam = available.filter(u => u.team_id && u.team_id !== teamId);
+  const noTeam = available.filter(u => !u.team_id);
+
+  const addMember = async () => {
+    if (!selectedUser) return;
+    setAdding(true);
+    try {
+      await api.post(`/teams/${teamId}/members`, { user_id: selectedUser });
+      setSelectedUser('');
+      onAdded();
+      loadAvailable();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setAdding(false);
+  };
+
+  if (!showForm) {
+    return (
+      <button onClick={() => setShowForm(true)}
+        className="w-full mt-3 h-9 border-2 border-dashed border-gray-300 rounded-xl text-xs text-gray-500 flex items-center justify-center gap-2 hover:border-blue-400 hover:text-blue-600 cursor-pointer transition-colors">
+        <UserPlus className="h-4 w-4" /> Thêm nhân viên vào team
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 bg-blue-50 rounded-xl border border-blue-200 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-bold text-blue-800 flex items-center gap-1.5">
+          <UserPlus className="h-3.5 w-3.5" /> Thêm NV từ phòng ban
+        </h4>
+        <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+      </div>
+
+      {loading ? (
+        <div className="py-3 text-center"><div className="animate-spin h-4 w-4 border-2 border-blue-200 border-t-blue-600 rounded-full mx-auto" /></div>
+      ) : available.length === 0 ? (
+        <p className="text-xs text-gray-500 text-center py-2">Tất cả NV trong PB đã thuộc team này</p>
+      ) : (
+        <>
+          <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm">
+            <option value="">— Chọn nhân viên —</option>
+            {noTeam.length > 0 && <optgroup label="Chưa có team">
+              {noTeam.map(u => <option key={u.id} value={u.id}>{u.full_name} · {u.email}{u.position ? ` · ${u.position}` : ''}</option>)}
+            </optgroup>}
+            {inOtherTeam.length > 0 && <optgroup label="Đang ở team khác (sẽ chuyển)">
+              {inOtherTeam.map(u => <option key={u.id} value={u.id}>⚠️ {u.full_name} · {u.email}</option>)}
+            </optgroup>}
+          </select>
+
+          <div className="flex justify-end gap-2">
+            <button onClick={addMember} disabled={!selectedUser || adding}
+              className="h-8 px-4 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
+              <UserPlus className="h-3 w-3" /> {adding ? '...' : 'Thêm vào team'}
+            </button>
+          </div>
+
+          <p className="text-[9px] text-blue-400">Hiện {available.length} NV trong PB · {noTeam.length} chưa có team</p>
+        </>
+      )}
+    </div>
   );
 }
