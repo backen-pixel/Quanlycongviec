@@ -16,6 +16,7 @@ import ProjectTemplatesPage from './pages/ProjectTemplatesPage';
 import PersonalTasks from './pages/PersonalTasks';
 import CompaniesPage from './pages/CompaniesPage';
 import DepartmentsPage from './pages/DepartmentsPage';
+import TeamsPage from './pages/TeamsPage';
 import WorkflowSettings from './pages/WorkflowSettings';
 import ApprovalRulesPage from './pages/ApprovalRulesPage';
 import EcosystemPage from './pages/EcosystemPage';
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="/companies" element={<CompaniesPage />} />
             <Route path="/departments" element={<DepartmentsPage />} />
             <Route path="/departments/:id/chat" element={<DepartmentChat />} />
+            <Route path="/teams" element={<TeamsPage />} />
             <Route path="/personal-tasks" element={<PersonalTasks />} />
             <Route path="/workflow-settings" element={<WorkflowSettings />} />
             <Route path="/approval-rules" element={<ApprovalRulesPage />} />

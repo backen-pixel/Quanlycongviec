@@ -74,8 +74,8 @@ r.get('/', async (req, res) => {
     const { role, department_id, search, include_inactive } = req.query;
 
     // Try full select (needs migration 06 columns), fallback to basic
-    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color)`;
-    const basicCols = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color)`;
+    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color),team:teams(id,name,color)`;
+    const basicCols = `id,email,full_name,phone,avatar,role,department_id,team_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color),team:teams(id,name,color)`;
     const basicColsNoDept = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at`;
 
     let data = null, error = null;
@@ -131,10 +131,11 @@ r.get('/:id', async (req, res) => {
     // Defensive: try full columns, fallback to basic
     let user = null;
     const { data: u1, error: e1 } = await supabase.from('users').select(`
-      id,email,full_name,phone,avatar,role,position,department_id,
+      id,email,full_name,phone,avatar,role,position,department_id,team_id,
       date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,
       is_active,last_login_at,created_at,
-      department:departments!users_department_id_fkey(id,name,color)
+      department:departments!users_department_id_fkey(id,name,color),
+      team:teams(id,name,color)
     `).eq('id', req.params.id).single();
     if (!e1) { user = u1; }
     else {
@@ -185,6 +186,7 @@ r.post('/', async (req, res) => {
       email: b.email, password: hash, full_name: b.full_name,
       phone: b.phone || null, role: b.role || 'staff',
       department_id: b.department_id || null,
+      team_id: b.team_id || null,
     };
     // Optional fields (need migration 06)
     ['position','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills'].forEach(f => {
@@ -215,7 +217,7 @@ r.put('/:id', async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['full_name','phone','role','position','department_id','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills','is_active','avatar'];
+    const fields = ['full_name','phone','role','position','department_id','team_id','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills','is_active','avatar'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     if (b.password) update.password = await bcrypt.hash(b.password, 12);
 
