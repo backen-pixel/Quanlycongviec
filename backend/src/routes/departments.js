@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { syncDepartmentToEcosystem, syncUserToEcosystem, removeUserFromEcosystem } = require('../helpers/ecosystemSync');
 
 const r = Router();
 r.use(auth);
@@ -96,9 +97,15 @@ r.post('/', async (req, res) => {
     const { data, error } = await supabase.from('departments').insert({
       name: b.name, slug, description: b.description || null,
       color: b.color || '#6366F1', manager_id: b.manager_id || null,
-      parent_id: b.parent_id || null,
+      parent_id: b.parent_id || null, company_id: b.company_id || null,
     }).select().single();
     if (error) throw error;
+
+    // Auto sync to ecosystem
+    if (b.company_id) {
+      await syncDepartmentToEcosystem({ ...data, company_id: b.company_id });
+    }
+
     res.status(201).json({ department: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -109,11 +116,17 @@ r.put('/:id', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    ['name', 'slug', 'description', 'color', 'manager_id', 'parent_id', 'is_active'].forEach(f => {
+    ['name', 'slug', 'description', 'color', 'manager_id', 'parent_id', 'is_active', 'company_id'].forEach(f => {
       if (b[f] !== undefined) update[f] = b[f];
     });
     const { data, error } = await supabase.from('departments').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
+
+    // Auto sync to ecosystem
+    if (data.company_id) {
+      await syncDepartmentToEcosystem(data);
+    }
+
     res.json({ department: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -131,11 +144,15 @@ r.delete('/:id', async (req, res) => {
 r.post('/:id/members', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
-    const { user_id } = req.body;
+    const { user_id, unit_role } = req.body;
     const { data, error } = await supabase.from('users')
       .update({ department_id: req.params.id }).eq('id', user_id)
       .select('id,full_name,email,role,position').single();
     if (error) throw error;
+
+    // Auto sync to ecosystem
+    await syncUserToEcosystem(user_id, req.params.id, unit_role || 'member');
+
     res.json({ member: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -145,6 +162,10 @@ r.delete('/:id/members/:userId', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     await supabase.from('users').update({ department_id: null }).eq('id', req.params.userId).eq('department_id', req.params.id);
+
+    // Auto remove from ecosystem
+    await removeUserFromEcosystem(req.params.userId, req.params.id);
+
     res.json({ message: 'Đã xóa khỏi phòng ban' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });

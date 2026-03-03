@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { syncCompanyToEcosystem } = require('../helpers/ecosystemSync');
 
 const r = Router();
 r.use(auth);
@@ -61,8 +62,15 @@ r.post('/', async (req, res) => {
       name: b.name, short_name: b.short_name || null,
       tax_code: b.tax_code || null, address: b.address || null,
       phone: b.phone || null, email: b.email || null, logo_url: b.logo_url || null,
+      division_unit_id: b.division_unit_id || null,
     }).select().single();
     if (error) throw error;
+
+    // Auto sync to ecosystem
+    if (b.division_unit_id) {
+      await syncCompanyToEcosystem({ ...data, division_unit_id: b.division_unit_id });
+    }
+
     res.status(201).json({ company: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -73,11 +81,15 @@ r.put('/:id', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    ['name', 'short_name', 'tax_code', 'address', 'phone', 'email', 'logo_url', 'is_active'].forEach(f => {
+    ['name', 'short_name', 'tax_code', 'address', 'phone', 'email', 'logo_url', 'is_active', 'division_unit_id'].forEach(f => {
       if (b[f] !== undefined) update[f] = b[f];
     });
     const { data, error } = await supabase.from('companies').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
+
+    // Auto sync to ecosystem
+    await syncCompanyToEcosystem(data);
+
     res.json({ company: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });

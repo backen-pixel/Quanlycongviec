@@ -248,10 +248,16 @@ export default function CompaniesPage() {
 function CompanyFormModal({ open, company, onClose, onSaved }) {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
+  const [divisions, setDivisions] = useState([]);
 
   useEffect(() => {
     if (open) {
-      setForm(company || { name: '', short_name: '', tax_code: '', address: '', phone: '', email: '' });
+      setForm(company || { name: '', short_name: '', tax_code: '', address: '', phone: '', email: '', division_unit_id: '' });
+      // Load Khối
+      api.get('/ecosystem/units').then(r => {
+        const divs = (r.data.units || []).filter(u => u.level?.depth === 1);
+        setDivisions(divs);
+      }).catch(() => {});
     }
   }, [open, company]);
 
@@ -283,6 +289,17 @@ function CompanyFormModal({ open, company, onClose, onSaved }) {
           <div><label className="block text-sm font-medium mb-1">Mã số thuế</label>
             <input value={form.tax_code || ''} onChange={e => set('tax_code', e.target.value)} className="input" placeholder="0123456789" /></div>
         </div>
+
+        {/* Gán vào Khối trong Hệ sinh thái */}
+        <div>
+          <label className="block text-sm font-medium mb-1">🔗 Thuộc Khối <span className="text-xs text-gray-400 font-normal">(Hệ sinh thái)</span></label>
+          <select value={form.division_unit_id || ''} onChange={e => set('division_unit_id', e.target.value || null)} className="input">
+            <option value="">— Chưa gán Khối —</option>
+            {divisions.map(d => <option key={d.id} value={d.id}>{d.level?.icon} {d.name}{d.short_name ? ` (${d.short_name})` : ''}</option>)}
+          </select>
+          {form.division_unit_id && <p className="text-[10px] text-green-600 mt-1">✓ Khi lưu sẽ tự động thêm vào cấu trúc tổ chức</p>}
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div><label className="block text-sm font-medium mb-1">Điện thoại</label>
             <input value={form.phone || ''} onChange={e => set('phone', e.target.value)} className="input" /></div>
