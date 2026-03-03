@@ -1,0 +1,48 @@
+// Auto-migration helper: creates tables if they don't exist
+// Run once at server startup via Supabase JS client
+
+const { supabase } = require('../config/supabase');
+
+async function runMigrations() {
+  console.log('🔄 Running auto-migrations...');
+
+  // ═══ 1. workflow_flows ═══
+  try {
+    const { error } = await supabase.from('workflow_flows').select('id').limit(1);
+    if (error && error.message.includes('could not find')) {
+      console.log('⚠️ Table workflow_flows not found. Please run migration 20_workflow_flows.sql in Supabase SQL Editor.');
+    } else {
+      console.log('✅ workflow_flows OK');
+    }
+  } catch (e) {
+    console.log('⚠️ workflow_flows check error:', e.message);
+  }
+
+  // ═══ 2. workflow_flow_steps ═══
+  try {
+    const { error } = await supabase.from('workflow_flow_steps').select('id').limit(1);
+    if (error && error.message.includes('could not find')) {
+      console.log('⚠️ Table workflow_flow_steps not found. Please run migration 20_workflow_flows.sql in Supabase SQL Editor.');
+    } else {
+      console.log('✅ workflow_flow_steps OK');
+    }
+  } catch (e) {
+    console.log('⚠️ workflow_flow_steps check error:', e.message);
+  }
+
+  // ═══ 3. Check deadline_days on company_template_tasks ═══
+  try {
+    const { error } = await supabase.from('company_template_tasks').select('id,deadline_days').limit(1);
+    if (error && error.message.includes('does not exist')) {
+      console.log('⚠️ Column deadline_days not found on company_template_tasks. Please run migration 20_workflow_flows.sql.');
+    } else {
+      console.log('✅ company_template_tasks.deadline_days OK');
+    }
+  } catch (e) {
+    console.log('⚠️ deadline check error:', e.message);
+  }
+
+  console.log('🔄 Migration check complete.');
+}
+
+module.exports = { runMigrations };

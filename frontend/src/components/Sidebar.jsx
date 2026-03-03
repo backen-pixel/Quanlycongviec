@@ -6,7 +6,7 @@ import api from '../lib/api';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, MessageSquare, Palette, Calculator, FileText,
-  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2, Building, MessageCircle, Network, Layers
+  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, UserPlus, Building2, Building, MessageCircle, Network, Layers, GitBranch
 } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 
@@ -48,6 +48,7 @@ const adminTools = [
   { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
   { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
   { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
+  { to: '/workflow-flows', icon: GitBranch, label: 'Quản lý luồng' },
   { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
 ];
 

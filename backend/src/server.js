@@ -43,6 +43,7 @@ app.use('/api/stages', require('./routes/stages'));
 app.use('/api/approvals', require('./routes/approvals'));
 app.use('/api/ecosystem', require('./routes/ecosystem'));
 app.use('/api/company-templates', require('./routes/companyTemplates'));
+app.use('/api/flows', require('./routes/flows'));
 
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {
