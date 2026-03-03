@@ -35,15 +35,9 @@ export default function TemplateSetDetailPage() {
         setTasks(tasksData.tasks || []);
 
         const companyId = setData.set?.unit?.company_id;
-        let stagesUrl = '/stages';
-        if (companyId) stagesUrl += `?company_id=${companyId}`;
-        const { data: stagesData } = await api.get(stagesUrl);
-        let stagesList = stagesData.stages || [];
-        if (stagesList.length === 0 && companyId) {
-          const { data: defaultStages } = await api.get('/stages');
-          stagesList = defaultStages.stages || [];
-        }
-        setStages(stagesList);
+        // Load ALL stages (not just company-specific) to match all task stage_ids
+        const { data: stagesData } = await api.get('/stages');
+        setStages(stagesData.stages || []);
 
         // Load users for assignee selection
         const { data: usersData } = await api.get('/users');
@@ -131,16 +125,24 @@ export default function TemplateSetDetailPage() {
 
       {showAddTask && <AddTaskForm stages={stages} users={allUsers} onAdd={addTask} onCancel={() => setShowAddTask(false)} />}
 
-      {stages.filter(s => s.is_active !== false).map((stage, stageIdx) => {
-        const stageTasks = tasksByStage[stage.id];
-        if (!stageTasks) return null;
-        return (
-          <StageSection key={stage.id} stage={stage} stageNumber={stageIdx + 1} tasks={stageTasks}
-            users={allUsers}
-            onUpdateTask={updateTask} onDeleteTask={deleteTask}
-            onAddChecklist={addChecklist} onDeleteChecklist={deleteChecklist} />
-        );
-      })}
+      {/* Show tasks grouped by stage — include stages that have tasks even if not in stages list */}
+      {(() => {
+        const stageIds = [...new Set(tasks.map(t => t.stage_id))];
+        const stageMap = {};
+        stages.forEach(s => { stageMap[s.id] = s; });
+        // Build ordered list: known stages first, then unknown
+        const orderedStages = stageIds.map(sid => stageMap[sid] || { id: sid, name: tasks.find(t => t.stage_id === sid)?.stage?.name || 'Quy trình khác', color: '#6b7280', icon: '📋' });
+        return orderedStages.map((stage, stageIdx) => {
+          const stageTasks = tasksByStage[stage.id];
+          if (!stageTasks) return null;
+          return (
+            <StageSection key={stage.id} stage={stage} stageNumber={stageIdx + 1} tasks={stageTasks}
+              users={allUsers}
+              onUpdateTask={updateTask} onDeleteTask={deleteTask}
+              onAddChecklist={addChecklist} onDeleteChecklist={deleteChecklist} />
+          );
+        });
+      })()}
 
       {tasks.length === 0 && !showAddTask && (
         <div className="text-center py-16 bg-white rounded-2xl border">
