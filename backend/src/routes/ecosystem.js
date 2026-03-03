@@ -153,7 +153,7 @@ r.get('/units', async (req, res) => {
       .select(`
         *,
         level:ecosystem_levels(id,name,slug,depth,icon,color),
-        company:companies(id,name,short_name)
+        company:companies!ecosystem_units_company_id_fkey(id,name,short_name)
       `)
       .eq('is_active', true)
       .order('order_index');
@@ -199,7 +199,7 @@ r.get('/units/:id', async (req, res) => {
       .select(`
         *,
         level:ecosystem_levels(id,name,slug,depth,icon,color),
-        company:companies(id,name,short_name)
+        company:companies!ecosystem_units_company_id_fkey(id,name,short_name)
       `)
       .eq('id', req.params.id).single();
     if (error) throw error;
