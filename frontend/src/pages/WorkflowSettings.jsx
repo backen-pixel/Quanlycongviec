@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
-import { Plus, GripVertical, Pencil, Trash2, Power, PowerOff, ChevronDown, ChevronUp, Save, X, Link2, ArrowRight, Settings2 } from 'lucide-react';
+import { Plus, GripVertical, Pencil, Trash2, Power, PowerOff, ChevronDown, ChevronUp, Save, X, Link2, ArrowRight, Settings2, FolderKanban } from 'lucide-react';
 
 const ICONS = ['💬','🎨','💰','📝','🏭','🚛','🔧','❤️','📋','🔍','📦','🛡️','⭐','📊','🔔','✅','❌','🏗️','🔄','📌'];
 
@@ -37,23 +37,26 @@ export default function WorkflowSettings() {
   const [dragIdx, setDragIdx] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [divisions, setDivisions] = useState([]);
+  const [stageGroups, setStageGroups] = useState([]);
   const [filterCompany, setFilterCompany] = useState('__all__'); // '__all__' | '__default__' | company_id
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [sr, csr, mr, compRes, unitRes] = await Promise.all([
+      const [sr, csr, mr, compRes, unitRes, sgRes] = await Promise.all([
         api.get('/stages').catch(() => api.get('/users/stages').catch(() => ({ data: { stages: [] } }))),
         api.get('/stages/customer-statuses').catch(() => ({ data: { statuses: [] } })),
         api.get('/stages/status-mapping').catch(() => ({ data: { mappings: [] } })),
         api.get('/companies').catch(() => ({ data: { companies: [] } })),
         api.get('/ecosystem/units').catch(() => ({ data: { units: [] } })),
+        api.get('/ecosystem/stage-groups').catch(() => ({ data: { groups: [] } })),
       ]);
       setStages(sr.data.stages || []);
       setCustStatuses(csr.data.statuses || []);
       setMappings((mr.data.mappings || []).map(m => ({ stage_id: m.stage_id, customer_status_id: m.customer_status_id })));
       setCompanies(compRes.data.companies || []);
       setDivisions((unitRes.data.units || []).filter(u => u.level?.depth === 1));
+      setStageGroups(sgRes.data.groups || []);
     } catch (_) {}
     setLoading(false);
   }, []);
@@ -184,6 +187,50 @@ export default function WorkflowSettings() {
               <Plus className="h-3.5 w-3.5" /> Thêm quy trình
             </button>
           </div>
+
+          {/* Nút tạo QT từ nhóm khi chọn Cty cụ thể */}
+          {filterCompany !== '__all__' && filterCompany !== '__default__' && (() => {
+            const comp = companies.find(c => c.id === filterCompany);
+            const div = comp ? divisions.find(d => d.id === comp.division_unit_id) : null;
+            // Tìm nhóm QT thuộc Khối này
+            const divGroups = div ? stageGroups.filter(g => g.division_unit_id === div.id) : [];
+            // Thêm nhóm QT chung (không thuộc Khối nào)
+            const generalGroups = stageGroups.filter(g => !g.division_unit_id);
+            const allGroups = [...divGroups, ...generalGroups];
+
+            if (allGroups.length === 0) return null;
+            const companyStageCount = stages.filter(s => s.company_id === filterCompany).length;
+
+            return (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <FolderKanban className="h-4 w-4 text-indigo-600" />
+                  <p className="text-xs font-bold text-indigo-900">Tạo quy trình từ Nhóm QT</p>
+                  {div && <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">{div.level?.icon} {div.name}</span>}
+                  {companyStageCount > 0 && <span className="text-[10px] text-amber-600">⚠️ Cty đã có {companyStageCount} QT</span>}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {allGroups.map(g => (
+                    <button key={g.id} onClick={async () => {
+                      const stageNames = (g.stages || []).map(s => s.name).join(', ');
+                      if (!confirm(`Tạo ${g.stages?.length || 0} quy trình từ nhóm "${g.name}" cho ${comp?.name}?\n\nQuy trình: ${stageNames}`)) return;
+                      try {
+                        const res = await api.post(`/ecosystem/stage-groups/${g.id}/generate-for-company`, { company_id: filterCompany });
+                        alert(`✅ Đã tạo ${res.data.count} quy trình cho ${comp?.name}`);
+                        load();
+                      } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+                    }}
+                      className="h-8 px-3 bg-white border border-indigo-300 rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-indigo-100 cursor-pointer text-indigo-700">
+                      <span>{g.icon || '📋'}</span>
+                      {g.name}
+                      <span className="text-[9px] text-indigo-400">({g.stages?.length || 0} QT)</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[9px] text-indigo-400">Click nhóm → auto tạo các stage của nhóm đó cho {comp?.name}</p>
+              </div>
+            );
+          })()}
 
           <div className="space-y-2">
             {stages.filter(s => {

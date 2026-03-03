@@ -444,6 +444,60 @@ r.post('/stage-groups/:id/stages', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══ TẠO QUY TRÌNH CHO CTY TỪ NHÓM QT ═══
+// POST /stage-groups/:id/generate-for-company
+// Copy stages từ nhóm QT → tạo workflow_stages mới cho company_id
+r.post('/stage-groups/:id/generate-for-company', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role))
+      return res.status(403).json({ error: 'Không có quyền' });
+
+    const { company_id } = req.body;
+    if (!company_id) return res.status(400).json({ error: 'Cần company_id' });
+
+    // Get group stages
+    const { data: items } = await supabase.from('workflow_stage_group_items')
+      .select('*, stage:workflow_stages(id,name,slug,color,icon,order_index,description)')
+      .eq('group_id', req.params.id).order('order_index');
+
+    if (!items?.length) return res.status(400).json({ error: 'Nhóm QT chưa có stage nào' });
+
+    // Check existing stages for this company
+    const { data: existing } = await supabase.from('workflow_stages')
+      .select('slug').eq('company_id', company_id);
+    const existingSlugs = new Set((existing || []).map(s => s.slug));
+
+    const created = [];
+    for (let i = 0; i < items.length; i++) {
+      const src = items[i].stage;
+      if (!src) continue;
+
+      // Generate unique slug for company
+      let slug = `${src.slug}-${company_id.substring(0, 8)}`;
+      if (existingSlugs.has(slug)) {
+        slug = `${src.slug}-${company_id.substring(0, 8)}-${Date.now()}`;
+      }
+
+      const { data: newStage, error } = await supabase.from('workflow_stages').insert({
+        name: src.name,
+        slug,
+        description: src.description || null,
+        color: src.color || '#3B82F6',
+        icon: src.icon || null,
+        order_index: i + 1,
+        is_active: true,
+        company_id,
+      }).select().single();
+
+      if (error) { console.error('Gen stage error:', error); continue; }
+      created.push(newStage);
+      existingSlugs.add(slug);
+    }
+
+    res.json({ created, count: created.length });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
 // Assign stage groups to unit
 r.post('/units/:id/stage-groups', async (req, res) => {
   try {
