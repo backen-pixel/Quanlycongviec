@@ -43,6 +43,37 @@ async function loadStepDetails(steps) {
     } else {
       step.tasks = [];
     }
+
+    // Load company processes linked to this step
+    try {
+      const { data: stepProcs } = await supabase.from('flow_step_processes')
+        .select('*, process:company_processes(id,name,description,color,icon,order_index)')
+        .eq('flow_step_id', step.id)
+        .order('order_index');
+      step.processes = (stepProcs || []).map(sp => ({ ...sp.process, _link_id: sp.id, is_required: sp.is_required }));
+
+      // Count tasks per process
+      for (const proc of step.processes) {
+        const { count } = await supabase.from('company_process_tasks')
+          .select('id', { count: 'exact', head: true })
+          .eq('process_id', proc.id);
+        proc.task_count = count || 0;
+      }
+    } catch { step.processes = []; }
+
+    // Also load all available processes for the company (for selection)
+    if (step.company_unit_id) {
+      try {
+        const { data: allProcs } = await supabase.from('company_processes')
+          .select('id,name,description,color,icon,order_index')
+          .eq('company_unit_id', step.company_unit_id)
+          .eq('is_active', true)
+          .order('order_index');
+        step.available_processes = allProcs || [];
+      } catch { step.available_processes = []; }
+    } else {
+      step.available_processes = [];
+    }
   }
   return steps;
 }

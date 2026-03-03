@@ -44,6 +44,7 @@ app.use('/api/approvals', require('./routes/approvals'));
 app.use('/api/ecosystem', require('./routes/ecosystem'));
 app.use('/api/company-templates', require('./routes/companyTemplates'));
 app.use('/api/flows', require('./routes/flows'));
+app.use('/api/company-processes', require('./routes/companyProcesses'));
 
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {
