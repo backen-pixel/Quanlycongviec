@@ -192,7 +192,16 @@ export default function NotificationCenter({ socket }) {
                 return (
                   <div
                     key={n.id}
-                    onClick={() => !n.is_read && !isApproval && markRead(n.id)}
+                    onClick={() => {
+                      if (!n.is_read && !isApproval) markRead(n.id);
+                      // Navigate to project if metadata has project_id
+                      const pid = n.metadata?.project_id;
+                      if (pid) {
+                        const navTab = n.metadata?.nav_tab;
+                        navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
+                        setOpen(false);
+                      }
+                    }}
                     className={`px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 transition-colors ${!n.is_read ? 'bg-blue-50/40' : ''}`}
                   >
                     <div className="flex gap-3">
