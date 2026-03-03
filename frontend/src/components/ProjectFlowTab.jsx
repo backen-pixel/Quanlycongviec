@@ -145,7 +145,20 @@ export default function ProjectFlowTab({ projectId }) {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-2 mt-3">
+                    <div className="flex items-center gap-2 mt-3 flex-wrap">
+                      {a.status === 'pending' && a.template_set_id && (
+                        <button onClick={async () => {
+                          if (!confirm('Tạo task từ bộ NV mẫu? Task sẽ được phân công PB/Team/NV theo template.')) return;
+                          try {
+                            const r = await api.post(`/company-templates/projects/${projectId}/generate-from-template`, { template_set_id: a.template_set_id, assignment_id: a.id });
+                            alert(`✅ Đã tạo ${r.data.count} task từ bộ mẫu`);
+                            load();
+                          } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+                        }}
+                          className="h-7 px-3 text-[10px] bg-indigo-600 text-white rounded-lg cursor-pointer hover:bg-indigo-700 flex items-center gap-1">
+                          <Zap className="h-3 w-3" /> Tạo task từ mẫu
+                        </button>
+                      )}
                       {a.status === 'pending' && (
                         <button onClick={async () => { try { await api.put(`/company-templates/project-assignments/${a.id}`, { status: 'in_progress' }); load(); } catch {} }}
                           className="h-7 px-3 text-[10px] bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 flex items-center gap-1">
