@@ -115,8 +115,11 @@ r.put('/status-mapping', auth, async (req, res) => {
 r.get('/', auth, async (req, res) => {
   try {
     const isAdmin = ['admin', 'manager'].includes(req.user.role);
+    const { company_id } = req.query;
     let q = supabase.from('workflow_stages').select('*').order('order_index');
     if (!isAdmin) q = q.eq('is_active', true);
+    if (company_id) q = q.eq('company_id', company_id);
+    else if (company_id === '') q = q.is('company_id', null); // chỉ stages mặc định
     const { data, error } = await q;
     if (error) throw error;
     res.json({ stages: data || [] });
@@ -128,7 +131,7 @@ r.post('/', auth, async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Chỉ admin/manager được tạo quy trình' });
-    const { name, slug, description, color, icon, order_index } = req.body;
+    const { name, slug, description, color, icon, order_index, company_id } = req.body;
     if (!name || !slug) return res.status(400).json({ error: 'Cần name và slug' });
     let oi = order_index;
     if (oi === undefined || oi === null) {
@@ -136,7 +139,7 @@ r.post('/', auth, async (req, res) => {
       oi = (mx?.[0]?.order_index || 0) + 1;
     }
     const { data, error } = await supabase.from('workflow_stages')
-      .insert({ name, slug, description: description || '', color: color || '#3B82F6', icon: icon || '', order_index: oi, is_active: true })
+      .insert({ name, slug, description: description || '', color: color || '#3B82F6', icon: icon || '', order_index: oi, is_active: true, company_id: company_id || null })
       .select().single();
     if (error) throw error;
     res.json({ stage: data });
@@ -148,7 +151,7 @@ r.put('/:id', auth, async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
-    const { name, slug, description, color, icon, is_active } = req.body;
+    const { name, slug, description, color, icon, is_active, company_id } = req.body;
     const update = {};
     if (name !== undefined) update.name = name;
     if (slug !== undefined) update.slug = slug;
@@ -156,6 +159,7 @@ r.put('/:id', auth, async (req, res) => {
     if (color !== undefined) update.color = color;
     if (icon !== undefined) update.icon = icon;
     if (is_active !== undefined) update.is_active = is_active;
+    if (company_id !== undefined) update.company_id = company_id || null;
     const { data, error } = await supabase.from('workflow_stages')
       .update(update).eq('id', req.params.id).select().single();
     if (error) throw error;

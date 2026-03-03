@@ -35,18 +35,25 @@ export default function WorkflowSettings() {
   const [editStatus, setEditStatus] = useState(null);
   const [tab, setTab] = useState('stages'); // 'stages' | 'statuses' | 'mapping'
   const [dragIdx, setDragIdx] = useState(null);
+  const [companies, setCompanies] = useState([]);
+  const [divisions, setDivisions] = useState([]);
+  const [filterCompany, setFilterCompany] = useState('__all__'); // '__all__' | '__default__' | company_id
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [sr, csr, mr] = await Promise.all([
+      const [sr, csr, mr, compRes, unitRes] = await Promise.all([
         api.get('/stages').catch(() => api.get('/users/stages').catch(() => ({ data: { stages: [] } }))),
         api.get('/stages/customer-statuses').catch(() => ({ data: { statuses: [] } })),
         api.get('/stages/status-mapping').catch(() => ({ data: { mappings: [] } })),
+        api.get('/companies').catch(() => ({ data: { companies: [] } })),
+        api.get('/ecosystem/units').catch(() => ({ data: { units: [] } })),
       ]);
       setStages(sr.data.stages || []);
       setCustStatuses(csr.data.statuses || []);
       setMappings((mr.data.mappings || []).map(m => ({ stage_id: m.stage_id, customer_status_id: m.customer_status_id })));
+      setCompanies(compRes.data.companies || []);
+      setDivisions((unitRes.data.units || []).filter(u => u.level?.depth === 1));
     } catch (_) {}
     setLoading(false);
   }, []);
@@ -158,15 +165,32 @@ export default function WorkflowSettings() {
       {/* ═══ TAB: QUY TRÌNH ═══ */}
       {tab === 'stages' && (
         <div className="space-y-3">
-          <div className="flex justify-end">
-            <button onClick={() => setEditStage({ name: '', slug: '', color: '#3B82F6', icon: '📋', description: '' })}
+          {/* Filter bar */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-1">
+              <span className="text-xs text-gray-500 whitespace-nowrap">Công ty:</span>
+              <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="h-8 px-3 border rounded-lg text-sm min-w-[180px]">
+                <option value="__all__">Tất cả quy trình</option>
+                <option value="__default__">🌐 Mặc định (chung)</option>
+                {companies.map(c => {
+                  const div = divisions.find(d => d.id === c.division_unit_id);
+                  return <option key={c.id} value={c.id}>{c.name}{div ? ` · ${div.level?.icon || ''} ${div.name}` : ''}</option>;
+                })}
+              </select>
+              {filterCompany !== '__all__' && <button onClick={() => setFilterCompany('__all__')} className="text-xs text-blue-600 cursor-pointer hover:underline">Xóa lọc</button>}
+            </div>
+            <button onClick={() => setEditStage({ name: '', slug: '', color: '#3B82F6', icon: '📋', description: '', company_id: filterCompany !== '__all__' && filterCompany !== '__default__' ? filterCompany : '' })}
               className="h-8 px-3 bg-blue-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
               <Plus className="h-3.5 w-3.5" /> Thêm quy trình
             </button>
           </div>
 
           <div className="space-y-2">
-            {stages.map((s, i) => (
+            {stages.filter(s => {
+              if (filterCompany === '__all__') return true;
+              if (filterCompany === '__default__') return !s.company_id;
+              return s.company_id === filterCompany;
+            }).map((s, i) => (
               <div key={s.id} className={`flex items-center gap-2 sm:gap-3 p-3 rounded-xl border transition-all ${s.is_active ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-200 opacity-60'}`}>
                 {/* Drag handle + order */}
                 <div className="flex flex-col items-center gap-0.5 shrink-0">
@@ -184,6 +208,15 @@ export default function WorkflowSettings() {
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-gray-900">{s.name}</h3>
                     {!s.is_active && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">Tắt</span>}
+                    {s.company_id && (() => {
+                      const comp = companies.find(c => c.id === s.company_id);
+                      const div = comp ? divisions.find(d => d.id === comp.division_unit_id) : null;
+                      return <>
+                        <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full">🏢 {comp?.short_name || comp?.name || 'Cty'}</span>
+                        {div && <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full">{div.level?.icon} {div.name}</span>}
+                      </>;
+                    })()}
+                    {!s.company_id && <span className="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">🌐 Chung</span>}
                   </div>
                   <p className="text-[10px] text-gray-500">{s.slug} · {s.description || '—'}</p>
                 </div>
@@ -205,7 +238,7 @@ export default function WorkflowSettings() {
           </div>
 
           {/* Edit/Create modal */}
-          {editStage && <StageForm stage={editStage} onSave={saveStage} onCancel={() => setEditStage(null)} icons={ICONS} />}
+          {editStage && <StageForm stage={editStage} onSave={saveStage} onCancel={() => setEditStage(null)} icons={ICONS} companies={companies} divisions={divisions} />}
         </div>
       )}
 
@@ -288,7 +321,7 @@ export default function WorkflowSettings() {
 }
 
 // ═══ Stage edit form ═══
-function StageForm({ stage, onSave, onCancel, icons }) {
+function StageForm({ stage, onSave, onCancel, icons, companies = [], divisions = [] }) {
   // Convert Lucide icon name to emoji for editing
   const initIcon = stage.icon && stage.icon.charCodeAt(0) <= 127
     ? (ICON_NAME_TO_EMOJI[stage.icon] || '📋')
@@ -303,6 +336,24 @@ function StageForm({ stage, onSave, onCancel, icons }) {
           <input value={f.name} onChange={e => setF({ ...f, name: e.target.value, slug: f.id ? f.slug : slugify(e.target.value) })}
             className="w-full h-9 px-3 border rounded-lg text-sm" placeholder="VD: Sản xuất" />
         </div>
+
+        {/* Thuộc Công ty */}
+        <div>
+          <label className="text-[11px] font-medium text-gray-500 block mb-1">🔗 Thuộc Công ty <span className="text-[10px] text-gray-400 font-normal">(để trống = quy trình chung)</span></label>
+          <select value={f.company_id || ''} onChange={e => setF({ ...f, company_id: e.target.value || null })} className="w-full h-9 px-3 border rounded-lg text-sm">
+            <option value="">🌐 Mặc định (chung toàn hệ thống)</option>
+            {companies.map(c => {
+              const div = divisions.find(d => d.id === c.division_unit_id);
+              return <option key={c.id} value={c.id}>{c.name}{div ? ` · ${div.level?.icon || ''} ${div.name}` : ''}</option>;
+            })}
+          </select>
+          {f.company_id && (() => {
+            const comp = companies.find(c => c.id === f.company_id);
+            const div = comp ? divisions.find(d => d.id === comp.division_unit_id) : null;
+            return div ? <p className="text-[10px] text-purple-600 mt-1">{div.level?.icon} Khối: {div.name}</p> : null;
+          })()}
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-[11px] font-medium text-gray-500 block mb-1">Slug</label>

@@ -148,10 +148,10 @@ export default function ProjectFlowTab({ projectId }) {
                     <div className="flex items-center gap-2 mt-3 flex-wrap">
                       {a.status === 'pending' && a.template_set_id && (
                         <button onClick={async () => {
-                          if (!confirm('Tạo task từ bộ NV mẫu? Task sẽ được phân công PB/Team/NV theo template.')) return;
+                          if (!confirm('Tạo task từ dự án mẫu? Task sẽ được phân công PB/Team/NV theo template.')) return;
                           try {
                             const r = await api.post(`/company-templates/projects/${projectId}/generate-from-template`, { template_set_id: a.template_set_id, assignment_id: a.id });
-                            alert(`✅ Đã tạo ${r.data.count} task từ bộ mẫu`);
+                            alert(`✅ Đã tạo ${r.data.count} task từ dự án mẫu`);
                             load();
                           } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
                         }}
@@ -289,7 +289,7 @@ function AssignModal({ projectId, divisions, companies, existing, onDone, onClos
           )}
 
           {compId && tplSets.length > 0 && (
-            <div><label className="text-[11px] font-medium text-gray-600 block mb-1">Bộ NV mẫu</label>
+            <div><label className="text-[11px] font-medium text-gray-600 block mb-1">Dự án mẫu</label>
               <select value={tplSetId} onChange={e => setTplSetId(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm">
                 <option value="">Không dùng mẫu</option>
                 {tplSets.map(s => <option key={s.id} value={s.id}>{s.name}{s.is_default ? ' ★' : ''} ({s.task_count} task)</option>)}

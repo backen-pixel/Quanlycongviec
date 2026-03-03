@@ -44,7 +44,7 @@ export default function TemplatesPage() {
   const toggle = (id) => setExpandedStages(e => ({ ...e, [id]: !e[id] }));
 
   const deleteTemplate = async (id) => {
-    if (!confirm('Xóa nhiệm vụ mẫu?')) return;
+    if (!confirm('Xóa dự án mẫu?')) return;
     await api.delete(`/templates/${id}`); load();
   };
 
@@ -67,7 +67,7 @@ export default function TemplatesPage() {
   const totalTemplates = stages.reduce((s, st) => s + (st.templates?.length || 0), 0);
 
   const activateAll = async () => {
-    if (!confirm('Kích hoạt tất cả nhiệm vụ mẫu?')) return;
+    if (!confirm('Kích hoạt tất cả dự án mẫu?')) return;
     await api.post('/templates/activate-all');
     load();
   };
@@ -76,9 +76,9 @@ export default function TemplatesPage() {
     <div className="space-y-5 max-w-5xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Nhiệm vụ mẫu</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Dự án mẫu</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Quản lý nhiệm vụ mẫu cho từng quy trình — {totalTemplates} mẫu · {stages.length} giai đoạn
+            Quản lý dự án mẫu cho từng quy trình — {totalTemplates} mẫu · {stages.length} giai đoạn
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -127,7 +127,7 @@ export default function TemplatesPage() {
                   <span className="text-[11px] sm:text-xs font-medium text-blue-700 whitespace-nowrap">NV mặc định:</span>
                   <UserSelect value={stageAssignees[stage.id] || ''} onChange={v => setStageDefaultAssignee(stage.id, v)}
                     users={users} placeholder="— Chưa chỉ định —" className="flex-1 min-w-[140px] max-w-[250px]" size="sm" />
-                  <span className="text-[10px] text-blue-400 hidden sm:inline">→ áp dụng cho tất cả NV mẫu</span>
+                  <span className="text-[10px] text-blue-400 hidden sm:inline">→ áp dụng cho tất cả dự án mẫu</span>
                 </div>
               )}
 
@@ -172,7 +172,7 @@ export default function TemplatesPage() {
                     </div>
                   )) : (
                     <div className="px-4 py-6 text-center text-xs text-gray-400">
-                      Chưa có nhiệm vụ mẫu — sẽ dùng mặc định khi chuyển giai đoạn
+                      Chưa có dự án mẫu — sẽ dùng mặc định khi chuyển giai đoạn
                     </div>
                   )}
                 </div>
@@ -223,7 +223,7 @@ function TemplateFormModal({ open, onClose, onSaved, editTemplate, preStageId, s
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editTemplate ? 'Sửa nhiệm vụ mẫu' : 'Thêm nhiệm vụ mẫu'} size="md">
+    <Modal open={open} onClose={onClose} title={editTemplate ? 'Sửa dự án mẫu' : 'Thêm dự án mẫu'} size="md">
       <form onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2"><label className="block text-sm font-medium mb-1">Tên nhiệm vụ *</label><input value={form.title || ''} onChange={e => set('title', e.target.value)} required className="input" /></div>

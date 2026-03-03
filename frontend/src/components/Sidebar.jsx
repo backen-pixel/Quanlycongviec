@@ -44,7 +44,7 @@ const adminTools = [
   { to: '/companies', icon: Building2, label: 'Công ty' },
   { to: '/departments', icon: Building, label: 'Phòng ban' },
   { to: '/users', icon: Users, label: 'Nhân viên' },
-  { to: '/templates', icon: ClipboardList, label: 'NV mẫu' },
+  { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
   { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
   { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
   { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },

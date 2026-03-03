@@ -232,7 +232,7 @@ function UnitDetailModal({ unitId, levels, stageGroups, allUsers, units, isAdmin
   const childMin = children.length > 0 ? Math.min(...children.map(ch => ch.level?.depth ?? 99)) : 99;
   const isCo = unit.level?.depth >= 2;
   const tabs = [{ id: 'info', l: 'Đơn vị con', n: children.length }, { id: 'members', l: 'Quản lý & NV', n: members.length }, { id: 'workflows', l: 'Quy trình', n: stage_groups.length }];
-  if (isCo) tabs.push({ id: 'templates', l: 'NV mẫu', n: tplSets.length });
+  if (isCo) tabs.push({ id: 'templates', l: 'Dự án mẫu', n: tplSets.length });
   tabs.push({ id: 'projects', l: 'Dự án', n: projects.length });
 
   return (
@@ -294,7 +294,7 @@ function TemplatesTab({ unitId, sets, onReload, isAdmin }) {
   };
 
   const setDefault = async (id) => { try { await api.put(`/company-templates/template-sets/${id}`, { is_default: true }); onReload(); } catch {} };
-  const remove = async (id) => { if (!confirm('Xóa bộ mẫu?')) return; try { await api.delete(`/company-templates/template-sets/${id}`); onReload(); } catch {} };
+  const remove = async (id) => { if (!confirm('Xóa dự án mẫu?')) return; try { await api.delete(`/company-templates/template-sets/${id}`); onReload(); } catch {} };
 
   return (
     <div className="space-y-2">
@@ -305,7 +305,7 @@ function TemplatesTab({ unitId, sets, onReload, isAdmin }) {
 
       {showCreate && (
         <div className="bg-blue-50 rounded-lg p-3 space-y-2">
-          <input value={newName} onChange={e => setNewName(e.target.value)} className="w-full h-8 px-3 border rounded text-sm" placeholder="Tên bộ mẫu (VD: Dự án Biệt thự)" />
+          <input value={newName} onChange={e => setNewName(e.target.value)} className="w-full h-8 px-3 border rounded text-sm" placeholder="Tên dự án mẫu (VD: Dự án Biệt thự)" />
           <div className="flex gap-2">
             <input value={newType} onChange={e => setNewType(e.target.value)} className="flex-1 h-8 px-3 border rounded text-sm" placeholder="Loại dự án (optional)" />
             <button onClick={create} disabled={saving} className="h-8 px-3 bg-blue-600 text-white rounded text-xs font-medium cursor-pointer disabled:opacity-50">{saving ? '...' : 'Tạo'}</button>
@@ -323,7 +323,7 @@ function TemplatesTab({ unitId, sets, onReload, isAdmin }) {
               {s.is_default && <span className="text-[8px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-bold">MẶC ĐỊNH</span>}
               {s.project_type && <span className="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{s.project_type}</span>}
             </div>
-            <p className="text-[10px] text-gray-400">{s.task_count || 0} task mẫu</p>
+            <p className="text-[10px] text-gray-400">{s.task_count || 0} nhiệm vụ</p>
           </div>
           {isAdmin && (
             <div className="flex gap-1 shrink-0">
@@ -335,7 +335,7 @@ function TemplatesTab({ unitId, sets, onReload, isAdmin }) {
         </div>
       ))}
 
-      {sets.length === 0 && !showCreate && <p className="text-xs text-gray-400 text-center py-4">Chưa có bộ NV mẫu</p>}
+      {sets.length === 0 && !showCreate && <p className="text-xs text-gray-400 text-center py-4">Chưa có dự án mẫu</p>}
     </div>
   );
 }
