@@ -12,7 +12,7 @@ import UsersPage from './pages/UsersPage';
 import CustomersPage from './pages/CustomersPage';
 import CustomerDetail from './pages/CustomerDetail';
 import ProductsPage from './pages/ProductsPage';
-import TemplatesPage from './pages/TemplatesPage';
+import ProjectTemplatesPage from './pages/ProjectTemplatesPage';
 import PersonalTasks from './pages/PersonalTasks';
 import CompaniesPage from './pages/CompaniesPage';
 import DepartmentsPage from './pages/DepartmentsPage';
@@ -74,7 +74,7 @@ export default function App() {
             <Route path="/customers" element={<CustomersPage />} />
             <Route path="/customers/:id" element={<CustomerDetail />} />
             <Route path="/products" element={<ProductsPage />} />
-            <Route path="/templates" element={<TemplatesPage />} />
+            <Route path="/templates" element={<ProjectTemplatesPage />} />
             <Route path="/companies" element={<CompaniesPage />} />
             <Route path="/departments" element={<DepartmentsPage />} />
             <Route path="/departments/:id/chat" element={<DepartmentChat />} />

@@ -49,6 +49,17 @@ r.post('/units/:unitId/template-sets', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET single template set
+r.get('/template-sets/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('company_template_sets')
+      .select('*, unit:ecosystem_units!company_template_sets_unit_id_fkey(id,name,company_id,parent_id)')
+      .eq('id', req.params.id).single();
+    if (error) throw error;
+    res.json({ set: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
 // PUT update template set
 r.put('/template-sets/:id', async (req, res) => {
   try {
