@@ -166,8 +166,9 @@ r.post('/template-sets/:setId/tasks', async (req, res) => {
     if (!stage_id) return res.status(400).json({ error: 'Chọn quy trình' });
 
     const opt = v => (v && typeof v === 'string' && v.trim()) ? v.trim() : null;
+    const { deadline_days, deadline_hours } = req.body;
     const { data, error } = await supabase.from('company_template_tasks')
-      .insert({ template_set_id: req.params.setId, stage_id, title: title.trim(), description: description || null, order_index: order_index || 0, default_department_id: opt(default_department_id), default_team_id: opt(default_team_id), default_assignee_id: opt(default_assignee_id), estimated_hours: estimated_hours || null, priority: priority || 'medium' })
+      .insert({ template_set_id: req.params.setId, stage_id, title: title.trim(), description: description || null, order_index: order_index || 0, default_department_id: opt(default_department_id), default_team_id: opt(default_team_id), default_assignee_id: opt(default_assignee_id), estimated_hours: estimated_hours || null, priority: priority || 'medium', deadline_days: deadline_days || 0, deadline_hours: deadline_hours || 0 })
       .select(`*, stage:workflow_stages(id,name,slug,color,icon)`).single();
     if (error) throw error;
     res.json({ task: data });
@@ -177,7 +178,7 @@ r.post('/template-sets/:setId/tasks', async (req, res) => {
 // PUT update template task
 r.put('/template-tasks/:id', async (req, res) => {
   try {
-    const { title, description, stage_id, order_index, default_department_id, default_team_id, default_assignee_id, estimated_hours, priority } = req.body;
+    const { title, description, stage_id, order_index, default_department_id, default_team_id, default_assignee_id, estimated_hours, priority, deadline_days, deadline_hours } = req.body;
     const opt = v => (v && typeof v === 'string' && v.trim()) ? v.trim() : null;
     const update = {};
     if (title !== undefined) update.title = title;
@@ -189,6 +190,8 @@ r.put('/template-tasks/:id', async (req, res) => {
     if (default_assignee_id !== undefined) update.default_assignee_id = opt(default_assignee_id);
     if (estimated_hours !== undefined) update.estimated_hours = estimated_hours;
     if (priority !== undefined) update.priority = priority;
+    if (deadline_days !== undefined) update.deadline_days = deadline_days;
+    if (deadline_hours !== undefined) update.deadline_hours = deadline_hours;
 
     const { data, error } = await supabase.from('company_template_tasks')
       .update(update).eq('id', req.params.id).select().single();
@@ -211,10 +214,11 @@ r.delete('/template-tasks/:id', async (req, res) => {
 
 r.post('/template-tasks/:taskId/checklists', async (req, res) => {
   try {
-    const { title, order_index, require_file, require_note } = req.body;
+    const { title, order_index, require_file, require_note, default_assignee_id } = req.body;
     if (!title?.trim()) return res.status(400).json({ error: 'Tiêu đề checklist là bắt buộc' });
+    const opt = v => (v && typeof v === 'string' && v.trim()) ? v.trim() : null;
     const { data, error } = await supabase.from('company_template_checklists')
-      .insert({ template_task_id: req.params.taskId, title: title.trim(), order_index: order_index || 0, require_file: require_file || false, require_note: require_note || false })
+      .insert({ template_task_id: req.params.taskId, title: title.trim(), order_index: order_index || 0, require_file: require_file || false, require_note: require_note || false, default_assignee_id: opt(default_assignee_id) })
       .select().single();
     if (error) throw error;
     res.json({ checklist: data });
