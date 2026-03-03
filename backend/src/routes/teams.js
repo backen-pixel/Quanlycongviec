@@ -116,4 +116,102 @@ r.delete('/:id', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
+// ═══ ADD MEMBER to team ═══
+r.post('/:id/members', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    const { user_id } = req.body;
+    if (!user_id) return res.status(400).json({ error: 'Cần user_id' });
+
+    // Get team info
+    const { data: team } = await supabase.from('teams').select('id,name,department_id').eq('id', req.params.id).single();
+    if (!team) return res.status(404).json({ error: 'Team không tồn tại' });
+
+    // Update user's team_id + department_id
+    await supabase.from('users').update({
+      team_id: req.params.id,
+      department_id: team.department_id,
+      updated_at: new Date().toISOString(),
+    }).eq('id', user_id);
+
+    // Auto sync to ecosystem — thêm vào unit_members cấp team
+    try {
+      // Tìm ecosystem_unit cho department trước, rồi tìm team unit nếu có
+      const { data: deptUnit } = await supabase.from('ecosystem_units')
+        .select('id').eq('department_id', team.department_id).eq('is_active', true).single();
+
+      if (deptUnit) {
+        // Tìm team unit (con của dept unit có tên = team.name)
+        const { data: teamUnits } = await supabase.from('ecosystem_units')
+          .select('id').eq('parent_id', deptUnit.id).eq('name', team.name).eq('is_active', true).limit(1);
+
+        const unitId = teamUnits?.[0]?.id || deptUnit.id;
+
+        // Check nếu đã là member
+        const { data: existing } = await supabase.from('ecosystem_unit_members')
+          .select('id').eq('unit_id', unitId).eq('user_id', user_id).single();
+
+        if (!existing) {
+          await supabase.from('ecosystem_unit_members').insert({
+            unit_id: unitId,
+            user_id: user_id,
+            unit_role: 'member',
+            can_manage_children: false,
+          });
+        }
+      }
+    } catch (syncErr) { console.error('Team member sync:', syncErr.message); }
+
+    const { data: user } = await supabase.from('users')
+      .select('id,full_name,email,phone,avatar,role,position').eq('id', user_id).single();
+
+    res.json({ member: user });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══ REMOVE MEMBER from team ═══
+r.delete('/:id/members/:userId', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+
+    // Clear team_id on user (keep department_id)
+    await supabase.from('users').update({
+      team_id: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.userId).eq('team_id', req.params.id);
+
+    // Remove from ecosystem_unit_members
+    try {
+      const { data: team } = await supabase.from('teams').select('department_id,name').eq('id', req.params.id).single();
+      if (team) {
+        const { data: deptUnit } = await supabase.from('ecosystem_units')
+          .select('id').eq('department_id', team.department_id).eq('is_active', true).single();
+        if (deptUnit) {
+          const { data: teamUnits } = await supabase.from('ecosystem_units')
+            .select('id').eq('parent_id', deptUnit.id).eq('name', team.name).eq('is_active', true).limit(1);
+          const unitId = teamUnits?.[0]?.id || deptUnit.id;
+          await supabase.from('ecosystem_unit_members').delete().eq('unit_id', unitId).eq('user_id', req.params.userId);
+        }
+      }
+    } catch (syncErr) { console.error('Remove member sync:', syncErr.message); }
+
+    res.json({ message: 'Đã xóa khỏi team' });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══ GET NV của PB (để chọn thêm vào team) ═══
+r.get('/:id/available-members', async (req, res) => {
+  try {
+    const { data: team } = await supabase.from('teams').select('department_id').eq('id', req.params.id).single();
+    if (!team) return res.status(404).json({ error: 'Team không tồn tại' });
+
+    // Lấy tất cả NV của PB
+    const { data: deptUsers } = await supabase.from('users')
+      .select('id,full_name,email,phone,avatar,role,position,team_id')
+      .eq('department_id', team.department_id).eq('is_active', true).order('full_name');
+
+    res.json({ users: deptUsers || [] });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
 module.exports = r;
