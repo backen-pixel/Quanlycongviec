@@ -507,4 +507,68 @@ r.post('/projects/:projectId/units', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════
+// LIÊN KẾT COMPANIES + DEPARTMENTS
+// ═══════════════════════════════════════════════
+
+// GET companies chưa liên kết (hoặc tất cả)
+r.get('/available-companies', async (req, res) => {
+  try {
+    const { data: companies, error } = await supabase.from('companies')
+      .select('id, name, short_name, code, logo, is_active')
+      .eq('is_active', true).order('name');
+    if (error) throw error;
+
+    // Đánh dấu đã liên kết
+    const { data: linked } = await supabase.from('ecosystem_units')
+      .select('company_id').not('company_id', 'is', null).eq('is_active', true);
+    const linkedIds = new Set((linked || []).map(u => u.company_id));
+
+    res.json({
+      companies: (companies || []).map(c => ({ ...c, is_linked: linkedIds.has(c.id) }))
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET departments của 1 company (hoặc tất cả)
+r.get('/available-departments', async (req, res) => {
+  try {
+    const { company_id } = req.query;
+    let q = supabase.from('departments').select('id, name, short_name, company_id, is_active').eq('is_active', true).order('name');
+    if (company_id) q = q.eq('company_id', company_id);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Đánh dấu đã liên kết
+    const { data: linked } = await supabase.from('ecosystem_units')
+      .select('department_id').not('department_id', 'is', null).eq('is_active', true);
+    const linkedIds = new Set((linked || []).map(u => u.department_id));
+
+    res.json({
+      departments: (data || []).map(d => ({ ...d, is_linked: linkedIds.has(d.id) }))
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET users of a company (qua departments)
+r.get('/company-users/:companyId', async (req, res) => {
+  try {
+    // Get departments of this company
+    const { data: depts } = await supabase.from('departments')
+      .select('id').eq('company_id', req.params.companyId).eq('is_active', true);
+    const deptIds = (depts || []).map(d => d.id);
+
+    // Get users in these departments
+    let users = [];
+    if (deptIds.length) {
+      const { data } = await supabase.from('users')
+        .select('id, full_name, email, avatar, role, department_id, is_active')
+        .in('department_id', deptIds).eq('is_active', true).order('full_name');
+      users = data || [];
+    }
+
+    res.json({ users, department_ids: deptIds });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = r;

@@ -81,6 +81,7 @@ function OrgChart({ node, onSelect, onAddChild, isAdmin }) {
           <h3 className="text-xs font-bold text-gray-900 truncate">{node.name}</h3>
           <div className="inline-flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full mt-1 font-medium" style={{ backgroundColor: c + '15', color: c }}>{node.level?.name}</div>
           {node.code && <div className="text-[9px] text-gray-400 font-mono mt-0.5">{node.code}</div>}
+          {node.company && <div className="text-[8px] text-green-600 mt-0.5">🔗 {node.company.name}</div>}
           {node.member_count > 0 && <div className="flex items-center justify-center gap-1 mt-1 text-[10px] text-gray-500"><Users className="h-3 w-3" /> {node.member_count}</div>}
           {node.stage_groups?.length > 0 && <div className="flex flex-wrap justify-center gap-0.5 mt-1">{node.stage_groups.map(g => <span key={g.id} className="text-[8px] px-1 py-0.5 rounded-full" style={{ backgroundColor: g.color + '15', color: g.color }}>{g.icon}</span>)}</div>}
         </div>
@@ -101,26 +102,96 @@ function OrgChart({ node, onSelect, onAddChild, isAdmin }) {
 function CreateUnitModal({ parentId, levels, units, onCreated, onClose }) {
   const [name, setName] = useState(''); const [sn, setSn] = useState(''); const [code, setCode] = useState('');
   const [levelId, setLevelId] = useState(''); const [desc, setDesc] = useState(''); const [saving, setSaving] = useState(false);
+  const [companyId, setCompanyId] = useState(''); const [deptId, setDeptId] = useState('');
+  const [companies, setCompanies] = useState([]); const [departments, setDepartments] = useState([]);
+
   const parent = parentId ? units.find(u => u.id === parentId) : null;
   const avail = levels.filter(l => l.depth > (parent?.level?.depth ?? -1));
+  const selectedLevel = levels.find(l => l.id === levelId);
+  const isCompanyLevel = selectedLevel?.slug === 'subsidiary' || selectedLevel?.depth === 2;
+  const isDeptLevel = selectedLevel?.slug === 'department' || selectedLevel?.depth === 3;
+
   useEffect(() => { if (avail.length && !levelId) setLevelId(avail[0].id); }, [avail.length]);
+
+  // Load companies khi chọn cấp Công ty
+  useEffect(() => {
+    if (isCompanyLevel) {
+      api.get('/ecosystem/available-companies').then(r => setCompanies(r.data.companies || [])).catch(() => {});
+    }
+  }, [isCompanyLevel]);
+
+  // Load departments khi chọn cấp Phòng ban
+  useEffect(() => {
+    if (isDeptLevel) {
+      const parentCompanyId = parent?.company_id;
+      const url = parentCompanyId ? `/ecosystem/available-departments?company_id=${parentCompanyId}` : '/ecosystem/available-departments';
+      api.get(url).then(r => setDepartments(r.data.departments || [])).catch(() => {});
+    }
+  }, [isDeptLevel, parent?.company_id]);
+
+  // Auto-fill name khi chọn company/department
+  const onSelectCompany = (cid) => {
+    setCompanyId(cid);
+    const c = companies.find(x => x.id === cid);
+    if (c && !name) { setName(c.name); setSn(c.short_name || ''); setCode(c.code || ''); }
+  };
+  const onSelectDept = (did) => {
+    setDeptId(did);
+    const d = departments.find(x => x.id === did);
+    if (d && !name) { setName(d.name); setSn(d.short_name || ''); }
+  };
+
   const save = async () => {
     if (!name.trim() || !levelId) return alert('Nhập tên và chọn cấp bậc');
     setSaving(true);
-    try { await api.post('/ecosystem/units', { name: name.trim(), short_name: sn || null, code: code || null, level_id: levelId, parent_id: parentId || null, description: desc || null }); onCreated(); }
-    catch (e) { alert(e.response?.data?.error || 'Lỗi'); } setSaving(false);
+    try {
+      await api.post('/ecosystem/units', {
+        name: name.trim(), short_name: sn || null, code: code || null,
+        level_id: levelId, parent_id: parentId || null, description: desc || null,
+        company_id: companyId || null, department_id: deptId || null,
+      });
+      onCreated();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setSaving(false);
   };
+
   return (
     <Modal open onClose={onClose} title={parent ? `Thêm con: ${parent.name}` : 'Thêm đơn vị gốc'} size="md">
       <div className="space-y-4">
         {parent && <div className="flex items-center gap-2 bg-blue-50 rounded-xl p-3"><span className="text-lg">{parent.level?.icon}</span><div className="w-1 h-8 rounded-full" style={{ backgroundColor: parent.level?.color }} /><div><p className="text-sm font-bold">{parent.name}</p><p className="text-[10px]" style={{ color: parent.level?.color }}>{parent.level?.name}</p></div><span className="text-gray-300 mx-2">→</span><span className="text-xs text-gray-500">Con</span></div>}
         <div className="grid grid-cols-2 gap-3">
+          {/* Cấp bậc */}
+          <div className="col-span-2"><label className="text-[11px] font-medium text-gray-600 block mb-1">Cấp bậc *</label>
+            {avail.length > 0 ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">{avail.map(l => <button key={l.id} onClick={() => { setLevelId(l.id); setCompanyId(''); setDeptId(''); }} className={`flex items-center gap-2 p-2.5 rounded-xl border-2 cursor-pointer text-left ${levelId === l.id ? 'shadow-md' : 'border-gray-200'}`} style={levelId === l.id ? { borderColor: l.color, backgroundColor: l.color + '08' } : {}}><span className="text-lg">{l.icon}</span><div><p className="text-xs font-bold" style={levelId === l.id ? { color: l.color } : {}}>{l.name}</p><p className="text-[9px] text-gray-400">Cấp {l.depth}</p></div></button>)}</div> : <div className="bg-red-50 rounded-lg p-3 text-xs text-red-600">Không có cấp phù hợp</div>}
+          </div>
+
+          {/* Liên kết Công ty */}
+          {isCompanyLevel && companies.length > 0 && (
+            <div className="col-span-2">
+              <label className="text-[11px] font-medium text-gray-600 block mb-1">🔗 Liên kết Công ty <span className="text-gray-400 font-normal">(chọn từ danh sách)</span></label>
+              <select value={companyId} onChange={e => onSelectCompany(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm">
+                <option value="">— Không liên kết / Tạo mới —</option>
+                {companies.map(c => <option key={c.id} value={c.id} disabled={c.is_linked}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}{c.is_linked ? ' ✓ đã liên kết' : ''}</option>)}
+              </select>
+              {companyId && <p className="text-[10px] text-green-600 mt-1">✓ Sẽ liên kết với công ty đã tạo — PB & NV sẽ được đồng bộ</p>}
+            </div>
+          )}
+
+          {/* Liên kết Phòng ban */}
+          {isDeptLevel && departments.length > 0 && (
+            <div className="col-span-2">
+              <label className="text-[11px] font-medium text-gray-600 block mb-1">🔗 Liên kết Phòng ban <span className="text-gray-400 font-normal">(chọn từ danh sách)</span></label>
+              <select value={deptId} onChange={e => onSelectDept(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm">
+                <option value="">— Không liên kết / Tạo mới —</option>
+                {departments.map(d => <option key={d.id} value={d.id} disabled={d.is_linked}>{d.name}{d.short_name ? ` (${d.short_name})` : ''}{d.is_linked ? ' ✓ đã liên kết' : ''}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* Tên, viết tắt, mã */}
           <div className="col-span-2"><label className="text-[11px] font-medium text-gray-600 block mb-1">Tên *</label><input value={name} onChange={e => setName(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm" /></div>
           <div><label className="text-[11px] font-medium text-gray-600 block mb-1">Viết tắt</label><input value={sn} onChange={e => setSn(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm" /></div>
           <div><label className="text-[11px] font-medium text-gray-600 block mb-1">Mã</label><input value={code} onChange={e => setCode(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm font-mono" /></div>
-          <div className="col-span-2"><label className="text-[11px] font-medium text-gray-600 block mb-1">Cấp bậc *</label>
-            {avail.length > 0 ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">{avail.map(l => <button key={l.id} onClick={() => setLevelId(l.id)} className={`flex items-center gap-2 p-2.5 rounded-xl border-2 cursor-pointer text-left ${levelId === l.id ? 'shadow-md' : 'border-gray-200'}`} style={levelId === l.id ? { borderColor: l.color, backgroundColor: l.color + '08' } : {}}><span className="text-lg">{l.icon}</span><div><p className="text-xs font-bold" style={levelId === l.id ? { color: l.color } : {}}>{l.name}</p><p className="text-[9px] text-gray-400">Cấp {l.depth}</p></div></button>)}</div> : <div className="bg-red-50 rounded-lg p-3 text-xs text-red-600">Không có cấp phù hợp</div>}
-          </div>
           <div className="col-span-2"><label className="text-[11px] font-medium text-gray-600 block mb-1">Mô tả</label><textarea value={desc} onChange={e => setDesc(e.target.value)} className="w-full min-h-[50px] px-3 py-2 border rounded-lg text-sm resize-none" /></div>
         </div>
         <div className="flex justify-end gap-2"><button onClick={onClose} className="h-8 px-3 border rounded-lg text-xs cursor-pointer">Hủy</button><button onClick={save} disabled={saving || !levelId} className="h-8 px-4 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50">{saving ? '...' : 'Tạo'}</button></div>
@@ -175,6 +246,7 @@ function UnitDetailModal({ unitId, levels, stageGroups, allUsers, units, isAdmin
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap"><span className="text-base font-bold text-gray-900">{unit.name}</span>{unit.short_name && <span className="text-[10px] bg-white border px-1.5 py-0.5 rounded">{unit.short_name}</span>}{unit.code && <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-mono">{unit.code}</span>}</div>
                 <button onClick={() => isAdmin && setChangingLevel(!changingLevel)} className={`inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg font-medium mt-1 ${isAdmin ? 'cursor-pointer hover:shadow-md' : ''}`} style={{ backgroundColor: c + '20', color: c, border: `1px solid ${c}30` }}><Layers className="h-3 w-3" /> {unit.level?.name} · Cấp {unit.level?.depth ?? '?'}{isAdmin && <Edit className="h-2.5 w-2.5 ml-1 opacity-40" />}</button>
+                {unit.company && <span className="inline-flex items-center gap-1 text-[10px] text-green-700 bg-green-50 px-2 py-0.5 rounded-lg mt-1 ml-1">🔗 Công ty: <strong>{unit.company.name}</strong></span>}
               </div>
               {isAdmin && <div className="flex gap-1 shrink-0"><button onClick={() => setEditMode(!editMode)} className="h-8 px-3 text-[10px] text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 cursor-pointer flex items-center gap-1"><Edit className="h-3 w-3" /> Sửa</button><button onClick={del} className="h-8 px-3 text-[10px] text-red-600 bg-red-50 rounded-lg hover:bg-red-100 cursor-pointer flex items-center gap-1"><Trash2 className="h-3 w-3" /> Xóa</button></div>}
             </div>
