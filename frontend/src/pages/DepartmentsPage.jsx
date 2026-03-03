@@ -22,14 +22,20 @@ export default function DepartmentsPage() {
   const [allUsers, setAllUsers] = useState([]);
   const [addUserId, setAddUserId] = useState('');
   const [menuDept, setMenuDept] = useState(null);
+  const [companies, setCompanies] = useState([]);
+  const [filterCompany, setFilterCompany] = useState('');
   const { user } = useAuth();
   const navigate = useNavigate();
 
   const load = () => {
     setLoading(true);
-    api.get('/departments')
-      .then(r => setDepartments(r.data.departments || []))
-      .catch(() => {}).finally(() => setLoading(false));
+    Promise.all([
+      api.get('/departments'),
+      api.get('/companies'),
+    ]).then(([dRes, cRes]) => {
+      setDepartments(dRes.data.departments || []);
+      setCompanies(cRes.data.companies || []);
+    }).catch(() => {}).finally(() => setLoading(false));
   };
   useEffect(load, []);
 
@@ -87,12 +93,29 @@ export default function DepartmentsPage() {
         )}
       </div>
 
+      {/* Company filter */}
+      {companies.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Lọc theo Cty:</span>
+          <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="h-8 px-3 border rounded-lg text-sm">
+            <option value="">Tất cả công ty</option>
+            <option value="__none__">Chưa gán Cty</option>
+            {companies.map(c => <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>)}
+          </select>
+          {filterCompany && <button onClick={() => setFilterCompany('')} className="text-xs text-blue-600 cursor-pointer hover:underline">Xóa lọc</button>}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Left: Department list */}
         <div className="lg:col-span-1 space-y-2">
           {loading ? (
             <div className="text-center py-10"><svg className="animate-spin h-6 w-6 text-gray-400 mx-auto" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>
-          ) : departments.map(d => (
+          ) : departments.filter(d => {
+            if (!filterCompany) return true;
+            if (filterCompany === '__none__') return !d.company_id;
+            return d.company_id === filterCompany;
+          }).map(d => (
             <div key={d.id} onClick={() => loadDetail(d.id)}
               className={`bg-white rounded-xl border p-4 cursor-pointer transition-all hover:shadow-md ${selectedDept === d.id ? 'ring-2 ring-blue-500 border-blue-300' : 'border-gray-200'}`}>
               <div className="flex items-center gap-3">
@@ -104,6 +127,7 @@ export default function DepartmentsPage() {
                   <h3 className="text-sm font-semibold text-gray-900 truncate">{d.name}</h3>
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <span className="flex items-center gap-1"><Users className="h-3 w-3" />{d.member_count || 0} người</span>
+                    {d.company_id && <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">{companies.find(c => c.id === d.company_id)?.short_name || companies.find(c => c.id === d.company_id)?.name || 'Cty'}</span>}
                   </div>
                 </div>
 
