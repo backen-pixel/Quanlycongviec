@@ -393,11 +393,11 @@ r.post('/stage-groups', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
-    const { name, slug, description, color, icon, order_index } = req.body;
+    const { name, slug, description, color, icon, order_index, division_unit_id } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Tên nhóm là bắt buộc' });
     if (!slug || !slug.trim()) return res.status(400).json({ error: 'Slug là bắt buộc' });
     const { data, error } = await supabase.from('workflow_stage_groups')
-      .insert({ name: name.trim(), slug: slug.trim(), description: description || null, color: color || '#6366F1', icon: icon || null, order_index: order_index || 0 })
+      .insert({ name: name.trim(), slug: slug.trim(), description: description || null, color: color || '#6366F1', icon: icon || null, order_index: order_index || 0, division_unit_id: division_unit_id || null })
       .select().single();
     if (error) throw error;
     res.json({ group: data });
@@ -408,7 +408,7 @@ r.put('/stage-groups/:id', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
-    const { name, slug, description, color, icon, order_index, is_active } = req.body;
+    const { name, slug, description, color, icon, order_index, is_active, division_unit_id } = req.body;
     const update = {};
     if (name !== undefined) update.name = name;
     if (slug !== undefined) update.slug = slug;
@@ -417,6 +417,7 @@ r.put('/stage-groups/:id', async (req, res) => {
     if (icon !== undefined) update.icon = icon;
     if (order_index !== undefined) update.order_index = order_index;
     if (is_active !== undefined) update.is_active = is_active;
+    if (division_unit_id !== undefined) update.division_unit_id = division_unit_id || null;
 
     const { data, error } = await supabase.from('workflow_stage_groups')
       .update(update).eq('id', req.params.id).select().single();

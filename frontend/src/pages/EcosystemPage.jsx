@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import Modal from '../components/Modal';
 import {
   Plus, ChevronRight, ChevronDown, Users, Trash2, Layers,
   Edit, Shield, FolderKanban, Network, Save, X, UserPlus, Crown, User,
-  ArrowDownRight, Copy, FileText, ChevronUp
+  ArrowDownRight, Copy, FileText, ChevronUp, ZoomIn, ZoomOut, Maximize2, Move
 } from 'lucide-react';
 
 const RL = { director: 'Giám đốc', manager: 'Quản lý', team_lead: 'Trưởng nhóm', member: 'Nhân viên' };
@@ -52,17 +52,95 @@ export default function EcosystemPage() {
       </div>
 
       {tree.length > 0 ? (
-        <div className="overflow-x-auto pb-6">
-          <div className="min-w-fit flex flex-col items-center">
+        <ZoomableCanvas>
+          <div className="min-w-fit flex flex-col items-center p-8">
             {tree.map(root => <OrgChart key={root.id} node={root} onSelect={setSelectedUnit} onAddChild={setShowCreate} isAdmin={isAdmin} />)}
           </div>
-        </div>
+        </ZoomableCanvas>
       ) : (
         <div className="text-center py-20 bg-white rounded-2xl border"><Network className="h-14 w-14 mx-auto mb-4 text-gray-200" /><p className="text-sm text-gray-500">Chưa có cấu trúc tổ chức</p></div>
       )}
 
       {showCreate && <CreateUnitModal parentId={showCreate === 'root' ? null : showCreate} levels={levels} units={units} onCreated={() => { load(); setShowCreate(null); }} onClose={() => setShowCreate(null)} />}
       {selectedUnit && <UnitDetailModal unitId={selectedUnit} levels={levels} stageGroups={stageGroups} allUsers={allUsers} units={units} isAdmin={isAdmin} onUpdated={load} onClose={() => setSelectedUnit(null)} />}
+    </div>
+  );
+}
+
+/* ═══ ZOOMABLE CANVAS ═══ */
+function ZoomableCanvas({ children }) {
+  const containerRef = useRef(null);
+  const [zoom, setZoom] = useState(0.85);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+  const panStart = useRef({ x: 0, y: 0 });
+
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+  const handleWheel = useCallback((e) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      setZoom(z => clamp(z - e.deltaY * 0.002, 0.2, 2));
+    }
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
+
+  const onMouseDown = (e) => {
+    if (e.target.closest('button') || e.target.closest('a')) return;
+    setDragging(true);
+    dragStart.current = { x: e.clientX, y: e.clientY };
+    panStart.current = { ...pan };
+  };
+  const onMouseMove = (e) => {
+    if (!dragging) return;
+    setPan({
+      x: panStart.current.x + (e.clientX - dragStart.current.x),
+      y: panStart.current.y + (e.clientY - dragStart.current.y),
+    });
+  };
+  const onMouseUp = () => setDragging(false);
+
+  const zoomIn = () => setZoom(z => clamp(z + 0.15, 0.2, 2));
+  const zoomOut = () => setZoom(z => clamp(z - 0.15, 0.2, 2));
+  const resetView = () => { setZoom(0.85); setPan({ x: 0, y: 0 }); };
+
+  return (
+    <div className="relative">
+      {/* Zoom controls */}
+      <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-white/90 backdrop-blur rounded-xl border shadow-sm px-1.5 py-1">
+        <button onClick={zoomOut} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Thu nhỏ"><ZoomOut className="h-3.5 w-3.5 text-gray-600" /></button>
+        <span className="text-[10px] font-mono text-gray-500 w-10 text-center">{Math.round(zoom * 100)}%</span>
+        <button onClick={zoomIn} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Phóng to"><ZoomIn className="h-3.5 w-3.5 text-gray-600" /></button>
+        <div className="w-px h-4 bg-gray-200 mx-0.5" />
+        <button onClick={resetView} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Reset"><Maximize2 className="h-3.5 w-3.5 text-gray-600" /></button>
+      </div>
+
+      {/* Hint */}
+      <div className="absolute bottom-2 left-2 z-20 text-[9px] text-gray-400 bg-white/80 backdrop-blur rounded-lg px-2 py-1 flex items-center gap-1.5">
+        <Move className="h-3 w-3" /> Kéo để di chuyển · Ctrl+Scroll để zoom
+      </div>
+
+      {/* Canvas */}
+      <div ref={containerRef}
+        className="overflow-hidden rounded-2xl border bg-gray-50/50 bg-[radial-gradient(circle,#e5e7eb_1px,transparent_1px)] bg-[size:20px_20px]"
+        style={{ height: 'calc(100vh - 200px)', minHeight: 400, cursor: dragging ? 'grabbing' : 'grab' }}
+        onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
+        <div style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transformOrigin: 'top center',
+          transition: dragging ? 'none' : 'transform 0.15s ease',
+          willChange: 'transform',
+        }}>
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
