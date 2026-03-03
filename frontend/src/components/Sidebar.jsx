@@ -43,6 +43,7 @@ const adminTools = [
   { to: '/ecosystem-levels', icon: Layers, label: 'Cấp bậc HST' },
   { to: '/companies', icon: Building2, label: 'Công ty' },
   { to: '/departments', icon: Building, label: 'Phòng ban' },
+  { to: '/teams', icon: Users, label: 'Team' },
   { to: '/users', icon: Users, label: 'Nhân viên' },
   { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
   { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
