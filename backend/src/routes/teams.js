@@ -107,11 +107,30 @@ r.put('/:id', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// ═══ DELETE (soft) ═══
+// ═══ DELETE (soft) — also sync ecosystem ═══
 r.delete('/:id', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+
+    // Get team members before deleting
+    const { data: team } = await supabase.from('teams').select('id,name,department_id').eq('id', req.params.id).single();
+    const { data: members } = await supabase.from('users').select('id').eq('team_id', req.params.id).eq('is_active', true);
+
+    // Soft delete team
     await supabase.from('teams').update({ is_active: false }).eq('id', req.params.id);
+
+    // Remove members from team + ecosystem
+    for (const m of (members || [])) {
+      await supabase.from('users').update({ team_id: null }).eq('id', m.id);
+      try { await removeUserFromEcosystem(m.id, team?.department_id); } catch {}
+    }
+
+    // Soft delete ecosystem unit linked to this team
+    try {
+      await supabase.from('ecosystem_units').update({ is_active: false })
+        .eq('name', team?.name).eq('is_active', true);
+    } catch {}
+
     res.json({ message: 'Đã vô hiệu hóa' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });

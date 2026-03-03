@@ -184,9 +184,11 @@ r.post('/', async (req, res) => {
   try {
     const b = req.body;
 
-    // Auto-generate code
-    const { count } = await supabase.from('projects').select('id', { count: 'exact', head: true });
-    const code = `TB-${new Date().getFullYear()}-${String((count||0)+1).padStart(3,'0')}`;
+    // Auto-generate code (use MAX to avoid duplicates)
+    const yr = new Date().getFullYear();
+    const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${yr}-%`).order('code', { ascending: false }).limit(1);
+    const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) || 0 : 0;
+    const code = `TB-${yr}-${String(lastNum + 1).padStart(3, '0')}`;
 
     // Get first stage
     const { data: stage } = await supabase.from('workflow_stages').select('id').eq('slug','consulting').single();
@@ -371,9 +373,11 @@ r.post('/create-with-flow', async (req, res) => {
     if (!b.name?.trim()) return res.status(400).json({ error: 'Tên dự án là bắt buộc' });
     if (!b.customer_id) return res.status(400).json({ error: 'Chọn khách hàng' });
 
-    // Auto-generate code
-    const { count } = await supabase.from('projects').select('id', { count: 'exact', head: true });
-    const code = `TB-${new Date().getFullYear()}-${String((count || 0) + 1).padStart(3, '0')}`;
+    // Auto-generate code (use MAX to avoid duplicates)
+    const yr = new Date().getFullYear();
+    const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${yr}-%`).order('code', { ascending: false }).limit(1);
+    const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) || 0 : 0;
+    const code = `TB-${yr}-${String(lastNum + 1).padStart(3, '0')}`;
 
     // Get first stage for initial status
     const { data: firstStage } = await supabase.from('workflow_stages')

@@ -76,7 +76,21 @@ export default function WorkflowFlowsPage() {
 /* ═══ FLOW CARD ═══ */
 function FlowCard({ flow, onEdit, onDelete, onClone, onSetDefault }) {
   const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [expandedStepId, setExpandedStepId] = useState(null);
   const totalTasks = (flow.steps || []).reduce((s, st) => s + (st.task_count || 0), 0);
+
+  const toggleExpand = async () => {
+    if (!expanded && !detail) {
+      try {
+        const { data } = await api.get(`/flows/${flow.id}`);
+        setDetail(data.flow);
+      } catch {}
+    }
+    setExpanded(!expanded);
+  };
+
+  const steps = detail?.steps || flow.steps || [];
 
   return (
     <div className="bg-white rounded-xl border overflow-hidden hover:shadow-sm transition-shadow">
@@ -113,29 +127,53 @@ function FlowCard({ flow, onEdit, onDelete, onClone, onSetDefault }) {
           <button onClick={onDelete} className="w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer" title="Xóa"><Trash2 className="h-3.5 w-3.5" /></button>
         </div>
 
-        <button onClick={() => setExpanded(!expanded)} className="cursor-pointer shrink-0">
+        <button onClick={toggleExpand} className="cursor-pointer shrink-0">
           {expanded ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
         </button>
       </div>
 
       {expanded && (
         <div className="border-t px-4 py-3 space-y-2 bg-gray-50/50">
-          {(flow.steps || []).map((step, i) => (
-            <div key={step.id} className="flex items-start gap-3 bg-white rounded-lg border p-3">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
-                style={{ backgroundColor: step.division?.level?.color || '#6b7280' }}>{i + 1}</div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900">{step.division?.level?.icon} {step.division?.name}</p>
-                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                  {step.company && <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded"><Building2 className="h-2 w-2 inline" /> {step.company.short_name || step.company.name}</span>}
-                  {step.template_set && <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded"><ClipboardList className="h-2 w-2 inline" /> {step.template_set.name}</span>}
-                  {step.task_count > 0 && <span className="text-[10px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">{step.task_count} NV</span>}
-                </div>
-                {step.description && <p className="text-[10px] text-gray-400 mt-0.5">{step.description}</p>}
+          {steps.map((step, i) => {
+            const tasks = step.tasks || [];
+            const isStepExpanded = expandedStepId === step.id;
+            const divColor = step.division?.level?.color || '#6b7280';
+            return (
+              <div key={step.id} className="bg-white rounded-lg border overflow-hidden" style={{ borderLeft: `3px solid ${divColor}` }}>
+                <button onClick={() => setExpandedStepId(isStepExpanded ? null : step.id)}
+                  className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                    style={{ backgroundColor: divColor }}>{i + 1}</div>
+                  <div className="flex-1 text-left min-w-0">
+                    <p className="text-sm font-medium text-gray-900">{step.division?.level?.icon} {step.division?.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      {step.company && <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded"><Building2 className="h-2 w-2 inline" /> {step.company.short_name || step.company.name}</span>}
+                      {step.template_set && <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded"><ClipboardList className="h-2 w-2 inline" /> {step.template_set.name}</span>}
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium shrink-0">{tasks.length || step.task_count || 0} NV</span>
+                  {isStepExpanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />}
+                </button>
+
+                {isStepExpanded && tasks.length > 0 && (
+                  <div className="border-t bg-gray-50/50 p-2 space-y-0.5">
+                    {tasks.map(t => (
+                      <div key={t.id} className="flex items-center gap-1.5 py-1.5 px-2 bg-white rounded text-[11px]">
+                        <CheckSquare className="h-3 w-3 text-gray-300 shrink-0" />
+                        <span className="flex-1 text-gray-800">{t.title}</span>
+                        {t.default_assignee && <span className="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded text-[9px] shrink-0"><User className="h-2 w-2 inline" /> {t.default_assignee.full_name?.split(' ').pop()}</span>}
+                        {(t.deadline_days > 0 || t.deadline_hours > 0) && <span className="bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded text-[9px] shrink-0"><Clock className="h-2 w-2 inline" /> {t.deadline_days > 0 ? `${t.deadline_days}d` : ''}{t.deadline_hours > 0 ? `${t.deadline_hours}h` : ''}</span>}
+                        {t.checklists?.length > 0 && <span className="text-[9px] text-gray-400 shrink-0">📋{t.checklists.length}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {isStepExpanded && tasks.length === 0 && (
+                  <div className="border-t p-2 text-[10px] text-gray-400 italic text-center">Chưa có NV mẫu</div>
+                )}
               </div>
-              {i < (flow.steps || []).length - 1 && <ArrowRight className="h-4 w-4 text-gray-300 shrink-0 mt-1" />}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
