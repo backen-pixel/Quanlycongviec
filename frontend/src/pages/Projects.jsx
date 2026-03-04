@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import ProjectCreateModalFullScreen from '../components/ProjectCreateModalFullScreen';
 import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List } from 'lucide-react';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 
@@ -68,7 +67,6 @@ export default function Projects() {
   const [filterPerson, setFilterPerson] = useState('all');
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
   const [showAdvFilter, setShowAdvFilter] = useState(false);
 
   const load = () => {
@@ -185,7 +183,7 @@ export default function Projects() {
               <List className="h-3.5 w-3.5" /> Danh sách
             </button>
           </div>
-          <button onClick={() => setShowCreate(true)}
+          <button onClick={() => navigate('/projects/create')}
             className="h-9 px-3 sm:px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
             <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Tạo dự án</span>
           </button>
@@ -480,8 +478,6 @@ export default function Projects() {
           );
         })()
       )}
-
-      <ProjectCreateModalFullScreen open={showCreate} onClose={() => setShowCreate(false)} onCreated={load} />
     </div>
   );
 }
