@@ -18,6 +18,7 @@ export default function CompanyProcessesPage() {
   const [editId, setEditId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
+  const [companyEmployees, setCompanyEmployees] = useState([]);
 
   const loadUnits = useCallback(async () => {
     try {
@@ -28,6 +29,15 @@ export default function CompanyProcessesPage() {
       setUnits(companies);
       if (!selectedUnit && companies.length > 0) setSelectedUnit(companies[0].id);
     } catch {}
+  }, []);
+
+  // Load nhân viên của công ty
+  const loadCompanyEmployees = useCallback(async (companyId) => {
+    if (!companyId) { setCompanyEmployees([]); return; }
+    try {
+      const { data } = await api.get(`/users?company_id=${companyId}`);
+      setCompanyEmployees(data.users || []);
+    } catch { setCompanyEmployees([]); }
   }, []);
 
   const loadProcesses = useCallback(async () => {
@@ -42,6 +52,7 @@ export default function CompanyProcessesPage() {
 
   useEffect(() => { loadUnits(); }, [loadUnits]);
   useEffect(() => { loadProcesses(); }, [loadProcesses]);
+  useEffect(() => { loadCompanyEmployees(selectedUnit); }, [selectedUnit, loadCompanyEmployees]);
 
   const generateSuggestions = async () => {
     if (!selectedUnit) return;
@@ -104,7 +115,8 @@ export default function CompanyProcessesPage() {
               onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
               onEdit={() => setEditId(p.id)}
               onEditDone={() => { setEditId(null); loadProcesses(); }}
-              onDelete={() => deleteProcess(p.id)} />
+              onDelete={() => deleteProcess(p.id)}
+              companyEmployees={companyEmployees} />
           ))}
         </div>
       )}
@@ -120,7 +132,7 @@ export default function CompanyProcessesPage() {
   );
 }
 
-function ProcessRow({ process, index, expanded, editing, onToggle, onEdit, onEditDone, onDelete }) {
+function ProcessRow({ process, index, expanded, editing, onToggle, onEdit, onEditDone, onDelete, companyEmployees }) {
   const [tasks, setTasks] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
@@ -135,9 +147,9 @@ function ProcessRow({ process, index, expanded, editing, onToggle, onEdit, onEdi
 
   const handleToggle = () => { if (!expanded && !loaded) loadTasks(); onToggle(); };
 
-  const addTask = async (title, priority, deadlineDays, deadlineHours) => {
+  const addTask = async (title, priority, deadlineDays, deadlineHours, assigneeId) => {
     try {
-      await api.post(`/company-processes/${process.id}/tasks`, { title, priority, deadline_days: deadlineDays, deadline_hours: deadlineHours });
+      await api.post(`/company-processes/${process.id}/tasks`, { title, priority, deadline_days: deadlineDays, deadline_hours: deadlineHours, assignee_id: assigneeId || null });
       loadTasks();
       setShowAddTask(false);
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
@@ -173,7 +185,7 @@ function ProcessRow({ process, index, expanded, editing, onToggle, onEdit, onEdi
           ))}
 
           {showAddTask ? (
-            <InlineAddTask onAdd={addTask} onCancel={() => setShowAddTask(false)} />
+            <InlineAddTask onAdd={addTask} onCancel={() => setShowAddTask(false)} companyEmployees={companyEmployees} />
           ) : (
             <button onClick={() => setShowAddTask(true)}
               className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-[10px] text-gray-500 flex items-center justify-center gap-1 hover:border-purple-400 hover:text-purple-600 cursor-pointer">
@@ -240,24 +252,29 @@ function TaskRow({ task, processId, onReload, onDelete }) {
   );
 }
 
-function InlineAddTask({ onAdd, onCancel }) {
+function InlineAddTask({ onAdd, onCancel, companyEmployees = [] }) {
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState('medium');
+  const [assigneeId, setAssigneeId] = useState(''); // NEW
   const [dd, setDd] = useState('');
   const [dh, setDh] = useState('');
   return (
     <div className="bg-white rounded-lg border p-2 space-y-1.5">
-      <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Tên nhiệm vụ..." className="w-full h-7 px-2 border rounded text-[11px]" autoFocus onKeyDown={e => { if (e.key === 'Enter' && title.trim()) onAdd(title.trim(), priority, parseInt(dd)||0, parseInt(dh)||0); if (e.key === 'Escape') onCancel(); }} />
+      <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Tên nhiệm vụ..." className="w-full h-7 px-2 border rounded text-[11px]" autoFocus onKeyDown={e => { if (e.key === 'Enter' && title.trim()) onAdd(title.trim(), priority, parseInt(dd)||0, parseInt(dh)||0, assigneeId); if (e.key === 'Escape') onCancel(); }} />
       <div className="flex items-center gap-1.5 flex-wrap">
         <select value={priority} onChange={e => setPriority(e.target.value)} className="h-6 px-1 border rounded text-[10px]">
           <option value="low">Thấp</option><option value="medium">TB</option><option value="high">Cao</option><option value="urgent">Gấp</option>
+        </select>
+        <select value={assigneeId} onChange={e => setAssigneeId(e.target.value)} className="h-6 px-1 border rounded text-[10px]">
+          <option value="">-- Nhân viên --</option>
+          {companyEmployees.map(emp => <option key={emp.id} value={emp.id}>{emp.full_name}</option>)}
         </select>
         <span className="text-[9px] text-gray-400">⏰</span>
         <input type="number" min="0" value={dd} onChange={e => setDd(e.target.value)} placeholder="0" className="w-10 h-6 px-1 border rounded text-[10px] text-center" /><span className="text-[9px] text-gray-400">ngày</span>
         <input type="number" min="0" value={dh} onChange={e => setDh(e.target.value)} placeholder="0" className="w-10 h-6 px-1 border rounded text-[10px] text-center" /><span className="text-[9px] text-gray-400">giờ</span>
         <div className="flex-1" />
         <button onClick={onCancel} className="h-6 px-2 text-[10px] text-gray-500 cursor-pointer">Hủy</button>
-        <button onClick={() => title.trim() && onAdd(title.trim(), priority, parseInt(dd)||0, parseInt(dh)||0)} disabled={!title.trim()}
+        <button onClick={() => title.trim() && onAdd(title.trim(), priority, parseInt(dd)||0, parseInt(dh)||0, assigneeId)} disabled={!title.trim()}
           className="h-6 px-2 bg-purple-600 text-white rounded text-[10px] font-medium cursor-pointer disabled:opacity-50">+ Thêm</button>
       </div>
     </div>
