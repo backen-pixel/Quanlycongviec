@@ -534,14 +534,15 @@ r.post('/create-with-flow', async (req, res) => {
                 for (const c of t.checklists) {
                   const checklistKey = `checklist_${c.id}`;
                   const checkAssignee = b.task_assignments?.[checklistKey] || c.default_assignee_id || null;
-                  await supabase.from('task_checklists').insert({
-                    task_id: task.id,
-                    title: c.title,
-                    order_index: c.order_index || 0,
-                    is_completed: false,
-                    // store assignee in notes as workaround (no assignee_id col in task_checklists)
-                    notes: checkAssignee ? JSON.stringify({ assignee_id: checkAssignee }) : null,
-                  }).catch(e => console.warn('Checklist insert error:', e.message));
+                  try {
+                    await supabase.from('task_checklists').insert({
+                      task_id: task.id,
+                      title: c.title,
+                      order_index: c.order_index || 0,
+                      is_completed: false,
+                      notes: checkAssignee ? JSON.stringify({ assignee_id: checkAssignee }) : null,
+                    });
+                  } catch (ce) { console.warn('Checklist insert error:', ce.message); }
                 }
               }
 
@@ -627,14 +628,16 @@ r.put('/:id/stage', async (req, res) => {
     if (error) throw error;
 
     // Save stage transition record
-    await supabase.from('stage_transitions').insert({
-      project_id: data.id,
-      from_stage_id: old?.current_stage_id || null,
-      to_stage_id: stage.id,
-      notes: notes || null,
-      attachments: attachments || [],
-      transitioned_by: req.user.userId,
-    }).catch(() => {}); // ignore if table doesn't exist
+    try {
+      await supabase.from('stage_transitions').insert({
+        project_id: data.id,
+        from_stage_id: old?.current_stage_id || null,
+        to_stage_id: stage.id,
+        notes: notes || null,
+        attachments: attachments || [],
+        transitioned_by: req.user.userId,
+      });
+    } catch {} // ignore if table doesn't exist
 
     // Auto-update customer status based on stage mapping
     if (data.customer_id) {
@@ -1018,14 +1021,16 @@ r.post('/:id/approve-advance', async (req, res) => {
       }).eq('id', req.params.id);
 
       // Save transition record
-      await supabase.from('stage_transitions').insert({
-        project_id: req.params.id,
-        from_stage_id: old?.current_stage_id || null,
-        to_stage_id: stage.id,
-        notes: meta.notes || null,
-        attachments: meta.attachments || [],
-        transitioned_by: req.user.userId,
-      }).catch(() => {});
+      try {
+        await supabase.from('stage_transitions').insert({
+          project_id: req.params.id,
+          from_stage_id: old?.current_stage_id || null,
+          to_stage_id: stage.id,
+          notes: meta.notes || null,
+          attachments: meta.attachments || [],
+          transitioned_by: req.user.userId,
+        });
+      } catch {} // ignore if table doesn't exist
 
       // Notify requester: approved
       await createNotification(req, meta.requested_by, 'project_stage_changed',
