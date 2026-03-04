@@ -547,109 +547,137 @@ export default function CreateProject() {
                               </div>
                             )}
 
-                            {/* Tasks from Template Set - ALWAYS VISIBLE */}
+                            {/* Tasks Grouped by Process (Stage) */}
                             {tasks.length > 0 && (
                               <div>
                                 <h4 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
                                   <CheckSquare className="h-4 w-4 text-blue-600" /> 
-                                  Nhiệm Vụ & Phân Công ({tasks.length})
+                                  Quy Trình & Nhiệm Vụ ({tasks.length} nhiệm vụ)
                                 </h4>
-                                <div className="space-y-3">
-                                  {tasks.map((task, taskIdx) => {
-                                    const taskChecklists = task.checklists || [];
-                                    console.log('📋 Task:', task.name, {
-                                      company_unit_id: step.company_unit_id,
-                                      employees_count: employees.length,
-                                      checklists: taskChecklists.length
-                                    }); // DEBUG
-                                    
-                                    return (
-                                      <div key={task.id} className="bg-white rounded-lg border border-gray-300 p-3">
-                                        {/* Task Header - Name + Assignee in one row */}
-                                        <div className="flex items-center gap-3 mb-2">
-                                          <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-xs shrink-0">
-                                            {taskIdx + 1}
-                                          </div>
-                                          <div className="flex-1">
-                                            <span className="text-sm font-semibold text-gray-900">
-                                              {task.name}
-                                            </span>
-                                          </div>
-                                          <div className="shrink-0 w-48">
-                                            <select
-                                              value={taskAssignees[task.id] || ''}
-                                              onChange={e => setTaskAssignees(prev => ({ ...prev, [task.id]: e.target.value }))}
-                                              className="w-full px-2 py-1 rounded border border-gray-300 text-xs focus:outline-none focus:border-blue-500"
-                                              title="Gán nhân viên"
-                                            >
-                                              <option value="">👤 Chưa gán</option>
-                                              {employees.map(emp => (
-                                                <option key={emp.id} value={emp.id}>
-                                                  {emp.full_name || emp.email}
-                                                </option>
-                                              ))}
-                                            </select>
-                                          </div>
-                                        </div>
+                                
+                                {/* Group tasks by stage */}
+                                {(() => {
+                                  const tasksByStage = {};
+                                  tasks.forEach(task => {
+                                    const stageSlug = task.stage?.slug || 'unknown';
+                                    if (!tasksByStage[stageSlug]) {
+                                      tasksByStage[stageSlug] = {
+                                        stage: task.stage,
+                                        tasks: []
+                                      };
+                                    }
+                                    tasksByStage[stageSlug].tasks.push(task);
+                                  });
 
-                                        {/* Task Description */}
-                                        {task.description && (
-                                          <p className="text-xs text-gray-600 ml-9 mb-2">
-                                            {task.description}
-                                          </p>
-                                        )}
-
-                                        {/* Checklists - Click to Expand */}
-                                        {taskChecklists.length > 0 && (
-                                          <div className="ml-9 mt-2">
-                                            <button
-                                              onClick={() => setExpandedTasks(p => ({ ...p, [task.id]: !p[task.id] }))}
-                                              className="flex items-center gap-2 text-xs font-medium text-purple-700 hover:text-purple-800 py-1"
-                                            >
-                                              {expandedTasks[task.id] ? (
-                                                <ChevronDown className="h-4 w-4" />
-                                              ) : (
-                                                <ChevronRight className="h-4 w-4" />
-                                              )}
-                                              <ListChecks className="h-4 w-4" />
-                                              <span>Checklist ({taskChecklists.length})</span>
-                                            </button>
-
-                                            {expandedTasks[task.id] && (
-                                              <div className="mt-2 space-y-2">
-                                                {taskChecklists.map((check, checkIdx) => (
-                                                  <div key={check.id} className="flex items-center gap-3 py-1.5 px-3 bg-purple-50 rounded border border-purple-200">
-                                                    <div className="flex items-center justify-center w-5 h-5 rounded bg-purple-100 text-purple-700 font-bold text-xs shrink-0">
-                                                      {checkIdx + 1}
-                                                    </div>
-                                                    <span className="text-xs text-gray-800 flex-1">
-                                                      {check.title || check.name}
-                                                    </span>
-                                                    <div className="shrink-0 w-40">
-                                                      <select
-                                                        value={taskAssignees[`checklist_${check.id}`] || ''}
-                                                        onChange={e => setTaskAssignees(prev => ({ ...prev, [`checklist_${check.id}`]: e.target.value }))}
-                                                        className="w-full px-2 py-1 rounded border border-gray-300 text-xs focus:outline-none focus:border-purple-500"
-                                                        title="Gán nhân viên"
-                                                      >
-                                                        <option value="">👤 Chưa gán</option>
-                                                        {employees.map(emp => (
-                                                          <option key={emp.id} value={emp.id}>
-                                                            {emp.full_name || emp.email}
-                                                          </option>
-                                                        ))}
-                                                      </select>
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
+                                  return Object.entries(tasksByStage).map(([stageSlug, group]) => (
+                                    <div key={stageSlug} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
+                                      {/* Stage Header */}
+                                      <div 
+                                        className="px-3 py-2 font-semibold text-sm text-white flex items-center gap-2"
+                                        style={{ backgroundColor: group.stage?.color || '#6b7280' }}
+                                      >
+                                        <span>{group.stage?.icon || '📋'}</span>
+                                        <span>{group.stage?.name || 'N/A'}</span>
+                                        <span className="ml-auto bg-white/20 px-2 py-0.5 rounded text-xs">
+                                          {group.tasks.length} nhiệm vụ
+                                        </span>
                                       </div>
-                                    );
-                                  })}
-                                </div>
+
+                                      {/* Tasks in this stage */}
+                                      <div className="p-3 bg-gray-50 space-y-2">
+                                        {group.tasks.map((task, taskIdx) => {
+                                          const taskChecklists = task.checklists || [];
+                                          
+                                          return (
+                                            <div key={task.id} className="bg-white rounded-lg border border-gray-300 p-3">
+                                              {/* Task Header - Name + Assignee in one row */}
+                                              <div className="flex items-center gap-3 mb-2">
+                                                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-xs shrink-0">
+                                                  {taskIdx + 1}
+                                                </div>
+                                                <div className="flex-1">
+                                                  <span className="text-sm font-semibold text-gray-900">
+                                                    {task.name}
+                                                  </span>
+                                                </div>
+                                                <div className="shrink-0 w-48">
+                                                  <select
+                                                    value={taskAssignees[task.id] || ''}
+                                                    onChange={e => setTaskAssignees(prev => ({ ...prev, [task.id]: e.target.value }))}
+                                                    className="w-full px-2 py-1 rounded border border-gray-300 text-xs focus:outline-none focus:border-blue-500"
+                                                    title="Gán nhân viên"
+                                                  >
+                                                    <option value="">👤 Chưa gán</option>
+                                                    {employees.map(emp => (
+                                                      <option key={emp.id} value={emp.id}>
+                                                        {emp.full_name || emp.email}
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                </div>
+                                              </div>
+
+                                              {/* Task Description */}
+                                              {task.description && (
+                                                <p className="text-xs text-gray-600 ml-9 mb-2">
+                                                  {task.description}
+                                                </p>
+                                              )}
+
+                                              {/* Checklists - Click to Expand */}
+                                              {taskChecklists.length > 0 && (
+                                                <div className="ml-9 mt-2">
+                                                  <button
+                                                    onClick={() => setExpandedTasks(p => ({ ...p, [task.id]: !p[task.id] }))}
+                                                    className="flex items-center gap-2 text-xs font-medium text-purple-700 hover:text-purple-800 py-1"
+                                                  >
+                                                    {expandedTasks[task.id] ? (
+                                                      <ChevronDown className="h-4 w-4" />
+                                                    ) : (
+                                                      <ChevronRight className="h-4 w-4" />
+                                                    )}
+                                                    <ListChecks className="h-4 w-4" />
+                                                    <span>Checklist ({taskChecklists.length})</span>
+                                                  </button>
+
+                                                  {expandedTasks[task.id] && (
+                                                    <div className="mt-2 space-y-2">
+                                                      {taskChecklists.map((check, checkIdx) => (
+                                                        <div key={check.id} className="flex items-center gap-3 py-1.5 px-3 bg-purple-50 rounded border border-purple-200">
+                                                          <div className="flex items-center justify-center w-5 h-5 rounded bg-purple-100 text-purple-700 font-bold text-xs shrink-0">
+                                                            {checkIdx + 1}
+                                                          </div>
+                                                          <span className="text-xs text-gray-800 flex-1">
+                                                            {check.title || check.name}
+                                                          </span>
+                                                          <div className="shrink-0 w-40">
+                                                            <select
+                                                              value={taskAssignees[`checklist_${check.id}`] || ''}
+                                                              onChange={e => setTaskAssignees(prev => ({ ...prev, [`checklist_${check.id}`]: e.target.value }))}
+                                                              className="w-full px-2 py-1 rounded border border-gray-300 text-xs focus:outline-none focus:border-purple-500"
+                                                              title="Gán nhân viên"
+                                                            >
+                                                              <option value="">👤 Chưa gán</option>
+                                                              {employees.map(emp => (
+                                                                <option key={emp.id} value={emp.id}>
+                                                                  {emp.full_name || emp.email}
+                                                                </option>
+                                                              ))}
+                                                            </select>
+                                                          </div>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  ));
+                                })()}
                               </div>
                             )}
                           </div>
