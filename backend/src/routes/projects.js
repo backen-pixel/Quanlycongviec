@@ -125,6 +125,62 @@ r.get('/:id', async (req, res) => {
       if (sp) stagePersons = sp;
     } catch { /* migration 07 not run yet */ }
 
+    // Load flow info (if project has flow_id)
+    let flowInfo = null;
+    if (data.flow_id) {
+      try {
+        const { data: flow } = await supabase.from('workflow_flows').select(`
+          *,
+          steps:workflow_flow_steps(
+            *,
+            stage:workflow_stages(id,name,slug,color),
+            division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name,short_name),
+            company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name)
+          )
+        `).eq('id', data.flow_id).single();
+        if (flow) {
+          flowInfo = flow;
+          // Sort steps by order_index
+          if (flowInfo.steps) flowInfo.steps.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+        }
+      } catch (e) { console.warn('Failed to load flow:', e.message); }
+    }
+
+    // Load flow assignments (company + template set per step)
+    let flowAssignments = [];
+    if (data.id) {
+      try {
+        const { data: assignments } = await supabase.from('project_company_assignments').select(`
+          *,
+          company:ecosystem_units!project_company_assignments_company_unit_id_fkey(id,name,short_name),
+          template_set:company_template_sets(id,name,description,is_default)
+        `).eq('project_id', data.id);
+        flowAssignments = assignments || [];
+
+        // For each assignment, load tasks with checklists
+        for (const assignment of flowAssignments) {
+          const { data: tasks } = await supabase.from('project_tasks').select(`
+            *,
+            assignee:users!tasks_assignee_id_fkey(id,full_name,avatar,email),
+            stage:workflow_stages(id,name,slug,color),
+            checklists:project_checklists(
+              *,
+              assignee:users!project_checklists_assignee_id_fkey(id,full_name,avatar,email)
+            )
+          `).eq('project_id', data.id).eq('template_set_id', assignment.template_set_id || '');
+          
+          assignment.tasks = tasks || [];
+          
+          // Calculate progress
+          const total = assignment.tasks.length;
+          const done = assignment.tasks.filter(t => t.status === 'done').length;
+          assignment.tasks_total = total;
+          assignment.tasks_completed = done;
+          assignment.progress = total > 0 ? Math.round((done / total) * 100) : 0;
+        }
+      } catch (e) { console.warn('Failed to load flow assignments:', e.message); }
+    }
+
     // Comments (trao đổi) — may fail if migration 03 not run
     let comments = [], activities = [], transitions = [];
     try {
@@ -167,6 +223,8 @@ r.get('/:id', async (req, res) => {
       project: {
         ...data,
         ...stagePersons,
+        flow: flowInfo,
+        flowAssignments,
         comments: comments || [],
         activities: activities || [],
         transitions: transitions || [],
