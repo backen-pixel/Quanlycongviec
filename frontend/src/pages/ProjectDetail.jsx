@@ -307,6 +307,56 @@ export default function ProjectDetail() {
         )}
       </div>
 
+      {/* Template Sets & Assignments - NEW SECTION */}
+      {project.flowAssignments && project.flowAssignments.length > 0 && (
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <h3 className="text-sm font-bold text-gray-900">📋 Bộ Quy Trình Đang Dùng</h3>
+            {project.flow && (
+              <span className="text-xs text-blue-600 bg-white px-2 py-1 rounded border border-blue-200">
+                {project.flow.name}
+              </span>
+            )}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {project.flowAssignments.map((assignment, idx) => (
+              <div key={assignment.id} className="bg-white rounded-lg border border-gray-200 p-3">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
+                        {idx + 1}
+                      </span>
+                      <h4 className="text-sm font-semibold text-gray-900">
+                        {assignment.company?.name || 'N/A'}
+                      </h4>
+                    </div>
+                    <p className="text-xs text-gray-600 ml-8">
+                      {assignment.template_set?.name || 'Chưa chọn template'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-bold text-blue-600">
+                      {assignment.progress || 0}%
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {assignment.tasks_completed || 0}/{assignment.tasks_total || 0}
+                    </div>
+                  </div>
+                </div>
+                {/* Progress bar */}
+                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-blue-500 to-indigo-600 h-full rounded-full transition-all"
+                    style={{ width: `${assignment.progress || 0}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200">
         {[
@@ -598,9 +648,21 @@ function TaskRow({ task: t, isLocked, onSelect }) {
       className={`flex items-center gap-2 sm:gap-3 bg-white rounded-lg border p-2 sm:p-3 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-sm hover:border-gray-300 cursor-pointer'}`}>
       <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
       <span className="flex-1 text-xs sm:text-sm font-medium text-gray-800 truncate">{t.title}</span>
+      {/* Assignee - Avatar + Name */}
+      {t.assignee ? (
+        <div className="flex items-center gap-1.5 shrink-0" title={t.assignee.full_name}>
+          <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold"
+            style={{ backgroundColor: avatarColor(t.assignee.full_name) }}>
+            {getInitials(t.assignee.full_name)}
+          </div>
+          <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[100px]">
+            {t.assignee.full_name}
+          </span>
+        </div>
+      ) : (
+        <span className="text-xs text-gray-400 hidden sm:inline">Chưa gán</span>
+      )}
       <span className={`text-[10px] px-1.5 py-0.5 rounded-full hidden sm:inline ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
-      {t.assignee && <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold shrink-0"
-        style={{ backgroundColor: avatarColor(t.assignee.full_name) }} title={t.assignee.full_name}>{getInitials(t.assignee.full_name)}</div>}
       {t.due_date && <span className={`text-[10px] hidden sm:inline ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
       <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
     </div>
