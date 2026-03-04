@@ -74,30 +74,51 @@ r.get('/', async (req, res) => {
     const { role, department_id, company_id, ecosystem_unit_id, search, include_inactive } = req.query;
 
     // ── Lọc theo ecosystem_unit_id (ưu tiên nhất) ──
-    // Users thuộc unit này: lấy qua ecosystem_unit_members
+    // Members được gán vào Teams → Teams thuộc Phòng ban → Phòng ban thuộc Công ty
+    // Cần lấy TẤT CẢ sub-units (đệ quy) rồi lấy members
     if (ecosystem_unit_id) {
       try {
-        // Lấy tất cả members của unit này (bao gồm cả unit con)
-        // Step 1: Lấy unit và children của nó
-        const { data: allUnits } = await supabase
+        // Load toàn bộ unit tree (tối đa 3 cấp con)
+        const allUnitIds = [ecosystem_unit_id];
+
+        // Level 1: children trực tiếp (phòng ban)
+        const { data: level1 } = await supabase
           .from('ecosystem_units')
           .select('id')
-          .or(`id.eq.${ecosystem_unit_id},parent_id.eq.${ecosystem_unit_id}`);
+          .eq('parent_id', ecosystem_unit_id);
+        const l1Ids = (level1 || []).map(u => u.id);
+        allUnitIds.push(...l1Ids);
 
-        const unitIds = (allUnits || []).map(u => u.id);
-        if (!unitIds.length) unitIds.push(ecosystem_unit_id);
+        // Level 2: children của children (teams/đội nhóm)
+        if (l1Ids.length) {
+          const { data: level2 } = await supabase
+            .from('ecosystem_units')
+            .select('id')
+            .in('parent_id', l1Ids);
+          const l2Ids = (level2 || []).map(u => u.id);
+          allUnitIds.push(...l2Ids);
 
-        // Step 2: Lấy user_id từ ecosystem_unit_members
+          // Level 3: sâu hơn nếu có
+          if (l2Ids.length) {
+            const { data: level3 } = await supabase
+              .from('ecosystem_units')
+              .select('id')
+              .in('parent_id', l2Ids);
+            allUnitIds.push(...(level3 || []).map(u => u.id));
+          }
+        }
+
+        // Lấy members từ TẤT CẢ units trong cây
         const { data: members } = await supabase
           .from('ecosystem_unit_members')
           .select('user_id')
-          .in('unit_id', unitIds);
+          .in('unit_id', allUnitIds);
 
         const userIds = [...new Set((members || []).map(m => m.user_id).filter(Boolean))];
 
         if (!userIds.length) return res.json({ users: [], stats: { total: 0 } });
 
-        // Step 3: Load users by id
+        // Load users by id
         let q = supabase.from('users')
           .select('id,email,full_name,phone,avatar,role,position,department_id,is_active,department:departments!users_department_id_fkey(id,name,color)')
           .in('id', userIds);
