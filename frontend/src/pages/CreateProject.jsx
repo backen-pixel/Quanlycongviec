@@ -101,10 +101,14 @@ export default function CreateProject() {
 
   const loadCompanyEmployees = async (companyUnitId) => {
     if (companyEmployees[companyUnitId]) return;
+    console.log('🔍 Loading employees for company:', companyUnitId); // DEBUG
     try {
       const { data } = await api.get(`/users?company_id=${companyUnitId}`);
+      console.log('✅ Loaded employees:', data.users?.length || 0, 'for company:', companyUnitId); // DEBUG
       setCompanyEmployees(prev => ({ ...prev, [companyUnitId]: data.users || [] }));
-    } catch {}
+    } catch (e) {
+      console.error('❌ Failed to load employees for company:', companyUnitId, e); // DEBUG
+    }
   };
 
   const handleTemplateSetChange = (companyUnitId, templateSetId) => {
@@ -553,7 +557,11 @@ export default function CreateProject() {
                                 <div className="space-y-3">
                                   {tasks.map((task, taskIdx) => {
                                     const taskChecklists = task.checklists || [];
-                                    console.log('Task:', task.name, 'Checklists:', taskChecklists.length); // DEBUG
+                                    console.log('📋 Task:', task.name, {
+                                      company_unit_id: step.company_unit_id,
+                                      employees_count: employees.length,
+                                      checklists: taskChecklists.length
+                                    }); // DEBUG
                                     
                                     return (
                                       <div key={task.id} className="bg-white rounded-lg border border-gray-300 p-3">
