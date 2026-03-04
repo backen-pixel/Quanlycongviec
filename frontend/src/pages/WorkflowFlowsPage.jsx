@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
+import ProcessTaskEditor from '../components/ProcessTaskEditor';
 import {
   GitBranch, Plus, Edit, Save, Trash2, Copy, Star, ChevronDown, ChevronRight,
   ArrowRight, Clock, Building2, X, CheckSquare, User, ClipboardList, Layers,
@@ -156,7 +157,8 @@ function FlowCard({ flow, onEdit, onDelete, onClone, onSetDefault }) {
                         {processes.map(proc => (
                           <ProcessCard key={proc.id} process={proc}
                             expanded={expandedProcessId === proc.id}
-                            onToggle={() => setExpandedProcessId(expandedProcessId === proc.id ? null : proc.id)} />
+                            onToggle={() => setExpandedProcessId(expandedProcessId === proc.id ? null : proc.id)}
+                            onUpdated={() => {}} />
                         ))}
                       </div>
                     )}
@@ -185,7 +187,7 @@ function FlowCard({ flow, onEdit, onDelete, onClone, onSetDefault }) {
 }
 
 /* ═══ PROCESS CARD — inline view ═══ */
-function ProcessCard({ process, expanded, onToggle }) {
+function ProcessCard({ process, expanded, onToggle, onUpdated }) {
   const [tasks, setTasks] = useState([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -200,37 +202,26 @@ function ProcessCard({ process, expanded, onToggle }) {
 
   const handleToggle = () => { if (!expanded) loadTasks(); onToggle(); };
 
+  const refreshTasks = async () => {
+    try {
+      const { data } = await api.get(`/company-processes/${process.id}/tasks`);
+      setTasks(data.tasks || []);
+      onUpdated?.();
+    } catch {}
+  };
+
   return (
     <div className="bg-white rounded-lg border overflow-hidden" style={{ borderLeft: `3px solid ${process.color || '#8B5CF6'}` }}>
       <button onClick={handleToggle} className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer">
         <span className="text-sm">{process.icon || '📋'}</span>
         <span className="flex-1 text-left text-xs font-medium text-gray-800">{process.name}</span>
-        <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full">{process.task_count || 0} NV</span>
+        <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full">{tasks.length || 0} NV</span>
         {expanded ? <ChevronDown className="h-3 w-3 text-gray-400" /> : <ChevronRight className="h-3 w-3 text-gray-400" />}
       </button>
       {expanded && (
-        <div className="border-t bg-purple-50/30 p-2 space-y-0.5">
+        <div className="border-t bg-purple-50/30 p-2 space-y-1">
           {tasks.map(t => (
-            <div key={t.id} className="bg-white rounded p-1.5">
-              <div className="flex items-center gap-1.5 text-[10px]">
-                <CheckSquare className="h-2.5 w-2.5 text-purple-400 shrink-0" />
-                <span className="flex-1 font-medium text-gray-800">{t.title}</span>
-                {t.default_assignee && <span className="bg-blue-50 text-blue-600 px-1 rounded text-[9px]">{t.default_assignee.full_name?.split(' ').pop()}</span>}
-                {(t.deadline_days > 0 || t.deadline_hours > 0) && <span className="bg-orange-50 text-orange-600 px-1 rounded text-[9px]"><Clock className="h-2 w-2 inline" /> {t.deadline_days > 0 ? `${t.deadline_days}d` : ''}{t.deadline_hours > 0 ? `${t.deadline_hours}h` : ''}</span>}
-              </div>
-              {t.checklists?.length > 0 && (
-                <div className="ml-4 mt-0.5 space-y-0">
-                  {t.checklists.map(c => (
-                    <div key={c.id} className="flex items-center gap-1 text-[9px] text-gray-500">
-                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
-                      <span>{c.title}</span>
-                      {c.require_file && <FileText className="h-2 w-2 text-blue-400" />}
-                      {c.require_note && <StickyNote className="h-2 w-2 text-amber-400" />}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ProcessTaskEditor key={t.id} task={t} onUpdated={refreshTasks} onDeleted={refreshTasks} />
           ))}
           {tasks.length === 0 && <p className="text-[9px] text-gray-400 italic text-center py-1">Chưa có nhiệm vụ</p>}
         </div>
