@@ -82,6 +82,13 @@ export default function TemplateSetDetailPage() {
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
+  const updateChecklist = async (checkId, data) => {
+    try {
+      await api.put(`/company-templates/template-checklists/${checkId}`, data);
+      await reload();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
   const deleteChecklist = async (checkId) => {
     try {
       await api.delete(`/company-templates/template-checklists/${checkId}`);
@@ -139,7 +146,7 @@ export default function TemplateSetDetailPage() {
             <StageSection key={stage.id} stage={stage} stageNumber={stageIdx + 1} tasks={stageTasks}
               users={allUsers}
               onUpdateTask={updateTask} onDeleteTask={deleteTask}
-              onAddChecklist={addChecklist} onDeleteChecklist={deleteChecklist} />
+              onAddChecklist={addChecklist} onUpdateChecklist={updateChecklist} onDeleteChecklist={deleteChecklist} />
           );
         });
       })()}
@@ -219,7 +226,7 @@ function AddTaskForm({ stages, users, onAdd, onCancel }) {
 }
 
 /* ═══ STAGE SECTION ═══ */
-function StageSection({ stage, stageNumber, tasks, users, onUpdateTask, onDeleteTask, onAddChecklist, onDeleteChecklist }) {
+function StageSection({ stage, stageNumber, tasks, users, onUpdateTask, onDeleteTask, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
   const [open, setOpen] = useState(true);
   const icon = stage.icon && stage.icon.charCodeAt(0) > 127 ? stage.icon : '📋';
 
@@ -242,7 +249,7 @@ function StageSection({ stage, stageNumber, tasks, users, onUpdateTask, onDelete
           {tasks.map(task => (
             <TaskCard key={task.id} task={task} users={users}
               onUpdate={onUpdateTask} onDelete={onDeleteTask}
-              onAddChecklist={onAddChecklist} onDeleteChecklist={onDeleteChecklist} />
+              onAddChecklist={onAddChecklist} onUpdateChecklist={onUpdateChecklist} onDeleteChecklist={onDeleteChecklist} />
           ))}
         </div>
       )}
@@ -251,7 +258,7 @@ function StageSection({ stage, stageNumber, tasks, users, onUpdateTask, onDelete
 }
 
 /* ═══ TASK CARD ═══ */
-function TaskCard({ task, users, onUpdate, onDelete, onAddChecklist, onDeleteChecklist }) {
+function TaskCard({ task, users, onUpdate, onDelete, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
@@ -369,19 +376,7 @@ function TaskCard({ task, users, onUpdate, onDelete, onAddChecklist, onDeleteChe
           <div className="space-y-1">
             <p className="text-[10px] font-semibold text-gray-500 uppercase">Checklist ({task.checklists?.length || 0})</p>
             {(task.checklists || []).map(c => (
-              <div key={c.id} className="flex items-center gap-2 py-1">
-                <CheckSquare className="h-3 w-3 text-gray-300 shrink-0" />
-                <span className="text-xs text-gray-700 flex-1">{c.title}</span>
-                {c.default_assignee_id && (
-                  <span className="text-[8px] bg-blue-50 text-blue-600 px-1 rounded flex items-center gap-0.5">
-                    <User className="h-2 w-2" />
-                    {(users || []).find(u => u.id === c.default_assignee_id)?.full_name?.split(' ').pop() || 'NV'}
-                  </span>
-                )}
-                {c.require_file && <span className="text-[8px] bg-blue-50 text-blue-500 px-1 rounded">📎 File</span>}
-                {c.require_note && <span className="text-[8px] bg-green-50 text-green-500 px-1 rounded">📝 Note</span>}
-                <button onClick={() => onDeleteChecklist(c.id)} className="text-red-300 hover:text-red-500 cursor-pointer"><Trash2 className="h-2.5 w-2.5" /></button>
-              </div>
+              <ChecklistItem key={c.id} checklist={c} users={users} onUpdate={onUpdateChecklist} onDelete={onDeleteChecklist} />
             ))}
             <div className="flex items-center gap-2">
               <Plus className="h-3 w-3 text-gray-300 shrink-0" />
@@ -392,6 +387,80 @@ function TaskCard({ task, users, onUpdate, onDelete, onAddChecklist, onDeleteChe
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ═══ CHECKLIST ITEM (EDITABLE) ═══ */
+function ChecklistItem({ checklist, users, onUpdate, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(checklist.title);
+  const [assigneeId, setAssigneeId] = useState(checklist.default_assignee_id || '');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    await onUpdate(checklist.id, {
+      title: title.trim(),
+      default_assignee_id: assigneeId || null,
+    });
+    setEditing(false);
+    setSaving(false);
+  };
+
+  const assignee = (users || []).find(u => u.id === checklist.default_assignee_id);
+
+  if (editing) {
+    return (
+      <div className="bg-blue-50 rounded p-2 space-y-2 border border-blue-200">
+        <input
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          className="w-full h-6 px-2 border rounded text-xs"
+          placeholder="Tiêu đề checklist"
+        />
+        <div>
+          <label className="text-[10px] text-gray-600 block mb-1">👤 Gán nhân viên:</label>
+          <UserSelect 
+            value={assigneeId} 
+            onChange={setAssigneeId} 
+            users={users || []} 
+            className="w-full" 
+            placeholder="-- Chưa gán --" 
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <button onClick={() => setEditing(false)} className="h-6 px-2 border rounded text-[10px]">
+            Hủy
+          </button>
+          <button onClick={save} disabled={saving} className="h-6 px-3 bg-blue-600 text-white rounded text-[10px] font-medium disabled:opacity-50">
+            {saving ? '...' : 'Lưu'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 py-1 group hover:bg-gray-50 rounded px-1 -mx-1">
+      <CheckSquare className="h-3 w-3 text-gray-300 shrink-0" />
+      <span className="text-xs text-gray-700 flex-1 cursor-pointer" onClick={() => setEditing(true)}>
+        {checklist.title}
+      </span>
+      {assignee && (
+        <span className="text-[8px] bg-blue-50 text-blue-600 px-1 rounded flex items-center gap-0.5">
+          <User className="h-2 w-2" />
+          {assignee.full_name?.split(' ').pop() || 'NV'}
+        </span>
+      )}
+      {checklist.require_file && <span className="text-[8px] bg-blue-50 text-blue-500 px-1 rounded">📎</span>}
+      {checklist.require_note && <span className="text-[8px] bg-green-50 text-green-500 px-1 rounded">📝</span>}
+      <button onClick={() => setEditing(true)} className="opacity-0 group-hover:opacity-100 h-5 w-5 rounded flex items-center justify-center text-blue-500 hover:bg-blue-100 cursor-pointer">
+        <Edit className="h-2.5 w-2.5" />
+      </button>
+      <button onClick={() => onDelete(checklist.id)} className="opacity-0 group-hover:opacity-100 h-5 w-5 rounded flex items-center justify-center text-red-400 hover:bg-red-100 cursor-pointer">
+        <Trash2 className="h-2.5 w-2.5" />
+      </button>
     </div>
   );
 }
