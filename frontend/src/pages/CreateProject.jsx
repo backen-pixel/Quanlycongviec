@@ -63,13 +63,18 @@ export default function CreateProject() {
     try {
       const { data } = await api.get(`/flows/${flow.id}`);
       setFlowDetail(data.flow);
+      console.log('Flow detail:', data.flow); // DEBUG
       (data.flow?.steps || []).forEach(step => {
+        console.log('Step:', step.name, 'company_unit_id:', step.company_unit_id); // DEBUG
         if (step.company_unit_id) {
           loadTemplateSets(step.company_unit_id);
           loadCompanyEmployees(step.company_unit_id);
         }
       });
-    } catch { setFlowDetail(null); }
+    } catch (e) { 
+      console.error('Error loading flow:', e); // DEBUG
+      setFlowDetail(null); 
+    }
   };
 
   const loadTemplateSets = async (companyUnitId) => {
@@ -445,11 +450,19 @@ export default function CreateProject() {
                 </h3>
                 <div className="space-y-3">
                   {(flowDetail.steps || []).map((step, idx) => {
-                    const companyUnit = step.company_unit;
+                    const companyUnit = step.company; // Backend returns 'company' not 'company_unit'
                     const sets = templateSets[step.company_unit_id] || [];
                     const selectedSetId = selectedTemplateSets[step.company_unit_id];
                     const tasks = selectedSetId ? (templateTasks[selectedSetId] || []) : [];
                     const employees = companyEmployees[step.company_unit_id] || [];
+                    
+                    console.log('Rendering step:', step.name, {
+                      company_unit_id: step.company_unit_id,
+                      sets: sets.length,
+                      selectedSetId,
+                      tasks: tasks.length,
+                      employees: employees.length
+                    }); // DEBUG
                     
                     return (
                       <div key={step.id} className="border border-gray-200 rounded-lg overflow-hidden">
@@ -462,7 +475,7 @@ export default function CreateProject() {
                             <div className="text-left">
                               <h4 className="font-semibold text-gray-900 text-sm">{step.name}</h4>
                               <p className="text-xs text-gray-500">
-                                {companyUnit?.parent?.name} → {companyUnit?.name}
+                                {step.division?.name || 'N/A'} → {companyUnit?.name || 'Chưa chọn công ty'}
                               </p>
                             </div>
                           </div>
@@ -475,8 +488,20 @@ export default function CreateProject() {
 
                         {expandedSteps[step.id] && (
                           <div className="border-t bg-gray-50 p-4 space-y-4">
+                            {/* Show message if no company selected */}
+                            {!step.company_unit_id && (
+                              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+                                <p className="text-sm text-yellow-700 font-medium">
+                                  ⚠️ Bước này chưa được gán công ty
+                                </p>
+                                <p className="text-xs text-yellow-600 mt-1">
+                                  Vui lòng vào "Quản lý luồng" để gán công ty cho bước này
+                                </p>
+                              </div>
+                            )}
+
                             {/* Template Set Selection */}
-                            {sets.length > 0 && (
+                            {step.company_unit_id && sets.length > 0 && (
                               <div>
                                 <label className="block text-xs font-semibold text-gray-700 mb-2 flex items-center gap-2">
                                   <Layers className="h-3.5 w-3.5" /> Bộ Quy Trình
@@ -493,6 +518,18 @@ export default function CreateProject() {
                                     </option>
                                   ))}
                                 </select>
+                              </div>
+                            )}
+
+                            {/* Show message if no template sets */}
+                            {step.company_unit_id && sets.length === 0 && (
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                                <p className="text-sm text-blue-700 font-medium">
+                                  📋 Công ty này chưa có bộ quy trình mẫu
+                                </p>
+                                <p className="text-xs text-blue-600 mt-1">
+                                  Vui lòng tạo bộ quy trình trong "Bộ quy trình mẫu"
+                                </p>
                               </div>
                             )}
 
