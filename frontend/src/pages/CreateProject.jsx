@@ -4,8 +4,14 @@ import api from '../lib/api';
 import { FileUploadButton } from '../components/FileUpload';
 import {
   Plus, ChevronDown, ChevronRight, X, CheckSquare, User, 
-  FileText, Save, AlertCircle, MapPin, DollarSign, Flag, Building2, GitBranch, Layers
+  FileText, Save, AlertCircle, MapPin, DollarSign, Flag, Building2, GitBranch, Layers, ListChecks
 } from 'lucide-react';
+
+// Format VND currency
+const formatVND = (value) => {
+  if (!value) return '';
+  return new Intl.NumberFormat('vi-VN').format(value) + ' VND';
+};
 
 export default function CreateProject() {
   const navigate = useNavigate();
@@ -19,11 +25,15 @@ export default function CreateProject() {
   const [flowDetail, setFlowDetail] = useState(null);
   const [templateSets, setTemplateSets] = useState({});
   const [selectedTemplateSets, setSelectedTemplateSets] = useState({});
+  const [templateTasks, setTemplateTasks] = useState({});
+  const [companyEmployees, setCompanyEmployees] = useState({});
+  const [taskAssignees, setTaskAssignees] = useState({});
   const [quotationFiles, setQuotationFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCust, setNewCust] = useState({ full_name: '', phone: '', email: '', city: '' });
   const [expandedSteps, setExpandedSteps] = useState({});
+  const [expandedTasks, setExpandedTasks] = useState({});
   const [activeTab, setActiveTab] = useState('info');
   const [errors, setErrors] = useState({});
 
@@ -39,16 +49,25 @@ export default function CreateProject() {
     ]);
   }, []);
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k, v) => {
+    if (k === 'estimated_value') {
+      const numeric = v.replace(/[^\d]/g, '');
+      setForm(f => ({ ...f, [k]: numeric }));
+    } else {
+      setForm(f => ({ ...f, [k]: v }));
+    }
+  };
 
   const selectFlow = async (flow) => {
     setSelectedFlow(flow);
     try {
       const { data } = await api.get(`/flows/${flow.id}`);
       setFlowDetail(data.flow);
-      // Load template sets for each company in flow
       (data.flow?.steps || []).forEach(step => {
-        if (step.company_unit_id) loadTemplateSets(step.company_unit_id);
+        if (step.company_unit_id) {
+          loadTemplateSets(step.company_unit_id);
+          loadCompanyEmployees(step.company_unit_id);
+        }
       });
     } catch { setFlowDetail(null); }
   };
@@ -58,12 +77,33 @@ export default function CreateProject() {
     try {
       const { data } = await api.get(`/company-templates/units/${companyUnitId}/template-sets`);
       setTemplateSets(prev => ({ ...prev, [companyUnitId]: data.sets || [] }));
-      // Auto-select default template set
       const defaultSet = (data.sets || []).find(s => s.is_default);
       if (defaultSet) {
         setSelectedTemplateSets(prev => ({ ...prev, [companyUnitId]: defaultSet.id }));
+        loadTemplateTasks(defaultSet.id);
       }
     } catch {}
+  };
+
+  const loadTemplateTasks = async (templateSetId) => {
+    if (templateTasks[templateSetId]) return;
+    try {
+      const { data } = await api.get(`/company-templates/template-sets/${templateSetId}/tasks`);
+      setTemplateTasks(prev => ({ ...prev, [templateSetId]: data.tasks || [] }));
+    } catch {}
+  };
+
+  const loadCompanyEmployees = async (companyUnitId) => {
+    if (companyEmployees[companyUnitId]) return;
+    try {
+      const { data } = await api.get(`/users?company_id=${companyUnitId}`);
+      setCompanyEmployees(prev => ({ ...prev, [companyUnitId]: data.users || [] }));
+    } catch {}
+  };
+
+  const handleTemplateSetChange = (companyUnitId, templateSetId) => {
+    setSelectedTemplateSets(prev => ({ ...prev, [companyUnitId]: templateSetId }));
+    if (templateSetId) loadTemplateTasks(templateSetId);
   };
 
   const createCustomer = async () => {
@@ -111,6 +151,7 @@ export default function CreateProject() {
             order_index: s.order_index,
           })),
         quotation_files: quotationFiles,
+        task_assignments: taskAssignees,
       };
       const { data } = await api.post('/projects/create-with-flow', payload);
       navigate(`/projects/${data.project.id}`);
@@ -129,12 +170,12 @@ export default function CreateProject() {
   const selectedCustomer = customers.find(c => c.id === form.customer_id);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Tạo Dự Án Mới</h1>
-          <p className="text-sm text-gray-600 mt-1">Nhập thông tin cơ bản và chọn luồng quy trình</p>
+          <p className="text-sm text-gray-600 mt-1">Nhập thông tin, chọn luồng và phân công nhiệm vụ</p>
         </div>
         <button
           onClick={handleCancel}
@@ -148,7 +189,7 @@ export default function CreateProject() {
       <div className="flex gap-0 border-b border-gray-200">
         {[
           { id: 'info', label: '📋 Thông Tin', desc: 'Dự án & khách hàng' },
-          { id: 'flow', label: '🔄 Quy Trình', desc: 'Chọn luồng & bộ mẫu' },
+          { id: 'flow', label: '🔄 Quy Trình', desc: 'Luồng, nhiệm vụ & phân công' },
           { id: 'files', label: '📎 Tệp', desc: 'Báo giá & tài liệu' }
         ].map(tab => (
           <button
@@ -331,13 +372,12 @@ export default function CreateProject() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                    <DollarSign className="h-4 w-4 text-gray-600" /> Giá Trị Dự Tính (VND)
+                    <DollarSign className="h-4 w-4 text-gray-600" /> Giá Trị Dự Tính
                   </label>
                   <input
-                    value={form.estimated_value || ''}
+                    value={formatVND(form.estimated_value)}
                     onChange={e => set('estimated_value', e.target.value)}
-                    placeholder="0"
-                    type="number"
+                    placeholder="VD: 50.000.000 VND"
                     className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500"
                   />
                 </div>
@@ -397,14 +437,19 @@ export default function CreateProject() {
               )}
             </div>
 
-            {/* Flow Steps with Template Sets */}
+            {/* Flow Steps with Tasks & Assignees */}
             {flowDetail && (
               <div className="border-t pt-6">
-                <h3 className="text-lg font-bold text-gray-900 mb-4">Cấu Trúc Luồng: {selectedFlow.name}</h3>
+                <h3 className="text-lg font-bold text-gray-900 mb-4">
+                  Cấu Trúc Luồng & Phân Công: {selectedFlow.name}
+                </h3>
                 <div className="space-y-3">
                   {(flowDetail.steps || []).map((step, idx) => {
                     const companyUnit = step.company_unit;
                     const sets = templateSets[step.company_unit_id] || [];
+                    const selectedSetId = selectedTemplateSets[step.company_unit_id];
+                    const tasks = selectedSetId ? (templateTasks[selectedSetId] || []) : [];
+                    const employees = companyEmployees[step.company_unit_id] || [];
                     
                     return (
                       <div key={step.id} className="border border-gray-200 rounded-lg overflow-hidden">
@@ -429,7 +474,7 @@ export default function CreateProject() {
                         </button>
 
                         {expandedSteps[step.id] && (
-                          <div className="border-t bg-gray-50 p-4 space-y-3">
+                          <div className="border-t bg-gray-50 p-4 space-y-4">
                             {/* Template Set Selection */}
                             {sets.length > 0 && (
                               <div>
@@ -437,11 +482,8 @@ export default function CreateProject() {
                                   <Layers className="h-3.5 w-3.5" /> Bộ Quy Trình
                                 </label>
                                 <select
-                                  value={selectedTemplateSets[step.company_unit_id] || ''}
-                                  onChange={e => setSelectedTemplateSets(prev => ({ 
-                                    ...prev, 
-                                    [step.company_unit_id]: e.target.value 
-                                  }))}
+                                  value={selectedSetId || ''}
+                                  onChange={e => handleTemplateSetChange(step.company_unit_id, e.target.value)}
                                   className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500 text-sm"
                                 >
                                   <option value="">-- Chọn bộ quy trình --</option>
@@ -454,19 +496,100 @@ export default function CreateProject() {
                               </div>
                             )}
 
-                            {/* Process List */}
-                            {(step.processes || []).length > 0 && (
+                            {/* Tasks from Template Set */}
+                            {tasks.length > 0 && (
                               <div>
-                                <p className="text-xs font-semibold text-gray-700 mb-2">Quy Trình Nội Bộ:</p>
-                                <div className="space-y-1">
-                                  {(step.processes || []).map(proc => (
-                                    <div key={proc.id} className="flex items-center gap-2 py-1.5 px-3 bg-white rounded border border-gray-200 text-sm">
-                                      <span className="text-base">{proc.icon || '📋'}</span>
-                                      <span className="flex-1 text-gray-800">{proc.name}</span>
-                                      {proc.task_count > 0 && (
-                                        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
-                                          {proc.task_count} NV
-                                        </span>
+                                <p className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                                  <CheckSquare className="h-3.5 w-3.5" /> 
+                                  Nhiệm Vụ & Phân Công ({tasks.length})
+                                </p>
+                                <div className="space-y-2">
+                                  {tasks.map(task => (
+                                    <div key={task.id} className="bg-white rounded-lg border border-gray-200">
+                                      <button
+                                        onClick={() => setExpandedTasks(p => ({ ...p, [task.id]: !p[task.id] }))}
+                                        className="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition text-left"
+                                      >
+                                        <div className="flex items-center gap-2 flex-1">
+                                          <CheckSquare className="h-4 w-4 text-blue-600" />
+                                          <span className="text-sm text-gray-800">{task.name}</span>
+                                          {task.checklist_count > 0 && (
+                                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                                              <ListChecks className="h-3 w-3 inline" /> {task.checklist_count}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {expandedTasks[task.id] ? (
+                                          <ChevronDown className="h-4 w-4 text-gray-400" />
+                                        ) : (
+                                          <ChevronRight className="h-4 w-4 text-gray-400" />
+                                        )}
+                                      </button>
+
+                                      {expandedTasks[task.id] && (
+                                        <div className="border-t bg-gray-50 p-3 space-y-3">
+                                          {/* Task Assignee */}
+                                          <div>
+                                            <label className="text-xs font-medium text-gray-600 block mb-1">
+                                              👤 Gán nhân viên
+                                            </label>
+                                            <select
+                                              value={taskAssignees[task.id] || ''}
+                                              onChange={e => setTaskAssignees(prev => ({ ...prev, [task.id]: e.target.value }))}
+                                              className="w-full px-3 py-1.5 rounded border border-gray-300 text-sm focus:outline-none focus:border-blue-500"
+                                            >
+                                              <option value="">-- Chưa gán --</option>
+                                              {employees.map(emp => (
+                                                <option key={emp.id} value={emp.id}>
+                                                  {emp.full_name || emp.email} {emp.role ? `(${emp.role})` : ''}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </div>
+
+                                          {/* Task Description */}
+                                          {task.description && (
+                                            <div className="text-xs text-gray-600 bg-white rounded p-2 border">
+                                              {task.description}
+                                            </div>
+                                          )}
+
+                                          {/* Checklists */}
+                                          {task.checklists && task.checklists.length > 0 && (
+                                            <div>
+                                              <p className="text-xs font-medium text-gray-600 mb-2">
+                                                📋 Checklist ({task.checklists.length})
+                                              </p>
+                                              <div className="space-y-2">
+                                                {task.checklists.map(check => (
+                                                  <div key={check.id} className="bg-white rounded border p-2">
+                                                    <div className="flex items-start gap-2 mb-2">
+                                                      <input type="checkbox" disabled className="mt-0.5" />
+                                                      <span className="text-xs text-gray-800 flex-1">{check.name}</span>
+                                                    </div>
+                                                    <div>
+                                                      <label className="text-xs text-gray-500 block mb-1">
+                                                        Gán:
+                                                      </label>
+                                                      <select
+                                                        value={taskAssignees[`checklist_${check.id}`] || ''}
+                                                        onChange={e => setTaskAssignees(prev => ({ ...prev, [`checklist_${check.id}`]: e.target.value }))}
+                                                        className="w-full px-2 py-1 rounded border text-xs focus:outline-none focus:border-blue-500"
+                                                      >
+                                                        <option value="">-- Chưa gán --</option>
+                                                        {employees.map(emp => (
+                                                          <option key={emp.id} value={emp.id}>
+                                                            {emp.full_name || emp.email}
+                                                          </option>
+                                                        ))}
+                                                      </select>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
                                       )}
                                     </div>
                                   ))}
