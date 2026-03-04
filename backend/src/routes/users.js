@@ -73,59 +73,63 @@ r.get('/', async (req, res) => {
   try {
     const { role, department_id, company_id, ecosystem_unit_id, search, include_inactive } = req.query;
 
-    // Resolve ecosystem_unit_id → real companies.id
-    // ecosystem_unit_id = ecosystem_units.id (cấp Công ty)
-    // ecosystem_units.company_id = companies.id
-    let resolvedCompanyId = company_id || null;
-    if (ecosystem_unit_id && !resolvedCompanyId) {
+    // ── Lọc theo ecosystem_unit_id (ưu tiên nhất) ──
+    // Users thuộc unit này: lấy qua ecosystem_unit_members
+    if (ecosystem_unit_id) {
       try {
-        const { data: unit } = await supabase
+        // Lấy tất cả members của unit này (bao gồm cả unit con)
+        // Step 1: Lấy unit và children của nó
+        const { data: allUnits } = await supabase
           .from('ecosystem_units')
-          .select('id,company_id')
-          .eq('id', ecosystem_unit_id)
-          .single();
-        if (unit?.company_id) {
-          resolvedCompanyId = unit.company_id;
-        } else {
-          // ecosystem_unit has no company_id — try members table
-          const { data: members } = await supabase
-            .from('ecosystem_unit_members')
-            .select('user_id')
-            .eq('unit_id', ecosystem_unit_id);
-          if (members?.length) {
-            // Return users by member list directly
-            const userIds = members.map(m => m.user_id);
-            const { data: memberUsers } = await supabase
-              .from('users')
-              .select('id,email,full_name,phone,avatar,role,department_id,is_active,department:departments!users_department_id_fkey(id,name,color,company_id)')
-              .in('id', userIds)
-              .eq('is_active', true)
-              .order('full_name');
-            return res.json({ users: memberUsers || [], stats: { total: memberUsers?.length || 0 } });
-          }
-        }
+          .select('id')
+          .or(`id.eq.${ecosystem_unit_id},parent_id.eq.${ecosystem_unit_id}`);
+
+        const unitIds = (allUnits || []).map(u => u.id);
+        if (!unitIds.length) unitIds.push(ecosystem_unit_id);
+
+        // Step 2: Lấy user_id từ ecosystem_unit_members
+        const { data: members } = await supabase
+          .from('ecosystem_unit_members')
+          .select('user_id')
+          .in('unit_id', unitIds);
+
+        const userIds = [...new Set((members || []).map(m => m.user_id).filter(Boolean))];
+
+        if (!userIds.length) return res.json({ users: [], stats: { total: 0 } });
+
+        // Step 3: Load users by id
+        let q = supabase.from('users')
+          .select('id,email,full_name,phone,avatar,role,position,department_id,is_active,department:departments!users_department_id_fkey(id,name,color)')
+          .in('id', userIds);
+        if (!include_inactive) q = q.eq('is_active', true);
+        if (role) q = q.eq('role', role);
+        if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+        const { data: users, error } = await q.order('full_name');
+        if (error) throw error;
+
+        return res.json({ users: users || [], stats: { total: users?.length || 0 } });
       } catch (e) {
-        console.warn('Failed to resolve ecosystem_unit_id:', e.message);
+        console.warn('ecosystem_unit_id filter failed:', e.message);
+        return res.json({ users: [], stats: { total: 0 } });
       }
     }
 
-    // Try full select (needs migration 06 columns), fallback to basic
+    // ── Lọc thông thường (không có ecosystem_unit_id) ──
     const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams(id,name,color)`;
     const basicCols = `id,email,full_name,phone,avatar,role,department_id,team_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams(id,name,color)`;
     const basicColsNoDept = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at`;
 
     let data = null, error = null;
 
-    // Attempt 1: full columns + department join
     let q = supabase.from('users').select(fullCols);
     if (!include_inactive) q = q.eq('is_active', true);
     if (role) q = q.eq('role', role);
     if (department_id === 'none') q = q.is('department_id', null);
     else if (department_id) q = q.eq('department_id', department_id);
+    if (company_id) q = q.eq('department.company_id', company_id);
     if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`);
     ({ data, error } = await q.order('full_name'));
 
-    // Attempt 2: basic columns + department join
     if (error) {
       console.warn('Users full select failed, trying basic+dept:', error.message);
       let q2 = supabase.from('users').select(basicCols);
@@ -137,7 +141,6 @@ r.get('/', async (req, res) => {
       ({ data, error } = await q2.order('full_name'));
     }
 
-    // Attempt 3: basic columns without department join
     if (error) {
       console.warn('Users basic+dept select failed, trying no-dept:', error.message);
       let q3 = supabase.from('users').select(basicColsNoDept);
@@ -151,10 +154,9 @@ r.get('/', async (req, res) => {
 
     if (error) throw error;
 
-    // Filter by company_id (from resolvedCompanyId or direct company_id param)
     let all = data || [];
-    if (resolvedCompanyId) {
-      all = all.filter(u => u.department?.company_id === resolvedCompanyId);
+    if (company_id) {
+      all = all.filter(u => u.department?.company_id === company_id);
     }
 
     const stats = { total: all.length, byRole: {}, byDept: {} };
