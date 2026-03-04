@@ -172,12 +172,27 @@ r.post('/', async (req, res) => {
 
     // Add checklists
     if (b.checklists?.length) {
-      await supabase.from('task_checklists').insert(
-        b.checklists.map((c, i) => ({
-          task_id: data.id, title: c.title || c, order_index: i,
+      for (const c of b.checklists) {
+        const { data: cl } = await supabase.from('task_checklists').insert({
+          task_id: data.id,
+          title: c.title || c,
+          order_index: b.checklists.indexOf(c),
           attachments: c.attachments || [],
-        }))
-      );
+          notes: c.notes || null,
+        }).select().single();
+        // Notify checklist assignee if set
+        if (c.notes && cl) {
+          try {
+            const parsed = typeof c.notes === 'string' ? JSON.parse(c.notes) : c.notes;
+            if (parsed?.assignee_id && parsed.assignee_id !== req.user.userId) {
+              await createNotification(req, parsed.assignee_id, 'task_assigned',
+                '📋 Checklist được giao',
+                `Bạn được giao checklist "${c.title}" trong công việc "${b.title}"`,
+                'task', data.id);
+            }
+          } catch {}
+        }
+      }
     }
 
     // Save file attachments to DB
@@ -375,6 +390,46 @@ r.delete('/:taskId/checklists/:clId', async (req, res) => {
     await supabase.from('task_checklists').delete().eq('id', req.params.clId);
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── STANDALONE CHECKLIST UPDATE (PUT /tasks/checklists/:id) ──
+// Used for updating notes (may contain JSON with assignee_id) and attachments
+r.put('/checklists/:clId', async (req, res) => {
+  try {
+    const b = req.body;
+    const update = { updated_at: new Date().toISOString() };
+    if (b.notes !== undefined) update.notes = b.notes;
+    if (b.attachments !== undefined) update.attachments = b.attachments;
+    if (b.title !== undefined) update.title = b.title;
+    if (b.is_completed !== undefined) {
+      update.is_completed = b.is_completed;
+      update.completed_by = b.is_completed ? req.user.userId : null;
+      update.completed_at = b.is_completed ? new Date().toISOString() : null;
+    }
+
+    const { data, error } = await supabase.from('task_checklists').update(update).eq('id', req.params.clId).select().single();
+    if (error) throw error;
+
+    // If notes contain JSON with assignee_id → notify the assignee
+    if (b.notes) {
+      try {
+        const parsed = typeof b.notes === 'string' ? JSON.parse(b.notes) : b.notes;
+        if (parsed?.assignee_id) {
+          // Get task info for notification
+          const { data: cl } = await supabase.from('task_checklists').select('task_id, title').eq('id', req.params.clId).single();
+          if (cl?.task_id) {
+            const { data: task } = await supabase.from('tasks').select('title, project_id, projects(code)').eq('id', cl.task_id).single();
+            await createNotification(req, parsed.assignee_id, 'task_assigned',
+              '📋 Được gán mục checklist',
+              `Bạn được gán: "${data.title}" trong task "${task?.title || ''}"${task?.projects?.code ? ` — DA ${task.projects.code}` : ''}`,
+              'task', cl.task_id);
+          }
+        }
+      } catch { /* notes is plain text, not JSON */ }
+    }
+
+    res.json({ checklist: data });
+  } catch (e) { console.error('checklist put', e); res.status(500).json({ error: e.message || 'Lỗi' }); }
 });
 
 // ─── COMMENTS ──
