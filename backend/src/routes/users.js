@@ -71,7 +71,43 @@ r.get('/departments', async (req, res) => {
 // ═══ STAFF LIST (with filters) ═══
 r.get('/', async (req, res) => {
   try {
-    const { role, department_id, company_id, search, include_inactive } = req.query;
+    const { role, department_id, company_id, ecosystem_unit_id, search, include_inactive } = req.query;
+
+    // Resolve ecosystem_unit_id → real companies.id
+    // ecosystem_unit_id = ecosystem_units.id (cấp Công ty)
+    // ecosystem_units.company_id = companies.id
+    let resolvedCompanyId = company_id || null;
+    if (ecosystem_unit_id && !resolvedCompanyId) {
+      try {
+        const { data: unit } = await supabase
+          .from('ecosystem_units')
+          .select('id,company_id')
+          .eq('id', ecosystem_unit_id)
+          .single();
+        if (unit?.company_id) {
+          resolvedCompanyId = unit.company_id;
+        } else {
+          // ecosystem_unit has no company_id — try members table
+          const { data: members } = await supabase
+            .from('ecosystem_unit_members')
+            .select('user_id')
+            .eq('unit_id', ecosystem_unit_id);
+          if (members?.length) {
+            // Return users by member list directly
+            const userIds = members.map(m => m.user_id);
+            const { data: memberUsers } = await supabase
+              .from('users')
+              .select('id,email,full_name,phone,avatar,role,department_id,is_active,department:departments!users_department_id_fkey(id,name,color,company_id)')
+              .in('id', userIds)
+              .eq('is_active', true)
+              .order('full_name');
+            return res.json({ users: memberUsers || [], stats: { total: memberUsers?.length || 0 } });
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to resolve ecosystem_unit_id:', e.message);
+      }
+    }
 
     // Try full select (needs migration 06 columns), fallback to basic
     const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams(id,name,color)`;
@@ -115,10 +151,10 @@ r.get('/', async (req, res) => {
 
     if (error) throw error;
 
-    // Filter by company_id on client side (after department join)
+    // Filter by company_id (from resolvedCompanyId or direct company_id param)
     let all = data || [];
-    if (company_id) {
-      all = all.filter(u => u.department?.company_id === company_id);
+    if (resolvedCompanyId) {
+      all = all.filter(u => u.department?.company_id === resolvedCompanyId);
     }
 
     const stats = { total: all.length, byRole: {}, byDept: {} };

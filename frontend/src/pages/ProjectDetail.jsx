@@ -386,7 +386,77 @@ export default function ProjectDetail() {
               <Plus className="h-4 w-4" /> Thêm công việc
             </button>
           </div>
-          {/* Show ALL stage groups — future stages visible but locked */}
+
+          {/* ── NEW: Flow-based view (Company → Process → Tasks) ── */}
+          {project.flowAssignments?.length > 0 ? (
+            <div className="space-y-4">
+              {project.flowAssignments.map((assignment, aIdx) => {
+                const assignmentTasks = assignment.tasks || [];
+                // Group tasks by stage
+                const byStage = {};
+                assignmentTasks.forEach(t => {
+                  const slug = t.stage?.slug || 'other';
+                  if (!byStage[slug]) byStage[slug] = { stage: t.stage, tasks: [] };
+                  byStage[slug].tasks.push(t);
+                });
+                const doneCount = assignmentTasks.filter(t => t.status === 'done').length;
+
+                return (
+                  <div key={assignment.id} className="border border-gray-200 rounded-xl overflow-hidden">
+                    {/* Company Header */}
+                    <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">{aIdx + 1}</span>
+                        <div>
+                          <h4 className="text-sm font-semibold text-gray-900">{assignment.company?.name || 'N/A'}</h4>
+                          {assignment.template_set && (
+                            <p className="text-xs text-gray-500">📋 {assignment.template_set.name}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-bold text-blue-600">{doneCount}/{assignmentTasks.length}</div>
+                        <div className="w-24 bg-gray-200 rounded-full h-1.5 mt-1">
+                          <div className="bg-blue-500 h-full rounded-full" style={{ width: `${assignmentTasks.length ? Math.round(doneCount/assignmentTasks.length*100) : 0}%` }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stages → Tasks */}
+                    <div className="divide-y">
+                      {Object.entries(byStage).map(([slug, group]) => {
+                        const stageDone = group.tasks.filter(t => t.status === 'done').length;
+                        const allDone = stageDone === group.tasks.length;
+                        return (
+                          <div key={slug}>
+                            {/* Stage sub-header */}
+                            <div className="flex items-center gap-2 px-4 py-2 bg-white" style={{ borderLeft: `3px solid ${group.stage?.color || '#6b7280'}` }}>
+                              <span className="text-xs font-semibold text-gray-700 flex-1">
+                                {group.stage?.name || 'Quy trình khác'}
+                              </span>
+                              <span className="text-xs text-gray-400">{stageDone}/{group.tasks.length}</span>
+                              {allDone && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">✓</span>}
+                            </div>
+                            {/* Tasks */}
+                            <div className="px-3 pb-2 space-y-1 bg-gray-50">
+                              {group.tasks.map(t => (
+                                <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} />
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {assignmentTasks.length === 0 && (
+                        <div className="px-4 py-4 text-xs text-gray-400 text-center">Chưa có nhiệm vụ</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+          /* ── OLD: Stage-based flat view (legacy projects) ── */
+          <div className="space-y-4">
           {STAGE_FLOW.map((sf) => {
             const stageTasks = (project.tasks || []).filter(t => t.stage?.slug === sf.slug);
             const stageIdx = STAGE_FLOW.findIndex(s => s.slug === sf.slug);
@@ -396,7 +466,6 @@ export default function ProjectDetail() {
             const allDone = stageTasks.length > 0 && stageTasks.every(t => t.status === 'done');
             const done = stageTasks.filter(t => t.status === 'done').length;
 
-            // Check if previous stages all done
             let prevAllDone = true;
             if (isFuture) {
               for (let pi = 0; pi < stageIdx; pi++) {
@@ -405,8 +474,6 @@ export default function ProjectDetail() {
               }
             }
             const isLocked = isFuture && !prevAllDone;
-
-            // Group by workflow line if present
             const wlForStage = (project.workflowLines || []).filter(l => l.stage_slug === sf.slug);
 
             return (
@@ -434,8 +501,6 @@ export default function ProjectDetail() {
                     </button>
                   )}
                 </h4>
-
-                {/* Sub-group by workflow lines */}
                 {wlForStage.length > 1 && stageTasks.length > 0 && (
                   <div className="ml-3 space-y-3">
                     {wlForStage.map(line => {
@@ -456,7 +521,6 @@ export default function ProjectDetail() {
                         </div>
                       );
                     })}
-                    {/* Tasks without workflow_line_id */}
                     {stageTasks.filter(t => !t.workflow_line_id).length > 0 && (
                       <div className="space-y-1">
                         {stageTasks.filter(t => !t.workflow_line_id).map(t => (
@@ -466,8 +530,6 @@ export default function ProjectDetail() {
                     )}
                   </div>
                 )}
-
-                {/* No workflow sub-groups or only 1 line */}
                 {(wlForStage.length <= 1 || !stageTasks.length) && (
                   isLocked ? (
                     <div className="bg-gray-50 rounded-lg p-4 text-center text-xs text-gray-400 border border-dashed">
@@ -487,6 +549,8 @@ export default function ProjectDetail() {
               </div>
             );
           })}
+          </div>
+          )}
           {totalTasks === 0 && <div className="text-center py-10 text-gray-400"><CheckSquare className="h-10 w-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Chưa có công việc</p></div>}
         </div>
       )}

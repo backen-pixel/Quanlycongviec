@@ -101,13 +101,13 @@ export default function CreateProject() {
 
   const loadCompanyEmployees = async (companyUnitId) => {
     if (companyEmployees[companyUnitId]) return;
-    console.log('🔍 Loading employees for company:', companyUnitId); // DEBUG
     try {
-      const { data } = await api.get(`/users?company_id=${companyUnitId}`);
-      console.log('✅ Loaded employees:', data.users?.length || 0, 'for company:', companyUnitId); // DEBUG
+      // companyUnitId = ecosystem_units.id (cấp Công ty con thuộc Khối)
+      // Backend sẽ resolve: ecosystem_units.id → ecosystem_units.company_id → departments.company_id → users
+      const { data } = await api.get(`/users?ecosystem_unit_id=${companyUnitId}`);
       setCompanyEmployees(prev => ({ ...prev, [companyUnitId]: data.users || [] }));
     } catch (e) {
-      console.error('❌ Failed to load employees for company:', companyUnitId, e); // DEBUG
+      console.error('Failed to load employees for unit:', companyUnitId, e);
     }
   };
 
