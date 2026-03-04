@@ -26,6 +26,7 @@ import TemplateSetDetailPage from './pages/TemplateSetDetailPage';
 import DepartmentChat from './pages/DepartmentChat';
 import WorkflowFlowsPage from './pages/WorkflowFlowsPage';
 import CompanyProcessesPage from './pages/CompanyProcessesPage';
+import CreateProject from './pages/CreateProject';
 import { Settings } from 'lucide-react';
 
 function ProtectedLayout() {
@@ -48,14 +49,22 @@ function ProtectedLayout() {
 
   if (!user) return <Navigate to="/login" state={{ from: location }} />;
 
+  // Pages with full-screen layouts (no padding wrapper)
+  const fullscreenPages = ['/projects/create'];
+  const isFullscreen = fullscreenPages.some(p => location.pathname.startsWith(p));
+
   return (
     <div className="flex h-screen bg-[var(--color-page-bg)]">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <main className="flex-1 overflow-y-auto w-full">
-          <div className="p-6 w-full max-w-full">
+          {isFullscreen ? (
             <Outlet />
-          </div>
+          ) : (
+            <div className="p-6 w-full max-w-full">
+              <Outlet />
+            </div>
+          )}
         </main>
       </div>
     </div>
@@ -72,6 +81,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/my-tasks" element={<MyTasks />} />
             <Route path="/projects" element={<Projects />} />
+            <Route path="/projects/create" element={<CreateProject />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/stage/:slug" element={<StageView />} />
