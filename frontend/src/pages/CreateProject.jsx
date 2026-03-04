@@ -699,13 +699,11 @@ export default function CreateProject() {
               <div className="bg-gray-50 rounded-lg p-8 border-2 border-dashed border-gray-300 text-center">
                 <FileText className="h-12 w-12 mx-auto mb-3 text-gray-400" />
                 <FileUploadButton
-                  onUpload={(files) => setQuotationFiles(prev => [...prev, ...files])}
-                  maxSize={10}
-                  maxFiles={5}
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.png"
+                  onFilesUploaded={(files) => setQuotationFiles(prev => [...prev, ...files])}
+                  multiple={true}
                 />
                 <p className="text-sm text-gray-600 mt-3">
-                  Tối đa 5 tệp, mỗi tệp dưới 10MB
+                  PDF, Word, Excel, JPG, PNG
                 </p>
               </div>
             </div>

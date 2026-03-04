@@ -707,28 +707,54 @@ function WorkflowLineRow({ line, editing, users, onUpdate, onDelete }) {
 }
 
 function TaskRow({ task: t, isLocked, onSelect }) {
+  const [showChecklist, setShowChecklist] = useState(false);
+  const checklists = t.checklists || [];
+  const checkDone = checklists.filter(c => c.is_completed).length;
+
   return (
-    <div onClick={() => !isLocked && onSelect(t.id)}
-      className={`flex items-center gap-2 sm:gap-3 bg-white rounded-lg border p-2 sm:p-3 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-sm hover:border-gray-300 cursor-pointer'}`}>
-      <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
-      <span className="flex-1 text-xs sm:text-sm font-medium text-gray-800 truncate">{t.title}</span>
-      {/* Assignee - Avatar + Name */}
-      {t.assignee ? (
-        <div className="flex items-center gap-1.5 shrink-0" title={t.assignee.full_name}>
-          <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold"
-            style={{ backgroundColor: avatarColor(t.assignee.full_name) }}>
-            {getInitials(t.assignee.full_name)}
+    <div className={`bg-white rounded-lg border ${isLocked ? 'opacity-50' : 'hover:shadow-sm hover:border-gray-300'}`}>
+      {/* Main row */}
+      <div onClick={() => !isLocked && onSelect(t.id)}
+        className={`flex items-center gap-2 sm:gap-3 p-2 sm:p-3 ${isLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+        <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
+        <span className="flex-1 text-xs sm:text-sm font-medium text-gray-800 truncate">{t.title}</span>
+        {/* Assignee */}
+        {t.assignee ? (
+          <div className="flex items-center gap-1.5 shrink-0" title={t.assignee.full_name}>
+            <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold"
+              style={{ backgroundColor: avatarColor(t.assignee.full_name) }}>
+              {getInitials(t.assignee.full_name)}
+            </div>
+            <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[100px]">{t.assignee.full_name}</span>
           </div>
-          <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[100px]">
-            {t.assignee.full_name}
-          </span>
+        ) : (
+          <span className="text-xs text-gray-400 hidden sm:inline">Chưa gán</span>
+        )}
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full hidden sm:inline ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
+        {t.due_date && <span className={`text-[10px] hidden sm:inline ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
+        <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
+        {/* Checklist toggle */}
+        {checklists.length > 0 && (
+          <button onClick={e => { e.stopPropagation(); setShowChecklist(v => !v); }}
+            className="flex items-center gap-1 text-[10px] text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded hover:bg-purple-100 shrink-0">
+            {showChecklist ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            {checkDone}/{checklists.length}
+          </button>
+        )}
+      </div>
+      {/* Checklists */}
+      {showChecklist && checklists.length > 0 && (
+        <div className="border-t px-3 pb-2 pt-1 space-y-1 bg-purple-50">
+          {checklists.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)).map(c => (
+            <div key={c.id} className="flex items-center gap-2 py-1">
+              <div className={`w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center ${c.is_completed ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300'}`}>
+                {c.is_completed && <span className="text-white text-[8px]">✓</span>}
+              </div>
+              <span className={`text-xs flex-1 ${c.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{c.title}</span>
+            </div>
+          ))}
         </div>
-      ) : (
-        <span className="text-xs text-gray-400 hidden sm:inline">Chưa gán</span>
       )}
-      <span className={`text-[10px] px-1.5 py-0.5 rounded-full hidden sm:inline ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
-      {t.due_date && <span className={`text-[10px] hidden sm:inline ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
-      <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
     </div>
   );
 }
