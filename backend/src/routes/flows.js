@@ -52,12 +52,14 @@ async function loadStepDetails(steps) {
         .order('order_index');
       step.processes = (stepProcs || []).map(sp => ({ ...sp.process, _link_id: sp.id, is_required: sp.is_required }));
 
-      // Count tasks per process
+      // Load tasks + checklists for each process
       for (const proc of step.processes) {
-        const { count } = await supabase.from('company_process_tasks')
-          .select('id', { count: 'exact', head: true })
-          .eq('process_id', proc.id);
-        proc.task_count = count || 0;
+        const { data: procTasks } = await supabase.from('company_process_tasks')
+          .select('*, checklists:company_process_checklists(*)')
+          .eq('process_id', proc.id)
+          .order('order_index');
+        proc.tasks = procTasks || [];
+        proc.task_count = procTasks?.length || 0;
       }
     } catch { step.processes = []; }
 
