@@ -35,7 +35,9 @@ export default function CompanyProcessesPage() {
   const loadCompanyEmployees = useCallback(async (companyId) => {
     if (!companyId) { setCompanyEmployees([]); return; }
     try {
-      const { data } = await api.get(`/users?company_id=${companyId}`);
+      // companyId = ecosystem_units.id (cấp Công ty con)
+      // Backend resolve: ecosystem_units.id → company_id → departments → users
+      const { data } = await api.get(`/users?ecosystem_unit_id=${companyId}`);
       setCompanyEmployees(data.users || []);
     } catch { setCompanyEmployees([]); }
   }, []);
