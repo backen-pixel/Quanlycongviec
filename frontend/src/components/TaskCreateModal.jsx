@@ -84,6 +84,24 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
     } catch { setCompanyEmployees([]); }
   };
 
+  // ── Load template tasks when template set selected → extract stages ──
+  useEffect(() => {
+    if (!selectedTemplateSet) { setStages([]); return; }
+    api.get(`/company-templates/template-sets/${selectedTemplateSet}/tasks`).then(r => {
+      const tasks = r.data.tasks || [];
+      // Extract unique stages from tasks
+      const stageMap = {};
+      tasks.forEach(t => {
+        if (t.stage) stageMap[t.stage.id] = t.stage;
+      });
+      setStages(Object.values(stageMap));
+      // Auto-select first stage if available
+      if (Object.keys(stageMap).length > 0 && !selectedStageId) {
+        setSelectedStageId(Object.keys(stageMap)[0]);
+      }
+    }).catch(() => {});
+  }, [selectedTemplateSet]);
+
   // ── Load template sets for company ──
   const loadTemplateSets = async (unitId) => {
     if (!unitId) { setTemplateSets([]); return; }
@@ -194,13 +212,31 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
             </div>
           )}
 
-          {/* Employees count badge */}
+          {/* Employees count + Template sets selector */}
           {selectedCompany && (
-            <p className="text-[10px] text-blue-600 mt-1.5 flex items-center gap-1">
-              <Users className="h-3 w-3" />
-              {companyEmployees.length} nhân viên
-              {templateSets.length > 0 && ` • ${templateSets.length} bộ quy trình`}
-            </p>
+            <div className="mt-2 space-y-1.5">
+              <p className="text-[10px] text-blue-600 flex items-center gap-1">
+                <Users className="h-3 w-3" />
+                {companyEmployees.length} nhân viên
+                {templateSets.length > 0 && ` • ${templateSets.length} bộ quy trình`}
+              </p>
+              {templateSets.length > 0 && (
+                <div>
+                  <select value={selectedTemplateSet} onChange={e => setSelectedTemplateSet(e.target.value)}
+                    className="w-full h-8 px-2 rounded border border-blue-300 bg-white text-xs focus:outline-none focus:border-blue-500">
+                    <option value="">— Chọn bộ quy trình (tùy chọn) —</option>
+                    {templateSets.map(ts => (
+                      <option key={ts.id} value={ts.id}>
+                        {ts.name} {ts.is_default && '⭐'}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedTemplateSet && stages.length > 0 && (
+                    <p className="text-[9px] text-green-600 mt-0.5">✓ {stages.length} quy trình có sẵn</p>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
