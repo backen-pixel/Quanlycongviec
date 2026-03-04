@@ -105,7 +105,7 @@ r.get('/:id', async (req, res) => {
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar,email),
       designer:users!projects_designer_id_fkey(id,full_name,avatar,email),
       project_manager:users!projects_project_manager_id_fkey(id,full_name,avatar,email),
-      tasks(*, assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,slug,color,order_index), checklists:task_checklists(id,title,is_completed,order_index,notes))
+      tasks(*, assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,slug,color,order_index), checklists:task_checklists(id,title,is_completed,order_index,notes,attachments))
     `).eq('id', req.params.id).single();
     if (error) throw error;
 
@@ -165,7 +165,7 @@ r.get('/:id', async (req, res) => {
             *,
             assignee:users!tasks_assignee_id_fkey(id,full_name,avatar,email),
             stage:workflow_stages(id,name,slug,color),
-            checklists:task_checklists(id,title,is_completed,order_index,notes)
+            checklists:task_checklists(id,title,is_completed,order_index,notes,attachments)
           `).eq('project_id', data.id)
             .eq('task_type', 'project')
             .order('order_index');

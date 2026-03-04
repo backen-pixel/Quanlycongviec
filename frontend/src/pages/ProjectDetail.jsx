@@ -440,7 +440,7 @@ export default function ProjectDetail() {
                             {/* Tasks */}
                             <div className="px-3 pb-2 space-y-1 bg-gray-50">
                               {group.tasks.map(t => (
-                                <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} />
+                                <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} companyUnitId={assignment.company?.id} onReload={load} />
                               ))}
                             </div>
                           </div>
@@ -658,7 +658,7 @@ export default function ProjectDetail() {
 
       {/* Modals */}
       <TaskDetailModal taskId={selectedTask} open={!!selectedTask} onClose={() => setSelectedTask(null)} onUpdated={load} />
-      <TaskCreateModal open={showCreateTask} onClose={() => setShowCreateTask(false)} onCreated={load} projectId={id} stageId={project.current_stage?.id} />
+      <TaskCreateModal open={showCreateTask} onClose={() => setShowCreateTask(false)} onCreated={load} projectId={id} stageId={project.current_stage?.id} project={project} />
       <AdvanceStageModal open={showAdvance} onClose={() => setShowAdvance(false)} project={project} nextStage={nextStage} onAdvanced={load} />
     </div>
   );
@@ -706,33 +706,84 @@ function WorkflowLineRow({ line, editing, users, onUpdate, onDelete }) {
   );
 }
 
-function TaskRow({ task: t, isLocked, onSelect }) {
+function TaskRow({ task: t, isLocked, onSelect, companyUnitId, onReload }) {
   const [showChecklist, setShowChecklist] = useState(false);
-  const checklists = t.checklists || [];
+  const [editingAssignee, setEditingAssignee] = useState(false);
+  const [companyUsers, setCompanyUsers] = useState([]);
+  const [localTask, setLocalTask] = useState(t);
+  const checklists = localTask.checklists || [];
   const checkDone = checklists.filter(c => c.is_completed).length;
+
+  // Sync when prop changes
+  useState(() => { setLocalTask(t); }, [t]);
+
+  const loadCompanyUsers = async () => {
+    if (!companyUnitId) return;
+    try {
+      const r = await api.get(`/users?ecosystem_unit_id=${companyUnitId}`);
+      setCompanyUsers(r.data.users || []);
+    } catch { }
+  };
+
+  const handleAssigneeClick = (e) => {
+    e.stopPropagation();
+    if (isLocked) return;
+    loadCompanyUsers();
+    setEditingAssignee(true);
+  };
+
+  const handleAssigneeChange = async (newAssigneeId) => {
+    setEditingAssignee(false);
+    if (newAssigneeId === (localTask.assignee_id || localTask.assignee?.id)) return;
+    try {
+      const user = companyUsers.find(u => u.id === newAssigneeId);
+      setLocalTask(prev => ({ ...prev, assignee_id: newAssigneeId, assignee: user || null }));
+      await api.put(`/tasks/${localTask.id}`, { assignee_id: newAssigneeId || null });
+      onReload?.();
+    } catch { setLocalTask(t); }
+  };
 
   return (
     <div className={`bg-white rounded-lg border ${isLocked ? 'opacity-50' : 'hover:shadow-sm hover:border-gray-300'}`}>
       {/* Main row */}
-      <div onClick={() => !isLocked && onSelect(t.id)}
+      <div onClick={() => !isLocked && onSelect(localTask.id)}
         className={`flex items-center gap-2 sm:gap-3 p-2 sm:p-3 ${isLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-        <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${TASK_COLORS[t.status] || 'bg-gray-400'}`} />
-        <span className="flex-1 text-xs sm:text-sm font-medium text-gray-800 truncate">{t.title}</span>
-        {/* Assignee */}
-        {t.assignee ? (
-          <div className="flex items-center gap-1.5 shrink-0" title={t.assignee.full_name}>
-            <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold"
-              style={{ backgroundColor: avatarColor(t.assignee.full_name) }}>
-              {getInitials(t.assignee.full_name)}
+        <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${TASK_COLORS[localTask.status] || 'bg-gray-400'}`} />
+        <span className="flex-1 text-xs sm:text-sm font-medium text-gray-800 truncate">{localTask.title}</span>
+
+        {/* Assignee — click to reassign */}
+        {editingAssignee ? (
+          <div className="shrink-0 relative z-10" onClick={e => e.stopPropagation()}>
+            <select autoFocus defaultValue={localTask.assignee?.id || ''}
+              onChange={e => handleAssigneeChange(e.target.value)}
+              onBlur={() => setEditingAssignee(false)}
+              className="h-7 px-2 border border-blue-400 rounded text-xs bg-white max-w-[140px]">
+              <option value="">— Bỏ gán —</option>
+              {companyUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+            </select>
+          </div>
+        ) : localTask.assignee ? (
+          <div className="flex items-center gap-1.5 shrink-0 group/assignee cursor-pointer"
+            title={`${localTask.assignee.full_name} — Bấm để đổi`}
+            onClick={handleAssigneeClick}>
+            <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold ring-1 ring-transparent group-hover/assignee:ring-blue-400 transition-all"
+              style={{ backgroundColor: avatarColor(localTask.assignee.full_name) }}>
+              {getInitials(localTask.assignee.full_name)}
             </div>
-            <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[100px]">{t.assignee.full_name}</span>
+            <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[100px]">{localTask.assignee.full_name}</span>
           </div>
         ) : (
-          <span className="text-xs text-gray-400 hidden sm:inline">Chưa gán</span>
+          <button onClick={handleAssigneeClick}
+            className="text-xs text-gray-400 hidden sm:inline hover:text-blue-500 hover:underline cursor-pointer shrink-0"
+            title="Gán người thực hiện">
+            + Gán
+          </button>
         )}
-        <span className={`text-[10px] px-1.5 py-0.5 rounded-full hidden sm:inline ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority]}</span>
-        {t.due_date && <span className={`text-[10px] hidden sm:inline ${new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
-        <span className="text-[10px] text-gray-400">{TASK_STATUS[t.status]}</span>
+
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full hidden sm:inline ${PRIORITY_COLORS[localTask.priority] || ''}`}>{PRIORITY_LABELS[localTask.priority]}</span>
+        {localTask.due_date && <span className={`text-[10px] hidden sm:inline ${new Date(localTask.due_date) < new Date() && localTask.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(localTask.due_date)}</span>}
+        <span className="text-[10px] text-gray-400">{TASK_STATUS[localTask.status]}</span>
+
         {/* Checklist toggle */}
         {checklists.length > 0 && (
           <button onClick={e => { e.stopPropagation(); setShowChecklist(v => !v); }}
@@ -742,16 +793,135 @@ function TaskRow({ task: t, isLocked, onSelect }) {
           </button>
         )}
       </div>
+
       {/* Checklists */}
       {showChecklist && checklists.length > 0 && (
-        <div className="border-t px-3 pb-2 pt-1 space-y-1 bg-purple-50">
+        <div className="border-t px-3 pb-2 pt-2 space-y-2 bg-purple-50">
           {checklists.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)).map(c => (
-            <div key={c.id} className="flex items-center gap-2 py-1">
-              <div className={`w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center ${c.is_completed ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300'}`}>
-                {c.is_completed && <span className="text-white text-[8px]">✓</span>}
-              </div>
-              <span className={`text-xs flex-1 ${c.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{c.title}</span>
+            <ChecklistItem key={c.id} item={c} companyUsers={companyUsers}
+              onLoadUsers={loadCompanyUsers} onReload={onReload} taskId={localTask.id} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ Checklist Item ═══
+function ChecklistItem({ item: c, companyUsers, onLoadUsers, onReload, taskId }) {
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesText, setNotesText] = useState('');
+  const [editingAssignee, setEditingAssignee] = useState(false);
+
+  // Parse notes — may be plain text or JSON
+  const parseNotes = (raw) => {
+    if (!raw) return { text: '', assignee_id: null };
+    if (typeof raw === 'object') return { text: raw.text || '', assignee_id: raw.assignee_id || null };
+    try {
+      const parsed = JSON.parse(raw);
+      return { text: parsed.text || '', assignee_id: parsed.assignee_id || null };
+    } catch {
+      return { text: raw, assignee_id: null };
+    }
+  };
+
+  const { text: notesDisplay, assignee_id: checklistAssigneeId } = parseNotes(c.notes);
+  const checklistAssignee = companyUsers.find(u => u.id === checklistAssigneeId);
+  const attachments = c.attachments || [];
+
+  const startEditNotes = () => {
+    setNotesText(notesDisplay);
+    setEditingNotes(true);
+    onLoadUsers?.();
+  };
+
+  const saveNotes = async () => {
+    setEditingNotes(false);
+    try {
+      // Preserve assignee_id in JSON if exists
+      const newNotes = checklistAssigneeId
+        ? JSON.stringify({ text: notesText, assignee_id: checklistAssigneeId })
+        : notesText;
+      await api.put(`/tasks/checklists/${c.id}`, { notes: newNotes });
+      onReload?.();
+    } catch { }
+  };
+
+  const handleChecklistAssignee = async (newUserId) => {
+    setEditingAssignee(false);
+    try {
+      const newNotes = JSON.stringify({ text: notesDisplay, assignee_id: newUserId || null });
+      await api.put(`/tasks/checklists/${c.id}`, { notes: newNotes });
+      onReload?.();
+    } catch { }
+  };
+
+  return (
+    <div className="bg-white rounded-lg border border-purple-100 p-2 space-y-1">
+      {/* Title row */}
+      <div className="flex items-start gap-2">
+        <div className={`w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center mt-0.5 ${c.is_completed ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300'}`}>
+          {c.is_completed && <span className="text-white text-[8px]">✓</span>}
+        </div>
+        <span className={`text-xs flex-1 ${c.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{c.title}</span>
+
+        {/* Checklist assignee */}
+        {editingAssignee ? (
+          <select autoFocus defaultValue={checklistAssigneeId || ''}
+            onChange={e => handleChecklistAssignee(e.target.value)}
+            onBlur={() => setEditingAssignee(false)}
+            className="h-6 px-1 border border-blue-400 rounded text-[10px] bg-white max-w-[120px]">
+            <option value="">— Bỏ gán —</option>
+            {companyUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+          </select>
+        ) : checklistAssignee ? (
+          <div className="flex items-center gap-1 cursor-pointer" title="Đổi người thực hiện"
+            onClick={() => { onLoadUsers?.(); setEditingAssignee(true); }}>
+            <div className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold"
+              style={{ backgroundColor: avatarColor(checklistAssignee.full_name) }}>
+              {getInitials(checklistAssignee.full_name)}
             </div>
+            <span className="text-[9px] text-gray-500">{checklistAssignee.full_name}</span>
+          </div>
+        ) : (
+          <button onClick={() => { onLoadUsers?.(); setEditingAssignee(true); }}
+            className="text-[9px] text-gray-300 hover:text-blue-500 cursor-pointer">
+            + Gán
+          </button>
+        )}
+
+        {/* Edit notes button */}
+        <button onClick={startEditNotes}
+          className="text-[9px] text-gray-300 hover:text-blue-500 cursor-pointer shrink-0" title="Sửa ghi chú">
+          ✎
+        </button>
+      </div>
+
+      {/* Notes */}
+      {editingNotes ? (
+        <div className="ml-5 space-y-1">
+          <textarea value={notesText} onChange={e => setNotesText(e.target.value)}
+            className="w-full text-xs border border-blue-300 rounded p-1.5 resize-none outline-none focus:ring-1 focus:ring-blue-400 min-h-[60px]"
+            placeholder="Ghi chú..." autoFocus />
+          <div className="flex gap-1.5">
+            <button onClick={saveNotes} className="h-6 px-2 bg-blue-600 text-white text-[10px] rounded cursor-pointer hover:bg-blue-700">Lưu</button>
+            <button onClick={() => setEditingNotes(false)} className="h-6 px-2 bg-gray-100 text-gray-600 text-[10px] rounded cursor-pointer hover:bg-gray-200">Hủy</button>
+          </div>
+        </div>
+      ) : notesDisplay ? (
+        <p className="ml-5 text-[10px] text-gray-500 whitespace-pre-wrap">{notesDisplay}</p>
+      ) : null}
+
+      {/* Attachments */}
+      {attachments.length > 0 && (
+        <div className="ml-5 space-y-1 mt-1">
+          {attachments.map((f, fi) => (
+            <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1.5 bg-gray-50 rounded px-2 py-1 hover:bg-gray-100 transition-colors">
+              <Paperclip className="h-3 w-3 text-gray-400 shrink-0" />
+              <span className="text-[10px] text-blue-600 truncate flex-1">{f.file_name || 'file'}</span>
+              {f.file_size && <span className="text-[9px] text-gray-400">{(f.file_size / 1024).toFixed(0)}KB</span>}
+            </a>
           ))}
         </div>
       )}
