@@ -47,6 +47,7 @@ export default function ProjectDetail() {
   const [showAdvance, setShowAdvance] = useState(false);
   const [showApprovalRequest, setShowApprovalRequest] = useState(false);
   const [showPeople, setShowPeople] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
   const [editingLines, setEditingLines] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [addLineStage, setAddLineStage] = useState('');
@@ -192,35 +193,50 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {/* Quotation files — list with add/delete */}
-      <div className="bg-white rounded-xl border p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> File báo giá</h3>
-          <FileUploadButton compact onFilesUploaded={async (files) => {
-            const existing = project.quotation_files || [];
-            await api.put(`/projects/${id}`, { quotation_files: [...existing, ...files] });
-            load();
-          }} />
-        </div>
-        {project.quotation_files?.length > 0 ? (
-          <div className="space-y-1.5">
-            {project.quotation_files.map((f, fi) => (
-              <div key={fi} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 group">
-                <Paperclip className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                <a href={f.file_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline flex-1 truncate">{f.file_name || `File ${fi + 1}`}</a>
-                {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(0)}KB</span>}
-                <button onClick={async () => {
-                  const updated = (project.quotation_files || []).filter((_, j) => j !== fi);
-                  await api.put(`/projects/${id}`, { quotation_files: updated });
-                  load();
-                }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+      {/* Quotation files — collapsible */}
+      <div className="bg-white rounded-xl border">
+        <button onClick={() => setShowFiles(v => !v)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+            <FileText className="h-3.5 w-3.5" /> File báo giá
+            {project.quotation_files?.length > 0 && (
+              <span className="ml-1 bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                {project.quotation_files.length}
+              </span>
+            )}
+          </h3>
+          {showFiles ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
+        </button>
+        
+        {showFiles && (
+          <div className="px-4 pb-4 border-t">
+            <div className="flex justify-end mb-2 pt-2">
+              <FileUploadButton compact onFilesUploaded={async (files) => {
+                const existing = project.quotation_files || [];
+                await api.put(`/projects/${id}`, { quotation_files: [...existing, ...files] });
+                load();
+              }} />
+            </div>
+            {project.quotation_files?.length > 0 ? (
+              <div className="space-y-1.5">
+                {project.quotation_files.map((f, fi) => (
+                  <div key={fi} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 group">
+                    <Paperclip className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                    <a href={f.file_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline flex-1 truncate">{f.file_name || `File ${fi + 1}`}</a>
+                    {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(0)}KB</span>}
+                    <button onClick={async () => {
+                      const updated = (project.quotation_files || []).filter((_, j) => j !== fi);
+                      await api.put(`/projects/${id}`, { quotation_files: updated });
+                      load();
+                    }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
+            ) : (
+              <p className="text-xs text-gray-400 text-center py-3">Chưa có file báo giá</p>
+            )}
           </div>
-        ) : (
-          <p className="text-xs text-gray-400 text-center py-3">Chưa có file báo giá — bấm nút Upload để thêm</p>
         )}
       </div>
 
@@ -828,6 +844,9 @@ function ChecklistItem({ item: c, companyUsers, onLoadUsers, onReload, taskId })
   const { text: notesDisplay, assignee_id: checklistAssigneeId } = parseNotes(c.notes);
   const checklistAssignee = companyUsers.find(u => u.id === checklistAssigneeId);
   const attachments = c.attachments || [];
+  
+  // DEBUG
+  if (c.notes) console.log('Checklist notes:', c.notes, '→', notesDisplay);
 
   const startEditNotes = () => {
     setNotesText(notesDisplay);
