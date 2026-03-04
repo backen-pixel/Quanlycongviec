@@ -1,0 +1,292 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from '../lib/api';
+import {
+  Layers, Plus, Edit, Save, Trash2, Star, CheckSquare, FileText, Building2, Copy
+} from 'lucide-react';
+
+export default function TemplateSetsPage() {
+  const navigate = useNavigate();
+  const [units, setUnits] = useState([]);
+  const [selectedUnit, setSelectedUnit] = useState('');
+  const [sets, setSets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editId, setEditId] = useState(null);
+
+  const loadUnits = useCallback(async () => {
+    try {
+      const { data } = await api.get('/ecosystem/units');
+      const companies = (data.units || []).filter(u => u.level?.depth === 2);
+      setUnits(companies);
+      if (!selectedUnit && companies.length > 0) setSelectedUnit(companies[0].id);
+    } catch {}
+  }, []);
+
+  const loadSets = useCallback(async () => {
+    if (!selectedUnit) { setSets([]); setLoading(false); return; }
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/company-templates/units/${selectedUnit}/template-sets`);
+      setSets(data.sets || []);
+    } catch {}
+    setLoading(false);
+  }, [selectedUnit]);
+
+  useEffect(() => { loadUnits(); }, [loadUnits]);
+  useEffect(() => { loadSets(); }, [loadSets]);
+
+  const deleteSet = async (id) => {
+    if (!confirm('Xóa bộ mẫu này?')) return;
+    try {
+      await api.put(`/company-templates/template-sets/${id}`, { is_active: false });
+      loadSets();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
+  const setDefault = async (id) => {
+    try {
+      await api.put(`/company-templates/template-sets/${id}`, { is_default: true });
+      loadSets();
+    } catch {}
+  };
+
+  return (
+    <div className="space-y-5 max-w-5xl">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Layers className="h-5 w-5 text-purple-600" /> Bộ Quy Trình Mẫu
+          </h1>
+          <p className="text-xs text-gray-500 mt-0.5">Mỗi công ty có thể có nhiều bộ quy trình khác nhau</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select 
+            value={selectedUnit} 
+            onChange={e => setSelectedUnit(e.target.value)} 
+            className="h-9 px-3 border rounded-lg text-sm min-w-[200px]"
+          >
+            <option value="">— Chọn Công ty —</option>
+            {units.map(u => (
+              <option key={u.id} value={u.id}>
+                {u.level?.icon} {u.parent?.name ? u.parent.name + ' · ' : ''}{u.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {selectedUnit && (
+        <button 
+          onClick={() => setShowCreate(true)}
+          className="h-8 px-3 bg-purple-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-purple-700 cursor-pointer"
+        >
+          <Plus className="h-3.5 w-3.5" /> Tạo bộ quy trình mới
+        </button>
+      )}
+
+      {showCreate && (
+        <SetForm 
+          unitId={selectedUnit} 
+          onSaved={() => { loadSets(); setShowCreate(false); }} 
+          onCancel={() => setShowCreate(false)} 
+        />
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin h-6 w-6 border-2 border-purple-200 border-t-purple-600 rounded-full" />
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {sets.map(set => editId === set.id ? (
+            <SetForm 
+              key={set.id} 
+              set={set} 
+              unitId={selectedUnit} 
+              onSaved={() => { loadSets(); setEditId(null); }} 
+              onCancel={() => setEditId(null)} 
+            />
+          ) : (
+            <SetCard 
+              key={set.id} 
+              set={set} 
+              onEdit={() => setEditId(set.id)} 
+              onDelete={() => deleteSet(set.id)}
+              onSetDefault={() => setDefault(set.id)}
+              onManage={() => navigate(`/template-sets/${set.id}`)}
+            />
+          ))}
+        </div>
+      )}
+
+      {!loading && sets.length === 0 && selectedUnit && (
+        <div className="text-center py-16 bg-white rounded-2xl border">
+          <Layers className="h-12 w-12 mx-auto mb-3 text-gray-200" />
+          <p className="text-sm text-gray-500">Công ty chưa có bộ quy trình nào</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SetCard({ set, onEdit, onDelete, onSetDefault, onManage }) {
+  return (
+    <div className="bg-white rounded-xl border p-4 hover:shadow-md transition">
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="text-sm font-bold text-gray-900">{set.name}</h3>
+            {set.is_default && (
+              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
+                <Star className="h-3 w-3 inline" /> Mặc định
+              </span>
+            )}
+          </div>
+          {set.description && (
+            <p className="text-xs text-gray-500 mb-2">{set.description}</p>
+          )}
+          <div className="flex items-center gap-3 text-xs text-gray-600">
+            <span className="flex items-center gap-1">
+              <CheckSquare className="h-3.5 w-3.5" />
+              {set.task_count || 0} nhiệm vụ
+            </span>
+            {set.project_type && (
+              <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded">
+                {set.project_type}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button 
+            onClick={onManage}
+            className="w-8 h-8 rounded-lg hover:bg-purple-50 flex items-center justify-center text-purple-600 cursor-pointer"
+            title="Quản lý nhiệm vụ"
+          >
+            <FileText className="h-4 w-4" />
+          </button>
+          {!set.is_default && (
+            <button 
+              onClick={onSetDefault}
+              className="w-8 h-8 rounded-lg hover:bg-amber-50 flex items-center justify-center text-amber-600 cursor-pointer"
+              title="Đặt làm mặc định"
+            >
+              <Star className="h-4 w-4" />
+            </button>
+          )}
+          <button 
+            onClick={onEdit}
+            className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-blue-600 cursor-pointer"
+          >
+            <Edit className="h-4 w-4" />
+          </button>
+          <button 
+            onClick={onDelete}
+            className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center text-red-500 cursor-pointer"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SetForm({ set, unitId, onSaved, onCancel }) {
+  const [name, setName] = useState(set?.name || '');
+  const [description, setDescription] = useState(set?.description || '');
+  const [projectType, setProjectType] = useState(set?.project_type || '');
+  const [isDefault, setIsDefault] = useState(set?.is_default || false);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!name.trim()) return alert('Nhập tên bộ mẫu');
+    setSaving(true);
+    try {
+      if (set?.id) {
+        await api.put(`/company-templates/template-sets/${set.id}`, {
+          name: name.trim(),
+          description: description.trim() || null,
+          project_type: projectType.trim() || null,
+          is_default: isDefault,
+        });
+      } else {
+        await api.post(`/company-templates/units/${unitId}/template-sets`, {
+          name: name.trim(),
+          description: description.trim() || null,
+          project_type: projectType.trim() || null,
+          is_default: isDefault,
+        });
+      }
+      onSaved();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="bg-purple-50 rounded-xl border border-purple-200 p-4 space-y-3">
+      <h3 className="text-sm font-bold text-purple-900">
+        {set ? '✏️ Sửa' : '➕ Tạo'} bộ quy trình
+      </h3>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2 sm:col-span-1">
+          <label className="text-xs font-medium text-gray-600 block mb-1">Tên bộ mẫu *</label>
+          <input 
+            value={name} 
+            onChange={e => setName(e.target.value)} 
+            placeholder="VD: Quy trình tiêu chuẩn"
+            className="w-full h-9 px-3 border rounded-lg text-sm" 
+          />
+        </div>
+        <div className="col-span-2 sm:col-span-1">
+          <label className="text-xs font-medium text-gray-600 block mb-1">Loại dự án</label>
+          <input 
+            value={projectType} 
+            onChange={e => setProjectType(e.target.value)} 
+            placeholder="VD: Tủ bếp, Nội thất..."
+            className="w-full h-9 px-3 border rounded-lg text-sm" 
+          />
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-gray-600 block mb-1">Mô tả</label>
+          <textarea 
+            value={description} 
+            onChange={e => setDescription(e.target.value)} 
+            placeholder="Mô tả ngắn gọn..."
+            rows="2"
+            className="w-full px-3 py-2 border rounded-lg text-sm"
+          />
+        </div>
+        <div className="col-span-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={isDefault} 
+              onChange={e => setIsDefault(e.target.checked)} 
+              className="w-4 h-4 accent-purple-600"
+            />
+            <span className="text-sm text-gray-700">Đặt làm bộ mặc định</span>
+          </label>
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button 
+          onClick={onCancel} 
+          className="h-8 px-3 border rounded-lg text-xs cursor-pointer"
+        >
+          Hủy
+        </button>
+        <button 
+          onClick={save} 
+          disabled={saving} 
+          className="h-8 px-4 bg-purple-600 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50"
+        >
+          {saving ? '...' : <><Save className="h-3.5 w-3.5 inline mr-1" />Lưu</>}
+        </button>
+      </div>
+    </div>
+  );
+}

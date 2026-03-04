@@ -42,6 +42,7 @@ const adminTools = [
   { to: '/ecosystem', icon: Network, label: 'Hệ sinh thái' },
   { to: '/workflow-flows', icon: GitBranch, label: 'Quản lý luồng' },
   { to: '/company-processes', icon: Layers, label: 'QT nội bộ Cty' },
+  { to: '/template-sets', icon: ClipboardList, label: 'Bộ quy trình mẫu' },
   { to: '/companies', icon: Building2, label: 'Công ty' },
   { to: '/teams', icon: Users, label: 'Team' },
   { to: '/users', icon: Users, label: 'Nhân viên' },
