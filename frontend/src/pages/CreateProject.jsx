@@ -86,6 +86,7 @@ export default function CreateProject() {
       if (defaultSet) {
         setSelectedTemplateSets(prev => ({ ...prev, [companyUnitId]: defaultSet.id }));
         loadTemplateTasks(defaultSet.id);
+        loadCompanyEmployees(companyUnitId); // Load employees when auto-selecting default template
       }
     } catch {}
   };
@@ -108,7 +109,10 @@ export default function CreateProject() {
 
   const handleTemplateSetChange = (companyUnitId, templateSetId) => {
     setSelectedTemplateSets(prev => ({ ...prev, [companyUnitId]: templateSetId }));
-    if (templateSetId) loadTemplateTasks(templateSetId);
+    if (templateSetId) {
+      loadTemplateTasks(templateSetId);
+      loadCompanyEmployees(companyUnitId); // Load employees for this company
+    }
   };
 
   const createCustomer = async () => {
@@ -467,7 +471,13 @@ export default function CreateProject() {
                     return (
                       <div key={step.id} className="border border-gray-200 rounded-lg overflow-hidden">
                         <button
-                          onClick={() => setExpandedSteps(p => ({ ...p, [step.id]: !p[step.id] }))}
+                          onClick={() => {
+                            setExpandedSteps(p => ({ ...p, [step.id]: !p[step.id] }));
+                            // Load employees when expanding step
+                            if (!expandedSteps[step.id] && step.company_unit_id) {
+                              loadCompanyEmployees(step.company_unit_id);
+                            }
+                          }}
                           className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition"
                         >
                           <div className="flex items-center gap-3">
