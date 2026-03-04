@@ -202,3 +202,146 @@ BEGIN
 
   RAISE NOTICE 'Luồng tạo xong: % bước', v_step_order;
 END $$;
+
+
+-- ═══ PHẦN 3: LUỒNG 2 — TỦ BẾP VIP (thêm bước, deadline dài hơn) ═══
+DO $$
+DECLARE
+  v_flow_id UUID;
+  v_step_id UUID;
+  v_div_id UUID;
+  v_comp_id UUID;
+  v_proc RECORD;
+  v_step_order INT := 0;
+  v_proc_order INT;
+  -- Thứ tự 8 Khối giống chuẩn nhưng Khối KD xuất hiện 2 lần (đầu + cuối)
+  v_kw_groups TEXT[][] := ARRAY[
+    ARRAY['kinh doanh','tư vấn','sales'],
+    ARRAY['thiết kế','design'],
+    ARRAY['báo giá','quotation'],
+    ARRAY['hợp đồng','contract'],
+    ARRAY['sản xuất','production'],
+    ARRAY['vận chuyển','shipping','giao hàng'],
+    ARRAY['lắp đặt','install'],
+    ARRAY['cskh','chăm sóc','customer care'],
+    ARRAY['kinh doanh','tư vấn','sales']
+  ];
+  v_kw_group TEXT[];
+  v_kw TEXT;
+  v_found BOOLEAN;
+BEGIN
+  IF EXISTS (SELECT 1 FROM workflow_flows WHERE name LIKE '%VIP%' LIMIT 1) THEN
+    RAISE NOTICE 'Luồng VIP đã có, bỏ qua';
+    RETURN;
+  END IF;
+
+  INSERT INTO workflow_flows (name,description,color,icon,is_default)
+  VALUES ('Tủ bếp VIP','KD → TK → BG → HĐ → SX → VC → LĐ → CSKH → KD (theo dõi VIP)','#D946EF','⭐',false)
+  RETURNING id INTO v_flow_id;
+
+  FOR i IN 1..array_length(v_kw_groups,1) LOOP
+    v_kw_group := v_kw_groups[i];
+    v_found := false;
+
+    FOREACH v_kw IN ARRAY v_kw_group LOOP
+      IF v_found THEN EXIT; END IF;
+      SELECT eu.id INTO v_div_id FROM ecosystem_units eu
+      JOIN ecosystem_levels el ON el.id = eu.level_id
+      WHERE el.depth = 1 AND eu.is_active = true AND LOWER(eu.name) LIKE '%' || v_kw || '%'
+      LIMIT 1;
+
+      IF v_div_id IS NOT NULL THEN
+        v_found := true;
+        SELECT eu.id INTO v_comp_id FROM ecosystem_units eu
+        JOIN ecosystem_levels el ON el.id = eu.level_id
+        WHERE el.depth = 2 AND eu.parent_id = v_div_id AND eu.is_active = true
+        ORDER BY eu.name LIMIT 1;
+
+        v_step_order := v_step_order + 1;
+        INSERT INTO workflow_flow_steps (flow_id, division_unit_id, company_unit_id, order_index)
+        VALUES (v_flow_id, v_div_id, v_comp_id, v_step_order)
+        RETURNING id INTO v_step_id;
+
+        IF v_comp_id IS NOT NULL THEN
+          v_proc_order := 0;
+          FOR v_proc IN SELECT id FROM company_processes WHERE company_unit_id = v_comp_id AND is_active = true ORDER BY order_index LOOP
+            v_proc_order := v_proc_order + 1;
+            INSERT INTO flow_step_processes (flow_step_id, process_id, order_index, is_required) VALUES (v_step_id, v_proc.id, v_proc_order, true);
+          END LOOP;
+        END IF;
+
+        v_div_id := NULL; v_comp_id := NULL;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RAISE NOTICE 'Luồng VIP: % bước', v_step_order;
+END $$;
+
+
+-- ═══ PHẦN 4: LUỒNG 3 — SHOWROOM / TRƯNG BÀY (rút gọn) ═══
+DO $$
+DECLARE
+  v_flow_id UUID;
+  v_step_id UUID;
+  v_div_id UUID;
+  v_comp_id UUID;
+  v_proc RECORD;
+  v_step_order INT := 0;
+  v_proc_order INT;
+  -- Showroom: TK → SX → VC → LĐ (bỏ KD, BG, HĐ, CSKH)
+  v_kw_groups TEXT[][] := ARRAY[
+    ARRAY['thiết kế','design'],
+    ARRAY['sản xuất','production'],
+    ARRAY['vận chuyển','shipping','giao hàng'],
+    ARRAY['lắp đặt','install']
+  ];
+  v_kw_group TEXT[];
+  v_kw TEXT;
+  v_found BOOLEAN;
+BEGIN
+  IF EXISTS (SELECT 1 FROM workflow_flows WHERE name LIKE '%howroom%' LIMIT 1) THEN
+    RAISE NOTICE 'Luồng Showroom đã có, bỏ qua';
+    RETURN;
+  END IF;
+
+  INSERT INTO workflow_flows (name,description,color,icon,is_default)
+  VALUES ('Showroom / Trưng bày','TK → SX → VC → LĐ (không qua KD, BG, HĐ, CSKH)','#0EA5E9','🏠',false)
+  RETURNING id INTO v_flow_id;
+
+  FOR i IN 1..array_length(v_kw_groups,1) LOOP
+    v_kw_group := v_kw_groups[i];
+    v_found := false;
+
+    FOREACH v_kw IN ARRAY v_kw_group LOOP
+      IF v_found THEN EXIT; END IF;
+      SELECT eu.id INTO v_div_id FROM ecosystem_units eu
+      JOIN ecosystem_levels el ON el.id = eu.level_id
+      WHERE el.depth = 1 AND eu.is_active = true AND LOWER(eu.name) LIKE '%' || v_kw || '%'
+      LIMIT 1;
+
+      IF v_div_id IS NOT NULL THEN
+        v_found := true;
+        SELECT eu.id INTO v_comp_id FROM ecosystem_units eu
+        JOIN ecosystem_levels el ON el.id = eu.level_id
+        WHERE el.depth = 2 AND eu.parent_id = v_div_id AND eu.is_active = true
+        ORDER BY eu.name LIMIT 1;
+
+        v_step_order := v_step_order + 1;
+        INSERT INTO workflow_flow_steps (flow_id, division_unit_id, company_unit_id, order_index)
+        VALUES (v_flow_id, v_div_id, v_comp_id, v_step_order)
+        RETURNING id INTO v_step_id;
+
+        IF v_comp_id IS NOT NULL THEN
+          v_proc_order := 0;
+          FOR v_proc IN SELECT id FROM company_processes WHERE company_unit_id = v_comp_id AND is_active = true ORDER BY order_index LOOP
+            v_proc_order := v_proc_order + 1;
+            INSERT INTO flow_step_processes (flow_step_id, process_id, order_index, is_required) VALUES (v_step_id, v_proc.id, v_proc_order, true);
+          END LOOP;
+        END IF;
+
+        v_div_id := NULL; v_comp_id := NULL;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RAISE NOTICE 'Luồng Showroom: % bước', v_step_order;
+END $$;
