@@ -27,6 +27,7 @@ import DepartmentChat from './pages/DepartmentChat';
 import WorkflowFlowsPage from './pages/WorkflowFlowsPage';
 import CompanyProcessesPage from './pages/CompanyProcessesPage';
 import CreateProject from './pages/CreateProject';
+import CreateProjectNew from './pages/CreateProjectNew';
 import { Settings } from 'lucide-react';
 
 function ProtectedLayout() {
@@ -81,7 +82,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/my-tasks" element={<MyTasks />} />
             <Route path="/projects" element={<Projects />} />
-            <Route path="/projects/create" element={<CreateProject />} />
+            <Route path="/projects/create" element={<CreateProjectNew />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/stage/:slug" element={<StageView />} />
