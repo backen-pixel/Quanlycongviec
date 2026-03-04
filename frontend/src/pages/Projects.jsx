@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import ProjectCreateModal from '../components/ProjectCreateModal';
+import ProjectCreateModalFullScreen from '../components/ProjectCreateModalFullScreen';
 import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List } from 'lucide-react';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 
@@ -481,7 +481,7 @@ export default function Projects() {
         })()
       )}
 
-      <ProjectCreateModal open={showCreate} onClose={() => setShowCreate(false)} onCreated={load} />
+      <ProjectCreateModalFullScreen open={showCreate} onClose={() => setShowCreate(false)} onCreated={load} />
     </div>
   );
 }
