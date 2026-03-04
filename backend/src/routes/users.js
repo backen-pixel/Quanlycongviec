@@ -71,11 +71,11 @@ r.get('/departments', async (req, res) => {
 // ═══ STAFF LIST (with filters) ═══
 r.get('/', async (req, res) => {
   try {
-    const { role, department_id, search, include_inactive } = req.query;
+    const { role, department_id, company_id, search, include_inactive } = req.query;
 
     // Try full select (needs migration 06 columns), fallback to basic
-    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color),team:teams(id,name,color)`;
-    const basicCols = `id,email,full_name,phone,avatar,role,department_id,team_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color),team:teams(id,name,color)`;
+    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams(id,name,color)`;
+    const basicCols = `id,email,full_name,phone,avatar,role,department_id,team_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams(id,name,color)`;
     const basicColsNoDept = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at`;
 
     let data = null, error = null;
@@ -115,13 +115,18 @@ r.get('/', async (req, res) => {
 
     if (error) throw error;
 
-    const all = data || [];
+    // Filter by company_id on client side (after department join)
+    let all = data || [];
+    if (company_id) {
+      all = all.filter(u => u.department?.company_id === company_id);
+    }
+
     const stats = { total: all.length, byRole: {}, byDept: {} };
     all.forEach(u => {
       stats.byRole[u.role] = (stats.byRole[u.role] || 0) + 1;
       if (u.department?.name) stats.byDept[u.department.name] = (stats.byDept[u.department.name] || 0) + 1;
     });
-    res.json({ users: data, stats });
+    res.json({ users: all, stats });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
