@@ -4,7 +4,7 @@ import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
 import {
   Plus, CheckSquare, ChevronDown, ChevronRight, Building2,
-  GitBranch, ArrowRight, Clock, User, ClipboardList, Star
+  GitBranch, ArrowRight, Clock, User, ClipboardList, Star, Trash2, Edit, Save, Layers, FileText, StickyNote
 } from 'lucide-react';
 
 export default function ProjectCreateModal({ open, onClose, onCreated }) {
@@ -18,6 +18,9 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCust, setNewCust] = useState({ full_name: '', phone: '', email: '', city: '' });
   const [expandedSteps, setExpandedSteps] = useState({});
+  const [expandedProcesses, setExpandedProcesses] = useState({});
+  const [editingTask, setEditingTask] = useState(null);
+  const [editingChecklist, setEditingChecklist] = useState(null);
 
   useEffect(() => {
     if (!open) return;
@@ -26,6 +29,7 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
     setFlowDetail(null);
     setQuotationFiles([]);
     setExpandedSteps({});
+    setExpandedProcesses({});
 
     Promise.all([
       api.get('/customers').then(r => setCustomers(r.data.customers || [])).catch(() => {}),
@@ -60,10 +64,35 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
   };
 
   const toggleStep = (id) => setExpandedSteps(p => ({ ...p, [id]: !p[id] }));
+  const toggleProcess = (id) => setExpandedProcesses(p => ({ ...p, [id]: !p[id] }));
 
-  // Count total tasks from flow
-  const totalTasks = (flowDetail?.steps || []).reduce((s, st) => s + (st.tasks?.length || 0), 0);
-  const stepsWithTemplate = (flowDetail?.steps || []).filter(s => s.template_set_id);
+  const deleteTask = async (taskId) => {
+    if (!confirm('Xóa nhiệm vụ này?')) return;
+    try {
+      await api.delete(`/company-processes/tasks/${taskId}`);
+      const { data } = await api.get(`/flows/${selectedFlow.id}`);
+      setFlowDetail(data.flow);
+    } catch {}
+  };
+
+  const deleteChecklist = async (checklistId) => {
+    try {
+      await api.delete(`/company-processes/checklists/${checklistId}`);
+      const { data } = await api.get(`/flows/${selectedFlow.id}`);
+      setFlowDetail(data.flow);
+    } catch {}
+  };
+
+  // Đếm tổng tasks từ quy trình (không phải template)
+  const countTotalTasks = () => {
+    let count = 0;
+    (flowDetail?.steps || []).forEach(step => {
+      (step.processes || []).forEach(proc => {
+        count += proc.task_count || 0;
+      });
+    });
+    return count;
+  };
 
   const submit = async () => {
     if (!form.name?.trim()) return alert('Nhập tên dự án');
@@ -80,10 +109,9 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
         estimated_value: form.estimated_value ? +form.estimated_value : null,
         priority: form.priority || 'medium',
         flow_id: selectedFlow.id,
-        flow_assignments: (flowDetail?.steps || []).filter(s => s.company_unit_id && s.template_set_id).map(s => ({
+        flow_assignments: (flowDetail?.steps || []).filter(s => s.company_unit_id).map(s => ({
           division_unit_id: s.division_unit_id,
           company_unit_id: s.company_unit_id,
-          template_set_id: s.template_set_id,
           order_index: s.order_index,
         })),
         quotation_files: quotationFiles,
@@ -137,7 +165,6 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {flows.map(f => {
                 const isSel = selectedFlow?.id === f.id;
-                const fTasks = (f.steps || []).reduce((s, st) => s + (st.task_count || 0), 0);
                 return (
                   <button key={f.id} type="button" onClick={() => selectFlow(f)}
                     className={`p-3 rounded-xl border-2 text-left cursor-pointer transition-all ${isSel ? 'border-indigo-500 bg-white shadow-sm' : 'border-transparent bg-white/50 hover:bg-white'}`}>
@@ -147,7 +174,6 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
                         <p className="text-sm font-semibold text-gray-900 flex items-center gap-1">
                           {f.name}
                           {f.is_default && <Star className="h-3 w-3 text-amber-500" />}
-                          <span className="text-[9px] font-normal bg-gray-100 text-gray-500 px-1.5 rounded-full">{fTasks} NV</span>
                         </p>
                         <div className="flex items-center gap-0.5 mt-1 flex-wrap">
                           {(f.steps || []).map((s, i) => (
@@ -170,17 +196,15 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
           )}
         </div>
 
-        {/* ═══ 3. PREVIEW LUỒNG ĐÃ CHỌN ═══ */}
+        {/* ═══ 3. PREVIEW LUỒNG + QUY TRÌNH NỘI BỘ ═══ */}
         {flowDetail && (
           <div className="bg-white rounded-xl border p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                📋 Nhiệm vụ sẽ được tạo ({totalTasks} NV từ {stepsWithTemplate.length} khối)
-              </h3>
-            </div>
+            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+              <Layers className="h-4 w-4" /> Quy trình theo Luồng ({countTotalTasks()} NV)
+            </h3>
 
             {(flowDetail.steps || []).map((step, idx) => {
-              const tasks = step.tasks || [];
+              const processes = step.processes || [];
               const isExpanded = expandedSteps[step.id];
               const divColor = step.division?.level?.color || '#6b7280';
 
@@ -195,27 +219,62 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
                         {step.company && <span className="text-gray-400 font-normal"> · {step.company.short_name || step.company.name}</span>}
                       </p>
                     </div>
-                    {step.template_set && <span className="text-[9px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded shrink-0">{step.template_set.name}</span>}
-                    <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full font-medium shrink-0">{tasks.length} NV</span>
+                    <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full font-medium shrink-0">{processes.length} QT</span>
                     {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />}
                   </button>
 
-                  {isExpanded && tasks.length > 0 && (
-                    <div className="border-t bg-gray-50/50 p-2 space-y-0.5 max-h-[200px] overflow-y-auto">
-                      {tasks.map(t => (
-                        <div key={t.id} className="flex items-center gap-1.5 py-1 px-2 bg-white rounded text-[10px]">
-                          <CheckSquare className="h-2.5 w-2.5 text-gray-300 shrink-0" />
-                          <span className="flex-1 truncate text-gray-800">{t.title}</span>
-                          {t.default_assignee && <span className="bg-blue-50 text-blue-600 px-1 rounded shrink-0"><User className="h-2 w-2 inline" /> {t.default_assignee.full_name?.split(' ').pop()}</span>}
-                          {(t.deadline_days > 0 || t.deadline_hours > 0) && <span className="bg-orange-50 text-orange-600 px-1 rounded shrink-0"><Clock className="h-2 w-2 inline" /> {t.deadline_days > 0 ? `${t.deadline_days}d` : ''}{t.deadline_hours > 0 ? `${t.deadline_hours}h` : ''}</span>}
-                          {t.checklists?.length > 0 && <span className="text-gray-400 shrink-0">📋{t.checklists.length}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {isExpanded && (
+                    <div className="border-t bg-gray-50/50 p-2 space-y-1.5 max-h-[400px] overflow-y-auto">
+                      {processes.length > 0 ? (
+                        processes.map(proc => {
+                          const isProcExpanded = expandedProcesses[proc.id];
+                          return (
+                            <div key={proc.id} className="bg-white rounded border" style={{ borderLeft: `3px solid ${proc.color || '#8B5CF6'}` }}>
+                              <button type="button" onClick={() => toggleProcess(proc.id)}
+                                className="w-full flex items-center gap-2 p-1.5 hover:bg-gray-50 cursor-pointer">
+                                <span className="text-sm">{proc.icon || '📋'}</span>
+                                <span className="flex-1 text-xs font-medium text-gray-800">{proc.name}</span>
+                                <span className="text-[9px] bg-purple-50 text-purple-600 px-1 rounded">{proc.task_count || 0} NV</span>
+                                {isProcExpanded ? <ChevronDown className="h-3 w-3 text-gray-400" /> : <ChevronRight className="h-3 w-3 text-gray-400" />}
+                              </button>
 
-                  {isExpanded && tasks.length === 0 && (
-                    <div className="border-t p-2 text-[10px] text-gray-400 italic">Chưa setup nhiệm vụ mẫu cho khối này</div>
+                              {isProcExpanded && (
+                                <div className="border-t bg-purple-50/30 p-1.5 space-y-1">
+                                  {proc.tasks && proc.tasks.length > 0 ? (
+                                    proc.tasks.map(task => (
+                                      <div key={task.id} className="bg-white rounded p-1.5 group">
+                                        <div className="flex items-center gap-1.5 text-[10px]">
+                                          <CheckSquare className="h-2.5 w-2.5 text-purple-400 shrink-0" />
+                                          <span className="flex-1 font-medium text-gray-800">{task.title}</span>
+                                          <button type="button" onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-2.5 w-2.5" /></button>
+                                        </div>
+                                        {task.checklists && task.checklists.length > 0 && (
+                                          <div className="ml-4 mt-0.5 space-y-0">
+                                            {task.checklists.map(cl => (
+                                              <div key={cl.id} className="flex items-center gap-1 text-[9px] text-gray-500 group/cl">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
+                                                <span>{cl.title}</span>
+                                                {cl.require_file && <FileText className="h-2 w-2 text-blue-400" />}
+                                                {cl.require_note && <StickyNote className="h-2 w-2 text-amber-400" />}
+                                                <button type="button" onClick={() => deleteChecklist(cl.id)} className="ml-auto opacity-0 group-hover/cl:opacity-100 text-red-400 cursor-pointer"><Trash2 className="h-2 w-2" /></button>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <p className="text-[9px] text-gray-400 italic py-1">Chưa có nhiệm vụ</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="text-[10px] text-gray-400 italic py-2">Khối này chưa setup quy trình nội bộ</p>
+                      )}
+                    </div>
                   )}
                 </div>
               );
@@ -261,7 +320,7 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
           <button type="button" onClick={onClose} className="h-10 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
           <button type="button" onClick={submit} disabled={loading}
             className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50">
-            {loading ? 'Đang tạo...' : `🚀 Tạo dự án${totalTasks > 0 ? ` (${totalTasks} NV)` : ''}`}
+            {loading ? 'Đang tạo...' : `🚀 Tạo dự án (${countTotalTasks()} NV)`}
           </button>
         </div>
       </div>
