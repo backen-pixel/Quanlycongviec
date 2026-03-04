@@ -121,10 +121,10 @@ export default function CreateProject() {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 -mx-6 -my-6">
+    <div className="fixed inset-0 flex flex-col bg-gradient-to-br from-slate-50 to-slate-100 overflow-hidden">
       {/* Header */}
-      <div className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
-        <div className="flex items-center justify-between px-8 py-5">
+      <div className="flex-shrink-0 bg-white border-b border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between px-8 py-5 max-w-full">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center">
               <Plus className="h-6 w-6 text-white" />
@@ -143,8 +143,11 @@ export default function CreateProject() {
         </div>
       </div>
 
-      <div className="px-8 py-8">
-        <div className="max-w-5xl mx-auto">
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Scrollable Content Area */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="px-8 py-8">
+            <div className="max-w-5xl mx-auto">
           {/* Tabs */}
           <div className="flex gap-1 mb-8 bg-white rounded-xl p-1 shadow-sm">
             {[
@@ -580,6 +583,8 @@ export default function CreateProject() {
                   {loading ? 'Đang tạo...' : 'Tạo Dự Án'}
                 </button>
               )}
+            </div>
+          </div>
             </div>
           </div>
         </div>
