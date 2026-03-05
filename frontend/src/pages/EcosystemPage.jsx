@@ -8,7 +8,7 @@ import {
   Plus, ChevronRight, ChevronDown, Users, Trash2, Layers,
   Edit, Shield, FolderKanban, Network, Save, X, UserPlus, Crown, User,
   ArrowDownRight, Copy, FileText, ChevronUp, ZoomIn, ZoomOut, Maximize2, Move,
-  List, Sitemap, HelpCircle
+  List, GitBranch, HelpCircle
 } from 'lucide-react';
 
 const RL = { director: 'Giám đốc', manager: 'Quản lý', team_lead: 'Trưởng nhóm', member: 'Nhân viên' };
@@ -98,7 +98,7 @@ export default function EcosystemPage() {
                 viewMode === 'diagram' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              <Sitemap className="h-4 w-4" />
+              <GitBranch className="h-4 w-4" />
               Sơ đồ
             </button>
           </div>
@@ -143,7 +143,7 @@ export default function EcosystemPage() {
             </div>
             <div className="bg-white/70 rounded-lg p-3">
               <div className="font-semibold text-purple-900 mb-2 flex items-center gap-2">
-                <Sitemap className="w-4 h-4" />
+                <GitBranch className="w-4 h-4" />
                 Chế độ Sơ đồ
               </div>
               <ul className="space-y-1 text-xs text-gray-600">
