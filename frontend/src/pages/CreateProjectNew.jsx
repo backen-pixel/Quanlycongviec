@@ -513,9 +513,15 @@ export default function CreateProjectNew() {
                                     </div>
                                   </button>
                                   {expandedProcesses[proc.id] && proc.task_count > 0 && (
-                                    <div className="mt-2 ml-8 space-y-1 border-l-2 border-gray-300 pl-3">
-                                      {(proc.tasks || []).map(task => (
-                                        <p key={task.id} className="text-sm text-gray-600">• {task.name}</p>
+                                    <div className="mt-2 ml-8 space-y-2 border-l-2 border-gray-300 pl-3">
+                                      {(proc.tasks || []).map((task, idx) => (
+                                        <div key={task.id} className="flex items-center gap-3 py-1">
+                                          <span className="text-xs font-bold text-gray-400 w-6 text-center">{idx + 1}</span>
+                                          <span className="font-semibold text-gray-900 flex-1">{task.name}</span>
+                                          <span className="text-xs text-purple-600 font-medium whitespace-nowrap">
+                                            {task.assignee_field ? '👤 ' + task.assignee_field.replace(/_/g, ' ') : '○ Chưa gán'}
+                                          </span>
+                                        </div>
                                       ))}
                                     </div>
                                   )}
