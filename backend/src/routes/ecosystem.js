@@ -627,3 +627,9 @@ r.get('/company-users/:companyId', async (req, res) => {
 });
 
 module.exports = r;
+
+// Export helper functions for use in permission middleware
+module.exports.canManageUnit = canManageUnit;
+module.exports.getUserAccessibleUnits = getUserAccessibleUnits;
+module.exports.getDescendantUnits = getDescendantUnits;
+
