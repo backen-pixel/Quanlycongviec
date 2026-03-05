@@ -608,22 +608,48 @@ r.get('/available-departments', async (req, res) => {
 // GET users of a company (qua departments)
 r.get('/company-users/:companyId', async (req, res) => {
   try {
-    // Get departments of this company
-    const { data: depts } = await supabase.from('departments')
-      .select('id').eq('company_id', req.params.companyId).eq('is_active', true);
+    const unitId = req.params.companyId;
+
+    // Step 1: Resolve ecosystem_units.id → companies.id
+    // ecosystem_units has company_id column linking to companies table
+    const { data: unit } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, company_id')
+      .eq('id', unitId)
+      .single();
+
+    // Use company_id from ecosystem_unit if available, else try unitId directly
+    const companyId = unit?.company_id || unitId;
+
+    // Step 2: Get departments of this company
+    const { data: depts } = await supabase
+      .from('departments')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+
     const deptIds = (depts || []).map(d => d.id);
 
-    // Get users in these departments
+    // Step 3: Get users in these departments
     let users = [];
     if (deptIds.length) {
-      const { data } = await supabase.from('users')
-        .select('id, full_name, email, avatar, role, department_id, is_active')
-        .in('department_id', deptIds).eq('is_active', true).order('full_name');
+      const { data } = await supabase
+        .from('users')
+        .select(`
+          id, full_name, email, phone, avatar, role,
+          department:departments(id, name, company_id)
+        `)
+        .in('department_id', deptIds)
+        .eq('is_active', true)
+        .order('full_name');
       users = data || [];
     }
 
-    res.json({ users, department_ids: deptIds });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json({ users, department_ids: deptIds, company_id: companyId });
+  } catch (e) { 
+    console.error('company-users error:', e);
+    res.status(500).json({ error: e.message }); 
+  }
 });
 
 // ─── POST Setup Wizard (batch create divisions + companies + departments) ──
