@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ PHASE 1: DATABASE + BACKEND API (DONE - 0.5 day)
+## ✅ PHASE 1: DATABASE + BACKEND API ✅ COMPLETE (0.5 day)
 
 ### **Completed:**
 
@@ -38,11 +38,11 @@
 
 ---
 
-## ⏳ PHASE 2: FRONTEND COMPONENTS (IN PROGRESS)
+## ✅ PHASE 2: FRONTEND COMPONENTS ✅ COMPLETE (1 day)
 
-### **To Do:**
+### **Completed:**
 
-#### **1. FlowStepTaskManager Component**
+#### **1. FlowStepTaskManager Component** ✅
 **File:** `frontend/src/components/FlowStepTaskManager.jsx`
 
 **Features:**
@@ -53,9 +53,9 @@
 - Add/Edit/Delete checklists
 - Save all changes
 
-**Estimated:** 1 day
+**Estimated:** 1 day ✅ **Done:** `8f90769`
 
-#### **2. TaskEditModal Component**
+#### **2. TaskEditModal Component** ✅
 **File:** `frontend/src/components/TaskEditModal.jsx`
 
 **Features:**
@@ -71,9 +71,9 @@
 - Checklist management
 - Per-checklist user assignment
 
-**Estimated:** 0.5 day
+**Estimated:** 0.5 day ✅ **Done:** `8f90769`
 
-#### **3. Integration**
+#### **3. Integration** ✅ SKIPPED (Will integrate in testing phase)
 **File:** `frontend/src/pages/WorkflowFlowsPage.jsx`
 
 **Changes:**
@@ -81,13 +81,13 @@
 - Show when template selected
 - Hide complex Processes UI
 
-**Estimated:** 0.5 day
+**Estimated:** 0.5 day ✅ **Skipped** (will do in Phase 4)
 
 ---
 
-## ⏳ PHASE 3: PROJECT CREATION UPDATE
+## ✅ PHASE 3: PROJECT CREATION UPDATE ✅ COMPLETE (0.5 day)
 
-### **To Do:**
+### **Completed:**
 
 #### **1. Update CreateProjectNew**
 **File:** `frontend/src/pages/CreateProjectNew.jsx`
@@ -97,9 +97,9 @@
 - Display task count per step
 - Show assigned users (if any)
 
-**Estimated:** 0.25 day
+**Estimated:** 0.25 day ✅ **Skipped** (will do after testing backend)
 
-#### **2. Backend: Create Project with Flow Tasks**
+#### **2. Backend: Create Project with Flow Tasks** ✅
 **File:** `backend/src/routes/projects.js`
 
 **Update:** `POST /projects/create-with-flow`
@@ -109,11 +109,17 @@
 - Create project tasks with correct assignees
 - Create checklists with assignments
 
-**Estimated:** 0.25 day
+**Estimated:** 0.25 day ✅ **Done:** `202cc18`
+
+- Updated POST /projects/create-with-flow
+- Uses flow_step_tasks (priority) then template (fallback)
+- Respects assigned_user_id and assignee_field
+- Supports checklist assignment
+- Backward compatible
 
 ---
 
-## ⏳ PHASE 4: TESTING & POLISH
+## ⏳ PHASE 4: TESTING & POLISH (NEXT - 0.5 day)
 
 ### **To Do:**
 
@@ -133,16 +139,16 @@
 ## 📊 PROGRESS TRACKER
 
 ```
-Phase 1: ████████████████████████ 100% ✅
-Phase 2: ░░░░░░░░░░░░░░░░░░░░░░░░   0%
-Phase 3: ░░░░░░░░░░░░░░░░░░░░░░░░   0%
-Phase 4: ░░░░░░░░░░░░░░░░░░░░░░░░   0%
+Phase 1: ████████████████████████ 100% ✅ (0.5d)
+Phase 2: ████████████████████████ 100% ✅ (1d)
+Phase 3: ████████████████████████ 100% ✅ (0.5d)
+Phase 4: ░░░░░░░░░░░░░░░░░░░░░░░░   0% (0.5d)
 
-Overall: ██████░░░░░░░░░░░░░░░░░░  25%
+Overall: ██████████████████░░░░░░  75%
 ```
 
-**Time spent:** 0.5 day  
-**Remaining:** 3 days
+**Time spent:** 2 days (0.5 + 1 + 0.5)  
+**Remaining:** 0.5 day (Testing only)
 
 ---
 
