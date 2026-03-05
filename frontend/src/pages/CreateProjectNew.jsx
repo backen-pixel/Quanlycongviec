@@ -111,8 +111,10 @@ export default function CreateProjectNew() {
         priority: form.priority || 'medium',
         flow_id: selectedFlow.id,
         flow_assignments: (flowDetail?.steps || []).filter(s => s.company_unit_id).map(s => ({
+          flow_step_id: s.id, // Flow step ID for loading tasks
           division_unit_id: s.division_unit_id,
           company_unit_id: s.company_unit_id,
+          template_set_id: s.template_set_id || null,
           order_index: s.order_index,
         })),
         quotation_files: quotationFiles,
