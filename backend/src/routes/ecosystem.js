@@ -609,59 +609,49 @@ r.get('/available-departments', async (req, res) => {
 r.get('/company-users/:companyId', async (req, res) => {
   try {
     const unitId = req.params.companyId;
+    console.log('[company-users] unitId:', unitId);
 
     // Step 1: Resolve ecosystem_units.id → companies.id
-    const { data: unit } = await supabase
+    const { data: unit, error: unitErr } = await supabase
       .from('ecosystem_units')
       .select('id, name, company_id')
       .eq('id', unitId)
       .single();
 
+    console.log('[company-users] unit:', unit?.name, 'company_id:', unit?.company_id, 'err:', unitErr?.message);
     const companyId = unit?.company_id || null;
 
     // Step 2: Get departments by company_id
     let deptIds = [];
     if (companyId) {
-      const { data: depts } = await supabase
+      const { data: depts, error: deptErr } = await supabase
         .from('departments')
         .select('id, name')
         .eq('company_id', companyId)
         .eq('is_active', true);
+      console.log('[company-users] depts:', depts?.length, 'err:', deptErr?.message);
       deptIds = (depts || []).map(d => d.id);
     }
 
-    // Step 3: Get users (no join - keep simple to avoid errors)
+    // Step 3: Get users - NO JOIN, flat query only
     let users = [];
     if (deptIds.length) {
-      const { data, error } = await supabase
+      const { data, error: userErr } = await supabase
         .from('users')
         .select('id, full_name, email, phone, avatar, role, department_id, position')
         .in('department_id', deptIds)
         .eq('is_active', true)
         .order('full_name');
       
-      if (error) throw error;
+      console.log('[company-users] users:', data?.length, 'err:', userErr?.message);
+      if (userErr) throw userErr;
       users = data || [];
     }
 
-    // Fallback: try querying by company directly if users still empty
-    if (!users.length && companyId) {
-      const { data } = await supabase
-        .from('users')
-        .select('id, full_name, email, phone, avatar, role, department_id, position')
-        .eq('is_active', true)
-        .order('full_name')
-        .limit(200);
-      
-      // Filter by company using in-memory join
-      const allDepts = await supabase.from('departments').select('id').eq('company_id', companyId);
-      const allDeptIds = new Set((allDepts.data || []).map(d => d.id));
-      users = (data || []).filter(u => allDeptIds.has(u.department_id));
-    }
-
+    console.log('[company-users] RESULT:', users.length, 'users for unit', unitId);
     res.json({ users, company_unit_id: unitId, company_id: companyId, count: users.length });
   } catch (e) { 
-    console.error('company-users error:', e);
+    console.error('[company-users] FATAL:', e.message);
     res.status(500).json({ error: e.message }); 
   }
 });
