@@ -489,58 +489,83 @@ r.post('/create-with-flow', async (req, res) => {
           started_at: assignment.order_index === 0 ? new Date().toISOString() : null,
         }, { onConflict: 'project_id,division_unit_id' });
 
-        // If template_set_id → generate tasks from template
-        if (assignment.template_set_id) {
-          const { data: tplTasks } = await supabase.from('company_template_tasks')
-            .select('*, checklists:company_template_checklists(*)')
-            .eq('template_set_id', assignment.template_set_id)
+        // If flow_step_id → generate tasks from flow (not template)
+        if (assignment.flow_step_id) {
+          const { data: flowTasks } = await supabase
+            .from('flow_step_tasks')
+            .select('*, checklists:flow_step_task_checklists(*)')
+            .eq('flow_step_id', assignment.flow_step_id)
+            .eq('is_active', true)
             .order('order_index');
 
-          if (tplTasks?.length) {
-            for (const t of tplTasks) {
-              // Calculate deadline based on template deadline_days/hours
+          if (flowTasks?.length) {
+            for (const t of flowTasks) {
+              // Calculate due date based on estimated_days
               let dueDate = null;
-              if (t.deadline_days > 0 || t.deadline_hours > 0) {
+              if (t.estimated_days > 0) {
                 dueDate = new Date(stepStartDate);
-                dueDate.setDate(dueDate.getDate() + (t.deadline_days || 0));
-                dueDate.setHours(dueDate.getHours() + (t.deadline_hours || 0));
+                dueDate.setDate(dueDate.getDate() + t.estimated_days);
               }
 
-              // Assignee: check task_assignments from frontend first, then default_assignee from template
-              const taskKey = t.id; // template task id
-              const overrideAssignee = b.task_assignments?.[taskKey] || null;
-              const finalAssignee = overrideAssignee || t.default_assignee_id || null;
+              // Determine assignee: priority flow_step_tasks.assigned_user_id > assignee_field > override from frontend
+              let finalAssignee = null;
+              
+              if (t.assigned_user_id) {
+                // Use specific user from flow
+                finalAssignee = t.assigned_user_id;
+              } else if (t.assignee_field && project[t.assignee_field + '_id']) {
+                // Fallback to field (e.g., project.sales_person_id)
+                finalAssignee = project[t.assignee_field + '_id'];
+              }
+              
+              // Override from frontend if provided
+              const taskKey = t.id;
+              if (b.task_assignments?.[taskKey]) {
+                finalAssignee = b.task_assignments[taskKey];
+              }
 
               const { data: task, error: taskErr } = await supabase.from('tasks').insert({
                 project_id: projectId,
                 stage_id: t.stage_id,
                 title: t.title,
                 description: t.description || null,
-                assignee_id: finalAssignee,          // ← đúng field name
+                assignee_id: finalAssignee,
                 priority: t.priority || 'medium',
                 status: 'pending',
                 order_index: t.order_index,
-                created_by_id: req.user.userId,      // ← đúng field name
+                created_by_id: req.user.userId,
                 due_date: dueDate ? dueDate.toISOString() : null,
-                estimated_hours: t.estimated_hours || null,
+                estimated_hours: (t.estimated_days || 0) * 8, // Convert days to hours
                 task_type: 'project',
-                metadata: { template_task_id: t.id, template_set_id: assignment.template_set_id },
+                metadata: { 
+                  flow_step_task_id: t.id,
+                  flow_step_id: assignment.flow_step_id,
+                  template_task_id: t.template_task_id, // Link to original template if exists
+                },
               }).select().single();
 
               if (taskErr) { console.error('Task create error:', taskErr); continue; }
 
-              // Create checklists from template
+              // Create checklists from flow task
               if (t.checklists?.length) {
                 for (const c of t.checklists) {
+                  // Determine checklist assignee: use checklist's assigned_user_id or inherit from task
+                  let checklistAssignee = c.assigned_user_id || finalAssignee;
+                  
+                  // Override from frontend if provided
                   const checklistKey = `checklist_${c.id}`;
-                  const checkAssignee = b.task_assignments?.[checklistKey] || c.default_assignee_id || null;
+                  if (b.task_assignments?.[checklistKey]) {
+                    checklistAssignee = b.task_assignments[checklistKey];
+                  }
+
                   try {
                     await supabase.from('task_checklists').insert({
                       task_id: task.id,
-                      title: c.title,
+                      label: c.label,
                       order_index: c.order_index || 0,
+                      is_required: c.is_required || false,
                       is_completed: false,
-                      notes: checkAssignee ? JSON.stringify({ assignee_id: checkAssignee }) : null,
+                      assigned_user_id: checklistAssignee,
                     });
                   } catch (ce) { console.warn('Checklist insert error:', ce.message); }
                 }
@@ -549,6 +574,82 @@ r.post('/create-with-flow', async (req, res) => {
               allCreatedTasks.push(task);
 
               // Notify assignee
+              if (finalAssignee) {
+                await createNotification(req, finalAssignee, 'task_assigned',
+                  '📌 Nhiệm vụ mới', `${t.title} — DA ${code}`, 'project', projectId);
+              }
+
+              if (dueDate && dueDate > stepStartDate) {
+                stepStartDate = dueDate;
+              }
+            }
+
+            const maxDeadline = flowTasks.reduce((max, t) => {
+              if (t.estimated_days > 0) {
+                const d = new Date(stepStartDate);
+                d.setDate(d.getDate() + t.estimated_days);
+                return d > max ? d : max;
+              }
+              return max;
+            }, stepStartDate);
+            stepStartDate = maxDeadline;
+          }
+        } else if (assignment.template_set_id) {
+          // Fallback: If no flow_step_id, use template directly (backward compatibility)
+          const { data: tplTasks } = await supabase.from('company_template_tasks')
+            .select('*, checklists:company_template_checklists(*)')
+            .eq('template_set_id', assignment.template_set_id)
+            .order('order_index');
+
+          if (tplTasks?.length) {
+            for (const t of tplTasks) {
+              let dueDate = null;
+              if (t.deadline_days > 0 || t.deadline_hours > 0) {
+                dueDate = new Date(stepStartDate);
+                dueDate.setDate(dueDate.getDate() + (t.deadline_days || 0));
+                dueDate.setHours(dueDate.getHours() + (t.deadline_hours || 0));
+              }
+
+              const taskKey = t.id;
+              const overrideAssignee = b.task_assignments?.[taskKey] || null;
+              const finalAssignee = overrideAssignee || t.default_assignee_id || null;
+
+              const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                project_id: projectId,
+                stage_id: t.stage_id,
+                title: t.title,
+                description: t.description || null,
+                assignee_id: finalAssignee,
+                priority: t.priority || 'medium',
+                status: 'pending',
+                order_index: t.order_index,
+                created_by_id: req.user.userId,
+                due_date: dueDate ? dueDate.toISOString() : null,
+                estimated_hours: t.estimated_hours || null,
+                task_type: 'project',
+                metadata: { template_task_id: t.id, template_set_id: assignment.template_set_id },
+              }).select().single();
+
+              if (taskErr) { console.error('Task create error:', taskErr); continue; }
+
+              if (t.checklists?.length) {
+                for (const c of t.checklists) {
+                  const checklistKey = `checklist_${c.id}`;
+                  const checkAssignee = b.task_assignments?.[checklistKey] || c.default_assignee_id || null;
+                  try {
+                    await supabase.from('task_checklists').insert({
+                      task_id: task.id,
+                      label: c.title,
+                      order_index: c.order_index || 0,
+                      is_completed: false,
+                      assigned_user_id: checkAssignee,
+                    });
+                  } catch (ce) { console.warn('Checklist insert error:', ce.message); }
+                }
+              }
+
+              allCreatedTasks.push(task);
+
               if (finalAssignee) {
                 await createNotification(req, finalAssignee, 'task_assigned',
                   '📌 Nhiệm vụ mới', `${t.title} — DA ${code}`, 'project', projectId);
