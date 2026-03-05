@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import ProcessTaskEditor from '../components/ProcessTaskEditor';
 import FlowStepTaskManager from '../components/FlowStepTaskManager';
+import FlowProcessTaskEditor from '../components/FlowProcessTaskEditor';
 import {
   GitBranch, Plus, Edit, Save, Trash2, Copy, Star, ChevronDown, ChevronRight,
   ArrowRight, Clock, Building2, X, CheckSquare, User, ClipboardList, Layers,
@@ -491,19 +492,34 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
                         {isExpanded && (
                           <>
                             {processes.length > 0 ? (
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                                {processes.map(p => {
-                                  const checked = (step.selected_process_ids || []).includes(p.id);
-                                  return (
-                                    <label key={p.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs ${checked ? 'border-purple-400 bg-purple-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
-                                      <input type="checkbox" checked={checked} onChange={() => toggleProcess(step._key, p.id)} className="accent-purple-600" />
-                                      <span>{p.icon}</span>
-                                      <span className="flex-1 font-medium">{p.name}</span>
-                                      <span className="text-[9px] text-gray-400">{p.task_count || 0} NV</span>
-                                    </label>
-                                  );
-                                })}
-                              </div>
+                              <>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                  {processes.map(p => {
+                                    const checked = (step.selected_process_ids || []).includes(p.id);
+                                    return (
+                                      <label key={p.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs ${checked ? 'border-purple-400 bg-purple-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
+                                        <input type="checkbox" checked={checked} onChange={() => toggleProcess(step._key, p.id)} className="accent-purple-600" />
+                                        <span>{p.icon}</span>
+                                        <span className="flex-1 font-medium">{p.name}</span>
+                                        <span className="text-[9px] text-gray-400">{p.task_count || 0} NV</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+
+                                {/* Task Editor - Show when processes selected */}
+                                {(step.selected_process_ids || []).length > 0 && (
+                                  <div className="mt-3 p-3 bg-white rounded-lg border border-blue-200 border-dashed">
+                                    <div className="text-[10px] font-semibold text-blue-700 mb-2">📋 Quản lý Nhiệm Vụ</div>
+                                    <FlowProcessTaskEditor
+                                      companyUnitId={step.company_unit_id}
+                                      divisionUnitId={step.division_unit_id}
+                                      processes={processes.filter(p => (step.selected_process_ids || []).includes(p.id))}
+                                      onTasksUpdate={() => {/* Refresh if needed */}}
+                                    />
+                                  </div>
+                                )}
+                              </>
                             ) : (
                               <p className="text-[10px] text-gray-400 italic">Công ty chưa có quy trình — bấm "Tạo QT gợi ý" hoặc tạo thủ công trong trang Quy trình Cty</p>
                             )}
