@@ -307,4 +307,201 @@ r.post('/:id/clone', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════
+// FLOW STEP TASKS & CHECKLISTS (Migration 21)
+// ═══════════════════════════════════════════════════════════
+
+// ─── GET flow step tasks ───
+r.get('/steps/:stepId/tasks', async (req, res) => {
+  try {
+    const { data: tasks, error } = await supabase
+      .from('flow_step_tasks')
+      .select(`
+        *,
+        stage:workflow_stages(id,name,slug,icon,color),
+        assigned_user:users(id,full_name,email,phone,avatar,role),
+        checklists:flow_step_task_checklists(*)
+      `)
+      .eq('flow_step_id', req.params.stepId)
+      .eq('is_active', true)
+      .order('order_index');
+    
+    if (error) throw error;
+    res.json({ tasks: tasks || [] });
+  } catch (e) {
+    console.error('Get flow step tasks error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── CREATE flow step task ───
+r.post('/steps/tasks', async (req, res) => {
+  try {
+    const { 
+      flow_step_id, title, description, stage_id,
+      assigned_user_id, assigned_company_unit_id, assignee_field,
+      estimated_days, order_index, template_task_id
+    } = req.body;
+    
+    if (!flow_step_id || !title) {
+      return res.status(400).json({ error: 'Cần flow_step_id và title' });
+    }
+    
+    const { data: task, error } = await supabase
+      .from('flow_step_tasks')
+      .insert({
+        flow_step_id,
+        title: title.trim(),
+        description: description?.trim() || null,
+        stage_id: stage_id || null,
+        assigned_user_id: assigned_user_id || null,
+        assigned_company_unit_id: assigned_company_unit_id || null,
+        assignee_field: assignee_field || null,
+        estimated_days: estimated_days || 1,
+        order_index: order_index || 0,
+        template_task_id: template_task_id || null,
+      })
+      .select(`
+        *,
+        stage:workflow_stages(id,name,slug,icon),
+        assigned_user:users(id,full_name,email)
+      `)
+      .single();
+    
+    if (error) throw error;
+    res.json({ task });
+  } catch (e) {
+    console.error('Create flow step task error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── UPDATE flow step task ───
+r.put('/steps/tasks/:taskId', async (req, res) => {
+  try {
+    const updates = {};
+    const allowed = [
+      'title', 'description', 'stage_id', 
+      'assigned_user_id', 'assigned_company_unit_id', 'assignee_field',
+      'estimated_days', 'order_index', 'is_active'
+    ];
+    
+    allowed.forEach(key => {
+      if (req.body[key] !== undefined) {
+        updates[key] = req.body[key];
+      }
+    });
+    
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Không có dữ liệu để update' });
+    }
+    
+    const { data: task, error } = await supabase
+      .from('flow_step_tasks')
+      .update(updates)
+      .eq('id', req.params.taskId)
+      .select(`
+        *,
+        stage:workflow_stages(id,name,slug,icon),
+        assigned_user:users(id,full_name,email)
+      `)
+      .single();
+    
+    if (error) throw error;
+    res.json({ task });
+  } catch (e) {
+    console.error('Update flow step task error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── DELETE flow step task ───
+r.delete('/steps/tasks/:taskId', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('flow_step_tasks')
+      .delete()
+      .eq('id', req.params.taskId);
+    
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Delete flow step task error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── CREATE checklist for flow step task ───
+r.post('/steps/tasks/:taskId/checklists', async (req, res) => {
+  try {
+    const { label, order_index, is_required, assigned_user_id, template_checklist_id } = req.body;
+    
+    if (!label || !label.trim()) {
+      return res.status(400).json({ error: 'Cần label' });
+    }
+    
+    const { data: checklist, error } = await supabase
+      .from('flow_step_task_checklists')
+      .insert({
+        flow_step_task_id: req.params.taskId,
+        label: label.trim(),
+        order_index: order_index || 0,
+        is_required: is_required || false,
+        assigned_user_id: assigned_user_id || null,
+        template_checklist_id: template_checklist_id || null,
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json({ checklist });
+  } catch (e) {
+    console.error('Create checklist error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── UPDATE checklist ───
+r.put('/steps/tasks/:taskId/checklists/:checklistId', async (req, res) => {
+  try {
+    const updates = {};
+    const allowed = ['label', 'order_index', 'is_required', 'assigned_user_id'];
+    
+    allowed.forEach(key => {
+      if (req.body[key] !== undefined) {
+        updates[key] = req.body[key];
+      }
+    });
+    
+    const { data: checklist, error } = await supabase
+      .from('flow_step_task_checklists')
+      .update(updates)
+      .eq('id', req.params.checklistId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json({ checklist });
+  } catch (e) {
+    console.error('Update checklist error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── DELETE checklist ───
+r.delete('/steps/tasks/:taskId/checklists/:checklistId', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('flow_step_task_checklists')
+      .delete()
+      .eq('id', req.params.checklistId);
+    
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Delete checklist error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = r;
