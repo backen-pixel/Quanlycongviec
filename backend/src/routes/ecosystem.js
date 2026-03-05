@@ -624,40 +624,42 @@ r.get('/company-users/:companyId', async (req, res) => {
     if (companyId) {
       const { data: depts } = await supabase
         .from('departments')
-        .select('id')
+        .select('id, name')
         .eq('company_id', companyId)
         .eq('is_active', true);
       deptIds = (depts || []).map(d => d.id);
     }
 
-    // Step 3: Get users in these departments
+    // Step 3: Get users (no join - keep simple to avoid errors)
     let users = [];
     if (deptIds.length) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('users')
-        .select(`id, full_name, email, phone, avatar, role,
-          department:departments(id, name)
-        `)
+        .select('id, full_name, email, phone, avatar, role, department_id, position')
         .in('department_id', deptIds)
         .eq('is_active', true)
         .order('full_name');
+      
+      if (error) throw error;
       users = data || [];
     }
 
-    // Fallback: if still empty, try getting all users of this company directly
+    // Fallback: try querying by company directly if users still empty
     if (!users.length && companyId) {
-      const { data: fallbackUsers } = await supabase
+      const { data } = await supabase
         .from('users')
-        .select(`id, full_name, email, phone, avatar, role,
-          department:departments(id, name)
-        `)
-        .eq('company_id', companyId)
+        .select('id, full_name, email, phone, avatar, role, department_id, position')
         .eq('is_active', true)
-        .order('full_name');
-      users = fallbackUsers || [];
+        .order('full_name')
+        .limit(200);
+      
+      // Filter by company using in-memory join
+      const allDepts = await supabase.from('departments').select('id').eq('company_id', companyId);
+      const allDeptIds = new Set((allDepts.data || []).map(d => d.id));
+      users = (data || []).filter(u => allDeptIds.has(u.department_id));
     }
 
-    res.json({ users, company_unit_id: unitId, company_id: companyId, department_ids: deptIds });
+    res.json({ users, company_unit_id: unitId, company_id: companyId, count: users.length });
   } catch (e) { 
     console.error('company-users error:', e);
     res.status(500).json({ error: e.message }); 
