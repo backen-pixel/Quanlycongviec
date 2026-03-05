@@ -19,7 +19,7 @@ const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
   { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
-  { to: '/departments', icon: MessageCircle, label: 'Trao đổi PB' },
+  // { to: '/departments', icon: MessageCircle, label: 'Trao đổi PB' }, // ẩn
   { to: '/projects', icon: FolderKanban, label: 'Dự án' },
   { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV' },
   { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
@@ -119,19 +119,24 @@ export default function Sidebar() {
   }, []);
 
   // Build workflow menu from DB stages (fallback to hardcoded)
+  // GỘP các stage giống nhau theo slug
   const workflow = useMemo(() => {
     if (dbStages.length > 0) {
-      return dbStages.map(s => {
-        const isEmoji = s.icon && s.icon.charCodeAt(0) > 127;
-        return {
-          to: `/stage/${s.slug}`,
-          icon: isEmoji ? null : (ICON_MAP[s.icon] || FolderKanban),
-          emoji: isEmoji ? s.icon : null,
-          label: s.name,
-          dot: s.color || '#3B82F6',
-          slug: s.slug,
-        };
+      const uniqueMap = {};
+      dbStages.forEach(s => {
+        if (!uniqueMap[s.slug]) {
+          const isEmoji = s.icon && s.icon.charCodeAt(0) > 127;
+          uniqueMap[s.slug] = {
+            to: `/stage/${s.slug}`,
+            icon: isEmoji ? null : (ICON_MAP[s.icon] || FolderKanban),
+            emoji: isEmoji ? s.icon : null,
+            label: s.name,
+            dot: s.color || '#3B82F6',
+            slug: s.slug,
+          };
+        }
       });
+      return Object.values(uniqueMap);
     }
     return FALLBACK_WORKFLOW;
   }, [dbStages]);

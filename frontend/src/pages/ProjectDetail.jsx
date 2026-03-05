@@ -142,27 +142,60 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {/* Stage pipeline */}
+      {/* Stage pipeline - COMPACT */}
       <div className="bg-white rounded-xl border p-4">
-        <div className="flex items-center gap-1 overflow-x-auto">
+        <div className="flex items-center gap-2 overflow-x-auto">
+          {/* Hiển thị: stages đã xong + current + next, còn lại hiển thị dots */}
           {STAGE_FLOW.map((s, i) => {
             const isCurrent = s.status === project.status;
             const isPast = i < currentStageIdx;
+            const isNext = i === currentStageIdx + 1;
             const person = project[s.personKey];
+            
+            // Chỉ hiển thị: past + current + next
+            // Còn lại hiển thị dạng compact
+            if (!isPast && !isCurrent && !isNext && i > 0 && i < STAGE_FLOW.length - 1) {
+              // Chỉ hiển thị dot đầu tiên của nhóm pending
+              if (i === currentStageIdx + 2) {
+                return (
+                  <div key={s.slug} className="flex items-center gap-1">
+                    <div className="flex items-center gap-0.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                    </div>
+                    <span className="text-[10px] text-gray-400 mx-1">+{STAGE_FLOW.length - currentStageIdx - 2}</span>
+                  </div>
+                );
+              }
+              return null;
+            }
+            
             return (
               <div key={s.slug} className="flex items-center gap-1">
-                <div className={`h-9 px-3 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5 ${
+                <div className={`h-8 px-2.5 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5 ${
                   isCurrent ? 'bg-blue-600 text-white' : isPast ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
                 }`}>
                   {isPast && <CheckSquare className="h-3 w-3" />}
+                  {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                   {s.label}
-                  {person && <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold ml-0.5"
-                    style={{ backgroundColor: avatarColor(person.full_name) }} title={person.full_name}>{getInitials(person.full_name)}</div>}
+                  {person && (
+                    <div className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold ml-0.5"
+                      style={{ backgroundColor: avatarColor(person.full_name) }} title={person.full_name}>
+                      {getInitials(person.full_name)}
+                    </div>
+                  )}
                 </div>
-                {i < STAGE_FLOW.length - 1 && <ChevronRight className="h-3 w-3 text-gray-300 shrink-0" />}
+                {i < STAGE_FLOW.length - 1 && (isPast || isCurrent || isNext) && <ChevronRight className="h-3 w-3 text-gray-300 shrink-0" />}
               </div>
             );
           })}
+        </div>
+        {/* Stage counter */}
+        <div className="mt-2 text-[10px] text-gray-400 flex items-center gap-2">
+          <span>{currentStageIdx + 1}/{STAGE_FLOW.length} bước</span>
+          <span>•</span>
+          <span className="text-emerald-600 font-medium">{currentStageIdx} hoàn thành</span>
         </div>
       </div>
 
