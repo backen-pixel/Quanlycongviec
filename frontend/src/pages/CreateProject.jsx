@@ -104,7 +104,7 @@ export default function CreateProject() {
     try {
       // Use ecosystem/company-users endpoint which resolves:
       // ecosystem_units.id → departments.company_id → users
-      const { data } = await api.get(`/ecosystem/company-users/${companyUnitId}`);
+      const { data } = await api.get(`/users?company_unit_id=${companyUnitId}`);
       setCompanyEmployees(prev => ({ ...prev, [companyUnitId]: data.users || [] }));
     } catch (e) {
       console.error('Failed to load employees for unit:', companyUnitId, e);
