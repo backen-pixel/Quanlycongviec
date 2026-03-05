@@ -54,4 +54,42 @@ r.post('/reset-seed-passwords', async (req, res) => {
 // Thông tin user hiện tại
 r.get('/me', auth, (req, res) => res.json({ user: req.user }));
 
+// ─────────────────────────────────────────────────────────────
+// PERMISSION APIs
+// ─────────────────────────────────────────────────────────────
+const { hasPermission, getRolePermissions } = require('../middleware/permission');
+
+// Get my permissions
+r.get('/my-permissions', auth, async (req, res) => {
+  try {
+    const permissions = await getRolePermissions(req.user.role);
+    res.json({ permissions, role: req.user.role });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// Check specific permission
+r.post('/check-permission', auth, async (req, res) => {
+  try {
+    const { permission, unit_id } = req.body;
+    if (!permission) {
+      return res.status(400).json({ error: 'Missing permission' });
+    }
+    
+    const allowed = await hasPermission(
+      req.user.userId,
+      req.user.role,
+      permission,
+      unit_id || null
+    );
+    
+    res.json({ allowed, permission, unit_id });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
 module.exports = r;
