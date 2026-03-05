@@ -611,33 +611,32 @@ r.get('/company-users/:companyId', async (req, res) => {
     const unitId = req.params.companyId;
 
     // Step 1: Resolve ecosystem_units.id → companies.id
-    // ecosystem_units has company_id column linking to companies table
     const { data: unit } = await supabase
       .from('ecosystem_units')
       .select('id, name, company_id')
       .eq('id', unitId)
       .single();
 
-    // Use company_id from ecosystem_unit if available, else try unitId directly
-    const companyId = unit?.company_id || unitId;
+    const companyId = unit?.company_id || null;
 
-    // Step 2: Get departments of this company
-    const { data: depts } = await supabase
-      .from('departments')
-      .select('id')
-      .eq('company_id', companyId)
-      .eq('is_active', true);
-
-    const deptIds = (depts || []).map(d => d.id);
+    // Step 2: Get departments by company_id
+    let deptIds = [];
+    if (companyId) {
+      const { data: depts } = await supabase
+        .from('departments')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('is_active', true);
+      deptIds = (depts || []).map(d => d.id);
+    }
 
     // Step 3: Get users in these departments
     let users = [];
     if (deptIds.length) {
       const { data } = await supabase
         .from('users')
-        .select(`
-          id, full_name, email, phone, avatar, role,
-          department:departments(id, name, company_id)
+        .select(`id, full_name, email, phone, avatar, role,
+          department:departments(id, name)
         `)
         .in('department_id', deptIds)
         .eq('is_active', true)
@@ -645,7 +644,20 @@ r.get('/company-users/:companyId', async (req, res) => {
       users = data || [];
     }
 
-    res.json({ users, department_ids: deptIds, company_id: companyId });
+    // Fallback: if still empty, try getting all users of this company directly
+    if (!users.length && companyId) {
+      const { data: fallbackUsers } = await supabase
+        .from('users')
+        .select(`id, full_name, email, phone, avatar, role,
+          department:departments(id, name)
+        `)
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('full_name');
+      users = fallbackUsers || [];
+    }
+
+    res.json({ users, company_unit_id: unitId, company_id: companyId, department_ids: deptIds });
   } catch (e) { 
     console.error('company-users error:', e);
     res.status(500).json({ error: e.message }); 
