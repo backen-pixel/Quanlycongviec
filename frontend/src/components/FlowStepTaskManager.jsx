@@ -61,7 +61,7 @@ export default function FlowStepTaskManager({ flowStep, templateSetId, onTasksCh
 
   const loadEmployees = async (companyUnitId) => {
     try {
-      const { data } = await api.get(`/ecosystem/company-users/${companyUnitId}`);
+      const { data } = await api.get(`/users?company_unit_id=${companyUnitId}`);
       setEmployees(data.users || []);
     } catch (error) {
       console.error('Load employees error:', error);

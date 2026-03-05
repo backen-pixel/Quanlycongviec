@@ -71,7 +71,41 @@ r.get('/departments', async (req, res) => {
 // ═══ STAFF LIST (with filters) ═══
 r.get('/', async (req, res) => {
   try {
-    const { role, department_id, company_id, ecosystem_unit_id, search, include_inactive } = req.query;
+    const { role, department_id, company_id, ecosystem_unit_id, company_unit_id, search, include_inactive } = req.query;
+
+    // ── Lọc theo company_unit_id (ecosystem_units.id → company_id → departments → users) ──
+    // FIX: company_unit_id = ecosystem_units.id (NOT companies.id)
+    if (company_unit_id) {
+      try {
+        // Step 1: Get company_id from ecosystem_units
+        const { data: unit } = await supabase.from('ecosystem_units')
+          .select('id, company_id').eq('id', company_unit_id).single();
+        
+        const resolvedCompanyId = unit?.company_id;
+        if (!resolvedCompanyId) return res.json({ users: [] });
+
+        // Step 2: Get departments by company_id
+        const { data: depts } = await supabase.from('departments')
+          .select('id').eq('company_id', resolvedCompanyId).eq('is_active', true);
+        const deptIds = (depts || []).map(d => d.id);
+        if (!deptIds.length) return res.json({ users: [] });
+
+        // Step 3: Get users
+        let q = supabase.from('users')
+          .select('id, full_name, email, phone, avatar, role, department_id, position')
+          .in('department_id', deptIds);
+        if (!include_inactive) q = q.eq('is_active', true);
+        if (role) q = q.eq('role', role);
+        if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+        const { data: users, error } = await q.order('full_name');
+        if (error) throw error;
+
+        return res.json({ users: users || [] });
+      } catch (e) {
+        console.error('company_unit_id filter error:', e.message);
+        return res.json({ users: [] });
+      }
+    }
 
     // ── Lọc theo ecosystem_unit_id (ưu tiên nhất) ──
     // Members được gán vào Teams → Teams thuộc Phòng ban → Phòng ban thuộc Công ty

@@ -27,7 +27,7 @@ export default function FlowProcessTaskEditor({
   const loadEmployees = async (unitId) => {
     setLoadingEmployees(true);
     try {
-      const { data } = await api.get(`/ecosystem/company-users/${unitId}`);
+      const { data } = await api.get(`/users?company_unit_id=${unitId}`);
       setEmployees(data.users || []);
     } catch (e) {
       console.error('Load employees error:', e);
