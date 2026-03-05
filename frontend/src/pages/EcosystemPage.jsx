@@ -2,10 +2,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import Modal from '../components/Modal';
+import EcosystemSetupWizard from '../components/EcosystemSetupWizard';
+import EcosystemListView from '../components/EcosystemListView';
 import {
   Plus, ChevronRight, ChevronDown, Users, Trash2, Layers,
   Edit, Shield, FolderKanban, Network, Save, X, UserPlus, Crown, User,
-  ArrowDownRight, Copy, FileText, ChevronUp, ZoomIn, ZoomOut, Maximize2, Move
+  ArrowDownRight, Copy, FileText, ChevronUp, ZoomIn, ZoomOut, Maximize2, Move,
+  List, Sitemap, HelpCircle
 } from 'lucide-react';
 
 const RL = { director: 'Giám đốc', manager: 'Quản lý', team_lead: 'Trưởng nhóm', member: 'Nhân viên' };
@@ -22,6 +25,9 @@ export default function EcosystemPage() {
   const [selectedUnit, setSelectedUnit] = useState(null);
   const [showCreate, setShowCreate] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'diagram'
+  const [showWizard, setShowWizard] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const isAdmin = ['admin', 'manager'].includes(user?.role);
 
   const load = useCallback(async () => {
@@ -41,24 +47,179 @@ export default function EcosystemPage() {
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-blue-200 border-t-blue-600 rounded-full" /></div>;
 
+  // Show wizard for first-time setup
+  if (showWizard || (units.length === 0 && isAdmin)) {
+    return (
+      <EcosystemSetupWizard
+        onComplete={() => {
+          setShowWizard(false);
+          load();
+        }}
+        onSkip={() => setShowWizard(false)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2"><Network className="h-6 w-6 text-blue-600" /> Cấu Trúc Tổ Chức</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Network className="h-6 w-6 text-blue-600" /> Cấu Trúc Công Ty
+          </h1>
           <p className="text-xs text-gray-500 mt-0.5">{units.length} đơn vị · {levels.length} cấp bậc</p>
         </div>
-        {isAdmin && <button onClick={() => setShowCreate('root')} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4" /> Thêm gốc</button>}
+        
+        <div className="flex items-center gap-2">
+          {/* Help button */}
+          <button
+            onClick={() => setShowGuide(!showGuide)}
+            className="h-9 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-gray-200 cursor-pointer"
+          >
+            <HelpCircle className="h-4 w-4" />
+            Hướng dẫn
+          </button>
+
+          {/* View mode toggle */}
+          <div className="flex bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition flex items-center gap-1.5 ${
+                viewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <List className="h-4 w-4" />
+              Danh sách
+            </button>
+            <button
+              onClick={() => setViewMode('diagram')}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition flex items-center gap-1.5 ${
+                viewMode === 'diagram' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <Sitemap className="h-4 w-4" />
+              Sơ đồ
+            </button>
+          </div>
+
+          {/* Add button */}
+          {isAdmin && (
+            <button
+              onClick={() => units.length === 0 ? setShowWizard(true) : setShowCreate('root')}
+              className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              {units.length === 0 ? 'Bắt đầu thiết lập' : 'Thêm gốc'}
+            </button>
+          )}
+        </div>
       </div>
 
-      {tree.length > 0 ? (
-        <ZoomableCanvas>
-          <div className="min-w-fit flex flex-col items-center p-8">
-            {tree.map(root => <OrgChart key={root.id} node={root} onSelect={setSelectedUnit} onAddChild={setShowCreate} isAdmin={isAdmin} />)}
+      {/* Guide Panel */}
+      {showGuide && (
+        <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-5">
+          <div className="flex items-start justify-between mb-3">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <HelpCircle className="w-5 h-5 text-blue-600" />
+              Hướng dẫn sử dụng Cấu trúc Công ty
+            </h3>
+            <button onClick={() => setShowGuide(false)} className="text-gray-500 hover:text-gray-700">
+              <X className="w-4 h-4" />
+            </button>
           </div>
-        </ZoomableCanvas>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-700">
+            <div className="bg-white/70 rounded-lg p-3">
+              <div className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                <List className="w-4 h-4" />
+                Chế độ Danh sách
+              </div>
+              <ul className="space-y-1 text-xs text-gray-600">
+                <li>• Xem dạng cây thu gọn, dễ dàng tìm kiếm</li>
+                <li>• Click để mở rộng/thu gọn từng cấp</li>
+                <li>• Click tên đơn vị để xem chi tiết</li>
+                <li>• Phù hợp với mobile và danh sách dài</li>
+              </ul>
+            </div>
+            <div className="bg-white/70 rounded-lg p-3">
+              <div className="font-semibold text-purple-900 mb-2 flex items-center gap-2">
+                <Sitemap className="w-4 h-4" />
+                Chế độ Sơ đồ
+              </div>
+              <ul className="space-y-1 text-xs text-gray-600">
+                <li>• Xem cấu trúc trực quan bằng sơ đồ</li>
+                <li>• Kéo để di chuyển, Ctrl+Scroll để zoom</li>
+                <li>• Thấy rõ quan hệ giữa các đơn vị</li>
+                <li>• Phù hợp với desktop và overview</li>
+              </ul>
+            </div>
+            <div className="bg-white/70 rounded-lg p-3">
+              <div className="font-semibold text-green-900 mb-2">📋 Cấu trúc</div>
+              <ul className="space-y-1 text-xs text-gray-600">
+                <li>• <strong>Khối:</strong> Nhóm công ty (VD: Miền Nam)</li>
+                <li>• <strong>Công ty:</strong> Đơn vị kinh doanh</li>
+                <li>• <strong>Phòng ban:</strong> Bộ phận (Tư vấn, Thiết kế...)</li>
+                <li>• <strong>Nhân viên:</strong> Thành viên trong phòng ban</li>
+              </ul>
+            </div>
+            <div className="bg-white/70 rounded-lg p-3">
+              <div className="font-semibold text-amber-900 mb-2">⚡ Thao tác nhanh</div>
+              <ul className="space-y-1 text-xs text-gray-600">
+                <li>• <strong>Click đơn vị:</strong> Xem chi tiết</li>
+                <li>• <strong>Nút "+":</strong> Thêm đơn vị con</li>
+                <li>• <strong>Nút "Sửa":</strong> Chỉnh sửa thông tin</li>
+                <li>• <strong>Tìm kiếm:</strong> Gõ tên để lọc nhanh</li>
+              </ul>
+            </div>
+          </div>
+          {units.length === 0 && isAdmin && (
+            <div className="mt-4 p-3 bg-blue-100 border border-blue-300 rounded-lg">
+              <p className="text-sm text-blue-900">
+                <strong>🎯 Bắt đầu:</strong> Bạn chưa có cấu trúc nào. Bấm nút{' '}
+                <button
+                  onClick={() => setShowWizard(true)}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
+                >
+                  <Plus className="w-3 h-3" /> Bắt đầu thiết lập
+                </button>
+                {' '}để được hướng dẫn từng bước.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Content */}
+      {tree.length > 0 ? (
+        viewMode === 'list' ? (
+          <EcosystemListView
+            tree={tree}
+            onSelect={setSelectedUnit}
+            onAddChild={setShowCreate}
+            isAdmin={isAdmin}
+            allUsers={allUsers}
+          />
+        ) : (
+          <ZoomableCanvas>
+            <div className="min-w-fit flex flex-col items-center p-8">
+              {tree.map(root => <OrgChart key={root.id} node={root} onSelect={setSelectedUnit} onAddChild={setShowCreate} isAdmin={isAdmin} />)}
+            </div>
+          </ZoomableCanvas>
+        )
       ) : (
-        <div className="text-center py-20 bg-white rounded-2xl border"><Network className="h-14 w-14 mx-auto mb-4 text-gray-200" /><p className="text-sm text-gray-500">Chưa có cấu trúc tổ chức</p></div>
+        <div className="text-center py-20 bg-white rounded-2xl border">
+          <Network className="h-14 w-14 mx-auto mb-4 text-gray-200" />
+          <p className="text-sm text-gray-500 mb-4">Chưa có cấu trúc công ty</p>
+          {isAdmin && (
+            <button
+              onClick={() => setShowWizard(true)}
+              className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+            >
+              <Plus className="w-5 h-5" />
+              Bắt đầu thiết lập
+            </button>
+          )}
+        </div>
       )}
 
       {showCreate && <CreateUnitModal parentId={showCreate === 'root' ? null : showCreate} levels={levels} units={units} onCreated={() => { load(); setShowCreate(null); }} onClose={() => setShowCreate(null)} />}

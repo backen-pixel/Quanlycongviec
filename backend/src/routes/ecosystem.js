@@ -626,6 +626,103 @@ r.get('/company-users/:companyId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── POST Setup Wizard (batch create divisions + companies + departments) ──
+r.post('/setup-wizard', async (req, res) => {
+  if (!['admin', 'manager'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+
+  try {
+    const { divisions, companies, departments } = req.body;
+
+    // Validation
+    if (!divisions || !Array.isArray(divisions) || divisions.length === 0) {
+      return res.status(400).json({ error: 'Cần ít nhất 1 Khối' });
+    }
+    if (!companies || !Array.isArray(companies) || companies.length === 0) {
+      return res.status(400).json({ error: 'Cần ít nhất 1 Công ty' });
+    }
+
+    // Get level IDs
+    const { data: levels } = await supabase.from('ecosystem_levels')
+      .select('id, level_index').order('level_index');
+    const levelMap = {};
+    (levels || []).forEach(l => { levelMap[l.level_index] = l.id; });
+
+    const createdUnits = [];
+
+    // 1. Create Divisions (Level 1 - Khối)
+    const divisionMap = {}; // index -> unit_id
+    for (let i = 0; i < divisions.length; i++) {
+      const div = divisions[i];
+      if (!div.name || !div.name.trim()) continue;
+
+      const { data: unit, error } = await supabase.from('ecosystem_units').insert({
+        name: div.name.trim(),
+        description: div.description?.trim() || null,
+        level_id: levelMap[1], // Level 1 = Khối
+        parent_id: null,
+        is_active: true,
+      }).select().single();
+
+      if (error) throw error;
+      divisionMap[i] = unit.id;
+      createdUnits.push(unit);
+    }
+
+    // 2. Create Companies (Level 2 - Công ty)
+    const companyMap = {}; // index -> unit_id
+    for (let i = 0; i < companies.length; i++) {
+      const comp = companies[i];
+      if (!comp.name || !comp.name.trim()) continue;
+
+      const parentId = divisionMap[comp.divisionIndex];
+      if (!parentId) continue; // Skip if parent not created
+
+      const { data: unit, error } = await supabase.from('ecosystem_units').insert({
+        name: comp.name.trim(),
+        description: `Loại: ${comp.type || 'kitchen'}`,
+        level_id: levelMap[2], // Level 2 = Công ty
+        parent_id: parentId,
+        is_active: true,
+      }).select().single();
+
+      if (error) throw error;
+      companyMap[i] = unit.id;
+      createdUnits.push(unit);
+    }
+
+    // 3. Create Departments (Level 3 - Phòng ban) for each company
+    if (departments && Array.isArray(departments) && departments.length > 0) {
+      for (const companyIdx in companyMap) {
+        const companyUnitId = companyMap[companyIdx];
+
+        for (const dept of departments) {
+          const { data: deptUnit, error } = await supabase.from('ecosystem_units').insert({
+            name: dept.label,
+            description: `${dept.defaultCount || 0} nhân viên dự kiến`,
+            level_id: levelMap[3], // Level 3 = Phòng ban
+            parent_id: companyUnitId,
+            is_active: true,
+          }).select().single();
+
+          if (error) throw error;
+          createdUnits.push(deptUnit);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Đã tạo ${createdUnits.length} đơn vị`,
+      units: createdUnits,
+    });
+  } catch (e) {
+    console.error('Wizard setup error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = r;
 
 // Export helper functions for use in permission middleware
