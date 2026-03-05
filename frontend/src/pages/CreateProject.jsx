@@ -102,9 +102,9 @@ export default function CreateProject() {
   const loadCompanyEmployees = async (companyUnitId) => {
     if (companyEmployees[companyUnitId]) return;
     try {
-      // companyUnitId = ecosystem_units.id (cấp Công ty con thuộc Khối)
-      // Backend sẽ resolve: ecosystem_units.id → ecosystem_units.company_id → departments.company_id → users
-      const { data } = await api.get(`/users?ecosystem_unit_id=${companyUnitId}`);
+      // Use ecosystem/company-users endpoint which resolves:
+      // ecosystem_units.id → departments.company_id → users
+      const { data } = await api.get(`/ecosystem/company-users/${companyUnitId}`);
       setCompanyEmployees(prev => ({ ...prev, [companyUnitId]: data.users || [] }));
     } catch (e) {
       console.error('Failed to load employees for unit:', companyUnitId, e);
@@ -587,24 +587,26 @@ export default function CreateProject() {
                                       <div className="p-3 bg-gray-50 space-y-2">
                                         {group.tasks.map((task, taskIdx) => {
                                           const taskChecklists = task.checklists || [];
+                                          const taskName = task.title || task.name || '(không tên)';
                                           
                                           return (
-                                            <div key={task.id} className="bg-white rounded-lg border border-gray-300 p-3">
-                                              {/* Task Header - Name + Assignee in one row */}
-                                              <div className="flex items-center gap-3 mb-2">
-                                                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-xs shrink-0">
+                                            <div key={task.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                              {/* Task Header - Number + Name + Assignee on SAME ROW */}
+                                              <div className="flex items-center gap-3 px-4 py-3">
+                                                {/* Number badge */}
+                                                <div className="flex items-center justify-center w-7 h-7 rounded-full bg-purple-100 text-purple-700 font-bold text-sm shrink-0">
                                                   {taskIdx + 1}
                                                 </div>
-                                                <div className="flex-1">
-                                                  <span className="text-sm font-semibold text-gray-900">
-                                                    {task.name}
-                                                  </span>
-                                                </div>
-                                                <div className="shrink-0 w-48">
+                                                {/* Task name - bold, large */}
+                                                <span className="flex-1 font-bold text-gray-900 text-base leading-snug">
+                                                  {taskName}
+                                                </span>
+                                                {/* Assignee dropdown */}
+                                                <div className="shrink-0 w-44">
                                                   <select
                                                     value={taskAssignees[task.id] || ''}
                                                     onChange={e => setTaskAssignees(prev => ({ ...prev, [task.id]: e.target.value }))}
-                                                    className="w-full px-2 py-1 rounded border border-gray-300 text-xs focus:outline-none focus:border-blue-500"
+                                                    className="w-full px-2 py-1.5 rounded-lg border border-gray-300 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400"
                                                     title="Gán nhân viên"
                                                   >
                                                     <option value="">👤 Chưa gán</option>
@@ -619,43 +621,46 @@ export default function CreateProject() {
 
                                               {/* Task Description */}
                                               {task.description && (
-                                                <p className="text-xs text-gray-600 ml-9 mb-2">
+                                                <p className="text-xs text-gray-500 px-4 pb-2 pl-14">
                                                   {task.description}
                                                 </p>
                                               )}
 
-                                              {/* Checklists - Click to Expand */}
+                                              {/* Checklists accordion */}
                                               {taskChecklists.length > 0 && (
-                                                <div className="ml-9 mt-2">
+                                                <div className="border-t border-gray-100">
                                                   <button
                                                     onClick={() => setExpandedTasks(p => ({ ...p, [task.id]: !p[task.id] }))}
-                                                    className="flex items-center gap-2 text-xs font-medium text-purple-700 hover:text-purple-800 py-1"
+                                                    className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold text-purple-700 hover:bg-purple-50 transition-colors"
                                                   >
                                                     {expandedTasks[task.id] ? (
-                                                      <ChevronDown className="h-4 w-4" />
+                                                      <ChevronDown className="h-3.5 w-3.5" />
                                                     ) : (
-                                                      <ChevronRight className="h-4 w-4" />
+                                                      <ChevronRight className="h-3.5 w-3.5" />
                                                     )}
-                                                    <ListChecks className="h-4 w-4" />
+                                                    <ListChecks className="h-3.5 w-3.5" />
                                                     <span>Checklist ({taskChecklists.length})</span>
                                                   </button>
 
                                                   {expandedTasks[task.id] && (
-                                                    <div className="mt-2 space-y-2">
+                                                    <div className="px-4 pb-3 space-y-2 bg-purple-50/40">
                                                       {taskChecklists.map((check, checkIdx) => (
-                                                        <div key={check.id} className="flex items-center gap-3 py-1.5 px-3 bg-purple-50 rounded border border-purple-200">
-                                                          <div className="flex items-center justify-center w-5 h-5 rounded bg-purple-100 text-purple-700 font-bold text-xs shrink-0">
+                                                        <div key={check.id} className="flex items-center gap-3 py-2 px-3 bg-white rounded-lg border border-purple-200 shadow-sm">
+                                                          {/* Check number */}
+                                                          <div className="flex items-center justify-center w-5 h-5 rounded-full bg-purple-100 text-purple-700 font-bold text-[10px] shrink-0">
                                                             {checkIdx + 1}
                                                           </div>
-                                                          <span className="text-xs text-gray-800 flex-1">
-                                                            {check.title || check.name}
+                                                          {/* Check title */}
+                                                          <span className="flex-1 text-sm font-medium text-gray-800">
+                                                            {check.title || check.label || check.name}
                                                           </span>
-                                                          <div className="shrink-0 w-40">
+                                                          {/* Assignee dropdown */}
+                                                          <div className="shrink-0 w-36">
                                                             <select
                                                               value={taskAssignees[`checklist_${check.id}`] || ''}
                                                               onChange={e => setTaskAssignees(prev => ({ ...prev, [`checklist_${check.id}`]: e.target.value }))}
-                                                              className="w-full px-2 py-1 rounded border border-gray-300 text-xs focus:outline-none focus:border-purple-500"
-                                                              title="Gán nhân viên"
+                                                              className="w-full px-2 py-1 rounded-lg border border-gray-300 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                                              title="Gán nhân viên cho checklist"
                                                             >
                                                               <option value="">👤 Chưa gán</option>
                                                               {employees.map(emp => (
