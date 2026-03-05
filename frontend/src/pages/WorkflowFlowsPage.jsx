@@ -286,7 +286,7 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
   const loadTemplates = async (companyUnitId) => {
     if (templatesMap[companyUnitId]) return;
     try {
-      const { data } = await api.get(`/company-templates/by-unit/${companyUnitId}`);
+      const { data } = await api.get(`/company-templates/units/${companyUnitId}/template-sets`);
       setTemplatesMap(p => ({ ...p, [companyUnitId]: data.template_sets || [] }));
     } catch (e) {
       console.error('Load templates error:', e);
