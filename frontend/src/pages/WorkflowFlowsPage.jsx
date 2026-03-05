@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import ProcessTaskEditor from '../components/ProcessTaskEditor';
+import FlowStepTaskManager from '../components/FlowStepTaskManager';
 import {
   GitBranch, Plus, Edit, Save, Trash2, Copy, Star, ChevronDown, ChevronRight,
   ArrowRight, Clock, Building2, X, CheckSquare, User, ClipboardList, Layers,
@@ -241,21 +242,26 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
   const [saving, setSaving] = useState(false);
   const [companiesMap, setCompaniesMap] = useState({});
   const [processesMap, setProcessesMap] = useState({});
+  const [templatesMap, setTemplatesMap] = useState({});
   const [expandedStep, setExpandedStep] = useState(null);
 
   useEffect(() => {
     if (flow?.steps?.length) {
       setSteps(flow.steps.map(s => ({
         _key: s.id || Math.random().toString(36).slice(2),
-        _dbId: s.id,
+        id: s.id, // Save step id for task manager
         division_unit_id: s.division_unit_id,
         company_unit_id: s.company_unit_id || '',
+        template_set_id: s.template_set_id || null,
         description: s.description || '',
         selected_process_ids: (s.processes || []).map(p => p.id),
       })));
       flow.steps.forEach(s => {
         loadCompanies(s.division_unit_id);
-        if (s.company_unit_id) loadProcesses(s.company_unit_id);
+        if (s.company_unit_id) {
+          loadProcesses(s.company_unit_id);
+          loadTemplates(s.company_unit_id);
+        }
       });
     }
   }, [flow]);
@@ -277,6 +283,16 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
     } catch {}
   };
 
+  const loadTemplates = async (companyUnitId) => {
+    if (templatesMap[companyUnitId]) return;
+    try {
+      const { data } = await api.get(`/company-templates/by-unit/${companyUnitId}`);
+      setTemplatesMap(p => ({ ...p, [companyUnitId]: data.template_sets || [] }));
+    } catch (e) {
+      console.error('Load templates error:', e);
+    }
+  };
+
   const addStep = (divId) => {
     if (!divId) return;
     setSteps(prev => [...prev, { _key: Math.random().toString(36).slice(2), division_unit_id: divId, company_unit_id: '', description: '', selected_process_ids: [] }]);
@@ -287,8 +303,19 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
     setSteps(prev => prev.map(s => {
       if (s._key !== key) return s;
       const updated = { ...s, [field]: value };
-      if (field === 'division_unit_id') { updated.company_unit_id = ''; updated.selected_process_ids = []; loadCompanies(value); }
-      if (field === 'company_unit_id') { updated.selected_process_ids = []; if (value) loadProcesses(value); }
+      if (field === 'division_unit_id') { 
+        updated.company_unit_id = ''; 
+        updated.template_set_id = null;
+        updated.selected_process_ids = []; 
+        loadCompanies(value); 
+      }
+      if (field === 'company_unit_id') { 
+        updated.selected_process_ids = []; 
+        if (value) {
+          loadProcesses(value); 
+          loadTemplates(value);
+        }
+      }
       return updated;
     }));
   };
@@ -342,7 +369,7 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
       const stepsData = steps.map((s, i) => ({
         division_unit_id: s.division_unit_id,
         company_unit_id: opt(s.company_unit_id),
-        template_set_id: null,
+        template_set_id: opt(s.template_set_id),
         order_index: i,
         description: s.description || null,
       }));
@@ -426,32 +453,83 @@ function FlowForm({ flow, divisions, onSaved, onCancel }) {
                   )}
 
                   {step.company_unit_id && (
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] font-semibold text-purple-600 flex items-center gap-1"><Layers className="h-3 w-3" /> Quy trình nội bộ ({(step.selected_process_ids || []).length}/{processes.length})</span>
-                        {processes.length === 0 && (
-                          <button type="button" onClick={() => generateProcesses(step.company_unit_id, step._key)}
-                            className="text-[9px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-200 cursor-pointer">⚡ Tạo QT gợi ý</button>
+                    <>
+                      {/* Template Selection */}
+                      <div className="flex items-center gap-2">
+                        <ClipboardList className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                        <select 
+                          value={step.template_set_id || ''} 
+                          onChange={e => updateStep(step._key, 'template_set_id', e.target.value || null)} 
+                          className="flex-1 h-8 px-2 border rounded-lg text-xs"
+                        >
+                          <option value="">— Chọn Bộ Mẫu (Template) —</option>
+                          {(templatesMap[step.company_unit_id] || []).map(t => (
+                            <option key={t.id} value={t.id}>
+                              {t.name} ({t.task_count || 0} tasks)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Processes Section - Collapse when template selected */}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedStep(expandedStep === step._key ? null : step._key)}
+                          className="w-full flex items-center justify-between mb-1 hover:bg-gray-50 p-1 rounded cursor-pointer"
+                        >
+                          <span className="text-[10px] font-semibold text-purple-600 flex items-center gap-1">
+                            {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                            <Layers className="h-3 w-3" /> Quy trình nội bộ ({(step.selected_process_ids || []).length}/{processes.length})
+                          </span>
+                          {processes.length === 0 && (
+                            <button type="button" onClick={(e) => { e.stopPropagation(); generateProcesses(step.company_unit_id, step._key); }}
+                              className="text-[9px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-200 cursor-pointer">⚡ Tạo QT gợi ý</button>
+                          )}
+                        </button>
+                        
+                        {isExpanded && (
+                          <>
+                            {processes.length > 0 ? (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                {processes.map(p => {
+                                  const checked = (step.selected_process_ids || []).includes(p.id);
+                                  return (
+                                    <label key={p.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs ${checked ? 'border-purple-400 bg-purple-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
+                                      <input type="checkbox" checked={checked} onChange={() => toggleProcess(step._key, p.id)} className="accent-purple-600" />
+                                      <span>{p.icon}</span>
+                                      <span className="flex-1 font-medium">{p.name}</span>
+                                      <span className="text-[9px] text-gray-400">{p.task_count || 0} NV</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-gray-400 italic">Công ty chưa có quy trình — bấm "Tạo QT gợi ý" hoặc tạo thủ công trong trang Quy trình Cty</p>
+                            )}
+                          </>
                         )}
                       </div>
-                      {processes.length > 0 ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                          {processes.map(p => {
-                            const checked = (step.selected_process_ids || []).includes(p.id);
-                            return (
-                              <label key={p.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs ${checked ? 'border-purple-400 bg-purple-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
-                                <input type="checkbox" checked={checked} onChange={() => toggleProcess(step._key, p.id)} className="accent-purple-600" />
-                                <span>{p.icon}</span>
-                                <span className="flex-1 font-medium">{p.name}</span>
-                                <span className="text-[9px] text-gray-400">{p.task_count || 0} NV</span>
-                              </label>
-                            );
-                          })}
+
+                      {/* Task Manager - Show when template selected or flow step saved */}
+                      {step.template_set_id && step.id && (
+                        <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                          <FlowStepTaskManager
+                            flowStep={{ id: step.id, company_unit_id: step.company_unit_id }}
+                            templateSetId={step.template_set_id}
+                            onTasksChange={() => {/* Could refresh if needed */}}
+                          />
                         </div>
-                      ) : (
-                        <p className="text-[10px] text-gray-400 italic">Công ty chưa có quy trình — bấm "Tạo QT gợi ý" hoặc tạo thủ công trong trang Quy trình Cty</p>
                       )}
-                    </div>
+
+                      {step.template_set_id && !step.id && (
+                        <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                          <p className="text-xs text-yellow-800">
+                            💡 Lưu luồng trước để quản lý tasks chi tiết
+                          </p>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
