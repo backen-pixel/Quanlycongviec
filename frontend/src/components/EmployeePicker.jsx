@@ -78,15 +78,20 @@ export default function EmployeePicker({
     }
   }, [open]);
 
-  // Close on scroll/resize
+  // Close on outside scroll / resize — but NOT when scrolling inside dropdown
   useEffect(() => {
     if (!open) return;
-    const handleClose = () => setOpen(false);
-    window.addEventListener('scroll', handleClose, true);
-    window.addEventListener('resize', handleClose);
+    const handleScroll = (e) => {
+      // If scroll happened inside our dropdown, ignore
+      if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    const handleResize = () => setOpen(false);
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', handleResize);
     return () => {
-      window.removeEventListener('scroll', handleClose, true);
-      window.removeEventListener('resize', handleClose);
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', handleResize);
     };
   }, [open]);
 
