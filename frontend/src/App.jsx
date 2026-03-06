@@ -29,6 +29,7 @@ import CompanyProcessesPage from './pages/CompanyProcessesPage';
 import CreateProject from './pages/CreateProject';
 import CreateProjectNew from './pages/CreateProjectNew';
 import TemplateSetsPage from './pages/TemplateSetsPage';
+import PermissionsPage from './pages/PermissionsPage';
 import WorkflowHubPage from './pages/WorkflowHubPage';
 import { Settings } from 'lucide-react';
 
@@ -108,6 +109,7 @@ export default function App() {
             <Route path="/company-processes" element={<WorkflowHubPage />} />
             <Route path="/template-sets" element={<WorkflowHubPage />} />
             <Route path="/template-sets/:setId" element={<TemplateSetDetailPage />} />
+            <Route path="/permissions" element={<PermissionsPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
                 <div className="text-center">
