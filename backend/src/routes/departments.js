@@ -26,22 +26,24 @@ r.get('/my/list', async (req, res) => {
 // LIST departments with member count
 r.get('/', async (req, res) => {
   try {
-    const { data: depts, error } = await supabase.from('departments').select('*').order('name');
+    const { company_id, company_unit_id } = req.query;
+    
+    // Resolve company_unit_id → company_id if needed
+    let resolvedCompanyId = company_id;
+    if (!resolvedCompanyId && company_unit_id) {
+      const { data: unit } = await supabase.from('ecosystem_units')
+        .select('company_id').eq('id', company_unit_id).single();
+      resolvedCompanyId = unit?.company_id;
+    }
+
+    let q = supabase.from('departments').select('id, name, company_id, color, is_active').order('name');
+    if (resolvedCompanyId) q = q.eq('company_id', resolvedCompanyId);
+    q = q.eq('is_active', true);
+    
+    const { data: depts, error } = await q;
     if (error) throw error;
 
-    // Count members per dept
-    const { data: users } = await supabase.from('users')
-      .select('department_id').eq('is_active', true).not('department_id', 'is', null);
-
-    const countMap = {};
-    (users || []).forEach(u => { countMap[u.department_id] = (countMap[u.department_id] || 0) + 1; });
-
-    const result = (depts || []).map(d => ({
-      ...d,
-      member_count: countMap[d.id] || 0,
-    }));
-
-    res.json({ departments: result });
+    res.json({ departments: depts || [] });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 

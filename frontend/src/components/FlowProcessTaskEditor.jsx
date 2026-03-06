@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, X, Loader, Search, ChevronDown, ChevronUp, CheckSquare } from 'lucide-react';
 import api from '../lib/api';
+import EmployeePicker from './EmployeePicker';
 
 /**
  * FlowProcessTaskEditor
@@ -13,28 +14,9 @@ export default function FlowProcessTaskEditor({
   processes = [],
 }) {
   const [expandedProcess, setExpandedProcess] = useState(null);
-  const [processTasksMap, setProcessTasksMap] = useState({}); // processId → tasks[]
+  const [processTasksMap, setProcessTasksMap] = useState({});
   const [loadingMap, setLoadingMap] = useState({});
-  const [employees, setEmployees] = useState([]);
-  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
-
-  // Load employees when company changes
-  useEffect(() => {
-    if (companyUnitId) loadEmployees(companyUnitId);
-  }, [companyUnitId]);
-
-  const loadEmployees = async (unitId) => {
-    setLoadingEmployees(true);
-    try {
-      const { data } = await api.get(`/users?company_unit_id=${unitId}`);
-      setEmployees(data.users || []);
-    } catch (e) {
-      console.error('Load employees error:', e);
-    } finally {
-      setLoadingEmployees(false);
-    }
-  };
 
   const loadProcessTasks = async (processId) => {
     if (processTasksMap[processId]) return; // cached
@@ -185,12 +167,11 @@ export default function FlowProcessTaskEditor({
                         task={task}
                         idx={idx}
                         processId={proc.id}
-                        employees={employees}
+                        companyUnitId={companyUnitId}
                         onEdit={() => setEditingTask({ ...task, processId: proc.id, assignee_id: task.default_assignee_id, isNew: false })}
                         onDelete={() => handleDeleteTask(task.id, proc.id)}
                         onSaveChecklist={(check) => handleSaveChecklist(check, task.id, proc.id)}
                         onDeleteChecklist={(checkId) => handleDeleteChecklist(checkId, proc.id)}
-                        loadingEmployees={loadingEmployees}
                       />
                     ))}
                   </div>
@@ -205,8 +186,7 @@ export default function FlowProcessTaskEditor({
       {editingTask && (
         <TaskEditModal
           task={editingTask}
-          employees={employees}
-          loadingEmployees={loadingEmployees}
+          companyUnitId={companyUnitId}
           onSave={handleSaveTask}
           onCancel={() => setEditingTask(null)}
         />
@@ -216,7 +196,7 @@ export default function FlowProcessTaskEditor({
 }
 
 // ─── TaskRow ───
-function TaskRow({ task, idx, processId, employees, onEdit, onDelete, onSaveChecklist, onDeleteChecklist }) {
+function TaskRow({ task, idx, processId, companyUnitId, onEdit, onDelete, onSaveChecklist, onDeleteChecklist }) {
   const [expanded, setExpanded] = useState(false);
   const [addingCheck, setAddingCheck] = useState(false);
   const [newCheckTitle, setNewCheckTitle] = useState('');
@@ -229,7 +209,11 @@ function TaskRow({ task, idx, processId, employees, onEdit, onDelete, onSaveChec
     setAddingCheck(false);
   };
 
-  const assignee = employees.find(e => e.id === task.default_assignee_id);
+  const handleAssigneeChange = async (userId) => {
+    try {
+      await api.put(`/company-processes/tasks/${task.id}`, { default_assignee_id: userId || null });
+    } catch (e) { console.error(e); }
+  };
 
   return (
     <div className="px-3 py-2 bg-white hover:bg-gray-50 transition-colors">
@@ -237,9 +221,16 @@ function TaskRow({ task, idx, processId, employees, onEdit, onDelete, onSaveChec
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-bold text-gray-400 w-5 text-center shrink-0">{idx + 1}</span>
         <span className="flex-1 font-semibold text-gray-900 text-sm leading-snug">{task.title}</span>
-        {assignee && (
-          <span className="text-[10px] text-blue-600 font-medium shrink-0">👤 {assignee.full_name}</span>
-        )}
+        {/* Assignee picker */}
+        <div className="shrink-0 w-36" onClick={e => e.stopPropagation()}>
+          <EmployeePicker
+            companyUnitId={companyUnitId}
+            value={task.default_assignee_id || ''}
+            onChange={handleAssigneeChange}
+            placeholder="+ Gán"
+            size="sm"
+          />
+        </div>
         <div className="flex items-center gap-1 shrink-0">
           <button onClick={onEdit} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded" title="Sửa">
             <Edit className="w-3.5 h-3.5" />
@@ -309,15 +300,9 @@ function TaskRow({ task, idx, processId, employees, onEdit, onDelete, onSaveChec
 }
 
 // ─── TaskEditModal ───
-function TaskEditModal({ task, employees, loadingEmployees, onSave, onCancel }) {
+function TaskEditModal({ task, companyUnitId, onSave, onCancel }) {
   const [form, setForm] = useState(task);
-  const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
-
-  const filtered = employees.filter(e =>
-    e.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-    e.email?.toLowerCase().includes(search.toLowerCase())
-  );
 
   const handleSave = async () => {
     if (!form.title?.trim()) { alert('Nhập tên nhiệm vụ'); return; }
@@ -328,8 +313,8 @@ function TaskEditModal({ task, employees, loadingEmployees, onSave, onCancel }) 
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[85vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b px-5 py-4 flex items-center justify-between">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+        <div className="border-b px-5 py-4 flex items-center justify-between">
           <h3 className="font-bold text-gray-900">{task.isNew ? '➕ Thêm Nhiệm Vụ' : '✏️ Sửa Nhiệm Vụ'}</h3>
           <button onClick={onCancel} className="p-2 hover:bg-gray-100 rounded"><X className="w-4 h-4" /></button>
         </div>
@@ -337,9 +322,7 @@ function TaskEditModal({ task, employees, loadingEmployees, onSave, onCancel }) 
         <div className="p-5 space-y-4">
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Tên nhiệm vụ *</label>
-            <input
-              type="text"
-              value={form.title || ''}
+            <input type="text" value={form.title || ''}
               onChange={e => setForm({ ...form, title: e.target.value })}
               placeholder="Ví dụ: Gặp khách hàng tư vấn"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
@@ -348,66 +331,25 @@ function TaskEditModal({ task, employees, loadingEmployees, onSave, onCancel }) 
 
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Mô tả</label>
-            <textarea
-              value={form.description || ''}
+            <textarea value={form.description || ''}
               onChange={e => setForm({ ...form, description: e.target.value })}
               rows={2}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
-          {/* Assignee selection */}
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-2">👤 Gán cho</label>
-            <div className="relative mb-2">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Tìm nhân viên..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {loadingEmployees ? (
-              <div className="flex justify-center py-3"><Loader className="w-4 h-4 animate-spin text-gray-400" /></div>
-            ) : (
-              <div className="border border-gray-200 rounded-lg max-h-44 overflow-y-auto">
-                {/* No assignee option */}
-                <label className={`flex items-center gap-2.5 px-3 py-2 border-b cursor-pointer hover:bg-gray-50 ${!form.assignee_id ? 'bg-gray-50' : ''}`}>
-                  <input type="radio" name="assignee" checked={!form.assignee_id}
-                    onChange={() => setForm({ ...form, assignee_id: null })} className="w-3.5 h-3.5" />
-                  <span className="text-xs text-gray-500 italic">Không gán cụ thể</span>
-                </label>
-
-                {filtered.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-gray-400 text-center">Không tìm thấy nhân viên</div>
-                ) : filtered.map(emp => (
-                  <label
-                    key={emp.id}
-                    className={`flex items-start gap-2.5 px-3 py-2 border-b last:border-0 cursor-pointer hover:bg-gray-50 ${form.assignee_id === emp.id ? 'bg-blue-50' : ''}`}
-                  >
-                    <input type="radio" name="assignee" checked={form.assignee_id === emp.id}
-                      onChange={() => setForm({ ...form, assignee_id: emp.id })} className="w-3.5 h-3.5 mt-0.5" />
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">{emp.full_name}</div>
-                      <div className="text-xs text-gray-500">{emp.department?.name || emp.email}</div>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {form.assignee_id && (
-              <div className="mt-2 text-xs text-blue-700 bg-blue-50 px-3 py-1.5 rounded">
-                ✓ {employees.find(e => e.id === form.assignee_id)?.full_name}
-              </div>
-            )}
+            <EmployeePicker
+              companyUnitId={companyUnitId}
+              value={form.assignee_id || ''}
+              onChange={(userId) => setForm({ ...form, assignee_id: userId })}
+              placeholder="Chọn nhân viên..."
+            />
           </div>
         </div>
 
-        <div className="sticky bottom-0 bg-gray-50 border-t px-5 py-3 flex justify-end gap-2">
+        <div className="border-t px-5 py-3 flex justify-end gap-2">
           <button onClick={onCancel} className="px-4 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-100">Hủy</button>
           <button onClick={handleSave} disabled={saving}
             className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5">

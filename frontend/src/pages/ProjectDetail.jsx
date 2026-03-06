@@ -5,6 +5,7 @@ import TaskDetailModal from '../components/TaskDetailModal';
 import TaskCreateModal from '../components/TaskCreateModal';
 import Modal from '../components/Modal';
 import { FileUploadButton, FilePreview, FileList } from '../components/FileUpload';
+import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
@@ -757,36 +758,17 @@ function WorkflowLineRow({ line, editing, users, onUpdate, onDelete }) {
 
 function TaskRow({ task: t, isLocked, onSelect, companyUnitId, onReload }) {
   const [showChecklist, setShowChecklist] = useState(false);
-  const [editingAssignee, setEditingAssignee] = useState(false);
-  const [companyUsers, setCompanyUsers] = useState([]);
   const [localTask, setLocalTask] = useState(t);
   const checklists = localTask.checklists || [];
   const checkDone = checklists.filter(c => c.is_completed).length;
 
   // Sync when prop changes
-  useState(() => { setLocalTask(t); }, [t]);
+  useEffect(() => { setLocalTask(t); }, [t]);
 
-  const loadCompanyUsers = async () => {
-    if (!companyUnitId) return;
-    try {
-      const r = await api.get(`/users?ecosystem_unit_id=${companyUnitId}`);
-      setCompanyUsers(r.data.users || []);
-    } catch { }
-  };
-
-  const handleAssigneeClick = (e) => {
-    e.stopPropagation();
-    if (isLocked) return;
-    loadCompanyUsers();
-    setEditingAssignee(true);
-  };
-
-  const handleAssigneeChange = async (newAssigneeId) => {
-    setEditingAssignee(false);
+  const handleAssigneeChange = async (newAssigneeId, userObj) => {
     if (newAssigneeId === (localTask.assignee_id || localTask.assignee?.id)) return;
     try {
-      const user = companyUsers.find(u => u.id === newAssigneeId);
-      setLocalTask(prev => ({ ...prev, assignee_id: newAssigneeId, assignee: user || null }));
+      setLocalTask(prev => ({ ...prev, assignee_id: newAssigneeId, assignee: userObj || null }));
       await api.put(`/tasks/${localTask.id}`, { assignee_id: newAssigneeId || null });
       onReload?.();
     } catch { setLocalTask(t); }
@@ -800,34 +782,26 @@ function TaskRow({ task: t, isLocked, onSelect, companyUnitId, onReload }) {
         <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${TASK_COLORS[localTask.status] || 'bg-gray-400'}`} />
         <span className="flex-1 text-xs sm:text-sm font-medium text-gray-800 truncate">{localTask.title}</span>
 
-        {/* Assignee — click to reassign */}
-        {editingAssignee ? (
-          <div className="shrink-0 relative z-10" onClick={e => e.stopPropagation()}>
-            <select autoFocus defaultValue={localTask.assignee?.id || ''}
-              onChange={e => handleAssigneeChange(e.target.value)}
-              onBlur={() => setEditingAssignee(false)}
-              className="h-7 px-2 border border-blue-400 rounded text-xs bg-white max-w-[140px]">
-              <option value="">— Bỏ gán —</option>
-              {companyUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-            </select>
+        {/* Assignee - EmployeePicker */}
+        {!isLocked && companyUnitId ? (
+          <div className="shrink-0 w-36" onClick={e => e.stopPropagation()}>
+            <EmployeePicker
+              companyUnitId={companyUnitId}
+              value={localTask.assignee_id || localTask.assignee?.id || ''}
+              onChange={handleAssigneeChange}
+              placeholder="+ Gán"
+              size="sm"
+            />
           </div>
         ) : localTask.assignee ? (
-          <div className="flex items-center gap-1.5 shrink-0 group/assignee cursor-pointer"
-            title={`${localTask.assignee.full_name} — Bấm để đổi`}
-            onClick={handleAssigneeClick}>
-            <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold ring-1 ring-transparent group-hover/assignee:ring-blue-400 transition-all"
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full flex items-center justify-center text-white text-[8px] sm:text-[9px] font-bold"
               style={{ backgroundColor: avatarColor(localTask.assignee.full_name) }}>
               {getInitials(localTask.assignee.full_name)}
             </div>
             <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[100px]">{localTask.assignee.full_name}</span>
           </div>
-        ) : (
-          <button onClick={handleAssigneeClick}
-            className="text-xs text-gray-400 hidden sm:inline hover:text-blue-500 hover:underline cursor-pointer shrink-0"
-            title="Gán người thực hiện">
-            + Gán
-          </button>
-        )}
+        ) : null}
 
         <span className={`text-[10px] px-1.5 py-0.5 rounded-full hidden sm:inline ${PRIORITY_COLORS[localTask.priority] || ''}`}>{PRIORITY_LABELS[localTask.priority]}</span>
         {localTask.due_date && <span className={`text-[10px] hidden sm:inline ${new Date(localTask.due_date) < new Date() && localTask.status !== 'done' ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(localTask.due_date)}</span>}
@@ -847,8 +821,8 @@ function TaskRow({ task: t, isLocked, onSelect, companyUnitId, onReload }) {
       {showChecklist && checklists.length > 0 && (
         <div className="border-t px-3 pb-2 pt-2 space-y-2 bg-purple-50">
           {checklists.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)).map(c => (
-            <ChecklistItem key={c.id} item={c} companyUsers={companyUsers}
-              onLoadUsers={loadCompanyUsers} onReload={onReload} taskId={localTask.id} />
+            <ChecklistItem key={c.id} item={c} companyUnitId={companyUnitId}
+              onReload={onReload} taskId={localTask.id} />
           ))}
         </div>
       )}
@@ -857,42 +831,26 @@ function TaskRow({ task: t, isLocked, onSelect, companyUnitId, onReload }) {
 }
 
 // ═══ Checklist Item ═══
-function ChecklistItem({ item: c, companyUsers, onLoadUsers, onReload, taskId }) {
+function ChecklistItem({ item: c, companyUnitId, onReload, taskId }) {
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesText, setNotesText] = useState('');
-  const [editingAssignee, setEditingAssignee] = useState(false);
 
-  // Parse notes — may be plain text or JSON
   const parseNotes = (raw) => {
     if (!raw) return { text: '', assignee_id: null };
     if (typeof raw === 'object') return { text: raw.text || '', assignee_id: raw.assignee_id || null };
-    try {
-      const parsed = JSON.parse(raw);
-      return { text: parsed.text || '', assignee_id: parsed.assignee_id || null };
-    } catch {
-      return { text: raw, assignee_id: null };
-    }
+    try { const p = JSON.parse(raw); return { text: p.text || '', assignee_id: p.assignee_id || null }; }
+    catch { return { text: raw, assignee_id: null }; }
   };
 
   const { text: notesDisplay, assignee_id: checklistAssigneeId } = parseNotes(c.notes);
-  const checklistAssignee = companyUsers.find(u => u.id === checklistAssigneeId);
+  const assignedUserId = c.assigned_user_id || checklistAssigneeId;
   const attachments = c.attachments || [];
-  
-  // DEBUG
-  if (c.notes) console.log('Checklist notes:', c.notes, '→', notesDisplay);
-
-  const startEditNotes = () => {
-    setNotesText(notesDisplay);
-    setEditingNotes(true);
-    onLoadUsers?.();
-  };
 
   const saveNotes = async () => {
     setEditingNotes(false);
     try {
-      // Preserve assignee_id in JSON if exists
-      const newNotes = checklistAssigneeId
-        ? JSON.stringify({ text: notesText, assignee_id: checklistAssigneeId })
+      const newNotes = assignedUserId
+        ? JSON.stringify({ text: notesText, assignee_id: assignedUserId })
         : notesText;
       await api.put(`/tasks/checklists/${c.id}`, { notes: newNotes });
       onReload?.();
@@ -900,10 +858,9 @@ function ChecklistItem({ item: c, companyUsers, onLoadUsers, onReload, taskId })
   };
 
   const handleChecklistAssignee = async (newUserId) => {
-    setEditingAssignee(false);
     try {
       const newNotes = JSON.stringify({ text: notesDisplay, assignee_id: newUserId || null });
-      await api.put(`/tasks/checklists/${c.id}`, { notes: newNotes });
+      await api.put(`/tasks/checklists/${c.id}`, { notes: newNotes, assigned_user_id: newUserId || null });
       onReload?.();
     } catch { }
   };
@@ -917,33 +874,21 @@ function ChecklistItem({ item: c, companyUsers, onLoadUsers, onReload, taskId })
         </div>
         <span className={`text-xs flex-1 ${c.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{c.title}</span>
 
-        {/* Checklist assignee */}
-        {editingAssignee ? (
-          <select autoFocus defaultValue={checklistAssigneeId || ''}
-            onChange={e => handleChecklistAssignee(e.target.value)}
-            onBlur={() => setEditingAssignee(false)}
-            className="h-6 px-1 border border-blue-400 rounded text-[10px] bg-white max-w-[120px]">
-            <option value="">— Bỏ gán —</option>
-            {companyUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-          </select>
-        ) : checklistAssignee ? (
-          <div className="flex items-center gap-1 cursor-pointer" title="Đổi người thực hiện"
-            onClick={() => { onLoadUsers?.(); setEditingAssignee(true); }}>
-            <div className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold"
-              style={{ backgroundColor: avatarColor(checklistAssignee.full_name) }}>
-              {getInitials(checklistAssignee.full_name)}
-            </div>
-            <span className="text-[9px] text-gray-500">{checklistAssignee.full_name}</span>
+        {/* Checklist assignee - EmployeePicker */}
+        {companyUnitId && (
+          <div className="shrink-0 w-32" onClick={e => e.stopPropagation()}>
+            <EmployeePicker
+              companyUnitId={companyUnitId}
+              value={assignedUserId || ''}
+              onChange={handleChecklistAssignee}
+              placeholder="+ Gán"
+              size="sm"
+            />
           </div>
-        ) : (
-          <button onClick={() => { onLoadUsers?.(); setEditingAssignee(true); }}
-            className="text-[9px] text-gray-300 hover:text-blue-500 cursor-pointer">
-            + Gán
-          </button>
         )}
 
         {/* Edit notes button */}
-        <button onClick={startEditNotes}
+        <button onClick={() => { setNotesText(notesDisplay); setEditingNotes(true); }}
           className="text-[9px] text-gray-300 hover:text-blue-500 cursor-pointer shrink-0" title="Sửa ghi chú">
           ✎
         </button>
