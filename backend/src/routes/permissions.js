@@ -262,11 +262,11 @@ r.get('/ecosystem-units/:unitId/permissions', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('user_permissions')
-      .select(\`
+      .select(`
         *,
         user:users(id, full_name, email),
         permission:permissions(*)
-      \`)
+      `)
       .eq('ecosystem_unit_id', req.params.unitId);
     
     if (error) throw error;
