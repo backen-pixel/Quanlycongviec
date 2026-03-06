@@ -181,12 +181,19 @@ r.get('/units', async (req, res) => {
         .eq('unit_id', unit.id);
       unit.stage_groups = (groups || []).map(g => g.group);
     }
-    }
 
     // Build tree (only if no level filter, otherwise return flat list)
     if (level === undefined) {
       const tree = buildTree(units);
       res.json({ units, tree });
+    } else {
+      res.json({ units });
+    }
+  } catch (e) { 
+    console.error('GET /units error:', e);
+    res.status(500).json({ error: e.message }); 
+  }
+});
     } else {
       res.json({ units });
     }
