@@ -178,7 +178,24 @@ r.get('/', async (req, res) => {
     if (role) q = q.eq('role', role);
     if (department_id === 'none') q = q.is('department_id', null);
     else if (department_id) q = q.eq('department_id', department_id);
-    if (company_id) q = q.eq('department.company_id', company_id);
+    
+    // Company filter: need to get departments first, then filter users
+    if (company_id) {
+      const { data: companyDepts } = await supabase
+        .from('departments')
+        .select('id')
+        .eq('company_id', company_id)
+        .eq('is_active', true);
+      
+      const deptIds = (companyDepts || []).map(d => d.id);
+      if (deptIds.length > 0) {
+        q = q.in('department_id', deptIds);
+      } else {
+        // No departments for this company → return empty
+        return res.json({ users: [], stats: { total: 0, byRole: {} } });
+      }
+    }
+    
     if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`);
     ({ data, error } = await q.order('full_name'));
 
