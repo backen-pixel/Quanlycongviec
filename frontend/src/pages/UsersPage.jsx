@@ -12,9 +12,13 @@ export default function UsersPage() {
   const [users, setUsers] = useState([]);
   const [stats, setStats] = useState({});
   const [departments, setDepartments] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [divisions, setDivisions] = useState([]);
   const [search, setSearch] = useState('');
   const [filterRole, setFilterRole] = useState('');
   const [filterDept, setFilterDept] = useState('');
+  const [filterCompany, setFilterCompany] = useState('');
+  const [filterDivision, setFilterDivision] = useState('');
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [editUser, setEditUser] = useState(null);
@@ -28,16 +32,37 @@ export default function UsersPage() {
     if (search) params.search = search;
     if (filterRole) params.role = filterRole;
     if (filterDept) params.department_id = filterDept;
+    if (filterCompany) params.company_id = filterCompany;
+    // Division filtering happens via company (filter companies by division first)
     api.get('/users', { params })
       .then(r => { setUsers(r.data.users || []); setStats(r.data.stats || {}); })
       .catch(() => {}).finally(() => setLoading(false));
-  }, [search, filterRole, filterDept]);
+  }, [search, filterRole, filterDept, filterCompany]);
 
   useEffect(() => {
     load();
-    api.get('/users/departments').then(r => setDepartments(r.data.departments || [])).catch(() => {});
+    // Load departments, companies (from ecosystem level 2), divisions (level 1)
+    Promise.all([
+      api.get('/users/departments'),
+      api.get('/ecosystem/units?level=2'), // Level 2 = companies
+      api.get('/ecosystem/units?level=1'), // Level 1 = divisions (khối)
+    ]).then(([deptRes, compRes, divRes]) => {
+      setDepartments(deptRes.data.departments || []);
+      
+      // Companies from ecosystem (have parent_id = division)
+      const companyUnits = compRes.data.units || [];
+      setCompanies(companyUnits.map(u => ({
+        id: u.company_id, // actual companies table id
+        name: u.name,
+        division_unit_id: u.parent_id, // parent = division
+        unit_id: u.id, // ecosystem_units.id
+      })).filter(c => c.id)); // Only units that have company_id
+      
+      setDivisions(divRes.data.units || []);
+    }).catch(() => {});
   }, []);
-  useEffect(() => { load(); }, [filterRole, filterDept]);
+  
+  useEffect(() => { load(); }, [filterRole, filterDept, filterCompany]);
 
   const deactivate = async (id, name) => {
     if (!confirm(`Vô hiệu hóa nhân viên "${name}"?`)) return;
@@ -69,19 +94,117 @@ export default function UsersPage() {
         ))}
       </div>
 
-      {/* Search + dept filter */}
-      <div className="flex gap-3">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()}
-            placeholder="Tìm tên, email, SĐT..." className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+      {/* Filters: Division + Company + Department + Search */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        {/* Division (Khối) */}
+        <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-9">
+          <Layers className="h-4 w-4 text-gray-400 shrink-0" />
+          <select 
+            value={filterDivision} 
+            onChange={e => {
+              setFilterDivision(e.target.value);
+              setFilterCompany(''); // Reset company when division changes
+            }} 
+            className="flex-1 text-sm outline-none bg-transparent"
+          >
+            <option value="">Tất cả khối</option>
+            {divisions.map(d => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
         </div>
-        <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="h-9 px-3 border rounded-lg text-sm bg-white">
-          <option value="">Tất cả phòng ban</option>
-          <option value="none">⚠️ Chưa có phòng ban</option>
-          {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
+
+        {/* Company */}
+        <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-9">
+          <Building2 className="h-4 w-4 text-gray-400 shrink-0" />
+          <select 
+            value={filterCompany} 
+            onChange={e => setFilterCompany(e.target.value)} 
+            className="flex-1 text-sm outline-none bg-transparent"
+          >
+            <option value="">Tất cả công ty</option>
+            {companies
+              .filter(c => !filterDivision || c.division_unit_id === filterDivision)
+              .map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))
+            }
+          </select>
+        </div>
+
+        {/* Department */}
+        <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-9">
+          <UsersRound className="h-4 w-4 text-gray-400 shrink-0" />
+          <select 
+            value={filterDept} 
+            onChange={e => setFilterDept(e.target.value)} 
+            className="flex-1 text-sm outline-none bg-transparent"
+          >
+            <option value="">Tất cả phòng ban</option>
+            <option value="none">⚠️ Chưa có phòng ban</option>
+            {departments
+              .filter(d => !filterCompany || d.company_id === filterCompany)
+              .map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))
+            }
+          </select>
+        </div>
+
+        {/* Search */}
+        <div className="relative sm:col-span-2">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input 
+            value={search} 
+            onChange={e => setSearch(e.target.value)} 
+            onKeyDown={e => e.key === 'Enter' && load()}
+            placeholder="Tìm tên, email, SĐT..." 
+            className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white" 
+          />
+        </div>
       </div>
+
+      {/* Active filters summary */}
+      {(filterDivision || filterCompany || filterDept || filterRole) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-500">Đang lọc:</span>
+          {filterDivision && (
+            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full flex items-center gap-1">
+              Khối: {divisions.find(d => d.id === filterDivision)?.name}
+              <button onClick={() => setFilterDivision('')} className="hover:text-purple-900">×</button>
+            </span>
+          )}
+          {filterCompany && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full flex items-center gap-1">
+              Cty: {companies.find(c => c.id === filterCompany)?.name}
+              <button onClick={() => setFilterCompany('')} className="hover:text-blue-900">×</button>
+            </span>
+          )}
+          {filterDept && (
+            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full flex items-center gap-1">
+              PB: {departments.find(d => d.id === filterDept)?.name}
+              <button onClick={() => setFilterDept('')} className="hover:text-green-900">×</button>
+            </span>
+          )}
+          {filterRole && (
+            <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full flex items-center gap-1">
+              Role: {ROLES[filterRole]}
+              <button onClick={() => setFilterRole('')} className="hover:text-gray-900">×</button>
+            </span>
+          )}
+          <button 
+            onClick={() => {
+              setFilterDivision('');
+              setFilterCompany('');
+              setFilterDept('');
+              setFilterRole('');
+            }}
+            className="text-xs text-red-600 hover:text-red-800 font-medium"
+          >
+            Xóa tất cả
+          </button>
+        </div>
+      )}
 
       {/* Users grid */}
       {loading ? (
