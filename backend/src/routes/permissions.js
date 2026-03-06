@@ -11,7 +11,8 @@ r.get('/permissions', async (req, res) => {
       .from('permissions')
       .select('*')
       .eq('is_active', true)
-      .order('resource, action');
+      .order('resource', { ascending: true })
+      .order('action', { ascending: true });
     
     if (error) throw error;
     
@@ -42,7 +43,8 @@ r.get('/roles', async (req, res) => {
         *,
         role_permissions(count)
       `)
-      .order('is_system DESC, name');
+      .order('is_system', { ascending: false })
+      .order('name', { ascending: true });
     
     if (error) throw error;
     res.json({ roles: roles || [] });
