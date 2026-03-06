@@ -8,8 +8,8 @@ const LEVEL_ICONS = { 0: '🏢', 1: '📦', 2: '🏭', 3: '👥', 4: '⚡' };
 // Helper: Get depth from unit
 const getUnitDepth = (unit) => {
   if (!unit) return null;
-  if (typeof getUnitDepth(unit) === 'number') return getUnitDepth(unit); // Legacy
-  return getUnitDepth(unit)?.depth ?? null; // New schema
+  if (typeof unit.level === 'number') return unit.level; // Legacy
+  return unit.level?.depth ?? null; // New schema
 };
 
 // Vai trò TRONG hệ sinh thái (position-based roles)
@@ -440,7 +440,7 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
   );
 }
 
-function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
+function AddUserModal({ unit, users: propUsers, existingUserIds, onClose, onSaved }) {
   const [selectedUser, setSelectedUser] = useState('');
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -449,20 +449,25 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
   const [selectedCompany, setSelectedCompany] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [filteredUsers, setFilteredUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    loadFilters();
+    loadData();
   }, []);
 
   useEffect(() => {
     applyFilters();
-  }, [users, unit, selectedCompany, selectedDepartment, searchTerm]);
+  }, [allUsers, unit, selectedCompany, selectedDepartment, searchTerm]);
 
-  const loadFilters = async () => {
+  const loadData = async () => {
     setLoading(true);
     try {
-      // Load all departments first (for filtering)
+      // Load users first
+      const { data: usersData } = await api.get('/users');
+      setAllUsers(usersData.users || []);
+      
+      // Load all departments (for filtering)
       const { data: deptData } = await api.get('/departments');
       const allDepts = deptData.departments || [];
       
@@ -473,10 +478,11 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
         
         // Get child companies of this unit
         const childCompanies = allUnits.filter(u => {
-          if (getUnitDepth(unit) === 0) return u.level === 2; // Tập đoàn → all companies
+          const uDepth = getUnitDepth(u);
+          if (getUnitDepth(unit) === 0) return uDepth === 2; // Tập đoàn → all companies
           if (getUnitDepth(unit) === 1) {
             // Khối → companies that are children or have parent_id = this unit
-            return u.level === 2 && (u.parent_id === unit.id || allUnits.find(p => p.id === u.parent_id && p.parent_id === unit.id));
+            return uDepth === 2 && (u.parent_id === unit.id || allUnits.find(p => p.id === u.parent_id && p.parent_id === unit.id));
           }
           return false;
         });
@@ -496,13 +502,13 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
         setDepartments(allDepts);
       }
     } catch (e) {
-      console.error('Load filters error:', e);
+      console.error('Load data error:', e);
     }
     setLoading(false);
   };
 
   const applyFilters = () => {
-    let filtered = users.filter(u => !existingUserIds.includes(u.id));
+    let filtered = allUsers.filter(u => !existingUserIds.includes(u.id));
 
     // Filter by ecosystem hierarchy
     if (getUnitDepth(unit) === 0) {
