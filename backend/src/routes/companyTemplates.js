@@ -134,8 +134,11 @@ r.post('/template-sets/:id/clone', async (req, res) => {
 // COPY tasks from company_process to template_set
 r.post('/template-sets/:id/copy-from-process', async (req, res) => {
   try {
-    const { process_id } = req.body;
-    if (!process_id) return res.status(400).json({ error: 'Chọn quy trình gốc' });
+    const { process_id, process_ids } = req.body;
+    
+    // Support single process_id or array of process_ids
+    const processIdList = process_ids || (process_id ? [process_id] : []);
+    if (processIdList.length === 0) return res.status(400).json({ error: 'Chọn quy trình gốc' });
 
     // Get template set
     const { data: templateSet, error: setErr } = await supabase
@@ -146,91 +149,157 @@ r.post('/template-sets/:id/copy-from-process', async (req, res) => {
     if (setErr) throw setErr;
     if (!templateSet) return res.status(404).json({ error: 'Không tìm thấy bộ mẫu' });
 
-    // Get process
-    const { data: process, error: procErr } = await supabase
-      .from('company_processes')
-      .select('*')
-      .eq('id', process_id)
-      .single();
-    if (procErr) throw procErr;
-    if (!process) return res.status(404).json({ error: 'Không tìm thấy quy trình' });
+    // Load all workflow stages for mapping
+    const { data: allStages } = await supabase
+      .from('workflow_stages')
+      .select('id,name,slug,order_index')
+      .order('order_index');
+    
+    // Build stage name → stage_id mapping (fuzzy match)
+    const stageMap = {};
+    (allStages || []).forEach(s => {
+      stageMap[s.slug] = s.id;
+      stageMap[s.name.toLowerCase()] = s.id;
+    });
+
+    // Helper to find stage_id from process name
+    const findStageId = (processName) => {
+      const lower = (processName || '').toLowerCase().trim();
+      // Direct slug match
+      for (const [key, id] of Object.entries(stageMap)) {
+        if (lower.includes(key) || key.includes(lower)) return id;
+      }
+      // Keyword mapping
+      const keywordMap = {
+        'tư vấn': 'consulting', 'tiếp nhận': 'consulting', 'tìm hiểu': 'consulting',
+        'thiết kế': 'design', 'khảo sát': 'design', 'bản vẽ': 'design',
+        'báo giá': 'quotation', 'giá': 'quotation',
+        'hợp đồng': 'contract', 'ký kết': 'contract',
+        'sản xuất': 'production', 'gia công': 'production', 'chế tạo': 'production',
+        'vận chuyển': 'shipping', 'giao hàng': 'shipping',
+        'lắp đặt': 'installation', 'thi công': 'installation',
+        'bảo hành': 'customer-care', 'cskh': 'customer-care', 'chăm sóc': 'customer-care',
+      };
+      for (const [keyword, slug] of Object.entries(keywordMap)) {
+        if (lower.includes(keyword)) {
+          return stageMap[slug] || null;
+        }
+      }
+      return null;
+    };
 
     // Delete existing tasks in template (if any)
     await supabase.from('company_template_tasks')
       .delete()
       .eq('template_set_id', req.params.id);
 
-    // Get tasks from process
-    const { data: processTasks, error: tasksErr } = await supabase
-      .from('company_process_tasks')
-      .select('*')
-      .eq('process_id', process_id)
-      .order('order_index');
-    if (tasksErr) throw tasksErr;
+    let totalCopied = 0;
+    let processNames = [];
+    let orderOffset = 0;
 
-    let copiedCount = 0;
-
-    // Copy each task
-    for (const pTask of (processTasks || [])) {
-      const { data: newTask, error: taskInsertErr } = await supabase
-        .from('company_template_tasks')
-        .insert({
-          template_set_id: req.params.id,
-          stage_id: pTask.stage_id,
-          title: pTask.title,
-          description: pTask.description || null,
-          order_index: pTask.order_index || 0,
-          default_department_id: pTask.default_department_id || null,
-          default_team_id: pTask.default_team_id || null,
-          default_assignee_id: pTask.default_assignee_id || null,
-          estimated_hours: pTask.estimated_hours || null,
-          priority: pTask.priority || 'medium',
-          deadline_days: pTask.deadline_days || 0,
-          deadline_hours: pTask.deadline_hours || 0,
-        })
-        .select()
+    for (const pid of processIdList) {
+      // Get process
+      const { data: process, error: procErr } = await supabase
+        .from('company_processes')
+        .select('*')
+        .eq('id', pid)
         .single();
-      
-      if (taskInsertErr) {
-        console.error('Error copying task:', taskInsertErr);
+      if (procErr || !process) {
+        console.error('Process not found:', pid);
         continue;
       }
 
-      copiedCount++;
-
-      // Copy checklists
-      const { data: processChecklists } = await supabase
-        .from('company_process_checklists')
-        .select('*')
-        .eq('process_task_id', pTask.id)
-        .order('order_index');
-
-      if (processChecklists?.length) {
-        const checklistsToInsert = processChecklists.map(c => ({
-          template_task_id: newTask.id,
-          title: c.title,
-          order_index: c.order_index || 0,
-          require_file: c.require_file || false,
-          require_note: c.require_note || false,
-        }));
-
-        await supabase.from('company_template_checklists').insert(checklistsToInsert);
+      processNames.push(process.name);
+      
+      // Determine stage_id from process name
+      const stageId = findStageId(process.name);
+      if (!stageId) {
+        // Fallback: use first stage
+        console.warn(`No stage match for process "${process.name}", using first stage`);
       }
+      const finalStageId = stageId || (allStages?.[0]?.id);
+      if (!finalStageId) {
+        console.error('No stages found in database!');
+        continue;
+      }
+
+      // Get tasks from process
+      const { data: processTasks, error: tasksErr } = await supabase
+        .from('company_process_tasks')
+        .select('*')
+        .eq('process_id', pid)
+        .order('order_index');
+      if (tasksErr) {
+        console.error('Error loading process tasks:', tasksErr);
+        continue;
+      }
+
+      // Copy each task
+      for (const pTask of (processTasks || [])) {
+        const { data: newTask, error: taskInsertErr } = await supabase
+          .from('company_template_tasks')
+          .insert({
+            template_set_id: req.params.id,
+            stage_id: finalStageId, // From process name → stage mapping
+            title: pTask.title,
+            description: pTask.description || null,
+            order_index: (pTask.order_index || 0) + orderOffset,
+            default_department_id: pTask.default_department_id || null,
+            default_team_id: pTask.default_team_id || null,
+            default_assignee_id: pTask.default_assignee_id || null,
+            estimated_hours: pTask.estimated_hours || null,
+            priority: pTask.priority || 'medium',
+            deadline_days: pTask.deadline_days || 0,
+            deadline_hours: pTask.deadline_hours || 0,
+          })
+          .select()
+          .single();
+        
+        if (taskInsertErr) {
+          console.error('Error copying task:', taskInsertErr);
+          continue;
+        }
+
+        totalCopied++;
+
+        // Copy checklists (column name is task_id in process_checklists)
+        const { data: processChecklists } = await supabase
+          .from('company_process_checklists')
+          .select('*')
+          .eq('task_id', pTask.id)
+          .order('order_index');
+
+        if (processChecklists?.length) {
+          const checklistsToInsert = processChecklists.map(c => ({
+            template_task_id: newTask.id,
+            title: c.title,
+            order_index: c.order_index || 0,
+            require_file: c.require_file || false,
+            require_note: c.require_note || false,
+          }));
+
+          await supabase.from('company_template_checklists').insert(checklistsToInsert);
+        }
+      }
+
+      // Offset order for next process's tasks
+      orderOffset += (processTasks?.length || 0) + 10;
     }
 
-    // Update template_set with source_process_id
+    // Update template_set with source_process_id (last one if multiple)
+    const sourceId = processIdList[processIdList.length - 1];
     await supabase
       .from('company_template_sets')
       .update({ 
-        source_process_id: process_id,
+        source_process_id: sourceId,
         updated_at: new Date().toISOString()
       })
       .eq('id', req.params.id);
 
     res.json({
       success: true,
-      copied_tasks: copiedCount,
-      source_process: process.name,
+      copied_tasks: totalCopied,
+      source_processes: processNames,
       template_set: templateSet.name,
     });
   } catch (e) {
