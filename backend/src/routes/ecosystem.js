@@ -760,3 +760,23 @@ module.exports.canManageUnit = canManageUnit;
 module.exports.getUserAccessibleUnits = getUserAccessibleUnits;
 module.exports.getDescendantUnits = getDescendantUnits;
 
+
+
+// ═══ ADD USER TO UNIT ═══
+r.post("/units/members", async (req, res) => {
+  try {
+    const { unit_id, user_id } = req.body;
+    if (!unit_id || !user_id) return res.status(400).json({ error: "Missing unit_id or user_id" });
+    
+    const { data, error } = await supabase
+      .from("ecosystem_unit_members")
+      .insert({ unit_id, user_id })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json({ member: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});

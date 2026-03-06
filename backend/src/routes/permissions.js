@@ -252,3 +252,54 @@ r.post('/check-permission', async (req, res) => {
 });
 
 module.exports = r;
+
+// ═══════════════════════════════════════════════
+// ECOSYSTEM UNIT PERMISSIONS - Custom permissions per unit
+// ═══════════════════════════════════════════════
+
+// Get permissions for an ecosystem unit (all users in that unit)
+r.get('/ecosystem-units/:unitId/permissions', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('user_permissions')
+      .select(\`
+        *,
+        user:users(id, full_name, email),
+        permission:permissions(*)
+      \`)
+      .eq('ecosystem_unit_id', req.params.unitId);
+    
+    if (error) throw error;
+    res.json({ permissions: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Grant/revoke custom permission for user in specific unit
+r.post('/users/custom-permission', async (req, res) => {
+  try {
+    const { user_id, permission_id, ecosystem_unit_id, granted } = req.body;
+    
+    // Upsert: if exists update, else insert
+    const { data, error } = await supabase
+      .from('user_permissions')
+      .upsert({
+        user_id,
+        permission_id,
+        ecosystem_unit_id,
+        granted: granted !== undefined ? granted : true,
+        granted_by: null, // TODO: get from req.user
+        granted_at: new Date().toISOString(),
+      }, {
+        onConflict: 'user_id,permission_id,ecosystem_unit_id'
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json({ user_permission: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
