@@ -404,17 +404,30 @@ r.post('/template-tasks/:taskId/checklists', async (req, res) => {
 
 r.put('/template-checklists/:id', async (req, res) => {
   try {
-    const { title, order_index, require_file, require_note } = req.body;
+    const { title, order_index, require_file, require_note, default_assignee_id } = req.body;
     const update = {};
     if (title !== undefined) update.title = title;
     if (order_index !== undefined) update.order_index = order_index;
     if (require_file !== undefined) update.require_file = require_file;
     if (require_note !== undefined) update.require_note = require_note;
+    if (default_assignee_id !== undefined) {
+      update.default_assignee_id = (default_assignee_id && typeof default_assignee_id === 'string' && default_assignee_id.trim()) 
+        ? default_assignee_id.trim() 
+        : null;
+    }
+    
+    if (Object.keys(update).length === 0) {
+      return res.json({ checklist: null, message: 'Nothing to update' });
+    }
+    
     const { data, error } = await supabase.from('company_template_checklists')
       .update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json({ checklist: data });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { 
+    console.error('Update template checklist error:', e);
+    res.status(500).json({ error: e.message }); 
+  }
 });
 
 r.delete('/template-checklists/:id', async (req, res) => {

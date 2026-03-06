@@ -77,7 +77,11 @@ export default function TemplateSetDetailPage() {
   const updateTask = async (taskId, data) => {
     try {
       await api.put(`/company-templates/template-tasks/${taskId}`, data);
-      await reload();
+      // Only reload full list if structural change (not just assignee)
+      if (data.default_assignee_id === undefined) {
+        await reload();
+      }
+      // For assignee-only updates, skip reload to prevent flicker
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
@@ -99,7 +103,10 @@ export default function TemplateSetDetailPage() {
   const updateChecklist = async (checkId, data) => {
     try {
       await api.put(`/company-templates/template-checklists/${checkId}`, data);
-      await reload();
+      // Only reload if structural change (not just assignee)
+      if (data.default_assignee_id === undefined) {
+        await reload();
+      }
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 

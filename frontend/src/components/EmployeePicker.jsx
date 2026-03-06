@@ -3,6 +3,9 @@ import { createPortal } from 'react-dom';
 import { Search, X, ChevronDown, User, Building2, Users, AlertCircle } from 'lucide-react';
 import api from '../lib/api';
 
+// Global cache to prevent re-fetching when components remount
+const _cache = { users: {}, departments: {} };
+
 /**
  * EmployeePicker - Component chọn nhân viên với filter Công ty + Phòng ban
  * Uses React Portal to render dropdown outside parent overflow:hidden containers
@@ -94,21 +97,33 @@ export default function EmployeePicker({
   }, [open]);
 
   const loadData = async (unitId) => {
+    // Use global cache to prevent redundant API calls on remount
+    if (_cache.users[unitId]) {
+      setAllUsers(_cache.users[unitId]);
+      setDepartments(_cache.departments[unitId] || []);
+      return;
+    }
+    
     setLoading(true);
     try {
       const { data } = await api.get(`/users?company_unit_id=${unitId}`);
       const users = data.users || [];
       setAllUsers(users);
+      _cache.users[unitId] = users;
 
       const companyId = data.company_id;
       if (companyId) {
         try {
           const { data: deptData } = await api.get(`/departments?company_id=${companyId}`);
-          setDepartments(deptData.departments || []);
+          const depts = deptData.departments || [];
+          setDepartments(depts);
+          _cache.departments[unitId] = depts;
         } catch {
           const deptMap = {};
           users.forEach(u => { if (u.department_id) deptMap[u.department_id] = u.department_id; });
-          setDepartments(Object.keys(deptMap).map(id => ({ id, name: id })));
+          const depts = Object.keys(deptMap).map(id => ({ id, name: id }));
+          setDepartments(depts);
+          _cache.departments[unitId] = depts;
         }
       }
     } catch (e) {
