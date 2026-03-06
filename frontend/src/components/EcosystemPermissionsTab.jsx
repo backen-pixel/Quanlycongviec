@@ -27,8 +27,9 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
   const [permissions, setPermissions] = useState([]);
   const [roles, setRoles] = useState([]);
   const [selectedUnit, setSelectedUnit] = useState(null);
-  const [selectedPositionRole, setSelectedPositionRole] = useState(null); // NEW
+  const [selectedPositionRole, setSelectedPositionRole] = useState(null);
   const [unitPermissions, setUnitPermissions] = useState([]);
+  const [unitUsers, setUnitUsers] = useState([]); // NEW: Users in this unit
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -59,13 +60,26 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
 
   const loadUnitPermissions = async (unitId) => {
     try {
-      const { data } = await api.get(`/permissions/ecosystem-units/${unitId}/permissions`);
-      setUnitPermissions(data.permissions || []);
+      // Load permissions AND users for this unit
+      const [permsRes, usersRes] = await Promise.all([
+        api.get(`/permissions/ecosystem-units/${unitId}/permissions`),
+        api.get(`/ecosystem/units/${unitId}/users`), // NEW endpoint
+      ]);
+      
+      setUnitPermissions(permsRes.data.permissions || []);
+      setUnitUsers(usersRes.data.users || []); // Users in this unit (hierarchical)
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
       setSelectedUsers([]);
-      setSelectedPositionRole(null); // Reset position role
+      setSelectedPositionRole(null);
     } catch (e) {
-      console.error('Load unit permissions error:', e);
+      console.error('Load unit data error:', e);
+      // Fallback: try to get users from ecosystem_unit_members
+      try {
+        const { data } = await api.get(`/ecosystem/units/${unitId}/members`);
+        setUnitUsers(data.users || []);
+      } catch (err) {
+        setUnitUsers([]);
+      }
       setUnitPermissions([]);
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
     }
@@ -114,16 +128,6 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
       </div>
     );
   };
-
-  const unitUsers = unitPermissions.reduce((acc, up) => {
-    if (!acc.find(u => u.user_id === up.user_id)) {
-      const user = allUsers.find(u => u.id === up.user_id);
-      if (user) {
-        acc.push({ user_id: up.user_id, user_name: user.full_name, email: user.email });
-      }
-    }
-    return acc;
-  }, []);
 
   const toggleUserSelection = (userId) => {
     setSelectedUsers(prev =>

@@ -809,3 +809,124 @@ r.post("/units/members", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ═══ GET USERS IN UNIT (HIERARCHICAL) ═══
+r.get('/units/:unitId/users', async (req, res) => {
+  try {
+    const { unitId } = req.params;
+    
+    // Get unit details
+    const { data: unit, error: unitError } = await supabase
+      .from('ecosystem_units')
+      .select('*, level:ecosystem_levels(depth)')
+      .eq('id', unitId)
+      .single();
+    
+    if (unitError) throw unitError;
+    
+    const unitDepth = unit.level?.depth ?? null;
+    let userIds = [];
+    
+    if (unitDepth === 0) {
+      // Tập đoàn: all users
+      const { data: allUsers } = await supabase.from('users').select('id').eq('is_active', true);
+      userIds = (allUsers || []).map(u => u.id);
+    } else if (unitDepth === 1) {
+      // Khối: users in companies under this khối
+      // Get all child units
+      const { data: childUnits } = await supabase
+        .from('ecosystem_units')
+        .select('id, company_id, level:ecosystem_levels(depth)')
+        .or(`parent_id.eq.${unitId},id.eq.${unitId}`);
+      
+      const companyIds = (childUnits || [])
+        .filter(u => u.company_id)
+        .map(u => u.company_id);
+      
+      if (companyIds.length > 0) {
+        const { data: depts } = await supabase
+          .from('departments')
+          .select('id')
+          .in('company_id', companyIds);
+        
+        const deptIds = (depts || []).map(d => d.id);
+        
+        if (deptIds.length > 0) {
+          const { data: users } = await supabase
+            .from('users')
+            .select('id')
+            .in('department_id', deptIds)
+            .eq('is_active', true);
+          
+          userIds = (users || []).map(u => u.id);
+        }
+      }
+    } else if (unitDepth === 2) {
+      // Công ty: users in departments of this company
+      if (unit.company_id) {
+        const { data: depts } = await supabase
+          .from('departments')
+          .select('id')
+          .eq('company_id', unit.company_id);
+        
+        const deptIds = (depts || []).map(d => d.id);
+        
+        if (deptIds.length > 0) {
+          const { data: users } = await supabase
+            .from('users')
+            .select('id')
+            .in('department_id', deptIds)
+            .eq('is_active', true);
+          
+          userIds = (users || []).map(u => u.id);
+        }
+      }
+    } else if (unitDepth === 3) {
+      // Phòng ban: users in this department
+      // Find department by company_id match (ecosystem_units.company_id = departments.company_id)
+      if (unit.company_id) {
+        const { data: depts } = await supabase
+          .from('departments')
+          .select('id')
+          .eq('company_id', unit.company_id);
+        
+        // Assume unit name matches department name (or link via another field)
+        const dept = (depts || []).find(d => d.name === unit.name);
+        
+        if (dept) {
+          const { data: users } = await supabase
+            .from('users')
+            .select('id')
+            .eq('department_id', dept.id)
+            .eq('is_active', true);
+          
+          userIds = (users || []).map(u => u.id);
+        }
+      }
+    } else if (unitDepth === 4) {
+      // Team: users in ecosystem_unit_members
+      const { data: members } = await supabase
+        .from('ecosystem_unit_members')
+        .select('user_id')
+        .eq('unit_id', unitId);
+      
+      userIds = (members || []).map(m => m.user_id);
+    }
+    
+    // Load full user details
+    if (userIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, full_name, email, department_id, departments(name)')
+        .in('id', userIds)
+        .eq('is_active', true);
+      
+      res.json({ users: users || [] });
+    } else {
+      res.json({ users: [] });
+    }
+  } catch (e) {
+    console.error('GET /units/:unitId/users error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
