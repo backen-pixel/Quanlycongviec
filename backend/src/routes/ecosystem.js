@@ -194,14 +194,6 @@ r.get('/units', async (req, res) => {
     res.status(500).json({ error: e.message }); 
   }
 });
-    } else {
-      res.json({ units });
-    }
-  } catch (e) { 
-    console.error('GET /units error:', e);
-    res.status(500).json({ error: e.message }); 
-  }
-});
 
 function buildTree(units) {
   const map = {};
