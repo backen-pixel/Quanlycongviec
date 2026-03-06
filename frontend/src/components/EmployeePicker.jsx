@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, X, ChevronDown, User, Building2, Users, AlertCircle } from 'lucide-react';
 import api from '../lib/api';
@@ -51,15 +51,15 @@ export default function EmployeePicker({
     }
   }, [value, allUsers]);
 
-  // Calculate dropdown position using Portal (fixed positioning)
-  useEffect(() => {
+  // Calculate position synchronously before paint to avoid flicker
+  useLayoutEffect(() => {
     if (open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
       const viewportHeight = window.innerHeight;
       const spaceBelow = viewportHeight - rect.bottom;
-      const dropdownHeight = 340; // Approximate max height
+      const dropdownHeight = 340;
       
-      const style = {
+      const s = {
         position: 'fixed',
         left: Math.max(8, Math.min(rect.left, window.innerWidth - 296)),
         width: 288,
@@ -67,14 +67,12 @@ export default function EmployeePicker({
       };
 
       if (spaceBelow < dropdownHeight && rect.top > spaceBelow) {
-        // Show above
-        style.bottom = viewportHeight - rect.top + 4;
+        s.bottom = viewportHeight - rect.top + 4;
       } else {
-        // Show below
-        style.top = rect.bottom + 4;
+        s.top = rect.bottom + 4;
       }
 
-      setDropdownStyle(style);
+      setDropdownStyle(s);
     }
   }, [open]);
 

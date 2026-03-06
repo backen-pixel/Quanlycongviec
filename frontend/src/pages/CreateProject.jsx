@@ -99,7 +99,25 @@ export default function CreateProject() {
     if (templateTasks[templateSetId]) return;
     try {
       const { data } = await api.get(`/company-templates/template-sets/${templateSetId}/tasks`);
-      setTemplateTasks(prev => ({ ...prev, [templateSetId]: data.tasks || [] }));
+      const tasks = data.tasks || [];
+      setTemplateTasks(prev => ({ ...prev, [templateSetId]: tasks }));
+      
+      // Pre-fill taskAssignees from template default_assignee_id
+      const prefill = {};
+      tasks.forEach(t => {
+        if (t.default_assignee_id) {
+          prefill[t.id] = t.default_assignee_id;
+        }
+        // Also pre-fill checklist assignees
+        (t.checklists || []).forEach(c => {
+          if (c.default_assignee_id) {
+            prefill[`checklist_${c.id}`] = c.default_assignee_id;
+          }
+        });
+      });
+      if (Object.keys(prefill).length > 0) {
+        setTaskAssignees(prev => ({ ...prev, ...prefill }));
+      }
     } catch {}
   };
 

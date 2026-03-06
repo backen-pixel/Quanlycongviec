@@ -442,7 +442,21 @@ function TaskCard({ task, users, companyUnitId, onUpdate, onDelete, onAddCheckli
         {task.checklists?.length > 0 && <span className="text-[9px] text-gray-400 flex items-center gap-0.5"><CheckSquare className="h-2.5 w-2.5" />{task.checklists.length}</span>}
 
         {task.default_department && <span className="text-[8px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Building className="h-2 w-2" />{task.default_department.short_name || task.default_department.name}</span>}
-        {task.default_assignee && <span className="text-[8px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><User className="h-2 w-2" />{task.default_assignee.full_name?.split(' ').pop()}</span>}
+        
+        {/* Inline EmployeePicker on task row */}
+        <div className="shrink-0 w-36" onClick={e => e.stopPropagation()}>
+          <EmployeePicker
+            companyUnitId={companyUnitId}
+            value={assigneeId}
+            onChange={(userId) => {
+              setAssigneeId(userId);
+              // Auto-save assignee immediately
+              onUpdate(task.id, { default_assignee_id: userId || null });
+            }}
+            placeholder="+ Gán NV"
+            size="sm"
+          />
+        </div>
 
         <div className="flex gap-0.5 shrink-0">
           <button onClick={() => { if (editing) saveEdit(); else setEditing(true); }} className="h-6 w-6 rounded flex items-center justify-center text-blue-500 hover:bg-blue-50 cursor-pointer">{editing ? <Save className="h-3 w-3" /> : <Edit className="h-3 w-3" />}</button>
@@ -576,12 +590,19 @@ function ChecklistItem({ checklist, users, companyUnitId, onUpdate, onDelete }) 
       <span className="text-xs text-gray-700 flex-1 cursor-pointer" onClick={() => setEditing(true)}>
         {checklist.title}
       </span>
-      {assignee && (
-        <span className="text-[8px] bg-blue-50 text-blue-600 px-1 rounded flex items-center gap-0.5">
-          <User className="h-2 w-2" />
-          {assignee.full_name?.split(' ').pop() || 'NV'}
-        </span>
-      )}
+      {/* Inline EmployeePicker for checklist */}
+      <div className="shrink-0 w-32" onClick={e => e.stopPropagation()}>
+        <EmployeePicker
+          companyUnitId={companyUnitId}
+          value={assigneeId}
+          onChange={(userId) => {
+            setAssigneeId(userId);
+            onUpdate(checklist.id, { default_assignee_id: userId || null });
+          }}
+          placeholder="+ Gán"
+          size="sm"
+        />
+      </div>
       {checklist.require_file && <span className="text-[8px] bg-blue-50 text-blue-500 px-1 rounded">📎</span>}
       {checklist.require_note && <span className="text-[8px] bg-green-50 text-green-500 px-1 rounded">📝</span>}
       <button onClick={() => setEditing(true)} className="opacity-0 group-hover:opacity-100 h-5 w-5 rounded flex items-center justify-center text-blue-500 hover:bg-blue-100 cursor-pointer">
