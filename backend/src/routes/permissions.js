@@ -279,7 +279,7 @@ r.get('/ecosystem-units/:unitId/permissions', async (req, res) => {
 // Grant/revoke custom permission for user in specific unit
 r.post('/users/custom-permission', async (req, res) => {
   try {
-    const { user_id, permission_id, ecosystem_unit_id, granted } = req.body;
+    const { user_id, permission_id, ecosystem_unit_id, granted, position_role } = req.body;
     
     // Upsert: if exists update, else insert
     const { data, error } = await supabase
@@ -289,6 +289,7 @@ r.post('/users/custom-permission', async (req, res) => {
         permission_id,
         ecosystem_unit_id,
         granted: granted !== undefined ? granted : true,
+        position_role: position_role || null, // NEW: Save position role (director/manager/employee...)
         granted_by: null, // TODO: get from req.user
         granted_at: new Date().toISOString(),
       }, {
