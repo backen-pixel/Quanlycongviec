@@ -5,6 +5,13 @@ import api from '../lib/api';
 const LEVEL_LABELS = { 0: 'Tập đoàn', 1: 'Khối', 2: 'Công ty', 3: 'Phòng ban', 4: 'Đội nhóm' };
 const LEVEL_ICONS = { 0: '🏢', 1: '📦', 2: '🏭', 3: '👥', 4: '⚡' };
 
+// Helper: Get depth from unit
+const getUnitDepth = (unit) => {
+  if (!unit) return null;
+  if (typeof getUnitDepth(unit) === 'number') return getUnitDepth(unit); // Legacy
+  return getUnitDepth(unit)?.depth ?? null; // New schema
+};
+
 // Vai trò TRONG hệ sinh thái (position-based roles)
 const POSITION_ROLES = [
   { id: 'director', name: 'Giám đốc', level: 'high', color: 'red' },
@@ -79,7 +86,7 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
     const hasChildren = children.length > 0;
     const isExpanded = expandedUnits[unit.id];
     const isSelected = selectedUnit?.id === unit.id;
-    const icon = LEVEL_ICONS[unit.level] || '📦';
+    const icon = LEVEL_ICONS[getUnitDepth(unit)] || '📦';
 
     return (
       <div key={unit.id}>
@@ -136,7 +143,7 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
   const getAllowedPermissions = () => {
     if (!selectedUnit || !selectedPositionRole) return [];
 
-    const unitLevel = selectedUnit.level;
+    const unitLevel = getUnitDepth(selectedUnit);
     const positionLevel = POSITION_ROLES.find(r => r.id === selectedPositionRole)?.level;
 
     // Filter permissions based on hierarchical rules
@@ -249,10 +256,10 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                      <span>{LEVEL_ICONS[selectedUnit.level]}</span>
+                      <span>{LEVEL_ICONS[getUnitDepth(selectedUnit)]}</span>
                       {selectedUnit.name}
                     </h3>
-                    <p className="text-xs text-gray-500">{LEVEL_LABELS[selectedUnit.level]} • {unitUsers.length} nhân viên</p>
+                    <p className="text-xs text-gray-500">{LEVEL_LABELS[getUnitDepth(selectedUnit)]} • {unitUsers.length} nhân viên</p>
                   </div>
                   <button
                     onClick={() => setShowAddUser(true)}
@@ -366,7 +373,7 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                       {Object.keys(groupedPermissions).length === 0 ? (
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                           <p className="text-xs text-yellow-800">
-                            ⚠️ Vai trò <strong>{selectedPosition.name}</strong> trong <strong>{LEVEL_LABELS[selectedUnit.level]}</strong> không có quyền nào khả dụng.
+                            ⚠️ Vai trò <strong>{selectedPosition.name}</strong> trong <strong>{LEVEL_LABELS[getUnitDepth(selectedUnit)]}</strong> không có quyền nào khả dụng.
                           </p>
                         </div>
                       ) : (
@@ -460,14 +467,14 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
       const allDepts = deptData.departments || [];
       
       // If unit is Khối (level 1) or higher, load companies under it
-      if (unit.level <= 1) {
+      if (getUnitDepth(unit) <= 1) {
         const { data } = await api.get('/ecosystem/units');
         const allUnits = data.units || [];
         
         // Get child companies of this unit
         const childCompanies = allUnits.filter(u => {
-          if (unit.level === 0) return u.level === 2; // Tập đoàn → all companies
-          if (unit.level === 1) {
+          if (getUnitDepth(unit) === 0) return u.level === 2; // Tập đoàn → all companies
+          if (getUnitDepth(unit) === 1) {
             // Khối → companies that are children or have parent_id = this unit
             return u.level === 2 && (u.parent_id === unit.id || allUnits.find(p => p.id === u.parent_id && p.parent_id === unit.id));
           }
@@ -480,11 +487,11 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
         const companyIds = childCompanies.map(c => c.company_id).filter(Boolean);
         const relevantDepts = allDepts.filter(d => companyIds.includes(d.company_id));
         setDepartments(relevantDepts);
-      } else if (unit.level === 2) {
+      } else if (getUnitDepth(unit) === 2) {
         // If unit is Company, load its departments
         const relevantDepts = allDepts.filter(d => d.company_id === unit.company_id);
         setDepartments(relevantDepts);
-      } else if (unit.level === 3) {
+      } else if (getUnitDepth(unit) === 3) {
         // Phòng ban: no filters needed (will filter by department directly)
         setDepartments(allDepts);
       }
@@ -498,9 +505,9 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
     let filtered = users.filter(u => !existingUserIds.includes(u.id));
 
     // Filter by ecosystem hierarchy
-    if (unit.level === 0) {
+    if (getUnitDepth(unit) === 0) {
       // Tập đoàn: all users (no filter)
-    } else if (unit.level === 1) {
+    } else if (getUnitDepth(unit) === 1) {
       // Khối: users in companies under this Khối
       const relevantDeptIds = departments.map(d => d.id);
       filtered = filtered.filter(u => relevantDeptIds.includes(u.department_id));
@@ -519,7 +526,7 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
       if (selectedDepartment) {
         filtered = filtered.filter(u => u.department_id === selectedDepartment);
       }
-    } else if (unit.level === 2) {
+    } else if (getUnitDepth(unit) === 2) {
       // Công ty: users in this company
       const companyDeptIds = departments.map(d => d.id);
       filtered = filtered.filter(u => companyDeptIds.includes(u.department_id));
@@ -527,14 +534,14 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
       if (selectedDepartment) {
         filtered = filtered.filter(u => u.department_id === selectedDepartment);
       }
-    } else if (unit.level === 3) {
+    } else if (getUnitDepth(unit) === 3) {
       // Phòng ban: users in this department
       // Find department by matching company_id + name (or use ecosystem link)
       const dept = departments.find(d => d.company_id === unit.company_id);
       if (dept) {
         filtered = filtered.filter(u => u.department_id === dept.id);
       }
-    } else if (unit.level === 4) {
+    } else if (getUnitDepth(unit) === 4) {
       // Team: show all for now (will be refined with ecosystem_unit_members)
     }
 
@@ -586,7 +593,7 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
           </div>
 
           {/* Company filter (if Khối or higher) */}
-          {unit.level <= 1 && companies.length > 0 && (
+          {getUnitDepth(unit) <= 1 && companies.length > 0 && (
             <div>
               <label className="text-xs font-medium text-gray-700 block mb-1">Công ty</label>
               <select
@@ -606,7 +613,7 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
           )}
 
           {/* Department filter (if Company or has selected company) */}
-          {(unit.level === 2 || selectedCompany) && departments.length > 0 && (
+          {(getUnitDepth(unit) === 2 || selectedCompany) && departments.length > 0 && (
             <div>
               <label className="text-xs font-medium text-gray-700 block mb-1">Phòng ban</label>
               <select
