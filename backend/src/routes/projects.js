@@ -5,7 +5,39 @@ const { auth } = require('../middleware/auth');
 const r = Router();
 r.use(auth);
 
-// ─── HELPER ──
+// ─── HELPER: Get user's company_id ──
+async function getUserCompanyId(userId) {
+  try {
+    const { data: user } = await supabase
+      .from('users')
+      .select('department_id, departments(company_id)')
+      .eq('id', userId)
+      .single();
+    
+    return user?.departments?.company_id || null;
+  } catch (e) {
+    console.warn('Get user company_id error:', e.message);
+    return null;
+  }
+}
+
+// ─── HELPER: Check if user has permission ──
+async function checkPermission(userId, resource, action, ecosystemUnitId = null) {
+  try {
+    const { data } = await supabase.rpc('user_has_permission', {
+      p_user_id: userId,
+      p_resource: resource,
+      p_action: action,
+      p_ecosystem_unit_id: ecosystemUnitId,
+    });
+    return !!data;
+  } catch (e) {
+    console.warn('Check permission error:', e.message);
+    return false; // Deny by default on error
+  }
+}
+
+// ─── HELPER: Create notification ──
 async function createNotification(req, userId, type, title, message, entityType, entityId) {
   if (!userId || userId === req.user.userId) return;
   const { data } = await supabase.from('notifications').insert({
@@ -73,16 +105,28 @@ r.get('/', async (req, res) => {
       if (mappedStatus) q = q.eq('status', mappedStatus);
     }
 
-    // ── ROLE-BASED FILTERING ──
-    // Non-admin/manager users only see projects where they are assigned to a stage
+    // ── PERMISSION-BASED FILTERING ──
     const userRole = req.user.role;
-    if (userRole && !['admin', 'manager'].includes(userRole)) {
-      const uid = req.user.userId;
-      // Try with stage person fields, fallback to legacy fields only
-      try {
-        q = q.or(`consulting_person_id.eq.${uid},design_person_id.eq.${uid},quotation_person_id.eq.${uid},contract_person_id.eq.${uid},production_person_id.eq.${uid},shipping_person_id.eq.${uid},installation_person_id.eq.${uid},care_person_id.eq.${uid},sales_person_id.eq.${uid},designer_id.eq.${uid},project_manager_id.eq.${uid}`);
-      } catch {
-        q = q.or(`sales_person_id.eq.${uid},designer_id.eq.${uid},project_manager_id.eq.${uid}`);
+    const userId = req.user.userId;
+    
+    // Check if user has 'projects' 'all_companies' permission
+    const canViewAllCompanies = await checkPermission(userId, 'projects', 'all_companies');
+    
+    if (!canViewAllCompanies) {
+      // User can only see projects from their company
+      const userCompanyId = await getUserCompanyId(userId);
+      
+      if (userCompanyId) {
+        q = q.eq('company_id', userCompanyId);
+      } else {
+        // No company assigned → only see projects where user is assigned
+        if (userRole && !['admin', 'manager'].includes(userRole)) {
+          try {
+            q = q.or(`consulting_person_id.eq.${userId},design_person_id.eq.${userId},quotation_person_id.eq.${userId},contract_person_id.eq.${userId},production_person_id.eq.${userId},shipping_person_id.eq.${userId},installation_person_id.eq.${userId},care_person_id.eq.${userId},sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`);
+          } catch {
+            q = q.or(`sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`);
+          }
+        }
       }
     }
 
