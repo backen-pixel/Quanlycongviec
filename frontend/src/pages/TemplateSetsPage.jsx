@@ -199,27 +199,67 @@ function SetForm({ set, unitId, onSaved, onCancel }) {
   const [projectType, setProjectType] = useState(set?.project_type || '');
   const [isDefault, setIsDefault] = useState(set?.is_default || false);
   const [saving, setSaving] = useState(false);
+  const [processes, setProcesses] = useState([]);
+  const [selectedProcess, setSelectedProcess] = useState('');
+  const [loadingProcesses, setLoadingProcesses] = useState(false);
+
+  // Load processes when creating new template (not editing)
+  useEffect(() => {
+    if (!set?.id && unitId) {
+      loadProcesses();
+    }
+  }, [unitId, set]);
+
+  const loadProcesses = async () => {
+    setLoadingProcesses(true);
+    try {
+      const { data } = await api.get(`/company-processes/unit/${unitId}`);
+      setProcesses(data.processes || []);
+    } catch (e) {
+      console.error('Load processes error:', e);
+    }
+    setLoadingProcesses(false);
+  };
 
   const save = async () => {
     if (!name.trim()) return alert('Nhập tên bộ mẫu');
+    if (!set?.id && !selectedProcess) {
+      return alert('Vui lòng chọn quy trình nội bộ làm gốc');
+    }
+    
     setSaving(true);
     try {
       if (set?.id) {
+        // Edit existing
         await api.put(`/company-templates/template-sets/${set.id}`, {
           name: name.trim(),
           description: description.trim() || null,
           project_type: projectType.trim() || null,
           is_default: isDefault,
         });
+        onSaved();
       } else {
-        await api.post(`/company-templates/units/${unitId}/template-sets`, {
+        // Create new
+        const { data } = await api.post(`/company-templates/units/${unitId}/template-sets`, {
           name: name.trim(),
           description: description.trim() || null,
           project_type: projectType.trim() || null,
           is_default: isDefault,
         });
+
+        // Immediately copy tasks from selected process
+        const newSetId = data.set.id;
+        try {
+          await api.post(`/company-templates/template-sets/${newSetId}/copy-from-process`, {
+            process_id: selectedProcess
+          });
+        } catch (copyErr) {
+          console.error('Copy tasks error:', copyErr);
+          alert('Bộ mẫu đã tạo nhưng lỗi khi copy nhiệm vụ. Vui lòng copy thủ công trong trang chi tiết.');
+        }
+        
+        onSaved();
       }
-      onSaved();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
     }
@@ -232,6 +272,40 @@ function SetForm({ set, unitId, onSaved, onCancel }) {
         {set ? '✏️ Sửa' : '➕ Tạo'} bộ quy trình
       </h3>
       <div className="grid grid-cols-2 gap-3">
+        {/* Process selection - only for new templates */}
+        {!set?.id && (
+          <div className="col-span-2 bg-white rounded-lg border-2 border-purple-300 p-3">
+            <label className="text-xs font-bold text-purple-900 block mb-2 flex items-center gap-1">
+              <Copy className="h-3.5 w-3.5" /> Chọn quy trình nội bộ làm gốc *
+            </label>
+            {loadingProcesses ? (
+              <div className="text-xs text-gray-500 py-2">Đang tải quy trình...</div>
+            ) : processes.length === 0 ? (
+              <div className="text-xs text-amber-700 bg-amber-50 rounded p-2">
+                ⚠️ Công ty này chưa có quy trình nội bộ. Vui lòng tạo quy trình trước.
+              </div>
+            ) : (
+              <>
+                <select 
+                  value={selectedProcess} 
+                  onChange={e => setSelectedProcess(e.target.value)} 
+                  className="w-full h-9 px-3 border border-purple-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">-- Chọn quy trình --</option>
+                  {processes.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.icon || '📋'} {p.name} ({p.task_count || 0} nhiệm vụ)
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-purple-600 mt-1">
+                  Tất cả nhiệm vụ + checklist sẽ được copy từ quy trình này
+                </p>
+              </>
+            )}
+          </div>
+        )}
+        
         <div className="col-span-2 sm:col-span-1">
           <label className="text-xs font-medium text-gray-600 block mb-1">Tên bộ mẫu *</label>
           <input 
