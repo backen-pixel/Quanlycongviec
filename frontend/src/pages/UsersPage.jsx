@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import Modal from '../components/Modal';
-import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound } from 'lucide-react';
+import UserRolesModal from '../components/UserRolesModal';
+import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 
 const ROLES = { admin: 'Admin', manager: 'Quản lý', sales: 'Kinh doanh', designer: 'Thiết kế', production: 'Sản xuất', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
@@ -19,6 +20,7 @@ export default function UsersPage() {
   const [editUser, setEditUser] = useState(null);
   const [showDetail, setShowDetail] = useState(null);
   const [menuUser, setMenuUser] = useState(null);
+  const [showRolesModal, setShowRolesModal] = useState(null); // { userId, userName }
 
   const load = useCallback(() => {
     setLoading(true);
@@ -121,6 +123,8 @@ export default function UsersPage() {
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setMenuUser(null)} />
                     <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border z-50 py-1">
+                      <button onClick={() => { setMenuUser(null); setShowRolesModal({ userId: u.id, userName: u.full_name }); }}
+                        className="w-full px-3 py-2 text-xs text-left hover:bg-purple-50 flex items-center gap-2 cursor-pointer text-purple-700"><Shield className="h-3 w-3" /> Phân quyền</button>
                       <button onClick={() => { setMenuUser(null); setEditUser(u); setShowCreate(true); }}
                         className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700"><Edit className="h-3 w-3" /> Chỉnh sửa</button>
                       <button onClick={() => deactivate(u.id, u.full_name)}
@@ -135,6 +139,15 @@ export default function UsersPage() {
       )}
 
       <StaffFormModal open={showCreate} onClose={() => { setShowCreate(false); setEditUser(null); }} onSaved={load} editUser={editUser} />
+      
+      {showRolesModal && (
+        <UserRolesModal
+          userId={showRolesModal.userId}
+          userName={showRolesModal.userName}
+          onClose={() => setShowRolesModal(null)}
+          onSaved={() => { setShowRolesModal(null); load(); }}
+        />
+      )}
       <StaffDetailModal userId={showDetail} open={!!showDetail} onClose={() => setShowDetail(null)} />
     </div>
   );
