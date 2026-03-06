@@ -436,8 +436,119 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
 function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
   const [selectedUser, setSelectedUser] = useState('');
   const [saving, setSaving] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [companies, setCompanies] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [selectedCompany, setSelectedCompany] = useState('');
+  const [selectedDepartment, setSelectedDepartment] = useState('');
+  const [filteredUsers, setFilteredUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  const availableUsers = users.filter(u => !existingUserIds.includes(u.id));
+  useEffect(() => {
+    loadFilters();
+  }, []);
+
+  useEffect(() => {
+    applyFilters();
+  }, [users, unit, selectedCompany, selectedDepartment, searchTerm]);
+
+  const loadFilters = async () => {
+    setLoading(true);
+    try {
+      // Load all departments first (for filtering)
+      const { data: deptData } = await api.get('/departments');
+      const allDepts = deptData.departments || [];
+      
+      // If unit is Khối (level 1) or higher, load companies under it
+      if (unit.level <= 1) {
+        const { data } = await api.get('/ecosystem/units');
+        const allUnits = data.units || [];
+        
+        // Get child companies of this unit
+        const childCompanies = allUnits.filter(u => {
+          if (unit.level === 0) return u.level === 2; // Tập đoàn → all companies
+          if (unit.level === 1) {
+            // Khối → companies that are children or have parent_id = this unit
+            return u.level === 2 && (u.parent_id === unit.id || allUnits.find(p => p.id === u.parent_id && p.parent_id === unit.id));
+          }
+          return false;
+        });
+        
+        setCompanies(childCompanies);
+        
+        // Get departments of these companies
+        const companyIds = childCompanies.map(c => c.company_id).filter(Boolean);
+        const relevantDepts = allDepts.filter(d => companyIds.includes(d.company_id));
+        setDepartments(relevantDepts);
+      } else if (unit.level === 2) {
+        // If unit is Company, load its departments
+        const relevantDepts = allDepts.filter(d => d.company_id === unit.company_id);
+        setDepartments(relevantDepts);
+      } else if (unit.level === 3) {
+        // Phòng ban: no filters needed (will filter by department directly)
+        setDepartments(allDepts);
+      }
+    } catch (e) {
+      console.error('Load filters error:', e);
+    }
+    setLoading(false);
+  };
+
+  const applyFilters = () => {
+    let filtered = users.filter(u => !existingUserIds.includes(u.id));
+
+    // Filter by ecosystem hierarchy
+    if (unit.level === 0) {
+      // Tập đoàn: all users (no filter)
+    } else if (unit.level === 1) {
+      // Khối: users in companies under this Khối
+      const relevantDeptIds = departments.map(d => d.id);
+      filtered = filtered.filter(u => relevantDeptIds.includes(u.department_id));
+      
+      // If company selected, narrow down
+      if (selectedCompany) {
+        const companyDepts = departments.filter(d => d.company_id === selectedCompany);
+        const companyDeptIds = companyDepts.map(d => d.id);
+        filtered = filtered.filter(u => companyDeptIds.includes(u.department_id));
+        
+        // Update department dropdown
+        setDepartments(companyDepts);
+      }
+      
+      // If department selected, narrow down further
+      if (selectedDepartment) {
+        filtered = filtered.filter(u => u.department_id === selectedDepartment);
+      }
+    } else if (unit.level === 2) {
+      // Công ty: users in this company
+      const companyDeptIds = departments.map(d => d.id);
+      filtered = filtered.filter(u => companyDeptIds.includes(u.department_id));
+      
+      if (selectedDepartment) {
+        filtered = filtered.filter(u => u.department_id === selectedDepartment);
+      }
+    } else if (unit.level === 3) {
+      // Phòng ban: users in this department
+      // Find department by matching company_id + name (or use ecosystem link)
+      const dept = departments.find(d => d.company_id === unit.company_id);
+      if (dept) {
+        filtered = filtered.filter(u => u.department_id === dept.id);
+      }
+    } else if (unit.level === 4) {
+      // Team: show all for now (will be refined with ecosystem_unit_members)
+    }
+
+    // Search by name
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter(u =>
+        u.full_name?.toLowerCase().includes(term) ||
+        u.email?.toLowerCase().includes(term)
+      );
+    }
+
+    setFilteredUsers(filtered);
+  };
 
   const handleAdd = async () => {
     if (!selectedUser) return alert('Chọn nhân viên');
@@ -457,18 +568,111 @@ function AddUserModal({ unit, users, existingUserIds, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl p-4 max-w-md w-full">
+      <div className="bg-white rounded-xl p-4 max-w-xl w-full max-h-[80vh] overflow-hidden flex flex-col">
         <h3 className="text-sm font-bold mb-3">Gán nhân viên vào {unit.name}</h3>
-        <select
-          value={selectedUser}
-          onChange={e => setSelectedUser(e.target.value)}
-          className="w-full px-3 py-2 border rounded-lg text-sm mb-3"
-        >
-          <option value="">-- Chọn nhân viên --</option>
-          {availableUsers.map(u => (
-            <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
-          ))}
-        </select>
+        
+        {/* Filters */}
+        <div className="space-y-3 mb-3">
+          {/* Search */}
+          <div>
+            <label className="text-xs font-medium text-gray-700 block mb-1">Tìm kiếm</label>
+            <input
+              type="text"
+              placeholder="Gõ tên hoặc email..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full px-3 py-2 border rounded-lg text-sm"
+            />
+          </div>
+
+          {/* Company filter (if Khối or higher) */}
+          {unit.level <= 1 && companies.length > 0 && (
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1">Công ty</label>
+              <select
+                value={selectedCompany}
+                onChange={e => {
+                  setSelectedCompany(e.target.value);
+                  setSelectedDepartment('');
+                }}
+                className="w-full px-3 py-2 border rounded-lg text-sm"
+              >
+                <option value="">-- Tất cả công ty --</option>
+                {companies.map(c => (
+                  <option key={c.id} value={c.company_id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Department filter (if Company or has selected company) */}
+          {(unit.level === 2 || selectedCompany) && departments.length > 0 && (
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1">Phòng ban</label>
+              <select
+                value={selectedDepartment}
+                onChange={e => setSelectedDepartment(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg text-sm"
+              >
+                <option value="">-- Tất cả phòng ban --</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* User count */}
+          <p className="text-xs text-gray-500">
+            Tìm thấy {filteredUsers.length} nhân viên
+          </p>
+        </div>
+
+        {/* User list */}
+        <div className="flex-1 overflow-y-auto border rounded-lg mb-3">
+          {loading ? (
+            <div className="flex items-center justify-center h-32">
+              <div className="animate-spin h-6 w-6 border-2 border-purple-200 border-t-purple-600 rounded-full" />
+            </div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-32 text-gray-400">
+              <Users className="h-8 w-8 mb-2 opacity-30" />
+              <p className="text-xs">Không tìm thấy nhân viên</p>
+            </div>
+          ) : (
+            <div className="p-2 space-y-1">
+              {filteredUsers.map(u => (
+                <label
+                  key={u.id}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                    selectedUser === u.id ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-purple-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="user"
+                    value={u.id}
+                    checked={selectedUser === u.id}
+                    onChange={() => setSelectedUser(u.id)}
+                    className="w-4 h-4 accent-purple-600"
+                  />
+                  <div className="w-8 h-8 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold shrink-0">
+                    {u.full_name?.charAt(0)?.toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900">{u.full_name}</p>
+                    <p className="text-xs text-gray-500 truncate">{u.email}</p>
+                    {u.department_name && (
+                      <p className="text-xs text-gray-400">{u.department_name}</p>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
         <div className="flex gap-2">
           <button onClick={onClose} className="flex-1 px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">
             Hủy
