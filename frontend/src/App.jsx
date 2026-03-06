@@ -29,6 +29,7 @@ import CompanyProcessesPage from './pages/CompanyProcessesPage';
 import CreateProject from './pages/CreateProject';
 import CreateProjectNew from './pages/CreateProjectNew';
 import TemplateSetsPage from './pages/TemplateSetsPage';
+import WorkflowHubPage from './pages/WorkflowHubPage';
 import { Settings } from 'lucide-react';
 
 function ProtectedLayout() {
@@ -102,9 +103,10 @@ export default function App() {
             <Route path="/ecosystem" element={<EcosystemPage />} />
             <Route path="/ecosystem-levels" element={<EcosystemLevelsPage />} />
             <Route path="/stage-groups" element={<StageGroupsPage />} />
-            <Route path="/workflow-flows" element={<WorkflowFlowsPage />} />
-            <Route path="/company-processes" element={<CompanyProcessesPage />} />
-            <Route path="/template-sets" element={<TemplateSetsPage />} />
+            <Route path="/workflow-hub" element={<WorkflowHubPage />} />
+            <Route path="/workflow-flows" element={<WorkflowHubPage />} />
+            <Route path="/company-processes" element={<WorkflowHubPage />} />
+            <Route path="/template-sets" element={<WorkflowHubPage />} />
             <Route path="/template-sets/:setId" element={<TemplateSetDetailPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
