@@ -471,6 +471,38 @@ r.post('/create-with-flow', async (req, res) => {
     const projectStart = new Date();
     let allCreatedTasks = [];
 
+    // ── Handle added tasks (insert into template before generating project tasks) ──
+    const tempIdToRealIdMap = {}; // Map temp IDs to real task IDs for assignment lookup
+    if (b.added_tasks?.length) {
+      for (const addedTask of b.added_tasks) {
+        try {
+          const { data: newTemplateTask, error: addErr } = await supabase
+            .from('company_template_tasks')
+            .insert({
+              template_set_id: addedTask.template_set_id,
+              stage_id: addedTask.stage_id,
+              title: addedTask.title,
+              description: addedTask.description || null,
+              order_index: addedTask.order_index || 9999,
+            })
+            .select()
+            .single();
+          
+          if (addErr) {
+            console.error('Failed to insert added task:', addErr);
+            continue;
+          }
+          
+          // Map temp_id to real task id for assignment lookup
+          if (addedTask._temp_id && newTemplateTask) {
+            tempIdToRealIdMap[addedTask._temp_id] = newTemplateTask.id;
+          }
+        } catch (e) {
+          console.error('Error adding task to template:', e);
+        }
+      }
+    }
+
     // ── Process flow steps: assignments + template tasks ──
     // b.flow_assignments = [{ division_unit_id, company_unit_id, template_set_id, order_index }]
     if (b.flow_assignments?.length) {
@@ -610,8 +642,18 @@ r.post('/create-with-flow', async (req, res) => {
                 dueDate.setHours(dueDate.getHours() + (t.deadline_hours || 0));
               }
 
-              const taskKey = t.id;
-              const overrideAssignee = b.task_assignments?.[taskKey] || null;
+              // Check assignment: first try direct task.id, then check if this is a newly added task (temp_id mapping)
+              let taskKey = t.id;
+              let overrideAssignee = b.task_assignments?.[taskKey] || null;
+              
+              // If no assignment found and this task was just added (reverse lookup in tempIdToRealIdMap)
+              if (!overrideAssignee) {
+                const tempId = Object.keys(tempIdToRealIdMap).find(tid => tempIdToRealIdMap[tid] === t.id);
+                if (tempId && b.task_assignments?.[tempId]) {
+                  overrideAssignee = b.task_assignments[tempId];
+                }
+              }
+              
               const finalAssignee = overrideAssignee || t.default_assignee_id || null;
 
               const { data: task, error: taskErr } = await supabase.from('tasks').insert({

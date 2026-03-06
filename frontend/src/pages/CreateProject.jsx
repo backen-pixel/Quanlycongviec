@@ -37,6 +37,9 @@ export default function CreateProject() {
   const [expandedTasks, setExpandedTasks] = useState({});
   const [activeTab, setActiveTab] = useState('info');
   const [errors, setErrors] = useState({});
+  const [addedTasks, setAddedTasks] = useState({}); // { templateSetId_stageId: [{ title, description, order_index, _temp_id }] }
+  const [showAddTask, setShowAddTask] = useState(null); // { templateSetId, stageId, stageName }
+  const [newTask, setNewTask] = useState({ title: '', description: '' });
 
   useEffect(() => {
     Promise.all([
@@ -148,6 +151,22 @@ export default function CreateProject() {
 
     setLoading(true);
     try {
+      // Prepare added tasks for backend
+      const addedTasksArray = [];
+      Object.entries(addedTasks).forEach(([key, tasks]) => {
+        const [templateSetId, stageId] = key.split('_');
+        tasks.forEach(task => {
+          addedTasksArray.push({
+            template_set_id: templateSetId,
+            stage_id: stageId,
+            title: task.title,
+            description: task.description,
+            order_index: task.order_index,
+            _temp_id: task._temp_id, // For mapping assignees
+          });
+        });
+      });
+
       const payload = {
         name: form.name.trim(),
         description: form.description || null,
@@ -166,6 +185,7 @@ export default function CreateProject() {
           })),
         quotation_files: quotationFiles,
         task_assignments: taskAssignees,
+        added_tasks: addedTasksArray, // New tasks to add to template set
       };
       const { data } = await api.post('/projects/create-with-flow', payload);
       navigate(`/projects/${data.project.id}`);
@@ -179,6 +199,44 @@ export default function CreateProject() {
     if (confirm('Hủy tạo dự án mới? Dữ liệu sẽ không được lưu.')) {
       navigate('/projects');
     }
+  };
+
+  const handleAddTaskClick = (templateSetId, stageId, stageName) => {
+    setShowAddTask({ templateSetId, stageId, stageName });
+    setNewTask({ title: '', description: '' });
+  };
+
+  const handleSaveNewTask = () => {
+    if (!newTask.title.trim()) return;
+    const { templateSetId, stageId } = showAddTask;
+    const key = `${templateSetId}_${stageId}`;
+    const tempId = `temp_${Date.now()}_${Math.random()}`;
+    const task = {
+      _temp_id: tempId,
+      title: newTask.title.trim(),
+      description: newTask.description.trim(),
+      order_index: 9999, // Đẩy xuống cuối
+      stage: { id: stageId }, // Minimal stage info for grouping
+    };
+    setAddedTasks(prev => ({
+      ...prev,
+      [key]: [...(prev[key] || []), task]
+    }));
+    setShowAddTask(null);
+    setNewTask({ title: '', description: '' });
+  };
+
+  const handleCancelAddTask = () => {
+    setShowAddTask(null);
+    setNewTask({ title: '', description: '' });
+  };
+
+  const handleDeleteAddedTask = (templateSetId, stageId, tempId) => {
+    const key = `${templateSetId}_${stageId}`;
+    setAddedTasks(prev => ({
+      ...prev,
+      [key]: (prev[key] || []).filter(t => t._temp_id !== tempId)
+    }));
   };
 
   const selectedCustomer = customers.find(c => c.id === form.customer_id);
@@ -559,6 +617,8 @@ export default function CreateProject() {
                                 {/* Group tasks by stage */}
                                 {(() => {
                                   const tasksByStage = {};
+                                  
+                                  // Add template tasks
                                   tasks.forEach(task => {
                                     const stageSlug = task.stage?.slug || 'unknown';
                                     if (!tasksByStage[stageSlug]) {
@@ -569,6 +629,29 @@ export default function CreateProject() {
                                     }
                                     tasksByStage[stageSlug].tasks.push(task);
                                   });
+
+                                  // Add newly added tasks (temporary, not saved yet)
+                                  const selectedSetId = selectedTemplateSets[step.company_unit_id];
+                                  if (selectedSetId) {
+                                    Object.entries(addedTasks).forEach(([key, addedList]) => {
+                                      const [setId, stageId] = key.split('_');
+                                      if (setId === selectedSetId) {
+                                        addedList.forEach(task => {
+                                          // Find stage info from existing tasks
+                                          const existingStageEntry = Object.values(tasksByStage).find(g => g.stage?.id === stageId);
+                                          const stageSlug = existingStageEntry?.stage?.slug || `stage_${stageId}`;
+                                          
+                                          if (!tasksByStage[stageSlug]) {
+                                            tasksByStage[stageSlug] = {
+                                              stage: existingStageEntry?.stage || { id: stageId, name: 'N/A', slug: stageSlug },
+                                              tasks: []
+                                            };
+                                          }
+                                          tasksByStage[stageSlug].tasks.push(task);
+                                        });
+                                      }
+                                    });
+                                  }
 
                                   return Object.entries(tasksByStage).map(([stageSlug, group]) => (
                                     <div key={stageSlug} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
@@ -582,32 +665,93 @@ export default function CreateProject() {
                                         <span className="ml-auto bg-white/20 px-2 py-0.5 rounded text-xs">
                                           {group.tasks.length} nhiệm vụ
                                         </span>
+                                        {/* Add Task Button */}
+                                        <button
+                                          onClick={() => handleAddTaskClick(selectedSetId, group.stage?.id, group.stage?.name)}
+                                          className="ml-2 px-2 py-0.5 bg-white/20 hover:bg-white/30 rounded text-xs font-medium flex items-center gap-1 transition-colors"
+                                          title="Thêm nhiệm vụ vào quy trình này"
+                                        >
+                                          <Plus className="h-3 w-3" /> Thêm
+                                        </button>
                                       </div>
 
                                       {/* Tasks in this stage */}
                                       <div className="p-3 bg-gray-50 space-y-2">
+                                        {/* Add Task Form (inline) */}
+                                        {showAddTask?.templateSetId === selectedSetId && showAddTask?.stageId === group.stage?.id && (
+                                          <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-3 space-y-2">
+                                            <input
+                                              autoFocus
+                                              type="text"
+                                              value={newTask.title}
+                                              onChange={e => setNewTask(p => ({ ...p, title: e.target.value }))}
+                                              placeholder="Tên nhiệm vụ..."
+                                              className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                              onKeyDown={e => {
+                                                if (e.key === 'Enter') handleSaveNewTask();
+                                                if (e.key === 'Escape') handleCancelAddTask();
+                                              }}
+                                            />
+                                            <textarea
+                                              value={newTask.description}
+                                              onChange={e => setNewTask(p => ({ ...p, description: e.target.value }))}
+                                              placeholder="Mô tả (không bắt buộc)..."
+                                              rows={2}
+                                              className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            />
+                                            <div className="flex items-center gap-2">
+                                              <button
+                                                onClick={handleSaveNewTask}
+                                                disabled={!newTask.title.trim()}
+                                                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-1"
+                                              >
+                                                <Save className="h-3 w-3" /> Lưu
+                                              </button>
+                                              <button
+                                                onClick={handleCancelAddTask}
+                                                className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg text-xs font-medium hover:bg-gray-50 flex items-center gap-1"
+                                              >
+                                                <X className="h-3 w-3" /> Hủy
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+
                                         {group.tasks.map((task, taskIdx) => {
                                           const taskChecklists = task.checklists || [];
                                           const taskName = task.title || task.name || '(không tên)';
+                                          const isNewlyAdded = task._temp_id; // Check if this is a new task
+                                          const taskId = task.id || task._temp_id;
                                           
                                           return (
-                                            <div key={task.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                            <div key={taskId} className={`bg-white rounded-lg border overflow-hidden ${isNewlyAdded ? 'border-blue-300 shadow-sm' : 'border-gray-200'}`}>
                                               {/* Task Header - Number + Name + Assignee on SAME ROW */}
                                               <div className="flex items-center gap-3 px-4 py-3">
                                                 {/* Number badge */}
-                                                <div className="flex items-center justify-center w-7 h-7 rounded-full bg-purple-100 text-purple-700 font-bold text-sm shrink-0">
+                                                <div className={`flex items-center justify-center w-7 h-7 rounded-full font-bold text-sm shrink-0 ${isNewlyAdded ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
                                                   {taskIdx + 1}
                                                 </div>
                                                 {/* Task name - bold, large */}
                                                 <span className="flex-1 font-bold text-gray-900 text-base leading-snug">
                                                   {taskName}
+                                                  {isNewlyAdded && <span className="ml-2 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-normal">MỚI</span>}
                                                 </span>
+                                                {/* Delete button for newly added tasks */}
+                                                {isNewlyAdded && (
+                                                  <button
+                                                    onClick={() => handleDeleteAddedTask(selectedSetId, group.stage?.id, task._temp_id)}
+                                                    className="shrink-0 p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600"
+                                                    title="Xóa nhiệm vụ mới"
+                                                  >
+                                                    <X className="h-4 w-4" />
+                                                  </button>
+                                                )}
                                                 {/* Assignee Picker */}
                                                 <div className="shrink-0 w-48">
                                                   <EmployeePicker
                                                     companyUnitId={step.company_unit_id}
-                                                    value={taskAssignees[task.id] || ''}
-                                                    onChange={(userId) => setTaskAssignees(prev => ({ ...prev, [task.id]: userId || '' }))}
+                                                    value={taskAssignees[taskId] || ''}
+                                                    onChange={(userId) => setTaskAssignees(prev => ({ ...prev, [taskId]: userId || '' }))}
                                                     placeholder="👤 Chưa gán"
                                                     size="sm"
                                                   />
@@ -625,15 +769,16 @@ export default function CreateProject() {
                                               {taskChecklists.length > 0 && (
                                                 <div className="border-t border-gray-100">
                                                   <button
-                                                    onClick={() => setExpandedTasks(p => ({ ...p, [task.id]: !p[task.id] }))}
+                                                    onClick={() => setExpandedTasks(p => ({ ...p, [taskId]: !p[taskId] }))}
                                                     className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold text-purple-700 hover:bg-purple-50 transition-colors"
                                                   >
-                                                    {expandedTasks[task.id] ? (
+                                                    {expandedTasks[taskId] ? (
                                                       <ChevronDown className="h-3.5 w-3.5" />
                                                     ) : (
                                                       <ChevronRight className="h-3.5 w-3.5" />
                                                     )}
                                                     <ListChecks className="h-3.5 w-3.5" />
+
                                                     <span>Checklist ({taskChecklists.length})</span>
                                                   </button>
 

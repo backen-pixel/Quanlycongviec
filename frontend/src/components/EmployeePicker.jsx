@@ -145,12 +145,12 @@ export default function EmployeePicker({
         <>
           {/* Backdrop */}
           <div
-            className="fixed inset-0 z-40"
+            className="fixed inset-0 z-[9998]"
             onClick={() => setOpen(false)}
           />
 
           {/* Dropdown panel */}
-          <div className="absolute z-50 mt-1 w-72 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+          <div className="absolute z-[9999] mt-1 w-72 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
             {/* Search */}
             <div className="p-2 border-b border-gray-100">
               <div className="relative">
