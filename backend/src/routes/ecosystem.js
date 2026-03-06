@@ -159,16 +159,18 @@ r.get('/units', async (req, res) => {
       `)
       .eq('is_active', true);
     
-    // Filter by level if provided
-    if (level !== undefined) {
-      q = q.eq('level', parseInt(level));
-    }
-    
     const { data, error } = await q.order('order_index');
     if (error) throw error;
 
     // Load members count + stage groups for each
-    const units = data || [];
+    let units = data || [];
+    
+    // Filter by level AFTER loading (since level is in joined table)
+    if (level !== undefined) {
+      const levelNum = parseInt(level);
+      units = units.filter(u => u.level && u.level.depth === levelNum);
+    }
+    
     for (const unit of units) {
       const { count } = await supabase.from('ecosystem_unit_members')
         .select('id', { count: 'exact', head: true }).eq('unit_id', unit.id);
@@ -178,6 +180,7 @@ r.get('/units', async (req, res) => {
         .select('*, group:workflow_stage_groups(id,name,slug,color,icon)')
         .eq('unit_id', unit.id);
       unit.stage_groups = (groups || []).map(g => g.group);
+    }
     }
 
     // Build tree (only if no level filter, otherwise return flat list)
