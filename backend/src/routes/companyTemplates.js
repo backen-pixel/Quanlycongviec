@@ -131,6 +131,114 @@ r.post('/template-sets/:id/clone', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// COPY tasks from company_process to template_set
+r.post('/template-sets/:id/copy-from-process', async (req, res) => {
+  try {
+    const { process_id } = req.body;
+    if (!process_id) return res.status(400).json({ error: 'Chọn quy trình gốc' });
+
+    // Get template set
+    const { data: templateSet, error: setErr } = await supabase
+      .from('company_template_sets')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (setErr) throw setErr;
+    if (!templateSet) return res.status(404).json({ error: 'Không tìm thấy bộ mẫu' });
+
+    // Get process
+    const { data: process, error: procErr } = await supabase
+      .from('company_processes')
+      .select('*')
+      .eq('id', process_id)
+      .single();
+    if (procErr) throw procErr;
+    if (!process) return res.status(404).json({ error: 'Không tìm thấy quy trình' });
+
+    // Delete existing tasks in template (if any)
+    await supabase.from('company_template_tasks')
+      .delete()
+      .eq('template_set_id', req.params.id);
+
+    // Get tasks from process
+    const { data: processTasks, error: tasksErr } = await supabase
+      .from('company_process_tasks')
+      .select('*')
+      .eq('process_id', process_id)
+      .order('order_index');
+    if (tasksErr) throw tasksErr;
+
+    let copiedCount = 0;
+
+    // Copy each task
+    for (const pTask of (processTasks || [])) {
+      const { data: newTask, error: taskInsertErr } = await supabase
+        .from('company_template_tasks')
+        .insert({
+          template_set_id: req.params.id,
+          stage_id: pTask.stage_id,
+          title: pTask.title,
+          description: pTask.description || null,
+          order_index: pTask.order_index || 0,
+          default_department_id: pTask.default_department_id || null,
+          default_team_id: pTask.default_team_id || null,
+          default_assignee_id: pTask.default_assignee_id || null,
+          estimated_hours: pTask.estimated_hours || null,
+          priority: pTask.priority || 'medium',
+          deadline_days: pTask.deadline_days || 0,
+          deadline_hours: pTask.deadline_hours || 0,
+        })
+        .select()
+        .single();
+      
+      if (taskInsertErr) {
+        console.error('Error copying task:', taskInsertErr);
+        continue;
+      }
+
+      copiedCount++;
+
+      // Copy checklists
+      const { data: processChecklists } = await supabase
+        .from('company_process_checklists')
+        .select('*')
+        .eq('process_task_id', pTask.id)
+        .order('order_index');
+
+      if (processChecklists?.length) {
+        const checklistsToInsert = processChecklists.map(c => ({
+          template_task_id: newTask.id,
+          title: c.title,
+          order_index: c.order_index || 0,
+          require_file: c.require_file || false,
+          require_note: c.require_note || false,
+        }));
+
+        await supabase.from('company_template_checklists').insert(checklistsToInsert);
+      }
+    }
+
+    // Update template_set with source_process_id
+    await supabase
+      .from('company_template_sets')
+      .update({ 
+        source_process_id: process_id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', req.params.id);
+
+    res.json({
+      success: true,
+      copied_tasks: copiedCount,
+      source_process: process.name,
+      template_set: templateSet.name,
+    });
+  } catch (e) {
+    console.error('Copy from process error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ═══════════════════════════════════════════════
 // TASK MẪU — TEMPLATE TASKS
 // ═══════════════════════════════════════════════

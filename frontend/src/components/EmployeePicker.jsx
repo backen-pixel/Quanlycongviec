@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Search, X, ChevronDown, User, Building2, Users } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Search, X, ChevronDown, User, Building2, Users, AlertCircle } from 'lucide-react';
 import api from '../lib/api';
 
 /**
@@ -12,7 +12,7 @@ import api from '../lib/api';
  *   placeholder    - text hiển thị khi chưa chọn
  *   className      - extra class
  *   size           - 'sm' | 'md' (default 'md')
- *   showLabel      - hiển thị label Công ty/PB hay không
+ *   disabled       - disable picker manually
  */
 export default function EmployeePicker({
   companyUnitId,
@@ -21,15 +21,22 @@ export default function EmployeePicker({
   placeholder = '👤 Chưa gán',
   className = '',
   size = 'md',
-  showLabel = false,
+  disabled = false,
 }) {
   const [open, setOpen] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
-  const [selectedDept, setSelectedDept] = useState('');
+  const [selectedDept, setSelectedDept] = useState(''); // Default: "Tất cả"
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [dropdownPosition, setDropdownPosition] = useState('bottom'); // 'bottom' | 'top'
+  
+  const buttonRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  // Disable picker if no companyUnitId
+  const isDisabled = disabled || !companyUnitId;
 
   // Load users + departments when companyUnitId changes
   useEffect(() => {
@@ -51,6 +58,23 @@ export default function EmployeePicker({
       setSelectedUser(null);
     }
   }, [value, allUsers]);
+
+  // Calculate dropdown position when opening
+  useEffect(() => {
+    if (open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const spaceBelow = viewportHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      
+      // If less than 300px below, show above; otherwise below
+      if (spaceBelow < 300 && spaceAbove > spaceBelow) {
+        setDropdownPosition('top');
+      } else {
+        setDropdownPosition('bottom');
+      }
+    }
+  }, [open]);
 
   const loadData = async (unitId) => {
     setLoading(true);
@@ -81,7 +105,7 @@ export default function EmployeePicker({
     }
   };
 
-  // Filtered users
+  // Filtered users (default: Tất cả departments)
   const filtered = allUsers.filter(u => {
     const matchDept = !selectedDept || u.department_id === selectedDept;
     const matchSearch = !search ||
@@ -95,12 +119,18 @@ export default function EmployeePicker({
     onChange(user?.id || null, user || null);
     setOpen(false);
     setSearch('');
+    setSelectedDept(''); // Reset dept filter
   };
 
   const handleClear = (e) => {
     e.stopPropagation();
     setSelectedUser(null);
     onChange(null, null);
+  };
+
+  const handleToggle = () => {
+    if (isDisabled) return;
+    setOpen(!open);
   };
 
   const sizeClass = size === 'sm'
@@ -111,9 +141,17 @@ export default function EmployeePicker({
     <div className={`relative ${className}`}>
       {/* Trigger button */}
       <button
+        ref={buttonRef}
         type="button"
-        onClick={() => setOpen(!open)}
-        className={`w-full flex items-center gap-2 border border-gray-300 rounded-lg bg-white hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-400 transition-colors ${sizeClass} ${open ? 'border-purple-400 ring-2 ring-purple-200' : ''}`}
+        onClick={handleToggle}
+        disabled={isDisabled}
+        className={`w-full flex items-center gap-2 border rounded-lg bg-white transition-colors ${sizeClass} ${
+          isDisabled
+            ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-60'
+            : open
+            ? 'border-purple-400 ring-2 ring-purple-200'
+            : 'border-gray-300 hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-400'
+        }`}
       >
         {selectedUser ? (
           <>
@@ -123,25 +161,32 @@ export default function EmployeePicker({
             <span className="flex-1 text-left font-medium text-gray-900 truncate">
               {selectedUser.full_name}
             </span>
-            <button
-              type="button"
-              onClick={handleClear}
-              className="shrink-0 p-0.5 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-600"
-            >
-              <X className="w-3 h-3" />
-            </button>
+            {!isDisabled && (
+              <button
+                type="button"
+                onClick={handleClear}
+                className="shrink-0 p-0.5 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </>
         ) : (
           <>
             <User className="w-4 h-4 text-gray-400 shrink-0" />
-            <span className="flex-1 text-left text-gray-400">{placeholder}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <span className="flex-1 text-left text-gray-400">
+              {isDisabled && !companyUnitId ? 'Chọn công ty trước' : placeholder}
+            </span>
+            {!isDisabled && <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
+            {isDisabled && !companyUnitId && (
+              <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            )}
           </>
         )}
       </button>
 
       {/* Dropdown */}
-      {open && (
+      {open && !isDisabled && (
         <>
           {/* Backdrop */}
           <div
@@ -150,7 +195,12 @@ export default function EmployeePicker({
           />
 
           {/* Dropdown panel */}
-          <div className="absolute z-[9999] mt-1 w-72 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+          <div
+            ref={dropdownRef}
+            className={`absolute z-[9999] w-72 bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden ${
+              dropdownPosition === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'
+            }`}
+          >
             {/* Search */}
             <div className="p-2 border-b border-gray-100">
               <div className="relative">
@@ -166,8 +216,8 @@ export default function EmployeePicker({
               </div>
             </div>
 
-            {/* Department filter */}
-            {departments.length > 1 && (
+            {/* Department filter - Default: "Tất cả" */}
+            {departments.length > 0 && (
               <div className="px-2 py-1.5 border-b border-gray-100 flex items-center gap-1.5 flex-wrap">
                 <Users className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                 <button
@@ -198,11 +248,11 @@ export default function EmployeePicker({
             )}
 
             {/* User list */}
-            <div className="max-h-56 overflow-y-auto">
+            <div className="max-h-64 overflow-y-auto">
               {loading ? (
-                <div className="py-6 text-center text-sm text-gray-400">Đang tải...</div>
+                <div className="py-8 text-center text-sm text-gray-400">Đang tải...</div>
               ) : filtered.length === 0 ? (
-                <div className="py-6 text-center text-sm text-gray-400">
+                <div className="py-8 text-center text-sm text-gray-400">
                   {allUsers.length === 0 ? 'Công ty chưa có nhân viên' : 'Không tìm thấy'}
                 </div>
               ) : (
