@@ -25,7 +25,7 @@ export default function TemplateSetDetailPage() {
   const [showAddTask, setShowAddTask] = useState(false);
   const [showCopyProcess, setShowCopyProcess] = useState(false);
   const [processes, setProcesses] = useState([]);
-  const [selectedProcess, setSelectedProcess] = useState('');
+  const [selectedProcessIds, setSelectedProcessIds] = useState([]);
   const [copying, setCopying] = useState(false);
 
   useEffect(() => {
@@ -118,31 +118,52 @@ export default function TemplateSetDetailPage() {
   };
 
   const handleCopyFromProcess = async () => {
-    if (!selectedProcess) {
-      alert('Vui lòng chọn quy trình gốc');
+    if (selectedProcessIds.length === 0) {
+      alert('Vui lòng chọn ít nhất 1 quy trình');
       return;
     }
     
-    if (!confirm(`Copy toàn bộ nhiệm vụ từ quy trình này? Dữ liệu hiện tại sẽ bị thay thế.`)) {
+    const count = selectedProcessIds.length;
+    if (!confirm(`Copy nhiệm vụ từ ${count} quy trình đã chọn? Dữ liệu hiện tại sẽ bị thay thế.`)) {
       return;
     }
 
     setCopying(true);
     try {
       const { data } = await api.post(`/company-templates/template-sets/${setId}/copy-from-process`, {
-        process_id: selectedProcess
+        process_ids: selectedProcessIds
       });
       
-      alert(`✅ Đã copy ${data.copied_tasks} nhiệm vụ từ "${data.source_process}"`);
+      alert(`✅ Đã copy ${data.copied_tasks} nhiệm vụ từ ${data.source_processes?.length || 0} quy trình`);
       await reload();
       setShowCopyProcess(false);
-      setSelectedProcess('');
+      setSelectedProcessIds([]);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi khi copy quy trình');
     } finally {
       setCopying(false);
     }
   };
+
+  const toggleCopyProcess = (processId) => {
+    setSelectedProcessIds(prev =>
+      prev.includes(processId)
+        ? prev.filter(id => id !== processId)
+        : [...prev, processId]
+    );
+  };
+
+  const selectAllCopyProcesses = () => {
+    if (selectedProcessIds.length === processes.length) {
+      setSelectedProcessIds([]);
+    } else {
+      setSelectedProcessIds(processes.map(p => p.id));
+    }
+  };
+
+  const totalSelectedTasks = processes
+    .filter(p => selectedProcessIds.includes(p.id))
+    .reduce((sum, p) => sum + (p.task_count || 0), 0);
 
   const tasksByStage = {};
   tasks.forEach(t => {
@@ -191,32 +212,62 @@ export default function TemplateSetDetailPage() {
               onClick={() => setShowCopyProcess(true)}
               className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-2"
             >
-              <Copy className="h-4 w-4" /> Chọn quy trình gốc
+              <Copy className="h-4 w-4" /> Thêm nhiệm vụ từ quy trình
             </button>
           ) : (
             <div className="space-y-3">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Chọn quy trình nội bộ làm gốc
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-gray-700">
+                  Chọn quy trình nội bộ (có thể chọn nhiều)
                 </label>
-                <select
-                  value={selectedProcess}
-                  onChange={(e) => setSelectedProcess(e.target.value)}
-                  className="w-full px-3 py-2 border border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="">-- Chọn quy trình --</option>
-                  {processes.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.task_count || 0} nhiệm vụ)
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={selectAllCopyProcesses}
+                    className="text-[10px] text-purple-600 hover:text-purple-800 font-medium"
+                  >
+                    {selectedProcessIds.length === processes.length ? '⬜ Bỏ chọn tất cả' : '✅ Chọn tất cả'}
+                  </button>
+                  {selectedProcessIds.length > 0 && (
+                    <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+                      {selectedProcessIds.length} QT · {totalSelectedTasks} NV
+                    </span>
+                  )}
+                </div>
               </div>
               
-              {selectedProcess && (
-                <div className="bg-white rounded-lg p-3 border border-purple-200">
-                  <p className="text-sm text-gray-700">
-                    ⚠️ <strong>Lưu ý:</strong> Copy sẽ thay thế toàn bộ nhiệm vụ hiện tại bằng nhiệm vụ từ quy trình đã chọn.
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {processes.map(p => {
+                  const checked = selectedProcessIds.includes(p.id);
+                  return (
+                    <label
+                      key={p.id}
+                      className={`flex items-center gap-2.5 p-2 rounded-lg border cursor-pointer transition-colors ${
+                        checked
+                          ? 'border-purple-400 bg-purple-50'
+                          : 'border-gray-200 hover:border-purple-300 hover:bg-purple-50/30'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleCopyProcess(p.id)}
+                        className="w-4 h-4 accent-purple-600 shrink-0"
+                      />
+                      <span className="text-sm shrink-0">{p.icon || '📋'}</span>
+                      <span className="flex-1 text-sm font-medium text-gray-800">{p.name}</span>
+                      <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded shrink-0">
+                        {p.task_count || 0} NV
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              
+              {selectedProcessIds.length > 0 && (
+                <div className="bg-white rounded-lg p-3 border border-amber-200">
+                  <p className="text-sm text-amber-800">
+                    ⚠️ Copy sẽ <strong>thay thế</strong> toàn bộ nhiệm vụ hiện tại
                   </p>
                 </div>
               )}
@@ -224,7 +275,7 @@ export default function TemplateSetDetailPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleCopyFromProcess}
-                  disabled={!selectedProcess || copying}
+                  disabled={selectedProcessIds.length === 0 || copying}
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {copying ? (
@@ -234,14 +285,14 @@ export default function TemplateSetDetailPage() {
                     </>
                   ) : (
                     <>
-                      <Copy className="h-4 w-4" /> Copy nhiệm vụ
+                      <Copy className="h-4 w-4" /> Copy {totalSelectedTasks} nhiệm vụ
                     </>
                   )}
                 </button>
                 <button
                   onClick={() => {
                     setShowCopyProcess(false);
-                    setSelectedProcess('');
+                    setSelectedProcessIds([]);
                   }}
                   className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50"
                 >
