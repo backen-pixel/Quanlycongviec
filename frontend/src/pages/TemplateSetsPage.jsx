@@ -200,7 +200,7 @@ function SetForm({ set, unitId, onSaved, onCancel }) {
   const [isDefault, setIsDefault] = useState(set?.is_default || false);
   const [saving, setSaving] = useState(false);
   const [processes, setProcesses] = useState([]);
-  const [selectedProcess, setSelectedProcess] = useState('');
+  const [selectedProcessIds, setSelectedProcessIds] = useState([]);
   const [loadingProcesses, setLoadingProcesses] = useState(false);
 
   // Load processes when creating new template (not editing)
@@ -221,16 +221,35 @@ function SetForm({ set, unitId, onSaved, onCancel }) {
     setLoadingProcesses(false);
   };
 
+  const toggleProcess = (processId) => {
+    setSelectedProcessIds(prev =>
+      prev.includes(processId)
+        ? prev.filter(id => id !== processId)
+        : [...prev, processId]
+    );
+  };
+
+  const selectAllProcesses = () => {
+    if (selectedProcessIds.length === processes.length) {
+      setSelectedProcessIds([]);
+    } else {
+      setSelectedProcessIds(processes.map(p => p.id));
+    }
+  };
+
+  const totalSelectedTasks = processes
+    .filter(p => selectedProcessIds.includes(p.id))
+    .reduce((sum, p) => sum + (p.task_count || 0), 0);
+
   const save = async () => {
     if (!name.trim()) return alert('Nhập tên bộ mẫu');
-    if (!set?.id && !selectedProcess) {
-      return alert('Vui lòng chọn quy trình nội bộ làm gốc');
+    if (!set?.id && selectedProcessIds.length === 0) {
+      return alert('Vui lòng chọn ít nhất 1 quy trình nội bộ');
     }
     
     setSaving(true);
     try {
       if (set?.id) {
-        // Edit existing
         await api.put(`/company-templates/template-sets/${set.id}`, {
           name: name.trim(),
           description: description.trim() || null,
@@ -239,7 +258,6 @@ function SetForm({ set, unitId, onSaved, onCancel }) {
         });
         onSaved();
       } else {
-        // Create new
         const { data } = await api.post(`/company-templates/units/${unitId}/template-sets`, {
           name: name.trim(),
           description: description.trim() || null,
@@ -247,15 +265,16 @@ function SetForm({ set, unitId, onSaved, onCancel }) {
           is_default: isDefault,
         });
 
-        // Immediately copy tasks from selected process
+        // Copy tasks from ALL selected processes
         const newSetId = data.set.id;
         try {
-          await api.post(`/company-templates/template-sets/${newSetId}/copy-from-process`, {
-            process_id: selectedProcess
+          const { data: copyResult } = await api.post(`/company-templates/template-sets/${newSetId}/copy-from-process`, {
+            process_ids: selectedProcessIds
           });
+          alert(`✅ Đã copy ${copyResult.copied_tasks} nhiệm vụ từ ${copyResult.source_processes?.length || 0} quy trình`);
         } catch (copyErr) {
           console.error('Copy tasks error:', copyErr);
-          alert('Bộ mẫu đã tạo nhưng lỗi khi copy nhiệm vụ. Vui lòng copy thủ công trong trang chi tiết.');
+          alert('Bộ mẫu đã tạo nhưng lỗi khi copy nhiệm vụ.');
         }
         
         onSaved();
@@ -286,20 +305,53 @@ function SetForm({ set, unitId, onSaved, onCancel }) {
               </div>
             ) : (
               <>
-                <select 
-                  value={selectedProcess} 
-                  onChange={e => setSelectedProcess(e.target.value)} 
-                  className="w-full h-9 px-3 border border-purple-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="">-- Chọn quy trình --</option>
-                  {processes.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.icon || '📋'} {p.name} ({p.task_count || 0} nhiệm vụ)
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-purple-600 mt-1">
-                  Tất cả nhiệm vụ + checklist sẽ được copy từ quy trình này
+                {/* Select all toggle */}
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    type="button"
+                    onClick={selectAllProcesses}
+                    className="text-[10px] text-purple-600 hover:text-purple-800 font-medium"
+                  >
+                    {selectedProcessIds.length === processes.length ? '⬜ Bỏ chọn tất cả' : '✅ Chọn tất cả'}
+                  </button>
+                  {selectedProcessIds.length > 0 && (
+                    <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+                      {selectedProcessIds.length} quy trình · {totalSelectedTasks} nhiệm vụ
+                    </span>
+                  )}
+                </div>
+                
+                {/* Process checkbox list */}
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {processes.map(p => {
+                    const checked = selectedProcessIds.includes(p.id);
+                    return (
+                      <label
+                        key={p.id}
+                        className={`flex items-center gap-2.5 p-2 rounded-lg border cursor-pointer transition-colors ${
+                          checked
+                            ? 'border-purple-400 bg-purple-50'
+                            : 'border-gray-200 hover:border-purple-300 hover:bg-purple-50/30'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleProcess(p.id)}
+                          className="w-4 h-4 accent-purple-600 shrink-0"
+                        />
+                        <span className="text-sm shrink-0">{p.icon || '📋'}</span>
+                        <span className="flex-1 text-sm font-medium text-gray-800">{p.name}</span>
+                        <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded shrink-0">
+                          {p.task_count || 0} NV
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                
+                <p className="text-[10px] text-purple-600 mt-2">
+                  Nhiệm vụ + checklist sẽ được copy từ các quy trình đã chọn (tự động phân theo giai đoạn)
                 </p>
               </>
             )}
