@@ -21,16 +21,74 @@ async function getUserCompanyId(userId) {
   }
 }
 
-// ─── HELPER: Check if user has permission ──
+// ─── HELPER: Get all child ecosystem units (recursive) ──
+async function getAllChildUnits(unitId) {
+  try {
+    const allIds = [unitId];
+    let queue = [unitId];
+    
+    while (queue.length > 0) {
+      const { data: children } = await supabase
+        .from('ecosystem_units')
+        .select('id')
+        .in('parent_id', queue);
+      
+      const childIds = (children || []).map(c => c.id);
+      allIds.push(...childIds);
+      queue = childIds;
+    }
+    
+    return allIds;
+  } catch (e) {
+    console.warn('Get child units error:', e.message);
+    return [unitId];
+  }
+}
+
+// ─── HELPER: Check if user has permission (with hierarchical scope) ──
 async function checkPermission(userId, resource, action, ecosystemUnitId = null) {
   try {
-    const { data } = await supabase.rpc('user_has_permission', {
-      p_user_id: userId,
-      p_resource: resource,
-      p_action: action,
-      p_ecosystem_unit_id: ecosystemUnitId,
-    });
-    return !!data;
+    // Get user's roles
+    const { data: userRoles } = await supabase
+      .from('user_roles')
+      .select('role_id, ecosystem_unit_id')
+      .eq('user_id', userId);
+    
+    if (!userRoles || userRoles.length === 0) return false;
+    
+    // Get all permissions for user's roles
+    const roleIds = userRoles.map(ur => ur.role_id);
+    const { data: rolePerms } = await supabase
+      .from('role_permissions')
+      .select('permission_id, permissions(resource, action)')
+      .in('role_id', roleIds);
+    
+    // Check if user has the requested permission through any role
+    const hasPermissionInRole = (rolePerms || []).some(rp => 
+      rp.permissions?.resource === resource && rp.permissions?.action === action
+    );
+    
+    if (!hasPermissionInRole) return false;
+    
+    // If no specific unit requested, check for global permissions
+    if (!ecosystemUnitId) {
+      return userRoles.some(ur => !ur.ecosystem_unit_id); // Global role
+    }
+    
+    // Check hierarchical permissions (parent unit → includes all children)
+    for (const ur of userRoles) {
+      if (!ur.ecosystem_unit_id) return true; // Global role = access to all
+      
+      // Get all child units of the role's scope
+      const allowedUnits = await getAllChildUnits(ur.ecosystem_unit_id);
+      
+      // Check if requested unit is in allowed units
+      if (allowedUnits.includes(ecosystemUnitId)) {
+        return true;
+      }
+    }
+    
+    return false;
   } catch (e) {
     console.warn('Check permission error:', e.message);
     return false; // Deny by default on error
@@ -105,29 +163,51 @@ r.get('/', async (req, res) => {
       if (mappedStatus) q = q.eq('status', mappedStatus);
     }
 
-    // ── PERMISSION-BASED FILTERING ──
-    const userRole = req.user.role;
+    // ── PERMISSION-BASED FILTERING WITH HIERARCHICAL SCOPE ──
     const userId = req.user.userId;
     
-    // Check if user has 'projects' 'all_companies' permission
-    const canViewAllCompanies = await checkPermission(userId, 'projects', 'all_companies');
+    // Get user's roles with ecosystem scopes
+    const { data: userRoles } = await supabase
+      .from('user_roles')
+      .select('role_id, ecosystem_unit_id')
+      .eq('user_id', userId);
     
-    if (!canViewAllCompanies) {
-      // User can only see projects from their company
-      const userCompanyId = await getUserCompanyId(userId);
+    if (userRoles && userRoles.length > 0) {
+      // Get all ecosystem units user has access to (including children)
+      const accessibleUnitIds = new Set();
+      const hasGlobalRole = userRoles.some(ur => !ur.ecosystem_unit_id);
       
-      if (userCompanyId) {
-        q = q.eq('company_id', userCompanyId);
-      } else {
-        // No company assigned → only see projects where user is assigned
-        if (userRole && !['admin', 'manager'].includes(userRole)) {
-          try {
-            q = q.or(`consulting_person_id.eq.${userId},design_person_id.eq.${userId},quotation_person_id.eq.${userId},contract_person_id.eq.${userId},production_person_id.eq.${userId},shipping_person_id.eq.${userId},installation_person_id.eq.${userId},care_person_id.eq.${userId},sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`);
-          } catch {
-            q = q.or(`sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`);
+      if (!hasGlobalRole) {
+        // Collect all units from user's roles (with hierarchy)
+        for (const ur of userRoles) {
+          if (ur.ecosystem_unit_id) {
+            const childUnits = await getAllChildUnits(ur.ecosystem_unit_id);
+            childUnits.forEach(id => accessibleUnitIds.add(id));
           }
         }
+        
+        // Get company_ids from accessible ecosystem units
+        if (accessibleUnitIds.size > 0) {
+          const { data: units } = await supabase
+            .from('ecosystem_units')
+            .select('company_id')
+            .in('id', Array.from(accessibleUnitIds))
+            .not('company_id', 'is', null);
+          
+          const companyIds = [...new Set((units || []).map(u => u.company_id).filter(Boolean))];
+          
+          if (companyIds.length > 0) {
+            q = q.in('company_id', companyIds);
+          } else {
+            // No companies accessible → return empty
+            return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
+          }
+        } else {
+          // No accessible units → return empty
+          return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
+        }
       }
+      // If hasGlobalRole, don't filter by company (see all)
     }
 
     const p = +page, l = +limit;
