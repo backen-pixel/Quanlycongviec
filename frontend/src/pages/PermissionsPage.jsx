@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Shield, Plus, Check, X, Save, Users as UsersIcon, Settings, Layers, Building2, Users as UsersRound } from 'lucide-react';
 import api from '../lib/api';
 import UserRolesModal from '../components/UserRolesModal';
+import EcosystemPermissionsTab from '../components/EcosystemPermissionsTab';
 
 // Vietnamese labels for resources
 const RESOURCE_LABELS = {
@@ -246,11 +247,15 @@ export default function PermissionsPage() {
           Gán vai trò cho nhân viên
         </button>
         <button
-          onClick={() => window.location.href = '/ecosystem-permissions'}
-          className="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition-colors"
+          onClick={() => setActiveTab('ecosystem')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'ecosystem'
+              ? 'border-purple-600 text-purple-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
         >
           <Building2 className="h-4 w-4 inline mr-2" />
-          Phân quyền hệ sinh thái
+          Phân quyền chi tiết
         </button>
       </div>
 
@@ -266,7 +271,7 @@ export default function PermissionsPage() {
           onTogglePermission={togglePermission}
           onSave={saveRolePermissions}
         />
-      ) : (
+      ) : activeTab === 'users' ? (
         <UsersTab
           users={users}
           loading={loadingUsers}
@@ -282,6 +287,8 @@ export default function PermissionsPage() {
           onFilterCompany={setFilterCompany}
           onFilterDept={setFilterDept}
         />
+      ) : (
+        <EcosystemPermissionsTab users={users} />
       )}
 
       {/* Create Role Modal */}
