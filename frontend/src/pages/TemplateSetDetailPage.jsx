@@ -23,6 +23,10 @@ export default function TemplateSetDetailPage() {
   const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddTask, setShowAddTask] = useState(false);
+  const [showCopyProcess, setShowCopyProcess] = useState(false);
+  const [processes, setProcesses] = useState([]);
+  const [selectedProcess, setSelectedProcess] = useState('');
+  const [copying, setCopying] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -42,6 +46,16 @@ export default function TemplateSetDetailPage() {
         // Load users for assignee selection
         const { data: usersData } = await api.get('/users');
         setAllUsers(usersData.users || []);
+
+        // Load company processes for copying
+        if (setData.set?.unit_id) {
+          try {
+            const { data: procData } = await api.get(`/company-processes/unit/${setData.set.unit_id}`);
+            setProcesses(procData.processes || []);
+          } catch (e) {
+            console.log('No processes found for unit');
+          }
+        }
       } catch {}
       setLoading(false);
     })();
@@ -96,6 +110,33 @@ export default function TemplateSetDetailPage() {
     } catch {}
   };
 
+  const handleCopyFromProcess = async () => {
+    if (!selectedProcess) {
+      alert('Vui lòng chọn quy trình gốc');
+      return;
+    }
+    
+    if (!confirm(`Copy toàn bộ nhiệm vụ từ quy trình này? Dữ liệu hiện tại sẽ bị thay thế.`)) {
+      return;
+    }
+
+    setCopying(true);
+    try {
+      const { data } = await api.post(`/company-templates/template-sets/${setId}/copy-from-process`, {
+        process_id: selectedProcess
+      });
+      
+      alert(`✅ Đã copy ${data.copied_tasks} nhiệm vụ từ "${data.source_process}"`);
+      await reload();
+      setShowCopyProcess(false);
+      setSelectedProcess('');
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi khi copy quy trình');
+    } finally {
+      setCopying(false);
+    }
+  };
+
   const tasksByStage = {};
   tasks.forEach(t => {
     const sid = t.stage_id;
@@ -129,6 +170,81 @@ export default function TemplateSetDetailPage() {
         <div className="bg-white rounded-xl border p-3 text-center"><p className="text-2xl font-bold text-amber-600">{tasks.filter(t => t.default_assignee_id).length}</p><p className="text-[10px] text-gray-500">Đã gán NV</p></div>
         <div className="bg-white rounded-xl border p-3 text-center"><p className="text-2xl font-bold text-orange-600">{tasks.filter(t => t.deadline_days > 0 || t.deadline_hours > 0).length}</p><p className="text-[10px] text-gray-500">Có deadline</p></div>
       </div>
+
+      {/* Copy from Process section */}
+      {processes.length > 0 && (
+        <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl border-2 border-purple-200 p-4">
+          <div className="flex items-center gap-3 mb-3">
+            <Copy className="h-5 w-5 text-purple-600" />
+            <h3 className="font-bold text-gray-900">Copy từ Quy trình nội bộ</h3>
+          </div>
+          
+          {!showCopyProcess ? (
+            <button
+              onClick={() => setShowCopyProcess(true)}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-2"
+            >
+              <Copy className="h-4 w-4" /> Chọn quy trình gốc
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Chọn quy trình nội bộ làm gốc
+                </label>
+                <select
+                  value={selectedProcess}
+                  onChange={(e) => setSelectedProcess(e.target.value)}
+                  className="w-full px-3 py-2 border border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">-- Chọn quy trình --</option>
+                  {processes.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.task_count || 0} nhiệm vụ)
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {selectedProcess && (
+                <div className="bg-white rounded-lg p-3 border border-purple-200">
+                  <p className="text-sm text-gray-700">
+                    ⚠️ <strong>Lưu ý:</strong> Copy sẽ thay thế toàn bộ nhiệm vụ hiện tại bằng nhiệm vụ từ quy trình đã chọn.
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopyFromProcess}
+                  disabled={!selectedProcess || copying}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {copying ? (
+                    <>
+                      <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                      Đang copy...
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" /> Copy nhiệm vụ
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCopyProcess(false);
+                    setSelectedProcess('');
+                  }}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50"
+                >
+                  Hủy
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {showAddTask && <AddTaskForm stages={stages} users={allUsers} onAdd={addTask} onCancel={() => setShowAddTask(false)} />}
 
