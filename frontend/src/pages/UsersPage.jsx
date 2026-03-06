@@ -32,12 +32,19 @@ export default function UsersPage() {
     if (search) params.search = search;
     if (filterRole) params.role = filterRole;
     if (filterDept) params.department_id = filterDept;
-    if (filterCompany) params.company_id = filterCompany;
-    // Division filtering happens via company (filter companies by division first)
+    
+    // Division filter: use ecosystem_unit_id (backend will get all children)
+    if (filterDivision) {
+      params.ecosystem_unit_id = filterDivision;
+    } else if (filterCompany) {
+      // No division selected, but company selected
+      params.company_id = filterCompany;
+    }
+    
     api.get('/users', { params })
       .then(r => { setUsers(r.data.users || []); setStats(r.data.stats || {}); })
       .catch(() => {}).finally(() => setLoading(false));
-  }, [search, filterRole, filterDept, filterCompany]);
+  }, [search, filterRole, filterDept, filterCompany, filterDivision]);
 
   useEffect(() => {
     load();
@@ -62,7 +69,7 @@ export default function UsersPage() {
     }).catch(() => {});
   }, []);
   
-  useEffect(() => { load(); }, [filterRole, filterDept, filterCompany]);
+  useEffect(() => { load(); }, [filterRole, filterDept, filterCompany, filterDivision]);
 
   const deactivate = async (id, name) => {
     if (!confirm(`Vô hiệu hóa nhân viên "${name}"?`)) return;

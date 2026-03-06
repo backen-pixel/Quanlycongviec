@@ -104,15 +104,14 @@ r.get('/', async (req, res) => {
       }
     }
 
-    // ── Lọc theo ecosystem_unit_id (ưu tiên nhất) ──
-    // Members được gán vào Teams → Teams thuộc Phòng ban → Phòng ban thuộc Công ty
-    // Cần lấy TẤT CẢ sub-units (đệ quy) rồi lấy members
+    // ── Lọc theo ecosystem_unit_id (division/company level) ──
+    // Resolve: ecosystem_unit → companies → departments → users
     if (ecosystem_unit_id) {
       try {
-        // Load toàn bộ unit tree (tối đa 3 cấp con)
+        // Get all child units (recursive: division → companies → depts → teams)
         const allUnitIds = [ecosystem_unit_id];
 
-        // Level 1: children trực tiếp (phòng ban)
+        // Level 1: children trực tiếp
         const { data: level1 } = await supabase
           .from('ecosystem_units')
           .select('id')
@@ -120,7 +119,7 @@ r.get('/', async (req, res) => {
         const l1Ids = (level1 || []).map(u => u.id);
         allUnitIds.push(...l1Ids);
 
-        // Level 2: children của children (teams/đội nhóm)
+        // Level 2: children của children
         if (l1Ids.length) {
           const { data: level2 } = await supabase
             .from('ecosystem_units')
@@ -139,20 +138,53 @@ r.get('/', async (req, res) => {
           }
         }
 
-        // Lấy members từ TẤT CẢ units trong cây
-        const { data: members } = await supabase
-          .from('ecosystem_unit_members')
-          .select('user_id')
-          .in('unit_id', allUnitIds);
+        // Get company_ids from all units (units that have company_id)
+        const { data: unitsWithCompanies } = await supabase
+          .from('ecosystem_units')
+          .select('company_id')
+          .in('id', allUnitIds)
+          .not('company_id', 'is', null);
 
-        const userIds = [...new Set((members || []).map(m => m.user_id).filter(Boolean))];
+        const companyIds = [...new Set((unitsWithCompanies || []).map(u => u.company_id).filter(Boolean))];
 
-        if (!userIds.length) return res.json({ users: [], stats: { total: 0 } });
+        if (!companyIds.length) {
+          // No companies found → try ecosystem_unit_members (for teams/depts)
+          const { data: members } = await supabase
+            .from('ecosystem_unit_members')
+            .select('user_id')
+            .in('unit_id', allUnitIds);
 
-        // Load users by id
+          const userIds = [...new Set((members || []).map(m => m.user_id).filter(Boolean))];
+          
+          if (!userIds.length) return res.json({ users: [], stats: { total: 0 } });
+
+          let q = supabase.from('users')
+            .select('id,email,full_name,phone,avatar,role,position,department_id,is_active,department:departments!users_department_id_fkey(id,name,color)')
+            .in('id', userIds);
+          if (!include_inactive) q = q.eq('is_active', true);
+          if (role) q = q.eq('role', role);
+          if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+          const { data: users, error } = await q.order('full_name');
+          if (error) throw error;
+
+          return res.json({ users: users || [], stats: { total: users?.length || 0 } });
+        }
+
+        // Get departments from companies
+        const { data: depts } = await supabase
+          .from('departments')
+          .select('id')
+          .in('company_id', companyIds)
+          .eq('is_active', true);
+
+        const deptIds = (depts || []).map(d => d.id);
+
+        if (!deptIds.length) return res.json({ users: [], stats: { total: 0 } });
+
+        // Get users by department
         let q = supabase.from('users')
           .select('id,email,full_name,phone,avatar,role,position,department_id,is_active,department:departments!users_department_id_fkey(id,name,color)')
-          .in('id', userIds);
+          .in('department_id', deptIds);
         if (!include_inactive) q = q.eq('is_active', true);
         if (role) q = q.eq('role', role);
         if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
