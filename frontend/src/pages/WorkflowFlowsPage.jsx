@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
-import ProcessTaskEditor from '../components/ProcessTaskEditor';
 import FlowStepTaskManager from '../components/FlowStepTaskManager';
-import FlowProcessTaskEditor from '../components/FlowProcessTaskEditor';
 import {
   GitBranch, Plus, Edit, Save, Trash2, Copy, Star, ChevronDown, ChevronRight,
   ArrowRight, Clock, Building2, X, CheckSquare, User, ClipboardList, Layers,
@@ -50,7 +48,7 @@ export default function WorkflowFlowsPage() {
           <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <GitBranch className="h-5 w-5 text-indigo-600" /> Quản Lý Luồng
           </h1>
-          <p className="text-xs text-gray-500 mt-0.5">Luồng → Khối → Công ty → Quy trình nội bộ → Nhiệm vụ → Checklist</p>
+          <p className="text-xs text-gray-500 mt-0.5">Luồng → Khối → Công ty → Bộ quy trình mẫu → Nhiệm vụ</p>
         </div>
         <button onClick={() => setShowCreate(true)}
           className="h-9 px-4 bg-indigo-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-indigo-700 cursor-pointer">
