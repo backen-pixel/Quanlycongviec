@@ -849,9 +849,11 @@ function ChecklistItem({ item: c, companyUnitId, onReload, taskId }) {
   const saveNotes = async () => {
     setEditingNotes(false);
     try {
-      const newNotes = assignedUserId
-        ? JSON.stringify({ text: notesText, assignee_id: assignedUserId })
-        : notesText;
+      // Always save in JSON format for consistency
+      const newNotes = JSON.stringify({ 
+        text: notesText.trim(), 
+        assignee_id: assignedUserId || null 
+      });
       await api.put(`/tasks/checklists/${c.id}`, { notes: newNotes });
       onReload?.();
     } catch { }
