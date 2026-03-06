@@ -1,386 +1,219 @@
-# 🔐 HỆ THỐNG PHÂN QUYỀN - TuBep Pro
+# Permission System Architecture - TuBep Pro
 
-**Date**: 2026-03-05
-**Status**: Proposal / Design Document
+## Overview
+3-level hierarchical permission system with role-based access control (RBAC) + granular per-user overrides.
 
----
+## Database Schema (Migration 24)
 
-## 📊 HIỆN TRẠNG
-
-### Hệ sinh thái
-```
-Tập đoàn (depth=0)
-  └── Khối (depth=1, Division)
-       └── Công ty (depth=2, Company)
-            └── Phòng ban (depth=3, Department)
-                 └── Team (depth=4)
-                      └── Nhân viên
-```
-
-### Vai trò hiện tại
-**Global roles** (users.role):
-- admin, manager, employee, sales, designer, accountant, production, installer
-
-**Unit roles** (ecosystem_unit_members.unit_role):
-- director, manager, member, viewer
-
-### ❌ Vấn đề
-- Phân quyền đơn giản (1 role global)
-- Không phân quyền theo đơn vị
-- Không kiểm soát chi tiết (ai làm được gì)
-- Không kế thừa quyền từ trên xuống
-- Không audit log
-
----
-
-## 🎯 ĐỀ XUẤT: RBAC + SCOPE-BASED (OPTION A)
-
-### Nguyên tắc
-1. **Role-based**: Mỗi role có permissions mặc định
-2. **Scope-based**: Quyền giới hạn theo đơn vị (unit)
-3. **Hierarchy**: Kế thừa quyền từ trên xuống
-4. **Override**: Có thể gán/thu hồi quyền đặc biệt
-
-### Cách hoạt động
-```
-User
- ├── Global Role → Default Permissions
- ├── Unit Memberships (many units)
- │    ├── Unit A: director, can_manage_children=true
- │    └── Unit B: member
- └── Permission Overrides (special grants/denies)
-```
-
----
-
-## 📋 CÁC LOẠI QUYỀN
-
-### 1. DỰ ÁN (Projects)
-- `projects.view_all` - Xem tất cả
-- `projects.view_unit` - Xem dự án đơn vị
-- `projects.view_assigned` - Xem DA được gán
-- `projects.create` - Tạo mới
-- `projects.edit_all` - Sửa tất cả
-- `projects.edit_assigned` - Sửa DA được gán
-- `projects.delete` - Xóa
-- `projects.approve` - Duyệt chuyển stage
-
-### 2. CÔNG VIỆC (Tasks)
-- `tasks.view_all` - Xem tất cả CV
-- `tasks.view_unit` - Xem CV đơn vị
-- `tasks.view_assigned` - Xem CV được gán
-- `tasks.create` - Tạo CV
-- `tasks.edit_all` - Sửa tất cả
-- `tasks.edit_assigned` - Sửa CV được gán
-- `tasks.delete` - Xóa CV
-- `tasks.reassign` - Gán lại người làm
-
-### 3. KHÁCH HÀNG (Customers)
-- `customers.view_all` - Xem tất cả KH
-- `customers.view_unit` - Xem KH đơn vị
-- `customers.create` - Tạo KH
-- `customers.edit` - Sửa KH
-- `customers.delete` - Xóa KH
-
-### 4. HỆ SINH THÁI (Ecosystem)
-- `ecosystem.view` - Xem cấu trúc
-- `ecosystem.manage_unit` - Quản lý đơn vị mình
-- `ecosystem.manage_children` - Quản lý đơn vị con
-- `ecosystem.manage_all` - Quản lý toàn bộ
-- `ecosystem.add_members` - Thêm thành viên
-- `ecosystem.assign_roles` - Gán vai trò
-
-### 5. QUY TRÌNH (Workflows)
-- `workflows.view` - Xem quy trình
-- `workflows.create` - Tạo quy trình
-- `workflows.edit` - Sửa quy trình
-- `workflows.delete` - Xóa quy trình
-
-### 6. BÁO CÁO (Reports)
-- `reports.view_all` - Xem tất cả BC
-- `reports.view_unit` - Xem BC đơn vị
-- `reports.export` - Xuất BC
-- `reports.finance` - Xem BC tài chính (nhạy cảm)
-
-### 7. CÀI ĐẶT (Settings)
-- `settings.workflow` - Cấu hình quy trình
-- `settings.templates` - Quản lý mẫu
-- `settings.users` - Quản lý user
-- `settings.system` - Cài đặt hệ thống
-
----
-
-## 💾 DATABASE SCHEMA
-
-### Bảng 1: `role_permissions` (Quyền mặc định)
+### Core Tables
 ```sql
-CREATE TABLE role_permissions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  role VARCHAR(50) NOT NULL,
-  permission VARCHAR(100) NOT NULL,
-  is_allowed BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(role, permission)
-);
+roles                    -- Admin, Manager, Employee, Viewer
+├─ id, name, description, is_system
+└─ role_permissions      -- M:N join with permissions
 
--- Seed admin
-INSERT INTO role_permissions (role, permission) VALUES
-('admin', 'projects.view_all'),
-('admin', 'projects.create'),
-('admin', 'projects.edit_all'),
-('admin', 'projects.delete'),
-('admin', 'tasks.view_all'),
-('admin', 'ecosystem.manage_all'),
-('admin', 'settings.system'),
-('admin', 'reports.finance');
+permissions              -- 25+ permissions
+├─ id, resource, action, description
+└─ Grouped: projects, workflows, templates, users, ecosystem, reports, settings
 
--- Seed manager
-INSERT INTO role_permissions (role, permission) VALUES
-('manager', 'projects.view_all'),
-('manager', 'projects.create'),
-('manager', 'tasks.view_all'),
-('manager', 'ecosystem.manage_unit');
+user_roles               -- User → Role assignments
+├─ user_id, role_id, ecosystem_unit_id (scope)
+└─ Unique: (user_id, role_id, ecosystem_unit_id)
 
--- Seed employee
-INSERT INTO role_permissions (role, permission) VALUES
-('employee', 'projects.view_assigned'),
-('employee', 'tasks.view_assigned'),
-('employee', 'tasks.edit_assigned');
+user_permissions         -- Granular overrides
+├─ user_id, permission_id, ecosystem_unit_id, granted (bool)
+└─ Unique: (user_id, permission_id, ecosystem_unit_id)
 ```
 
-### Bảng 2: `user_permission_overrides` (Gán đặc biệt)
+### Permission Check RPC
 ```sql
-CREATE TABLE user_permission_overrides (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  permission VARCHAR(100) NOT NULL,
-  is_allowed BOOLEAN NOT NULL,
-  unit_id UUID REFERENCES ecosystem_units(id) ON DELETE CASCADE,
-  reason TEXT,
-  granted_by UUID REFERENCES users(id),
-  granted_at TIMESTAMPTZ DEFAULT now(),
-  expires_at TIMESTAMPTZ,
-  UNIQUE(user_id, permission, unit_id)
-);
+user_has_permission(user_id, resource, action, unit_id)
+→ Checks user_roles + role_permissions
+→ Checks user_permissions (direct grants/revokes)
+→ Handles hierarchy (division includes companies)
 ```
 
-### Bảng 3: `permission_audit_log` (Audit trail)
-```sql
-CREATE TABLE permission_audit_log (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id),
-  action VARCHAR(100) NOT NULL,
-  resource_type VARCHAR(50),
-  resource_id UUID,
-  unit_id UUID,
-  allowed BOOLEAN NOT NULL,
-  reason TEXT,
-  ip_address INET,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+## 3 Permission Levels
 
-CREATE INDEX idx_audit_user ON permission_audit_log(user_id, created_at DESC);
+### Level 1: Role-based (Global/Scoped)
+- Predefined roles with permission sets
+- Scope options: Global, Division, Company, Department, Team
+- Example: "Manager" role in "Division A" → access all child units
+
+### Level 2: Hierarchical (Inherited)
+- Parent scope includes children
+- Division → Companies → Departments → Teams
+- Backend: `getAllChildUnits()` BFS recursive
+- Example: Division admin sees all companies/depts/teams
+
+### Level 3: Granular (Per-User Overrides)
+- Toggle individual permissions per user per unit
+- Overrides role permissions
+- Example: Employee A in Company B has "view" but not "edit"
+
+## UI Structure
+
+### /permissions - Unified 3-tab interface
+
+**Tab 1: Vai trò & Quyền**
+- Left: Roles list (admin, manager, employee, viewer)
+- Right: Permission grid (grouped by resource)
+- Toggle permissions for selected role
+- Create new roles (non-system)
+
+**Tab 2: Gán vai trò**
+- User list with filters (Division/Company/Dept)
+- Click user → UserRolesModal
+- Assign role with optional scope (ecosystem_unit_id)
+- Shows current roles with scope breadcrumb
+
+**Tab 3: Phân quyền chi tiết**
+- Left: Ecosystem tree (collapsible)
+- Right: Multi-select users + bulk permission toggles
+- [✅ grant] [❌ revoke] buttons per permission
+- Bulk operations for fast mass assignment
+
+## Workflows
+
+### Scenario 1: Department-level Access
+```
+1. Create role "dept_supervisor"
+2. Toggle permissions: projects view/edit, users view
+3. Go to Tab 2 → Select user "Nguyễn A"
+4. Assign "dept_supervisor" scoped to "Phòng Kế Hoạch"
+5. Result: User A can view/edit projects in that dept only
 ```
 
----
+### Scenario 2: Company-wide Admin
+```
+1. Use system role "manager"
+2. Tab 2 → Select user "Trần B"
+3. Assign "manager" scoped to "Công ty Phúc Đạt"
+4. Result: User B manages all depts/teams in that company
+```
 
-## 🔧 BACKEND LOGIC
+### Scenario 3: Custom Permissions
+```
+1. Tab 3 → Select "Công ty A"
+2. Check 10 designers
+3. Click ✅ "edit" for "templates" resource
+4. Click ❌ "delete" for "templates" resource
+5. Result: 10 designers can edit but not delete templates
+```
 
-### Check Permission Function
+## Backend Filtering Logic
+
+### Projects Endpoint
 ```javascript
-async function hasPermission(userId, permission, resourceUnitId = null) {
-  const user = await getUser(userId);
-  
-  // 1. Check role permissions
-  const rolePerms = await getRolePermissions(user.role);
-  if (rolePerms.includes(permission)) return true;
-  
-  // 2. Check DENY override (highest priority)
-  const deny = await getUserOverride(userId, permission, null);
-  if (deny && !deny.is_allowed) return false;
-  
-  // 3. Check unit-based access
-  if (resourceUnitId) {
-    const accessible = await getUserAccessibleUnits(userId, user.role);
-    if (!accessible.includes(resourceUnitId)) return false;
-    
-    // Check unit role
-    const membership = await getUnitMembership(userId, resourceUnitId);
-    if (membership && ['director','manager'].includes(membership.unit_role)) {
-      const unitPerms = getUnitRolePermissions(membership.unit_role);
-      if (unitPerms.includes(permission)) return true;
-    }
+// Check permission
+const hasPerm = await checkPermission(userId, 'projects', 'all_companies');
+
+if (hasPerm) {
+  // See all projects
+  query = supabase.from('projects').select('*');
+} else {
+  // Filter by accessible companies
+  const units = await getUserAccessibleUnits(userId);
+  const companyIds = units.filter(u => u.company_id).map(u => u.company_id);
+  query = query.in('company_id', companyIds);
+}
+```
+
+### Users Endpoint
+```javascript
+// Division filter
+if (ecosystem_unit_id) {
+  const allUnits = await getAllChildUnits(ecosystem_unit_id); // BFS
+  const companyIds = extractCompanyIds(allUnits);
+  const deptIds = await getDepartments(companyIds);
+  query = query.in('department_id', deptIds);
+}
+```
+
+## Key Files
+
+### Backend
+- `backend/supabase/24_permission_system.sql` - Schema + RPC
+- `backend/src/routes/permissions.js` - Permission API (300 lines)
+- `backend/src/routes/projects.js` - Filtering logic
+- `backend/src/routes/users.js` - Division/Company/Dept filters
+- `backend/src/routes/ecosystem.js` - Unit management
+
+### Frontend
+- `frontend/src/pages/PermissionsPage.jsx` - Main 3-tab UI (400 lines)
+- `frontend/src/components/UserRolesModal.jsx` - Role assignment modal (250 lines)
+- `frontend/src/components/EcosystemPermissionsTab.jsx` - Bulk permissions (400 lines)
+- `frontend/src/pages/UsersPage.jsx` - User filters + role menu
+
+## Common Patterns
+
+### Checking Permissions (Frontend)
+```javascript
+// Check if user can edit projects
+const canEdit = await api.post('/permissions/check', {
+  user_id: currentUser.id,
+  resource: 'projects',
+  action: 'edit',
+  unit_id: selectedProject.company_id
+});
+```
+
+### Bulk Permission Grant (Frontend)
+```javascript
+// Grant "view" to 10 users in Company A
+await Promise.all(
+  selectedUsers.map(userId =>
+    api.post('/permissions/users/custom-permission', {
+      user_id: userId,
+      permission_id: viewPermId,
+      ecosystem_unit_id: companyA.id,
+      granted: true
+    })
+  )
+);
+```
+
+### Hierarchical Unit Resolution (Backend)
+```javascript
+// Get all child units (BFS, 3 levels)
+async function getAllChildUnits(unitId) {
+  const allIds = [unitId];
+  let queue = [unitId];
+  while (queue.length > 0) {
+    const children = await supabase
+      .from('ecosystem_units')
+      .select('id')
+      .in('parent_id', queue);
+    const childIds = children.data.map(c => c.id);
+    allIds.push(...childIds);
+    queue = childIds;
   }
-  
-  // 4. Check ALLOW override
-  const allow = await getUserOverride(userId, permission, resourceUnitId);
-  if (allow && allow.is_allowed) return true;
-  
-  return false;
+  return allIds;
 }
 ```
 
-### Middleware
-```javascript
-// backend/src/middleware/permission.js
-function requirePermission(permission) {
-  return async (req, res, next) => {
-    const allowed = await hasPermission(req.user.userId, permission);
-    
-    await logPermissionCheck(req.user.userId, permission, allowed);
-    
-    if (!allowed) {
-      return res.status(403).json({ 
-        error: 'Không có quyền',
-        permission 
-      });
-    }
-    next();
-  };
-}
-```
+## Performance Considerations
 
-### Sử dụng
-```javascript
-// routes/projects.js
-r.get('/', requirePermission('projects.view_all'), async (req, res) => {
-  // ...
-});
+- **Caching**: User roles/permissions cached in session (TODO)
+- **Filtering**: Apply filters early (SQL level, not JS)
+- **Bulk operations**: Use Promise.all for parallel requests
+- **Tree loading**: Only load needed levels (level param)
+- **Avoid N+1**: Use JOIN/select expansion where possible
 
-r.post('/', requirePermission('projects.create'), async (req, res) => {
-  // ...
-});
+## Security Notes
 
-r.delete('/:id', requirePermission('projects.delete'), async (req, res) => {
-  // ...
-});
-```
+- System roles (is_system=true) cannot be deleted
+- Permission checks run server-side (never trust frontend)
+- ecosystem_unit_id validates unit exists + user has access
+- Default deny: no permission = access denied
+- Audit trail: granted_by/granted_at columns (TODO: implement)
 
----
+## Future Enhancements
 
-## 🎨 FRONTEND
-
-### Hook: usePermission
-```javascript
-// hooks/usePermission.js
-export function usePermission() {
-  const { user } = useAuth();
-  
-  const can = (permission) => {
-    if (['admin','manager'].includes(user?.role)) return true;
-    return user?.permissions?.includes(permission) || false;
-  };
-  
-  return { can };
-}
-```
-
-### Component
-```javascript
-function ProjectActions({ project }) {
-  const { can } = usePermission();
-  
-  return (
-    <div>
-      {can('projects.edit_all') && <button>Sửa</button>}
-      {can('projects.delete') && <button>Xóa</button>}
-    </div>
-  );
-}
-```
-
----
-
-## 📝 USE CASES
-
-### Case 1: Director Khối
-**Setup**:
-- Role: `employee`
-- Unit: Khối Miền Nam (depth=1), unit_role=`director`, can_manage_children=`true`
-
-**Quyền**:
-✅ Xem/sửa dự án của tất cả Công ty trong Khối
-✅ Thêm nhân viên vào Công ty
-✅ Tạo dự án cho Công ty
-❌ Xóa dự án (cần override)
-
-### Case 2: Manager Công ty
-**Setup**:
-- Role: `manager`
-- Unit: Công ty A, unit_role=`manager`, can_manage_children=`false`
-
-**Quyền**:
-✅ Xem/sửa dự án Công ty A
-✅ Tạo dự án cho Công ty A
-❌ Không thấy Công ty B
-❌ Không quản lý Phòng ban (can_manage_children=false)
-
-### Case 3: Nhân viên Designer
-**Setup**:
-- Role: `designer`
-- Unit: Team Thiết kế, unit_role=`member`
-
-**Quyền**:
-✅ Xem CV được gán
-✅ Sửa CV được gán
-❌ Không xem dự án khác
-❌ Không tạo dự án
-
----
-
-## 🚀 ROADMAP TRIỂN KHAI
-
-### Phase 1: Setup (2-3 giờ)
-- [ ] Tạo 3 bảng: role_permissions, user_permission_overrides, permission_audit_log
-- [ ] Seed data cho role_permissions (admin, manager, employee)
-- [ ] Test migration
-
-### Phase 2: Backend Core (3-4 giờ)
-- [ ] Viết hasPermission() function
-- [ ] Viết requirePermission() middleware
-- [ ] Viết helper functions (getRolePermissions, getUserOverride, etc)
-- [ ] Test với Postman
-
-### Phase 3: Apply to Routes (2-3 giờ)
-- [ ] Apply middleware vào /projects routes
-- [ ] Apply vào /tasks routes
-- [ ] Apply vào /customers routes
-- [ ] Apply vào /ecosystem routes
-
-### Phase 4: Frontend (2-3 giờ)
-- [ ] Tạo usePermission hook
-- [ ] API: GET /auth/my-permissions
-- [ ] Apply vào components (show/hide buttons)
-- [ ] Test UI
-
-### Phase 5: Admin UI (3-4 giờ)
-- [ ] Trang quản lý permissions
-- [ ] Gán/thu hồi quyền cho user
-- [ ] Xem audit log
-- [ ] Test end-to-end
-
-**Tổng thời gian**: 12-17 giờ
-
----
-
-## ✅ LỢI ÍCH
-
-1. **Bảo mật tốt hơn**: Kiểm soát chi tiết ai làm được gì
-2. **Linh hoạt**: 1 user nhiều vai trò ở nhiều đơn vị
-3. **Kế thừa tự động**: Director Khối → auto quản lý Công ty
-4. **Audit trail**: Log đầy đủ ai làm gì, khi nào
-5. **Mở rộng dễ**: Thêm permission mới chỉ cần insert DB
-6. **Tương thích**: Dùng lại ecosystem hiện tại
-
----
-
-## 🎯 KẾT LUẬN
-
-**Đề xuất triển khai OPTION A**:
-- ✅ Đơn giản, dễ maintain
-- ✅ Ít thay đổi DB (3 bảng mới)
-- ✅ Logic rõ ràng
-- ✅ Linh hoạt đủ cho 90% use cases
-- ✅ Có thể nâng cấp sau (thêm ABAC nếu cần)
-
-**Next step**: Bạn OK với thiết kế này → tôi code luôn!
+- [ ] Permission change audit log
+- [ ] Role templates (quick assign common sets)
+- [ ] Permission groups (bundle related permissions)
+- [ ] Time-based permissions (expiry dates)
+- [ ] Delegation (temporary permission grants)
+- [ ] Frontend permission caching
+- [ ] Permission diff view (before/after)
+- [ ] Bulk import/export roles
