@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import UserSelect from '../components/UserSelect';
+import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Plus, Save, Trash2, Edit, GripVertical, ChevronDown, ChevronRight,
   FileText, CheckSquare, Users, User, Building, ClipboardList, Copy, Star, Clock
@@ -246,7 +246,7 @@ export default function TemplateSetDetailPage() {
         </div>
       )}
 
-      {showAddTask && <AddTaskForm stages={stages} users={allUsers} onAdd={addTask} onCancel={() => setShowAddTask(false)} />}
+      {showAddTask && <AddTaskForm stages={stages} users={allUsers} companyUnitId={set?.unit_id} onAdd={addTask} onCancel={() => setShowAddTask(false)} />}
 
       {/* Show tasks grouped by stage — include stages that have tasks even if not in stages list */}
       {(() => {
@@ -261,6 +261,7 @@ export default function TemplateSetDetailPage() {
           return (
             <StageSection key={stage.id} stage={stage} stageNumber={stageIdx + 1} tasks={stageTasks}
               users={allUsers}
+              companyUnitId={set?.unit_id}
               onUpdateTask={updateTask} onDeleteTask={deleteTask}
               onAddChecklist={addChecklist} onUpdateChecklist={updateChecklist} onDeleteChecklist={deleteChecklist} />
           );
@@ -279,7 +280,7 @@ export default function TemplateSetDetailPage() {
 }
 
 /* ═══ ADD TASK FORM ═══ */
-function AddTaskForm({ stages, users, onAdd, onCancel }) {
+function AddTaskForm({ stages, users, companyUnitId, onAdd, onCancel }) {
   const [title, setTitle] = useState('');
   const [stageId, setStageId] = useState(stages[0]?.id || '');
   const [desc, setDesc] = useState('');
@@ -315,7 +316,13 @@ function AddTaskForm({ stages, users, onAdd, onCancel }) {
           </select>
         </div>
         <div><label className="text-[11px] font-medium text-gray-600 block mb-1">Người chịu trách nhiệm</label>
-          <UserSelect value={assigneeId} onChange={setAssigneeId} users={users} className="w-full" placeholder="-- Chọn NV --" />
+          <EmployeePicker
+            companyUnitId={companyUnitId}
+            value={assigneeId}
+            onChange={(userId) => setAssigneeId(userId)}
+            placeholder="-- Chọn NV --"
+            size="sm"
+          />
         </div>
         <div className="flex gap-2">
           <div className="flex-1"><label className="text-[11px] font-medium text-gray-600 block mb-1">Ưu tiên</label>
@@ -342,7 +349,7 @@ function AddTaskForm({ stages, users, onAdd, onCancel }) {
 }
 
 /* ═══ STAGE SECTION ═══ */
-function StageSection({ stage, stageNumber, tasks, users, onUpdateTask, onDeleteTask, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
+function StageSection({ stage, stageNumber, tasks, users, companyUnitId, onUpdateTask, onDeleteTask, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
   const [open, setOpen] = useState(true);
   const icon = stage.icon && stage.icon.charCodeAt(0) > 127 ? stage.icon : '📋';
 
@@ -363,7 +370,7 @@ function StageSection({ stage, stageNumber, tasks, users, onUpdateTask, onDelete
       {open && (
         <div className="border-t divide-y">
           {tasks.map(task => (
-            <TaskCard key={task.id} task={task} users={users}
+            <TaskCard key={task.id} task={task} users={users} companyUnitId={companyUnitId}
               onUpdate={onUpdateTask} onDelete={onDeleteTask}
               onAddChecklist={onAddChecklist} onUpdateChecklist={onUpdateChecklist} onDeleteChecklist={onDeleteChecklist} />
           ))}
@@ -374,7 +381,7 @@ function StageSection({ stage, stageNumber, tasks, users, onUpdateTask, onDelete
 }
 
 /* ═══ TASK CARD ═══ */
-function TaskCard({ task, users, onUpdate, onDelete, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
+function TaskCard({ task, users, companyUnitId, onUpdate, onDelete, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
@@ -461,7 +468,13 @@ function TaskCard({ task, users, onUpdate, onDelete, onAddChecklist, onUpdateChe
                 </div>
                 <div className="col-span-2">
                   <label className="text-[10px] text-gray-500 block mb-0.5">Người chịu trách nhiệm</label>
-                  <UserSelect value={assigneeId} onChange={setAssigneeId} users={users || []} className="w-full" placeholder="-- Chọn --" />
+                  <EmployeePicker
+                    companyUnitId={companyUnitId}
+                    value={assigneeId}
+                    onChange={(userId) => setAssigneeId(userId)}
+                    placeholder="-- Chọn --"
+                    size="sm"
+                  />
                 </div>
               </div>
               <div>
@@ -492,7 +505,7 @@ function TaskCard({ task, users, onUpdate, onDelete, onAddChecklist, onUpdateChe
           <div className="space-y-1">
             <p className="text-[10px] font-semibold text-gray-500 uppercase">Checklist ({task.checklists?.length || 0})</p>
             {(task.checklists || []).map(c => (
-              <ChecklistItem key={c.id} checklist={c} users={users} onUpdate={onUpdateChecklist} onDelete={onDeleteChecklist} />
+              <ChecklistItem key={c.id} checklist={c} users={users} companyUnitId={companyUnitId} onUpdate={onUpdateChecklist} onDelete={onDeleteChecklist} />
             ))}
             <div className="flex items-center gap-2">
               <Plus className="h-3 w-3 text-gray-300 shrink-0" />
@@ -508,7 +521,7 @@ function TaskCard({ task, users, onUpdate, onDelete, onAddChecklist, onUpdateChe
 }
 
 /* ═══ CHECKLIST ITEM (EDITABLE) ═══ */
-function ChecklistItem({ checklist, users, onUpdate, onDelete }) {
+function ChecklistItem({ checklist, users, companyUnitId, onUpdate, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(checklist.title);
   const [assigneeId, setAssigneeId] = useState(checklist.default_assignee_id || '');
@@ -537,12 +550,12 @@ function ChecklistItem({ checklist, users, onUpdate, onDelete }) {
         />
         <div>
           <label className="text-[10px] text-gray-600 block mb-1">👤 Gán nhân viên:</label>
-          <UserSelect 
-            value={assigneeId} 
-            onChange={setAssigneeId} 
-            users={users || []} 
-            className="w-full" 
-            placeholder="-- Chưa gán --" 
+          <EmployeePicker
+            companyUnitId={companyUnitId}
+            value={assigneeId}
+            onChange={(userId) => setAssigneeId(userId)}
+            placeholder="-- Chưa gán --"
+            size="sm"
           />
         </div>
         <div className="flex justify-end gap-2">
