@@ -245,6 +245,13 @@ export default function PermissionsPage() {
           <UsersIcon className="h-4 w-4 inline mr-2" />
           Gán vai trò cho nhân viên
         </button>
+        <button
+          onClick={() => window.location.href = '/ecosystem-permissions'}
+          className="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition-colors"
+        >
+          <Building2 className="h-4 w-4 inline mr-2" />
+          Phân quyền hệ sinh thái
+        </button>
       </div>
 
       {/* Tab Content */}

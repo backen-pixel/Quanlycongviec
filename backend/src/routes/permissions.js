@@ -264,8 +264,8 @@ r.get('/ecosystem-units/:unitId/permissions', async (req, res) => {
       .from('user_permissions')
       .select(`
         *,
-        user:users(id, full_name, email),
-        permission:permissions(*)
+        user:users!user_permissions_user_id_fkey(id, full_name, email),
+        permission:permissions!user_permissions_permission_id_fkey(*)
       `)
       .eq('ecosystem_unit_id', req.params.unitId);
     

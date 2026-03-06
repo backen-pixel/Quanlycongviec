@@ -149,14 +149,22 @@ r.delete('/levels/:id', async (req, res) => {
 // GET tree structure
 r.get('/units', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('ecosystem_units')
+    const { level } = req.query;
+    
+    let q = supabase.from('ecosystem_units')
       .select(`
         *,
         level:ecosystem_levels(id,name,slug,depth,icon,color),
         company:companies!ecosystem_units_company_id_fkey(id,name,short_name)
       `)
-      .eq('is_active', true)
-      .order('order_index');
+      .eq('is_active', true);
+    
+    // Filter by level if provided
+    if (level !== undefined) {
+      q = q.eq('level', parseInt(level));
+    }
+    
+    const { data, error } = await q.order('order_index');
     if (error) throw error;
 
     // Load members count + stage groups for each
@@ -172,10 +180,17 @@ r.get('/units', async (req, res) => {
       unit.stage_groups = (groups || []).map(g => g.group);
     }
 
-    // Build tree
-    const tree = buildTree(units);
-    res.json({ units, tree });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    // Build tree (only if no level filter, otherwise return flat list)
+    if (level === undefined) {
+      const tree = buildTree(units);
+      res.json({ units, tree });
+    } else {
+      res.json({ units });
+    }
+  } catch (e) { 
+    console.error('GET /units error:', e);
+    res.status(500).json({ error: e.message }); 
+  }
 });
 
 function buildTree(units) {
