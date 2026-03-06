@@ -724,9 +724,9 @@ export default function CreateProject() {
                                           const taskId = task.id || task._temp_id;
                                           
                                           return (
-                                            <div key={taskId} className={`bg-white rounded-lg border overflow-hidden ${isNewlyAdded ? 'border-blue-300 shadow-sm' : 'border-gray-200'}`}>
+                                            <div key={taskId} className={`relative bg-white rounded-lg border overflow-visible ${isNewlyAdded ? 'border-blue-300 shadow-sm' : 'border-gray-200'}`} style={{ zIndex: expandedTasks[taskId] ? 10 : 1 }}>
                                               {/* Task Header - Number + Name + Assignee on SAME ROW */}
-                                              <div className="flex items-center gap-3 px-4 py-3">
+                                              <div className="flex items-center gap-3 px-4 py-3 relative">
                                                 {/* Number badge */}
                                                 <div className={`flex items-center justify-center w-7 h-7 rounded-full font-bold text-sm shrink-0 ${isNewlyAdded ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
                                                   {taskIdx + 1}

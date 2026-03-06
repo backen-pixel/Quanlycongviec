@@ -53,7 +53,14 @@ export default function FlowStepTaskManager({ flowStep, templateSetId, onTasksCh
       }
     } catch (error) {
       console.error('Load tasks error:', error);
-      alert('Lỗi khi tải tasks: ' + error.message);
+      
+      // Check if error is 500 (likely missing migration)
+      if (error.response?.status === 500) {
+        alert('⚠️ Lỗi server: Có thể bạn chưa chạy Migration 21 (flow_step_tasks) trên Supabase.\n\nVui lòng chạy migration trong thư mục backend/migrations/');
+      } else {
+        alert('Lỗi khi tải tasks: ' + (error.response?.data?.error || error.message));
+      }
+      setTasks([]);
     } finally {
       setLoading(false);
     }
