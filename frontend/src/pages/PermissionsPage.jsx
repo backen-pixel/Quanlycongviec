@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, Plus, Check, X, Save, Users as UsersIcon, Settings } from 'lucide-react';
+import { Shield, Plus, Check, X, Save, Users as UsersIcon, Settings, Layers, Building2, Users as UsersRound } from 'lucide-react';
 import api from '../lib/api';
 import UserRolesModal from '../components/UserRolesModal';
 
@@ -69,18 +69,27 @@ export default function PermissionsPage() {
   
   // User assignment tab
   const [users, setUsers] = useState([]);
+  const [divisions, setDivisions] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  
+  // Filters
+  const [filterDivision, setFilterDivision] = useState('');
+  const [filterCompany, setFilterCompany] = useState('');
+  const [filterDept, setFilterDept] = useState('');
 
   useEffect(() => {
     load();
+    loadEcosystemData();
   }, []);
 
   useEffect(() => {
     if (activeTab === 'users') {
       loadUsers();
     }
-  }, [activeTab]);
+  }, [activeTab, filterDivision, filterCompany, filterDept]);
 
   const load = async () => {
     setLoading(true);
@@ -97,10 +106,47 @@ export default function PermissionsPage() {
     setLoading(false);
   };
 
+  const loadEcosystemData = async () => {
+    try {
+      const [deptRes, compRes, divRes] = await Promise.all([
+        api.get('/users/departments'),
+        api.get('/ecosystem/units?level=2'), // Companies
+        api.get('/ecosystem/units?level=1'), // Divisions
+      ]);
+      
+      setDepartments(deptRes.data.departments || []);
+      
+      // Companies from ecosystem
+      const companyUnits = compRes.data.units || [];
+      setCompanies(companyUnits.map(u => ({
+        id: u.company_id,
+        name: u.name,
+        division_unit_id: u.parent_id,
+        unit_id: u.id,
+      })).filter(c => c.id));
+      
+      setDivisions(divRes.data.units || []);
+    } catch (e) {
+      console.error('Load ecosystem data error:', e);
+    }
+  };
+
   const loadUsers = async () => {
     setLoadingUsers(true);
     try {
-      const { data } = await api.get('/users');
+      const params = {};
+      
+      if (filterDivision) {
+        params.ecosystem_unit_id = filterDivision;
+      } else if (filterCompany) {
+        params.company_id = filterCompany;
+      }
+      
+      if (filterDept) {
+        params.department_id = filterDept;
+      }
+      
+      const { data } = await api.get('/users', { params });
       setUsers(data.users || []);
     } catch (e) {
       console.error('Load users error:', e);
@@ -218,6 +264,16 @@ export default function PermissionsPage() {
           users={users}
           loading={loadingUsers}
           onUserClick={(user) => setSelectedUser(user)}
+          // Filters
+          divisions={divisions}
+          companies={companies}
+          departments={departments}
+          filterDivision={filterDivision}
+          filterCompany={filterCompany}
+          filterDept={filterDept}
+          onFilterDivision={setFilterDivision}
+          onFilterCompany={setFilterCompany}
+          onFilterDept={setFilterDept}
         />
       )}
 
@@ -376,7 +432,20 @@ function RolesTab({ roles, permissions, selectedRole, rolePermissions, saving, o
 }
 
 // Users Assignment Tab
-function UsersTab({ users, loading, onUserClick }) {
+function UsersTab({ 
+  users, 
+  loading, 
+  onUserClick, 
+  divisions, 
+  companies, 
+  departments,
+  filterDivision,
+  filterCompany,
+  filterDept,
+  onFilterDivision,
+  onFilterCompany,
+  onFilterDept,
+}) {
   const [search, setSearch] = useState('');
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [showBulkAssign, setShowBulkAssign] = useState(false);
@@ -420,6 +489,98 @@ function UsersTab({ users, loading, onUserClick }) {
             (Toàn hệ thống, Khối, Công ty, Phòng ban, Team). Vai trò gán ở cấp cao hơn sẽ bao gồm tất cả cấp con.
           </p>
         </div>
+
+        {/* Filters: Division + Company + Department */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Division */}
+          <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-10">
+            <Layers className="h-4 w-4 text-gray-400 shrink-0" />
+            <select 
+              value={filterDivision} 
+              onChange={e => {
+                onFilterDivision(e.target.value);
+                onFilterCompany(''); // Reset company
+              }} 
+              className="flex-1 text-sm outline-none bg-transparent"
+            >
+              <option value="">Tất cả khối</option>
+              {divisions.map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Company */}
+          <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-10">
+            <Building2 className="h-4 w-4 text-gray-400 shrink-0" />
+            <select 
+              value={filterCompany} 
+              onChange={e => onFilterCompany(e.target.value)} 
+              className="flex-1 text-sm outline-none bg-transparent"
+            >
+              <option value="">Tất cả công ty</option>
+              {companies
+                .filter(c => !filterDivision || c.division_unit_id === filterDivision)
+                .map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))
+              }
+            </select>
+          </div>
+
+          {/* Department */}
+          <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-10">
+            <UsersRound className="h-4 w-4 text-gray-400 shrink-0" />
+            <select 
+              value={filterDept} 
+              onChange={e => onFilterDept(e.target.value)} 
+              className="flex-1 text-sm outline-none bg-transparent"
+            >
+              <option value="">Tất cả phòng ban</option>
+              {departments
+                .filter(d => !filterCompany || d.company_id === filterCompany)
+                .map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))
+              }
+            </select>
+          </div>
+        </div>
+
+        {/* Active Filters */}
+        {(filterDivision || filterCompany || filterDept) && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-500">Đang lọc:</span>
+            {filterDivision && (
+              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full flex items-center gap-1">
+                Khối: {divisions.find(d => d.id === filterDivision)?.name}
+                <button onClick={() => onFilterDivision('')} className="hover:text-purple-900">×</button>
+              </span>
+            )}
+            {filterCompany && (
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full flex items-center gap-1">
+                Cty: {companies.find(c => c.id === filterCompany)?.name}
+                <button onClick={() => onFilterCompany('')} className="hover:text-blue-900">×</button>
+              </span>
+            )}
+            {filterDept && (
+              <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full flex items-center gap-1">
+                PB: {departments.find(d => d.id === filterDept)?.name}
+                <button onClick={() => onFilterDept('')} className="hover:text-green-900">×</button>
+              </span>
+            )}
+            <button 
+              onClick={() => {
+                onFilterDivision('');
+                onFilterCompany('');
+                onFilterDept('');
+              }}
+              className="text-xs text-red-600 hover:text-red-800 font-medium"
+            >
+              Xóa tất cả
+            </button>
+          </div>
+        )}
 
         {/* Search + Bulk Actions */}
         <div className="flex items-center gap-3">
