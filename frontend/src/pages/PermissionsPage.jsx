@@ -378,11 +378,29 @@ function RolesTab({ roles, permissions, selectedRole, rolePermissions, saving, o
 // Users Assignment Tab
 function UsersTab({ users, loading, onUserClick }) {
   const [search, setSearch] = useState('');
+  const [selectedUsers, setSelectedUsers] = useState([]);
+  const [showBulkAssign, setShowBulkAssign] = useState(false);
 
   const filteredUsers = users.filter(u =>
     u.full_name?.toLowerCase().includes(search.toLowerCase()) ||
     u.email?.toLowerCase().includes(search.toLowerCase())
   );
+
+  const toggleUser = (userId) => {
+    setSelectedUsers(prev =>
+      prev.includes(userId)
+        ? prev.filter(id => id !== userId)
+        : [...prev, userId]
+    );
+  };
+
+  const selectAll = () => {
+    if (selectedUsers.length === filteredUsers.length) {
+      setSelectedUsers([]);
+    } else {
+      setSelectedUsers(filteredUsers.map(u => u.id));
+    }
+  };
 
   if (loading) {
     return (
@@ -393,55 +411,119 @@ function UsersTab({ users, loading, onUserClick }) {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Info box */}
-      <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-        <p className="text-sm text-purple-900">
-          💡 <strong>Phân quyền phân cấp hệ sinh thái:</strong> Click vào nhân viên để gán vai trò với phạm vi 
-          (Toàn hệ thống, Khối, Công ty, Phòng ban, Team). Vai trò gán ở cấp cao hơn sẽ bao gồm tất cả cấp con.
-        </p>
-      </div>
-
-      {/* Search */}
-      <div className="relative max-w-md">
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Tìm nhân viên (tên, email)..."
-          className="w-full h-10 px-4 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-        />
-      </div>
-
-      {/* Users Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {filteredUsers.map(user => (
-          <button
-            key={user.id}
-            onClick={() => onUserClick(user)}
-            className="flex items-center gap-3 p-3 bg-white border rounded-lg hover:border-purple-400 hover:shadow-sm transition-all text-left"
-          >
-            <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-sm shrink-0">
-              {user.full_name?.charAt(0)?.toUpperCase() || '?'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-gray-900 truncate">{user.full_name}</p>
-              <p className="text-xs text-gray-500 truncate">{user.email}</p>
-              {user.department?.name && (
-                <p className="text-xs text-gray-400 mt-0.5">{user.department.name}</p>
-              )}
-            </div>
-            <Shield className="h-4 w-4 text-purple-400 shrink-0" />
-          </button>
-        ))}
-      </div>
-
-      {filteredUsers.length === 0 && (
-        <div className="text-center py-12 text-gray-400">
-          <UsersIcon className="h-12 w-12 mx-auto mb-2 opacity-30" />
-          <p className="text-sm">Không tìm thấy nhân viên</p>
+    <>
+      <div className="space-y-4">
+        {/* Info box */}
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+          <p className="text-sm text-purple-900">
+            💡 <strong>Phân quyền phân cấp hệ sinh thái:</strong> Click vào nhân viên để gán vai trò với phạm vi 
+            (Toàn hệ thống, Khối, Công ty, Phòng ban, Team). Vai trò gán ở cấp cao hơn sẽ bao gồm tất cả cấp con.
+          </p>
         </div>
+
+        {/* Search + Bulk Actions */}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-md">
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Tìm nhân viên (tên, email)..."
+              className="w-full h-10 px-4 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+          </div>
+          
+          {selectedUsers.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">
+                {selectedUsers.length} nhân viên đã chọn
+              </span>
+              <button
+                onClick={() => setShowBulkAssign(true)}
+                className="h-10 px-4 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-2"
+              >
+                <Shield className="h-4 w-4" />
+                Gán vai trò hàng loạt
+              </button>
+              <button
+                onClick={() => setSelectedUsers([])}
+                className="h-10 px-3 border rounded-lg text-sm hover:bg-gray-50"
+              >
+                Bỏ chọn
+              </button>
+            </div>
+          )}
+          
+          <button
+            onClick={selectAll}
+            className="h-10 px-3 border rounded-lg text-sm hover:bg-gray-50"
+          >
+            {selectedUsers.length === filteredUsers.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+          </button>
+        </div>
+
+        {/* Users Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {filteredUsers.map(user => {
+            const isSelected = selectedUsers.includes(user.id);
+            return (
+              <div
+                key={user.id}
+                className={`relative flex items-center gap-3 p-3 bg-white border rounded-lg transition-all ${
+                  isSelected ? 'border-purple-500 bg-purple-50' : 'hover:border-purple-400 hover:shadow-sm'
+                }`}
+              >
+                {/* Checkbox */}
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleUser(user.id)}
+                  onClick={e => e.stopPropagation()}
+                  className="w-4 h-4 accent-purple-600 shrink-0"
+                />
+                
+                {/* User Info - Clickable */}
+                <button
+                  onClick={() => onUserClick(user)}
+                  className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                >
+                  <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-sm shrink-0">
+                    {user.full_name?.charAt(0)?.toUpperCase() || '?'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">{user.full_name}</p>
+                    <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                    {user.department?.name && (
+                      <p className="text-xs text-gray-400 mt-0.5">{user.department.name}</p>
+                    )}
+                  </div>
+                  <Shield className="h-4 w-4 text-purple-400 shrink-0" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {filteredUsers.length === 0 && (
+          <div className="text-center py-12 text-gray-400">
+            <UsersIcon className="h-12 w-12 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">Không tìm thấy nhân viên</p>
+          </div>
+        )}
+      </div>
+      
+      {/* Bulk Assign Modal */}
+      {showBulkAssign && (
+        <BulkRoleAssignModal
+          userIds={selectedUsers}
+          users={users.filter(u => selectedUsers.includes(u.id))}
+          onClose={() => setShowBulkAssign(false)}
+          onSaved={() => {
+            setShowBulkAssign(false);
+            setSelectedUsers([]);
+          }}
+        />
       )}
-    </div>
+    </>
   );
 }
 
@@ -516,6 +598,196 @@ function CreateRoleModal({ onClose, onSaved }) {
             {saving ? 'Đang tạo...' : 'Tạo vai trò'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+// Bulk Role Assignment Modal
+function BulkRoleAssignModal({ userIds, users, onClose, onSaved }) {
+  const [roles, setRoles] = useState([]);
+  const [selectedRole, setSelectedRole] = useState("");
+  const [ecosystemUnits, setEcosystemUnits] = useState([]);
+  const [selectedLevel, setSelectedLevel] = useState("");
+  const [selectedUnit, setSelectedUnit] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const LEVEL_LABELS = { 0: "Tập đoàn", 1: "Khối", 2: "Công ty", 3: "Phòng ban", 4: "Đội nhóm" };
+  const LEVEL_ICONS = { 0: "🏢", 1: "📦", 2: "🏭", 3: "👥", 4: "⚡" };
+
+  useEffect(() => {
+    Promise.all([
+      api.get("/permissions/roles"),
+      api.get("/ecosystem/units"),
+    ]).then(([rolesRes, unitsRes]) => {
+      setRoles(rolesRes.data.roles || []);
+      setEcosystemUnits(unitsRes.data.units || []);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  const unitsByLevel = {};
+  ecosystemUnits.forEach(u => {
+    const level = u.level || 0;
+    if (!unitsByLevel[level]) unitsByLevel[level] = [];
+    unitsByLevel[level].push(u);
+  });
+
+  const currentLevelUnits = selectedLevel ? (unitsByLevel[selectedLevel] || []) : [];
+
+  const handleAssign = async () => {
+    if (!selectedRole) return alert("Chọn vai trò");
+    if (selectedLevel && !selectedUnit) return alert("Chọn đơn vị");
+
+    setSaving(true);
+    try {
+      const promises = userIds.map(userId =>
+        api.post(`/permissions/users/${userId}/roles`, {
+          role_id: selectedRole,
+          ecosystem_unit_id: selectedUnit || null,
+        })
+      );
+      await Promise.all(promises);
+      alert(`✅ Đã gán vai trò cho ${userIds.length} nhân viên`);
+      onSaved();
+    } catch (e) {
+      alert("Lỗi: " + (e.response?.data?.error || e.message));
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl p-6 max-w-2xl w-full my-8">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <Shield className="h-5 w-5 text-purple-600" />
+              Gán vai trò hàng loạt
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {userIds.length} nhân viên được chọn
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center h-32">
+            <div className="animate-spin h-8 w-8 border-4 border-purple-200 border-t-purple-600 rounded-full" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Selected Users Preview */}
+            <div className="bg-gray-50 rounded-lg p-3 max-h-32 overflow-y-auto">
+              <p className="text-xs font-bold text-gray-700 mb-2">Nhân viên được chọn:</p>
+              <div className="flex flex-wrap gap-2">
+                {users.map(u => (
+                  <span key={u.id} className="text-xs bg-white px-2 py-1 rounded border">
+                    {u.full_name}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Role Selection */}
+            <div>
+              <label className="text-sm font-bold text-gray-700 block mb-2">Chọn vai trò *</label>
+              <select
+                value={selectedRole}
+                onChange={e => setSelectedRole(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+              >
+                <option value="">-- Chọn vai trò --</option>
+                {roles.map(r => (
+                  <option key={r.id} value={r.id}>{r.name} {r.description ? `(${r.description})` : ""}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Level Selection */}
+            <div>
+              <label className="text-sm font-bold text-gray-700 block mb-2">Cấp độ phân quyền</label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => { setSelectedLevel(""); setSelectedUnit(""); }}
+                  className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                    selectedLevel === "" 
+                      ? "bg-indigo-600 text-white border-indigo-600" 
+                      : "bg-white border-gray-300 text-gray-700 hover:border-indigo-400"
+                  }`}
+                >
+                  🌐 Toàn hệ thống
+                </button>
+                {Object.keys(unitsByLevel).sort((a, b) => +a - +b).map(level => (
+                  <button
+                    key={level}
+                    onClick={() => { setSelectedLevel(level); setSelectedUnit(""); }}
+                    className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                      selectedLevel === level 
+                        ? "bg-purple-600 text-white border-purple-600" 
+                        : "bg-white border-gray-300 text-gray-700 hover:border-purple-400"
+                    }`}
+                  >
+                    {LEVEL_ICONS[level]} {LEVEL_LABELS[level]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Unit Selection */}
+            {selectedLevel && (
+              <div>
+                <label className="text-sm font-bold text-gray-700 block mb-2">
+                  Chọn {LEVEL_LABELS[selectedLevel]} *
+                </label>
+                <select
+                  value={selectedUnit}
+                  onChange={e => setSelectedUnit(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">-- Chọn {LEVEL_LABELS[selectedLevel]} --</option>
+                  {currentLevelUnits.map(unit => (
+                    <option key={unit.id} value={unit.id}>
+                      {unit.name} {unit.short_name ? `(${unit.short_name})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Summary */}
+            {selectedRole && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-xs text-blue-800">
+                  <strong>Xác nhận:</strong> Gán vai trò "{roles.find(r => r.id === selectedRole)?.name}" cho {userIds.length} nhân viên
+                  {selectedLevel === "" && " (Toàn hệ thống)"}
+                  {selectedUnit && ` (${LEVEL_LABELS[selectedLevel]}: ${currentLevelUnits.find(u => u.id === selectedUnit)?.name})`}
+                </p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={onClose}
+                className="flex-1 px-4 py-2 border rounded-lg text-sm hover:bg-gray-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleAssign}
+                disabled={!selectedRole || (selectedLevel && !selectedUnit) || saving}
+                className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 disabled:bg-gray-300"
+              >
+                {saving ? "Đang gán..." : `Gán vai trò cho ${userIds.length} người`}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

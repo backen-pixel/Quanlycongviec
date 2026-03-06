@@ -439,41 +439,224 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
 // ═══ Staff Detail Modal ═══
 function StaffDetailModal({ userId, open, onClose }) {
   const [user, setUser] = useState(null);
+  const [userRoles, setUserRoles] = useState([]);
+  const [ecosystemPath, setEcosystemPath] = useState([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { if (!open || !userId) return; setLoading(true); api.get(`/users/${userId}`).then(r => setUser(r.data.user)).catch(() => {}).finally(() => setLoading(false)); }, [open, userId]);
+  const [showRolesModal, setShowRolesModal] = useState(false);
+  
+  useEffect(() => { 
+    if (!open || !userId) return; 
+    setLoading(true);
+    
+    Promise.all([
+      api.get(`/users/${userId}`),
+      api.get(`/permissions/users/${userId}/roles`),
+    ]).then(([userRes, rolesRes]) => {
+      const userData = userRes.data.user;
+      setUser(userData);
+      setUserRoles(rolesRes.data.user_roles || []);
+      
+      // Build ecosystem path (Team → Dept → Company → Division)
+      const path = [];
+      if (userData.team) path.push({ type: 'Team', name: userData.team.name, icon: '⚡' });
+      if (userData.department) {
+        path.push({ type: 'Phòng ban', name: userData.department.name, icon: '👥' });
+        // Load company from department
+        if (userData.department.company_id) {
+          api.get(`/companies/${userData.department.company_id}`).then(compRes => {
+            const company = compRes.data.company;
+            if (company) {
+              setEcosystemPath(prev => {
+                const newPath = [...prev];
+                newPath.push({ type: 'Công ty', name: company.name, icon: '🏭' });
+                // Load division if exists
+                if (company.division_unit_id) {
+                  api.get(`/ecosystem/units/${company.division_unit_id}`).then(divRes => {
+                    const div = divRes.data.unit;
+                    if (div) {
+                      setEcosystemPath(p => [...p, { type: 'Khối', name: div.name, icon: '📦' }]);
+                    }
+                  });
+                }
+                return newPath;
+              });
+            }
+          });
+        }
+      }
+      setEcosystemPath(path);
+    }).catch(() => {}).finally(() => setLoading(false)); 
+  }, [open, userId]);
+  
   if (!open) return null;
+  
   return (
-    <Modal open={open} onClose={onClose} title={user?.full_name || 'Nhân viên'} size="md">
-      {loading || !user ? <div className="flex items-center justify-center h-32"><div className="animate-spin h-6 w-6 border-2 border-gray-200 border-t-gray-600 rounded-full" /></div> : (
-        <div className="space-y-5">
-          <div className="flex items-center gap-4">
-            <div className="h-16 w-16 rounded-full flex items-center justify-center text-white font-bold text-2xl" style={{ backgroundColor: avatarColor(user.full_name) }}>{getInitials(user.full_name)}</div>
-            <div>
-              <h2 className="text-lg font-bold">{user.full_name}</h2>
-              <p className="text-sm text-gray-500">{user.position || ROLES[user.role]}</p>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[user.role] || ''}`}>{ROLES[user.role]}</span>
-                {user.department && <span className="text-[10px] font-medium px-2 py-0.5 rounded" style={{ backgroundColor: user.department.color + '20', color: user.department.color }}>{user.department.name}</span>}
-                {user.team && <span className="text-[10px] font-medium px-2 py-0.5 rounded" style={{ backgroundColor: (user.team.color || '#3b82f6') + '20', color: user.team.color || '#3b82f6' }}>👥 {user.team.name}</span>}
+    <>
+      <Modal open={open} onClose={onClose} title={user?.full_name || 'Nhân viên'} size="lg">
+        {loading || !user ? (
+          <div className="flex items-center justify-center h-32">
+            <div className="animate-spin h-6 w-6 border-2 border-gray-200 border-t-gray-600 rounded-full" />
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Header */}
+            <div className="flex items-center gap-4">
+              <div className="h-16 w-16 rounded-full flex items-center justify-center text-white font-bold text-2xl" 
+                style={{ backgroundColor: avatarColor(user.full_name) }}>
+                {getInitials(user.full_name)}
+              </div>
+              <div className="flex-1">
+                <h2 className="text-lg font-bold">{user.full_name}</h2>
+                <p className="text-sm text-gray-500">{user.position || ROLES[user.role]}</p>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[user.role] || ''}`}>
+                    {ROLES[user.role]}
+                  </span>
+                  {user.department && (
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded" 
+                      style={{ backgroundColor: user.department.color + '20', color: user.department.color }}>
+                      {user.department.name}
+                    </span>
+                  )}
+                  {user.team && (
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded" 
+                      style={{ backgroundColor: (user.team.color || '#3b82f6') + '20', color: user.team.color || '#3b82f6' }}>
+                      👥 {user.team.name}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-[11px] text-gray-500">Email</p><p className="font-medium">{user.email}</p></div>
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-[11px] text-gray-500">SĐT</p><p className="font-medium">{user.phone || '—'}</p></div>
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-[11px] text-gray-500">Ngày sinh</p><p className="font-medium">{formatDate(user.date_of_birth) || '—'}</p></div>
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-[11px] text-gray-500">Ngày vào làm</p><p className="font-medium">{formatDate(user.hire_date) || '—'}</p></div>
-          </div>
-          {user.taskStats && (
-            <div className="grid grid-cols-4 gap-2">
-              <div className="bg-blue-50 rounded-lg p-3 text-center"><p className="text-lg font-bold text-blue-600">{user.taskStats.assigned}</p><p className="text-[10px] text-gray-500">Được giao</p></div>
-              <div className="bg-amber-50 rounded-lg p-3 text-center"><p className="text-lg font-bold text-amber-600">{user.taskStats.in_progress}</p><p className="text-[10px] text-gray-500">Đang làm</p></div>
-              <div className="bg-emerald-50 rounded-lg p-3 text-center"><p className="text-lg font-bold text-emerald-600">{user.taskStats.done}</p><p className="text-[10px] text-gray-500">Hoàn thành</p></div>
-              <div className="bg-purple-50 rounded-lg p-3 text-center"><p className="text-lg font-bold text-purple-600">{user.taskStats.created}</p><p className="text-[10px] text-gray-500">Đã tạo</p></div>
+
+            {/* Ecosystem Path */}
+            {ecosystemPath.length > 0 && (
+              <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-3 border border-purple-200">
+                <p className="text-xs font-bold text-gray-700 mb-2">🏢 Cấu trúc tổ chức</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {[...ecosystemPath].reverse().map((item, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <span className="text-xs bg-white px-2 py-1 rounded border flex items-center gap-1.5">
+                        <span>{item.icon}</span>
+                        <span className="font-medium text-gray-700">{item.type}:</span>
+                        <span className="text-gray-900">{item.name}</span>
+                      </span>
+                      {idx < ecosystemPath.length - 1 && (
+                        <span className="text-gray-400">→</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Roles Section */}
+            <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-purple-600" />
+                  Vai trò & Phân quyền
+                </p>
+                <button
+                  onClick={() => setShowRolesModal(true)}
+                  className="text-xs px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-1"
+                >
+                  <Plus className="h-3 w-3" /> Gán vai trò
+                </button>
+              </div>
+              
+              {userRoles.length === 0 ? (
+                <p className="text-xs text-gray-500 italic">Chưa có vai trò nào được gán</p>
+              ) : (
+                <div className="space-y-2">
+                  {userRoles.map(ur => {
+                    const unit = ur.ecosystem_unit;
+                    const levelLabels = { 0: 'Tập đoàn', 1: 'Khối', 2: 'Công ty', 3: 'Phòng ban', 4: 'Team' };
+                    const levelLabel = unit ? levelLabels[unit.level] : null;
+                    const icons = { 0: '🏢', 1: '📦', 2: '🏭', 3: '👥', 4: '⚡' };
+                    const icon = unit ? icons[unit.level] : '🌐';
+                    
+                    return (
+                      <div key={ur.id} className="bg-white border border-purple-200 rounded-lg p-2.5 flex items-center gap-2">
+                        <Shield className="h-4 w-4 text-purple-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-gray-900">{ur.role?.name}</p>
+                          {unit ? (
+                            <p className="text-[10px] text-gray-600 flex items-center gap-1">
+                              <span>{icon}</span>
+                              <span className="font-medium">{levelLabel}</span>
+                              <span>→</span>
+                              <span className="truncate">{unit.name}</span>
+                            </p>
+                          ) : (
+                            <p className="text-[10px] text-gray-500">🌐 Toàn hệ thống</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+
+            {/* Contact Info */}
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-[11px] text-gray-500">Email</p>
+                <p className="font-medium">{user.email}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-[11px] text-gray-500">SĐT</p>
+                <p className="font-medium">{user.phone || '—'}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-[11px] text-gray-500">Ngày sinh</p>
+                <p className="font-medium">{formatDate(user.date_of_birth) || '—'}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-[11px] text-gray-500">Ngày vào làm</p>
+                <p className="font-medium">{formatDate(user.hire_date) || '—'}</p>
+              </div>
+            </div>
+
+            {/* Task Stats */}
+            {user.taskStats && (
+              <div className="grid grid-cols-4 gap-2">
+                <div className="bg-blue-50 rounded-lg p-3 text-center">
+                  <p className="text-lg font-bold text-blue-600">{user.taskStats.assigned}</p>
+                  <p className="text-[10px] text-gray-500">Được giao</p>
+                </div>
+                <div className="bg-amber-50 rounded-lg p-3 text-center">
+                  <p className="text-lg font-bold text-amber-600">{user.taskStats.in_progress}</p>
+                  <p className="text-[10px] text-gray-500">Đang làm</p>
+                </div>
+                <div className="bg-emerald-50 rounded-lg p-3 text-center">
+                  <p className="text-lg font-bold text-emerald-600">{user.taskStats.done}</p>
+                  <p className="text-[10px] text-gray-500">Hoàn thành</p>
+                </div>
+                <div className="bg-purple-50 rounded-lg p-3 text-center">
+                  <p className="text-lg font-bold text-purple-600">{user.taskStats.created}</p>
+                  <p className="text-[10px] text-gray-500">Đã tạo</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+      
+      {showRolesModal && user && (
+        <UserRolesModal
+          userId={user.id}
+          userName={user.full_name}
+          onClose={() => setShowRolesModal(false)}
+          onSaved={() => {
+            setShowRolesModal(false);
+            // Reload roles
+            api.get(`/permissions/users/${userId}/roles`).then(res => {
+              setUserRoles(res.data.user_roles || []);
+            });
+          }}
+        />
       )}
-    </Modal>
+    </>
   );
 }
