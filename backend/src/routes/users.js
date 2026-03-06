@@ -74,23 +74,19 @@ r.get('/', async (req, res) => {
     const { role, department_id, company_id, ecosystem_unit_id, company_unit_id, search, include_inactive } = req.query;
 
     // ── Lọc theo company_unit_id (ecosystem_units.id → company_id → departments → users) ──
-    // FIX: company_unit_id = ecosystem_units.id (NOT companies.id)
     if (company_unit_id) {
       try {
-        // Step 1: Get company_id from ecosystem_units
         const { data: unit } = await supabase.from('ecosystem_units')
           .select('id, company_id').eq('id', company_unit_id).single();
         
         const resolvedCompanyId = unit?.company_id;
-        if (!resolvedCompanyId) return res.json({ users: [] });
+        if (!resolvedCompanyId) return res.json({ users: [], company_id: null });
 
-        // Step 2: Get departments by company_id
         const { data: depts } = await supabase.from('departments')
           .select('id').eq('company_id', resolvedCompanyId).eq('is_active', true);
         const deptIds = (depts || []).map(d => d.id);
-        if (!deptIds.length) return res.json({ users: [] });
+        if (!deptIds.length) return res.json({ users: [], company_id: resolvedCompanyId });
 
-        // Step 3: Get users
         let q = supabase.from('users')
           .select('id, full_name, email, phone, avatar, role, department_id, position')
           .in('department_id', deptIds);
@@ -100,7 +96,8 @@ r.get('/', async (req, res) => {
         const { data: users, error } = await q.order('full_name');
         if (error) throw error;
 
-        return res.json({ users: users || [] });
+        // Return with company_id so frontend can fetch departments
+        return res.json({ users: users || [], company_id: resolvedCompanyId });
       } catch (e) {
         console.error('company_unit_id filter error:', e.message);
         return res.json({ users: [] });

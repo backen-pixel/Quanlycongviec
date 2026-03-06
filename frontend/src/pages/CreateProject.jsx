@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { FileUploadButton } from '../components/FileUpload';
+import EmployeePicker from '../components/EmployeePicker';
 import {
   Plus, ChevronDown, ChevronRight, X, CheckSquare, User, 
   FileText, Save, AlertCircle, MapPin, DollarSign, Flag, Building2, GitBranch, Layers, ListChecks
@@ -601,21 +602,15 @@ export default function CreateProject() {
                                                 <span className="flex-1 font-bold text-gray-900 text-base leading-snug">
                                                   {taskName}
                                                 </span>
-                                                {/* Assignee dropdown */}
-                                                <div className="shrink-0 w-44">
-                                                  <select
+                                                {/* Assignee Picker */}
+                                                <div className="shrink-0 w-48">
+                                                  <EmployeePicker
+                                                    companyUnitId={step.company_unit_id}
                                                     value={taskAssignees[task.id] || ''}
-                                                    onChange={e => setTaskAssignees(prev => ({ ...prev, [task.id]: e.target.value }))}
-                                                    className="w-full px-2 py-1.5 rounded-lg border border-gray-300 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400"
-                                                    title="Gán nhân viên"
-                                                  >
-                                                    <option value="">👤 Chưa gán</option>
-                                                    {employees.map(emp => (
-                                                      <option key={emp.id} value={emp.id}>
-                                                        {emp.full_name || emp.email}
-                                                      </option>
-                                                    ))}
-                                                  </select>
+                                                    onChange={(userId) => setTaskAssignees(prev => ({ ...prev, [task.id]: userId || '' }))}
+                                                    placeholder="👤 Chưa gán"
+                                                    size="sm"
+                                                  />
                                                 </div>
                                               </div>
 
@@ -654,21 +649,15 @@ export default function CreateProject() {
                                                           <span className="flex-1 text-sm font-medium text-gray-800">
                                                             {check.title || check.label || check.name}
                                                           </span>
-                                                          {/* Assignee dropdown */}
-                                                          <div className="shrink-0 w-36">
-                                                            <select
+                                                          {/* Assignee Picker */}
+                                                          <div className="shrink-0 w-40">
+                                                            <EmployeePicker
+                                                              companyUnitId={step.company_unit_id}
                                                               value={taskAssignees[`checklist_${check.id}`] || ''}
-                                                              onChange={e => setTaskAssignees(prev => ({ ...prev, [`checklist_${check.id}`]: e.target.value }))}
-                                                              className="w-full px-2 py-1 rounded-lg border border-gray-300 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400"
-                                                              title="Gán nhân viên cho checklist"
-                                                            >
-                                                              <option value="">👤 Chưa gán</option>
-                                                              {employees.map(emp => (
-                                                                <option key={emp.id} value={emp.id}>
-                                                                  {emp.full_name || emp.email}
-                                                                </option>
-                                                              ))}
-                                                            </select>
+                                                              onChange={(userId) => setTaskAssignees(prev => ({ ...prev, [`checklist_${check.id}`]: userId || '' }))}
+                                                              placeholder="👤 Chưa gán"
+                                                              size="sm"
+                                                            />
                                                           </div>
                                                         </div>
                                                       ))}
