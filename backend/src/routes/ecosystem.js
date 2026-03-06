@@ -783,6 +783,18 @@ r.post("/units/members", async (req, res) => {
     const { unit_id, user_id } = req.body;
     if (!unit_id || !user_id) return res.status(400).json({ error: "Missing unit_id or user_id" });
     
+    // Check if already exists
+    const { data: existing } = await supabase
+      .from("ecosystem_unit_members")
+      .select("id")
+      .eq("unit_id", unit_id)
+      .eq("user_id", user_id)
+      .single();
+    
+    if (existing) {
+      return res.json({ member: existing, already_exists: true });
+    }
+    
     const { data, error } = await supabase
       .from("ecosystem_unit_members")
       .insert({ unit_id, user_id })
