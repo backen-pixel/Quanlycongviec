@@ -883,23 +883,53 @@ r.get('/units/:unitId/users', async (req, res) => {
       }
     } else if (unitDepth === 3) {
       // Phòng ban: users in this department
-      // ecosystem_units has department_id field OR match by name
       let deptId = null;
       
-      // Try 1: Direct department_id link (if exists)
+      // Try 1: Direct department_id link (if exists in future)
       if (unit.department_id) {
         deptId = unit.department_id;
+        console.log('Department ID from unit:', deptId);
       }
       // Try 2: Match by name + company
       else if (unit.company_id && unit.name) {
-        const { data: dept } = await supabase
-          .from('departments')
-          .select('id')
-          .eq('company_id', unit.company_id)
-          .eq('name', unit.name)
-          .single();
+        console.log('Looking for department:', { company_id: unit.company_id, name: unit.name });
         
-        if (dept) deptId = dept.id;
+        const { data: dept, error: deptError } = await supabase
+          .from('departments')
+          .select('id, name')
+          .eq('company_id', unit.company_id)
+          .ilike('name', unit.name) // Case-insensitive match
+          .maybeSingle(); // Use maybeSingle instead of single (no error if not found)
+        
+        if (deptError) {
+          console.error('Department lookup error:', deptError);
+        }
+        
+        if (dept) {
+          deptId = dept.id;
+          console.log('Department found:', dept);
+        } else {
+          console.warn('No department match for:', unit.name, 'in company:', unit.company_id);
+          
+          // Fallback: Try partial match (in case name differs slightly)
+          const { data: allDepts } = await supabase
+            .from('departments')
+            .select('id, name')
+            .eq('company_id', unit.company_id);
+          
+          console.log('Available departments:', allDepts);
+          
+          // Try fuzzy match
+          const match = (allDepts || []).find(d => 
+            d.name.toLowerCase().includes(unit.name.toLowerCase()) ||
+            unit.name.toLowerCase().includes(d.name.toLowerCase())
+          );
+          
+          if (match) {
+            deptId = match.id;
+            console.log('Fuzzy match found:', match);
+          }
+        }
       }
       
       // Get users ONLY if department found
@@ -910,9 +940,10 @@ r.get('/units/:unitId/users', async (req, res) => {
           .eq('department_id', deptId)
           .eq('is_active', true);
         
+        console.log('Users found in department:', users?.length);
         userIds = (users || []).map(u => u.id);
       } else {
-        // No department match → return empty (not all users!)
+        console.warn('Department not found, returning empty user list');
         userIds = [];
       }
     } else if (unitDepth === 4) {
