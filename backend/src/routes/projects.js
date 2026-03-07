@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { requirePermission, getAccessibleUnits, checkPermission } = require('../middleware/newPermission');
 
 const r = Router();
 r.use(auth);
@@ -42,56 +43,6 @@ async function getAllChildUnits(unitId) {
   } catch (e) {
     console.warn('Get child units error:', e.message);
     return [unitId];
-  }
-}
-
-// ─── HELPER: Check if user has permission (with hierarchical scope) ──
-async function checkPermission(userId, resource, action, ecosystemUnitId = null) {
-  try {
-    // Get user's roles
-    const { data: userRoles } = await supabase
-      .from('user_roles')
-      .select('role_id, ecosystem_unit_id')
-      .eq('user_id', userId);
-    
-    if (!userRoles || userRoles.length === 0) return false;
-    
-    // Get all permissions for user's roles
-    const roleIds = userRoles.map(ur => ur.role_id);
-    const { data: rolePerms } = await supabase
-      .from('role_permissions')
-      .select('permission_id, permissions(resource, action)')
-      .in('role_id', roleIds);
-    
-    // Check if user has the requested permission through any role
-    const hasPermissionInRole = (rolePerms || []).some(rp => 
-      rp.permissions?.resource === resource && rp.permissions?.action === action
-    );
-    
-    if (!hasPermissionInRole) return false;
-    
-    // If no specific unit requested, check for global permissions
-    if (!ecosystemUnitId) {
-      return userRoles.some(ur => !ur.ecosystem_unit_id); // Global role
-    }
-    
-    // Check hierarchical permissions (parent unit → includes all children)
-    for (const ur of userRoles) {
-      if (!ur.ecosystem_unit_id) return true; // Global role = access to all
-      
-      // Get all child units of the role's scope
-      const allowedUnits = await getAllChildUnits(ur.ecosystem_unit_id);
-      
-      // Check if requested unit is in allowed units
-      if (allowedUnits.includes(ecosystemUnitId)) {
-        return true;
-      }
-    }
-    
-    return false;
-  } catch (e) {
-    console.warn('Check permission error:', e.message);
-    return false; // Deny by default on error
   }
 }
 
@@ -144,6 +95,11 @@ r.get('/pending-approvals', async (req, res) => {
 r.get('/', async (req, res) => {
   try {
     const { status, search, stage_slug, page = 1, limit = 50 } = req.query;
+    const userId = req.user.userId;
+    
+    // Check permission
+    const canViewAll = await checkPermission(userId, 'projects', 'all_companies');
+    
     let q = supabase.from('projects').select(`
       *, customers(id,full_name,phone,email,city),
       company:companies(id,name,short_name),
@@ -163,51 +119,29 @@ r.get('/', async (req, res) => {
       if (mappedStatus) q = q.eq('status', mappedStatus);
     }
 
-    // ── PERMISSION-BASED FILTERING WITH HIERARCHICAL SCOPE ──
-    const userId = req.user.userId;
-    
-    // Get user's roles with ecosystem scopes
-    const { data: userRoles } = await supabase
-      .from('user_roles')
-      .select('role_id, ecosystem_unit_id')
-      .eq('user_id', userId);
-    
-    if (userRoles && userRoles.length > 0) {
-      // Get all ecosystem units user has access to (including children)
-      const accessibleUnitIds = new Set();
-      const hasGlobalRole = userRoles.some(ur => !ur.ecosystem_unit_id);
+    // ── PERMISSION-BASED FILTERING (NEW LOGIC) ──
+    if (!canViewAll) {
+      // Get accessible units using new middleware
+      const accessibleUnits = await getAccessibleUnits(userId);
       
-      if (!hasGlobalRole) {
-        // Collect all units from user's roles (with hierarchy)
-        for (const ur of userRoles) {
-          if (ur.ecosystem_unit_id) {
-            const childUnits = await getAllChildUnits(ur.ecosystem_unit_id);
-            childUnits.forEach(id => accessibleUnitIds.add(id));
-          }
-        }
-        
-        // Get company_ids from accessible ecosystem units
-        if (accessibleUnitIds.size > 0) {
-          const { data: units } = await supabase
-            .from('ecosystem_units')
-            .select('company_id')
-            .in('id', Array.from(accessibleUnitIds))
-            .not('company_id', 'is', null);
-          
-          const companyIds = [...new Set((units || []).map(u => u.company_id).filter(Boolean))];
-          
-          if (companyIds.length > 0) {
-            q = q.in('company_id', companyIds);
-          } else {
-            // No companies accessible → return empty
-            return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
-          }
-        } else {
-          // No accessible units → return empty
-          return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
-        }
+      if (accessibleUnits.length === 0) {
+        return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
       }
-      // If hasGlobalRole, don't filter by company (see all)
+      
+      // Get company_ids from accessible units
+      const { data: units } = await supabase
+        .from('ecosystem_units')
+        .select('company_id')
+        .in('id', accessibleUnits)
+        .not('company_id', 'is', null);
+      
+      const companyIds = [...new Set((units || []).map(u => u.company_id).filter(Boolean))];
+      
+      if (companyIds.length > 0) {
+        q = q.in('company_id', companyIds);
+      } else {
+        return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
+      }
     }
 
     const p = +page, l = +limit;
@@ -369,7 +303,7 @@ r.get('/:id', async (req, res) => {
 });
 
 // ─── CREATE PROJECT ──
-r.post('/', async (req, res) => {
+r.post('/', requirePermission('projects', 'create'), async (req, res) => {
   try {
     const b = req.body;
 
@@ -851,7 +785,7 @@ r.post('/create-with-flow', async (req, res) => {
 });
 
 // ─── UPDATE PROJECT ──
-r.put('/:id', async (req, res) => {
+r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
@@ -1396,7 +1330,7 @@ r.post('/:id/approve-advance', async (req, res) => {
 });
 
 // ─── DELETE PROJECT ──
-r.delete('/:id', async (req, res) => {
+r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
   try {
     const { data: project } = await supabase.from('projects').select('code,name').eq('id', req.params.id).single();
     
