@@ -883,25 +883,37 @@ r.get('/units/:unitId/users', async (req, res) => {
       }
     } else if (unitDepth === 3) {
       // Phòng ban: users in this department
-      // Find department by company_id match (ecosystem_units.company_id = departments.company_id)
-      if (unit.company_id) {
-        const { data: depts } = await supabase
+      // ecosystem_units has department_id field OR match by name
+      let deptId = null;
+      
+      // Try 1: Direct department_id link (if exists)
+      if (unit.department_id) {
+        deptId = unit.department_id;
+      }
+      // Try 2: Match by name + company
+      else if (unit.company_id && unit.name) {
+        const { data: dept } = await supabase
           .from('departments')
           .select('id')
-          .eq('company_id', unit.company_id);
+          .eq('company_id', unit.company_id)
+          .eq('name', unit.name)
+          .single();
         
-        // Assume unit name matches department name (or link via another field)
-        const dept = (depts || []).find(d => d.name === unit.name);
+        if (dept) deptId = dept.id;
+      }
+      
+      // Get users ONLY if department found
+      if (deptId) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('id')
+          .eq('department_id', deptId)
+          .eq('is_active', true);
         
-        if (dept) {
-          const { data: users } = await supabase
-            .from('users')
-            .select('id')
-            .eq('department_id', dept.id)
-            .eq('is_active', true);
-          
-          userIds = (users || []).map(u => u.id);
-        }
+        userIds = (users || []).map(u => u.id);
+      } else {
+        // No department match → return empty (not all users!)
+        userIds = [];
       }
     } else if (unitDepth === 4) {
       // Team: users in ecosystem_unit_members
