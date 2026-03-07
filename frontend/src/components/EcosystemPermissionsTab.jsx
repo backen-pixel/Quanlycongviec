@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, Plus, Check, X, ChevronRight, ChevronDown, Users, AlertCircle } from 'lucide-react';
+import { Shield, Plus, Check, X, ChevronRight, ChevronDown, Users, AlertCircle, Search } from 'lucide-react';
 import api from '../lib/api';
 
 const LEVEL_LABELS = { 0: 'Tập đoàn', 1: 'Khối', 2: 'Công ty', 3: 'Phòng ban', 4: 'Đội nhóm' };
@@ -8,11 +8,11 @@ const LEVEL_ICONS = { 0: '🏢', 1: '📦', 2: '🏭', 3: '👥', 4: '⚡' };
 // Helper: Get depth from unit
 const getUnitDepth = (unit) => {
   if (!unit) return null;
-  if (typeof unit.level === 'number') return unit.level; // Legacy
-  return unit.level?.depth ?? null; // New schema
+  if (typeof unit.level === 'number') return unit.level;
+  return unit.level?.depth ?? null;
 };
 
-// Vai trò TRONG hệ sinh thái (position-based roles)
+// Vai trò TRONG hệ sinh thái
 const POSITION_ROLES = [
   { id: 'director', name: 'Giám đốc', level: 'high', color: 'red' },
   { id: 'manager', name: 'Quản lý', level: 'medium', color: 'purple' },
@@ -22,19 +22,86 @@ const POSITION_ROLES = [
   { id: 'support', name: 'Hỗ trợ', level: 'low', color: 'gray' },
 ];
 
+// Nhóm quyền với tên tiếng Việt
+const PERMISSION_GROUPS = {
+  'projects': {
+    name: '📁 Dự án',
+    permissions: {
+      'view': 'Xem danh sách dự án',
+      'create': 'Tạo dự án mới',
+      'edit': 'Chỉnh sửa thông tin dự án',
+      'delete': 'Xóa dự án',
+      'all_companies': 'Xem dự án của tất cả công ty (không giới hạn)',
+    }
+  },
+  'workflows': {
+    name: '🔀 Quy trình',
+    permissions: {
+      'view': 'Xem quy trình công việc',
+      'create': 'Tạo quy trình mới',
+      'edit': 'Chỉnh sửa quy trình',
+      'delete': 'Xóa quy trình',
+    }
+  },
+  'templates': {
+    name: '📋 Bộ mẫu',
+    permissions: {
+      'view': 'Xem bộ mẫu dự án',
+      'create': 'Tạo bộ mẫu',
+      'edit': 'Chỉnh sửa bộ mẫu',
+      'delete': 'Xóa bộ mẫu',
+    }
+  },
+  'users': {
+    name: '👥 Nhân viên',
+    permissions: {
+      'view': 'Xem danh sách nhân viên',
+      'create': 'Thêm nhân viên mới',
+      'edit': 'Chỉnh sửa thông tin nhân viên',
+      'delete': 'Xóa nhân viên',
+    }
+  },
+  'ecosystem': {
+    name: '🏢 Cấu trúc công ty',
+    permissions: {
+      'view': 'Xem cấu trúc tổ chức',
+      'edit': 'Sửa cấu trúc tổ chức',
+    }
+  },
+  'reports': {
+    name: '📊 Báo cáo',
+    permissions: {
+      'view': 'Xem báo cáo',
+      'export': 'Xuất dữ liệu',
+    }
+  },
+  'settings': {
+    name: '⚙️ Cài đặt',
+    permissions: {
+      'view': 'Xem cài đặt hệ thống',
+      'edit': 'Thay đổi cài đặt',
+    }
+  },
+};
+
 export default function EcosystemPermissionsTab({ users: allUsers }) {
   const [ecosystemUnits, setEcosystemUnits] = useState([]);
   const [permissions, setPermissions] = useState([]);
-  const [roles, setRoles] = useState([]);
   const [selectedUnit, setSelectedUnit] = useState(null);
   const [selectedPositionRole, setSelectedPositionRole] = useState(null);
-  const [unitPermissions, setUnitPermissions] = useState([]);
-  const [unitUsers, setUnitUsers] = useState([]); // NEW: Users in this unit
-  const [selectedUsers, setSelectedUsers] = useState([]);
+  const [selectedUser, setSelectedUser] = useState(null); // Single user selection
+  const [unitUsers, setUnitUsers] = useState([]);
+  const [userPermissions, setUserPermissions] = useState([]); // Permissions of selected user
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [expandedUnits, setExpandedUnits] = useState({});
-  const [showAddUser, setShowAddUser] = useState(false);
+  
+  // Filters for user list
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterCompany, setFilterCompany] = useState('');
+  const [filterDepartment, setFilterDepartment] = useState('');
+  const [companies, setCompanies] = useState([]);
+  const [departments, setDepartments] = useState([]);
 
   useEffect(() => {
     loadData();
@@ -43,68 +110,89 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [unitsRes, permsRes, rolesRes] = await Promise.all([
+      const [unitsRes, permsRes] = await Promise.all([
         api.get('/ecosystem/units'),
         api.get('/permissions/permissions'),
-        api.get('/permissions/roles'),
       ]);
       
       setEcosystemUnits(unitsRes.data.units || []);
       setPermissions(permsRes.data.permissions || []);
-      setRoles(rolesRes.data.roles || []);
     } catch (e) {
       console.error('Load data error:', e);
     }
     setLoading(false);
   };
 
-  const loadUnitPermissions = async (unitId, keepSelection = false) => {
+  const loadUnitData = async (unitId) => {
     try {
       console.log('🔄 Loading unit data for:', unitId);
       
-      // Load permissions AND users for this unit
-      const [permsRes, usersRes] = await Promise.all([
-        api.get(`/permissions/ecosystem-units/${unitId}/permissions`),
+      const [usersRes] = await Promise.all([
         api.get(`/ecosystem/units/${unitId}/users`),
       ]);
       
-      console.log('📊 API responses:', {
-        permissions: permsRes.data.permissions?.length,
-        users: usersRes.data.users?.length,
-      });
+      console.log('👥 Users loaded:', usersRes.data.users?.length);
       
-      setUnitPermissions(permsRes.data.permissions || []);
-      
-      // Normalize users: ensure user_id field exists
       const users = (usersRes.data.users || []).map(u => ({
         ...u,
-        user_id: u.id, // Normalize: backend returns 'id', frontend uses 'user_id'
+        user_id: u.id,
         user_name: u.full_name,
       }));
       
-      console.log('👥 Normalized users:', users.length, users.slice(0, 2));
       setUnitUsers(users);
-      
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
+      setSelectedPositionRole(null);
+      setSelectedUser(null);
+      setUserPermissions([]);
       
-      // Only reset selection if explicitly requested (e.g., changing unit)
-      if (!keepSelection) {
-        setSelectedUsers([]);
-        setSelectedPositionRole(null);
-        console.log('🔄 Selection reset');
-      } else {
-        console.log('✅ Keeping selection');
-      }
+      // Load filter options
+      await loadFilterOptions(unitId);
     } catch (e) {
       console.error('❌ Load unit data error:', e);
-      setUnitPermissions([]);
       setUnitUsers([]);
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
-      
-      if (!keepSelection) {
-        setSelectedUsers([]);
-        setSelectedPositionRole(null);
+    }
+  };
+
+  const loadFilterOptions = async (unitId) => {
+    const unit = ecosystemUnits.find(u => u.id === unitId);
+    if (!unit) return;
+    
+    const unitDepth = getUnitDepth(unit);
+    
+    try {
+      // Load companies if Khối or Tập đoàn
+      if (unitDepth <= 1) {
+        const { data } = await api.get('/ecosystem/units');
+        const allUnits = data.units || [];
+        const childCompanies = allUnits.filter(u => {
+          const uDepth = getUnitDepth(u);
+          if (unitDepth === 0) return uDepth === 2;
+          if (unitDepth === 1) return uDepth === 2 && (u.parent_id === unitId);
+          return false;
+        });
+        setCompanies(childCompanies);
       }
+      
+      // Load departments
+      const { data: deptData } = await api.get('/departments');
+      setDepartments(deptData.departments || []);
+    } catch (e) {
+      console.error('Load filter options error:', e);
+    }
+  };
+
+  const loadUserPermissions = async (userId) => {
+    if (!selectedUnit) return;
+    
+    try {
+      const { data } = await api.get(`/permissions/ecosystem-units/${selectedUnit.id}/permissions`);
+      const userPerms = (data.permissions || []).filter(p => p.user_id === userId);
+      setUserPermissions(userPerms);
+      console.log('User permissions loaded:', userPerms.length);
+    } catch (e) {
+      console.error('Load user permissions error:', e);
+      setUserPermissions([]);
     }
   };
 
@@ -130,7 +218,7 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
         <button
           onClick={() => {
             if (hasChildren) toggleExpand(unit.id);
-            loadUnitPermissions(unit.id);
+            loadUnitData(unit.id);
           }}
           className={`w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-purple-50 rounded transition-colors ${
             isSelected ? 'bg-purple-100 border-l-2 border-purple-600' : ''
@@ -152,88 +240,52 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
     );
   };
 
-  const toggleUserSelection = (userId) => {
-    setSelectedUsers(prev =>
-      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
-    );
-  };
-
-  const selectAllUsers = () => {
-    if (selectedUsers.length === unitUsers.length) {
-      setSelectedUsers([]);
-    } else {
-      setSelectedUsers(unitUsers.map(u => u.user_id));
+  const filteredUsers = unitUsers.filter(u => {
+    // Search filter
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      const nameMatch = (u.user_name || u.full_name || '').toLowerCase().includes(term);
+      const emailMatch = (u.email || '').toLowerCase().includes(term);
+      if (!nameMatch && !emailMatch) return false;
     }
-  };
+    
+    // Company filter (if applicable)
+    if (filterCompany && selectedUnit && getUnitDepth(selectedUnit) <= 1) {
+      const userDept = departments.find(d => d.id === u.department_id);
+      if (!userDept || userDept.company_id !== filterCompany) return false;
+    }
+    
+    // Department filter
+    if (filterDepartment) {
+      if (u.department_id !== filterDepartment) return false;
+    }
+    
+    return true;
+  });
 
-  // Get allowed permissions based on unit level and position role
-  const getAllowedPermissions = () => {
-    if (!selectedUnit || !selectedPositionRole) return [];
-
-    const unitLevel = getUnitDepth(selectedUnit);
-    const positionLevel = POSITION_ROLES.find(r => r.id === selectedPositionRole)?.level;
-
-    // Filter permissions based on hierarchical rules
-    return permissions.filter(perm => {
-      // Ecosystem permissions: only allow for current level or below
-      if (perm.resource === 'ecosystem') {
-        // Giám đốc/Quản lý: có thể CRUD cấp hiện tại và cấp dưới
-        if (positionLevel === 'high' || positionLevel === 'medium') {
-          return ['view', 'create', 'edit'].includes(perm.action); // Không cho delete
-        }
-        // Nhân viên: chỉ xem
-        return perm.action === 'view';
-      }
-
-      // Projects: depends on position
-      if (perm.resource === 'projects') {
-        if (positionLevel === 'high') return true; // All permissions
-        if (positionLevel === 'medium') return perm.action !== 'all_companies'; // No cross-company
-        return ['view'].includes(perm.action); // Employee: view only
-      }
-
-      // Users: cannot manage higher levels
-      if (perm.resource === 'users') {
-        if (positionLevel === 'high') return true;
-        if (positionLevel === 'medium') return perm.action !== 'delete';
-        return perm.action === 'view';
-      }
-
-      // Other resources
-      return true;
-    });
-  };
-
-  const bulkTogglePermission = async (permissionId, grant) => {
-    if (selectedUsers.length === 0 || !selectedUnit || !selectedPositionRole) return;
+  const togglePermission = async (permissionId, grant) => {
+    if (!selectedUser || !selectedUnit) return;
     
     setSaving(true);
     try {
-      await Promise.all(
-        selectedUsers.map(userId =>
-          api.post('/permissions/users/custom-permission', {
-            user_id: userId,
-            permission_id: permissionId,
-            ecosystem_unit_id: selectedUnit.id,
-            position_role: selectedPositionRole, // Save position role
-            granted: grant,
-          })
-        )
-      );
-      await loadUnitPermissions(selectedUnit.id, true); // Keep selection after bulk update
-      alert(`✅ Đã ${grant ? 'bật' : 'tắt'} quyền cho ${selectedUsers.length} nhân viên`);
+      await api.post('/permissions/users/custom-permission', {
+        user_id: selectedUser.user_id,
+        permission_id: permissionId,
+        ecosystem_unit_id: selectedUnit.id,
+        position_role: selectedPositionRole,
+        granted: grant,
+      });
+      
+      // Reload user permissions
+      await loadUserPermissions(selectedUser.user_id);
+      
+      const action = grant ? 'cấp' : 'thu hồi';
+      alert(`✅ Đã ${action} quyền thành công`);
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
     }
     setSaving(false);
   };
-
-  const allowedPermissions = getAllowedPermissions();
-  const groupedPermissions = {};
-  allowedPermissions.forEach(p => {
-    if (!groupedPermissions[p.resource]) groupedPermissions[p.resource] = [];
-    groupedPermissions[p.resource].push(p);
-  });
 
   if (loading) {
     return (
@@ -241,10 +293,16 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
         <div className="animate-spin h-8 w-8 border-4 border-purple-200 border-t-purple-600 rounded-full" />
       </div>
     );
-  }
+  };
 
   const rootUnits = buildTree(null);
   const selectedPosition = POSITION_ROLES.find(r => r.id === selectedPositionRole);
+  const unitDepth = selectedUnit ? getUnitDepth(selectedUnit) : null;
+  const availableDepartments = filterCompany 
+    ? departments.filter(d => d.company_id === filterCompany)
+    : (selectedUnit && unitDepth === 2 
+        ? departments.filter(d => d.company_id === selectedUnit.company_id)
+        : departments);
 
   return (
     <div className="space-y-4">
@@ -253,54 +311,43 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
         <div className="flex items-start gap-2">
           <AlertCircle className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
           <div className="text-xs text-gray-800">
-            <p className="font-bold mb-1">💡 Workflow phân quyền theo hệ sinh thái:</p>
+            <p className="font-bold mb-1">💡 Phân quyền theo 4 bước:</p>
             <ol className="list-decimal ml-4 space-y-0.5">
-              <li>Chọn đơn vị (Khối/Công ty/Phòng ban/Team)</li>
-              <li>Chọn vai trò TRONG đơn vị (Giám đốc/Quản lý/Nhân viên...)</li>
-              <li>Chọn nhân viên cần gán vai trò đó</li>
-              <li>Bật/tắt quyền phù hợp với vai trò (hệ thống tự lọc quyền hợp lệ)</li>
+              <li><strong>Chọn đơn vị</strong> (Khối/Công ty/Phòng ban) từ cây bên trái</li>
+              <li><strong>Chọn vai trò</strong> cho nhân viên (Giám đốc/Quản lý/Nhân viên)</li>
+              <li><strong>Chọn nhân viên</strong> cần phân quyền (có bộ lọc)</li>
+              <li><strong>Bật/tắt quyền</strong> chức năng và quyền quản lý hệ sinh thái</li>
             </ol>
-            <p className="mt-2 text-red-600 font-medium">⚠️ Bảo vệ phân cấp: Cấp dưới KHÔNG thể CRUD cấp trên!</p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-12 gap-4">
         {/* Left: Tree */}
-        <div className="col-span-3 bg-white rounded-lg border p-3 max-h-[600px] overflow-y-auto">
-          <h3 className="text-xs font-bold text-gray-700 mb-2">Cây đơn vị</h3>
+        <div className="col-span-3 bg-white rounded-lg border p-3 max-h-[700px] overflow-y-auto">
+          <h3 className="text-xs font-bold text-gray-700 mb-2">Cây hệ sinh thái</h3>
           <div className="space-y-0.5">
             {rootUnits.map(unit => renderUnit(unit))}
           </div>
         </div>
 
-        {/* Right: Position Roles + Users + Permissions */}
+        {/* Right: Role + Users + Permissions */}
         <div className="col-span-9 bg-white rounded-lg border p-4">
           {selectedUnit ? (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {/* Header */}
-              <div className="pb-2 border-b">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                      <span>{LEVEL_ICONS[getUnitDepth(selectedUnit)]}</span>
-                      {selectedUnit.name}
-                    </h3>
-                    <p className="text-xs text-gray-500">{LEVEL_LABELS[getUnitDepth(selectedUnit)]} • {unitUsers.length} nhân viên</p>
-                  </div>
-                  <button
-                    onClick={() => setShowAddUser(true)}
-                    className="text-xs px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
-                  >
-                    <Plus className="h-3 w-3 inline mr-1" /> Gán nhân viên
-                  </button>
-                </div>
+              <div className="pb-3 border-b">
+                <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                  <span>{LEVEL_ICONS[unitDepth]}</span>
+                  {selectedUnit.name}
+                </h3>
+                <p className="text-xs text-gray-500">{LEVEL_LABELS[unitDepth]}</p>
               </div>
 
-              {/* Step 1: Select Position Role */}
+              {/* Step 1: Select Role */}
               <div>
                 <h4 className="text-xs font-bold text-gray-700 mb-2">
-                  Bước 1: Chọn vai trò trong {selectedUnit.name}
+                  Bước 1: Chọn vai trò
                 </h4>
                 <div className="grid grid-cols-3 gap-2">
                   {POSITION_ROLES.map(role => {
@@ -320,7 +367,7 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                         key={role.id}
                         onClick={() => {
                           setSelectedPositionRole(role.id);
-                          setSelectedUsers([]); // Reset selection
+                          setSelectedUser(null);
                         }}
                         className={`px-3 py-2 rounded-lg border-2 text-xs font-medium transition-all ${
                           isSelected ? colorClass : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
@@ -331,127 +378,164 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                     );
                   })}
                 </div>
-                {selectedPosition && (
-                  <p className="text-xs text-gray-500 mt-2 italic">
-                    Đã chọn: <strong>{selectedPosition.name}</strong> - Quyền hạn được lọc tự động theo cấp bậc
-                  </p>
-                )}
               </div>
 
               {selectedPositionRole && (
                 <>
-                  {/* Step 2: Select Users */}
+                  {/* Step 2: Select User */}
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-xs font-bold text-gray-700">
-                        Bước 2: Chọn nhân viên làm {selectedPosition.name}
-                      </h4>
-                      {unitUsers.length > 0 && (
-                        <button
-                          onClick={selectAllUsers}
-                          className="text-xs text-purple-600 hover:text-purple-800 font-medium"
-                        >
-                          {selectedUsers.length === unitUsers.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-                        </button>
-                      )}
+                    <h4 className="text-xs font-bold text-gray-700 mb-2">
+                      Bước 2: Chọn nhân viên làm {selectedPosition.name}
+                    </h4>
+                    
+                    {/* Filters */}
+                    <div className="space-y-2 mb-3">
+                      {/* Search */}
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Tìm kiếm theo tên hoặc email..."
+                          value={searchTerm}
+                          onChange={e => setSearchTerm(e.target.value)}
+                          className="w-full pl-10 pr-3 py-2 border rounded-lg text-sm"
+                        />
+                      </div>
+                      
+                      {/* Company + Department filters */}
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Company (if Khối or Tập đoàn) */}
+                        {unitDepth <= 1 && companies.length > 0 && (
+                          <select
+                            value={filterCompany}
+                            onChange={e => {
+                              setFilterCompany(e.target.value);
+                              setFilterDepartment('');
+                            }}
+                            className="px-3 py-2 border rounded-lg text-sm"
+                          >
+                            <option value="">-- Tất cả công ty --</option>
+                            {companies.map(c => (
+                              <option key={c.id} value={c.company_id}>{c.name}</option>
+                            ))}
+                          </select>
+                        )}
+                        
+                        {/* Department */}
+                        {(unitDepth <= 2 || filterCompany) && availableDepartments.length > 0 && (
+                          <select
+                            value={filterDepartment}
+                            onChange={e => setFilterDepartment(e.target.value)}
+                            className="px-3 py-2 border rounded-lg text-sm"
+                          >
+                            <option value="">-- Tất cả phòng ban --</option>
+                            {availableDepartments.map(d => (
+                              <option key={d.id} value={d.id}>{d.name}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                      
+                      <p className="text-xs text-gray-500">
+                        Tìm thấy {filteredUsers.length} nhân viên
+                      </p>
                     </div>
                     
-                    {/* Debug info */}
-                    {process.env.NODE_ENV === 'development' && (
-                      <div className="text-xs text-gray-400 mb-2">
-                        Debug: unitUsers={unitUsers.length}, selectedUnit={selectedUnit?.name}
-                      </div>
-                    )}
-                    
-                    {unitUsers.length === 0 ? (
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                        <p className="text-xs text-gray-600 italic">
-                          Chưa có nhân viên trong {selectedUnit?.name}. 
-                          Click <strong>"+ Gán nhân viên"</strong> ở góc phải để thêm.
-                        </p>
+                    {/* User list */}
+                    {filteredUsers.length === 0 ? (
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-center">
+                        <Users className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                        <p className="text-xs text-gray-600">Không tìm thấy nhân viên</p>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 gap-2 mb-3">
-                        {unitUsers.map(u => {
-                          const userId = u.user_id || u.id; // Fallback to id if user_id missing
+                      <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+                        {filteredUsers.map(u => {
+                          const userId = u.user_id || u.id;
                           const userName = u.user_name || u.full_name || 'N/A';
-                          const isSelected = selectedUsers.includes(userId);
+                          const isSelected = selectedUser?.user_id === userId;
                           
                           return (
-                            <label
+                            <button
                               key={userId}
-                              className={`flex items-center gap-2 px-2 py-1.5 rounded border cursor-pointer transition-colors ${
+                              onClick={() => {
+                                setSelectedUser(u);
+                                loadUserPermissions(userId);
+                              }}
+                              className={`flex items-center gap-2 px-2 py-1.5 rounded border text-left transition-colors ${
                                 isSelected ? `border-${selectedPosition.color}-500 bg-${selectedPosition.color}-50` : 'border-gray-200 hover:border-purple-300'
                               }`}
                             >
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleUserSelection(userId)}
-                                className="w-3 h-3 accent-purple-600"
-                              />
                               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
                                 isSelected ? `bg-${selectedPosition.color}-200 text-${selectedPosition.color}-800` : 'bg-purple-100 text-purple-700'
                               }`}>
-                                {userName?.charAt(0)?.toUpperCase()}
+                                {userName.charAt(0).toUpperCase()}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-medium text-gray-900 truncate">{userName}</p>
                                 {u.email && <p className="text-[10px] text-gray-500 truncate">{u.email}</p>}
                               </div>
-                            </label>
+                            </button>
                           );
                         })}
                       </div>
                     )}
                   </div>
 
-                  {/* Step 3: Permissions */}
-                  {selectedUsers.length > 0 && (
+                  {/* Step 3: Permissions (only if user selected) */}
+                  {selectedUser && (
                     <div>
                       <h4 className="text-xs font-bold text-gray-700 mb-2">
-                        Bước 3: Bật/tắt quyền cho {selectedUsers.length} {selectedPosition.name} đã chọn
+                        Bước 3: Phân quyền cho {selectedUser.user_name || selectedUser.full_name}
                       </h4>
                       
-                      {Object.keys(groupedPermissions).length === 0 ? (
-                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                          <p className="text-xs text-yellow-800">
-                            ⚠️ Vai trò <strong>{selectedPosition.name}</strong> trong <strong>{LEVEL_LABELS[getUnitDepth(selectedUnit)]}</strong> không có quyền nào khả dụng.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-2 max-h-80 overflow-y-auto">
-                          {Object.entries(groupedPermissions).map(([resource, perms]) => (
-                            <div key={resource} className="border rounded">
-                              <div className="px-2 py-1 bg-gray-100 border-b">
-                                <h5 className="text-xs font-bold text-gray-800 uppercase">{resource}</h5>
+                      <div className="space-y-3 max-h-80 overflow-y-auto">
+                        {Object.entries(PERMISSION_GROUPS).map(([resource, group]) => {
+                          const resourcePerms = permissions.filter(p => p.resource === resource);
+                          
+                          return (
+                            <div key={resource} className="border rounded-lg overflow-hidden">
+                              <div className="px-3 py-2 bg-gray-100 border-b">
+                                <h5 className="text-xs font-bold text-gray-800">{group.name}</h5>
                               </div>
-                              <div className="p-1 grid grid-cols-2 gap-1">
-                                {perms.map(perm => (
-                                  <div key={perm.id} className="flex items-center gap-1">
-                                    <button
-                                      onClick={() => bulkTogglePermission(perm.id, true)}
-                                      disabled={saving}
-                                      className="flex-1 px-2 py-1 bg-green-50 border border-green-300 rounded text-xs hover:bg-green-100 disabled:opacity-50 flex items-center justify-center gap-1"
-                                    >
-                                      <Check className="h-3 w-3" />
-                                      {perm.action}
-                                    </button>
-                                    <button
-                                      onClick={() => bulkTogglePermission(perm.id, false)}
-                                      disabled={saving}
-                                      className="flex-1 px-2 py-1 bg-red-50 border border-red-300 rounded text-xs hover:bg-red-100 disabled:opacity-50 flex items-center justify-center gap-1"
-                                    >
-                                      <X className="h-3 w-3" />
-                                      {perm.action}
-                                    </button>
-                                  </div>
-                                ))}
+                              <div className="p-2 space-y-1">
+                                {resourcePerms.map(perm => {
+                                  const userPerm = userPermissions.find(up => up.permission_id === perm.id);
+                                  const isGranted = userPerm?.granted || false;
+                                  const label = group.permissions[perm.action] || perm.action;
+                                  
+                                  return (
+                                    <div key={perm.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded">
+                                      <span className="text-xs text-gray-700">{label}</span>
+                                      <div className="flex gap-1">
+                                        <button
+                                          onClick={() => togglePermission(perm.id, true)}
+                                          disabled={saving}
+                                          className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                                            isGranted 
+                                              ? 'bg-green-600 text-white' 
+                                              : 'bg-gray-100 text-gray-600 hover:bg-green-100'
+                                          } disabled:opacity-50`}
+                                        >
+                                          {isGranted ? '✓ Đã cấp' : 'Cấp quyền'}
+                                        </button>
+                                        {isGranted && (
+                                          <button
+                                            onClick={() => togglePermission(perm.id, false)}
+                                            disabled={saving}
+                                            className="px-3 py-1 bg-red-100 text-red-600 rounded text-xs font-medium hover:bg-red-200 disabled:opacity-50"
+                                          >
+                                            Thu hồi
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
-                          ))}
-                        </div>
-                      )}
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </>
@@ -459,287 +543,10 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-64 text-gray-400">
-              <Users className="h-12 w-12 mb-2 opacity-30" />
+              <Shield className="h-12 w-12 mb-2 opacity-30" />
               <p className="text-sm">Chọn đơn vị để bắt đầu phân quyền</p>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Add User Modal */}
-      {showAddUser && selectedUnit && (
-        <AddUserModal
-          unit={selectedUnit}
-          users={allUsers}
-          existingUserIds={unitUsers.map(u => u.user_id)}
-          onClose={() => setShowAddUser(false)}
-          onSaved={() => {
-            setShowAddUser(false);
-            loadUnitPermissions(selectedUnit.id, true); // Keep selection after adding user
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function AddUserModal({ unit, users: propUsers, existingUserIds, onClose, onSaved }) {
-  const [selectedUser, setSelectedUser] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [companies, setCompanies] = useState([]);
-  const [departments, setDepartments] = useState([]);
-  const [selectedCompany, setSelectedCompany] = useState('');
-  const [selectedDepartment, setSelectedDepartment] = useState('');
-  const [filteredUsers, setFilteredUsers] = useState([]);
-  const [allUsers, setAllUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  useEffect(() => {
-    applyFilters();
-  }, [allUsers, unit, selectedCompany, selectedDepartment, searchTerm]);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      // Load users first
-      const { data: usersData } = await api.get('/users');
-      setAllUsers(usersData.users || []);
-      
-      // Load all departments (for filtering)
-      const { data: deptData } = await api.get('/departments');
-      const allDepts = deptData.departments || [];
-      
-      // If unit is Khối (level 1) or higher, load companies under it
-      if (getUnitDepth(unit) <= 1) {
-        const { data } = await api.get('/ecosystem/units');
-        const allUnits = data.units || [];
-        
-        // Get child companies of this unit
-        const childCompanies = allUnits.filter(u => {
-          const uDepth = getUnitDepth(u);
-          if (getUnitDepth(unit) === 0) return uDepth === 2; // Tập đoàn → all companies
-          if (getUnitDepth(unit) === 1) {
-            // Khối → companies that are children or have parent_id = this unit
-            return uDepth === 2 && (u.parent_id === unit.id || allUnits.find(p => p.id === u.parent_id && p.parent_id === unit.id));
-          }
-          return false;
-        });
-        
-        setCompanies(childCompanies);
-        
-        // Get departments of these companies
-        const companyIds = childCompanies.map(c => c.company_id).filter(Boolean);
-        const relevantDepts = allDepts.filter(d => companyIds.includes(d.company_id));
-        setDepartments(relevantDepts);
-      } else if (getUnitDepth(unit) === 2) {
-        // If unit is Company, load its departments
-        const relevantDepts = allDepts.filter(d => d.company_id === unit.company_id);
-        setDepartments(relevantDepts);
-      } else if (getUnitDepth(unit) === 3) {
-        // Phòng ban: no filters needed (will filter by department directly)
-        setDepartments(allDepts);
-      }
-    } catch (e) {
-      console.error('Load data error:', e);
-    }
-    setLoading(false);
-  };
-
-  const applyFilters = () => {
-    let filtered = allUsers.filter(u => !existingUserIds.includes(u.id));
-
-    // Filter by ecosystem hierarchy
-    if (getUnitDepth(unit) === 0) {
-      // Tập đoàn: all users (no filter)
-    } else if (getUnitDepth(unit) === 1) {
-      // Khối: users in companies under this Khối
-      const relevantDeptIds = departments.map(d => d.id);
-      filtered = filtered.filter(u => relevantDeptIds.includes(u.department_id));
-      
-      // If company selected, narrow down
-      if (selectedCompany) {
-        const companyDepts = departments.filter(d => d.company_id === selectedCompany);
-        const companyDeptIds = companyDepts.map(d => d.id);
-        filtered = filtered.filter(u => companyDeptIds.includes(u.department_id));
-        
-        // Update department dropdown
-        setDepartments(companyDepts);
-      }
-      
-      // If department selected, narrow down further
-      if (selectedDepartment) {
-        filtered = filtered.filter(u => u.department_id === selectedDepartment);
-      }
-    } else if (getUnitDepth(unit) === 2) {
-      // Công ty: users in this company
-      const companyDeptIds = departments.map(d => d.id);
-      filtered = filtered.filter(u => companyDeptIds.includes(u.department_id));
-      
-      if (selectedDepartment) {
-        filtered = filtered.filter(u => u.department_id === selectedDepartment);
-      }
-    } else if (getUnitDepth(unit) === 3) {
-      // Phòng ban: users in this department
-      // Find department by matching company_id + name (or use ecosystem link)
-      const dept = departments.find(d => d.company_id === unit.company_id);
-      if (dept) {
-        filtered = filtered.filter(u => u.department_id === dept.id);
-      }
-    } else if (getUnitDepth(unit) === 4) {
-      // Team: show all for now (will be refined with ecosystem_unit_members)
-    }
-
-    // Search by name
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(u =>
-        u.full_name?.toLowerCase().includes(term) ||
-        u.email?.toLowerCase().includes(term)
-      );
-    }
-
-    setFilteredUsers(filtered);
-  };
-
-  const handleAdd = async () => {
-    if (!selectedUser) return alert('Chọn nhân viên');
-    
-    setSaving(true);
-    try {
-      await api.post('/ecosystem/units/members', {
-        unit_id: unit.id,
-        user_id: selectedUser,
-      });
-      onSaved();
-    } catch (e) {
-      alert('Lỗi: ' + (e.response?.data?.error || e.message));
-    }
-    setSaving(false);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl p-4 max-w-xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-        <h3 className="text-sm font-bold mb-3">Gán nhân viên vào {unit.name}</h3>
-        
-        {/* Filters */}
-        <div className="space-y-3 mb-3">
-          {/* Search */}
-          <div>
-            <label className="text-xs font-medium text-gray-700 block mb-1">Tìm kiếm</label>
-            <input
-              type="text"
-              placeholder="Gõ tên hoặc email..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm"
-            />
-          </div>
-
-          {/* Company filter (if Khối or higher) */}
-          {getUnitDepth(unit) <= 1 && companies.length > 0 && (
-            <div>
-              <label className="text-xs font-medium text-gray-700 block mb-1">Công ty</label>
-              <select
-                value={selectedCompany}
-                onChange={e => {
-                  setSelectedCompany(e.target.value);
-                  setSelectedDepartment('');
-                }}
-                className="w-full px-3 py-2 border rounded-lg text-sm"
-              >
-                <option value="">-- Tất cả công ty --</option>
-                {companies.map(c => (
-                  <option key={c.id} value={c.company_id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Department filter (if Company or has selected company) */}
-          {(getUnitDepth(unit) === 2 || selectedCompany) && departments.length > 0 && (
-            <div>
-              <label className="text-xs font-medium text-gray-700 block mb-1">Phòng ban</label>
-              <select
-                value={selectedDepartment}
-                onChange={e => setSelectedDepartment(e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg text-sm"
-              >
-                <option value="">-- Tất cả phòng ban --</option>
-                {departments.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* User count */}
-          <p className="text-xs text-gray-500">
-            Tìm thấy {filteredUsers.length} nhân viên
-          </p>
-        </div>
-
-        {/* User list */}
-        <div className="flex-1 overflow-y-auto border rounded-lg mb-3">
-          {loading ? (
-            <div className="flex items-center justify-center h-32">
-              <div className="animate-spin h-6 w-6 border-2 border-purple-200 border-t-purple-600 rounded-full" />
-            </div>
-          ) : filteredUsers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 text-gray-400">
-              <Users className="h-8 w-8 mb-2 opacity-30" />
-              <p className="text-xs">Không tìm thấy nhân viên</p>
-            </div>
-          ) : (
-            <div className="p-2 space-y-1">
-              {filteredUsers.map(u => (
-                <label
-                  key={u.id}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
-                    selectedUser === u.id ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-purple-300'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="user"
-                    value={u.id}
-                    checked={selectedUser === u.id}
-                    onChange={() => setSelectedUser(u.id)}
-                    className="w-4 h-4 accent-purple-600"
-                  />
-                  <div className="w-8 h-8 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold shrink-0">
-                    {u.full_name?.charAt(0)?.toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900">{u.full_name}</p>
-                    <p className="text-xs text-gray-500 truncate">{u.email}</p>
-                    {u.department_name && (
-                      <p className="text-xs text-gray-400">{u.department_name}</p>
-                    )}
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">
-            Hủy
-          </button>
-          <button
-            onClick={handleAdd}
-            disabled={!selectedUser || saving}
-            className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 disabled:bg-gray-300"
-          >
-            {saving ? 'Đang thêm...' : 'Thêm'}
-          </button>
         </div>
       </div>
     </div>
