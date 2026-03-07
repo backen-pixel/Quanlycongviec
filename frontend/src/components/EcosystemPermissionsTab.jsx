@@ -58,30 +58,41 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
     setLoading(false);
   };
 
-  const loadUnitPermissions = async (unitId) => {
+  const loadUnitPermissions = async (unitId, keepSelection = false) => {
     try {
       // Load permissions AND users for this unit
       const [permsRes, usersRes] = await Promise.all([
         api.get(`/permissions/ecosystem-units/${unitId}/permissions`),
-        api.get(`/ecosystem/units/${unitId}/users`), // NEW endpoint
+        api.get(`/ecosystem/units/${unitId}/users`),
       ]);
       
       setUnitPermissions(permsRes.data.permissions || []);
-      setUnitUsers(usersRes.data.users || []); // Users in this unit (hierarchical)
+      
+      // Normalize users: ensure user_id field exists
+      const users = (usersRes.data.users || []).map(u => ({
+        ...u,
+        user_id: u.id, // Normalize: backend returns 'id', frontend uses 'user_id'
+        user_name: u.full_name,
+      }));
+      setUnitUsers(users);
+      
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
-      setSelectedUsers([]);
-      setSelectedPositionRole(null);
+      
+      // Only reset selection if explicitly requested (e.g., changing unit)
+      if (!keepSelection) {
+        setSelectedUsers([]);
+        setSelectedPositionRole(null);
+      }
     } catch (e) {
       console.error('Load unit data error:', e);
-      // Fallback: try to get users from ecosystem_unit_members
-      try {
-        const { data } = await api.get(`/ecosystem/units/${unitId}/members`);
-        setUnitUsers(data.users || []);
-      } catch (err) {
-        setUnitUsers([]);
-      }
       setUnitPermissions([]);
+      setUnitUsers([]);
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
+      
+      if (!keepSelection) {
+        setSelectedUsers([]);
+        setSelectedPositionRole(null);
+      }
     }
   };
 
@@ -197,7 +208,7 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
           })
         )
       );
-      await loadUnitPermissions(selectedUnit.id);
+      await loadUnitPermissions(selectedUnit.id, true); // Keep selection after bulk update
       alert(`✅ Đã ${grant ? 'bật' : 'tắt'} quyền cho ${selectedUsers.length} nhân viên`);
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
@@ -436,7 +447,7 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
           onClose={() => setShowAddUser(false)}
           onSaved={() => {
             setShowAddUser(false);
-            loadUnitPermissions(selectedUnit.id);
+            loadUnitPermissions(selectedUnit.id, true); // Keep selection after adding user
           }}
         />
       )}
