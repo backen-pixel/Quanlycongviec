@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Shield, Plus, Check, X, Save, Users as UsersIcon, Settings, Layers, Building2, Users as UsersRound } from 'lucide-react';
+import { Shield, Plus, Check, X, Save, Settings, Building2 } from 'lucide-react';
 import api from '../lib/api';
-import UserRolesModal from '../components/UserRolesModal';
 import EcosystemPermissionsTab from '../components/EcosystemPermissionsTab';
 
 // Vietnamese labels for resources
@@ -59,7 +58,7 @@ const PERMISSION_DESCRIPTIONS = {
 };
 
 export default function PermissionsPage() {
-  const [activeTab, setActiveTab] = useState('roles'); // 'roles' | 'users'
+  const [activeTab, setActiveTab] = useState('roles'); // 'roles' | 'ecosystem'
   const [roles, setRoles] = useState([]);
   const [permissions, setPermissions] = useState({ permissions: [], grouped: {} });
   const [selectedRole, setSelectedRole] = useState(null);
@@ -68,29 +67,22 @@ export default function PermissionsPage() {
   const [saving, setSaving] = useState(false);
   const [showCreateRole, setShowCreateRole] = useState(false);
   
-  // User assignment tab
+  // For ecosystem tab
   const [users, setUsers] = useState([]);
-  const [divisions, setDivisions] = useState([]);
-  const [companies, setCompanies] = useState([]);
-  const [departments, setDepartments] = useState([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [selectedUser, setSelectedUser] = useState(null);
-  
-  // Filters
-  const [filterDivision, setFilterDivision] = useState('');
-  const [filterCompany, setFilterCompany] = useState('');
-  const [filterDept, setFilterDept] = useState('');
 
   useEffect(() => {
     load();
-    loadEcosystemData();
+    loadAllUsers(); // For ecosystem tab
   }, []);
 
-  useEffect(() => {
-    if (activeTab === 'users') {
-      loadUsers();
+  const loadAllUsers = async () => {
+    try {
+      const { data } = await api.get('/users');
+      setUsers(data.users || []);
+    } catch (e) {
+      console.error('Load users error:', e);
     }
-  }, [activeTab, filterDivision, filterCompany, filterDept]);
+  };
 
   const load = async () => {
     setLoading(true);
@@ -233,18 +225,7 @@ export default function PermissionsPage() {
           }`}
         >
           <Settings className="h-4 w-4 inline mr-2" />
-          Quản lý vai trò & quyền hạn
-        </button>
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'users'
-              ? 'border-purple-600 text-purple-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <UsersIcon className="h-4 w-4 inline mr-2" />
-          Gán vai trò cho nhân viên
+          Vai trò & Quyền hạn
         </button>
         <button
           onClick={() => setActiveTab('ecosystem')}
@@ -271,7 +252,9 @@ export default function PermissionsPage() {
           onTogglePermission={togglePermission}
           onSave={saveRolePermissions}
         />
-      ) : activeTab === 'users' ? (
+      ) : (
+        <EcosystemPermissionsTab users={users} />
+      )}
         <UsersTab
           users={users}
           loading={loadingUsers}
@@ -298,19 +281,6 @@ export default function PermissionsPage() {
           onSaved={() => {
             load();
             setShowCreateRole(false);
-          }}
-        />
-      )}
-
-      {/* User Roles Modal */}
-      {selectedUser && (
-        <UserRolesModal
-          userId={selectedUser.id}
-          userName={selectedUser.full_name}
-          onClose={() => setSelectedUser(null)}
-          onSaved={() => {
-            setSelectedUser(null);
-            loadUsers();
           }}
         />
       )}
