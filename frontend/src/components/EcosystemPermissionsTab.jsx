@@ -12,14 +12,14 @@ const getUnitDepth = (unit) => {
   return unit.level?.depth ?? null;
 };
 
-// Vai trò TRONG hệ sinh thái
+// Vai trò TRONG hệ sinh thái (CHỈ LÀ LABEL - không ảnh hưởng phân quyền)
 const POSITION_ROLES = [
-  { id: 'director', name: 'Giám đốc', level: 'high', color: 'red', canManage: true },
-  { id: 'manager', name: 'Quản lý', level: 'medium', color: 'purple', canManage: true },
-  { id: 'supervisor', name: 'Giám sát', level: 'medium', color: 'blue', canManage: true },
-  { id: 'leader', name: 'Trưởng nhóm', level: 'medium', color: 'indigo', canManage: false },
-  { id: 'employee', name: 'Nhân viên', level: 'low', color: 'green', canManage: false },
-  { id: 'support', name: 'Hỗ trợ', level: 'low', color: 'gray', canManage: false },
+  { id: 'director', name: 'Giám đốc', level: 'high', color: 'red' },
+  { id: 'manager', name: 'Quản lý', level: 'medium', color: 'purple' },
+  { id: 'supervisor', name: 'Giám sát', level: 'medium', color: 'blue' },
+  { id: 'leader', name: 'Trưởng nhóm', level: 'medium', color: 'indigo' },
+  { id: 'employee', name: 'Nhân viên', level: 'low', color: 'green' },
+  { id: 'support', name: 'Hỗ trợ', level: 'low', color: 'gray' },
 ];
 
 // Nhóm quyền với tên tiếng Việt
@@ -59,6 +59,7 @@ const PERMISSION_GROUPS = {
       'create': 'Thêm nhân viên mới',
       'edit': 'Chỉnh sửa thông tin nhân viên',
       'delete': 'Xóa nhân viên',
+      'manage_subordinates': '🛡️ Quản lý cấp dưới (chỉ Giám đốc, Quản lý, Giám sát)',
     }
   },
   'ecosystem': {
@@ -377,7 +378,6 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
   const rootUnits = buildTree(null);
   const selectedPosition = POSITION_ROLES.find(r => r.id === selectedPositionRole);
   const roleName = selectedPosition?.name || '';
-  const canManageSubordinates = selectedPosition?.canManage || false;
   const unitDepth = selectedUnit ? getUnitDepth(selectedUnit) : null;
   const availableDepartments = filterCompany 
     ? departments.filter(d => d.company_id === filterCompany)
@@ -392,13 +392,21 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
         <div className="flex items-start gap-2">
           <AlertCircle className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
           <div className="text-xs text-gray-800">
-            <p className="font-bold mb-1">💡 Phân quyền theo 3 bước:</p>
+            <p className="font-bold mb-1">💡 Cách phân quyền:</p>
             <ol className="list-decimal ml-4 space-y-0.5">
               <li><strong>Chọn đơn vị</strong> (Khối/Công ty/Phòng ban) từ cây bên trái</li>
-              <li><strong>Chọn vai trò + nhân viên</strong> (có bộ lọc tìm kiếm)</li>
-              <li><strong>Phân quyền</strong>: Chọn vai trò từ Tab 1 HOẶC tùy chỉnh chi tiết (toggle switches)</li>
+              <li><strong>Chọn vai trò</strong> để GÁN CHO nhân viên (Giám đốc, Quản lý, Nhân viên...)</li>
+              <li><strong>Chọn nhân viên</strong> cần phân quyền</li>
+              <li><strong>Phân quyền</strong>: Chọn từ Tab 1 HOẶC tùy chỉnh chi tiết</li>
             </ol>
-            <p className="mt-2 text-orange-700 font-semibold">⚠️ Chỉ Giám đốc, Quản lý, Giám sát mới có thể quản lý cấp dưới</p>
+            <div className="mt-2 p-2 bg-white/50 rounded border border-blue-200">
+              <p className="font-semibold text-blue-900">🛡️ Quyền "Quản lý cấp dưới":</p>
+              <p className="text-blue-800 mt-0.5">Chỉ cấp cho Giám đốc, Quản lý, Giám sát. Vai trò khác chỉ quản lý trong phạm vi được giao.</p>
+              <p className="text-blue-700 mt-1 text-[10px]">
+                <strong>Ví dụ:</strong> Trưởng phòng A ở Công ty A → chỉ quản lý Phòng A. <br/>
+                Quản lý B ở Công ty A → quản lý toàn bộ Công ty A + các phòng ban.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -456,22 +464,11 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                           isSelected ? colorClass : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
                         }`}
                       >
-                        <div className="flex items-center gap-1 justify-center">
-                          {role.name}
-                          {role.canManage && <Shield className="h-3 w-3" />}
-                        </div>
+                        {role.name}
                       </button>
                     );
                   })}
                 </div>
-                {!canManageSubordinates && selectedPositionRole && (
-                  <div className="mt-2 bg-orange-50 border border-orange-200 rounded p-2 flex items-start gap-2">
-                    <Lock className="h-4 w-4 text-orange-600 shrink-0 mt-0.5" />
-                    <p className="text-xs text-orange-800">
-                      <strong>Giới hạn:</strong> Vai trò này không có quyền quản lý cấp dưới. Chỉ được xem và thực hiện công việc được giao.
-                    </p>
-                  </div>
-                )}
               </div>
 
               {selectedPositionRole && (
@@ -583,37 +580,27 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                           Bước 3: Phân quyền cho {selectedUser.user_name || selectedUser.full_name}
                         </h4>
                         
-                        {canManageSubordinates && (
-                          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-                            <button
-                              onClick={() => setPermissionMode('custom')}
-                              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                                permissionMode === 'custom' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                              }`}
-                            >
-                              Tùy chỉnh
-                            </button>
-                            <button
-                              onClick={() => setPermissionMode('role')}
-                              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                                permissionMode === 'role' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                              }`}
-                            >
-                              Từ vai trò (Tab 1)
-                            </button>
-                          </div>
-                        )}
+                        <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+                          <button
+                            onClick={() => setPermissionMode('custom')}
+                            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                              permissionMode === 'custom' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                          >
+                            Tùy chỉnh
+                          </button>
+                          <button
+                            onClick={() => setPermissionMode('role')}
+                            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                              permissionMode === 'role' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                          >
+                            Từ vai trò (Tab 1)
+                          </button>
+                        </div>
                       </div>
                       
-                      {!canManageSubordinates ? (
-                        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
-                          <Lock className="h-8 w-8 text-red-600 mx-auto mb-2" />
-                          <p className="text-sm font-bold text-red-800 mb-1">Không có quyền phân quyền</p>
-                          <p className="text-xs text-red-700">
-                            Chỉ Giám đốc, Quản lý, và Giám sát mới có thể phân quyền cho nhân viên.
-                          </p>
-                        </div>
-                      ) : permissionMode === 'role' ? (
+                      {permissionMode === 'role' ? (
                         <div className="space-y-3">
                           <div className="bg-blue-50 border border-blue-200 rounded p-3">
                             <p className="text-xs text-blue-800 mb-2">
