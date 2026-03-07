@@ -87,11 +87,14 @@ const PERMISSION_GROUPS = {
 export default function EcosystemPermissionsTab({ users: allUsers }) {
   const [ecosystemUnits, setEcosystemUnits] = useState([]);
   const [permissions, setPermissions] = useState([]);
+  const [systemRoles, setSystemRoles] = useState([]); // NEW: Roles from Tab 1
   const [selectedUnit, setSelectedUnit] = useState(null);
+  const [roleType, setRoleType] = useState('position'); // 'position' | 'system'
   const [selectedPositionRole, setSelectedPositionRole] = useState(null);
-  const [selectedUser, setSelectedUser] = useState(null); // Single user selection
+  const [selectedSystemRole, setSelectedSystemRole] = useState(null); // NEW
+  const [selectedUser, setSelectedUser] = useState(null);
   const [unitUsers, setUnitUsers] = useState([]);
-  const [userPermissions, setUserPermissions] = useState([]); // Permissions of selected user
+  const [userPermissions, setUserPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [expandedUnits, setExpandedUnits] = useState({});
@@ -110,13 +113,15 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [unitsRes, permsRes] = await Promise.all([
+      const [unitsRes, permsRes, rolesRes] = await Promise.all([
         api.get('/ecosystem/units'),
         api.get('/permissions/permissions'),
+        api.get('/permissions/roles'), // NEW: Load system roles
       ]);
       
       setEcosystemUnits(unitsRes.data.units || []);
       setPermissions(permsRes.data.permissions || []);
+      setSystemRoles(rolesRes.data.roles || []); // NEW
     } catch (e) {
       console.error('Load data error:', e);
     }
@@ -141,7 +146,9 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
       
       setUnitUsers(users);
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
+      setRoleType('position'); // Reset to position roles
       setSelectedPositionRole(null);
+      setSelectedSystemRole(null);
       setSelectedUser(null);
       setUserPermissions([]);
       
@@ -297,6 +304,8 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
 
   const rootUnits = buildTree(null);
   const selectedPosition = POSITION_ROLES.find(r => r.id === selectedPositionRole);
+  const selectedRole = selectedSystemRole ? systemRoles.find(r => r.id === selectedSystemRole) : selectedPosition;
+  const roleName = selectedRole ? selectedRole.name : '';
   const unitDepth = selectedUnit ? getUnitDepth(selectedUnit) : null;
   const availableDepartments = filterCompany 
     ? departments.filter(d => d.company_id === filterCompany)
@@ -346,46 +355,113 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
 
               {/* Step 1: Select Role */}
               <div>
-                <h4 className="text-xs font-bold text-gray-700 mb-2">
-                  Bước 1: Chọn vai trò
-                </h4>
-                <div className="grid grid-cols-3 gap-2">
-                  {POSITION_ROLES.map(role => {
-                    const isSelected = selectedPositionRole === role.id;
-                    const colorClasses = {
-                      red: 'border-red-500 bg-red-50 text-red-700',
-                      purple: 'border-purple-500 bg-purple-50 text-purple-700',
-                      blue: 'border-blue-500 bg-blue-50 text-blue-700',
-                      indigo: 'border-indigo-500 bg-indigo-50 text-indigo-700',
-                      green: 'border-green-500 bg-green-50 text-green-700',
-                      gray: 'border-gray-500 bg-gray-50 text-gray-700',
-                    };
-                    const colorClass = colorClasses[role.color] || colorClasses.gray;
-                    
-                    return (
-                      <button
-                        key={role.id}
-                        onClick={() => {
-                          setSelectedPositionRole(role.id);
-                          setSelectedUser(null);
-                        }}
-                        className={`px-3 py-2 rounded-lg border-2 text-xs font-medium transition-all ${
-                          isSelected ? colorClass : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                        }`}
-                      >
-                        {role.name}
-                      </button>
-                    );
-                  })}
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold text-gray-700">
+                    Bước 1: Chọn vai trò
+                  </h4>
+                  {/* Toggle between role types */}
+                  <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+                    <button
+                      onClick={() => {
+                        setRoleType('position');
+                        setSelectedSystemRole(null);
+                        setSelectedUser(null);
+                      }}
+                      className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                        roleType === 'position' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Vai trò vị trí
+                    </button>
+                    <button
+                      onClick={() => {
+                        setRoleType('system');
+                        setSelectedPositionRole(null);
+                        setSelectedUser(null);
+                      }}
+                      className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                        roleType === 'system' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Vai trò hệ thống
+                    </button>
+                  </div>
                 </div>
+                
+                {/* Position Roles */}
+                {roleType === 'position' && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {POSITION_ROLES.map(role => {
+                      const isSelected = selectedPositionRole === role.id;
+                      const colorClasses = {
+                        red: 'border-red-500 bg-red-50 text-red-700',
+                        purple: 'border-purple-500 bg-purple-50 text-purple-700',
+                        blue: 'border-blue-500 bg-blue-50 text-blue-700',
+                        indigo: 'border-indigo-500 bg-indigo-50 text-indigo-700',
+                        green: 'border-green-500 bg-green-50 text-green-700',
+                        gray: 'border-gray-500 bg-gray-50 text-gray-700',
+                      };
+                      const colorClass = colorClasses[role.color] || colorClasses.gray;
+                      
+                      return (
+                        <button
+                          key={role.id}
+                          onClick={() => {
+                            setSelectedPositionRole(role.id);
+                            setSelectedUser(null);
+                          }}
+                          className={`px-3 py-2 rounded-lg border-2 text-xs font-medium transition-all ${
+                            isSelected ? colorClass : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                          }`}
+                        >
+                          {role.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                
+                {/* System Roles */}
+                {roleType === 'system' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {systemRoles.map(role => {
+                      const isSelected = selectedSystemRole === role.id;
+                      
+                      return (
+                        <button
+                          key={role.id}
+                          onClick={() => {
+                            setSelectedSystemRole(role.id);
+                            setSelectedUser(null);
+                          }}
+                          className={`px-3 py-2 rounded-lg border-2 text-xs font-medium transition-all ${
+                            isSelected 
+                              ? 'border-purple-500 bg-purple-50 text-purple-700' 
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Shield className="h-4 w-4" />
+                            <div className="text-left flex-1">
+                              <div className="font-bold">{role.name}</div>
+                              {role.description && (
+                                <div className="text-[10px] text-gray-500 truncate">{role.description}</div>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              {selectedPositionRole && (
+              {(selectedPositionRole || selectedSystemRole) && (
                 <>
                   {/* Step 2: Select User */}
                   <div>
                     <h4 className="text-xs font-bold text-gray-700 mb-2">
-                      Bước 2: Chọn nhân viên làm {selectedPosition.name}
+                      Bước 2: Chọn nhân viên ({roleName})
                     </h4>
                     
                     {/* Filters */}
@@ -462,11 +538,11 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                                 loadUserPermissions(userId);
                               }}
                               className={`flex items-center gap-2 px-2 py-1.5 rounded border text-left transition-colors ${
-                                isSelected ? `border-${selectedPosition.color}-500 bg-${selectedPosition.color}-50` : 'border-gray-200 hover:border-purple-300'
+                                isSelected ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-purple-300'
                               }`}
                             >
                               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                                isSelected ? `bg-${selectedPosition.color}-200 text-${selectedPosition.color}-800` : 'bg-purple-100 text-purple-700'
+                                isSelected ? 'bg-purple-200 text-purple-800' : 'bg-purple-100 text-purple-700'
                               }`}>
                                 {userName.charAt(0).toUpperCase()}
                               </div>
