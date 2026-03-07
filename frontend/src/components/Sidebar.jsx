@@ -48,7 +48,6 @@ const adminTools = [
 
 const adminSettings = [
   { to: '/permissions', icon: Shield, label: 'Phân quyền' },
-  { to: '/ecosystem-permissions', icon: Network, label: 'PQ Hệ sinh thái' },
   { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
   { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
   { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
