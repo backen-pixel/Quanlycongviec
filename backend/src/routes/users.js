@@ -13,21 +13,62 @@ r.use(auth);
 // ═══ WORKFLOW STAGES ═══
 r.get('/stages', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('workflow_stages').select('*').eq('is_active', true).order('order_index');
-    if (error) {
-      return res.json({ stages: [
-        { id: 'c1', slug: 'consulting', name: 'Tư vấn', color: '#8B5CF6', order_index: 1 },
-        { id: 'c2', slug: 'design', name: 'Thiết kế', color: '#EC4899', order_index: 2 },
-        { id: 'c3', slug: 'quotation', name: 'Báo giá', color: '#F59E0B', order_index: 3 },
-        { id: 'c4', slug: 'contract', name: 'Hợp đồng', color: '#10B981', order_index: 4 },
-        { id: 'c5', slug: 'production', name: 'Sản xuất', color: '#F97316', order_index: 5 },
-        { id: 'c6', slug: 'shipping', name: 'Vận chuyển', color: '#06B6D4', order_index: 6 },
-        { id: 'c7', slug: 'installation', name: 'Lắp đặt', color: '#3B82F6', order_index: 7 },
-        { id: 'c8', slug: 'customer-care', name: 'Chăm sóc KH', color: '#EF4444', order_index: 8 },
-      ] });
+    const userId = req.user.id;
+    const role = req.user.role;
+
+    // Admin/Manager thấy tất cả
+    if (['admin', 'manager'].includes(role)) {
+      const { data, error } = await supabase.from('workflow_stages').select('*').eq('is_active', true).order('order_index');
+      if (error) {
+        return res.json({ stages: [
+          { id: 'c1', slug: 'consulting', name: 'Tư vấn', color: '#8B5CF6', icon: '💬', order_index: 1 },
+          { id: 'c2', slug: 'design', name: 'Thiết kế', color: '#EC4899', icon: '🎨', order_index: 2 },
+          { id: 'c3', slug: 'quotation', name: 'Báo giá', color: '#F59E0B', icon: '💰', order_index: 3 },
+          { id: 'c4', slug: 'contract', name: 'Hợp đồng', color: '#10B981', icon: '📝', order_index: 4 },
+          { id: 'c5', slug: 'production', name: 'Sản xuất', color: '#F97316', icon: '🏭', order_index: 5 },
+          { id: 'c6', slug: 'shipping', name: 'Vận chuyển', color: '#06B6D4', icon: '🚛', order_index: 6 },
+          { id: 'c7', slug: 'installation', name: 'Lắp đặt', color: '#3B82F6', icon: '🔧', order_index: 7 },
+          { id: 'c8', slug: 'customer-care', name: 'Chăm sóc KH', color: '#EF4444', icon: '❤️', order_index: 8 },
+        ] });
+      }
+      return res.json({ stages: data || [] });
     }
-    res.json({ stages: data || [] });
-  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+
+    // NV thường: lọc theo stage_groups của ecosystem_units mà user thuộc về
+    // 1. Lấy tất cả ecosystem_units của user
+    const { data: memberships } = await supabase
+      .from('ecosystem_unit_members')
+      .select('unit_id, ecosystem_units!inner(stage_group_id)')
+      .eq('user_id', userId);
+
+    if (!memberships || memberships.length === 0) {
+      return res.json({ stages: [] });
+    }
+
+    // 2. Lấy tất cả stage_group_id (lọc null)
+    const stageGroupIds = [...new Set(
+      memberships
+        .map(m => m.ecosystem_units?.stage_group_id)
+        .filter(id => id != null)
+    )];
+
+    if (stageGroupIds.length === 0) {
+      return res.json({ stages: [] });
+    }
+
+    // 3. Lấy các workflow_stages từ stage_groups
+    const { data: stages } = await supabase
+      .from('workflow_stages')
+      .select('*')
+      .eq('is_active', true)
+      .in('stage_group_id', stageGroupIds)
+      .order('order_index');
+
+    res.json({ stages: stages || [] });
+  } catch (e) {
+    console.error('/users/stages error:', e);
+    res.status(500).json({ error: 'Lỗi khi lấy quy trình' });
+  }
 });
 
 // ═══ ROLE → STAGE ACCESS ═══
