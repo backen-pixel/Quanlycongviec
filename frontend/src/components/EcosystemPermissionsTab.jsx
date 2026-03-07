@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, Plus, Check, X, ChevronRight, ChevronDown, Users, AlertCircle, Search } from 'lucide-react';
+import { Shield, Plus, Check, X, ChevronRight, ChevronDown, Users, AlertCircle, Search, Lock } from 'lucide-react';
 import api from '../lib/api';
 
 const LEVEL_LABELS = { 0: 'Tập đoàn', 1: 'Khối', 2: 'Công ty', 3: 'Phòng ban', 4: 'Đội nhóm' };
@@ -14,12 +14,12 @@ const getUnitDepth = (unit) => {
 
 // Vai trò TRONG hệ sinh thái
 const POSITION_ROLES = [
-  { id: 'director', name: 'Giám đốc', level: 'high', color: 'red' },
-  { id: 'manager', name: 'Quản lý', level: 'medium', color: 'purple' },
-  { id: 'supervisor', name: 'Giám sát', level: 'medium', color: 'blue' },
-  { id: 'leader', name: 'Trưởng nhóm', level: 'medium', color: 'indigo' },
-  { id: 'employee', name: 'Nhân viên', level: 'low', color: 'green' },
-  { id: 'support', name: 'Hỗ trợ', level: 'low', color: 'gray' },
+  { id: 'director', name: 'Giám đốc', level: 'high', color: 'red', canManage: true },
+  { id: 'manager', name: 'Quản lý', level: 'medium', color: 'purple', canManage: true },
+  { id: 'supervisor', name: 'Giám sát', level: 'medium', color: 'blue', canManage: true },
+  { id: 'leader', name: 'Trưởng nhóm', level: 'medium', color: 'indigo', canManage: false },
+  { id: 'employee', name: 'Nhân viên', level: 'low', color: 'green', canManage: false },
+  { id: 'support', name: 'Hỗ trợ', level: 'low', color: 'gray', canManage: false },
 ];
 
 // Nhóm quyền với tên tiếng Việt
@@ -84,20 +84,44 @@ const PERMISSION_GROUPS = {
   },
 };
 
+// Toggle Switch Component
+function ToggleSwitch({ checked, onChange, disabled, label }) {
+  return (
+    <button
+      type="button"
+      onClick={() => !disabled && onChange(!checked)}
+      disabled={disabled}
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+      } ${checked ? 'bg-green-600' : 'bg-gray-300'}`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+          checked ? 'translate-x-5' : 'translate-x-0.5'
+        }`}
+      />
+      <span className="sr-only">{label}</span>
+    </button>
+  );
+}
+
 export default function EcosystemPermissionsTab({ users: allUsers }) {
   const [ecosystemUnits, setEcosystemUnits] = useState([]);
   const [permissions, setPermissions] = useState([]);
-  const [systemRoles, setSystemRoles] = useState([]); // NEW: Roles from Tab 1
+  const [systemRoles, setSystemRoles] = useState([]);
+  const [rolePermissions, setRolePermissions] = useState({}); // Map roleId -> permission ids
   const [selectedUnit, setSelectedUnit] = useState(null);
-  const [roleType, setRoleType] = useState('position'); // 'position' | 'system'
   const [selectedPositionRole, setSelectedPositionRole] = useState(null);
-  const [selectedSystemRole, setSelectedSystemRole] = useState(null); // NEW
   const [selectedUser, setSelectedUser] = useState(null);
   const [unitUsers, setUnitUsers] = useState([]);
   const [userPermissions, setUserPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [expandedUnits, setExpandedUnits] = useState({});
+  
+  // Step 3: Permission mode
+  const [permissionMode, setPermissionMode] = useState('custom'); // 'role' | 'custom'
+  const [selectedRoleTemplate, setSelectedRoleTemplate] = useState(null);
   
   // Filters for user list
   const [searchTerm, setSearchTerm] = useState('');
@@ -116,12 +140,24 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
       const [unitsRes, permsRes, rolesRes] = await Promise.all([
         api.get('/ecosystem/units'),
         api.get('/permissions/permissions'),
-        api.get('/permissions/roles'), // NEW: Load system roles
+        api.get('/permissions/roles'),
       ]);
       
       setEcosystemUnits(unitsRes.data.units || []);
       setPermissions(permsRes.data.permissions || []);
-      setSystemRoles(rolesRes.data.roles || []); // NEW
+      setSystemRoles(rolesRes.data.roles || []);
+      
+      // Load permissions for each role
+      const rolePermsMap = {};
+      for (const role of rolesRes.data.roles || []) {
+        try {
+          const { data } = await api.get(`/permissions/roles/${role.id}/permissions`);
+          rolePermsMap[role.id] = (data.permissions || []).map(p => p.id);
+        } catch (e) {
+          rolePermsMap[role.id] = [];
+        }
+      }
+      setRolePermissions(rolePermsMap);
     } catch (e) {
       console.error('Load data error:', e);
     }
@@ -146,11 +182,11 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
       
       setUnitUsers(users);
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
-      setRoleType('position'); // Reset to position roles
       setSelectedPositionRole(null);
-      setSelectedSystemRole(null);
       setSelectedUser(null);
       setUserPermissions([]);
+      setPermissionMode('custom');
+      setSelectedRoleTemplate(null);
       
       // Load filter options
       await loadFilterOptions(unitId);
@@ -285,9 +321,36 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
       
       // Reload user permissions
       await loadUserPermissions(selectedUser.user_id);
+    } catch (e) {
+      alert('Lỗi: ' + (e.response?.data?.error || e.message));
+    }
+    setSaving(false);
+  };
+
+  const applyRoleTemplate = async () => {
+    if (!selectedRoleTemplate || !selectedUser || !selectedUnit) return;
+    
+    const rolePerms = rolePermissions[selectedRoleTemplate] || [];
+    if (rolePerms.length === 0) {
+      alert('⚠️ Vai trò này chưa có quyền nào');
+      return;
+    }
+    
+    setSaving(true);
+    try {
+      // Grant all permissions from role
+      for (const permId of rolePerms) {
+        await api.post('/permissions/users/custom-permission', {
+          user_id: selectedUser.user_id,
+          permission_id: permId,
+          ecosystem_unit_id: selectedUnit.id,
+          position_role: selectedPositionRole,
+          granted: true,
+        });
+      }
       
-      const action = grant ? 'cấp' : 'thu hồi';
-      alert(`✅ Đã ${action} quyền thành công`);
+      await loadUserPermissions(selectedUser.user_id);
+      alert(`✅ Đã áp dụng quyền từ vai trò ${systemRoles.find(r => r.id === selectedRoleTemplate)?.name}`);
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
     }
@@ -304,8 +367,8 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
 
   const rootUnits = buildTree(null);
   const selectedPosition = POSITION_ROLES.find(r => r.id === selectedPositionRole);
-  const selectedRole = selectedSystemRole ? systemRoles.find(r => r.id === selectedSystemRole) : selectedPosition;
-  const roleName = selectedRole ? selectedRole.name : '';
+  const roleName = selectedPosition?.name || '';
+  const canManageSubordinates = selectedPosition?.canManage || false;
   const unitDepth = selectedUnit ? getUnitDepth(selectedUnit) : null;
   const availableDepartments = filterCompany 
     ? departments.filter(d => d.company_id === filterCompany)
@@ -320,13 +383,13 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
         <div className="flex items-start gap-2">
           <AlertCircle className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
           <div className="text-xs text-gray-800">
-            <p className="font-bold mb-1">💡 Phân quyền theo 4 bước:</p>
+            <p className="font-bold mb-1">💡 Phân quyền theo 3 bước:</p>
             <ol className="list-decimal ml-4 space-y-0.5">
               <li><strong>Chọn đơn vị</strong> (Khối/Công ty/Phòng ban) từ cây bên trái</li>
-              <li><strong>Chọn vai trò</strong> cho nhân viên (Giám đốc/Quản lý/Nhân viên)</li>
-              <li><strong>Chọn nhân viên</strong> cần phân quyền (có bộ lọc)</li>
-              <li><strong>Bật/tắt quyền</strong> chức năng và quyền quản lý hệ sinh thái</li>
+              <li><strong>Chọn vai trò + nhân viên</strong> (có bộ lọc tìm kiếm)</li>
+              <li><strong>Phân quyền</strong>: Chọn vai trò từ Tab 1 HOẶC tùy chỉnh chi tiết (toggle switches)</li>
             </ol>
+            <p className="mt-2 text-orange-700 font-semibold">⚠️ Chỉ Giám đốc, Quản lý, Giám sát mới có thể quản lý cấp dưới</p>
           </div>
         </div>
       </div>
@@ -353,110 +416,56 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                 <p className="text-xs text-gray-500">{LEVEL_LABELS[unitDepth]}</p>
               </div>
 
-              {/* Step 1: Select Role */}
+              {/* Step 1: Select Position Role */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-bold text-gray-700">
-                    Bước 1: Chọn vai trò
-                  </h4>
-                  {/* Toggle between role types */}
-                  <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-                    <button
-                      onClick={() => {
-                        setRoleType('position');
-                        setSelectedSystemRole(null);
-                        setSelectedUser(null);
-                      }}
-                      className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                        roleType === 'position' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                      }`}
-                    >
-                      Vai trò vị trí
-                    </button>
-                    <button
-                      onClick={() => {
-                        setRoleType('system');
-                        setSelectedPositionRole(null);
-                        setSelectedUser(null);
-                      }}
-                      className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                        roleType === 'system' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                      }`}
-                    >
-                      Vai trò hệ thống
-                    </button>
-                  </div>
-                </div>
-                
-                {/* Position Roles */}
-                {roleType === 'position' && (
-                  <div className="grid grid-cols-3 gap-2">
-                    {POSITION_ROLES.map(role => {
-                      const isSelected = selectedPositionRole === role.id;
-                      const colorClasses = {
-                        red: 'border-red-500 bg-red-50 text-red-700',
-                        purple: 'border-purple-500 bg-purple-50 text-purple-700',
-                        blue: 'border-blue-500 bg-blue-50 text-blue-700',
-                        indigo: 'border-indigo-500 bg-indigo-50 text-indigo-700',
-                        green: 'border-green-500 bg-green-50 text-green-700',
-                        gray: 'border-gray-500 bg-gray-50 text-gray-700',
-                      };
-                      const colorClass = colorClasses[role.color] || colorClasses.gray;
-                      
-                      return (
-                        <button
-                          key={role.id}
-                          onClick={() => {
-                            setSelectedPositionRole(role.id);
-                            setSelectedUser(null);
-                          }}
-                          className={`px-3 py-2 rounded-lg border-2 text-xs font-medium transition-all ${
-                            isSelected ? colorClass : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                          }`}
-                        >
+                <h4 className="text-xs font-bold text-gray-700 mb-2">
+                  Bước 1: Chọn vai trò vị trí
+                </h4>
+                <div className="grid grid-cols-3 gap-2">
+                  {POSITION_ROLES.map(role => {
+                    const isSelected = selectedPositionRole === role.id;
+                    const colorClasses = {
+                      red: 'border-red-500 bg-red-50 text-red-700',
+                      purple: 'border-purple-500 bg-purple-50 text-purple-700',
+                      blue: 'border-blue-500 bg-blue-50 text-blue-700',
+                      indigo: 'border-indigo-500 bg-indigo-50 text-indigo-700',
+                      green: 'border-green-500 bg-green-50 text-green-700',
+                      gray: 'border-gray-500 bg-gray-50 text-gray-700',
+                    };
+                    const colorClass = colorClasses[role.color] || colorClasses.gray;
+                    
+                    return (
+                      <button
+                        key={role.id}
+                        onClick={() => {
+                          setSelectedPositionRole(role.id);
+                          setSelectedUser(null);
+                          setPermissionMode('custom');
+                          setSelectedRoleTemplate(null);
+                        }}
+                        className={`px-3 py-2 rounded-lg border-2 text-xs font-medium transition-all ${
+                          isSelected ? colorClass : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1 justify-center">
                           {role.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                
-                {/* System Roles */}
-                {roleType === 'system' && (
-                  <div className="grid grid-cols-2 gap-2">
-                    {systemRoles.map(role => {
-                      const isSelected = selectedSystemRole === role.id;
-                      
-                      return (
-                        <button
-                          key={role.id}
-                          onClick={() => {
-                            setSelectedSystemRole(role.id);
-                            setSelectedUser(null);
-                          }}
-                          className={`px-3 py-2 rounded-lg border-2 text-xs font-medium transition-all ${
-                            isSelected 
-                              ? 'border-purple-500 bg-purple-50 text-purple-700' 
-                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Shield className="h-4 w-4" />
-                            <div className="text-left flex-1">
-                              <div className="font-bold">{role.name}</div>
-                              {role.description && (
-                                <div className="text-[10px] text-gray-500 truncate">{role.description}</div>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
+                          {role.canManage && <Shield className="h-3 w-3" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {!canManageSubordinates && selectedPositionRole && (
+                  <div className="mt-2 bg-orange-50 border border-orange-200 rounded p-2 flex items-start gap-2">
+                    <Lock className="h-4 w-4 text-orange-600 shrink-0 mt-0.5" />
+                    <p className="text-xs text-orange-800">
+                      <strong>Giới hạn:</strong> Vai trò này không có quyền quản lý cấp dưới. Chỉ được xem và thực hiện công việc được giao.
+                    </p>
                   </div>
                 )}
               </div>
 
-              {(selectedPositionRole || selectedSystemRole) && (
+              {selectedPositionRole && (
                 <>
                   {/* Step 2: Select User */}
                   <div>
@@ -557,61 +566,132 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                     )}
                   </div>
 
-                  {/* Step 3: Permissions (only if user selected) */}
+                  {/* Step 3: Permissions (only if user selected AND can manage) */}
                   {selectedUser && (
                     <div>
-                      <h4 className="text-xs font-bold text-gray-700 mb-2">
-                        Bước 3: Phân quyền cho {selectedUser.user_name || selectedUser.full_name}
-                      </h4>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-xs font-bold text-gray-700">
+                          Bước 3: Phân quyền cho {selectedUser.user_name || selectedUser.full_name}
+                        </h4>
+                        
+                        {canManageSubordinates && (
+                          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+                            <button
+                              onClick={() => setPermissionMode('custom')}
+                              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                                permissionMode === 'custom' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                              }`}
+                            >
+                              Tùy chỉnh
+                            </button>
+                            <button
+                              onClick={() => setPermissionMode('role')}
+                              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                                permissionMode === 'role' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                              }`}
+                            >
+                              Từ vai trò (Tab 1)
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       
-                      <div className="space-y-3 max-h-80 overflow-y-auto">
-                        {Object.entries(PERMISSION_GROUPS).map(([resource, group]) => {
-                          const resourcePerms = permissions.filter(p => p.resource === resource);
-                          
-                          return (
-                            <div key={resource} className="border rounded-lg overflow-hidden">
-                              <div className="px-3 py-2 bg-gray-100 border-b">
-                                <h5 className="text-xs font-bold text-gray-800">{group.name}</h5>
-                              </div>
-                              <div className="p-2 space-y-1">
-                                {resourcePerms.map(perm => {
-                                  const userPerm = userPermissions.find(up => up.permission_id === perm.id);
-                                  const isGranted = userPerm?.granted || false;
-                                  const label = group.permissions[perm.action] || perm.action;
-                                  
-                                  return (
-                                    <div key={perm.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded">
-                                      <span className="text-xs text-gray-700">{label}</span>
-                                      <div className="flex gap-1">
-                                        <button
-                                          onClick={() => togglePermission(perm.id, true)}
-                                          disabled={saving}
-                                          className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                                            isGranted 
-                                              ? 'bg-green-600 text-white' 
-                                              : 'bg-gray-100 text-gray-600 hover:bg-green-100'
-                                          } disabled:opacity-50`}
-                                        >
-                                          {isGranted ? '✓ Đã cấp' : 'Cấp quyền'}
-                                        </button>
-                                        {isGranted && (
-                                          <button
-                                            onClick={() => togglePermission(perm.id, false)}
-                                            disabled={saving}
-                                            className="px-3 py-1 bg-red-100 text-red-600 rounded text-xs font-medium hover:bg-red-200 disabled:opacity-50"
-                                          >
-                                            Thu hồi
-                                          </button>
+                      {!canManageSubordinates ? (
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                          <Lock className="h-8 w-8 text-red-600 mx-auto mb-2" />
+                          <p className="text-sm font-bold text-red-800 mb-1">Không có quyền phân quyền</p>
+                          <p className="text-xs text-red-700">
+                            Chỉ Giám đốc, Quản lý, và Giám sát mới có thể phân quyền cho nhân viên.
+                          </p>
+                        </div>
+                      ) : permissionMode === 'role' ? (
+                        <div className="space-y-3">
+                          <div className="bg-blue-50 border border-blue-200 rounded p-3">
+                            <p className="text-xs text-blue-800 mb-2">
+                              💡 Chọn vai trò hệ thống (đã tạo ở Tab 1) để áp dụng tất cả quyền của vai trò đó
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              {systemRoles.map(role => {
+                                const isSelected = selectedRoleTemplate === role.id;
+                                const permCount = rolePermissions[role.id]?.length || 0;
+                                
+                                return (
+                                  <button
+                                    key={role.id}
+                                    onClick={() => setSelectedRoleTemplate(role.id)}
+                                    className={`p-2 rounded-lg border-2 text-left transition-all ${
+                                      isSelected 
+                                        ? 'border-purple-500 bg-purple-50' 
+                                        : 'border-gray-200 bg-white hover:border-gray-300'
+                                    }`}
+                                  >
+                                    <div className="flex items-start gap-2">
+                                      <Shield className="h-4 w-4 shrink-0 mt-0.5 text-purple-600" />
+                                      <div className="flex-1">
+                                        <div className="text-xs font-bold text-gray-900">{role.name}</div>
+                                        {role.description && (
+                                          <div className="text-[10px] text-gray-500 mt-0.5">{role.description}</div>
                                         )}
+                                        <div className="text-[10px] text-gray-600 mt-1">
+                                          {permCount} quyền
+                                        </div>
                                       </div>
                                     </div>
-                                  );
-                                })}
-                              </div>
+                                  </button>
+                                );
+                              })}
                             </div>
-                          );
-                        })}
-                      </div>
+                          </div>
+                          
+                          {selectedRoleTemplate && (
+                            <button
+                              onClick={applyRoleTemplate}
+                              disabled={saving}
+                              className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {saving ? 'Đang áp dụng...' : '✅ Áp dụng toàn bộ quyền của vai trò'}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-3 max-h-96 overflow-y-auto">
+                          {Object.entries(PERMISSION_GROUPS).map(([resource, group]) => {
+                            const resourcePerms = permissions.filter(p => p.resource === resource);
+                            
+                            return (
+                              <div key={resource} className="border rounded-lg overflow-hidden">
+                                <div className="px-3 py-2 bg-gray-100 border-b">
+                                  <h5 className="text-xs font-bold text-gray-800">{group.name}</h5>
+                                </div>
+                                <div className="p-2 space-y-1">
+                                  {resourcePerms.map(perm => {
+                                    const userPerm = userPermissions.find(up => up.permission_id === perm.id);
+                                    const isGranted = userPerm?.granted || false;
+                                    const label = group.permissions[perm.action] || perm.action;
+                                    
+                                    return (
+                                      <div key={perm.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded">
+                                        <span className="text-xs text-gray-700 flex-1">{label}</span>
+                                        <div className="flex items-center gap-2">
+                                          <span className={`text-[10px] font-medium ${isGranted ? 'text-green-700' : 'text-gray-500'}`}>
+                                            {isGranted ? 'Đã cấp' : 'Chưa cấp'}
+                                          </span>
+                                          <ToggleSwitch
+                                            checked={isGranted}
+                                            onChange={(checked) => togglePermission(perm.id, checked)}
+                                            disabled={saving}
+                                            label={label}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
