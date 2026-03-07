@@ -140,7 +140,10 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
       const [unitsRes, permsRes, rolesRes] = await Promise.all([
         api.get('/ecosystem/units'),
         api.get('/permissions/permissions'),
-        api.get('/permissions/roles'),
+        api.get('/permissions/roles').catch(e => {
+          console.warn('Failed to load roles:', e);
+          return { data: { roles: [] } };
+        }),
       ]);
       
       setEcosystemUnits(unitsRes.data.units || []);
@@ -154,12 +157,18 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
           const { data } = await api.get(`/permissions/roles/${role.id}/permissions`);
           rolePermsMap[role.id] = (data.permissions || []).map(p => p.id);
         } catch (e) {
+          console.warn(`Failed to load permissions for role ${role.id}:`, e);
           rolePermsMap[role.id] = [];
         }
       }
       setRolePermissions(rolePermsMap);
     } catch (e) {
       console.error('Load data error:', e);
+      // Set defaults to prevent crash
+      setEcosystemUnits([]);
+      setPermissions([]);
+      setSystemRoles([]);
+      setRolePermissions({});
     }
     setLoading(false);
   };
@@ -610,8 +619,13 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                             <p className="text-xs text-blue-800 mb-2">
                               💡 Chọn vai trò hệ thống (đã tạo ở Tab 1) để áp dụng tất cả quyền của vai trò đó
                             </p>
-                            <div className="grid grid-cols-2 gap-2">
-                              {systemRoles.map(role => {
+                            {(systemRoles || []).length === 0 ? (
+                              <div className="text-center py-4">
+                                <p className="text-xs text-gray-600">Chưa có vai trò hệ thống nào. Tạo ở Tab 1 trước.</p>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-2 gap-2">
+                                {(systemRoles || []).map(role => {
                                 const isSelected = selectedRoleTemplate === role.id;
                                 const permCount = rolePermissions[role.id]?.length || 0;
                                 
@@ -640,7 +654,8 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                                   </button>
                                 );
                               })}
-                            </div>
+                              </div>
+                            )}
                           </div>
                           
                           {selectedRoleTemplate && (
