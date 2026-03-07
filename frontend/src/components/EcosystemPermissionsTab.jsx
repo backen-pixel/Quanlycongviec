@@ -659,13 +659,54 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                           </div>
                           
                           {selectedRoleTemplate && (
-                            <button
-                              onClick={applyRoleTemplate}
-                              disabled={saving}
-                              className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {saving ? 'Đang áp dụng...' : '✅ Áp dụng toàn bộ quyền của vai trò'}
-                            </button>
+                            <>
+                              {/* Show permission details */}
+                              <div className="bg-white border rounded-lg p-3">
+                                <h5 className="text-xs font-bold text-gray-700 mb-2">
+                                  📋 Chi tiết quyền của vai trò "{systemRoles.find(r => r.id === selectedRoleTemplate)?.name}"
+                                </h5>
+                                <div className="space-y-2 max-h-64 overflow-y-auto">
+                                  {Object.entries(PERMISSION_GROUPS).map(([resource, group]) => {
+                                    const rolePerms = rolePermissions[selectedRoleTemplate] || [];
+                                    const resourcePerms = permissions.filter(p => 
+                                      p.resource === resource && rolePerms.includes(p.id)
+                                    );
+                                    
+                                    if (resourcePerms.length === 0) return null;
+                                    
+                                    return (
+                                      <div key={resource} className="border-l-2 border-purple-300 pl-2">
+                                        <div className="text-xs font-semibold text-gray-800">{group.name}</div>
+                                        <ul className="mt-1 space-y-0.5">
+                                          {resourcePerms.map(perm => {
+                                            const label = group.permissions[perm.action] || perm.action;
+                                            return (
+                                              <li key={perm.id} className="text-xs text-gray-600 flex items-center gap-1">
+                                                <Check className="h-3 w-3 text-green-600" />
+                                                {label}
+                                              </li>
+                                            );
+                                          })}
+                                        </ul>
+                                      </div>
+                                    );
+                                  })}
+                                  {(rolePermissions[selectedRoleTemplate] || []).length === 0 && (
+                                    <p className="text-xs text-gray-500 text-center py-2">
+                                      Vai trò này chưa có quyền nào
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <button
+                                onClick={applyRoleTemplate}
+                                disabled={saving}
+                                className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {saving ? 'Đang áp dụng...' : '✅ Áp dụng toàn bộ quyền của vai trò'}
+                              </button>
+                            </>
                           )}
                         </div>
                       ) : (
