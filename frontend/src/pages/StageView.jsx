@@ -70,14 +70,32 @@ export default function StageView() {
         api.get('/projects', { params: { limit: 200 } }).catch(() => ({ data: { projects: [] } })),
       ]);
 
-      const stage = stageRes.data.stages?.find(s => s.slug === slug) || null;
-      setStageInfo(stage || { slug, name: STAGE_NAMES[slug], color: '#3b82f6' });
+      // Tìm TẤT CẢ stages cùng tên với slug hiện tại
+      const allStages = stageRes.data.stages || [];
+      const matchedStages = allStages.filter(s => s.slug === slug || s.name === STAGE_NAMES[slug]);
+      
+      // Sử dụng stage đầu tiên làm thông tin hiển thị
+      const primaryStage = matchedStages[0] || null;
+      setStageInfo(primaryStage || { slug, name: STAGE_NAMES[slug], color: '#3b82f6' });
 
-      if (!stage?.id) { setProjects([]); setTasks([]); setLoading(false); return; }
+      if (matchedStages.length === 0) { 
+        setProjects([]); 
+        setTasks([]); 
+        setLoading(false); 
+        return; 
+      }
 
-      const { data: taskData } = await api.get('/tasks', { params: { stage_id: stage.id } })
-        .catch(() => ({ data: { tasks: [] } }));
-      let stageTasks = taskData.tasks || [];
+      // Lấy tất cả stage IDs để query tasks
+      const stageIds = matchedStages.map(s => s.id);
+
+      // Load tasks từ TẤT CẢ stages cùng tên
+      const taskPromises = stageIds.map(stageId =>
+        api.get('/tasks', { params: { stage_id: stageId } })
+          .then(r => r.data.tasks || [])
+          .catch(() => [])
+      );
+      const taskArrays = await Promise.all(taskPromises);
+      let stageTasks = taskArrays.flat(); // Gộp tất cả tasks từ các stages
 
       // Load checklists for all tasks in parallel (batch)
       const checklistPromises = stageTasks.map(t =>
