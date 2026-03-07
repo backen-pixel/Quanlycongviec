@@ -255,24 +255,6 @@ export default function PermissionsPage() {
       ) : (
         <EcosystemPermissionsTab users={users} />
       )}
-        <UsersTab
-          users={users}
-          loading={loadingUsers}
-          onUserClick={(user) => setSelectedUser(user)}
-          // Filters
-          divisions={divisions}
-          companies={companies}
-          departments={departments}
-          filterDivision={filterDivision}
-          filterCompany={filterCompany}
-          filterDept={filterDept}
-          onFilterDivision={setFilterDivision}
-          onFilterCompany={setFilterCompany}
-          onFilterDept={setFilterDept}
-        />
-      ) : (
-        <EcosystemPermissionsTab users={users} />
-      )}
 
       {/* Create Role Modal */}
       {showCreateRole && (
