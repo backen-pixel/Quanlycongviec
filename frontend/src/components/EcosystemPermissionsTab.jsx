@@ -60,11 +60,18 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
 
   const loadUnitPermissions = async (unitId, keepSelection = false) => {
     try {
+      console.log('🔄 Loading unit data for:', unitId);
+      
       // Load permissions AND users for this unit
       const [permsRes, usersRes] = await Promise.all([
         api.get(`/permissions/ecosystem-units/${unitId}/permissions`),
         api.get(`/ecosystem/units/${unitId}/users`),
       ]);
+      
+      console.log('📊 API responses:', {
+        permissions: permsRes.data.permissions?.length,
+        users: usersRes.data.users?.length,
+      });
       
       setUnitPermissions(permsRes.data.permissions || []);
       
@@ -74,6 +81,8 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
         user_id: u.id, // Normalize: backend returns 'id', frontend uses 'user_id'
         user_name: u.full_name,
       }));
+      
+      console.log('👥 Normalized users:', users.length, users.slice(0, 2));
       setUnitUsers(users);
       
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
@@ -82,9 +91,12 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
       if (!keepSelection) {
         setSelectedUsers([]);
         setSelectedPositionRole(null);
+        console.log('🔄 Selection reset');
+      } else {
+        console.log('✅ Keeping selection');
       }
     } catch (e) {
-      console.error('Load unit data error:', e);
+      console.error('❌ Load unit data error:', e);
       setUnitPermissions([]);
       setUnitUsers([]);
       setSelectedUnit(ecosystemUnits.find(u => u.id === unitId));
@@ -344,15 +356,30 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                       )}
                     </div>
                     
+                    {/* Debug info */}
+                    {process.env.NODE_ENV === 'development' && (
+                      <div className="text-xs text-gray-400 mb-2">
+                        Debug: unitUsers={unitUsers.length}, selectedUnit={selectedUnit?.name}
+                      </div>
+                    )}
+                    
                     {unitUsers.length === 0 ? (
-                      <p className="text-xs text-gray-400 italic">Chưa có nhân viên. Click "Gán nhân viên" để thêm.</p>
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                        <p className="text-xs text-gray-600 italic">
+                          Chưa có nhân viên trong {selectedUnit?.name}. 
+                          Click <strong>"+ Gán nhân viên"</strong> ở góc phải để thêm.
+                        </p>
+                      </div>
                     ) : (
                       <div className="grid grid-cols-2 gap-2 mb-3">
                         {unitUsers.map(u => {
-                          const isSelected = selectedUsers.includes(u.user_id);
+                          const userId = u.user_id || u.id; // Fallback to id if user_id missing
+                          const userName = u.user_name || u.full_name || 'N/A';
+                          const isSelected = selectedUsers.includes(userId);
+                          
                           return (
                             <label
-                              key={u.user_id}
+                              key={userId}
                               className={`flex items-center gap-2 px-2 py-1.5 rounded border cursor-pointer transition-colors ${
                                 isSelected ? `border-${selectedPosition.color}-500 bg-${selectedPosition.color}-50` : 'border-gray-200 hover:border-purple-300'
                               }`}
@@ -360,16 +387,17 @@ export default function EcosystemPermissionsTab({ users: allUsers }) {
                               <input
                                 type="checkbox"
                                 checked={isSelected}
-                                onChange={() => toggleUserSelection(u.user_id)}
+                                onChange={() => toggleUserSelection(userId)}
                                 className="w-3 h-3 accent-purple-600"
                               />
                               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
                                 isSelected ? `bg-${selectedPosition.color}-200 text-${selectedPosition.color}-800` : 'bg-purple-100 text-purple-700'
                               }`}>
-                                {u.user_name?.charAt(0)?.toUpperCase()}
+                                {userName?.charAt(0)?.toUpperCase()}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium text-gray-900 truncate">{u.user_name}</p>
+                                <p className="text-xs font-medium text-gray-900 truncate">{userName}</p>
+                                {u.email && <p className="text-[10px] text-gray-500 truncate">{u.email}</p>}
                               </div>
                             </label>
                           );
