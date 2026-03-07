@@ -475,11 +475,15 @@ export default function CreateProjectNew() {
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              {(step.processes || []).length > 0 && (
-                                <span className="text-xs bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full font-semibold">
-                                  {(step.processes || []).length} bộ phận
-                                </span>
-                              )}
+                              {(() => {
+                                // Đếm số quy trình unique (gộp theo tên)
+                                const uniqueNames = new Set((step.processes || []).map(p => p.name));
+                                return uniqueNames.size > 0 && (
+                                  <span className="text-xs bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full font-semibold">
+                                    {uniqueNames.size} bộ phận
+                                  </span>
+                                );
+                              })()}
                               {expandedSteps[step.id] ? (
                                 <ChevronDown className="h-5 w-5 text-gray-400" />
                               ) : (
@@ -488,47 +492,65 @@ export default function CreateProjectNew() {
                             </div>
                           </button>
 
-                          {expandedSteps[step.id] && (
-                            <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 space-y-2">
-                              {(step.processes || []).map((proc) => (
-                                <div key={proc.id}>
-                                  <button
-                                    onClick={() => setExpandedProcesses(p => ({ ...p, [proc.id]: !p[proc.id] }))}
-                                    className="w-full text-left p-3 rounded-lg bg-white hover:bg-gray-100 transition border border-gray-200"
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                        {expandedProcesses[proc.id] ? (
-                                          <ChevronDown className="h-4 w-4 text-gray-400" />
-                                        ) : (
-                                          <ChevronRight className="h-4 w-4 text-gray-400" />
-                                        )}
-                                        <span className="font-medium text-gray-900">{proc.name}</span>
-                                      </div>
-                                      {proc.task_count > 0 && (
-                                        <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded font-medium">
-                                          {proc.task_count} task
-                                        </span>
-                                      )}
-                                    </div>
-                                  </button>
-                                  {expandedProcesses[proc.id] && proc.task_count > 0 && (
-                                    <div className="mt-2 ml-8 space-y-2 border-l-2 border-gray-300 pl-3">
-                                      {(proc.tasks || []).map((task, idx) => (
-                                        <div key={task.id} className="flex items-center gap-3 py-1">
-                                          <span className="text-xs font-bold text-gray-400 w-6 text-center">{idx + 1}</span>
-                                          <span className="font-semibold text-gray-900 flex-1">{task.name}</span>
-                                          <span className="text-xs text-purple-600 font-medium whitespace-nowrap">
-                                            {task.assignee_field ? '👤 ' + task.assignee_field.replace(/_/g, ' ') : '○ Chưa gán'}
-                                          </span>
+                          {expandedSteps[step.id] && (() => {
+                            // Gộp các quy trình cùng tên
+                            const processMap = {};
+                            (step.processes || []).forEach(proc => {
+                              if (!processMap[proc.name]) {
+                                processMap[proc.name] = {
+                                  id: proc.id, // Sử dụng ID của process đầu tiên
+                                  name: proc.name,
+                                  task_count: 0,
+                                  tasks: []
+                                };
+                              }
+                              processMap[proc.name].task_count += proc.task_count || 0;
+                              processMap[proc.name].tasks = processMap[proc.name].tasks.concat(proc.tasks || []);
+                            });
+                            const uniqueProcesses = Object.values(processMap);
+
+                            return (
+                              <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 space-y-2">
+                                {uniqueProcesses.map((proc) => (
+                                  <div key={proc.id}>
+                                    <button
+                                      onClick={() => setExpandedProcesses(p => ({ ...p, [proc.id]: !p[proc.id] }))}
+                                      className="w-full text-left p-3 rounded-lg bg-white hover:bg-gray-100 transition border border-gray-200"
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          {expandedProcesses[proc.id] ? (
+                                            <ChevronDown className="h-4 w-4 text-gray-400" />
+                                          ) : (
+                                            <ChevronRight className="h-4 w-4 text-gray-400" />
+                                          )}
+                                          <span className="font-medium text-gray-900">{proc.name}</span>
                                         </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                                        {proc.task_count > 0 && (
+                                          <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded font-medium">
+                                            {proc.task_count} task
+                                          </span>
+                                        )}
+                                      </div>
+                                    </button>
+                                    {expandedProcesses[proc.id] && proc.task_count > 0 && (
+                                      <div className="mt-2 ml-8 space-y-2 border-l-2 border-gray-300 pl-3">
+                                        {(proc.tasks || []).map((task, idx) => (
+                                          <div key={task.id} className="flex items-center gap-3 py-1">
+                                            <span className="text-xs font-bold text-gray-400 w-6 text-center">{idx + 1}</span>
+                                            <span className="font-semibold text-gray-900 flex-1">{task.name}</span>
+                                            <span className="text-xs text-purple-600 font-medium whitespace-nowrap">
+                                              {task.assignee_field ? '👤 ' + task.assignee_field.replace(/_/g, ' ') : '○ Chưa gán'}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
