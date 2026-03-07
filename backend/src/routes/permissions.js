@@ -136,6 +136,37 @@ r.delete('/roles/:id', async (req, res) => {
 // ROLE PERMISSIONS - Toggle permissions for a role
 // ═══════════════════════════════════════════════
 
+// Get all permissions for a specific role
+r.get('/roles/:roleId/permissions', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('role_permissions')
+      .select(`
+        permission_id,
+        permissions (
+          id,
+          resource,
+          action,
+          description
+        )
+      `)
+      .eq('role_id', req.params.roleId);
+    
+    if (error) throw error;
+    
+    // Flatten structure
+    const permissions = (data || []).map(rp => ({
+      id: rp.permission_id,
+      ...rp.permissions
+    }));
+    
+    res.json({ permissions });
+  } catch (e) {
+    console.error('Get role permissions error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Set permissions for a role (replace all)
 r.put('/roles/:roleId/permissions', async (req, res) => {
   try {
