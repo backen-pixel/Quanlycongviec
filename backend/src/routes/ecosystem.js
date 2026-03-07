@@ -958,14 +958,48 @@ r.get('/units/:unitId/users', async (req, res) => {
     
     // Load full user details
     if (userIds.length > 0) {
-      const { data: users } = await supabase
+      // Try full select with department info
+      let { data: users, error } = await supabase
         .from('users')
-        .select('id, full_name, email, department_id, departments(name)')
+        .select('id, full_name, email, department_id, departments!users_department_id_fkey(name)')
         .in('id', userIds)
         .eq('is_active', true);
       
+      if (error) {
+        console.warn('Users full select failed, trying basic+dept:', error.message);
+        // Fallback: try without FK specification
+        const result = await supabase
+          .from('users')
+          .select('id, full_name, email, department_id, departments(name)')
+          .in('id', userIds)
+          .eq('is_active', true);
+        
+        if (result.error) {
+          console.warn('Users basic+dept select failed, trying no-dept:', result.error.message);
+          // Final fallback: just user fields, no department
+          const simpleResult = await supabase
+            .from('users')
+            .select('id, full_name, email, department_id')
+            .in('id', userIds)
+            .eq('is_active', true);
+          
+          users = simpleResult.data;
+        } else {
+          users = result.data;
+        }
+      }
+      
+      console.log('Returning users:', users?.length);
+      
+      // Set headers to prevent caching (fix 304 issue)
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      
       res.json({ users: users || [] });
     } else {
+      console.log('No userIds, returning empty array');
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.json({ users: [] });
     }
   } catch (e) {
