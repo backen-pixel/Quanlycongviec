@@ -4,10 +4,10 @@ import { useAuth } from '../lib/auth';
 import {
   FolderKanban, RefreshCw, Building2, Search, ChevronRight, CheckSquare,
   LayoutGrid, List, Filter, Briefcase, ArrowLeft, Users, Eye, EyeOff, 
-  MessageSquare, Paperclip, Save, Clock, AlertCircle, PlayCircle
+  MessageSquare, Paperclip, Save, Clock, AlertCircle, PlayCircle, Calendar
 } from 'lucide-react';
 import { FileUploadButton, FilePreview } from '../components/FileUpload';
-import { getInitials, avatarColor, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
+import { getInitials, avatarColor, PRIORITY_LABELS, PRIORITY_COLORS, formatDate, formatVND } from '../lib/utils';
 
 // TaskCard component with expandable checklist
 function TaskCard({ task, onToggle, onSaveNote, onStart, onDone }) {
@@ -595,19 +595,68 @@ export default function ProjectWorkflowPage() {
                         <span className="text-xs font-medium text-gray-400">{projectsByStatus[col.id].length}</span>
                       </div>
                     </div>
-                    <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '400px', maxHeight: '70vh' }}>
+                    <div className="flex-1 rounded-b-xl border p-2 space-y-3 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '400px', maxHeight: '70vh' }}>
                       {projectsByStatus[col.id].map(proj => (
                         <div key={proj.id} onClick={() => selectProject(proj)}
-                          className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md hover:border-blue-300 transition-all cursor-pointer">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-bold text-blue-600">{proj.code}</span>
+                          className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg hover:border-blue-400 transition-all cursor-pointer group">
+                          {/* Header: Code + Stage */}
+                          <div className="flex items-start justify-between gap-2 mb-3">
+                            <span className="text-sm font-bold text-blue-600 flex-shrink-0">{proj.code}</span>
+                            {proj.current_stage && (
+                              <span className="text-[10px] px-2 py-1 rounded-full font-medium" style={{ backgroundColor: proj.current_stage.color + '20', color: proj.current_stage.color }}>
+                                {proj.current_stage.name}
+                              </span>
+                            )}
                           </div>
-                          <h3 className="text-sm font-semibold text-gray-900 mb-2 line-clamp-2">{proj.name}</h3>
-                          {proj.customers?.full_name && <p className="text-xs text-gray-500 mb-1">👤 {proj.customers.full_name}</p>}
-                          {proj.company && <p className="text-[10px] text-indigo-600 font-medium">🏢 {proj.company.short_name || proj.company.name}</p>}
-                          {proj.current_stage && (
-                            <div className="mt-2 pt-2 border-t">
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{proj.current_stage.name}</span>
+                          
+                          {/* Project Name */}
+                          <h3 className="text-base font-bold text-gray-900 mb-3 line-clamp-2 leading-tight">{proj.name}</h3>
+                          
+                          {/* Customer */}
+                          {proj.customers?.full_name && (
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                                {proj.customers.full_name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold text-gray-900 truncate">{proj.customers.full_name}</p>
+                                {proj.customers.phone && <p className="text-xs text-gray-500">{proj.customers.phone}</p>}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Company */}
+                          {proj.company && (
+                            <div className="flex items-center gap-2 mb-2 p-2 rounded-lg bg-indigo-50">
+                              <Building2 className="h-4 w-4 text-indigo-600 flex-shrink-0" />
+                              <span className="text-xs font-semibold text-indigo-900 truncate">{proj.company.short_name || proj.company.name}</span>
+                            </div>
+                          )}
+                          
+                          {/* Deadline */}
+                          {proj.deadline && (
+                            <div className="flex items-center gap-2 mt-2 text-xs">
+                              <Calendar className="h-3.5 w-3.5 text-gray-400" />
+                              <span className={`font-medium ${new Date(proj.deadline) < new Date() ? 'text-red-600' : 'text-gray-600'}`}>
+                                {formatDate(proj.deadline)}
+                              </span>
+                            </div>
+                          )}
+                          
+                          {/* Responsible Person */}
+                          {proj.responsible_person && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold" style={{ backgroundColor: avatarColor(proj.responsible_person.full_name) }}>
+                                {getInitials(proj.responsible_person.full_name)}
+                              </div>
+                              <span className="text-xs text-gray-600 truncate">{proj.responsible_person.full_name}</span>
+                            </div>
+                          )}
+                          
+                          {/* Value */}
+                          {proj.estimated_value && (
+                            <div className="mt-3 pt-3 border-t border-gray-100">
+                              <p className="text-sm font-bold text-green-600">{formatVND(proj.estimated_value)}</p>
                             </div>
                           )}
                         </div>
