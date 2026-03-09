@@ -269,6 +269,9 @@ export default function ProjectWorkflowPage() {
       // Load tasks
       const { data: tasksData } = await api.get('/tasks', { params: { project_id: project.id } });
       let allTasks = tasksData.tasks || [];
+      
+      console.log('[ProjectWorkflow] Loaded tasks:', allTasks.length);
+      console.log('[ProjectWorkflow] Tasks:', allTasks.map(t => ({ id: t.id, title: t.title, stage_id: t.stage_id, stage: t.stage })));
 
       // Load checklists for each task
       const checklistPromises = allTasks.map(t =>
@@ -683,6 +686,11 @@ export default function ProjectWorkflowPage() {
 
     // Stage selected: show task kanban (columns = tasks, cards = checklists)
     const stageTasks = tasks.filter(t => t.stage?.slug === selectedStage.slug);
+    
+    console.log('[ProjectWorkflow] Selected stage:', selectedStage.slug, selectedStage.name);
+    console.log('[ProjectWorkflow] Total tasks:', tasks.length);
+    console.log('[ProjectWorkflow] Tasks with stage:', tasks.map(t => ({ id: t.id, title: t.title, stageSlug: t.stage?.slug, stageName: t.stage?.name })));
+    console.log('[ProjectWorkflow] Filtered stageTasks:', stageTasks.length);
     
     return (
       <div className="space-y-4">
