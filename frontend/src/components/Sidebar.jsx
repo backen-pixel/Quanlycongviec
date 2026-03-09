@@ -20,6 +20,7 @@ const nav = [
   { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
   { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
   // { to: '/departments', icon: MessageCircle, label: 'Trao đổi PB' }, // ẩn
+  { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
   { to: '/projects', icon: FolderKanban, label: 'Dự án' },
   { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV' },
   { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
@@ -190,21 +191,6 @@ export default function Sidebar() {
       {/* Nav */}
       <div className="flex-1 overflow-y-auto py-2">
         <Section title="Tổng quan" items={filteredNav} collapsed={collapsed} />
-        {/* Quy trình — collapsible */}
-        <div className="mb-4">
-          {!collapsed && (
-            <button onClick={() => setShowWorkflow(!showWorkflow)}
-              className="w-full flex items-center justify-between px-4 py-1 text-[10px] font-semibold text-[var(--color-sidebar-text)] uppercase tracking-widest opacity-60 hover:opacity-100 cursor-pointer">
-              <span>Quy trình ({workflow.length})</span>
-              {showWorkflow ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            </button>
-          )}
-          {(showWorkflow || collapsed) && (
-            <nav className="space-y-0.5 px-2">
-              {workflow.map(i => <SideLink key={i.to} {...i} collapsed={collapsed} />)}
-            </nav>
-          )}
-        </div>
         {tools.length > 0 && <Section title="Hệ thống" items={tools} collapsed={collapsed} />}
         {settings.length > 0 && (
           <div className="mb-4">
