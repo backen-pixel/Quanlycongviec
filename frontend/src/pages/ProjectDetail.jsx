@@ -52,7 +52,6 @@ export default function ProjectDetail() {
   const [editingLines, setEditingLines] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [addLineStage, setAddLineStage] = useState('');
-  const [taskView, setTaskView] = useState('kanban'); // 'kanban' | 'stages'
 
   const load = () => {
     setLoading(true);
@@ -436,131 +435,13 @@ export default function ProjectDetail() {
               <h3 className="text-sm font-bold text-gray-900 mb-1">Quản lý công việc</h3>
               <p className="text-xs text-gray-600">Tạo task mới, gán nhân viên và theo dõi tiến độ</p>
             </div>
-            <div className="flex items-center gap-2">
-              {/* View Toggle */}
-              <div className="flex items-center gap-1 bg-white border rounded-lg p-1">
-                <button onClick={() => setTaskView('kanban')}
-                  className={`h-8 px-3 rounded text-xs font-medium cursor-pointer flex items-center gap-1.5 ${
-                    taskView === 'kanban' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-                  }`}>
-                  <LayoutGrid className="h-3.5 w-3.5" /> Kanban
-                </button>
-                <button onClick={() => setTaskView('stages')}
-                  className={`h-8 px-3 rounded text-xs font-medium cursor-pointer flex items-center gap-1.5 ${
-                    taskView === 'stages' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-                  }`}>
-                  <List className="h-3.5 w-3.5" /> Quy trình
-                </button>
-              </div>
-              <button onClick={() => setShowCreateTask(true)}
-                className="h-10 px-5 bg-blue-600 text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-blue-700 cursor-pointer shadow-sm hover:shadow-md transition-all">
-                <Plus className="h-4 w-4" /> Thêm công việc
-              </button>
-            </div>
+            <button onClick={() => setShowCreateTask(true)}
+              className="h-10 px-5 bg-blue-600 text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-blue-700 cursor-pointer shadow-sm hover:shadow-md transition-all">
+              <Plus className="h-4 w-4" /> Thêm công việc
+            </button>
           </div>
 
-          {/* KANBAN VIEW (Status-based) */}
-          {taskView === 'kanban' && (() => {
-            const allTasks = project.tasks || [];
-            const now = new Date();
-            
-            // Sort by stage order → task order → due date
-            const sortedTasks = [...allTasks].sort((a, b) => {
-              const aStageOrder = a.stage?.order_index || 0;
-              const bStageOrder = b.stage?.order_index || 0;
-              if (aStageOrder !== bStageOrder) return aStageOrder - bStageOrder;
-              const aOrder = a.order_index || 0;
-              const bOrder = b.order_index || 0;
-              if (aOrder !== bOrder) return aOrder - bOrder;
-              if (a.due_date && b.due_date) return new Date(a.due_date) - new Date(b.due_date);
-              return 0;
-            });
-
-            const pending = sortedTasks.filter(t => t.status === 'pending' && (!t.due_date || new Date(t.due_date) >= now));
-            const inProgress = sortedTasks.filter(t => t.status === 'in_progress' && (!t.due_date || new Date(t.due_date) >= now));
-            const done = sortedTasks.filter(t => t.status === 'done');
-            const overdue = sortedTasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now);
-
-            const columns = [
-              { title: 'Chưa thực hiện', tasks: pending, color: '#6b7280', icon: Clock },
-              { title: 'Đang thực hiện', tasks: inProgress, color: '#3b82f6', icon: PlayCircle },
-              { title: 'Hoàn thành', tasks: done, color: '#10b981', icon: CheckSquare },
-              { title: 'Quá hạn', tasks: overdue, color: '#ef4444', icon: AlertCircle },
-            ];
-
-            return (
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-                {columns.map(col => {
-                  const Icon = col.icon;
-                  return (
-                    <div key={col.title} className="flex flex-col">
-                      <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '3px' }}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <Icon className="h-4 w-4" style={{ color: col.color }} />
-                            <h3 className="text-sm font-bold text-gray-900">{col.title}</h3>
-                          </div>
-                          <span className="text-xs font-medium text-gray-400">{col.tasks.length}</span>
-                        </div>
-                      </div>
-                      <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '400px', maxHeight: '70vh' }}>
-                        {col.tasks.length > 0 ? col.tasks.map(task => (
-                          <div key={task.id} onClick={() => setSelectedTask(task)}
-                            className={`bg-white rounded-lg border p-3 cursor-pointer hover:shadow-md transition-shadow ${
-                              task.status === 'done' ? 'border-emerald-200 bg-emerald-50/30' : 
-                              task.due_date && new Date(task.due_date) < now && task.status !== 'done' ? 'border-red-200 bg-red-50/20' : 
-                              'border-gray-200'
-                            }`}>
-                            <div className="flex items-start justify-between mb-2">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>
-                                    {PRIORITY_LABELS[task.priority]}
-                                  </span>
-                                  {task.stage && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{task.stage.name}</span>}
-                                </div>
-                                <h4 className="text-sm font-semibold text-gray-900 line-clamp-2">{task.title}</h4>
-                                {task.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>}
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between text-xs text-gray-500 mt-2 pt-2 border-t">
-                              <div className="flex items-center gap-2">
-                                {task.assignee ? (
-                                  <div className="flex items-center gap-1">
-                                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-semibold text-white" style={{ backgroundColor: avatarColor(task.assignee.full_name || task.assignee.email) }}>
-                                      {getInitials(task.assignee.full_name || task.assignee.email)}
-                                    </div>
-                                    <span className="text-[10px]">{task.assignee.full_name || task.assignee.email.split('@')[0]}</span>
-                                  </div>
-                                ) : (
-                                  <span className="text-[10px] text-gray-400">Chưa gán</span>
-                                )}
-                              </div>
-                              {task.due_date && (
-                                <div className={`flex items-center gap-1 ${new Date(task.due_date) < now && task.status !== 'done' ? 'text-red-600 font-medium' : ''}`}>
-                                  <Calendar className="h-3 w-3" />
-                                  <span className="text-[10px]">{formatDate(task.due_date)}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )) : (
-                          <div className="flex items-center justify-center h-32 text-xs text-gray-300">
-                            Chưa có task
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-
-          {/* STAGES VIEW (Original flow-based view) */}
-          {taskView === 'stages' && (
-          <>
-          {/* ── NEW: Flow-based view (Company → Process → Tasks) ── */}
+          {/* Flow-based view (Company → Process → Tasks) */}
           {project.flowAssignments?.length > 0 ? (
             <div className="space-y-4">
               {project.flowAssignments.map((assignment, aIdx) => {
@@ -723,8 +604,6 @@ export default function ProjectDetail() {
             );
           })}
           </div>
-          )}
-          </>
           )}
           {totalTasks === 0 && <div className="text-center py-10 text-gray-400"><CheckSquare className="h-10 w-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Chưa có công việc</p></div>}
         </div>
