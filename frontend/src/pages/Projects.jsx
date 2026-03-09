@@ -252,14 +252,14 @@ export default function Projects() {
             if (!placed) projectsByStatus['pending'].push(proj);
           });
           return (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="flex gap-4 overflow-x-auto pb-4">
               {STATUS_COLUMNS.map(col => (
-                <div key={col.id} className="flex flex-col min-w-[320px]">
+                <div key={col.id} className="flex flex-col flex-shrink-0" style={{ width: '360px' }}>
                   <div className="rounded-t-xl p-4 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
                     <h3 className="text-base font-bold text-gray-900">{col.label}</h3>
                     <span className="text-sm text-gray-400">{projectsByStatus[col.id].length} dự án</span>
                   </div>
-                  <div className="flex-1 rounded-b-xl border p-3 space-y-3 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '500px', maxHeight: '75vh' }}>
+                  <div className="flex-1 rounded-b-xl border p-3 space-y-3 bg-gray-50/50 overflow-y-auto" style={{ height: '75vh' }}>
                     {projectsByStatus[col.id].map(proj => (
                       <Link to={`/projects/${proj.id}`} key={proj.id} className="block bg-white rounded-xl border border-gray-200 p-5 hover:shadow-lg hover:border-blue-400 transition-all group">
                         {/* Header: Code + Stage */}
@@ -273,7 +273,7 @@ export default function Projects() {
                         </div>
                         
                         {/* Project Name */}
-                        <h3 className="text-lg font-bold text-gray-900 mb-4 line-clamp-2 leading-snug">{proj.name}</h3>
+                        <h3 className="text-lg font-bold text-gray-900 mb-4 leading-snug">{proj.name}</h3>
                         
                         {/* Customer */}
                         {proj.customers?.full_name && (
