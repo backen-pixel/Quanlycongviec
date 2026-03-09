@@ -19,12 +19,15 @@ const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
   { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
-  // { to: '/departments', icon: MessageCircle, label: 'Trao đổi PB' }, // ẩn
-  { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
   { to: '/projects', icon: FolderKanban, label: 'Dự án' },
   { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV' },
   { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
   { to: '/products', icon: Package, label: 'Sản phẩm' },
+];
+
+// Workspace section (between nav and tools)
+const workspace = [
+  { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
 ];
 
 // Fallback hardcoded stages (used if API fails)
@@ -186,6 +189,7 @@ export default function Sidebar() {
       {/* Nav */}
       <div className="flex-1 overflow-y-auto py-2">
         <Section title="Tổng quan" items={filteredNav} collapsed={collapsed} />
+        <Section title="Không gian làm việc" items={workspace} collapsed={collapsed} />
         {tools.length > 0 && <Section title="Hệ thống" items={tools} collapsed={collapsed} />}
         {settings.length > 0 && (
           <div className="mb-4">

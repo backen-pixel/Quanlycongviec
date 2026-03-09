@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import TaskDetailModal from '../components/TaskDetailModal';
@@ -7,12 +7,12 @@ import TaskCreateModal from '../components/TaskCreateModal';
 import Modal from '../components/Modal';
 import { FileUploadButton, FilePreview } from '../components/FileUpload';
 import {
-  PRIORITY_LABELS, PRIORITY_COLORS, formatDate, getInitials, avatarColor, ROLE_LABELS,
+  PRIORITY_LABELS, PRIORITY_COLORS, formatDate, getInitials, avatarColor, ROLE_LABELS, ROLE_STAGE_MAP,
 } from '../lib/utils';
 import {
-  Plus, FolderKanban, CheckSquare, Lock, RefreshCw, Building2, Users, Search,
-  ArrowRightCircle, Send, Paperclip, MessageSquare, Eye, EyeOff, Save, Calendar,
-  Briefcase, ChevronRight, LayoutGrid, List, Filter
+  Plus, FolderKanban, CheckSquare, Lock,
+  Clock, AlertTriangle, RefreshCw, Calendar, Building2,
+  ArrowRightCircle, Send, Paperclip, MessageSquare, Eye, EyeOff, Save
 } from 'lucide-react';
 
 const STAGE_NAMES = {
@@ -20,115 +20,84 @@ const STAGE_NAMES = {
   production: 'Sản xuất', shipping: 'Vận chuyển', installation: 'Lắp đặt', 'customer-care': 'Chăm sóc KH',
 };
 
-const STAGE_COLORS = {
-  consulting: '#8b5cf6', design: '#06b6d4', quotation: '#f59e0b', contract: '#10b981',
-  production: '#3b82f6', shipping: '#6366f1', installation: '#ec4899', 'customer-care': '#14b8a6',
-};
-
 const NEXT_STATUS = { consulting:'designing', design:'quoting', quotation:'contract_signed', contract:'producing', production:'shipping', shipping:'installing', installation:'warranty' };
 const NEXT_SLUG = { consulting:'design', design:'quotation', quotation:'contract', contract:'production', production:'shipping', shipping:'installation', installation:'customer-care' };
+// slug → project status khi đang ở giai đoạn đó
 const SLUG_TO_STATUS = { consulting:'consulting', design:'designing', quotation:'quoting', contract:'contract_signed', production:'producing', shipping:'shipping', installation:'installing', 'customer-care':'warranty' };
 
-export default function ProjectWorkflowPage() {
+const QT = [{id:'all',label:'Tất cả'},{id:'today',label:'Hôm nay'},{id:'week',label:'Tuần này'},{id:'month',label:'Tháng này'},{id:'custom',label:'Tùy chọn'}];
+function fmtD(d){return d.toISOString().slice(0,10)}
+function defRange(){const n=new Date();return{from:fmtD(new Date(n.getFullYear(),n.getMonth(),1)),to:fmtD(new Date(n.getFullYear(),n.getMonth()+1,0))}}
+
+export default function StageView() {
+  const { slug } = useParams();
   const { user } = useAuth();
-  const isAdmin = ['admin', 'manager', 'director'].includes(user?.role);
-
-  // ═══ STATE ═══
-  const [view, setView] = useState('projects'); // 'projects' | 'workflow'
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
   const [projects, setProjects] = useState([]);
-  const [allStages, setAllStages] = useState([]);
-  const [companies, setCompanies] = useState([]);
-  const [divisions, setDivisions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  // ═══ FILTERS ═══
-  const [filterDivision, setFilterDivision] = useState('all');
-  const [filterCompany, setFilterCompany] = useState('all');
-  const [filterSearch, setFilterSearch] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
-
-  // ═══ WORKFLOW VIEW STATE ═══
-  const [selectedProject, setSelectedProject] = useState(null);
-  const [selectedStage, setSelectedStage] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [stageInfo, setStageInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [showCreateTask, setShowCreateTask] = useState(false);
+  const [filterProject, setFilterProject] = useState('all');
+  const [filterCompany, setFilterCompany] = useState('all');
+  const [filterEmployee, setFilterEmployee] = useState('all');
+  const [quickTime, setQuickTime] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [advProj, setAdvProj] = useState(null);
   const [advNotes, setAdvNotes] = useState('');
   const [advFiles, setAdvFiles] = useState([]);
   const [advMode, setAdvMode] = useState('advance');
   const [advLoading, setAdvLoading] = useState(false);
-  const [pendingApprovals, setPendingApprovals] = useState({});
-  const [approvalRules, setApprovalRules] = useState({});
+  const [pendingApprovals, setPendingApprovals] = useState({}); // { projectId: true }
+  const [approvalRules, setApprovalRules] = useState({}); // { stageId: rule }
 
-  // ═══ LOAD DATA ═══
-  const loadProjects = useCallback(async () => {
+  useEffect(() => {
+    const n = new Date();
+    if (quickTime === 'all') { setDateFrom(''); setDateTo(''); }
+    else if (quickTime === 'today') { const d = fmtD(n); setDateFrom(d); setDateTo(d); }
+    else if (quickTime === 'week') { const s = new Date(n); s.setDate(n.getDate()-n.getDay()); setDateFrom(fmtD(s)); setDateTo(fmtD(n)); }
+    else if (quickTime === 'month') { setDateFrom(defRange().from); setDateTo(defRange().to); }
+  }, [quickTime]);
+
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [projRes, stageRes, compRes, divRes] = await Promise.all([
-        api.get('/projects', { params: { limit: 500 } }).catch(() => ({ data: { projects: [] } })),
+      const [stageRes, projRes] = await Promise.all([
         api.get('/users/stages').catch(() => ({ data: { stages: [] } })),
-        api.get('/companies').catch(() => ({ data: { companies: [] } })),
-        api.get('/ecosystem/units', { params: { level_code: 'division' } }).catch(() => ({ data: { units: [] } })),
+        api.get('/projects', { params: { limit: 200 } }).catch(() => ({ data: { projects: [] } })),
       ]);
 
-      let allProjects = projRes.data.projects || [];
+      // Tìm TẤT CẢ stages cùng tên với slug hiện tại
+      const allStages = stageRes.data.stages || [];
+      const matchedStages = allStages.filter(s => s.slug === slug || s.name === STAGE_NAMES[slug]);
       
-      // Filter by permission
-      if (!isAdmin) {
-        // Employee: only projects they are assigned to or participating in
-        allProjects = allProjects.filter(p => {
-          const isOwner = p.created_by === user.id;
-          const isResponsible = p.responsible_person_id === user.id;
-          // TODO: check project_members table if needed
-          return isOwner || isResponsible;
-        });
-      }
-
-      setProjects(allProjects);
-      setAllStages(stageRes.data.stages || []);
-      setCompanies(compRes.data.companies || []);
-      setDivisions(divRes.data.units || []);
-    } catch (e) {
-      console.error('loadProjects error:', e);
-      setError('Không thể tải dữ liệu.');
-    }
-    setLoading(false);
-  }, [user, isAdmin]);
-
-  useEffect(() => { loadProjects(); }, [loadProjects]);
-
-  // ═══ LOAD WORKFLOW DATA (when project + stage selected) ═══
-  const loadWorkflow = useCallback(async (projectId, stageSlug) => {
-    if (!projectId || !stageSlug) return;
-    setLoading(true);
-    try {
-      // Find all stages matching this slug
-      const matchedStages = allStages.filter(s => s.slug === stageSlug || s.name === STAGE_NAMES[stageSlug]);
+      // Sử dụng stage đầu tiên làm thông tin hiển thị
       const primaryStage = matchedStages[0] || null;
-      setStageInfo(primaryStage || { slug: stageSlug, name: STAGE_NAMES[stageSlug], color: STAGE_COLORS[stageSlug] || '#3b82f6' });
+      setStageInfo(primaryStage || { slug, name: STAGE_NAMES[slug], color: '#3b82f6' });
 
-      if (matchedStages.length === 0) {
-        setTasks([]);
-        setLoading(false);
-        return;
+      if (matchedStages.length === 0) { 
+        setProjects([]); 
+        setTasks([]); 
+        setLoading(false); 
+        return; 
       }
 
-      // Load tasks for this project + stage
+      // Lấy tất cả stage IDs để query tasks
       const stageIds = matchedStages.map(s => s.id);
+
+      // Load tasks từ TẤT CẢ stages cùng tên
       const taskPromises = stageIds.map(stageId =>
-        api.get('/tasks', { params: { stage_id: stageId, project_id: projectId } })
+        api.get('/tasks', { params: { stage_id: stageId } })
           .then(r => r.data.tasks || [])
           .catch(() => [])
       );
       const taskArrays = await Promise.all(taskPromises);
-      let stageTasks = taskArrays.flat();
+      let stageTasks = taskArrays.flat(); // Gộp tất cả tasks từ các stages
 
-      // Load checklists
+      // Load checklists for all tasks in parallel (batch)
       const checklistPromises = stageTasks.map(t =>
         api.get(`/tasks/${t.id}/checklists`).then(r => ({ taskId: t.id, checklists: r.data.checklists || [] })).catch(() => ({ taskId: t.id, checklists: [] }))
       );
@@ -137,61 +106,71 @@ export default function ProjectWorkflowPage() {
       checklistResults.forEach(r => { clMap[r.taskId] = r.checklists; });
       stageTasks = stageTasks.map(t => ({ ...t, checklists: clMap[t.id] || [] }));
 
+      const allProjs = projRes.data.projects || [];
+      const projectIdsWithTasks = new Set(stageTasks.map(t => t.project_id));
+      setProjects(allProjs.filter(p => projectIdsWithTasks.has(p.id)));
       setTasks(stageTasks.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
 
-      // Load approval info
+      // Check for pending approval requests for visible projects
       try {
-        const { data: pendData } = await api.get('/approvals/pending').catch(() => ({ data: { approvals: [] } }));
+        const projIds = Array.from(projectIdsWithTasks);
         const pendingMap = {};
-        (pendData.approvals || []).forEach(a => {
-          if (a.project_id === projectId) pendingMap[a.project_id] = true;
-        });
+        if (projIds.length > 0) {
+          // Check via project_approvals table
+          const { data: pendData } = await api.get('/approvals/pending').catch(() => ({ data: { approvals: [] } }));
+          (pendData.approvals || []).forEach(a => {
+            if (projIds.includes(a.project_id)) pendingMap[a.project_id] = true;
+          });
+          // Also check via legacy notifications
+          const { data: approvals } = await api.get('/projects/pending-approvals', { params: { project_ids: projIds.join(',') } }).catch(() => ({ data: { approvals: {} } }));
+          Object.assign(pendingMap, approvals.approvals || {});
+        }
         setPendingApprovals(pendingMap);
+      } catch { setPendingApprovals({}); }
 
+      // Load approval rules
+      try {
         const { data: rulesData } = await api.get('/approvals/rules');
         const rulesMap = {};
         (rulesData.rules || []).forEach(r => { rulesMap[r.stage_id] = r; });
         setApprovalRules(rulesMap);
-      } catch { setPendingApprovals({}); setApprovalRules({}); }
+      } catch { setApprovalRules({}); }
 
     } catch (e) {
-      console.error('loadWorkflow error:', e);
-      setError('Không thể tải quy trình.');
+      console.error('StageView loadData error:', e);
+      setError('Không thể tải dữ liệu.');
     }
     setLoading(false);
-  }, [allStages]);
+  }, [slug]);
 
-  useEffect(() => {
-    if (view === 'workflow' && selectedProject && selectedStage) {
-      loadWorkflow(selectedProject.id, selectedStage);
-    }
-  }, [view, selectedProject, selectedStage, loadWorkflow]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  // ═══ ACTIONS ═══
   const doAdvance = async () => {
-    if (!advProj || !selectedStage) return;
+    if (!advProj) return;
     setAdvLoading(true);
     try {
-      const ns = NEXT_SLUG[selectedStage], nst = NEXT_STATUS[selectedStage];
+      const ns = NEXT_SLUG[slug], nst = NEXT_STATUS[slug];
       if (advMode === 'advance' && ns && nst) {
         await api.put(`/projects/${advProj.id}/stage`, { stage_slug: ns, new_status: nst, notes: advNotes || null, attachments: advFiles });
       } else if (advMode === 'review' && ns && nst) {
+        // Use new approvals API — creates proper approval record for tab Duyệt
         await api.post(`/approvals/project/${advProj.id}/request`, {
           next_stage_slug: ns, next_status: nst, notes: advNotes || null, attachments: advFiles,
         });
-        alert('✅ Đã gửi yêu cầu duyệt!');
+        alert('✅ Đã gửi yêu cầu duyệt! Quản lý sẽ nhận thông báo.');
       }
       setAdvProj(null); setAdvNotes(''); setAdvFiles([]);
-      loadWorkflow(selectedProject.id, selectedStage);
+      loadData();
     } catch (e) { alert('Lỗi: ' + (e.response?.data?.error || e.message)); }
     setAdvLoading(false);
   };
 
+  // Collect all checklist notes + files for a project at current stage
   const collectChecklistSummary = (projectId) => {
+    const projTasks = (tasksByProject || {})[projectId] || [];
     let allNotes = [];
     let allFiles = [];
-    tasks.forEach(t => {
-      if (t.project_id !== projectId) return;
+    projTasks.forEach(t => {
       const cls = t.checklists || [];
       cls.forEach(cl => {
         if (cl.notes) allNotes.push(`[${t.title.replace(/\s*—\s*.+$/, '')}] ${cl.title}: ${cl.notes}`);
@@ -210,355 +189,83 @@ export default function ProjectWorkflowPage() {
   };
 
   const startTask = async (taskId) => {
+    // Optimistic update
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'in_progress' } : t));
     try { await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' }); } catch { }
-    loadWorkflow(selectedProject.id, selectedStage);
+    loadData();
   };
-
   const markTaskDone = async (taskId) => {
+    // Optimistic update — thẻ dự án sẽ nhảy sang cột tiếp theo ngay lập tức
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'done' } : t));
     try { await api.patch(`/tasks/${taskId}/status`, { status: 'done' }); } catch { }
-    loadWorkflow(selectedProject.id, selectedStage);
+    loadData();
   };
-
   const toggleCheckItem = async (taskId, clId, isCompleted) => {
     setTasks(prev => prev.map(t => {
       if (t.id !== taskId) return t;
       return { ...t, checklists: t.checklists.map(cl => cl.id === clId ? { ...cl, is_completed: !isCompleted } : cl) };
     }));
-    try { await api.patch(`/tasks/${taskId}/checklists/${clId}`, { is_completed: !isCompleted }); } catch { loadWorkflow(selectedProject.id, selectedStage); }
+    try { await api.patch(`/tasks/${taskId}/checklists/${clId}`, { is_completed: !isCompleted }); } catch { loadData(); }
   };
-
   const saveChecklistNote = async (taskId, clId, notes, attachments) => {
     try {
       await api.patch(`/tasks/${taskId}/checklists/${clId}`, { notes, attachments });
+      // Update local state
       setTasks(prev => prev.map(t => {
         if (t.id !== taskId) return t;
         return { ...t, checklists: t.checklists.map(cl => cl.id === clId ? { ...cl, notes, attachments } : cl) };
       }));
-    } catch { loadWorkflow(selectedProject.id, selectedStage); }
+    } catch { loadData(); }
   };
 
-  const selectProjectAndStage = (project, stageSlug) => {
-    setSelectedProject(project);
-    setSelectedStage(stageSlug);
-    setView('workflow');
-  };
-
-  const backToProjects = () => {
-    setView('projects');
-    setSelectedProject(null);
-    setSelectedStage(null);
-    setTasks([]);
-  };
-
-  // ═══ FILTERS ═══
-  let filteredProjects = [...projects];
-  
-  // Auto-filter by division/company
-  if (filterDivision !== 'all') {
-    const divCompanies = companies.filter(c => c.division_unit_id === filterDivision).map(c => c.id);
-    filteredProjects = filteredProjects.filter(p => divCompanies.includes(p.company_id));
-  }
-  if (filterCompany !== 'all') {
-    filteredProjects = filteredProjects.filter(p => p.company_id === filterCompany);
-  }
-  if (filterSearch) {
-    const s = filterSearch.toLowerCase();
-    filteredProjects = filteredProjects.filter(p =>
-      p.code?.toLowerCase().includes(s) ||
-      p.name?.toLowerCase().includes(s) ||
-      p.customers?.full_name?.toLowerCase().includes(s)
-    );
-  }
-
-  // ═══ PROJECT LIST VIEW ═══
-  if (view === 'projects') {
-    return (
-      <div className="space-y-4">
-        {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <Briefcase className="h-6 w-6 text-blue-600" />
-              Công việc dự án
-            </h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {filteredProjects.length} dự án · {isAdmin ? 'Quản lý' : 'Nhân viên'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowFilters(!showFilters)}
-              className={`h-9 px-4 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer transition-colors ${
-                showFilters ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700 hover:bg-gray-50'
-              }`}>
-              <Filter className="h-4 w-4" />
-              Lọc
-            </button>
-            <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-              <button onClick={() => setViewMode('grid')}
-                className={`h-7 w-7 rounded flex items-center justify-center cursor-pointer ${
-                  viewMode === 'grid' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'
-                }`}>
-                <LayoutGrid className="h-4 w-4" />
-              </button>
-              <button onClick={() => setViewMode('list')}
-                className={`h-7 w-7 rounded flex items-center justify-center cursor-pointer ${
-                  viewMode === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'
-                }`}>
-                <List className="h-4 w-4" />
-              </button>
-            </div>
-            <button onClick={loadProjects} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer text-gray-400">
-              <RefreshCw className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Filters */}
-        {showFilters && (
-          <div className="bg-white rounded-xl border p-4 space-y-3">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-                <Search className="h-4 w-4 text-gray-400" />
-                <input
-                  type="text"
-                  value={filterSearch}
-                  onChange={e => setFilterSearch(e.target.value)}
-                  placeholder="Tìm mã DA, tên, KH..."
-                  className="flex-1 h-9 px-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-gray-400" />
-                <select
-                  value={filterDivision}
-                  onChange={e => { setFilterDivision(e.target.value); setFilterCompany('all'); }}
-                  className="h-9 px-3 border rounded-lg text-sm bg-white">
-                  <option value="all">Tất cả Khối</option>
-                  {divisions.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-              <select
-                value={filterCompany}
-                onChange={e => setFilterCompany(e.target.value)}
-                className="h-9 px-3 border rounded-lg text-sm bg-white">
-                <option value="all">Tất cả Công ty</option>
-                {companies
-                  .filter(c => filterDivision === 'all' || c.division_unit_id === filterDivision)
-                  .map(c => (
-                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                  ))}
-              </select>
-            </div>
-          </div>
-        )}
-
-        {/* Projects Grid/List */}
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="flex flex-col items-center gap-2">
-              <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
-              </svg>
-              <span className="text-sm text-gray-400">Đang tải dự án...</span>
-            </div>
-          </div>
-        ) : filteredProjects.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-xl border">
-            <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-            <p className="text-sm text-gray-500">Không có dự án nào</p>
-          </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredProjects.map(proj => (
-              <ProjectCard key={proj.id} project={proj} onSelectStage={(slug) => selectProjectAndStage(proj, slug)} />
-            ))}
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl border overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Mã DA</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Tên dự án</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Khách hàng</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Công ty</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Trạng thái</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Quy trình</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filteredProjects.map(proj => (
-                  <ProjectRow key={proj.id} project={proj} onSelectStage={(slug) => selectProjectAndStage(proj, slug)} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ═══ WORKFLOW VIEW (Kanban by stage) ═══
-  if (view === 'workflow' && selectedProject && selectedStage) {
-    return <WorkflowKanbanView
-      project={selectedProject}
-      stageSlug={selectedStage}
-      tasks={tasks}
-      stageInfo={stageInfo}
-      loading={loading}
-      error={error}
-      isAdmin={isAdmin}
-      user={user}
-      onBack={backToProjects}
-      onRefresh={() => loadWorkflow(selectedProject.id, selectedStage)}
-      onStartTask={startTask}
-      onMarkTaskDone={markTaskDone}
-      onToggleCheckItem={toggleCheckItem}
-      onSaveChecklistNote={saveChecklistNote}
-      onOpenAdvance={openAdvanceModal}
-      pendingApprovals={pendingApprovals}
-      approvalRules={approvalRules}
-      selectedTask={selectedTask}
-      setSelectedTask={setSelectedTask}
-      showCreateTask={showCreateTask}
-      setShowCreateTask={setShowCreateTask}
-      advProj={advProj}
-      advNotes={advNotes}
-      advFiles={advFiles}
-      advMode={advMode}
-      advLoading={advLoading}
-      setAdvProj={setAdvProj}
-      setAdvNotes={setAdvNotes}
-      setAdvFiles={setAdvFiles}
-      doAdvance={doAdvance}
-    />;
-  }
-
-  return null;
-}
-
-// ═══ PROJECT CARD (Grid) ═══
-function ProjectCard({ project, onSelectStage }) {
-  const currentStage = Object.keys(SLUG_TO_STATUS).find(k => SLUG_TO_STATUS[k] === project.status) || 'consulting';
-  const stageName = STAGE_NAMES[currentStage];
-  const stageColor = STAGE_COLORS[currentStage];
-
-  return (
-    <div className="bg-white rounded-xl border hover:shadow-lg transition-shadow p-4 space-y-3">
-      <div>
-        <div className="flex items-start justify-between mb-2">
-          <Link to={`/projects/${project.id}`} className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-xs font-bold text-blue-600">{project.code}</span>
-              <span className="text-xs px-2 py-0.5 rounded" style={{ backgroundColor: stageColor + '20', color: stageColor }}>
-                {stageName}
-              </span>
-            </div>
-            <h3 className="text-sm font-semibold text-gray-900 line-clamp-2">{project.name}</h3>
-          </Link>
-        </div>
-        {project.customers?.full_name && (
-          <p className="text-xs text-gray-500">👤 {project.customers.full_name}</p>
-        )}
-        {project.company && (
-          <p className="text-xs text-indigo-600 mt-1">🏢 {project.company.short_name || project.company.name}</p>
-        )}
-      </div>
-
-      <div className="border-t pt-3">
-        <p className="text-xs font-medium text-gray-700 mb-2">Chọn quy trình xem:</p>
-        <div className="grid grid-cols-2 gap-1.5">
-          {Object.keys(STAGE_NAMES).map(slug => {
-            const isActive = slug === currentStage;
-            return (
-              <button
-                key={slug}
-                onClick={() => onSelectStage(slug)}
-                className={`h-8 px-2 rounded text-[10px] font-medium cursor-pointer transition-all ${
-                  isActive
-                    ? 'text-white shadow-sm'
-                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                }`}
-                style={isActive ? { backgroundColor: STAGE_COLORS[slug] } : {}}>
-                {STAGE_NAMES[slug]}
-              </button>
-            );
-          })}
-        </div>
+  if (loading) return (
+    <div className="flex items-center justify-center h-64">
+      <div className="flex flex-col items-center gap-2">
+        <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+        <span className="text-sm text-gray-400">Đang tải {STAGE_NAMES[slug]}...</span>
       </div>
     </div>
   );
-}
 
-// ═══ PROJECT ROW (List) ═══
-function ProjectRow({ project, onSelectStage }) {
-  const currentStage = Object.keys(SLUG_TO_STATUS).find(k => SLUG_TO_STATUS[k] === project.status) || 'consulting';
-  const stageName = STAGE_NAMES[currentStage];
-  const stageColor = STAGE_COLORS[currentStage];
+  const stageName = STAGE_NAMES[slug] || slug;
+  const allowedSlugs = ROLE_STAGE_MAP[user?.role] || [];
+  const isAdmin = ['admin', 'manager'].includes(user?.role);
+  const canInteract = isAdmin || allowedSlugs.includes(slug);
+  const nextStageName = STAGE_NAMES[NEXT_SLUG[slug]];
 
-  return (
-    <tr className="hover:bg-gray-50">
-      <td className="px-4 py-3">
-        <Link to={`/projects/${project.id}`} className="text-sm font-semibold text-blue-600 hover:underline">
-          {project.code}
-        </Link>
-      </td>
-      <td className="px-4 py-3">
-        <Link to={`/projects/${project.id}`} className="text-sm text-gray-900 hover:text-blue-600">
-          {project.name}
-        </Link>
-      </td>
-      <td className="px-4 py-3 text-sm text-gray-600">
-        {project.customers?.full_name || '-'}
-      </td>
-      <td className="px-4 py-3 text-xs text-indigo-600">
-        {project.company?.short_name || project.company?.name || '-'}
-      </td>
-      <td className="px-4 py-3">
-        <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: stageColor + '20', color: stageColor }}>
-          {stageName}
-        </span>
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex gap-1 flex-wrap">
-          {Object.keys(STAGE_NAMES).slice(0, 4).map(slug => (
-            <button
-              key={slug}
-              onClick={() => onSelectStage(slug)}
-              className="h-6 px-2 bg-gray-100 text-gray-600 rounded text-[10px] font-medium hover:bg-blue-50 hover:text-blue-600 cursor-pointer">
-              {STAGE_NAMES[slug]}
-            </button>
-          ))}
-        </div>
-      </td>
-    </tr>
-  );
-}
+  // ═══ FILTERS ═══
+  let filteredProjects = [...projects];
+  if (filterCompany !== 'all') filteredProjects = filteredProjects.filter(p => p.company_id === filterCompany);
+  if (filterProject !== 'all') filteredProjects = filteredProjects.filter(p => p.id === filterProject);
+  if (dateFrom || dateTo) {
+    filteredProjects = filteredProjects.filter(p => {
+      const d = p.created_at ? new Date(p.created_at) : null;
+      if (!d) return false;
+      if (dateFrom && d < new Date(dateFrom)) return false;
+      if (dateTo) { const t = new Date(dateTo); t.setHours(23,59,59,999); if (d > t) return false; }
+      return true;
+    });
+  }
+  const filtProjIds = new Set(filteredProjects.map(p => p.id));
 
-// ═══ WORKFLOW KANBAN VIEW (same as StageView.jsx but for 1 project) ═══
-function WorkflowKanbanView({
-  project, stageSlug, tasks, stageInfo, loading, error, isAdmin, user,
-  onBack, onRefresh, onStartTask, onMarkTaskDone, onToggleCheckItem, onSaveChecklistNote, onOpenAdvance,
-  pendingApprovals, approvalRules, selectedTask, setSelectedTask, showCreateTask, setShowCreateTask,
-  advProj, advNotes, advFiles, advMode, advLoading, setAdvProj, setAdvNotes, setAdvFiles, doAdvance
-}) {
-  const stageName = STAGE_NAMES[stageSlug] || stageSlug;
-  const canInteract = isAdmin; // simplify for now
-  const nextStageName = STAGE_NAMES[NEXT_SLUG[stageSlug]];
+  let filteredTasks = tasks.filter(t => filtProjIds.has(t.project_id));
+  if (filterEmployee !== 'all') filteredTasks = filteredTasks.filter(t => t.assignee_id === filterEmployee);
 
-  // Build kanban columns
+  // ═══ BUILD KANBAN: Columns = unique tasks by order_index, Cards = projects ═══
+  // Group tasks by project
+  const tasksByProject = {};
+  filteredTasks.forEach(t => {
+    if (!tasksByProject[t.project_id]) tasksByProject[t.project_id] = [];
+    tasksByProject[t.project_id].push(t);
+  });
+
+  // Determine column definitions from task order_index
   const colMap = {};
-  tasks.forEach(t => {
+  filteredTasks.forEach(t => {
     const idx = t.order_index ?? 0;
     if (!colMap[idx]) colMap[idx] = { titles: [], tasks: [] };
     colMap[idx].tasks.push(t);
+    // Strip " — LineLabel" suffix to get base title
     const base = t.title.replace(/\s*—\s*.+$/, '');
     colMap[idx].titles.push(base);
   });
@@ -571,79 +278,153 @@ function WorkflowKanbanView({
     return { orderIndex: +idx, title: baseTitle, tasks: g.tasks };
   });
 
-  const totalTasks = tasks.length;
-  const doneTasks = tasks.filter(t => t.status === 'done').length;
-  const allTasksDone = totalTasks > 0 && doneTasks === totalTasks;
-  const isPending = pendingApprovals[project.id];
-  const currentRule = stageInfo?.id ? approvalRules[stageInfo.id] : null;
-  const isAutoApproval = currentRule?.approval_mode === 'auto';
+  // For each project, map to ALL columns (not just current)
+  // Each column shows the project card with the task status at that column
+  const columnCards = {};
+  columns.forEach(col => { columnCards[col.orderIndex] = []; });
+
+  Object.entries(tasksByProject).forEach(([projId, projTasks]) => {
+    projTasks.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    // Find current (first non-done)
+    const currentTask = projTasks.find(t => t.status !== 'done');
+
+    projTasks.forEach(t => {
+      const idx = t.order_index ?? 0;
+      if (columnCards[idx]) {
+        const isCurrent = currentTask ? t.id === currentTask.id : t === projTasks[projTasks.length - 1];
+        columnCards[idx].push({ projectId: projId, task: t, isCurrent });
+      }
+    });
+  });
+
+  // All-done check per project
+  const projectsAllDone = {};
+  Object.entries(tasksByProject).forEach(([projId, pts]) => {
+    projectsAllDone[projId] = pts.length > 0 && pts.every(t => t.status === 'done');
+  });
+
+  const totalTasks = filteredTasks.length;
+  const doneTasks = filteredTasks.filter(t => t.status === 'done').length;
+
+  // Filter options
+  const projCompanies = [];
+  const seenC = new Set();
+  projects.forEach(p => { if (p.company_id && p.company && !seenC.has(p.company_id)) { seenC.add(p.company_id); projCompanies.push({ id: p.company_id, name: p.company.short_name || p.company.name }); } });
+  const projEmployees = [];
+  const seenE = new Set();
+  tasks.forEach(t => { if (t.assignee?.id && !seenE.has(t.assignee.id)) { seenE.add(t.assignee.id); projEmployees.push({ id: t.assignee.id, name: t.assignee.full_name }); } });
 
   return (
     <div className="space-y-4">
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
+          <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
+          <p className="text-sm text-red-700 flex-1">{error}</p>
+          <button onClick={loadData} className="h-8 px-3 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 cursor-pointer flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5" /> Thử lại</button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer">
-            <ChevronRight className="h-4 w-4 rotate-180" />
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }} />
-              <h1 className="text-xl font-bold text-gray-900">{project.code} — {stageName}</h1>
-            </div>
-            <p className="text-sm text-gray-500 mt-0.5">{project.name}</p>
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }} />
+            <h1 className="text-2xl font-bold text-gray-900">{stageName}</h1>
+            {user && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">{ROLE_LABELS[user.role] || user.role}</span>}
           </div>
+          <p className="text-sm text-gray-500 mt-0.5">{filteredProjects.length} dự án · {totalTasks} nhiệm vụ ({doneTasks} xong)</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={onRefresh} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer text-gray-400">
-            <RefreshCw className="h-4 w-4" />
-          </button>
-          {canInteract && (
-            <button onClick={() => setShowCreateTask(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
-              <Plus className="h-4 w-4" /> Thêm NV
-            </button>
+          <button onClick={loadData} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer text-gray-400"><RefreshCw className="h-4 w-4" /></button>
+          {canInteract && <button onClick={() => setShowCreateTask(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4" /> Thêm NV</button>}
+        </div>
+      </div>
+
+      {!canInteract && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2">
+          <Lock className="h-4 w-4 text-amber-500" />
+          <p className="text-sm text-amber-700">Chỉ xem — bạn không có quyền thao tác ở giai đoạn <strong>{stageName}</strong></p>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="bg-white rounded-xl border p-3 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+            <Calendar className="h-3.5 w-3.5 text-gray-400 self-center ml-2" />
+            {QT.map(t => <button key={t.id} onClick={() => setQuickTime(t.id)} className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${quickTime === t.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{t.label}</button>)}
+          </div>
+          {quickTime === 'custom' && (
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white" />
+              <span className="text-xs text-gray-400">→</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white" />
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {projCompanies.length > 0 && (
+            <div className="flex items-center gap-1">
+              <Building2 className="h-3.5 w-3.5 text-gray-400" />
+              <select value={filterCompany} onChange={e => { setFilterCompany(e.target.value); setFilterProject('all'); }} className="h-7 px-2 border rounded text-xs bg-white">
+                <option value="all">Tất cả CTy</option>
+                {projCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+          <select value={filterProject} onChange={e => setFilterProject(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white font-medium">
+            <option value="all">Tất cả DA</option>
+            {projects.filter(p => filterCompany === 'all' || p.company_id === filterCompany).map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+          </select>
+          {projEmployees.length > 1 && (
+            <select value={filterEmployee} onChange={e => setFilterEmployee(e.target.value)} className="h-7 px-2 border rounded text-xs bg-white">
+              <option value="all">Tất cả NV</option>
+              {projEmployees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
           )}
         </div>
       </div>
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-          <p className="text-sm text-red-700">{error}</p>
-        </div>
-      )}
-
-      {/* Advance banner */}
-      {nextStageName && allTasksDone && project.status === SLUG_TO_STATUS[stageSlug] && (
-        <div className={`${isPending ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} border rounded-xl p-4 flex items-center gap-3 flex-wrap`}>
-          <CheckSquare className={`h-5 w-5 ${isPending ? 'text-amber-600' : 'text-emerald-600'}`} />
-          <div className="flex-1 min-w-0">
-            <p className={`text-sm font-semibold ${isPending ? 'text-amber-800' : 'text-emerald-800'}`}>
-              {isPending ? '⏳ Đang chờ duyệt' : '✅ Hoàn thành!'}
-            </p>
-            <p className={`text-xs ${isPending ? 'text-amber-600' : 'text-emerald-600'}`}>
-              {isPending ? 'Yêu cầu duyệt đã được gửi.' : `Tất cả NV ở ${stageName} đã xong.`}
-            </p>
-          </div>
-          {!isPending && isAutoApproval && (
-            <button onClick={() => onOpenAdvance(project, 'advance')}
-              className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
-              <ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển → {nextStageName}
-            </button>
-          )}
-          {!isPending && !isAutoApproval && (
-            <button onClick={() => onOpenAdvance(project, 'review')}
-              className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600">
-              <Send className="h-3.5 w-3.5" /> Chờ duyệt → {nextStageName}
-            </button>
-          )}
-        </div>
-      )}
+      {/* Advance banners — only show for projects currently AT this stage and all tasks done */}
+      {nextStageName && filteredProjects
+        .filter(p => projectsAllDone[p.id] && p.status === SLUG_TO_STATUS[slug])
+        .map(p => {
+          const isPending = pendingApprovals[p.id];
+          // Check approval rule for current stage
+          const currentRule = stageInfo?.id ? approvalRules[stageInfo.id] : null;
+          const isAutoApproval = currentRule?.approval_mode === 'auto';
+          return (
+            <div key={p.id} className={`${isPending ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} border rounded-xl p-4 flex items-center gap-3 flex-wrap`}>
+              <CheckSquare className={`h-5 w-5 ${isPending ? 'text-amber-600' : 'text-emerald-600'}`} />
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-semibold ${isPending ? 'text-amber-800' : 'text-emerald-800'}`}>
+                  {isPending ? `⏳ ${p.code} — ${p.name}: Đang chờ duyệt` : `✅ ${p.code} — ${p.name}: Hoàn thành!`}
+                </p>
+                <p className={`text-xs ${isPending ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {isPending ? 'Yêu cầu duyệt đã được gửi, đang chờ phê duyệt.' : `Tất cả NV ở ${stageName} đã xong.`}
+                </p>
+              </div>
+              {!isPending && isAutoApproval && (
+                <button onClick={() => openAdvanceModal(p, 'advance')}
+                  className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-emerald-700">
+                  <ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển → {nextStageName}
+                </button>
+              )}
+              {!isPending && !isAutoApproval && (
+                <button onClick={() => openAdvanceModal(p, 'review')}
+                  className="h-8 px-3 bg-amber-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-amber-600">
+                  <Send className="h-3.5 w-3.5" /> Chờ duyệt → {nextStageName}
+                </button>
+              )}
+            </div>
+          );
+        })}
 
       {/* Progress */}
       {totalTasks > 0 && (
         <div className="bg-white rounded-xl border p-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-700">Tiến độ</span>
+            <span className="text-sm font-medium text-gray-700">Tiến độ giai đoạn</span>
             <span className="text-sm font-bold text-gray-900">{Math.round((doneTasks / totalTasks) * 100)}%</span>
           </div>
           <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -653,29 +434,22 @@ function WorkflowKanbanView({
         </div>
       )}
 
-      {/* Kanban columns */}
-      {loading ? (
-        <div className="flex items-center justify-center h-64">
-          <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
-          </svg>
-        </div>
-      ) : columns.length > 0 ? (
-        <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: '300px' }}>
+      {/* ═══ KANBAN: Columns = Nhiệm vụ, Cards = Dự án ═══ */}
+      {columns.length > 0 ? (
+        <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-4" style={{ minHeight: '300px' }}>
           {columns.map(col => {
+            const cards = columnCards[col.orderIndex] || [];
             const colDone = col.tasks.filter(t => t.status === 'done').length;
             return (
-              <div key={col.orderIndex} className="shrink-0 w-80 flex flex-col">
+              <div key={col.orderIndex} className="shrink-0 w-72 sm:w-80 flex flex-col">
                 {/* Column header */}
-                <div className="rounded-t-xl p-3 border border-b-0 bg-white">
+                <div className="rounded-t-xl p-3 border border-b-0 bg-white border-gray-200">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }}>
-                        {col.orderIndex + 1}
-                      </span>
+                      <span className="text-[10px] font-bold text-white w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: stageInfo?.color || '#3b82f6' }}>{col.orderIndex + 1}</span>
                       <h3 className="text-sm font-bold text-gray-900">{col.title}</h3>
                     </div>
+                    <span className="text-[10px] font-medium text-gray-400">{cards.length} DA</span>
                   </div>
                   <div className="w-full h-1.5 bg-gray-100 rounded-full">
                     <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${col.tasks.length > 0 ? (colDone / col.tasks.length) * 100 : 0}%` }} />
@@ -683,80 +457,169 @@ function WorkflowKanbanView({
                 </div>
 
                 {/* Cards */}
-                <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ maxHeight: '60vh' }}>
-                  {col.tasks.map(task => (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      project={project}
-                      canInteract={canInteract}
-                      onStartTask={onStartTask}
-                      onMarkTaskDone={onMarkTaskDone}
-                      onToggleCheckItem={onToggleCheckItem}
-                      onSaveChecklistNote={onSaveChecklistNote}
-                      onViewDetail={() => setSelectedTask(task.id)}
-                    />
-                  ))}
+                <div className="flex-1 rounded-b-xl border p-2 space-y-2 min-h-[100px] bg-gray-50/50 border-gray-200 overflow-y-auto" style={{ maxHeight: '60vh' }}>
+                  {cards.length > 0 ? cards.map(({ projectId, task, isCurrent }) => {
+                    const proj = projects.find(p => p.id === projectId);
+                    if (!proj) return null;
+                    const isDone = task.status === 'done';
+                    const isActive = task.status === 'in_progress';
+                    const isPending = task.status === 'pending';
+                    // Dự án đã chuyển sang quy trình khác → chỉ xem
+                    const projStillHere = proj.status === SLUG_TO_STATUS[slug];
+                    const canEdit = canInteract && projStillHere;
+                    const projTasks = tasksByProject[projectId] || [];
+                    const pDone = projTasks.filter(t => t.status === 'done').length;
+                    const pTotal = projTasks.length;
+                    const checklists = task.checklists || [];
+                    const clDone = checklists.filter(c => c.is_completed).length;
+                    const clTotal = checklists.length;
+                    const allClDone = clTotal > 0 && clDone === clTotal;
+
+                    return (
+                      <div key={projectId} className={`bg-white rounded-lg border p-3 transition-all ${
+                        isDone ? 'border-emerald-200 bg-emerald-50/30 opacity-80' :
+                        isCurrent ? 'border-blue-300 bg-blue-50/30 shadow-sm ring-1 ring-blue-200' :
+                        'border-gray-200'
+                      }`}>
+                        {/* Project header */}
+                        <Link to={`/projects/${proj.id}`} className="block hover:opacity-80">
+                          <div className="flex items-start justify-between mb-1">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="text-[10px] font-bold text-blue-600">{proj.code}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
+                              </div>
+                              <h4 className="text-sm font-semibold text-gray-900 leading-tight truncate">{proj.name}</h4>
+                              {proj.customers?.full_name && <p className="text-[10px] text-gray-500 mt-0.5">👤 {proj.customers.full_name}</p>}
+                              {proj.company && <p className="text-[10px] text-indigo-500">🏢 {proj.company.short_name || proj.company.name}</p>}
+                            </div>
+                            {isDone && <CheckSquare className="h-4 w-4 text-emerald-500 shrink-0" />}
+                            {isCurrent && !isDone && projStillHere && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium shrink-0">Đang làm</span>}
+                            {!projStillHere && <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium shrink-0">Đã chuyển</span>}
+                          </div>
+                        </Link>
+
+                        {/* Assignee + progress */}
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                          <div className="flex items-center gap-1">
+                            {task.assignee && (
+                              <>
+                                <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>{getInitials(task.assignee.full_name)}</div>
+                                <span className="text-[10px] text-gray-500 max-w-[80px] truncate">{task.assignee.full_name}</span>
+                              </>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-gray-400">{pDone}/{pTotal} NV</span>
+                            {clTotal > 0 && <span className={`text-[10px] font-medium ${allClDone || isDone ? 'text-emerald-600' : 'text-gray-400'}`}>✓ {clDone}/{clTotal}</span>}
+                          </div>
+                        </div>
+
+                        {/* Checklist items — interactive (notes/files editable for all, tick only for current) */}
+                        {clTotal > 0 && (
+                          <div className="mt-2 space-y-1">
+                            <div className="w-full h-1 bg-gray-100 rounded-full mb-1"><div className={`h-full rounded-full transition-all ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(clDone/clTotal)*100}%` }} /></div>
+                            {checklists.map(cl => (
+                              <ChecklistCard key={cl.id} cl={cl} taskId={task.id} canInteract={canEdit} canToggle={canEdit && isCurrent}
+                                onToggle={() => canEdit && isCurrent && toggleCheckItem(task.id, cl.id, cl.is_completed)}
+                                onSaveNote={(notes, files) => saveChecklistNote(task.id, cl.id, notes, files)} />
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Action buttons — only for current task, project still at this stage */}
+                        {canEdit && isCurrent && !isDone && (
+                          <div className="flex gap-1 mt-2">
+                            {task.status === 'pending' && <button onClick={e => { e.preventDefault(); startTask(task.id); }} className="flex-1 h-6 bg-blue-50 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
+                            {isActive && allClDone && <button onClick={e => { e.preventDefault(); markTaskDone(task.id); }} className="flex-1 h-6 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer animate-pulse">✓ Hoàn thành</button>}
+                            <button onClick={e => { e.preventDefault(); setSelectedTask(task.id); }} className="flex-1 h-6 text-gray-400 bg-white border rounded text-[10px] hover:text-blue-600 cursor-pointer">Chi tiết</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }) : (
+                    <div className="flex items-center justify-center h-20 text-xs text-gray-400">Không có dự án</div>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
-      ) : (
+      ) : filteredProjects.length > 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border">
           <CheckSquare className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-          <p className="text-sm text-gray-500">Chưa có nhiệm vụ</p>
+          <p className="text-sm text-gray-500 mb-2">Chưa có nhiệm vụ ở giai đoạn <strong>{stageName}</strong></p>
+          <button onClick={() => setShowCreateTask(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4" /> Tạo nhiệm vụ</button>
+        </div>
+      ) : (
+        <div className="text-center py-16">
+          <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+          <p className="text-sm text-gray-500">Không có dự án ở giai đoạn <strong>{stageName}</strong></p>
         </div>
       )}
 
       {/* Modals */}
-      <TaskDetailModal taskId={selectedTask} open={!!selectedTask} onClose={() => setSelectedTask(null)} onUpdated={onRefresh} />
-      <TaskCreateModal open={showCreateTask} onClose={() => setShowCreateTask(false)} onCreated={onRefresh} stageId={stageInfo?.id} projectId={project.id} />
+      <TaskDetailModal taskId={selectedTask} open={!!selectedTask} onClose={() => setSelectedTask(null)} onUpdated={loadData} />
+      <TaskCreateModal open={showCreateTask} onClose={() => setShowCreateTask(false)} onCreated={loadData} stageId={stageInfo?.id} projectId={filterProject !== 'all' ? filterProject : projects[0]?.id} />
 
-      {/* Advance Modal */}
+      {/* Advance / Review Modal */}
       <Modal open={!!advProj} onClose={() => setAdvProj(null)}
-        title={advMode === 'advance' ? `Chuyển → ${nextStageName}` : 'Chờ duyệt'} size="lg">
+        title={advMode === 'advance' ? `Chuyển: ${advProj?.code} → ${nextStageName}` : `Chờ duyệt: ${advProj?.code}`} size="lg">
         <div className="space-y-4">
           <div className={`${advMode === 'advance' ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'} border rounded-xl p-4`}>
             <p className={`text-sm ${advMode === 'advance' ? 'text-emerald-800' : 'text-amber-800'}`}>
               {advMode === 'advance'
-                ? `✅ Chuyển dự án → "${nextStageName}"`
-                : `🔍 Gửi yêu cầu duyệt`}
+                ? `✅ Chuyển "${advProj?.name}" → "${nextStageName}". Hệ thống sẽ tự tạo NV mới.`
+                : `🔍 Gửi yêu cầu duyệt cho người chịu trách nhiệm chính / quản lý DA.`}
             </p>
           </div>
 
+          {/* Tổng hợp từ checklist */}
           {(advNotes || advFiles.length > 0) && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
               <h4 className="text-xs font-semibold text-blue-700 uppercase mb-2">📋 Tổng hợp từ checklist</h4>
               {advNotes && (
-                <div className="bg-white rounded-lg p-3 border mb-2 max-h-40 overflow-y-auto">
+                <div className="bg-white rounded-lg p-3 border border-blue-100 mb-2 max-h-40 overflow-y-auto">
                   <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans">{advNotes}</pre>
                 </div>
               )}
               {advFiles.length > 0 && (
-                <FilePreview files={advFiles} onRemove={i => setAdvFiles(f => f.filter((_, j) => j !== i))} />
+                <div className="flex flex-wrap gap-1.5">
+                  {advFiles.map((f, fi) => {
+                    const isImg = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_url || f.file_name || '');
+                    return isImg ? (
+                      <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer">
+                        <img src={f.file_url} alt={f.file_name} className="h-14 w-14 rounded border object-cover hover:opacity-80" />
+                      </a>
+                    ) : (
+                      <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-[10px] text-blue-600 bg-white rounded px-2 py-1 border hover:bg-blue-50">
+                        <Paperclip className="h-3 w-3" />{f.file_name || 'file'}
+                      </a>
+                    );
+                  })}
+                </div>
               )}
+              <p className="text-[10px] text-blue-500 mt-2">Ghi chú + file từ checklist được tổng hợp tự động. Bạn có thể chỉnh sửa bên dưới.</p>
             </div>
           )}
 
           <div>
-            <label className="block text-sm font-medium mb-1">Ghi chú</label>
+            <label className="block text-sm font-medium mb-1">Ghi chú {advNotes ? '(đã tổng hợp, có thể sửa)' : ''}</label>
             <textarea value={advNotes} onChange={e => setAdvNotes(e.target.value)}
               className="w-full h-24 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
-              placeholder="Ghi chú..." />
+              placeholder={advMode === 'review' ? 'Ghi chú gửi kèm yêu cầu duyệt...' : 'Ghi chú chuyển giao...'} />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Đính kèm</label>
+            <label className="block text-sm font-medium mb-1">Đính kèm thêm file</label>
             <FileUploadButton onFilesUploaded={f => setAdvFiles(prev => [...prev, ...f])} />
             <FilePreview files={advFiles} onRemove={i => setAdvFiles(f => f.filter((_, j) => j !== i))} />
           </div>
           <div className="flex justify-end gap-2">
             <button onClick={() => setAdvProj(null)} className="h-9 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button>
             <button onClick={doAdvance} disabled={advLoading}
-              className={`h-9 px-4 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
-                advMode === 'advance' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-500 hover:bg-amber-600'
-              }`}>
-              {advLoading ? 'Đang xử lý...' : advMode === 'advance' ? <><ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển</> : <><Send className="h-3.5 w-3.5" /> Gửi</>}
+              className={`h-9 px-4 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${advMode === 'advance' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
+              {advLoading ? 'Đang xử lý...' : advMode === 'advance' ? <><ArrowRightCircle className="h-3.5 w-3.5" /> Chuyển GĐ</> : <><Send className="h-3.5 w-3.5" /> Gửi yêu cầu duyệt</>}
             </button>
           </div>
         </div>
@@ -765,85 +628,7 @@ function WorkflowKanbanView({
   );
 }
 
-// ═══ TASK CARD ═══
-function TaskCard({ task, project, canInteract, onStartTask, onMarkTaskDone, onToggleCheckItem, onSaveChecklistNote, onViewDetail }) {
-  const isDone = task.status === 'done';
-  const isActive = task.status === 'in_progress';
-  const checklists = task.checklists || [];
-  const clDone = checklists.filter(c => c.is_completed).length;
-  const clTotal = checklists.length;
-  const allClDone = clTotal > 0 && clDone === clTotal;
-
-  return (
-    <div className={`bg-white rounded-lg border p-3 transition-all ${
-      isDone ? 'border-emerald-200 bg-emerald-50/30 opacity-80' : 'border-gray-200'
-    }`}>
-      {/* Task header */}
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>
-              {PRIORITY_LABELS[task.priority]}
-            </span>
-          </div>
-          <h4 className="text-sm font-semibold text-gray-900 leading-tight">{task.title}</h4>
-        </div>
-        {isDone && <CheckSquare className="h-4 w-4 text-emerald-500 shrink-0" />}
-      </div>
-
-      {/* Assignee */}
-      {task.assignee && (
-        <div className="flex items-center gap-1.5 mt-2">
-          <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>
-            {getInitials(task.assignee.full_name)}
-          </div>
-          <span className="text-[10px] text-gray-500">{task.assignee.full_name}</span>
-        </div>
-      )}
-
-      {/* Checklist */}
-      {clTotal > 0 && (
-        <div className="mt-2 space-y-1">
-          <div className="w-full h-1 bg-gray-100 rounded-full">
-            <div className={`h-full rounded-full transition-all ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(clDone/clTotal)*100}%` }} />
-          </div>
-          {checklists.map(cl => (
-            <ChecklistCard
-              key={cl.id}
-              cl={cl}
-              taskId={task.id}
-              canInteract={canInteract}
-              canToggle={canInteract && !isDone}
-              onToggle={() => canInteract && !isDone && onToggleCheckItem(task.id, cl.id, cl.is_completed)}
-              onSaveNote={(notes, files) => onSaveChecklistNote(task.id, cl.id, notes, files)}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Actions */}
-      {canInteract && !isDone && (
-        <div className="flex gap-1 mt-2">
-          {task.status === 'pending' && (
-            <button onClick={() => onStartTask(task.id)} className="flex-1 h-6 bg-blue-50 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-100 cursor-pointer">
-              ▶ Bắt đầu
-            </button>
-          )}
-          {isActive && allClDone && (
-            <button onClick={() => onMarkTaskDone(task.id)} className="flex-1 h-6 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer animate-pulse">
-              ✓ Hoàn thành
-            </button>
-          )}
-          <button onClick={onViewDetail} className="flex-1 h-6 text-gray-400 bg-white border rounded text-[10px] hover:text-blue-600 cursor-pointer">
-            Chi tiết
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══ CHECKLIST CARD ═══
+// ═══ Checklist Card — inline notes + file upload ═══
 function ChecklistCard({ cl, taskId, canInteract, canToggle, onToggle, onSaveNote }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -881,9 +666,7 @@ function ChecklistCard({ cl, taskId, canInteract, canToggle, onToggle, onSaveNot
         </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1">
-            <span className={`text-[11px] leading-tight flex-1 ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
-              {cl.title}
-            </span>
+            <span className={`text-[11px] leading-tight flex-1 ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{cl.title}</span>
             <div className="flex items-center gap-0.5 shrink-0">
               {hasFiles && <Paperclip className="h-2.5 w-2.5 text-blue-400" />}
               {hasNotes && <MessageSquare className="h-2.5 w-2.5 text-amber-400" />}
@@ -901,7 +684,7 @@ function ChecklistCard({ cl, taskId, canInteract, canToggle, onToggle, onSaveNot
             </div>
           </div>
 
-          {/* View */}
+          {/* View notes + files */}
           {expanded && hasExtra && !editing && (
             <div className="mt-1 space-y-1">
               {hasNotes && <p className="text-[10px] text-gray-600 bg-amber-50 rounded px-2 py-1 border border-amber-100">{cl.notes}</p>}
@@ -925,7 +708,7 @@ function ChecklistCard({ cl, taskId, canInteract, canToggle, onToggle, onSaveNot
             </div>
           )}
 
-          {/* Edit */}
+          {/* Edit form */}
           {editing && (
             <div className="mt-1 space-y-1.5 bg-blue-50/50 rounded p-2 border border-blue-100" onClick={e => e.stopPropagation()}>
               <textarea value={noteText} onChange={e => setNoteText(e.target.value)}
