@@ -785,19 +785,30 @@ r.post('/create-with-flow', async (req, res) => {
               if (taskErr) { console.error('Task create error:', taskErr); continue; }
 
               if (t.checklists?.length) {
+                console.log(`[PROJECT ${projectId}] Creating ${t.checklists.length} checklists for task ${task.id} (${task.title})`);
                 for (const c of t.checklists) {
                   const checklistKey = `checklist_${c.id}`;
                   const checkAssignee = b.task_assignments?.[checklistKey] || c.default_assignee_id || null;
                   try {
-                    await supabase.from('task_checklists').insert({
+                    const { error: clError } = await supabase.from('task_checklists').insert({
                       task_id: task.id,
-                      label: c.title,
+                      title: c.title,  // ← FIX: use 'title' not 'label'
                       order_index: c.order_index || 0,
                       is_completed: false,
-                      assigned_user_id: checkAssignee,
+                      notes: checkAssignee ? JSON.stringify({ assignee_id: checkAssignee }) : null,
+                      attachments: [],
                     });
-                  } catch (ce) { console.warn('Checklist insert error:', ce.message); }
+                    if (clError) {
+                      console.error(`[PROJECT ${projectId}] Checklist insert error:`, clError);
+                    } else {
+                      console.log(`[PROJECT ${projectId}] Checklist created: ${c.title}`);
+                    }
+                  } catch (ce) { 
+                    console.warn('Checklist insert exception:', ce.message); 
+                  }
                 }
+              } else {
+                console.log(`[PROJECT ${projectId}] No checklists for task ${task.id}`);
               }
 
               allCreatedTasks.push(task);
