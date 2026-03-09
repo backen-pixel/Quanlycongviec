@@ -41,13 +41,17 @@ export default function ProjectWorkflowPage() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [filterDivision, filterCompany]);
 
   const loadData = async () => {
     setLoading(true);
     try {
+      const params = { limit: 500 };
+      if (filterDivision !== 'all') params.division_id = filterDivision;
+      if (filterCompany !== 'all') params.company_id = filterCompany;
+
       const [projRes, stageRes, compRes, divRes] = await Promise.all([
-        api.get('/projects', { params: { limit: 500 } }),
+        api.get('/projects', { params }),
         api.get('/users/stages'),
         api.get('/companies'),
         api.get('/ecosystem/units', { params: { level_code: 'division' } }),
@@ -55,6 +59,7 @@ export default function ProjectWorkflowPage() {
 
       let allProjects = projRes.data.projects || [];
       
+      // Frontend filter for non-admin (backend already filters by permission)
       if (!isAdmin) {
         allProjects = allProjects.filter(p => {
           return p.created_by === user.id || p.responsible_person_id === user.id;
@@ -71,16 +76,9 @@ export default function ProjectWorkflowPage() {
     setLoading(false);
   };
 
-  // Filter projects
+  // Filter projects (only search filter, division/company handled by backend)
   let filteredProjects = [...projects];
   
-  if (filterDivision !== 'all') {
-    const divCompanies = companies.filter(c => c.division_unit_id === filterDivision).map(c => c.id);
-    filteredProjects = filteredProjects.filter(p => divCompanies.includes(p.company_id));
-  }
-  if (filterCompany !== 'all') {
-    filteredProjects = filteredProjects.filter(p => p.company_id === filterCompany);
-  }
   if (filterSearch) {
     const s = filterSearch.toLowerCase();
     filteredProjects = filteredProjects.filter(p =>

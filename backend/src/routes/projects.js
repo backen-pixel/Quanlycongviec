@@ -94,7 +94,7 @@ r.get('/pending-approvals', async (req, res) => {
 // ─── LIST PROJECTS ──
 r.get('/', async (req, res) => {
   try {
-    const { status, search, stage_slug, page = 1, limit = 50 } = req.query;
+    const { status, search, stage_slug, page = 1, limit = 50, company_id, division_id } = req.query;
     const userId = req.user.userId;
     
     // Check permission
@@ -102,7 +102,7 @@ r.get('/', async (req, res) => {
     
     let q = supabase.from('projects').select(`
       *, customers(id,full_name,phone,email,city),
-      company:companies(id,name,short_name),
+      company:companies(id,name,short_name,division_unit_id),
       current_stage:workflow_stages(id,name,slug,color,icon),
       sales_person:users!projects_sales_person_id_fkey(id,full_name),
       designer:users!projects_designer_id_fkey(id,full_name),
@@ -117,6 +117,26 @@ r.get('/', async (req, res) => {
       const stMap = { consulting:'consulting', design:'designing', quotation:'quoting', contract:'contract_signed', production:'producing', shipping:'shipping', installation:'installing', 'customer-care':'warranty' };
       const mappedStatus = stMap[stage_slug];
       if (mappedStatus) q = q.eq('status', mappedStatus);
+    }
+
+    // Filter by company_id
+    if (company_id && company_id !== 'all') {
+      q = q.eq('company_id', company_id);
+    }
+
+    // Filter by division_id (get all companies in division, then filter)
+    if (division_id && division_id !== 'all' && !company_id) {
+      const { data: divCompanies } = await supabase
+        .from('companies')
+        .select('id')
+        .eq('division_unit_id', division_id);
+      const companyIds = (divCompanies || []).map(c => c.id);
+      if (companyIds.length > 0) {
+        q = q.in('company_id', companyIds);
+      } else {
+        // No companies in division → return empty
+        return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
+      }
     }
 
     // ── PERMISSION-BASED FILTERING (NEW LOGIC) ──
