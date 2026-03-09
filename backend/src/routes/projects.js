@@ -140,27 +140,38 @@ r.get('/', async (req, res) => {
     }
 
     // ── PERMISSION-BASED FILTERING (NEW LOGIC) ──
-    if (!canViewAll) {
+    // Admin/Manager/Director → bypass, see all
+    const { data: userData } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+    
+    const isPrivileged = ['admin', 'manager', 'director'].includes(userData?.role);
+    
+    if (!canViewAll && !isPrivileged) {
       // Get accessible units using new middleware
       const accessibleUnits = await getAccessibleUnits(userId);
       
       if (accessibleUnits.length === 0) {
-        return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
-      }
-      
-      // Get company_ids from accessible units
-      const { data: units } = await supabase
-        .from('ecosystem_units')
-        .select('company_id')
-        .in('id', accessibleUnits)
-        .not('company_id', 'is', null);
-      
-      const companyIds = [...new Set((units || []).map(u => u.company_id).filter(Boolean))];
-      
-      if (companyIds.length > 0) {
-        q = q.in('company_id', companyIds);
+        // Fallback: show only user's own projects (created_by or responsible)
+        q = q.or(`created_by.eq.${userId},responsible_person_id.eq.${userId},sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`);
       } else {
-        return res.json({ projects: [], total: 0, page: +page, totalPages: 0 });
+        // Get company_ids from accessible units
+        const { data: units } = await supabase
+          .from('ecosystem_units')
+          .select('company_id')
+          .in('id', accessibleUnits)
+          .not('company_id', 'is', null);
+        
+        const companyIds = [...new Set((units || []).map(u => u.company_id).filter(Boolean))];
+        
+        if (companyIds.length > 0) {
+          q = q.in('company_id', companyIds);
+        } else {
+          // No companies found → fallback to user's own projects
+          q = q.or(`created_by.eq.${userId},responsible_person_id.eq.${userId},sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`);
+        }
       }
     }
 
