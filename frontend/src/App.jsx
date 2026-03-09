@@ -32,6 +32,7 @@ import TemplateSetsPage from './pages/TemplateSetsPage';
 import PermissionsPage from './pages/PermissionsPage';
 import EcosystemPermissionsPage from './pages/EcosystemPermissionsPage';
 import WorkflowHubPage from './pages/WorkflowHubPage';
+import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import { Settings } from 'lucide-react';
 
 function ProtectedLayout() {
@@ -88,6 +89,7 @@ export default function App() {
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/create" element={<CreateProject />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />
+            <Route path="/project-workflow" element={<ProjectWorkflowPage />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/stage/:slug" element={<StageView />} />
             <Route path="/users" element={<UsersPage />} />
