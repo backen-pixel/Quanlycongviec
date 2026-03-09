@@ -282,18 +282,17 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">
               Người thực hiện
-              {selectedCompany && companyEmployees.length > 0 && (
-                <span className="text-blue-500 font-normal ml-1">(theo công ty)</span>
-              )}
+              <span className="text-gray-400 font-normal ml-1">(có thể gán sau)</span>
             </label>
             <select value={form.assignee_id} onChange={e => set('assignee_id', e.target.value)}
               className="w-full h-9 px-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-blue-500">
-              <option value="">— Chưa gán —</option>
+              <option value="">— Chưa gán (có thể gán sau) —</option>
               {employeeOptions.map(u => (
                 <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
               ))}
-              {!employeeOptions.length && <option disabled>Chọn công ty trước</option>}
+              {!employeeOptions.length && companyEmployees.length === 0 && <option disabled>Chọn công ty để thấy nhân viên</option>}
             </select>
+            <p className="text-[10px] text-blue-500 mt-1">💡 Có thể tạo task trước, gán người sau</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Hạn chót</label>
@@ -311,9 +310,10 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
 
         {/* ── Checklist ── */}
         <div>
-          <label className="block text-xs font-semibold text-gray-700 mb-2">
-            Checklist {checklists.length > 0 && <span className="text-gray-400 font-normal">({checklists.length})</span>}
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            Checklist {checklists.length > 0 && <span className="text-gray-400 font-normal">({checklists.length} mục)</span>}
           </label>
+          <p className="text-[10px] text-gray-500 mb-2">💡 Tạo danh sách công việc con. Có thể gán người làm riêng cho từng mục.</p>
           <div className="space-y-2">
             {checklists.map((c, i) => (
               <div key={i} className="flex items-center gap-2 bg-purple-50 rounded-lg px-3 py-2 border border-purple-100">
