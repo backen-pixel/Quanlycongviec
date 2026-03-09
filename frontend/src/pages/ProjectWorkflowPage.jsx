@@ -317,6 +317,11 @@ export default function ProjectWorkflowPage() {
       // Store project-specific stages (we'll use this in render)
       setSelectedProject({ ...fullProject, projectStages });
 
+      // AUTO-SELECT FIRST STAGE
+      if (projectStages.length > 0) {
+        setSelectedStage(projectStages[0]);
+      }
+
     } catch (e) {
       console.error(e);
     }
