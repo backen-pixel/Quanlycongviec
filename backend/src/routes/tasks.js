@@ -172,14 +172,22 @@ r.post('/', async (req, res) => {
 
     // Add checklists
     if (b.checklists?.length) {
+      console.log(`[TASK ${data.id}] Creating ${b.checklists.length} checklists:`, b.checklists);
       for (const c of b.checklists) {
-        const { data: cl } = await supabase.from('task_checklists').insert({
+        const { data: cl, error: clError } = await supabase.from('task_checklists').insert({
           task_id: data.id,
           title: c.title || c,
           order_index: b.checklists.indexOf(c),
           attachments: c.attachments || [],
           notes: c.notes || null,
         }).select().single();
+        
+        if (clError) {
+          console.error(`[TASK ${data.id}] Checklist insert error:`, clError);
+        } else {
+          console.log(`[TASK ${data.id}] Checklist created:`, cl.id, cl.title);
+        }
+        
         // Notify checklist assignee if set
         if (c.notes && cl) {
           try {
@@ -193,6 +201,8 @@ r.post('/', async (req, res) => {
           } catch {}
         }
       }
+    } else {
+      console.log(`[TASK ${data.id}] No checklists provided`);
     }
 
     // Save file attachments to DB

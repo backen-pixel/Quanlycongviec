@@ -137,7 +137,8 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
     if (!form.title.trim()) return;
     setLoading(true);
     try {
-      await api.post('/tasks', {
+      console.log('Creating task with checklists:', checklists);
+      const payload = {
         ...form,
         project_id: projectId,
         stage_id: selectedStageId || stageId || null,
@@ -147,14 +148,20 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
         metadata: selectedCompany ? { company_unit_id: selectedCompany } : undefined,
         checklists: checklists.map(c => ({
           title: c.title,
-          attachments: c.attachments,
+          attachments: c.attachments || [],
           notes: c.assignee_id ? JSON.stringify({ assignee_id: c.assignee_id }) : null,
         })),
         attachments: files,
-      });
+      };
+      console.log('Payload:', payload);
+      const response = await api.post('/tasks', payload);
+      console.log('Task created:', response.data);
       onCreated?.();
       onClose();
-    } catch { }
+    } catch (e) {
+      console.error('Task creation error:', e);
+      alert('Lỗi tạo task: ' + (e.response?.data?.error || e.message));
+    }
     setLoading(false);
   };
 
@@ -309,11 +316,18 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
         </div>
 
         {/* ── Checklist ── */}
-        <div>
+        <div className={`rounded-lg p-3 ${checklists.length === 0 ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50 border border-gray-200'}`}>
           <label className="block text-xs font-semibold text-gray-700 mb-1">
-            Checklist {checklists.length > 0 && <span className="text-gray-400 font-normal">({checklists.length} mục)</span>}
+            Checklist {checklists.length > 0 ? (
+              <span className="text-emerald-600 font-normal">({checklists.length} mục ✓)</span>
+            ) : (
+              <span className="text-amber-600 font-normal">(Chưa có mục nào)</span>
+            )}
           </label>
-          <p className="text-[10px] text-gray-500 mb-2">💡 Tạo danh sách công việc con. Có thể gán người làm riêng cho từng mục.</p>
+          <p className="text-[10px] text-gray-500 mb-2">
+            💡 Tạo danh sách công việc con. Có thể gán người làm riêng cho từng mục.
+            {checklists.length === 0 && <span className="text-amber-600 font-medium"> Nhập checklist bên dưới!</span>}
+          </p>
           <div className="space-y-2">
             {checklists.map((c, i) => (
               <div key={i} className="flex items-center gap-2 bg-purple-50 rounded-lg px-3 py-2 border border-purple-100">
