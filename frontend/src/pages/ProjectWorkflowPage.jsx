@@ -174,6 +174,11 @@ export default function ProjectWorkflowPage() {
   const [stages, setStages] = useState([]); // All workflow stages
   const [departments, setDepartments] = useState([]);
   const [teams, setTeams] = useState([]);
+  
+  // Checklist editing
+  const [editingChecklist, setEditingChecklist] = useState(null); // { taskId, clId }
+  const [editNoteText, setEditNoteText] = useState('');
+  const [editNoteFiles, setEditNoteFiles] = useState([]);
 
   // Permission check for viewing all employees
   const canViewAllEmployees = ['admin', 'manager', 'director', 'supervisor'].includes(user?.role);
@@ -802,7 +807,10 @@ export default function ProjectWorkflowPage() {
                     </div>
                   </div>
                   <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ maxHeight: '70vh' }}>
-                    {checklists.map(cl => (
+                    {checklists.map(cl => {
+                      const isEditing = editingChecklist?.taskId === task.id && editingChecklist?.clId === cl.id;
+                      
+                      return (
                       <div key={cl.id} className={`bg-white rounded-lg border p-3 ${cl.is_completed ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200'}`}>
                         <div className="flex items-start gap-2">
                           <button onClick={() => toggleCheckItem(task.id, cl.id, cl.is_completed)}
@@ -812,26 +820,114 @@ export default function ProjectWorkflowPage() {
                             {cl.is_completed && <CheckSquare className="h-3 w-3 text-white" />}
                           </button>
                           <div className="flex-1 min-w-0">
-                            <p className={`text-xs font-medium ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-900'}`}>{cl.title}</p>
-                            {cl.notes && (
-                              <div className="mt-1 text-[10px] text-gray-500 bg-gray-50 rounded px-2 py-1 border">
-                                {cl.notes}
+                            <div className="flex items-center justify-between gap-2">
+                              <p className={`text-xs font-medium ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-900'}`}>{cl.title}</p>
+                              {!isEditing && (
+                                <button onClick={() => {
+                                  setEditingChecklist({ taskId: task.id, clId: cl.id });
+                                  // Parse existing notes
+                                  let existingText = '';
+                                  try {
+                                    const parsed = JSON.parse(cl.notes || '{}');
+                                    existingText = parsed.text || '';
+                                  } catch {
+                                    existingText = cl.notes || '';
+                                  }
+                                  setEditNoteText(existingText);
+                                  setEditNoteFiles(cl.attachments || []);
+                                }}
+                                  className="text-[10px] text-blue-600 hover:text-blue-700 cursor-pointer font-medium">
+                                  {cl.notes || cl.attachments?.length ? 'Sửa' : '+ Ghi chú'}
+                                </button>
+                              )}
+                            </div>
+                            
+                            {isEditing ? (
+                              <div className="mt-2 space-y-2">
+                                <textarea value={editNoteText} onChange={e => setEditNoteText(e.target.value)}
+                                  placeholder="Nhập ghi chú..."
+                                  className="w-full text-xs p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                  rows={2} />
+                                <FileUploadButton onUploaded={(url) => setEditNoteFiles(prev => [...prev, url])}
+                                  className="text-[10px] px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded cursor-pointer">
+                                  + Đính kèm file
+                                </FileUploadButton>
+                                {editNoteFiles.length > 0 && (
+                                  <div className="flex gap-1 flex-wrap">
+                                    {editNoteFiles.map((f, i) => (
+                                      <div key={i} className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded flex items-center gap-1">
+                                        <Paperclip className="h-2.5 w-2.5" /> File {i+1}
+                                        <button onClick={() => setEditNoteFiles(prev => prev.filter((_, idx) => idx !== i))}
+                                          className="text-red-500 hover:text-red-700">×</button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="flex gap-2">
+                                  <button onClick={async () => {
+                                    // Save with JSON format (preserve assignee_id if exists)
+                                    let finalNotes = editNoteText;
+                                    try {
+                                      const existing = JSON.parse(cl.notes || '{}');
+                                      finalNotes = JSON.stringify({ ...existing, text: editNoteText });
+                                    } catch {
+                                      finalNotes = JSON.stringify({ text: editNoteText });
+                                    }
+                                    await saveChecklistNote(task.id, cl.id, finalNotes, editNoteFiles);
+                                    setEditingChecklist(null);
+                                    setEditNoteText('');
+                                    setEditNoteFiles([]);
+                                  }}
+                                    className="text-[10px] px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 cursor-pointer font-medium">
+                                    Lưu
+                                  </button>
+                                  <button onClick={() => {
+                                    setEditingChecklist(null);
+                                    setEditNoteText('');
+                                    setEditNoteFiles([]);
+                                  }}
+                                    className="text-[10px] px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 cursor-pointer">
+                                    Hủy
+                                  </button>
+                                </div>
                               </div>
-                            )}
-                            {cl.attachments?.length > 0 && (
-                              <div className="mt-1 flex gap-1 flex-wrap">
-                                {cl.attachments.map((att, i) => (
-                                  <a key={i} href={att} target="_blank" rel="noopener noreferrer"
-                                    className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
-                                    <Paperclip className="h-2.5 w-2.5 inline" /> File {i+1}
-                                  </a>
-                                ))}
-                              </div>
+                            ) : (
+                              <>
+                                {cl.notes && (() => {
+                                  // Parse notes if JSON (legacy format with assignee_id)
+                                  let displayNotes = cl.notes;
+                                  try {
+                                    const parsed = JSON.parse(cl.notes);
+                                    if (parsed.assignee_id && !parsed.text) {
+                                      displayNotes = ''; // Hide legacy JSON-only notes
+                                    } else if (parsed.text) {
+                                      displayNotes = parsed.text;
+                                    }
+                                  } catch {}
+                                  
+                                  return displayNotes ? (
+                                    <div className="mt-1 text-[10px] text-gray-500 bg-gray-50 rounded px-2 py-1 border">
+                                      {displayNotes}
+                                    </div>
+                                  ) : null;
+                                })()}
+                                {cl.attachments?.length > 0 && (
+                                  <div className="mt-1 flex gap-1 flex-wrap">
+                                    {cl.attachments.map((att, i) => (
+                                      <a key={i} href={att} target="_blank" rel="noopener noreferrer"
+                                        className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
+                                        <Paperclip className="h-2.5 w-2.5 inline" /> File {i+1}
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     {checklists.length === 0 && (
                       <div className="flex items-center justify-center h-32 text-xs text-gray-300">Chưa có checklist</div>
                     )}
