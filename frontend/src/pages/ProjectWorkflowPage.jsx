@@ -269,10 +269,30 @@ export default function ProjectWorkflowPage() {
 
   if (view === 'kanban' && selectedProject) {
     const now = new Date();
-    const pending = tasks.filter(t => t.status === 'pending' && (!t.due_date || new Date(t.due_date) >= now));
-    const inProgress = tasks.filter(t => t.status === 'in_progress' && (!t.due_date || new Date(t.due_date) >= now));
-    const done = tasks.filter(t => t.status === 'done');
-    const overdue = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now);
+    
+    // Sort tasks by stage order_index, then by order_index, then by due_date
+    const sortedTasks = [...tasks].sort((a, b) => {
+      // First by stage order
+      const aStageOrder = a.stage?.order_index || 0;
+      const bStageOrder = b.stage?.order_index || 0;
+      if (aStageOrder !== bStageOrder) return aStageOrder - bStageOrder;
+      
+      // Then by task order_index
+      const aOrder = a.order_index || 0;
+      const bOrder = b.order_index || 0;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      
+      // Finally by due_date
+      if (a.due_date && b.due_date) {
+        return new Date(a.due_date) - new Date(b.due_date);
+      }
+      return 0;
+    });
+    
+    const pending = sortedTasks.filter(t => t.status === 'pending' && (!t.due_date || new Date(t.due_date) >= now));
+    const inProgress = sortedTasks.filter(t => t.status === 'in_progress' && (!t.due_date || new Date(t.due_date) >= now));
+    const done = sortedTasks.filter(t => t.status === 'done');
+    const overdue = sortedTasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now);
 
     const columns = [
       { title: 'Chưa thực hiện', tasks: pending, color: '#6b7280', icon: Clock },
