@@ -4,21 +4,16 @@ import { useAuth } from '../lib/auth';
 import {
   FolderKanban, RefreshCw, Building2, Search, ChevronRight, CheckSquare,
   LayoutGrid, List, Filter, Briefcase, ArrowLeft, Users, Eye, EyeOff, 
-  MessageSquare, Paperclip, Save
+  MessageSquare, Paperclip, Save, Clock, AlertCircle, PlayCircle
 } from 'lucide-react';
 import { FileUploadButton, FilePreview } from '../components/FileUpload';
 import { getInitials, avatarColor, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
-
-const STAGE_COLORS = {
-  consulting: '#8b5cf6', design: '#06b6d4', quotation: '#f59e0b', contract: '#10b981',
-  production: '#3b82f6', shipping: '#6366f1', installation: '#ec4899', 'customer-care': '#14b8a6',
-};
 
 export default function ProjectWorkflowPage() {
   const { user } = useAuth();
   const isAdmin = ['admin', 'manager', 'director'].includes(user?.role);
 
-  const [view, setView] = useState('projects'); // 'projects' | 'kanban'
+  const [view, setView] = useState('projects');
   const [viewMode, setViewMode] = useState('grid');
   const [projects, setProjects] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -32,15 +27,10 @@ export default function ProjectWorkflowPage() {
   const [filterSearch, setFilterSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
-  // Kanban view state
   const [selectedProject, setSelectedProject] = useState(null);
-  const [selectedStage, setSelectedStage] = useState(null);
-  const [projectStages, setProjectStages] = useState([]);
   const [tasks, setTasks] = useState([]);
 
-  useEffect(() => {
-    loadData();
-  }, [filterDivision, filterCompany, filterEmployee]);
+  useEffect(() => { loadData(); }, [filterDivision, filterCompany, filterEmployee]);
 
   const loadData = async () => {
     setLoading(true);
@@ -58,7 +48,6 @@ export default function ProjectWorkflowPage() {
 
       let allProjects = projRes.data.projects || [];
       
-      // Filter by employee (if tasks have this employee assigned)
       if (filterEmployee !== 'all') {
         const { data: empTasks } = await api.get('/tasks', { params: { assignee_id: filterEmployee } });
         const empProjectIds = new Set((empTasks.tasks || []).map(t => t.project_id));
@@ -75,45 +64,14 @@ export default function ProjectWorkflowPage() {
     setLoading(false);
   };
 
-  const loadProjectStages = async (projectId) => {
-    try {
-      const { data: tasksData } = await api.get('/tasks', { params: { project_id: projectId } });
-      const allTasks = tasksData.tasks || [];
-
-      const stageMap = new Map();
-      allTasks.forEach(t => {
-        if (t.stage && !stageMap.has(t.stage.id)) {
-          stageMap.set(t.stage.id, t.stage);
-        }
-      });
-
-      return Array.from(stageMap.values()).sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
-    } catch (e) {
-      console.error(e);
-      return [];
-    }
-  };
-
   const selectProject = async (project) => {
     setSelectedProject(project);
-    const stages = await loadProjectStages(project.id);
-    setProjectStages(stages);
-    if (stages.length > 0) {
-      selectStage(stages[0]);
-    }
-    setView('kanban');
-  };
-
-  const selectStage = async (stage) => {
-    setSelectedStage(stage);
     setLoading(true);
     try {
-      const { data: tasksData } = await api.get('/tasks', {
-        params: { project_id: selectedProject.id, stage_id: stage.id }
-      });
-      let stageTasks = tasksData.tasks || [];
+      const { data: tasksData } = await api.get('/tasks', { params: { project_id: project.id } });
+      let allTasks = tasksData.tasks || [];
 
-      const checklistPromises = stageTasks.map(t =>
+      const checklistPromises = allTasks.map(t =>
         api.get(`/tasks/${t.id}/checklists`)
           .then(r => ({ taskId: t.id, checklists: r.data.checklists || [] }))
           .catch(() => ({ taskId: t.id, checklists: [] }))
@@ -121,20 +79,19 @@ export default function ProjectWorkflowPage() {
       const checklistResults = await Promise.all(checklistPromises);
       const clMap = {};
       checklistResults.forEach(r => { clMap[r.taskId] = r.checklists; });
-      stageTasks = stageTasks.map(t => ({ ...t, checklists: clMap[t.id] || [] }));
+      allTasks = allTasks.map(t => ({ ...t, checklists: clMap[t.id] || [] }));
 
-      setTasks(stageTasks.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
+      setTasks(allTasks);
     } catch (e) {
       console.error(e);
     }
     setLoading(false);
+    setView('kanban');
   };
 
   const backToProjects = () => {
     setView('projects');
     setSelectedProject(null);
-    setSelectedStage(null);
-    setProjectStages([]);
     setTasks([]);
   };
 
@@ -146,7 +103,7 @@ export default function ProjectWorkflowPage() {
     try {
       await api.patch(`/tasks/${taskId}/checklists/${clId}`, { is_completed: !isCompleted });
     } catch {
-      selectStage(selectedStage);
+      selectProject(selectedProject);
     }
   };
 
@@ -158,7 +115,25 @@ export default function ProjectWorkflowPage() {
         return { ...t, checklists: t.checklists.map(cl => cl.id === clId ? { ...cl, notes, attachments } : cl) };
       }));
     } catch {
-      selectStage(selectedStage);
+      selectProject(selectedProject);
+    }
+  };
+
+  const startTask = async (taskId) => {
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'in_progress' } : t));
+    try {
+      await api.patch(`/tasks/${taskId}/status`, { status: 'in_progress' });
+    } catch {
+      selectProject(selectedProject);
+    }
+  };
+
+  const markTaskDone = async (taskId) => {
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'done' } : t));
+    try {
+      await api.patch(`/tasks/${taskId}/status`, { status: 'done' });
+    } catch {
+      selectProject(selectedProject);
     }
   };
 
@@ -185,9 +160,7 @@ export default function ProjectWorkflowPage() {
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => setShowFilters(!showFilters)}
-              className={`h-9 px-4 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer ${
-                showFilters ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700 hover:bg-gray-50'
-              }`}>
+              className={`h-9 px-4 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer ${showFilters ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700 hover:bg-gray-50'}`}>
               <Filter className="h-4 w-4" />Lọc
             </button>
             <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
@@ -258,7 +231,7 @@ export default function ProjectWorkflowPage() {
                 {proj.customers?.full_name && <p className="text-xs text-gray-500">👤 {proj.customers.full_name}</p>}
                 {proj.company && <p className="text-xs text-indigo-600 mt-1">🏢 {proj.company.short_name || proj.company.name}</p>}
                 <div className="flex items-center justify-between pt-2 border-t mt-2">
-                  <span className="text-xs text-gray-500">Click xem quy trình</span>
+                  <span className="text-xs text-gray-500">Click xem chi tiết</span>
                   <ChevronRight className="h-4 w-4 text-gray-400" />
                 </div>
               </div>
@@ -294,9 +267,19 @@ export default function ProjectWorkflowPage() {
     );
   }
 
-  if (view === 'kanban' && selectedProject && selectedStage) {
-    const stageColor = STAGE_COLORS[selectedStage.slug] || selectedStage.color || '#3b82f6';
-    const columns = tasks.map(t => ({ task: t, checklists: t.checklists || [] }));
+  if (view === 'kanban' && selectedProject) {
+    const now = new Date();
+    const pending = tasks.filter(t => t.status === 'pending' && (!t.due_date || new Date(t.due_date) >= now));
+    const inProgress = tasks.filter(t => t.status === 'in_progress' && (!t.due_date || new Date(t.due_date) >= now));
+    const done = tasks.filter(t => t.status === 'done');
+    const overdue = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now);
+
+    const columns = [
+      { title: 'Chưa thực hiện', tasks: pending, color: '#6b7280', icon: Clock },
+      { title: 'Đang thực hiện', tasks: inProgress, color: '#3b82f6', icon: PlayCircle },
+      { title: 'Hoàn thành', tasks: done, color: '#10b981', icon: CheckSquare },
+      { title: 'Quá hạn', tasks: overdue, color: '#ef4444', icon: AlertCircle },
+    ];
 
     return (
       <div className="space-y-4">
@@ -308,20 +291,7 @@ export default function ProjectWorkflowPage() {
             <h1 className="text-xl font-bold text-gray-900">{selectedProject.code} — {selectedProject.name}</h1>
             <p className="text-sm text-gray-500">{selectedProject.customers?.full_name || ''}</p>
           </div>
-        </div>
-
-        <div className="bg-white rounded-xl border p-2">
-          <div className="flex gap-2 overflow-x-auto">
-            {projectStages.map(s => (
-              <button key={s.id} onClick={() => selectStage(s)}
-                className={`h-10 px-4 rounded-lg text-sm font-medium cursor-pointer whitespace-nowrap ${
-                  s.id === selectedStage.id ? 'text-white shadow-sm' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                }`}
-                style={s.id === selectedStage.id ? { backgroundColor: STAGE_COLORS[s.slug] || s.color } : {}}>
-                {s.name}
-              </button>
-            ))}
-          </div>
+          <div className="text-sm text-gray-500">{tasks.length} công việc</div>
         </div>
 
         {loading ? (
@@ -331,17 +301,80 @@ export default function ProjectWorkflowPage() {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
             </svg>
           </div>
-        ) : columns.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-xl border">
-            <CheckSquare className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-            <p className="text-sm text-gray-500">Chưa có nhiệm vụ</p>
-          </div>
         ) : (
-          <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: '400px' }}>
-            {columns.map((col, idx) => (
-              <TaskColumn key={col.task.id} task={col.task} checklists={col.checklists} stageColor={stageColor} index={idx}
-                onToggleCheckItem={toggleCheckItem} onSaveChecklistNote={saveChecklistNote} />
-            ))}
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+            {columns.map(col => {
+              const Icon = col.icon;
+              return (
+                <div key={col.title} className="flex flex-col">
+                  <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '3px' }}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <Icon className="h-4 w-4" style={{ color: col.color }} />
+                        <h3 className="text-sm font-bold text-gray-900">{col.title}</h3>
+                      </div>
+                      <span className="text-xs font-medium text-gray-400">{col.tasks.length}</span>
+                    </div>
+                  </div>
+                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '500px', maxHeight: '70vh' }}>
+                    {col.tasks.length > 0 ? col.tasks.map(task => {
+                      const checklists = task.checklists || [];
+                      const clDone = checklists.filter(c => c.is_completed).length;
+                      const clTotal = checklists.length;
+                      const allClDone = clTotal > 0 && clDone === clTotal;
+                      const isDone = task.status === 'done';
+                      const isPending = task.status === 'pending';
+                      const isOverdue = task.due_date && new Date(task.due_date) < now && !isDone;
+
+                      return (
+                        <div key={task.id} className={`bg-white rounded-lg border p-3 ${isDone ? 'border-emerald-200 bg-emerald-50/30' : isOverdue ? 'border-red-200 bg-red-50/20' : 'border-gray-200'}`}>
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
+                                {task.stage && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{task.stage.name}</span>}
+                              </div>
+                              <h4 className="text-sm font-semibold text-gray-900">{task.title}</h4>
+                              {task.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>}
+                            </div>
+                            {isDone && <CheckSquare className="h-4 w-4 text-emerald-500 shrink-0" />}
+                            {isOverdue && <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                          </div>
+                          {task.assignee && (
+                            <div className="flex items-center gap-1.5 mb-2">
+                              <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>{getInitials(task.assignee.full_name)}</div>
+                              <span className="text-[10px] text-gray-500">{task.assignee.full_name}</span>
+                            </div>
+                          )}
+                          {task.due_date && (
+                            <div className={`flex items-center gap-1 mb-2 text-[10px] ${isOverdue ? 'text-red-600' : 'text-gray-500'}`}>
+                              <Clock className="h-3 w-3" />{new Date(task.due_date).toLocaleDateString('vi-VN')}
+                            </div>
+                          )}
+                          {clTotal > 0 && (
+                            <div className="mt-2">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[10px] text-gray-500">Checklist</span>
+                                <span className={`text-[10px] font-medium ${allClDone ? 'text-emerald-600' : 'text-gray-400'}`}>{clDone}/{clTotal}</span>
+                              </div>
+                              <div className="w-full h-1.5 bg-gray-100 rounded-full mb-1">
+                                <div className={`h-full rounded-full ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(clDone/clTotal)*100}%` }} />
+                              </div>
+                            </div>
+                          )}
+                          {!isDone && (
+                            <div className="flex gap-1 mt-2 pt-2 border-t">
+                              {isPending && <button onClick={() => startTask(task.id)} className="flex-1 h-7 bg-blue-50 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
+                              {!isPending && allClDone && <button onClick={() => markTaskDone(task.id)} className="flex-1 h-7 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer">✓ Hoàn thành</button>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }) : <div className="text-center py-8 text-xs text-gray-400">Không có công việc</div>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -349,123 +382,4 @@ export default function ProjectWorkflowPage() {
   }
 
   return null;
-}
-
-function TaskColumn({ task, checklists, stageColor, index, onToggleCheckItem, onSaveChecklistNote }) {
-  const clDone = checklists.filter(c => c.is_completed).length;
-  return (
-    <div className="shrink-0 w-80 flex flex-col">
-      <div className="rounded-t-xl p-3 border border-b-0 bg-white">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-white w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: stageColor }}>{index + 1}</span>
-            <h3 className="text-sm font-bold text-gray-900">{task.title}</h3>
-          </div>
-          <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
-        </div>
-        {task.assignee && (
-          <div className="flex items-center gap-1.5 mt-2">
-            <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>
-              {getInitials(task.assignee.full_name)}
-            </div>
-            <span className="text-[10px] text-gray-500">{task.assignee.full_name}</span>
-          </div>
-        )}
-        <div className="w-full h-1.5 bg-gray-100 rounded-full mt-2">
-          <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${checklists.length > 0 ? (clDone / checklists.length) * 100 : 0}%` }} />
-        </div>
-      </div>
-      <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ maxHeight: '60vh' }}>
-        {checklists.length > 0 ? checklists.map(cl => (
-          <ChecklistCard key={cl.id} checklist={cl} taskId={task.id} onToggle={() => onToggleCheckItem(task.id, cl.id, cl.is_completed)}
-            onSaveNote={(notes, files) => onSaveChecklistNote(task.id, cl.id, notes, files)} />
-        )) : <div className="text-center py-8 text-xs text-gray-400">Không có checklist</div>}
-      </div>
-    </div>
-  );
-}
-
-function ChecklistCard({ checklist, taskId, onToggle, onSaveNote }) {
-  const [expanded, setExpanded] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [noteText, setNoteText] = useState('');
-  const [noteFiles, setNoteFiles] = useState([]);
-  const [saving, setSaving] = useState(false);
-
-  const hasNotes = !!checklist.notes;
-  const hasFiles = checklist.attachments?.length > 0;
-
-  const startEdit = () => {
-    setNoteText(checklist.notes || '');
-    setNoteFiles(checklist.attachments || []);
-    setEditing(true);
-    setExpanded(true);
-  };
-
-  const save = async () => {
-    setSaving(true);
-    await onSaveNote(noteText, noteFiles);
-    setEditing(false);
-    setSaving(false);
-  };
-
-  return (
-    <div className={`bg-white rounded-lg border p-3 ${checklist.is_completed ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200'}`}>
-      <div className="flex items-start gap-2">
-        <button onClick={onToggle} className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 cursor-pointer ${
-          checklist.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 hover:border-blue-400'
-        }`}>
-          {checklist.is_completed && <CheckSquare className="h-3 w-3" />}
-        </button>
-        <div className="flex-1">
-          <div className="flex items-center gap-1">
-            <span className={`text-sm flex-1 ${checklist.is_completed ? 'line-through text-gray-400' : 'text-gray-700 font-medium'}`}>
-              {checklist.title}
-            </span>
-            <div className="flex gap-0.5">
-              {hasFiles && <Paperclip className="h-3 w-3 text-blue-400" />}
-              {hasNotes && <MessageSquare className="h-3 w-3 text-amber-400" />}
-              {(hasNotes || hasFiles) && !editing && (
-                <button onClick={() => setExpanded(!expanded)} className="text-gray-300 hover:text-blue-500 cursor-pointer">
-                  {expanded ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                </button>
-              )}
-              <button onClick={startEdit} className="text-gray-300 hover:text-blue-500 cursor-pointer">
-                <MessageSquare className="h-3 w-3" />
-              </button>
-            </div>
-          </div>
-          {expanded && (hasNotes || hasFiles) && !editing && (
-            <div className="mt-2 space-y-1">
-              {hasNotes && <p className="text-xs text-gray-600 bg-amber-50 rounded px-2 py-1">{checklist.notes}</p>}
-              {hasFiles && (
-                <div className="flex flex-wrap gap-1">
-                  {checklist.attachments.map((f, fi) => (
-                    <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
-                      className="text-[10px] text-blue-600 bg-blue-50 rounded px-1.5 py-0.5 flex items-center gap-0.5">
-                      <Paperclip className="h-2.5 w-2.5" />{f.file_name || 'file'}
-                    </a>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {editing && (
-            <div className="mt-2 space-y-2 bg-blue-50 rounded p-2">
-              <textarea value={noteText} onChange={e => setNoteText(e.target.value)}
-                className="w-full h-16 px-2 py-1 border rounded text-xs" placeholder="Ghi chú..." />
-              <FilePreview files={noteFiles} onRemove={i => setNoteFiles(f => f.filter((_, j) => j !== i))} small />
-              <div className="flex gap-2">
-                <FileUploadButton compact onFilesUploaded={files => setNoteFiles(prev => [...prev, ...files])} />
-                <button onClick={save} disabled={saving} className="h-6 px-2 bg-blue-600 text-white rounded text-[10px] cursor-pointer flex items-center gap-1">
-                  <Save className="h-2.5 w-2.5" />{saving ? '...' : 'Lưu'}
-                </button>
-                <button onClick={() => setEditing(false)} className="h-6 px-2 bg-gray-100 text-gray-600 rounded text-[10px] cursor-pointer">Hủy</button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
