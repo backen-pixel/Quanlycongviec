@@ -632,13 +632,20 @@ export default function ProjectWorkflowPage() {
 
     // If no stage selected, show stage tabs
     if (!selectedStage) {
-      // Group tasks by stage to show count
+      // Group tasks by stage to show count (use both id and slug for matching)
       const tasksByStage = {};
-      projectStages.forEach(s => { tasksByStage[s.slug] = []; });
+      projectStages.forEach(s => { 
+        tasksByStage[s.id] = []; 
+        if (s.slug) tasksByStage[s.slug] = tasksByStage[s.id]; // Alias
+      });
       tasks.forEach(t => {
-        const slug = t.stage?.slug || 'other';
-        if (tasksByStage[slug]) tasksByStage[slug].push(t);
-        else {
+        const stageId = t.stage?.id;
+        const slug = t.stage?.slug;
+        if (stageId && tasksByStage[stageId]) {
+          tasksByStage[stageId].push(t);
+        } else if (slug && tasksByStage[slug]) {
+          tasksByStage[slug].push(t);
+        } else {
           tasksByStage['other'] = tasksByStage['other'] || [];
           tasksByStage['other'].push(t);
         }
@@ -666,10 +673,10 @@ export default function ProjectWorkflowPage() {
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
               {projectStages.map(stage => {
-                const stageTasks = tasksByStage[stage.slug] || [];
+                const stageTasks = tasksByStage[stage.id] || tasksByStage[stage.slug] || [];
                 const doneCount = stageTasks.filter(t => t.status === 'done').length;
                 return (
-                  <button key={stage.slug} onClick={() => setSelectedStage(stage)}
+                  <button key={stage.id || stage.slug} onClick={() => setSelectedStage(stage)}
                     className="p-4 rounded-xl border-2 hover:shadow-lg transition-all cursor-pointer text-left"
                     style={{ borderColor: stage.color + '40', backgroundColor: stage.color + '08' }}>
                     <div className="w-3 h-3 rounded-full mb-2" style={{ backgroundColor: stage.color }} />
@@ -685,11 +692,12 @@ export default function ProjectWorkflowPage() {
     }
 
     // Stage selected: show task kanban (columns = tasks, cards = checklists)
-    const stageTasks = tasks.filter(t => t.stage?.slug === selectedStage.slug);
+    // Use stage.id for matching (more reliable than slug)
+    const stageTasks = tasks.filter(t => t.stage?.id === selectedStage.id || t.stage?.slug === selectedStage.slug);
     
-    console.log('[ProjectWorkflow] Selected stage:', selectedStage.slug, selectedStage.name);
+    console.log('[ProjectWorkflow] Selected stage:', selectedStage.id, selectedStage.slug, selectedStage.name);
     console.log('[ProjectWorkflow] Total tasks:', tasks.length);
-    console.log('[ProjectWorkflow] Tasks with stage:', tasks.map(t => ({ id: t.id, title: t.title, stageSlug: t.stage?.slug, stageName: t.stage?.name })));
+    console.log('[ProjectWorkflow] Tasks with stage:', tasks.map(t => ({ id: t.id, title: t.title, stageId: t.stage?.id, stageSlug: t.stage?.slug, stageName: t.stage?.name })));
     console.log('[ProjectWorkflow] Filtered stageTasks:', stageTasks.length);
     
     return (
