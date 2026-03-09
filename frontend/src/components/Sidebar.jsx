@@ -119,25 +119,20 @@ export default function Sidebar() {
   }, []);
 
   // Build workflow menu from DB stages (fallback to hardcoded)
-  // GỘP các stage giống nhau theo TÊN (name) thay vì slug
+  // KHÔNG GỘP — hiển thị tất cả stages riêng biệt
   const workflow = useMemo(() => {
     if (dbStages.length > 0) {
-      const uniqueMap = {};
-      dbStages.forEach(s => {
-        // Gộp theo tên, nếu chưa có thì tạo mới
-        if (!uniqueMap[s.name]) {
-          const isEmoji = s.icon && s.icon.charCodeAt(0) > 127;
-          uniqueMap[s.name] = {
-            to: `/stage/${s.slug}`, // Dùng slug đầu tiên làm link
-            icon: isEmoji ? null : (ICON_MAP[s.icon] || FolderKanban),
-            emoji: isEmoji ? s.icon : null,
-            label: s.name,
-            dot: s.color || '#3B82F6',
-            slug: s.slug, // Lưu slug đầu tiên
-          };
-        }
+      return dbStages.map(s => {
+        const isEmoji = s.icon && s.icon.charCodeAt(0) > 127;
+        return {
+          to: `/stage/${s.slug}`,
+          icon: isEmoji ? null : (ICON_MAP[s.icon] || FolderKanban),
+          emoji: isEmoji ? s.icon : null,
+          label: s.name,
+          dot: s.color || '#3B82F6',
+          slug: s.slug,
+        };
       });
-      return Object.values(uniqueMap);
     }
     return FALLBACK_WORKFLOW;
   }, [dbStages]);
