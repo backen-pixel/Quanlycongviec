@@ -690,7 +690,7 @@ export default function ProjectWorkflowPage() {
     const projectStages = selectedProject.projectStages || stages;
 
     // If no stage selected, show stage tabs
-    if (!selectedStage) {
+    // ALWAYS SHOW BOTH TABS AND TASKS
       // Group tasks by stage to show count (use both id and slug for matching)
       const tasksByStage = {};
       projectStages.forEach(s => { 
@@ -748,7 +748,7 @@ export default function ProjectWorkflowPage() {
           </div>
         </div>
       );
-    }
+    // End of stage grouping
 
     // Stage selected: show task kanban (columns = tasks, cards = checklists)
     // Use stage.id for matching (more reliable than slug)
@@ -773,6 +773,36 @@ export default function ProjectWorkflowPage() {
             </div>
           </div>
           <div className="text-sm text-gray-500">{stageTasks.length} nhiệm vụ</div>
+        </div>
+
+        {/* Stage Tabs - ALWAYS VISIBLE */}
+        <div className="bg-white rounded-xl border p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">
+            Quy trình dự án
+            {selectedProject.flowAssignments?.length > 0 && (
+              <span className="text-xs text-gray-500 ml-2">({projectStages.length} quy trình trong luồng)</span>
+            )}
+          </h3>
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {projectStages.map(stage => {
+              const stageTasks = tasksByStage[stage.id] || tasksByStage[stage.slug] || [];
+              const doneCount = stageTasks.filter(t => t.status === 'done').length;
+              const isActive = selectedStage?.id === stage.id;
+              return (
+                <button key={stage.id || stage.slug} onClick={() => setSelectedStage(stage)}
+                  className={`p-3 rounded-lg border-2 transition-all cursor-pointer text-left flex-shrink-0 min-w-[120px] ${
+                    isActive ? 'border-blue-500 bg-blue-50 shadow-md' : 'border-gray-200 hover:shadow-md'
+                  }`}
+                  style={{ borderTopColor: stage.color, borderTopWidth: '3px' }}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stage.color }} />
+                    <h4 className={`text-sm font-bold ${isActive ? 'text-blue-900' : 'text-gray-900'}`}>{stage.name}</h4>
+                  </div>
+                  <p className="text-xs text-gray-500">{doneCount}/{stageTasks.length} hoàn thành</p>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {loading ? (
