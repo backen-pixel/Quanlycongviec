@@ -159,14 +159,24 @@ export default function ProjectWorkflowPage() {
 
   const [filterDivision, setFilterDivision] = useState('all');
   const [filterCompany, setFilterCompany] = useState('all');
+  const [filterDepartment, setFilterDepartment] = useState('all');
+  const [filterTeam, setFilterTeam] = useState('all');
   const [filterEmployee, setFilterEmployee] = useState('all');
   const [filterSearch, setFilterSearch] = useState('');
+  const [filterTimeRange, setFilterTimeRange] = useState('all'); // 'all' | 'custom'
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
   const [selectedProject, setSelectedProject] = useState(null);
   const [tasks, setTasks] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [teams, setTeams] = useState([]);
 
-  useEffect(() => { loadData(); }, [filterDivision, filterCompany, filterEmployee]);
+  // Permission check for viewing all employees
+  const canViewAllEmployees = ['admin', 'manager', 'director', 'supervisor'].includes(user?.role);
+
+  useEffect(() => { loadData(); }, [filterDivision, filterCompany, filterDepartment, filterTeam, filterEmployee, filterTimeRange, filterDateFrom, filterDateTo]);
 
   const loadData = async () => {
     setLoading(true);
@@ -175,25 +185,67 @@ export default function ProjectWorkflowPage() {
       if (filterDivision !== 'all') params.division_id = filterDivision;
       if (filterCompany !== 'all') params.company_id = filterCompany;
 
-      const [projRes, empRes, compRes, divRes] = await Promise.all([
+      const [projRes, empRes, compRes, divRes, deptRes, teamRes] = await Promise.all([
         api.get('/projects', { params }),
         api.get('/users'),
         api.get('/companies'),
         api.get('/ecosystem/units', { params: { level_code: 'division' } }),
+        api.get('/departments').catch(() => ({ data: { departments: [] } })),
+        api.get('/ecosystem/units', { params: { level_code: 'team' } }).catch(() => ({ data: { units: [] } })),
       ]);
 
       let allProjects = projRes.data.projects || [];
       
+      // Filter by employee (if not viewing all employees AND user is not admin/manager/supervisor)
       if (filterEmployee !== 'all') {
         const { data: empTasks } = await api.get('/tasks', { params: { assignee_id: filterEmployee } });
         const empProjectIds = new Set((empTasks.tasks || []).map(t => t.project_id));
         allProjects = allProjects.filter(p => empProjectIds.has(p.id));
+      } else if (!canViewAllEmployees) {
+        // Regular employee can only see their own projects
+        const { data: myTasks } = await api.get('/tasks', { params: { assignee_id: user.userId } });
+        const myProjectIds = new Set((myTasks.tasks || []).map(t => t.project_id));
+        allProjects = allProjects.filter(p => myProjectIds.has(p.id));
+      }
+
+      // Filter by time range
+      if (filterTimeRange === 'custom' && (filterDateFrom || filterDateTo)) {
+        allProjects = allProjects.filter(p => {
+          const createdAt = p.created_at ? new Date(p.created_at) : null;
+          if (!createdAt) return false;
+          if (filterDateFrom && createdAt < new Date(filterDateFrom)) return false;
+          if (filterDateTo) {
+            const endDate = new Date(filterDateTo);
+            endDate.setHours(23, 59, 59, 999);
+            if (createdAt > endDate) return false;
+          }
+          return true;
+        });
+      }
+
+      // Filter by department
+      if (filterDepartment !== 'all') {
+        allProjects = allProjects.filter(p => {
+          // Assuming projects have a department_id or we need to check via company
+          // For now, we'll filter via assigned users' departments
+          return true; // TODO: Implement department filter logic
+        });
+      }
+
+      // Filter by team
+      if (filterTeam !== 'all') {
+        allProjects = allProjects.filter(p => {
+          // TODO: Implement team filter logic
+          return true;
+        });
       }
 
       setProjects(allProjects);
       setEmployees(empRes.data.users || []);
       setCompanies(compRes.data.companies || []);
       setDivisions(divRes.data.units || []);
+      setDepartments(deptRes.data.departments || []);
+      setTeams(teamRes.data.units || []);
     } catch (e) {
       console.error(e);
     }
@@ -315,31 +367,136 @@ export default function ProjectWorkflowPage() {
 
         {showFilters && (
           <div className="bg-white rounded-xl border p-4 space-y-3">
+            {/* Search */}
             <div className="flex items-center gap-2">
               <Search className="h-4 w-4 text-gray-400" />
               <input type="text" value={filterSearch} onChange={e => setFilterSearch(e.target.value)}
-                placeholder="Tìm tên dự án..." className="flex-1 h-9 px-3 border rounded-lg text-sm" />
+                placeholder="Tìm tên dự án, mã DA, khách hàng..." className="flex-1 h-9 px-3 border rounded-lg text-sm" />
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Building2 className="h-4 w-4 text-gray-400" />
-              <select value={filterDivision} onChange={e => { setFilterDivision(e.target.value); setFilterCompany('all'); }}
-                className="h-9 px-3 border rounded-lg text-sm bg-white">
-                <option value="all">Tất cả Khối</option>
-                {divisions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-              <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)}
-                className="h-9 px-3 border rounded-lg text-sm bg-white">
-                <option value="all">Tất cả Công ty</option>
-                {companies.filter(c => filterDivision === 'all' || c.division_unit_id === filterDivision).map(c =>
-                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                )}
-              </select>
-              <Users className="h-4 w-4 text-gray-400" />
-              <select value={filterEmployee} onChange={e => setFilterEmployee(e.target.value)}
-                className="h-9 px-3 border rounded-lg text-sm bg-white">
-                <option value="all">Tất cả Nhân viên</option>
-                {employees.map(e => <option key={e.id} value={e.id}>{e.full_name}</option>)}
-              </select>
+
+            {/* Time range filter */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Thời gian</label>
+                <select value={filterTimeRange} onChange={e => setFilterTimeRange(e.target.value)}
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-white">
+                  <option value="all">Tất cả</option>
+                  <option value="custom">Tùy chỉnh</option>
+                </select>
+              </div>
+              {filterTimeRange === 'custom' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Từ ngày</label>
+                    <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
+                      className="w-full h-9 px-3 border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Đến ngày</label>
+                    <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
+                      className="w-full h-9 px-3 border rounded-lg text-sm" />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Hierarchy filters */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                  <Building2 className="h-3 w-3" /> Khối
+                </label>
+                <select value={filterDivision} onChange={e => { setFilterDivision(e.target.value); setFilterCompany('all'); setFilterDepartment('all'); setFilterTeam('all'); }}
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-white">
+                  <option value="all">Tất cả Khối</option>
+                  {divisions.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                  <Building2 className="h-3 w-3" /> Công ty
+                </label>
+                <select value={filterCompany} onChange={e => { setFilterCompany(e.target.value); setFilterDepartment('all'); setFilterTeam('all'); }}
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-white" disabled={filterDivision === 'all'}>
+                  <option value="all">Tất cả Công ty</option>
+                  {companies.filter(c => filterDivision === 'all' || c.division_unit_id === filterDivision).map(c => (
+                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                  <Users className="h-3 w-3" /> Phòng ban
+                </label>
+                <select value={filterDepartment} onChange={e => { setFilterDepartment(e.target.value); setFilterTeam('all'); }}
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-white" disabled={filterCompany === 'all'}>
+                  <option value="all">Tất cả Phòng ban</option>
+                  {departments.filter(d => filterCompany === 'all' || d.company_id === filterCompany).map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                  <Users className="h-3 w-3" /> Nhóm
+                </label>
+                <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-white" disabled={filterDepartment === 'all'}>
+                  <option value="all">Tất cả Nhóm</option>
+                  {teams.filter(t => filterDepartment === 'all' || t.parent_id === filterDepartment).map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Employee filter - only for admin/manager/supervisor */}
+            {canViewAllEmployees && (
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                  <User className="h-3 w-3" /> Nhân viên
+                </label>
+                <select value={filterEmployee} onChange={e => setFilterEmployee(e.target.value)}
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-white">
+                  <option value="all">Tất cả nhân viên</option>
+                  {employees.map(e => (
+                    <option key={e.id} value={e.id}>{e.full_name || e.email}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Permission notice for regular employees */}
+            {!canViewAllEmployees && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
+                <Eye className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                <div className="text-xs text-blue-900">
+                  <p className="font-medium">Chế độ xem nhân viên</p>
+                  <p className="text-blue-700 mt-0.5">Bạn chỉ thấy dự án được giao cho mình. Giám đốc/Quản lý/Giám sát mới xem được tất cả.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Clear filters */}
+            <div className="flex justify-end pt-2 border-t">
+              <button onClick={() => {
+                setFilterDivision('all');
+                setFilterCompany('all');
+                setFilterDepartment('all');
+                setFilterTeam('all');
+                setFilterEmployee('all');
+                setFilterSearch('');
+                setFilterTimeRange('all');
+                setFilterDateFrom('');
+                setFilterDateTo('');
+              }} className="h-8 px-3 text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1">
+                <X className="h-3 w-3" /> Xóa bộ lọc
+              </button>
             </div>
           </div>
         )}
