@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { FolderKanban, CheckSquare, AlertTriangle, TrendingUp, ArrowRight } from 'lucide-react';
-import { STATUS_LABELS, STATUS_COLORS, formatVND } from '../lib/utils';
+import { useAuth } from '../lib/auth';
+import { 
+  FolderKanban, CheckSquare, AlertTriangle, TrendingUp, ArrowRight, 
+  Clock, Calendar, ChevronRight, User, Flag, AlertCircle
+} from 'lucide-react';
+import { STATUS_LABELS, STATUS_COLORS, formatVND, formatDate, getInitials, avatarColor, PRIORITY_COLORS, PRIORITY_LABELS } from '../lib/utils';
 
 function StatCard({ title, value, icon: Icon, color, bgColor }) {
   return (
@@ -65,7 +70,7 @@ function RecentProjects({ projects }) {
       </div>
       <div className="divide-y divide-gray-100">
         {projects.map(p => (
-          <div key={p.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0 hover:bg-gray-50 -mx-2 px-2 rounded-lg transition-colors cursor-pointer">
+          <Link to={`/projects/${p.id}`} key={p.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0 hover:bg-gray-50 -mx-2 px-2 rounded-lg transition-colors cursor-pointer">
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-xs font-bold text-blue-600">{p.code}</span>
@@ -79,23 +84,142 @@ function RecentProjects({ projects }) {
             <div className="text-right shrink-0 ml-4">
               <p className="text-sm font-semibold text-gray-900">{formatVND(p.estimated_value)}</p>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
     </div>
   );
 }
 
+function MyTasksToday({ tasks, loading }) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  // Categorize tasks
+  const overdue = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < today);
+  const dueToday = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) >= today && new Date(t.due_date) < tomorrow);
+  const highPriority = tasks.filter(t => t.status !== 'done' && t.priority === 'high');
+  const inProgress = tasks.filter(t => t.status === 'in_progress');
+
+  const renderTaskList = (taskList, title, IconComponent, color, emptyMsg) => {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center py-8">
+          <svg className="animate-spin h-5 w-5 text-gray-400" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mb-6 last:mb-0">
+        <div className="flex items-center gap-2 mb-3">
+          <IconComponent className={`h-4 w-4 ${color}`} />
+          <h3 className="text-sm font-bold text-gray-900">{title}</h3>
+          <span className="text-xs font-medium text-gray-400">({taskList.length})</span>
+        </div>
+        {taskList.length === 0 ? (
+          <p className="text-xs text-gray-400 py-4 text-center bg-gray-50 rounded-lg">{emptyMsg}</p>
+        ) : (
+          <div className="space-y-2">
+            {taskList.map(task => (
+              <Link to={`/projects/${task.project_id}`} key={task.id}
+                className="block bg-white border border-gray-200 rounded-lg p-3 hover:border-blue-300 hover:shadow-sm transition-all group">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      {task.priority && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${PRIORITY_COLORS[task.priority]}`}>
+                          {PRIORITY_LABELS[task.priority]}
+                        </span>
+                      )}
+                      {task.stage && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: task.stage.color + '20', color: task.stage.color }}>
+                          {task.stage.name}
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="text-sm font-semibold text-gray-900 mb-1 group-hover:text-blue-600">{task.title}</h4>
+                    <div className="flex items-center gap-3 text-xs text-gray-500">
+                      {task.project && (
+                        <span className="flex items-center gap-1">
+                          <FolderKanban className="h-3 w-3" />
+                          {task.project.code}
+                        </span>
+                      )}
+                      {task.due_date && (
+                        <span className={`flex items-center gap-1 ${new Date(task.due_date) < now && task.status !== 'done' ? 'text-red-600 font-medium' : ''}`}>
+                          <Calendar className="h-3 w-3" />
+                          {formatDate(task.due_date)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-blue-500 shrink-0 mt-1" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 animate-fade-in">
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+          <CheckSquare className="h-4 w-4 text-blue-600" />
+          Công việc của tôi
+        </h2>
+        <Link to="/tasks" className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+          Xem tất cả <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+
+      {renderTaskList(overdue, 'Quá hạn', AlertCircle, 'text-red-600', 'Không có task quá hạn! 🎉')}
+      {renderTaskList(dueToday, 'Hạn hôm nay', Clock, 'text-orange-600', 'Không có task hạn hôm nay')}
+      {renderTaskList(highPriority, 'Ưu tiên cao', Flag, 'text-purple-600', 'Không có task ưu tiên cao')}
+      {renderTaskList(inProgress, 'Đang làm', PlayCircle, 'text-blue-600', 'Chưa bắt đầu task nào')}
+    </div>
+  );
+}
+
+function PlayCircle(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polygon points="10 8 16 12 10 16 10 8"/>
+    </svg>
+  );
+}
+
 export default function Dashboard() {
+  const { user } = useAuth();
   const [data, setData] = useState(null);
+  const [myTasks, setMyTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tasksLoading, setTasksLoading] = useState(true);
 
   useEffect(() => {
+    // Load dashboard stats
     api.get('/dashboard')
       .then(r => setData(r.data))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+
+    // Load my tasks
+    if (user?.id) {
+      api.get('/tasks', { params: { assignee_id: user.id } })
+        .then(r => setMyTasks(r.data.tasks || []))
+        .catch(() => {})
+        .finally(() => setTasksLoading(false));
+    }
+  }, [user?.id]);
 
   if (loading) {
     return (
@@ -133,6 +257,9 @@ export default function Dashboard() {
         <StatCard title="Task đang làm" value={taskCounts?.in_progress} icon={CheckSquare} color="text-emerald-600" bgColor="bg-emerald-50" />
         <StatCard title="Quá hạn" value={stats?.overdueCount} icon={AlertTriangle} color="text-red-600" bgColor="bg-red-50" />
       </div>
+
+      {/* My Tasks Today (NEW - PRIORITY SECTION) */}
+      <MyTasksToday tasks={myTasks} loading={tasksLoading} />
 
       {/* Pipeline + Recent */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
