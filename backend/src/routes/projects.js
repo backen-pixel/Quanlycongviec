@@ -150,13 +150,19 @@ r.get('/', async (req, res) => {
     const isPrivileged = ['admin', 'manager', 'director'].includes(userData?.role);
     
     if (!canViewAll && !isPrivileged) {
+      // Get projects where user is assigned to tasks
+      const { data: assignedTasks } = await supabase
+        .from('tasks')
+        .select('project_id')
+        .eq('assignee_id', userId);
+      
+      const assignedProjectIds = [...new Set((assignedTasks || []).map(t => t.project_id).filter(Boolean))];
+      
       // Get accessible units using new middleware
       const accessibleUnits = await getAccessibleUnits(userId);
       
-      if (accessibleUnits.length === 0) {
-        // Fallback: show only user's own projects (created_by or responsible)
-        q = q.or(`created_by.eq.${userId},responsible_person_id.eq.${userId},sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`);
-      } else {
+      let companyIds = [];
+      if (accessibleUnits.length > 0) {
         // Get company_ids from accessible units
         const { data: units } = await supabase
           .from('ecosystem_units')
@@ -164,14 +170,29 @@ r.get('/', async (req, res) => {
           .in('id', accessibleUnits)
           .not('company_id', 'is', null);
         
-        const companyIds = [...new Set((units || []).map(u => u.company_id).filter(Boolean))];
-        
-        if (companyIds.length > 0) {
-          q = q.in('company_id', companyIds);
-        } else {
-          // No companies found → fallback to user's own projects
-          q = q.or(`created_by.eq.${userId},responsible_person_id.eq.${userId},sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`);
-        }
+        companyIds = [...new Set((units || []).map(u => u.company_id).filter(Boolean))];
+      }
+      
+      // Build combined filter:
+      // 1. Projects in accessible companies (if any)
+      // 2. OR projects where user is team member
+      // 3. OR projects where user has assigned tasks
+      const teamFilter = `created_by.eq.${userId},responsible_person_id.eq.${userId},sales_person_id.eq.${userId},designer_id.eq.${userId},project_manager_id.eq.${userId}`;
+      
+      if (companyIds.length > 0 && assignedProjectIds.length > 0) {
+        // Has both company access AND assigned tasks
+        // Show: company projects OR team projects OR assigned projects
+        const allProjectIds = assignedProjectIds;
+        q = q.or(`company_id.in.(${companyIds.join(',')}),${teamFilter},id.in.(${allProjectIds.join(',')})`);
+      } else if (companyIds.length > 0) {
+        // Has company access but no assigned tasks
+        q = q.or(`company_id.in.(${companyIds.join(',')}),${teamFilter}`);
+      } else if (assignedProjectIds.length > 0) {
+        // No company access but has assigned tasks
+        q = q.or(`${teamFilter},id.in.(${assignedProjectIds.join(',')})`);
+      } else {
+        // No company access, no assigned tasks → only team projects
+        q = q.or(teamFilter);
       }
     }
 
