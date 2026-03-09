@@ -169,7 +169,9 @@ export default function ProjectWorkflowPage() {
   const [showFilters, setShowFilters] = useState(false);
 
   const [selectedProject, setSelectedProject] = useState(null);
+  const [selectedStage, setSelectedStage] = useState(null); // NEW: selected stage tab
   const [tasks, setTasks] = useState([]);
+  const [stages, setStages] = useState([]); // All workflow stages
   const [departments, setDepartments] = useState([]);
   const [teams, setTeams] = useState([]);
 
@@ -185,13 +187,14 @@ export default function ProjectWorkflowPage() {
       if (filterDivision !== 'all') params.division_id = filterDivision;
       if (filterCompany !== 'all') params.company_id = filterCompany;
 
-      const [projRes, empRes, compRes, divRes, deptRes, teamRes] = await Promise.all([
+      const [projRes, empRes, compRes, divRes, deptRes, teamRes, stagesRes] = await Promise.all([
         api.get('/projects', { params }),
         api.get('/users'),
         api.get('/companies'),
         api.get('/ecosystem/units', { params: { level_code: 'division' } }),
         api.get('/departments').catch(() => ({ data: { departments: [] } })),
         api.get('/ecosystem/units', { params: { level_code: 'team' } }).catch(() => ({ data: { units: [] } })),
+        api.get('/users/stages').catch(() => ({ data: { stages: [] } })),
       ]);
 
       let allProjects = projRes.data.projects || [];
@@ -246,6 +249,7 @@ export default function ProjectWorkflowPage() {
       setDivisions(divRes.data.units || []);
       setDepartments(deptRes.data.departments || []);
       setTeams(teamRes.data.units || []);
+      setStages((stagesRes.data.stages || []).sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
     } catch (e) {
       console.error(e);
     }
@@ -513,94 +517,142 @@ export default function ProjectWorkflowPage() {
             <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
             <p className="text-sm text-gray-500">Không có dự án</p>
           </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredProjects.map(proj => (
-              <div key={proj.id} className="bg-white rounded-xl border hover:shadow-lg transition p-4 cursor-pointer" onClick={() => selectProject(proj)}>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs font-bold text-blue-600">{proj.code}</span>
-                </div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-2">{proj.name}</h3>
-                {proj.customers?.full_name && <p className="text-xs text-gray-500">👤 {proj.customers.full_name}</p>}
-                {proj.company && <p className="text-xs text-indigo-600 mt-1">🏢 {proj.company.short_name || proj.company.name}</p>}
-                <div className="flex items-center justify-between pt-2 border-t mt-2">
-                  <span className="text-xs text-gray-500">Click xem chi tiết</span>
-                  <ChevronRight className="h-4 w-4 text-gray-400" />
-                </div>
-              </div>
-            ))}
-          </div>
         ) : (
-          <div className="bg-white rounded-xl border">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Mã DA</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Tên</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Khách hàng</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Công ty</th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filteredProjects.map(proj => (
-                  <tr key={proj.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => selectProject(proj)}>
-                    <td className="px-4 py-3"><span className="text-sm font-semibold text-blue-600">{proj.code}</span></td>
-                    <td className="px-4 py-3 text-sm text-gray-900">{proj.name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{proj.customers?.full_name || '-'}</td>
-                    <td className="px-4 py-3 text-xs text-indigo-600">{proj.company?.short_name || proj.company?.name || '-'}</td>
-                    <td className="px-4 py-3 text-right"><ChevronRight className="h-4 w-4 text-gray-400 inline" /></td>
-                  </tr>
+          /* Status-based Kanban for PROJECTS */
+          (() => {
+            const STATUS_COLUMNS = [
+              { id: 'pending', label: 'Đang chờ', color: '#6b7280', statuses: ['consulting', 'designing', 'quoting'] },
+              { id: 'processing', label: 'Chờ xử lý', color: '#f59e0b', statuses: ['contract_signed'] },
+              { id: 'working', label: 'Đang làm', color: '#3b82f6', statuses: ['producing', 'shipping', 'installing'] },
+              { id: 'review', label: 'Chờ kiểm tra', color: '#8b5cf6', statuses: [] }, // Custom logic
+              { id: 'done', label: 'Hoàn thành', color: '#10b981', statuses: ['completed'] },
+              { id: 'blocked', label: 'Bị chặn', color: '#ef4444', statuses: [] }, // Custom logic
+              { id: 'paused', label: 'Tạm hoãn', color: '#64748b', statuses: ['on_hold'] },
+            ];
+
+            const projectsByStatus = {};
+            STATUS_COLUMNS.forEach(col => { projectsByStatus[col.id] = []; });
+
+            filteredProjects.forEach(proj => {
+              const status = proj.status || 'consulting';
+              let placed = false;
+              
+              STATUS_COLUMNS.forEach(col => {
+                if (col.statuses.includes(status)) {
+                  projectsByStatus[col.id].push(proj);
+                  placed = true;
+                }
+              });
+              
+              if (!placed) projectsByStatus['pending'].push(proj); // Default fallback
+            });
+
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+                {STATUS_COLUMNS.map(col => (
+                  <div key={col.id} className="flex flex-col">
+                    <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '3px' }}>
+                      <div className="flex items-center justify-between mb-1">
+                        <h3 className="text-sm font-bold text-gray-900">{col.label}</h3>
+                        <span className="text-xs font-medium text-gray-400">{projectsByStatus[col.id].length}</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '400px', maxHeight: '70vh' }}>
+                      {projectsByStatus[col.id].map(proj => (
+                        <div key={proj.id} onClick={() => selectProject(proj)}
+                          className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md hover:border-blue-300 transition-all cursor-pointer">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-bold text-blue-600">{proj.code}</span>
+                          </div>
+                          <h3 className="text-sm font-semibold text-gray-900 mb-2 line-clamp-2">{proj.name}</h3>
+                          {proj.customers?.full_name && <p className="text-xs text-gray-500 mb-1">👤 {proj.customers.full_name}</p>}
+                          {proj.company && <p className="text-[10px] text-indigo-600 font-medium">🏢 {proj.company.short_name || proj.company.name}</p>}
+                          {proj.current_stage && (
+                            <div className="mt-2 pt-2 border-t">
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{proj.current_stage.name}</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {projectsByStatus[col.id].length === 0 && (
+                        <div className="flex items-center justify-center h-32 text-xs text-gray-300">Trống</div>
+                      )}
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </div>
+            );
+          })()
         )}
       </div>
     );
   }
 
   if (view === 'kanban' && selectedProject) {
-    // Group tasks by stage (Tư vấn, Thiết kế, Báo giá...)
-    const stageGroups = {};
-    tasks.forEach(t => {
-      const stageSlug = t.stage?.slug || 'other';
-      if (!stageGroups[stageSlug]) {
-        stageGroups[stageSlug] = {
-          stage: t.stage || { name: 'Khác', color: '#6b7280', order_index: 999 },
-          tasks: []
-        };
-      }
-      stageGroups[stageSlug].tasks.push(t);
-    });
-
-    // Sort stages by order_index
-    const sortedStages = Object.values(stageGroups).sort((a, b) => 
-      (a.stage.order_index || 0) - (b.stage.order_index || 0)
-    );
-
-    // Sort tasks within each stage
-    sortedStages.forEach(sg => {
-      sg.tasks.sort((a, b) => {
-        const aOrder = a.order_index || 0;
-        const bOrder = b.order_index || 0;
-        if (aOrder !== bOrder) return aOrder - bOrder;
-        if (a.due_date && b.due_date) return new Date(a.due_date) - new Date(b.due_date);
-        return 0;
+    // If no stage selected, show stage tabs
+    if (!selectedStage) {
+      // Group tasks by stage to show count
+      const tasksByStage = {};
+      stages.forEach(s => { tasksByStage[s.slug] = []; });
+      tasks.forEach(t => {
+        const slug = t.stage?.slug || 'other';
+        if (tasksByStage[slug]) tasksByStage[slug].push(t);
+        else tasksByStage['other'] = tasksByStage['other'] || [];
+        tasksByStage['other'].push(t);
       });
-    });
 
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <button onClick={backToProjects} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer">
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <div className="flex-1">
+              <h1 className="text-xl font-bold text-gray-900">{selectedProject.code} — {selectedProject.name}</h1>
+              <p className="text-sm text-gray-500">{selectedProject.customers?.full_name || ''}</p>
+            </div>
+          </div>
+
+          {/* Stage Tabs */}
+          <div className="bg-white rounded-xl border p-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Chọn quy trình để xem chi tiết</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+              {stages.map(stage => {
+                const stageTasks = tasksByStage[stage.slug] || [];
+                const doneCount = stageTasks.filter(t => t.status === 'done').length;
+                return (
+                  <button key={stage.slug} onClick={() => setSelectedStage(stage)}
+                    className="p-4 rounded-xl border-2 hover:shadow-lg transition-all cursor-pointer text-left"
+                    style={{ borderColor: stage.color + '40', backgroundColor: stage.color + '08' }}>
+                    <div className="w-3 h-3 rounded-full mb-2" style={{ backgroundColor: stage.color }} />
+                    <h4 className="text-sm font-bold text-gray-900 mb-1">{stage.name}</h4>
+                    <p className="text-xs text-gray-500">{doneCount}/{stageTasks.length} hoàn thành</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Stage selected: show task kanban (columns = tasks, cards = checklists)
+    const stageTasks = tasks.filter(t => t.stage?.slug === selectedStage.slug);
+    
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-3">
-          <button onClick={backToProjects} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer">
+          <button onClick={() => setSelectedStage(null)} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer">
             <ArrowLeft className="h-4 w-4" />
           </button>
           <div className="flex-1">
             <h1 className="text-xl font-bold text-gray-900">{selectedProject.code} — {selectedProject.name}</h1>
-            <p className="text-sm text-gray-500">{selectedProject.customers?.full_name || ''}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="w-2 h-4 rounded-full" style={{ backgroundColor: selectedStage.color }} />
+              <p className="text-sm font-medium" style={{ color: selectedStage.color }}>{selectedStage.name}</p>
+            </div>
           </div>
-          <div className="text-sm text-gray-500">{tasks.length} công việc</div>
+          <div className="text-sm text-gray-500">{stageTasks.length} nhiệm vụ</div>
         </div>
 
         {loading ? (
@@ -610,25 +662,68 @@ export default function ProjectWorkflowPage() {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
             </svg>
           </div>
+        ) : stageTasks.length === 0 ? (
+          <div className="text-center py-16 bg-white rounded-xl border">
+            <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-500">Chưa có nhiệm vụ trong quy trình này</p>
+          </div>
         ) : (
+          /* Task Kanban: Each column = 1 task, cards = checklists */
           <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: '500px' }}>
-            {sortedStages.map(({ stage, tasks: stageTasks }) => {
-              const doneCount = stageTasks.filter(t => t.status === 'done').length;
+            {stageTasks.map(task => {
+              const checklists = task.checklists || [];
+              const clDone = checklists.filter(c => c.is_completed).length;
               return (
-                <div key={stage.slug || 'other'} className="shrink-0 w-80 flex flex-col">
-                  <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: stage.color, borderTopWidth: '3px' }}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-6 rounded-full" style={{ backgroundColor: stage.color }} />
-                        <h3 className="text-sm font-bold text-gray-900">{stage.name}</h3>
-                      </div>
-                      <span className="text-xs font-medium text-gray-400">{doneCount}/{stageTasks.length}</span>
+                <div key={task.id} className="shrink-0 w-80 flex flex-col">
+                  <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: selectedStage.color, borderTopWidth: '3px' }}>
+                    <div className="mb-2">
+                      <h3 className="text-sm font-bold text-gray-900 mb-1">{task.title}</h3>
+                      {task.description && <p className="text-xs text-gray-500 line-clamp-2">{task.description}</p>}
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-500">Checklist: {clDone}/{checklists.length}</span>
+                      {task.assignee && (
+                        <div className="flex items-center gap-1">
+                          <div className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>
+                            {getInitials(task.assignee.full_name)}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ maxHeight: '70vh' }}>
-                    {stageTasks.map(task => <TaskCard key={task.id} task={task} onToggle={toggleCheckItem} onSaveNote={saveChecklistNote} onStart={startTask} onDone={markTaskDone} />)}
-                    {stageTasks.length === 0 && (
-                      <div className="flex items-center justify-center h-32 text-xs text-gray-300">Chưa có nhiệm vụ</div>
+                    {checklists.map(cl => (
+                      <div key={cl.id} className={`bg-white rounded-lg border p-3 ${cl.is_completed ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200'}`}>
+                        <div className="flex items-start gap-2">
+                          <button onClick={() => toggleCheckItem(task.id, cl.id, cl.is_completed)}
+                            className={`shrink-0 w-4 h-4 mt-0.5 rounded border-2 flex items-center justify-center cursor-pointer ${
+                              cl.is_completed ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 bg-white hover:border-blue-400'
+                            }`}>
+                            {cl.is_completed && <CheckSquare className="h-3 w-3 text-white" />}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-xs font-medium ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-900'}`}>{cl.title}</p>
+                            {cl.notes && (
+                              <div className="mt-1 text-[10px] text-gray-500 bg-gray-50 rounded px-2 py-1 border">
+                                {cl.notes}
+                              </div>
+                            )}
+                            {cl.attachments?.length > 0 && (
+                              <div className="mt-1 flex gap-1 flex-wrap">
+                                {cl.attachments.map((att, i) => (
+                                  <a key={i} href={att} target="_blank" rel="noopener noreferrer"
+                                    className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
+                                    <Paperclip className="h-2.5 w-2.5 inline" /> File {i+1}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {checklists.length === 0 && (
+                      <div className="flex items-center justify-center h-32 text-xs text-gray-300">Chưa có checklist</div>
                     )}
                   </div>
                 </div>
