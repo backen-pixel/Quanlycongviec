@@ -591,58 +591,58 @@ export default function ProjectWorkflowPage() {
             });
 
             return (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {STATUS_COLUMNS.map(col => (
-                  <div key={col.id} className="flex flex-col">
-                    <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '3px' }}>
+                  <div key={col.id} className="flex flex-col min-w-[320px]">
+                    <div className="rounded-t-xl p-4 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
                       <div className="flex items-center justify-between mb-1">
-                        <h3 className="text-sm font-bold text-gray-900">{col.label}</h3>
-                        <span className="text-xs font-medium text-gray-400">{projectsByStatus[col.id].length}</span>
+                        <h3 className="text-base font-bold text-gray-900">{col.label}</h3>
+                        <span className="text-sm font-medium text-gray-400">{projectsByStatus[col.id].length}</span>
                       </div>
                     </div>
-                    <div className="flex-1 rounded-b-xl border p-2 space-y-3 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '400px', maxHeight: '70vh' }}>
+                    <div className="flex-1 rounded-b-xl border p-3 space-y-3 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '500px', maxHeight: '75vh' }}>
                       {projectsByStatus[col.id].map(proj => (
                         <div key={proj.id} onClick={() => selectProject(proj)}
-                          className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg hover:border-blue-400 transition-all cursor-pointer group">
+                          className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-lg hover:border-blue-400 transition-all cursor-pointer group">
                           {/* Header: Code + Stage */}
-                          <div className="flex items-start justify-between gap-2 mb-3">
-                            <span className="text-sm font-bold text-blue-600 flex-shrink-0">{proj.code}</span>
+                          <div className="flex items-start justify-between gap-2 mb-4">
+                            <span className="text-base font-bold text-blue-600 flex-shrink-0">{proj.code}</span>
                             {proj.current_stage && (
-                              <span className="text-[10px] px-2 py-1 rounded-full font-medium" style={{ backgroundColor: proj.current_stage.color + '20', color: proj.current_stage.color }}>
+                              <span className="text-xs px-2.5 py-1 rounded-full font-semibold" style={{ backgroundColor: proj.current_stage.color + '20', color: proj.current_stage.color }}>
                                 {proj.current_stage.name}
                               </span>
                             )}
                           </div>
                           
                           {/* Project Name */}
-                          <h3 className="text-base font-bold text-gray-900 mb-3 line-clamp-2 leading-tight">{proj.name}</h3>
+                          <h3 className="text-lg font-bold text-gray-900 mb-4 line-clamp-2 leading-snug">{proj.name}</h3>
                           
                           {/* Customer */}
                           {proj.customers?.full_name && (
-                            <div className="flex items-center gap-2 mb-2">
-                              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                            <div className="flex items-center gap-3 mb-3 p-2 rounded-lg bg-gray-50">
+                              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
                                 {proj.customers.full_name.charAt(0).toUpperCase()}
                               </div>
                               <div className="min-w-0 flex-1">
-                                <p className="text-sm font-semibold text-gray-900 truncate">{proj.customers.full_name}</p>
-                                {proj.customers.phone && <p className="text-xs text-gray-500">{proj.customers.phone}</p>}
+                                <p className="text-sm font-bold text-gray-900 truncate">{proj.customers.full_name}</p>
+                                {proj.customers.phone && <p className="text-xs text-gray-500 mt-0.5">{proj.customers.phone}</p>}
                               </div>
                             </div>
                           )}
                           
                           {/* Company */}
                           {proj.company && (
-                            <div className="flex items-center gap-2 mb-2 p-2 rounded-lg bg-indigo-50">
-                              <Building2 className="h-4 w-4 text-indigo-600 flex-shrink-0" />
-                              <span className="text-xs font-semibold text-indigo-900 truncate">{proj.company.short_name || proj.company.name}</span>
+                            <div className="flex items-center gap-2 mb-3 p-2.5 rounded-lg bg-indigo-50 border border-indigo-100">
+                              <Building2 className="h-5 w-5 text-indigo-600 flex-shrink-0" />
+                              <span className="text-sm font-bold text-indigo-900 truncate">{proj.company.short_name || proj.company.name}</span>
                             </div>
                           )}
                           
                           {/* Deadline */}
                           {proj.deadline && (
-                            <div className="flex items-center gap-2 mt-2 text-xs">
-                              <Calendar className="h-3.5 w-3.5 text-gray-400" />
-                              <span className={`font-medium ${new Date(proj.deadline) < new Date() ? 'text-red-600' : 'text-gray-600'}`}>
+                            <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-orange-50 border border-orange-100">
+                              <Calendar className="h-4 w-4 text-orange-600" />
+                              <span className={`text-sm font-semibold ${new Date(proj.deadline) < new Date() ? 'text-red-600' : 'text-orange-900'}`}>
                                 {formatDate(proj.deadline)}
                               </span>
                             </div>
@@ -650,18 +650,18 @@ export default function ProjectWorkflowPage() {
                           
                           {/* Responsible Person */}
                           {proj.responsible_person && (
-                            <div className="flex items-center gap-2 mt-2">
-                              <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold" style={{ backgroundColor: avatarColor(proj.responsible_person.full_name) }}>
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: avatarColor(proj.responsible_person.full_name) }}>
                                 {getInitials(proj.responsible_person.full_name)}
                               </div>
-                              <span className="text-xs text-gray-600 truncate">{proj.responsible_person.full_name}</span>
+                              <span className="text-sm font-medium text-gray-700 truncate">{proj.responsible_person.full_name}</span>
                             </div>
                           )}
                           
                           {/* Value */}
                           {proj.estimated_value && (
-                            <div className="mt-3 pt-3 border-t border-gray-100">
-                              <p className="text-sm font-bold text-green-600">{formatVND(proj.estimated_value)}</p>
+                            <div className="mt-4 pt-4 border-t border-gray-100">
+                              <p className="text-base font-bold text-green-600">{formatVND(proj.estimated_value)}</p>
                             </div>
                           )}
                         </div>
