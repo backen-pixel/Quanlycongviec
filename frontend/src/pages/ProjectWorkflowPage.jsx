@@ -9,6 +9,142 @@ import {
 import { FileUploadButton, FilePreview } from '../components/FileUpload';
 import { getInitials, avatarColor, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 
+// TaskCard component with expandable checklist
+function TaskCard({ task, onToggle, onSaveNote, onStart, onDone }) {
+  const [expanded, setExpanded] = useState(false);
+  const [editingNote, setEditingNote] = useState({});
+  const [noteText, setNoteText] = useState({});
+  const [noteFiles, setNoteFiles] = useState({});
+
+  const checklists = task.checklists || [];
+  const clDone = checklists.filter(c => c.is_completed).length;
+  const clTotal = checklists.length;
+  const allClDone = clTotal > 0 && clDone === clTotal;
+  const isDone = task.status === 'done';
+  const isPending = task.status === 'pending';
+  const now = new Date();
+  const isOverdue = task.due_date && new Date(task.due_date) < now && !isDone;
+
+  const saveNote = (clId) => {
+    const text = noteText[clId] || '';
+    const files = noteFiles[clId] || [];
+    onSaveNote(task.id, clId, text, files);
+    setEditingNote({ ...editingNote, [clId]: false });
+  };
+
+  return (
+    <div className={`bg-white rounded-lg border ${isDone ? 'border-emerald-200 bg-emerald-50/30' : isOverdue ? 'border-red-200 bg-red-50/20' : 'border-gray-200'}`}>
+      {/* Task header */}
+      <div className="p-3 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${isDone ? 'bg-emerald-100 text-emerald-700' : task.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                {isDone ? '✓ Xong' : task.status === 'in_progress' ? '▶ Đang làm' : '⏳ Chờ'}
+              </span>
+            </div>
+            <h4 className="text-sm font-semibold text-gray-900">{task.title}</h4>
+            {task.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>}
+          </div>
+          <ChevronRight className={`h-4 w-4 text-gray-400 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+        </div>
+        {task.assignee && (
+          <div className="flex items-center gap-1.5 mb-2">
+            <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>
+              {getInitials(task.assignee.full_name)}
+            </div>
+            <span className="text-[10px] text-gray-500">{task.assignee.full_name}</span>
+          </div>
+        )}
+        {task.due_date && (
+          <div className={`flex items-center gap-1 mb-2 text-[10px] ${isOverdue ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+            <Clock className="h-3 w-3" />{new Date(task.due_date).toLocaleDateString('vi-VN')}
+          </div>
+        )}
+        {clTotal > 0 && (
+          <div className="mt-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-gray-500">Checklist</span>
+              <span className={`text-[10px] font-medium ${allClDone ? 'text-emerald-600' : 'text-gray-400'}`}>{clDone}/{clTotal}</span>
+            </div>
+            <div className="w-full h-1.5 bg-gray-100 rounded-full mb-1">
+              <div className={`h-full rounded-full ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${clTotal ? (clDone/clTotal)*100 : 0}%` }} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Checklist details (expandable) */}
+      {expanded && clTotal > 0 && (
+        <div className="px-3 pb-3 border-t space-y-2 pt-2">
+          {checklists.map(cl => (
+            <div key={cl.id} className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+              <div className="flex items-start gap-2">
+                <button onClick={(e) => { e.stopPropagation(); onToggle(task.id, cl.id, cl.is_completed); }}
+                  className={`shrink-0 w-4 h-4 mt-0.5 rounded border-2 flex items-center justify-center cursor-pointer ${
+                    cl.is_completed ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 bg-white hover:border-blue-400'
+                  }`}>
+                  {cl.is_completed && <CheckSquare className="h-3 w-3 text-white" />}
+                </button>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs ${cl.is_completed ? 'line-through text-gray-400' : 'text-gray-900'}`}>{cl.title}</p>
+                  {cl.notes && (
+                    <div className="mt-1 text-[10px] text-gray-500 bg-white rounded px-2 py-1 border">
+                      {cl.notes}
+                    </div>
+                  )}
+                  {cl.attachments?.length > 0 && (
+                    <div className="mt-1 flex gap-1 flex-wrap">
+                      {cl.attachments.map((att, i) => (
+                        <a key={i} href={att} target="_blank" rel="noopener noreferrer"
+                          className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
+                          <Paperclip className="h-2.5 w-2.5 inline" /> File {i+1}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {editingNote[cl.id] ? (
+                    <div className="mt-2 space-y-1" onClick={e => e.stopPropagation()}>
+                      <textarea value={noteText[cl.id] || ''} onChange={e => setNoteText({ ...noteText, [cl.id]: e.target.value })}
+                        placeholder="Ghi chú..."
+                        className="w-full text-xs border rounded px-2 py-1 min-h-[50px]" />
+                      <FileUploadButton onFilesUploaded={files => setNoteFiles({ ...noteFiles, [cl.id]: files })} />
+                      <div className="flex gap-1">
+                        <button onClick={() => saveNote(cl.id)}
+                          className="h-6 px-2 bg-blue-600 text-white rounded text-[10px] hover:bg-blue-700 cursor-pointer">
+                          <Save className="h-3 w-3 inline" /> Lưu
+                        </button>
+                        <button onClick={() => setEditingNote({ ...editingNote, [cl.id]: false })}
+                          className="h-6 px-2 bg-gray-100 text-gray-600 rounded text-[10px] hover:bg-gray-200 cursor-pointer">
+                          Hủy
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={(e) => { e.stopPropagation(); setEditingNote({ ...editingNote, [cl.id]: true }); setNoteText({ ...noteText, [cl.id]: cl.notes || '' }); }}
+                      className="mt-1 text-[9px] text-blue-600 hover:underline">
+                      <MessageSquare className="h-2.5 w-2.5 inline" /> {cl.notes ? 'Sửa ghi chú' : 'Thêm ghi chú'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      {!isDone && (
+        <div className="px-3 pb-3 flex gap-1 border-t pt-2">
+          {isPending && <button onClick={(e) => { e.stopPropagation(); onStart(task.id); }} className="flex-1 h-7 bg-blue-50 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
+          {!isPending && allClDone && <button onClick={(e) => { e.stopPropagation(); onDone(task.id); }} className="flex-1 h-7 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer">✓ Hoàn thành</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ProjectWorkflowPage() {
   const { user } = useAuth();
   const isAdmin = ['admin', 'manager', 'director'].includes(user?.role);
@@ -268,38 +404,34 @@ export default function ProjectWorkflowPage() {
   }
 
   if (view === 'kanban' && selectedProject) {
-    const now = new Date();
-    
-    // Sort tasks by stage order_index, then by order_index, then by due_date
-    const sortedTasks = [...tasks].sort((a, b) => {
-      // First by stage order
-      const aStageOrder = a.stage?.order_index || 0;
-      const bStageOrder = b.stage?.order_index || 0;
-      if (aStageOrder !== bStageOrder) return aStageOrder - bStageOrder;
-      
-      // Then by task order_index
-      const aOrder = a.order_index || 0;
-      const bOrder = b.order_index || 0;
-      if (aOrder !== bOrder) return aOrder - bOrder;
-      
-      // Finally by due_date
-      if (a.due_date && b.due_date) {
-        return new Date(a.due_date) - new Date(b.due_date);
+    // Group tasks by stage (Tư vấn, Thiết kế, Báo giá...)
+    const stageGroups = {};
+    tasks.forEach(t => {
+      const stageSlug = t.stage?.slug || 'other';
+      if (!stageGroups[stageSlug]) {
+        stageGroups[stageSlug] = {
+          stage: t.stage || { name: 'Khác', color: '#6b7280', order_index: 999 },
+          tasks: []
+        };
       }
-      return 0;
+      stageGroups[stageSlug].tasks.push(t);
     });
-    
-    const pending = sortedTasks.filter(t => t.status === 'pending' && (!t.due_date || new Date(t.due_date) >= now));
-    const inProgress = sortedTasks.filter(t => t.status === 'in_progress' && (!t.due_date || new Date(t.due_date) >= now));
-    const done = sortedTasks.filter(t => t.status === 'done');
-    const overdue = sortedTasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now);
 
-    const columns = [
-      { title: 'Chưa thực hiện', tasks: pending, color: '#6b7280', icon: Clock },
-      { title: 'Đang thực hiện', tasks: inProgress, color: '#3b82f6', icon: PlayCircle },
-      { title: 'Hoàn thành', tasks: done, color: '#10b981', icon: CheckSquare },
-      { title: 'Quá hạn', tasks: overdue, color: '#ef4444', icon: AlertCircle },
-    ];
+    // Sort stages by order_index
+    const sortedStages = Object.values(stageGroups).sort((a, b) => 
+      (a.stage.order_index || 0) - (b.stage.order_index || 0)
+    );
+
+    // Sort tasks within each stage
+    sortedStages.forEach(sg => {
+      sg.tasks.sort((a, b) => {
+        const aOrder = a.order_index || 0;
+        const bOrder = b.order_index || 0;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        if (a.due_date && b.due_date) return new Date(a.due_date) - new Date(b.due_date);
+        return 0;
+      });
+    });
 
     return (
       <div className="space-y-4">
@@ -322,75 +454,25 @@ export default function ProjectWorkflowPage() {
             </svg>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-            {columns.map(col => {
-              const Icon = col.icon;
+          <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: '500px' }}>
+            {sortedStages.map(({ stage, tasks: stageTasks }) => {
+              const doneCount = stageTasks.filter(t => t.status === 'done').length;
               return (
-                <div key={col.title} className="flex flex-col">
-                  <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '3px' }}>
+                <div key={stage.slug || 'other'} className="shrink-0 w-80 flex flex-col">
+                  <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: stage.color, borderTopWidth: '3px' }}>
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
-                        <Icon className="h-4 w-4" style={{ color: col.color }} />
-                        <h3 className="text-sm font-bold text-gray-900">{col.title}</h3>
+                        <div className="w-2 h-6 rounded-full" style={{ backgroundColor: stage.color }} />
+                        <h3 className="text-sm font-bold text-gray-900">{stage.name}</h3>
                       </div>
-                      <span className="text-xs font-medium text-gray-400">{col.tasks.length}</span>
+                      <span className="text-xs font-medium text-gray-400">{doneCount}/{stageTasks.length}</span>
                     </div>
                   </div>
-                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '500px', maxHeight: '70vh' }}>
-                    {col.tasks.length > 0 ? col.tasks.map(task => {
-                      const checklists = task.checklists || [];
-                      const clDone = checklists.filter(c => c.is_completed).length;
-                      const clTotal = checklists.length;
-                      const allClDone = clTotal > 0 && clDone === clTotal;
-                      const isDone = task.status === 'done';
-                      const isPending = task.status === 'pending';
-                      const isOverdue = task.due_date && new Date(task.due_date) < now && !isDone;
-
-                      return (
-                        <div key={task.id} className={`bg-white rounded-lg border p-3 ${isDone ? 'border-emerald-200 bg-emerald-50/30' : isOverdue ? 'border-red-200 bg-red-50/20' : 'border-gray-200'}`}>
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5 mb-1">
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
-                                {task.stage && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{task.stage.name}</span>}
-                              </div>
-                              <h4 className="text-sm font-semibold text-gray-900">{task.title}</h4>
-                              {task.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>}
-                            </div>
-                            {isDone && <CheckSquare className="h-4 w-4 text-emerald-500 shrink-0" />}
-                            {isOverdue && <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />}
-                          </div>
-                          {task.assignee && (
-                            <div className="flex items-center gap-1.5 mb-2">
-                              <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ backgroundColor: avatarColor(task.assignee.full_name) }}>{getInitials(task.assignee.full_name)}</div>
-                              <span className="text-[10px] text-gray-500">{task.assignee.full_name}</span>
-                            </div>
-                          )}
-                          {task.due_date && (
-                            <div className={`flex items-center gap-1 mb-2 text-[10px] ${isOverdue ? 'text-red-600' : 'text-gray-500'}`}>
-                              <Clock className="h-3 w-3" />{new Date(task.due_date).toLocaleDateString('vi-VN')}
-                            </div>
-                          )}
-                          {clTotal > 0 && (
-                            <div className="mt-2">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[10px] text-gray-500">Checklist</span>
-                                <span className={`text-[10px] font-medium ${allClDone ? 'text-emerald-600' : 'text-gray-400'}`}>{clDone}/{clTotal}</span>
-                              </div>
-                              <div className="w-full h-1.5 bg-gray-100 rounded-full mb-1">
-                                <div className={`h-full rounded-full ${isDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${(clDone/clTotal)*100}%` }} />
-                              </div>
-                            </div>
-                          )}
-                          {!isDone && (
-                            <div className="flex gap-1 mt-2 pt-2 border-t">
-                              {isPending && <button onClick={() => startTask(task.id)} className="flex-1 h-7 bg-blue-50 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-100 cursor-pointer">▶ Bắt đầu</button>}
-                              {!isPending && allClDone && <button onClick={() => markTaskDone(task.id)} className="flex-1 h-7 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium hover:bg-emerald-100 cursor-pointer">✓ Hoàn thành</button>}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    }) : <div className="text-center py-8 text-xs text-gray-400">Không có công việc</div>}
+                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ maxHeight: '70vh' }}>
+                    {stageTasks.map(task => <TaskCard key={task.id} task={task} onToggle={toggleCheckItem} onSaveNote={saveChecklistNote} onStart={startTask} onDone={markTaskDone} />)}
+                    {stageTasks.length === 0 && (
+                      <div className="flex items-center justify-center h-32 text-xs text-gray-300">Chưa có nhiệm vụ</div>
+                    )}
                   </div>
                 </div>
               );
@@ -400,6 +482,7 @@ export default function ProjectWorkflowPage() {
       </div>
     );
   }
+
 
   return null;
 }
