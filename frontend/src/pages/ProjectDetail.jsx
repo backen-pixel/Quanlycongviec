@@ -430,9 +430,13 @@ export default function ProjectDetail() {
       {/* ─── Tasks Tab ─── */}
       {activeTab === 'tasks' && (
         <div className="space-y-4">
-          <div className="flex justify-end">
+          <div className="flex justify-between items-center bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
+            <div>
+              <h3 className="text-sm font-bold text-gray-900 mb-1">Quản lý công việc</h3>
+              <p className="text-xs text-gray-600">Tạo task mới, gán nhân viên và theo dõi tiến độ</p>
+            </div>
             <button onClick={() => setShowCreateTask(true)}
-              className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
+              className="h-10 px-5 bg-blue-600 text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-blue-700 cursor-pointer shadow-sm hover:shadow-md transition-all">
               <Plus className="h-4 w-4" /> Thêm công việc
             </button>
           </div>
