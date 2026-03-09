@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List } from 'lucide-react';
+import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List, Clock, PlayCircle, CheckSquare, AlertCircle } from 'lucide-react';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 
 const TIME_FILTERS = [
@@ -55,6 +55,7 @@ function projStageSlug(p) {
 export default function Projects() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
+  const [allTasks, setAllTasks] = useState([]); // All tasks for kanban view
   const [search, setSearch] = useState('');
   const [filterStage, setFilterStage] = useState('all'); // 'all' | stage slug
   const [viewMode, setViewMode] = useState('kanban');
@@ -72,7 +73,26 @@ export default function Projects() {
   const load = () => {
     setLoading(true);
     api.get('/projects', { params: { search: search || undefined, limit: 500 } })
-      .then(r => setProjects(r.data.projects || []))
+      .then(r => {
+        const projs = r.data.projects || [];
+        setProjects(projs);
+        
+        // Load all tasks for kanban view
+        if (projs.length > 0) {
+          const projectIds = projs.map(p => p.id);
+          // Load tasks for all projects (batch request)
+          Promise.all(projectIds.map(pid => 
+            api.get(`/tasks`, { params: { project_id: pid } })
+              .then(tr => (tr.data.tasks || []).map(t => ({ ...t, project_id: pid })))
+              .catch(() => [])
+          )).then(taskArrays => {
+            const tasks = taskArrays.flat();
+            setAllTasks(tasks);
+          });
+        } else {
+          setAllTasks([]);
+        }
+      })
       .catch(() => setProjects([]))
       .finally(() => setLoading(false));
   };
@@ -291,42 +311,119 @@ export default function Projects() {
           <button onClick={() => setShowCreate(true)} className="mt-3 text-sm text-blue-600 font-medium cursor-pointer">+ Tạo dự án</button>
         </div>
       ) : filterStage === 'all' ? (
-        /* ═══ TAB TẤT CẢ: Kanban overview / List ═══ */
+        /* ═══ TAB TẤT CẢ: Kanban STATUS-BASED (Pending/InProgress/Done/Overdue) ═══ */
         viewMode === 'kanban' ? (
-          <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: '400px' }}>
-            {KANBAN_STAGES.map(stage => {
-              const stageProjects = filtered.filter(p => projStageSlug(p) === stage.slug);
-              return (
-                <div key={stage.slug} className="shrink-0 w-60 sm:w-72 flex flex-col">
-                  <div className="rounded-t-xl p-2.5 sm:p-3 border border-b-0 flex items-center gap-2" style={{ backgroundColor: stage.color + '15', borderColor: stage.color + '30' }}>
-                    <div className="w-2 h-8 rounded-full" style={{ backgroundColor: stage.color }} />
-                    <div className="flex-1 min-w-0">
-                      <Link to={stage.path} className="text-xs sm:text-sm font-bold text-gray-900 hover:text-blue-600">{stage.label}</Link>
-                      <p className="text-[10px] text-gray-500">{stageProjects.length} DA</p>
-                    </div>
-                    <span className="text-lg font-bold" style={{ color: stage.color }}>{stageProjects.length}</span>
-                  </div>
-                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto max-h-[65vh]" style={{ borderColor: stage.color + '30' }}>
-                    {stageProjects.length > 0 ? stageProjects.map(p => (
-                      <Link to={`/projects/${p.id}`} key={p.id}
-                        className="block bg-white rounded-lg border p-3 hover:shadow-md hover:border-blue-300 transition-all">
-                        <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-tight mb-1">{p.name}</h3>
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span className="text-xs font-bold text-blue-600">{p.code}</span>
-                          {p.priority && <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${PRIORITY_COLORS[p.priority]}`}>{PRIORITY_LABELS[p.priority]}</span>}
+          (() => {
+            const now = new Date();
+            
+            // Sort tasks by stage order → task order → due date
+            const sortedTasks = [...allTasks].sort((a, b) => {
+              const aStageOrder = a.stage?.order_index || 0;
+              const bStageOrder = b.stage?.order_index || 0;
+              if (aStageOrder !== bStageOrder) return aStageOrder - bStageOrder;
+              const aOrder = a.order_index || 0;
+              const bOrder = b.order_index || 0;
+              if (aOrder !== bOrder) return aOrder - bOrder;
+              if (a.due_date && b.due_date) return new Date(a.due_date) - new Date(b.due_date);
+              return 0;
+            });
+
+            const pending = sortedTasks.filter(t => t.status === 'pending' && (!t.due_date || new Date(t.due_date) >= now));
+            const inProgress = sortedTasks.filter(t => t.status === 'in_progress' && (!t.due_date || new Date(t.due_date) >= now));
+            const done = sortedTasks.filter(t => t.status === 'done');
+            const overdue = sortedTasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now);
+
+            const columns = [
+              { title: 'Chưa thực hiện', tasks: pending, color: '#6b7280', icon: Clock },
+              { title: 'Đang thực hiện', tasks: inProgress, color: '#3b82f6', icon: PlayCircle },
+              { title: 'Hoàn thành', tasks: done, color: '#10b981', icon: CheckSquare },
+              { title: 'Quá hạn', tasks: overdue, color: '#ef4444', icon: AlertCircle },
+            ];
+
+            const projectMap = {};
+            projects.forEach(p => { projectMap[p.id] = p; });
+
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                {columns.map(col => {
+                  const Icon = col.icon;
+                  return (
+                    <div key={col.title} className="flex flex-col">
+                      <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '3px' }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <Icon className="h-4 w-4" style={{ color: col.color }} />
+                            <h3 className="text-sm font-bold text-gray-900">{col.title}</h3>
+                          </div>
+                          <span className="text-xs font-medium text-gray-400">{col.tasks.length}</span>
                         </div>
-                        {p.customers?.full_name && <p className="text-xs text-gray-600">👤 {p.customers.full_name}</p>}
-                        {p.company && <p className="text-[10px] text-indigo-600 font-medium">🏢 {p.company.short_name || p.company.name}</p>}
-                        {p.estimated_value && <p className="text-xs font-bold text-emerald-600 mt-1">{formatVND(p.estimated_value)}</p>}
-                      </Link>
-                    )) : (
-                      <div className="flex items-center justify-center h-16 text-xs text-gray-400">Trống</div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                      </div>
+                      <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '400px', maxHeight: '70vh' }}>
+                        {col.tasks.length > 0 ? col.tasks.map(task => {
+                          const project = projectMap[task.project_id];
+                          if (!project) return null;
+                          
+                          return (
+                            <Link to={`/projects/${project.id}`} key={task.id}
+                              className={`block bg-white rounded-lg border p-3 hover:shadow-md transition-shadow ${
+                                task.status === 'done' ? 'border-emerald-200 bg-emerald-50/30' : 
+                                task.due_date && new Date(task.due_date) < now && task.status !== 'done' ? 'border-red-200 bg-red-50/20' : 
+                                'border-gray-200'
+                              }`}>
+                              {/* Project info */}
+                              <div className="flex items-center gap-1.5 mb-2">
+                                <span className="text-xs font-bold text-blue-600">{project.code}</span>
+                                <span className="text-[10px] text-gray-400">·</span>
+                                <span className="text-[10px] text-gray-600 truncate flex-1">{project.name}</span>
+                              </div>
+                              
+                              {/* Task info */}
+                              <div className="mb-2">
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority]}`}>
+                                    {PRIORITY_LABELS[task.priority]}
+                                  </span>
+                                  {task.stage && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{task.stage.name}</span>}
+                                </div>
+                                <h4 className="text-sm font-semibold text-gray-900 line-clamp-2">{task.title}</h4>
+                                {task.description && <p className="text-xs text-gray-500 mt-1 line-clamp-1">{task.description}</p>}
+                              </div>
+
+                              {/* Meta */}
+                              <div className="flex items-center justify-between text-xs text-gray-500 pt-2 border-t">
+                                <div className="flex items-center gap-2">
+                                  {task.assignee ? (
+                                    <div className="flex items-center gap-1">
+                                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-semibold text-white" style={{ backgroundColor: avatarColor(task.assignee.full_name || task.assignee.email) }}>
+                                        {getInitials(task.assignee.full_name || task.assignee.email)}
+                                      </div>
+                                      <span className="text-[10px]">{task.assignee.full_name || task.assignee.email.split('@')[0]}</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] text-gray-400">Chưa gán</span>
+                                  )}
+                                </div>
+                                {task.due_date && (
+                                  <div className={`flex items-center gap-1 ${new Date(task.due_date) < now && task.status !== 'done' ? 'text-red-600 font-medium' : ''}`}>
+                                    <Calendar className="h-3 w-3" />
+                                    <span className="text-[10px]">{formatDate(task.due_date)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </Link>
+                          );
+                        }) : (
+                          <div className="flex items-center justify-center h-32 text-xs text-gray-300">
+                            Chưa có task
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()
         ) : (
           /* List view for Tất cả */
           <div className="grid gap-3">
