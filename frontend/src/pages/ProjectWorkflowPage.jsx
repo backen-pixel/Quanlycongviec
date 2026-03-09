@@ -258,11 +258,19 @@ export default function ProjectWorkflowPage() {
 
   const selectProject = async (project) => {
     setSelectedProject(project);
+    setSelectedStage(null); // Reset stage selection
     setLoading(true);
     try {
+      // Load project details with flow assignments
+      const { data: projectDetail } = await api.get(`/projects/${project.id}`);
+      const fullProject = projectDetail.project || project;
+      setSelectedProject(fullProject);
+
+      // Load tasks
       const { data: tasksData } = await api.get('/tasks', { params: { project_id: project.id } });
       let allTasks = tasksData.tasks || [];
 
+      // Load checklists for each task
       const checklistPromises = allTasks.map(t =>
         api.get(`/tasks/${t.id}/checklists`)
           .then(r => ({ taskId: t.id, checklists: r.data.checklists || [] }))
@@ -274,6 +282,33 @@ export default function ProjectWorkflowPage() {
       allTasks = allTasks.map(t => ({ ...t, checklists: clMap[t.id] || [] }));
 
       setTasks(allTasks);
+
+      // Extract stages from project flow assignments or tasks
+      let projectStages = [];
+      if (fullProject.flowAssignments?.length > 0) {
+        // Get stages from flow assignments (via template sets)
+        const stageIds = new Set();
+        fullProject.flowAssignments.forEach(fa => {
+          fa.tasks?.forEach(t => {
+            if (t.stage_id) stageIds.add(t.stage_id);
+          });
+        });
+        // Filter global stages to only those in the flow
+        projectStages = stages.filter(s => stageIds.has(s.id));
+      } else {
+        // Fallback: get stages from tasks
+        const stageIds = new Set(allTasks.map(t => t.stage?.id).filter(Boolean));
+        projectStages = stages.filter(s => stageIds.has(s.id));
+      }
+
+      // If still empty, use all stages as fallback
+      if (projectStages.length === 0) {
+        projectStages = stages;
+      }
+
+      // Store project-specific stages (we'll use this in render)
+      setSelectedProject({ ...fullProject, projectStages });
+
     } catch (e) {
       console.error(e);
     }
@@ -589,16 +624,21 @@ export default function ProjectWorkflowPage() {
   }
 
   if (view === 'kanban' && selectedProject) {
+    // Use project-specific stages or fallback to all stages
+    const projectStages = selectedProject.projectStages || stages;
+
     // If no stage selected, show stage tabs
     if (!selectedStage) {
       // Group tasks by stage to show count
       const tasksByStage = {};
-      stages.forEach(s => { tasksByStage[s.slug] = []; });
+      projectStages.forEach(s => { tasksByStage[s.slug] = []; });
       tasks.forEach(t => {
         const slug = t.stage?.slug || 'other';
         if (tasksByStage[slug]) tasksByStage[slug].push(t);
-        else tasksByStage['other'] = tasksByStage['other'] || [];
-        tasksByStage['other'].push(t);
+        else {
+          tasksByStage['other'] = tasksByStage['other'] || [];
+          tasksByStage['other'].push(t);
+        }
       });
 
       return (
@@ -615,9 +655,14 @@ export default function ProjectWorkflowPage() {
 
           {/* Stage Tabs */}
           <div className="bg-white rounded-xl border p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Chọn quy trình để xem chi tiết</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+              Chọn quy trình để xem chi tiết 
+              {selectedProject.flowAssignments?.length > 0 && (
+                <span className="text-xs text-gray-500 ml-2">({projectStages.length} quy trình trong luồng)</span>
+              )}
+            </h3>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-              {stages.map(stage => {
+              {projectStages.map(stage => {
                 const stageTasks = tasksByStage[stage.slug] || [];
                 const doneCount = stageTasks.filter(t => t.status === 'done').length;
                 return (
