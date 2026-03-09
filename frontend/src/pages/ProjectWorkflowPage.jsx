@@ -710,44 +710,6 @@ export default function ProjectWorkflowPage() {
         }
       });
 
-      return (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <button onClick={backToProjects} className="h-9 w-9 bg-white border rounded-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer">
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <div className="flex-1">
-              <h1 className="text-xl font-bold text-gray-900">{selectedProject.code} — {selectedProject.name}</h1>
-              <p className="text-sm text-gray-500">{selectedProject.customers?.full_name || ''}</p>
-            </div>
-          </div>
-
-          {/* Stage Tabs */}
-          <div className="bg-white rounded-xl border p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">
-              Chọn quy trình để xem chi tiết 
-              {selectedProject.flowAssignments?.length > 0 && (
-                <span className="text-xs text-gray-500 ml-2">({projectStages.length} quy trình trong luồng)</span>
-              )}
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-              {projectStages.map(stage => {
-                const stageTasks = tasksByStage[stage.id] || tasksByStage[stage.slug] || [];
-                const doneCount = stageTasks.filter(t => t.status === 'done').length;
-                return (
-                  <button key={stage.id || stage.slug} onClick={() => setSelectedStage(stage)}
-                    className="p-4 rounded-xl border-2 hover:shadow-lg transition-all cursor-pointer text-left"
-                    style={{ borderColor: stage.color + '40', backgroundColor: stage.color + '08' }}>
-                    <div className="w-3 h-3 rounded-full mb-2" style={{ backgroundColor: stage.color }} />
-                    <h4 className="text-sm font-bold text-gray-900 mb-1">{stage.name}</h4>
-                    <p className="text-xs text-gray-500">{doneCount}/{stageTasks.length} hoàn thành</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      );
     // End of stage grouping
 
     // Stage selected: show task kanban (columns = tasks, cards = checklists)
