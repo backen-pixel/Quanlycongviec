@@ -6,6 +6,24 @@ const r = Router();
 r.use(auth);
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ROOT DASHBOARD - Unread notifications count (for NotificationCenter)
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/', async (req, res) => {
+  try {
+    const { count: unread } = await supabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', req.user.userId)
+      .eq('is_read', false);
+
+    res.json({ stats: { unread: unread || 0 } });
+  } catch (e) {
+    console.error('Dashboard root error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // DASHBOARD OVERVIEW - KPIs Tổng Quan
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/overview', async (req, res) => {
