@@ -113,78 +113,103 @@ r.get('/overview', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// WORKLOAD BY DIVISION - Phân bổ công việc theo Khối
+// WORKLOAD BY DIVISION - Phân bổ công việc theo Khối (OPTIMIZED)
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/workload', async (req, res) => {
   try {
-    // Get all divisions (ecosystem_units with level 1 - Khối)
+    // Step 1: Get level ID for "Khối" once
+    const { data: khoiLevel } = await supabase
+      .from('ecosystem_levels')
+      .select('id')
+      .eq('name', 'Khối')
+      .single();
+    
+    if (!khoiLevel) {
+      return res.json({ divisions: [] });
+    }
+
+    // Step 2: Get all divisions (Khối) and their companies in one query
     const { data: divisions } = await supabase
       .from('ecosystem_units')
       .select('id, name, short_name, color')
-      .eq('level_id', (await supabase.from('ecosystem_levels').select('id').eq('name', 'Khối').single()).data?.id)
+      .eq('level_id', khoiLevel.id)
       .order('name');
 
-    const workload = [];
-    
-    for (const division of divisions || []) {
-      // Get all companies under this division
-      const { data: companies } = await supabase
-        .from('ecosystem_units')
-        .select('id, name, short_name')
-        .eq('parent_id', division.id)
-        .order('name');
+    if (!divisions?.length) {
+      return res.json({ divisions: [] });
+    }
 
-      let totalTasks = 0;
-      const companyBreakdown = [];
+    const divisionIds = divisions.map(d => d.id);
 
-      for (const company of companies || []) {
-        // Count tasks for this company (via departments or direct assignment)
-        // Method 1: Via company_id in tasks (if exists)
-        let { count: companyTasks } = await supabase
-          .from('tasks')
-          .select('*', { count: 'exact', head: true })
-          .eq('company_id', company.id);
+    // Step 3: Get all companies under these divisions in ONE query
+    const { data: allCompanies } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, short_name, parent_id')
+      .in('parent_id', divisionIds)
+      .order('name');
 
-        // Method 2: Via project assignments if no direct company_id
-        if (!companyTasks || companyTasks === 0) {
-          const { data: projectIds } = await supabase
-            .from('project_company_assignments')
-            .select('project_id')
-            .eq('company_unit_id', company.id);
-          
-          if (projectIds?.length) {
-            const { count } = await supabase
-              .from('tasks')
-              .select('*', { count: 'exact', head: true })
-              .in('project_id', projectIds.map(p => p.project_id));
-            companyTasks = count || 0;
-          }
-        }
+    // Step 4: Get ALL tasks count grouped by assignee's department/company
+    // Simplified: Just count all active tasks (not done)
+    const { data: allTasks } = await supabase
+      .from('tasks')
+      .select('id, assignee_id, project_id, status')
+      .neq('status', 'done');
 
-        totalTasks += companyTasks || 0;
-        
-        if (companyTasks > 0) {
-          companyBreakdown.push({
-            id: company.id,
-            name: company.name,
-            short_name: company.short_name,
-            task_count: companyTasks,
-          });
-        }
+    // Step 5: Get user → department/company mapping
+    const { data: users } = await supabase
+      .from('users')
+      .select('id, department_id');
+
+    const { data: departments } = await supabase
+      .from('departments')
+      .select('id, company_id');
+
+    // Build mapping: user_id → company_id
+    const userToCompany = {};
+    (users || []).forEach(u => {
+      const dept = (departments || []).find(d => d.id === u.department_id);
+      if (dept?.company_id) {
+        userToCompany[u.id] = dept.company_id;
       }
+    });
 
-      workload.push({
+    // Count tasks per company
+    const companyTaskCount = {};
+    (allTasks || []).forEach(task => {
+      const companyId = userToCompany[task.assignee_id];
+      if (companyId) {
+        companyTaskCount[companyId] = (companyTaskCount[companyId] || 0) + 1;
+      }
+    });
+
+    // Build result
+    const workload = divisions.map(division => {
+      const companies = (allCompanies || []).filter(c => c.parent_id === division.id);
+      
+      const companyBreakdown = companies
+        .map(c => ({
+          id: c.id,
+          name: c.name,
+          short_name: c.short_name,
+          task_count: companyTaskCount[c.id] || 0,
+        }))
+        .filter(c => c.task_count > 0)
+        .sort((a, b) => b.task_count - a.task_count);
+
+      const totalTasks = companyBreakdown.reduce((sum, c) => sum + c.task_count, 0);
+
+      return {
         id: division.id,
         name: division.name,
         short_name: division.short_name,
         color: division.color || '#3b82f6',
         task_count: totalTasks,
-        company_count: companies?.length || 0,
+        company_count: companies.length,
         companies: companyBreakdown,
-      });
-    }
+      };
+    });
 
-    res.json({ divisions: workload });
+    res.json({ divisions: workload.filter(d => d.task_count > 0) });
   } catch (e) {
     console.error('Dashboard workload error:', e);
     res.status(500).json({ error: e.message });
