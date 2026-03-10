@@ -95,32 +95,80 @@ r.get('/overview', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PIPELINE - Quy trình sản xuất
+// WORKLOAD BY DIVISION - Phân bổ công việc theo Khối
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/pipeline', async (req, res) => {
+r.get('/workload', async (req, res) => {
   try {
-    const { data: stages } = await supabase.from('workflow_stages').select('id, name, slug, color, icon').order('order_index');
+    // Get all divisions (ecosystem_units with level 1 - Khối)
+    const { data: divisions } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, short_name, color')
+      .eq('level_id', (await supabase.from('ecosystem_levels').select('id').eq('name', 'Khối').single()).data?.id)
+      .order('name');
+
+    const workload = [];
     
-    const pipeline = [];
-    for (const stage of stages || []) {
-      const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true }).eq('current_stage_id', stage.id);
-      const { data: projectValues } = await supabase.from('projects').select('estimated_value').eq('current_stage_id', stage.id);
-      const totalValue = (projectValues || []).reduce((sum, p) => sum + (p.estimated_value || 0), 0);
-      
-      pipeline.push({
-        id: stage.id,
-        name: stage.name,
-        slug: stage.slug,
-        color: stage.color,
-        icon: stage.icon,
-        count: count || 0,
-        value: totalValue,
+    for (const division of divisions || []) {
+      // Get all companies under this division
+      const { data: companies } = await supabase
+        .from('ecosystem_units')
+        .select('id, name, short_name')
+        .eq('parent_id', division.id)
+        .order('name');
+
+      let totalTasks = 0;
+      const companyBreakdown = [];
+
+      for (const company of companies || []) {
+        // Count tasks for this company (via departments or direct assignment)
+        // Method 1: Via company_id in tasks (if exists)
+        let { count: companyTasks } = await supabase
+          .from('tasks')
+          .select('*', { count: 'exact', head: true })
+          .eq('company_id', company.id);
+
+        // Method 2: Via project assignments if no direct company_id
+        if (!companyTasks || companyTasks === 0) {
+          const { data: projectIds } = await supabase
+            .from('project_company_assignments')
+            .select('project_id')
+            .eq('company_unit_id', company.id);
+          
+          if (projectIds?.length) {
+            const { count } = await supabase
+              .from('tasks')
+              .select('*', { count: 'exact', head: true })
+              .in('project_id', projectIds.map(p => p.project_id));
+            companyTasks = count || 0;
+          }
+        }
+
+        totalTasks += companyTasks || 0;
+        
+        if (companyTasks > 0) {
+          companyBreakdown.push({
+            id: company.id,
+            name: company.name,
+            short_name: company.short_name,
+            task_count: companyTasks,
+          });
+        }
+      }
+
+      workload.push({
+        id: division.id,
+        name: division.name,
+        short_name: division.short_name,
+        color: division.color || '#3b82f6',
+        task_count: totalTasks,
+        company_count: companies?.length || 0,
+        companies: companyBreakdown,
       });
     }
 
-    res.json({ stages: pipeline });
+    res.json({ divisions: workload });
   } catch (e) {
-    console.error('Dashboard pipeline error:', e);
+    console.error('Dashboard workload error:', e);
     res.status(500).json({ error: e.message });
   }
 });
