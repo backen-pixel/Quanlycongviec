@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { syncUserToEcosystem, removeUserFromEcosystem } = require('../helpers/ecosystemSync');
