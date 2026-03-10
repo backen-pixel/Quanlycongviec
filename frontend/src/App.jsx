@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'rea
 import { AuthProvider, useAuth } from './lib/auth';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
+import Dashboard from './pages/DashboardNew';
 import MyTasks from './pages/MyTasks';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
