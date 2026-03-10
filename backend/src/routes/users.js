@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const { requirePermission } = require('../middleware/newPermission');
 const bcrypt = require('bcryptjs');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');

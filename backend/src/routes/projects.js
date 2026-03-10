@@ -543,7 +543,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
 });
 
 // ─── CREATE PROJECT WITH FLOW (new flow-based) ──
-r.post('/create-with-flow', async (req, res) => {
+r.post('/create-with-flow', requirePermission('projects', 'create'), async (req, res) => {
   try {
     const b = req.body;
     if (!b.name?.trim()) return res.status(400).json({ error: 'Tên dự án là bắt buộc' });
