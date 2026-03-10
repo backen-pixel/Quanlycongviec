@@ -315,10 +315,10 @@ export default function ProjectDetail() {
                 if (!byStage[l.stage_slug]) byStage[l.stage_slug] = [];
                 byStage[l.stage_slug].push(l);
               });
-              return STAGE_FLOW.map(s => {
+              return projectStages.map(s => {
                 const lines = byStage[s.slug] || [];
                 return (
-                  <div key={s.slug}>
+                  <div key={s.slug || s.label}>
                     <div className="flex items-center gap-2 mb-1.5">
                       <p className="text-[10px] font-semibold text-gray-400 uppercase flex-1">{s.label} ({lines.length})</p>
                       {editingLines && (
@@ -346,13 +346,13 @@ export default function ProjectDetail() {
             })()}
           </div>
         ) : (
-          /* Old: Fixed 8 stage persons */
+          /* Old: Fixed stage persons - now uses projectStages from flow */
           <div className="space-y-3">
             <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 sm:gap-3">
-              {STAGE_FLOW.map(s => {
+              {projectStages.map(s => {
                 const person = project[s.personKey];
                 return (
-                  <div key={s.slug} className="text-center">
+                  <div key={s.slug || s.label} className="text-center">
                     <div className="h-8 w-8 sm:h-9 sm:w-9 mx-auto rounded-full flex items-center justify-center text-white text-[9px] sm:text-[10px] font-bold mb-1"
                       style={{ backgroundColor: person ? avatarColor(person.full_name) : '#d1d5db' }}>
                       {person ? getInitials(person.full_name) : '?'}
