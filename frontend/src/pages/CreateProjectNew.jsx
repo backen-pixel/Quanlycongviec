@@ -18,6 +18,7 @@ export default function CreateProjectNew() {
   const navigate = useNavigate();
   const [form, setForm] = useState({});
   const [customers, setCustomers] = useState([]);
+  const [users, setUsers] = useState([]);
   const [flows, setFlows] = useState([]);
   const [selectedFlow, setSelectedFlow] = useState(null);
   const [flowDetail, setFlowDetail] = useState(null);
@@ -33,7 +34,7 @@ export default function CreateProjectNew() {
   const stepIndex = STEPS.findIndex(s => s.id === activeStep);
 
   useEffect(() => {
-    setForm({ name: '', description: '', customer_id: '', install_address: '', estimated_value: '', priority: 'medium' });
+    setForm({ name: '', description: '', customer_id: '', install_address: '', estimated_value: '', priority: 'medium', supervisor_id: '' });
     setSelectedFlow(null);
     setFlowDetail(null);
     setQuotationFiles([]);
@@ -42,6 +43,7 @@ export default function CreateProjectNew() {
 
     Promise.all([
       api.get('/customers').then(r => setCustomers(r.data.customers || [])).catch(() => {}),
+      api.get('/users').then(r => setUsers(r.data.users || [])).catch(() => {}),
       api.get('/flows').then(r => {
         const list = r.data.flows || [];
         setFlows(list);
@@ -109,6 +111,7 @@ export default function CreateProjectNew() {
         install_address: form.install_address || null,
         estimated_value: form.estimated_value ? +form.estimated_value : null,
         priority: form.priority || 'medium',
+        supervisor_id: form.supervisor_id || null,
         flow_id: selectedFlow.id,
         flow_assignments: (flowDetail?.steps || []).filter(s => s.company_unit_id).map(s => ({
           flow_step_id: s.id, // Flow step ID for loading tasks
@@ -412,6 +415,23 @@ export default function CreateProjectNew() {
                         <option value="medium">🟡 Trung Bình</option>
                         <option value="high">🔴 Cao</option>
                       </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                        <User className="h-4 w-4 text-indigo-600" /> Người Giám Sát <span className="text-xs font-normal text-gray-500">(không bắt buộc)</span>
+                      </label>
+                      <select
+                        value={form.supervisor_id || ''}
+                        onChange={e => set('supervisor_id', e.target.value)}
+                        className="w-full px-4 py-3 rounded-xl border-2 border-indigo-200 bg-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                      >
+                        <option value="">-- Không chọn --</option>
+                        {users.map(u => (
+                          <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">Người giám sát có quyền xem và theo dõi toàn bộ dự án</p>
                     </div>
                   </div>
                 </div>
