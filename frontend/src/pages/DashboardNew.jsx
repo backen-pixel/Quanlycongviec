@@ -26,18 +26,25 @@ export default function DashboardNew() {
   const loadDashboard = async () => {
     setLoading(true);
     try {
-      const [overviewRes, workloadRes, timelineRes, teamRes, alertsRes, customersRes, activityRes] = await Promise.all([
-        api.get('/dashboard/overview'),
-        api.get('/dashboard/workload'),
-        api.get('/dashboard/timeline?period=6m'),
-        api.get(`/dashboard/team?period=${period}`),
-        api.get('/dashboard/alerts'),
-        api.get('/dashboard/customers'),
-        api.get('/dashboard/activity?limit=10'),
+      // Parallel loading with timeout
+      const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms));
+      
+      const [overviewRes, workloadRes, timelineRes, teamRes, alertsRes, customersRes, activityRes] = await Promise.race([
+        Promise.all([
+          api.get('/dashboard/overview'),
+          api.get('/dashboard/workload'),
+          api.get('/dashboard/timeline?period=6m'),
+          api.get(`/dashboard/team?period=${period}`),
+          api.get('/dashboard/alerts'),
+          api.get('/dashboard/customers'),
+          api.get('/dashboard/activity?limit=10'),
+        ]),
+        timeout(15000), // 15 second timeout
       ]);
 
       setOverview(overviewRes.data);
       setWorkload(workloadRes.data.divisions || []);
+      console.log('Workload data:', workloadRes.data.divisions); // DEBUG
       setTimeline({ projects: timelineRes.data.projects || [], revenue: timelineRes.data.revenue || [] });
       setTeam(teamRes.data.performers || []);
       setAlerts(alertsRes.data);
@@ -45,6 +52,12 @@ export default function DashboardNew() {
       setActivities(activityRes.data.activities || []);
     } catch (err) {
       console.error('Failed to load dashboard:', err);
+      // Set default empty data on error
+      if (!overview) {
+        setOverview({ projects: {}, tasks: {}, customers: {}, revenue: {} });
+      }
+      setWorkload([]);
+      setAlerts({ overdue_projects: 0, overdue_tasks: 0, pending_approvals: 0, unassigned_high_priority: 0, resource_overload: 0 });
     }
     setLoading(false);
   };
