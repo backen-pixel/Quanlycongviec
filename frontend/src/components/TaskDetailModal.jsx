@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview, FileList } from './FileUpload';
+import ParticipantManager from './ParticipantManager';
 import {
   Clock, CheckSquare, MessageSquare, Users, Send, Trash2, Edit,
   User, Eye, EyeOff, Plus, Calendar, AlertTriangle, Paperclip, Save, X, ChevronDown
@@ -306,20 +307,14 @@ export default function TaskDetailModal({ taskId, open, onClose, onUpdated }) {
                 <RoleCard icon={User} label="Người giao" user={task.creator} />
                 <RoleCard icon={User} label="Thực hiện" user={task.assignee} />
               </div>
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-1"><Users className="h-4 w-4" /> Hỗ trợ</h4>
-                <div className="space-y-1">
-                  {task.participants?.filter(p => p.role === 'participant').map(p => <PersonRow key={p.id} user={p.user} />)}
-                  {!task.participants?.filter(p => p.role === 'participant').length && <p className="text-xs text-gray-400">Chưa có</p>}
-                </div>
-              </div>
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-1"><Eye className="h-4 w-4" /> Quan sát</h4>
-                <div className="space-y-1">
-                  {task.participants?.filter(p => p.role === 'observer').map(p => <PersonRow key={p.id} user={p.user} />)}
-                  {!task.participants?.filter(p => p.role === 'observer').length && <p className="text-xs text-gray-400">Chưa có</p>}
-                </div>
-              </div>
+              
+              {/* Sử dụng ParticipantManager component */}
+              <ParticipantManager
+                entityType="task"
+                entityId={taskId}
+                participants={task.participants || []}
+                onUpdated={loadTask}
+              />
             </div>
           )}
         </div>
