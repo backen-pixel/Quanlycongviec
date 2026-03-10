@@ -213,22 +213,22 @@ function KPICard({ title, value, subtitle, trend, trendLabel, trendNegative, ico
 // Workload Widget - Phân bổ công việc theo Giai đoạn
 // ═══════════════════════════════════════════════════════════════════════════
 function WorkloadWidget({ workload }) {
-  const maxCount = Math.max(...workload.map(d => d.task_count), 1);
+  const maxCount = Math.max(...workload.map(d => d.project_count), 1);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
           <TrendingUp className="h-5 w-5 text-blue-600" />
-          Phân Bổ Công Việc Theo Giai Đoạn
+          Phân Bổ Dự Án Theo Giai Đoạn
         </h2>
-        <Link to="/tasks" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+        <Link to="/projects" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
           Xem tất cả <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
       <div className="space-y-4">
         {workload.map(stage => {
-          const percentage = maxCount > 0 ? (stage.task_count / maxCount) * 100 : 0;
+          const percentage = maxCount > 0 ? (stage.project_count / maxCount) * 100 : 0;
           
           return (
             <div key={stage.id} className="group">
@@ -242,17 +242,14 @@ function WorkloadWidget({ workload }) {
                       style={{ backgroundColor: stage.color }}
                     />
                     {stage.name}
-                    {stage.project_count > 0 && (
-                      <span className="text-xs text-gray-500">({stage.project_count} dự án)</span>
-                    )}
                   </span>
-                  <span className="text-sm font-bold text-gray-900">{stage.task_count} việc</span>
+                  <span className="text-sm font-bold text-gray-900">{stage.project_count} dự án</span>
                 </div>
                 <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all duration-500 group-hover:opacity-80"
                     style={{
-                      width: `${Math.max(percentage, stage.task_count > 0 ? 5 : 0)}%`,
+                      width: `${Math.max(percentage, stage.project_count > 0 ? 5 : 0)}%`,
                       backgroundColor: stage.color || '#3b82f6',
                     }}
                   />
