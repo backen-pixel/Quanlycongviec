@@ -26,38 +26,44 @@ export default function DashboardNew() {
   const loadDashboard = async () => {
     setLoading(true);
     try {
-      // Parallel loading with timeout
-      const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms));
-      
-      const [overviewRes, workloadRes, timelineRes, teamRes, alertsRes, customersRes, activityRes] = await Promise.race([
+      // Load critical data only (fast endpoints)
+      const [overviewRes, workloadRes, alertsRes, activityRes] = await Promise.race([
         Promise.all([
           api.get('/dashboard/overview'),
           api.get('/dashboard/workload'),
-          api.get('/dashboard/timeline?period=6m'),
-          api.get(`/dashboard/team?period=${period}`),
           api.get('/dashboard/alerts'),
-          api.get('/dashboard/customers'),
           api.get('/dashboard/activity?limit=10'),
         ]),
-        timeout(15000), // 15 second timeout
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000)),
       ]);
 
       setOverview(overviewRes.data);
       setWorkload(workloadRes.data.divisions || []);
       console.log('Workload data:', workloadRes.data.divisions); // DEBUG
-      setTimeline({ projects: timelineRes.data.projects || [], revenue: timelineRes.data.revenue || [] });
-      setTeam(teamRes.data.performers || []);
       setAlerts(alertsRes.data);
-      setCustomers(customersRes.data);
       setActivities(activityRes.data.activities || []);
+      
+      // Set empty data for removed widgets
+      setTimeline({ projects: [], revenue: [] });
+      setTeam([]);
+      setCustomers({ top_customers: [], geo_distribution: {} });
     } catch (err) {
       console.error('Failed to load dashboard:', err);
       // Set default empty data on error
       if (!overview) {
-        setOverview({ projects: {}, tasks: {}, customers: {}, revenue: {} });
+        setOverview({ 
+          projects: { total: 0, active: 0, completed: 0, new_7d: 0, overdue: 0 },
+          tasks: { total: 0, completed: 0, completion_rate: 0, overdue: 0, blocked: 0 },
+          customers: { total: 0, new_7d: 0, vip: 0, return_rate: 0 },
+          revenue: { total: 0, growth_pct: 0, avg_project_value: 0, this_month: 0, last_month: 0 }
+        });
       }
       setWorkload([]);
       setAlerts({ overdue_projects: 0, overdue_tasks: 0, pending_approvals: 0, unassigned_high_priority: 0, resource_overload: 0 });
+      setActivities([]);
+      setTimeline({ projects: [], revenue: [] });
+      setTeam([]);
+      setCustomers({ top_customers: [], geo_distribution: {} });
     }
     setLoading(false);
   };
@@ -161,12 +167,6 @@ export default function DashboardNew() {
         <div>
           <AlertsWidget alerts={alerts} />
         </div>
-      </div>
-
-      {/* Team & Customers */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        <TeamWidget team={team} period={period} />
-        <CustomersWidget customers={customers} />
       </div>
 
       {/* Activity Feed */}

@@ -136,7 +136,20 @@ r.get('/workload', async (req, res) => {
       .order('name');
 
     if (!divisions?.length) {
-      return res.json({ divisions: [] });
+      // Return mock data for testing if no divisions exist
+      return res.json({ 
+        divisions: [
+          {
+            id: 'mock-1',
+            name: 'Chưa có Khối',
+            short_name: 'N/A',
+            color: '#94a3b8',
+            task_count: 0,
+            company_count: 0,
+            companies: [],
+          }
+        ]
+      });
     }
 
     const divisionIds = divisions.map(d => d.id);
@@ -209,7 +222,7 @@ r.get('/workload', async (req, res) => {
       };
     });
 
-    res.json({ divisions: workload.filter(d => d.task_count > 0) });
+    res.json({ divisions: workload }); // Show all divisions, even with 0 tasks
   } catch (e) {
     console.error('Dashboard workload error:', e);
     res.status(500).json({ error: e.message });
