@@ -643,11 +643,13 @@ r.post('/create-with-flow', async (req, res) => {
 
           if (flowTasks?.length) {
             for (const t of flowTasks) {
-              // Calculate due date based on estimated_days
-              let dueDate = null;
-              if (t.estimated_days > 0) {
-                dueDate = new Date(stepStartDate);
-                dueDate.setDate(dueDate.getDate() + t.estimated_days);
+              // Calculate deadline based on deadline_days/hours (unified with template logic)
+              let deadline = null;
+              if (t.deadline_days > 0 || t.deadline_hours > 0) {
+                const now = new Date();
+                if (t.deadline_days > 0) now.setDate(now.getDate() + t.deadline_days);
+                if (t.deadline_hours > 0) now.setHours(now.getHours() + t.deadline_hours);
+                deadline = now.toISOString();
               }
 
               // Determine assignee: priority flow_step_tasks.assigned_user_id > assignee_field > override from frontend
@@ -677,8 +679,8 @@ r.post('/create-with-flow', async (req, res) => {
                 status: 'pending',
                 order_index: t.order_index,
                 created_by_id: req.user.userId,
-                due_date: dueDate ? dueDate.toISOString() : null,
-                estimated_hours: (t.estimated_days || 0) * 8, // Convert days to hours
+                deadline: deadline,
+                estimated_hours: t.estimated_days ? t.estimated_days * 8 : null, // Keep estimated_hours for reference
                 task_type: 'project',
                 metadata: { 
                   flow_step_task_id: t.id,
@@ -692,6 +694,15 @@ r.post('/create-with-flow', async (req, res) => {
               // Create checklists from flow task
               if (t.checklists?.length) {
                 for (const c of t.checklists) {
+                  // Calculate checklist deadline
+                  let checklistDeadline = null;
+                  if (c.deadline_days > 0 || c.deadline_hours > 0) {
+                    const now = new Date();
+                    if (c.deadline_days > 0) now.setDate(now.getDate() + c.deadline_days);
+                    if (c.deadline_hours > 0) now.setHours(now.getHours() + c.deadline_hours);
+                    checklistDeadline = now.toISOString();
+                  }
+
                   // Determine checklist assignee: use checklist's assigned_user_id or inherit from task
                   let checklistAssignee = c.assigned_user_id || finalAssignee;
                   
@@ -709,6 +720,7 @@ r.post('/create-with-flow', async (req, res) => {
                       is_required: c.is_required || false,
                       is_completed: false,
                       assigned_user_id: checklistAssignee,
+                      deadline: checklistDeadline,
                     });
                   } catch (ce) { console.warn('Checklist insert error:', ce.message); }
                 }
@@ -721,20 +733,18 @@ r.post('/create-with-flow', async (req, res) => {
                 await createNotification(req, finalAssignee, 'task_assigned',
                   '📌 Nhiệm vụ mới', `${t.title} — DA ${code}`, 'project', projectId);
               }
-
-              if (dueDate && dueDate > stepStartDate) {
-                stepStartDate = dueDate;
-              }
             }
 
+            // Calculate next step start date based on max deadline
             const maxDeadline = flowTasks.reduce((max, t) => {
-              if (t.estimated_days > 0) {
-                const d = new Date(stepStartDate);
-                d.setDate(d.getDate() + t.estimated_days);
+              if (t.deadline_days > 0 || t.deadline_hours > 0) {
+                const d = new Date();
+                if (t.deadline_days > 0) d.setDate(d.getDate() + t.deadline_days);
+                if (t.deadline_hours > 0) d.setHours(d.getHours() + t.deadline_hours);
                 return d > max ? d : max;
               }
               return max;
-            }, stepStartDate);
+            }, new Date());
             stepStartDate = maxDeadline;
           }
         } else if (assignment.template_set_id) {
@@ -818,15 +828,14 @@ r.post('/create-with-flow', async (req, res) => {
                 await createNotification(req, finalAssignee, 'task_assigned',
                   '📌 Nhiệm vụ mới', `${t.title} — DA ${code}`, 'project', projectId);
               }
-
-              if (dueDate && dueDate > stepStartDate) {
-                stepStartDate = dueDate;
-              }
             }
 
+            // Calculate next step start date based on max template deadline
             const maxDeadline = tplTasks.reduce((max, t) => {
               if (t.deadline_days > 0 || t.deadline_hours > 0) {
-                const d = new Date(stepStartDate);
+                const d = new Date();
+                if (t.deadline_days > 0) d.setDate(d.getDate() + t.deadline_days);
+                if (t.deadline_hours > 0) d.setHours(d.getHours() + t.deadline_hours);
                 return d > max ? d : max;
               }
               return max;

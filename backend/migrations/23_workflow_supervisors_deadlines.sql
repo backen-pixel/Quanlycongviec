@@ -21,11 +21,23 @@ ADD COLUMN IF NOT EXISTS deadline_days INT CHECK (deadline_days >= 0),
 ADD COLUMN IF NOT EXISTS deadline_hours INT CHECK (deadline_hours >= 0),
 ADD COLUMN IF NOT EXISTS deadline_type TEXT CHECK (deadline_type IN ('from_task_start', 'from_prev_checklist', 'from_stage_start'));
 
--- 5. Add deadline to tasks table (actual deadline datetime)
+-- 5. Add deadline fields to flow_step_tasks (unify with template)
+ALTER TABLE flow_step_tasks
+ADD COLUMN IF NOT EXISTS deadline_days INT CHECK (deadline_days >= 0),
+ADD COLUMN IF NOT EXISTS deadline_hours INT CHECK (deadline_hours >= 0),
+ADD COLUMN IF NOT EXISTS deadline_type TEXT CHECK (deadline_type IN ('from_start', 'from_prev_task', 'from_stage_start'));
+
+-- 6. Add deadline fields to flow_step_task_checklists
+ALTER TABLE flow_step_task_checklists
+ADD COLUMN IF NOT EXISTS deadline_days INT CHECK (deadline_days >= 0),
+ADD COLUMN IF NOT EXISTS deadline_hours INT CHECK (deadline_hours >= 0),
+ADD COLUMN IF NOT EXISTS deadline_type TEXT CHECK (deadline_type IN ('from_task_start', 'from_prev_checklist', 'from_stage_start'));
+
+-- 7. Add deadline to tasks table (actual deadline datetime)
 ALTER TABLE tasks
 ADD COLUMN IF NOT EXISTS deadline TIMESTAMPTZ;
 
--- 6. Add deadline to task_checklists
+-- 8. Add deadline to task_checklists
 ALTER TABLE task_checklists
 ADD COLUMN IF NOT EXISTS deadline TIMESTAMPTZ;
 
@@ -38,6 +50,12 @@ COMMENT ON COLUMN company_template_tasks.deadline_type IS 'Cách tính deadline:
 COMMENT ON COLUMN company_template_checklists.deadline_days IS 'Số ngày deadline cho checklist';
 COMMENT ON COLUMN company_template_checklists.deadline_hours IS 'Số giờ deadline cho checklist';
 COMMENT ON COLUMN company_template_checklists.deadline_type IS 'Cách tính: from_task_start=từ khi task bắt đầu, from_prev_checklist=từ checklist trước, from_stage_start=từ khi vào stage';
+COMMENT ON COLUMN flow_step_tasks.deadline_days IS 'Số ngày deadline (giống template tasks)';
+COMMENT ON COLUMN flow_step_tasks.deadline_hours IS 'Số giờ deadline (giống template tasks)';
+COMMENT ON COLUMN flow_step_tasks.deadline_type IS 'Cách tính deadline (giống template tasks)';
+COMMENT ON COLUMN flow_step_task_checklists.deadline_days IS 'Số ngày deadline cho flow checklist';
+COMMENT ON COLUMN flow_step_task_checklists.deadline_hours IS 'Số giờ deadline cho flow checklist';
+COMMENT ON COLUMN flow_step_task_checklists.deadline_type IS 'Cách tính deadline cho flow checklist';
 COMMENT ON COLUMN tasks.deadline IS 'Deadline của nhiệm vụ (tự động tính từ template hoặc set thủ công)';
 COMMENT ON COLUMN task_checklists.deadline IS 'Deadline của checklist item';
 
