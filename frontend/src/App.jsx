@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth';
-import Sidebar from './components/Sidebar';
+import TopNavBar from './components/TopNavBar';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import MyTasks from './pages/MyTasks';
@@ -60,10 +60,10 @@ function ProtectedLayout() {
   const isFullscreen = fullscreenPages.some(p => location.pathname.startsWith(p));
 
   return (
-    <div className="flex h-screen bg-[var(--color-page-bg)]">
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
-        <main className="flex-1 overflow-y-auto w-full">
+    <div className="flex flex-col h-screen bg-[var(--color-page-bg)]">
+      <TopNavBar />
+      <div className="flex-1 overflow-y-auto w-full">
+        <main className="w-full">
           {isFullscreen ? (
             <Outlet />
           ) : (
