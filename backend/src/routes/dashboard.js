@@ -113,116 +113,62 @@ r.get('/overview', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// WORKLOAD BY DIVISION - Phân bổ công việc theo Khối (OPTIMIZED)
+// WORKLOAD BY STAGE - Phân bổ công việc theo Giai đoạn (SIMPLIFIED)
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/workload', async (req, res) => {
   try {
-    // Step 1: Get level ID for "Khối" once
-    const { data: khoiLevel } = await supabase
-      .from('ecosystem_levels')
-      .select('id')
-      .eq('name', 'Khối')
-      .single();
-    
-    if (!khoiLevel) {
+    // Get all workflow stages (8 stages: consulting → warranty)
+    const { data: stages } = await supabase
+      .from('workflow_stages')
+      .select('id, name, slug, color, icon, order_index')
+      .order('order_index');
+
+    if (!stages?.length) {
       return res.json({ divisions: [] });
     }
 
-    // Step 2: Get all divisions (Khối) and their companies in one query
-    const { data: divisions } = await supabase
-      .from('ecosystem_units')
-      .select('id, name, short_name, color')
-      .eq('level_id', khoiLevel.id)
-      .order('name');
+    // Get all projects with their current stage
+    const { data: projects } = await supabase
+      .from('projects')
+      .select('id, current_stage_id, status')
+      .neq('status', 'completed'); // Exclude completed projects
 
-    if (!divisions?.length) {
-      // Return mock data for testing if no divisions exist
-      return res.json({ 
-        divisions: [
-          {
-            id: 'mock-1',
-            name: 'Chưa có Khối',
-            short_name: 'N/A',
-            color: '#94a3b8',
-            task_count: 0,
-            company_count: 0,
-            companies: [],
-          }
-        ]
-      });
-    }
-
-    const divisionIds = divisions.map(d => d.id);
-
-    // Step 3: Get all companies under these divisions in ONE query
-    const { data: allCompanies } = await supabase
-      .from('ecosystem_units')
-      .select('id, name, short_name, parent_id')
-      .in('parent_id', divisionIds)
-      .order('name');
-
-    // Step 4: Get ALL tasks count grouped by assignee's department/company
-    // Simplified: Just count all active tasks (not done)
-    const { data: allTasks } = await supabase
+    // Get all active tasks
+    const { data: tasks } = await supabase
       .from('tasks')
-      .select('id, assignee_id, project_id, status')
+      .select('id, project_id, status, stage_id')
       .neq('status', 'done');
 
-    // Step 5: Get user → department/company mapping
-    const { data: users } = await supabase
-      .from('users')
-      .select('id, department_id');
-
-    const { data: departments } = await supabase
-      .from('departments')
-      .select('id, company_id');
-
-    // Build mapping: user_id → company_id
-    const userToCompany = {};
-    (users || []).forEach(u => {
-      const dept = (departments || []).find(d => d.id === u.department_id);
-      if (dept?.company_id) {
-        userToCompany[u.id] = dept.company_id;
+    // Count projects per stage
+    const stageProjectCount = {};
+    (projects || []).forEach(p => {
+      if (p.current_stage_id) {
+        stageProjectCount[p.current_stage_id] = (stageProjectCount[p.current_stage_id] || 0) + 1;
       }
     });
 
-    // Count tasks per company
-    const companyTaskCount = {};
-    (allTasks || []).forEach(task => {
-      const companyId = userToCompany[task.assignee_id];
-      if (companyId) {
-        companyTaskCount[companyId] = (companyTaskCount[companyId] || 0) + 1;
+    // Count tasks per stage
+    const stageTaskCount = {};
+    (tasks || []).forEach(t => {
+      if (t.stage_id) {
+        stageTaskCount[t.stage_id] = (stageTaskCount[t.stage_id] || 0) + 1;
       }
     });
 
-    // Build result
-    const workload = divisions.map(division => {
-      const companies = (allCompanies || []).filter(c => c.parent_id === division.id);
-      
-      const companyBreakdown = companies
-        .map(c => ({
-          id: c.id,
-          name: c.name,
-          short_name: c.short_name,
-          task_count: companyTaskCount[c.id] || 0,
-        }))
-        .filter(c => c.task_count > 0)
-        .sort((a, b) => b.task_count - a.task_count);
+    // Build workload per stage
+    const workload = stages.map(stage => ({
+      id: stage.id,
+      name: stage.name,
+      short_name: stage.slug,
+      color: stage.color || '#3b82f6',
+      icon: stage.icon,
+      task_count: stageTaskCount[stage.id] || 0,
+      project_count: stageProjectCount[stage.id] || 0,
+      company_count: 0, // Not used in this simplified version
+      companies: [], // Empty for now
+    }));
 
-      const totalTasks = companyBreakdown.reduce((sum, c) => sum + c.task_count, 0);
-
-      return {
-        id: division.id,
-        name: division.name,
-        short_name: division.short_name,
-        color: division.color || '#3b82f6',
-        task_count: totalTasks,
-        company_count: companies.length,
-        companies: companyBreakdown,
-      };
-    });
-
-    res.json({ divisions: workload }); // Show all divisions, even with 0 tasks
+    res.json({ divisions: workload });
   } catch (e) {
     console.error('Dashboard workload error:', e);
     res.status(500).json({ error: e.message });
