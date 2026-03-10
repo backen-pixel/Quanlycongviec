@@ -3,13 +3,13 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import {
   FolderKanban, CheckSquare, Users, DollarSign, TrendingUp, TrendingDown,
-  AlertTriangle, Clock, Eye, ArrowRight, Award, MapPin, Activity, Bell
+  AlertTriangle, Clock, Eye, ArrowRight, Award, MapPin, Activity, Bell, ChevronDown, ChevronRight
 } from 'lucide-react';
 import { formatVND, getInitials, avatarColor } from '../lib/utils';
 
 export default function DashboardNew() {
   const [overview, setOverview] = useState(null);
-  const [pipeline, setPipeline] = useState([]);
+  const [workload, setWorkload] = useState([]);
   const [timeline, setTimeline] = useState({ projects: [], revenue: [] });
   const [team, setTeam] = useState([]);
   const [alerts, setAlerts] = useState(null);
@@ -17,6 +17,7 @@ export default function DashboardNew() {
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('7d');
+  const [expandedDivision, setExpandedDivision] = useState(null);
 
   useEffect(() => {
     loadDashboard();
@@ -25,9 +26,9 @@ export default function DashboardNew() {
   const loadDashboard = async () => {
     setLoading(true);
     try {
-      const [overviewRes, pipelineRes, timelineRes, teamRes, alertsRes, customersRes, activityRes] = await Promise.all([
+      const [overviewRes, workloadRes, timelineRes, teamRes, alertsRes, customersRes, activityRes] = await Promise.all([
         api.get('/dashboard/overview'),
-        api.get('/dashboard/pipeline'),
+        api.get('/dashboard/workload'),
         api.get('/dashboard/timeline?period=6m'),
         api.get(`/dashboard/team?period=${period}`),
         api.get('/dashboard/alerts'),
@@ -36,7 +37,7 @@ export default function DashboardNew() {
       ]);
 
       setOverview(overviewRes.data);
-      setPipeline(pipelineRes.data.stages || []);
+      setWorkload(workloadRes.data.divisions || []);
       setTimeline({ projects: timelineRes.data.projects || [], revenue: timelineRes.data.revenue || [] });
       setTeam(teamRes.data.performers || []);
       setAlerts(alertsRes.data);
@@ -134,9 +135,13 @@ export default function DashboardNew() {
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        {/* Pipeline */}
+        {/* Workload by Division */}
         <div className="lg:col-span-2">
-          <PipelineWidget pipeline={pipeline} />
+          <WorkloadWidget 
+            workload={workload} 
+            expandedDivision={expandedDivision}
+            onToggleExpand={setExpandedDivision}
+          />
         </div>
 
         {/* Alerts */}
@@ -197,47 +202,92 @@ function KPICard({ title, value, subtitle, trend, trendLabel, trendNegative, ico
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Pipeline Widget
+// Workload Widget - Phân bổ công việc theo Khối
 // ═══════════════════════════════════════════════════════════════════════════
-function PipelineWidget({ pipeline }) {
-  const maxCount = Math.max(...pipeline.map(s => s.count), 1);
+function WorkloadWidget({ workload, expandedDivision, onToggleExpand }) {
+  const maxCount = Math.max(...workload.map(d => d.task_count), 1);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
           <TrendingUp className="h-5 w-5 text-blue-600" />
-          Quy Trình Sản Xuất
+          Phân Bổ Công Việc Theo Khối
         </h2>
-        <Link to="/projects" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+        <Link to="/tasks" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
           Xem tất cả <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
       <div className="space-y-4">
-        {pipeline.map(stage => {
-          const percentage = maxCount > 0 ? (stage.count / maxCount) * 100 : 0;
+        {workload.map(division => {
+          const percentage = maxCount > 0 ? (division.task_count / maxCount) * 100 : 0;
+          const isExpanded = expandedDivision === division.id;
+          
           return (
-            <div key={stage.id} className="group">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                  {stage.icon && <span>{stage.icon}</span>}
-                  {stage.name}
-                </span>
-                <span className="text-sm font-bold text-gray-900">{stage.count}</span>
+            <div key={division.id} className="group">
+              {/* Division bar */}
+              <div 
+                className="cursor-pointer hover:bg-gray-50 rounded-lg p-2 -mx-2 transition-colors"
+                onClick={() => onToggleExpand(isExpanded ? null : division.id)}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                    {isExpanded ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                    <span 
+                      className="w-3 h-3 rounded-full" 
+                      style={{ backgroundColor: division.color }}
+                    />
+                    {division.name}
+                    <span className="text-xs text-gray-500">({division.company_count} công ty)</span>
+                  </span>
+                  <span className="text-sm font-bold text-gray-900">{division.task_count} việc</span>
+                </div>
+                <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500 group-hover:opacity-80"
+                    style={{
+                      width: `${Math.max(percentage, division.task_count > 0 ? 5 : 0)}%`,
+                      backgroundColor: division.color || '#3b82f6',
+                    }}
+                  />
+                </div>
               </div>
-              <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-500 group-hover:opacity-80"
-                  style={{
-                    width: `${Math.max(percentage, stage.count > 0 ? 5 : 0)}%`,
-                    backgroundColor: stage.color || '#3b82f6',
-                  }}
-                />
-              </div>
-              <div className="text-xs text-gray-500 mt-1">{formatVND(stage.value)}</div>
+
+              {/* Company breakdown (expanded) */}
+              {isExpanded && division.companies.length > 0 && (
+                <div className="mt-3 ml-6 space-y-2 bg-gray-50 rounded-lg p-3 border-l-2" style={{ borderColor: division.color }}>
+                  <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Chi tiết công ty:</p>
+                  {division.companies.map(company => {
+                    const companyPercentage = division.task_count > 0 ? (company.task_count / division.task_count) * 100 : 0;
+                    return (
+                      <div key={company.id} className="flex items-center gap-2">
+                        <span className="text-xs text-gray-600 w-32 truncate">{company.name}</span>
+                        <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${Math.max(companyPercentage, 5)}%`,
+                              backgroundColor: division.color,
+                              opacity: 0.7,
+                            }}
+                          />
+                        </div>
+                        <span className="text-xs font-semibold text-gray-700 w-12 text-right">{company.task_count}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
+
+        {workload.length === 0 && (
+          <div className="text-center py-8 text-gray-400">
+            <TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">Chưa có dữ liệu</p>
+          </div>
+        )}
       </div>
     </div>
   );
