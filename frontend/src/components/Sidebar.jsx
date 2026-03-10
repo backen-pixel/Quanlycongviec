@@ -56,8 +56,9 @@ const MENU_GROUPS = [
     items: [
       { to: '/permissions', icon: Shield, label: 'Phân quyền' },
       { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
-      { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
-      { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
+      // Hidden from sidebar but routes still work
+      // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
+      // { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
       { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
     ]
   }
