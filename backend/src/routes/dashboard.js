@@ -331,39 +331,47 @@ r.get('/alerts', async (req, res) => {
   try {
     const now = new Date();
 
-    // Overdue projects
-    const { count: overdueProjects } = await supabase.from('projects').select('*', { count: 'exact', head: true })
-      .lt('due_date', now.toISOString())
-      .neq('status', 'warranty');
+    // Run all count queries in parallel
+    const [
+      overdueProjectsRes,
+      overdueTasksRes,
+      pendingApprovalsRes,
+      unassignedHighPriorityRes,
+      allActiveTasks,
+    ] = await Promise.all([
+      supabase.from('projects').select('*', { count: 'exact', head: true })
+        .lt('due_date', now.toISOString())
+        .neq('status', 'warranty'),
+      
+      supabase.from('tasks').select('*', { count: 'exact', head: true })
+        .lt('due_date', now.toISOString())
+        .neq('status', 'done'),
+      
+      supabase.from('project_approvals').select('id').eq('status', 'pending'),
+      
+      supabase.from('tasks').select('*', { count: 'exact', head: true })
+        .is('assignee_id', null)
+        .eq('priority', 'urgent'),
+      
+      // Get all active tasks at once
+      supabase.from('tasks').select('assignee_id')
+        .in('status', ['pending', 'in_progress', 'review']),
+    ]);
 
-    // Overdue tasks
-    const { count: overdueTasks } = await supabase.from('tasks').select('*', { count: 'exact', head: true })
-      .lt('due_date', now.toISOString())
-      .neq('status', 'done');
-
-    // Pending approvals
-    const { data: pendingApprovals } = await supabase.from('project_approvals').select('id').eq('status', 'pending');
-
-    // Unassigned high priority tasks
-    const { count: unassignedHighPriority } = await supabase.from('tasks').select('*', { count: 'exact', head: true })
-      .is('assignee_id', null)
-      .eq('priority', 'urgent');
-
-    // Resource overload (users with >20 active tasks)
-    const { data: users } = await supabase.from('users').select('id, full_name');
-    let resourceOverload = 0;
-    for (const user of users || []) {
-      const { count } = await supabase.from('tasks').select('*', { count: 'exact', head: true })
-        .eq('assignee_id', user.id)
-        .in('status', ['pending', 'in_progress', 'review']);
-      if (count > 20) resourceOverload++;
-    }
+    // Count resource overload in JS (no loops)
+    const userTaskCount = {};
+    (allActiveTasks.data || []).forEach(task => {
+      if (task.assignee_id) {
+        userTaskCount[task.assignee_id] = (userTaskCount[task.assignee_id] || 0) + 1;
+      }
+    });
+    const resourceOverload = Object.values(userTaskCount).filter(count => count > 20).length;
 
     res.json({
-      overdue_projects: overdueProjects || 0,
-      overdue_tasks: overdueTasks || 0,
-      pending_approvals: (pendingApprovals || []).length,
-      unassigned_high_priority: unassignedHighPriority || 0,
+      overdue_projects: overdueProjectsRes.count || 0,
+      overdue_tasks: overdueTasksRes.count || 0,
+      pending_approvals: (pendingApprovalsRes.data || []).length,
+      unassigned_high_priority: unassignedHighPriorityRes.count || 0,
       resource_overload: resourceOverload,
     });
   } catch (e) {
