@@ -67,7 +67,7 @@ async function logActivity(userId, action, entityType, entityId, description, ol
 }
 
 // ─── CHECK PENDING APPROVALS ──
-r.get('/pending-approvals', async (req, res) => {
+r.get('/pending-approvals', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { project_ids } = req.query;
     if (!project_ids) return res.json({ approvals: {} });
@@ -92,7 +92,7 @@ r.get('/pending-approvals', async (req, res) => {
 });
 
 // ─── LIST PROJECTS ──
-r.get('/', async (req, res) => {
+r.get('/', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { status, search, stage_slug, page = 1, limit = 50, company_id, division_id } = req.query;
     const userId = req.user.userId;
@@ -206,7 +206,7 @@ r.get('/', async (req, res) => {
 });
 
 // ─── GET PROJECT DETAIL ──
-r.get('/:id', async (req, res) => {
+r.get('/:id', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { data, error } = await supabase.from('projects').select(`
       *, customers(*),
