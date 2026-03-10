@@ -113,11 +113,11 @@ r.get('/overview', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// WORKLOAD BY STAGE - Phân bổ công việc theo Giai đoạn (SIMPLIFIED)
+// WORKLOAD BY STAGE - Phân bổ dự án theo Giai đoạn
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/workload', async (req, res) => {
   try {
-    // Get all workflow stages (8 stages: consulting → warranty)
+    // Get all workflow stages
     const { data: stages } = await supabase
       .from('workflow_stages')
       .select('id, name, slug, color, icon, order_index')
@@ -127,17 +127,11 @@ r.get('/workload', async (req, res) => {
       return res.json({ divisions: [] });
     }
 
-    // Get all projects with their current stage
+    // Get all projects with their current stage (not completed)
     const { data: projects } = await supabase
       .from('projects')
       .select('id, current_stage_id, status')
-      .neq('status', 'completed'); // Exclude completed projects
-
-    // Get all active tasks
-    const { data: tasks } = await supabase
-      .from('tasks')
-      .select('id, project_id, status, stage_id')
-      .neq('status', 'done');
+      .neq('status', 'completed');
 
     // Count projects per stage
     const stageProjectCount = {};
@@ -147,26 +141,45 @@ r.get('/workload', async (req, res) => {
       }
     });
 
-    // Count tasks per stage
-    const stageTaskCount = {};
-    (tasks || []).forEach(t => {
-      if (t.stage_id) {
-        stageTaskCount[t.stage_id] = (stageTaskCount[t.stage_id] || 0) + 1;
+    // Group stages by name (merge duplicates)
+    const stagesByName = {};
+    stages.forEach(stage => {
+      const projectCount = stageProjectCount[stage.id] || 0;
+      
+      if (!stagesByName[stage.name]) {
+        stagesByName[stage.name] = {
+          name: stage.name,
+          slug: stage.slug,
+          color: stage.color || '#3b82f6',
+          icon: stage.icon,
+          order_index: stage.order_index,
+          project_count: 0,
+          stage_ids: []
+        };
+      }
+      
+      stagesByName[stage.name].project_count += projectCount;
+      stagesByName[stage.name].stage_ids.push(stage.id);
+      // Keep the lowest order_index for sorting
+      if (stage.order_index < stagesByName[stage.name].order_index) {
+        stagesByName[stage.name].order_index = stage.order_index;
       }
     });
 
-    // Build workload per stage
-    const workload = stages.map(stage => ({
-      id: stage.id,
-      name: stage.name,
-      short_name: stage.slug,
-      color: stage.color || '#3b82f6',
-      icon: stage.icon,
-      task_count: stageTaskCount[stage.id] || 0,
-      project_count: stageProjectCount[stage.id] || 0,
-      company_count: 0, // Not used in this simplified version
-      companies: [], // Empty for now
-    }));
+    // Convert to array and sort by order_index
+    const workload = Object.values(stagesByName)
+      .sort((a, b) => a.order_index - b.order_index)
+      .map((stage, idx) => ({
+        id: stage.slug + '-' + idx,
+        name: stage.name,
+        short_name: stage.slug,
+        color: stage.color,
+        icon: stage.icon,
+        project_count: stage.project_count,
+        task_count: 0, // Not used
+        company_count: 0, // Not used
+        companies: [],
+      }));
 
     res.json({ divisions: workload });
   } catch (e) {
