@@ -96,8 +96,46 @@ export default function ProjectDetail() {
   if (loading) return <div className="flex items-center justify-center h-64"><svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>;
   if (!project) return <div className="text-center py-16 text-gray-400">Dự án không tồn tại</div>;
 
-  const currentStageIdx = STAGE_FLOW.findIndex(s => s.status === project.status);
-  const nextStage = currentStageIdx >= 0 && currentStageIdx < STAGE_FLOW.length - 1 ? STAGE_FLOW[currentStageIdx + 1] : null;
+  // Extract stages from project flow (if has flowAssignments)
+  let projectStages = STAGE_FLOW; // Default fallback
+  if (project.flowAssignments?.length > 0) {
+    // Get unique stage IDs from flow assignments
+    const stageIds = new Set();
+    project.flowAssignments.forEach(fa => {
+      fa.tasks?.forEach(t => {
+        if (t.stage_id) stageIds.add(t.stage_id);
+      });
+    });
+    
+    // Map to stage info (need to load stages from API or use task stages)
+    // For now, use tasks to get stage info
+    const stagesFromTasks = new Set();
+    project.tasks?.forEach(t => {
+      if (t.stage) stagesFromTasks.add(JSON.stringify({
+        id: t.stage.id,
+        name: t.stage.name,
+        slug: t.stage.slug,
+        color: t.stage.color,
+        order: t.stage.order_index
+      }));
+    });
+    
+    if (stagesFromTasks.size > 0) {
+      projectStages = Array.from(stagesFromTasks)
+        .map(s => JSON.parse(s))
+        .sort((a, b) => a.order - b.order)
+        .map(s => ({
+          slug: s.slug,
+          status: s.slug, // Approximate mapping
+          label: s.name,
+          personKey: null, // Will get from flowAssignments
+          color: s.color
+        }));
+    }
+  }
+
+  const currentStageIdx = projectStages.findIndex(s => s.status === project.status || s.slug === project.current_stage?.slug);
+  const nextStage = currentStageIdx >= 0 && currentStageIdx < projectStages.length - 1 ? projectStages[currentStageIdx + 1] : null;
   const canAdvance = project.canAdvance;
 
   const totalTasks = project.tasks?.length || 0;
@@ -143,40 +181,19 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {/* Stage pipeline - COMPACT */}
+      {/* Stage pipeline - Flow-based */}
       <div className="bg-white rounded-xl border p-4">
         <div className="flex items-center gap-2 overflow-x-auto">
-          {/* Hiển thị: stages đã xong + current + next, còn lại hiển thị dots */}
-          {STAGE_FLOW.map((s, i) => {
-            const isCurrent = s.status === project.status;
+          {projectStages.map((s, i) => {
+            const isCurrent = s.slug === project.current_stage?.slug || s.status === project.status;
             const isPast = i < currentStageIdx;
-            const isNext = i === currentStageIdx + 1;
-            const person = project[s.personKey];
-            
-            // Chỉ hiển thị: past + current + next
-            // Còn lại hiển thị dạng compact
-            if (!isPast && !isCurrent && !isNext && i > 0 && i < STAGE_FLOW.length - 1) {
-              // Chỉ hiển thị dot đầu tiên của nhóm pending
-              if (i === currentStageIdx + 2) {
-                return (
-                  <div key={s.slug} className="flex items-center gap-1">
-                    <div className="flex items-center gap-0.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
-                    </div>
-                    <span className="text-[10px] text-gray-400 mx-1">+{STAGE_FLOW.length - currentStageIdx - 2}</span>
-                  </div>
-                );
-              }
-              return null;
-            }
+            const person = project[s.personKey]; // Will be null for flow-based stages, handled below
             
             return (
-              <div key={s.slug} className="flex items-center gap-1">
+              <div key={s.slug || i} className="flex items-center gap-1">
                 <div className={`h-8 px-2.5 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5 ${
                   isCurrent ? 'bg-blue-600 text-white' : isPast ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
-                }`}>
+                }`} style={{ borderLeftColor: s.color, borderLeftWidth: '3px' }}>
                   {isPast && <CheckSquare className="h-3 w-3" />}
                   {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                   {s.label}
@@ -187,7 +204,7 @@ export default function ProjectDetail() {
                     </div>
                   )}
                 </div>
-                {i < STAGE_FLOW.length - 1 && (isPast || isCurrent || isNext) && <ChevronRight className="h-3 w-3 text-gray-300 shrink-0" />}
+                {i < projectStages.length - 1 && <ChevronRight className="h-3 w-3 text-gray-300 shrink-0" />}
               </div>
             );
           })}
