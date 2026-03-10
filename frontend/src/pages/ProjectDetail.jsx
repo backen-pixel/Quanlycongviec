@@ -157,6 +157,17 @@ export default function ProjectDetail() {
             {project.company && (
               <p className="text-xs text-indigo-600 font-medium flex items-center gap-1 mt-0.5">🏢 {project.company.name}{project.company.short_name ? ` (${project.company.short_name})` : ''}</p>
             )}
+            {project.supervisor && (
+              <div className="flex items-center gap-1.5 mt-1">
+                <div className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold"
+                  style={{ backgroundColor: avatarColor(project.supervisor.full_name) }}>
+                  {getInitials(project.supervisor.full_name)}
+                </div>
+                <p className="text-[10px] text-gray-500">
+                  👁️ Giám sát: <span className="font-medium text-gray-700">{project.supervisor.full_name}</span>
+                </p>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -307,69 +318,68 @@ export default function ProjectDetail() {
         </button>
         {showPeople && (
           <div className="px-3 sm:px-4 pb-4">
-        {project.workflowLines?.length > 0 ? (
-          <div className="space-y-3">
-            {(() => {
-              const byStage = {};
-              project.workflowLines.forEach(l => {
-                if (!byStage[l.stage_slug]) byStage[l.stage_slug] = [];
-                byStage[l.stage_slug].push(l);
-              });
-              return projectStages.map(s => {
-                const lines = byStage[s.slug] || [];
+            {/* Show people by stage with their assigned tasks */}
+            <div className="space-y-3">
+              {projectStages.map(s => {
+                // Get tasks for this stage
+                const stageTasks = (project.tasks || []).filter(t => 
+                  t.stage?.slug === s.slug || t.stage?.id === s.id
+                );
+                
+                // Group users by tasks
+                const userTasks = {};
+                stageTasks.forEach(task => {
+                  if (task.assignee) {
+                    const uid = task.assignee.id;
+                    if (!userTasks[uid]) {
+                      userTasks[uid] = { user: task.assignee, tasks: [] };
+                    }
+                    userTasks[uid].tasks.push(task);
+                  }
+                });
+                
+                const users = Object.values(userTasks);
+                
                 return (
                   <div key={s.slug || s.label}>
                     <div className="flex items-center gap-2 mb-1.5">
-                      <p className="text-[10px] font-semibold text-gray-400 uppercase flex-1">{s.label} ({lines.length})</p>
-                      {editingLines && (
-                        <button onClick={() => addLine(s.slug)}
-                          className="h-5 px-1.5 bg-blue-50 text-blue-600 rounded text-[9px] font-medium flex items-center gap-0.5 cursor-pointer hover:bg-blue-100">
-                          <Plus className="h-2.5 w-2.5" /> Thêm
-                        </button>
-                      )}
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase flex-1">
+                        {s.label} ({users.length} người)
+                      </p>
                     </div>
-                    {lines.length > 0 ? (
+                    {users.length > 0 ? (
                       <div className="space-y-1.5">
-                        {lines.map(line => (
-                          <WorkflowLineRow key={line.id} line={line} editing={editingLines}
-                            users={allUsers} onUpdate={updateLine} onDelete={deleteLine} />
+                        {users.map(({ user, tasks }) => (
+                          <div key={user.id} className="bg-gray-50 rounded-lg px-2.5 py-2">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                                style={{ backgroundColor: avatarColor(user.full_name) }}>
+                                {getInitials(user.full_name)}
+                              </div>
+                              <p className="text-xs font-medium text-gray-900">{user.full_name}</p>
+                              <span className="text-[9px] text-gray-500">({tasks.length} nhiệm vụ)</span>
+                            </div>
+                            <div className="ml-8 space-y-0.5">
+                              {tasks.map(task => (
+                                <div key={task.id} className="flex items-center gap-1 text-[10px] text-gray-600">
+                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                    task.status === 'done' ? 'bg-green-500' : 
+                                    task.status === 'in_progress' ? 'bg-blue-500' : 'bg-gray-300'
+                                  }`} />
+                                  <span className="truncate">{task.title}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="text-[10px] text-gray-300 py-1">
-                        {editingLines ? <button onClick={() => addLine(s.slug)} className="text-blue-500 hover:underline cursor-pointer">+ Thêm bộ phận</button> : '—'}
-                      </div>
+                      <div className="text-[10px] text-gray-300 py-1">Chưa phân công</div>
                     )}
-                  </div>
-                );
-              });
-            })()}
-          </div>
-        ) : (
-          /* Old: Fixed stage persons - now uses projectStages from flow */
-          <div className="space-y-3">
-            <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 sm:gap-3">
-              {projectStages.map(s => {
-                const person = project[s.personKey];
-                return (
-                  <div key={s.slug || s.label} className="text-center">
-                    <div className="h-8 w-8 sm:h-9 sm:w-9 mx-auto rounded-full flex items-center justify-center text-white text-[9px] sm:text-[10px] font-bold mb-1"
-                      style={{ backgroundColor: person ? avatarColor(person.full_name) : '#d1d5db' }}>
-                      {person ? getInitials(person.full_name) : '?'}
-                    </div>
-                    <p className="text-[9px] sm:text-[10px] font-medium text-gray-900 truncate">{person?.full_name || '—'}</p>
-                    <p className="text-[8px] sm:text-[9px] text-gray-400">{s.label}</p>
                   </div>
                 );
               })}
             </div>
-            {editingLines && (
-              <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2">
-                💡 Dự án này dùng phân công cũ (8 vai trò cố định). Bấm "Thêm" ở từng quy trình để chuyển sang phân công bộ phận linh hoạt.
-              </p>
-            )}
-          </div>
-        )}
           </div>
         )}
       </div>
