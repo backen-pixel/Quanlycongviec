@@ -63,7 +63,44 @@ const MENU_GROUPS = [
   }
 ];
 
+<<<<<<< Updated upstream
 function SideLink({ to, icon: Icon, label, collapsed }) {
+=======
+// Workspace section (between nav and tools)
+const workspace = [
+  { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
+];
+
+// Fallback hardcoded stages (used if API fails)
+const FALLBACK_WORKFLOW = [
+  { to: '/stage/consulting', icon: MessageSquare, label: 'Tư vấn', dot: '#8B5CF6', slug: 'consulting' },
+  { to: '/stage/design', icon: Palette, label: 'Thiết kế', dot: '#EC4899', slug: 'design' },
+  { to: '/stage/quotation', icon: Calculator, label: 'Báo giá', dot: '#F59E0B', slug: 'quotation' },
+  { to: '/stage/contract', icon: FileText, label: 'Hợp đồng', dot: '#10B981', slug: 'contract' },
+  { to: '/stage/production', icon: Hammer, label: 'Sản xuất', dot: '#F97316', slug: 'production' },
+  { to: '/stage/shipping', icon: Truck, label: 'Vận chuyển', dot: '#06B6D4', slug: 'shipping' },
+  { to: '/stage/installation', icon: Wrench, label: 'Lắp đặt', dot: '#3B82F6', slug: 'installation' },
+  { to: '/stage/customer-care', icon: Heart, label: 'CSKH', dot: '#EF4444', slug: 'customer-care' },
+];
+
+const adminTools = [
+  { to: '/ecosystem', icon: Network, label: 'Cấu trúc công ty' },
+  { to: '/workflow-hub', icon: GitBranch, label: 'Quản lý quy trình' },
+  { to: '/companies', icon: Building2, label: 'Công ty' },
+  { to: '/teams', icon: Users, label: 'Team' },
+  { to: '/users', icon: Users, label: 'Nhân viên' },
+];
+
+const adminSettings = [
+  { to: '/permissions', icon: Shield, label: 'Phân quyền' },
+  { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
+  { to: '/ecosystem-levels', icon: Layers, label: 'Cấp bậc HST' },
+  { to: '/departments', icon: Building, label: 'Phòng ban' },
+  { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
+];
+
+function SideLink({ to, icon: Icon, emoji, label, dot, collapsed }) {
+>>>>>>> Stashed changes
   return (
     <NavLink
       to={to}
