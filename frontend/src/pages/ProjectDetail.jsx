@@ -865,6 +865,7 @@ function TaskRow({ task: t, isLocked, onSelect, companyUnitId, onReload }) {
 function ChecklistItem({ item: c, companyUnitId, onReload, taskId }) {
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesText, setNotesText] = useState('');
+  const [uploadedFiles, setUploadedFiles] = useState([]);
 
   const parseNotes = (raw) => {
     if (!raw) return { text: '', assignee_id: null };
@@ -886,8 +887,20 @@ function ChecklistItem({ item: c, companyUnitId, onReload, taskId }) {
   const saveNotes = async () => {
     setEditingNotes(false);
     try {
-      // Chỉ lưu text vào notes, không lưu assignee_id
-      await api.put(`/tasks/checklists/${c.id}`, { notes: notesText.trim() || null });
+      // Lưu cả notes và attachments
+      await api.put(`/tasks/checklists/${c.id}`, { 
+        notes: notesText.trim() || null,
+        attachments: [...attachments, ...uploadedFiles]
+      });
+      setUploadedFiles([]);
+      onReload?.();
+    } catch { }
+  };
+
+  const deleteAttachment = async (fileIndex) => {
+    try {
+      const newAttachments = attachments.filter((_, i) => i !== fileIndex);
+      await api.put(`/tasks/checklists/${c.id}`, { attachments: newAttachments });
       onReload?.();
     } catch { }
   };
@@ -934,13 +947,31 @@ function ChecklistItem({ item: c, companyUnitId, onReload, taskId }) {
 
       {/* Notes */}
       {editingNotes ? (
-        <div className="ml-5 space-y-1">
+        <div className="ml-5 space-y-2">
           <textarea value={notesText} onChange={e => setNotesText(e.target.value)}
             className="w-full text-xs border border-blue-300 rounded p-1.5 resize-none outline-none focus:ring-1 focus:ring-blue-400 min-h-[60px]"
             placeholder="Ghi chú..." autoFocus />
+          
+          {/* File Upload */}
+          <div>
+            <FileUploadButton onFilesUploaded={(files) => setUploadedFiles(prev => [...prev, ...files])} />
+            {uploadedFiles.length > 0 && (
+              <div className="mt-1 space-y-1">
+                {uploadedFiles.map((f, i) => (
+                  <div key={i} className="flex items-center gap-2 bg-blue-50 rounded px-2 py-1 text-[10px]">
+                    <Paperclip className="h-3 w-3 text-blue-500" />
+                    <span className="flex-1 text-blue-700">{f.file_name}</span>
+                    <button onClick={() => setUploadedFiles(prev => prev.filter((_, j) => j !== i))}
+                      className="text-gray-400 hover:text-red-500">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-1.5">
             <button onClick={saveNotes} className="h-6 px-2 bg-blue-600 text-white text-[10px] rounded cursor-pointer hover:bg-blue-700">Lưu</button>
-            <button onClick={() => setEditingNotes(false)} className="h-6 px-2 bg-gray-100 text-gray-600 text-[10px] rounded cursor-pointer hover:bg-gray-200">Hủy</button>
+            <button onClick={() => { setEditingNotes(false); setUploadedFiles([]); }} className="h-6 px-2 bg-gray-100 text-gray-600 text-[10px] rounded cursor-pointer hover:bg-gray-200">Hủy</button>
           </div>
         </div>
       ) : notesDisplay ? (
@@ -951,12 +982,17 @@ function ChecklistItem({ item: c, companyUnitId, onReload, taskId }) {
       {attachments.length > 0 && (
         <div className="ml-5 space-y-1 mt-1">
           {attachments.map((f, fi) => (
-            <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1.5 bg-gray-50 rounded px-2 py-1 hover:bg-gray-100 transition-colors">
+            <div key={fi} className="flex items-center gap-1.5 bg-gray-50 rounded px-2 py-1 hover:bg-gray-100 transition-colors group">
               <Paperclip className="h-3 w-3 text-gray-400 shrink-0" />
-              <span className="text-[10px] text-blue-600 truncate flex-1">{f.file_name || 'file'}</span>
+              <a href={f.file_url} target="_blank" rel="noopener noreferrer"
+                className="text-[10px] text-blue-600 truncate flex-1 hover:underline">
+                {f.file_name || 'file'}
+              </a>
               {f.file_size && <span className="text-[9px] text-gray-400">{(f.file_size / 1024).toFixed(0)}KB</span>}
-            </a>
+              <button onClick={() => deleteAttachment(fi)}
+                className="text-[9px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Xóa file">✕</button>
+            </div>
           ))}
         </div>
       )}
