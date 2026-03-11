@@ -4,10 +4,30 @@
 -- Chạy script này trong Supabase SQL Editor
 
 -- 1. XÓA DỮ LIỆU CŨ (NẾU CÓ)
+-- Xóa các tham chiếu từ project_company_assignments trước
+DELETE FROM project_company_assignments WHERE division_unit_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa các tham chiếu từ ecosystem_unit_stage_groups
+DELETE FROM ecosystem_unit_stage_groups WHERE unit_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa members
 DELETE FROM ecosystem_unit_members WHERE unit_id IN (
   SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
 );
+
+-- Xóa company units thuộc các khối cũ
+DELETE FROM ecosystem_units WHERE parent_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa các khối cũ
 DELETE FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division');
+
+-- Xóa users cũ (nếu có)
 DELETE FROM users WHERE email IN ('kinhdoanh@tubep.vn', 'sanxuat@tubep.vn', 'vanchuyen@tubep.vn', 'lapdathb@tubep.vn');
 
 -- 2. TẠO 4 KHỐI (DIVISIONS)
