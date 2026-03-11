@@ -4,8 +4,40 @@
 -- Chạy script này trong Supabase SQL Editor
 
 -- 1. XÓA DỮ LIỆU CŨ (NẾU CÓ)
--- Xóa các tham chiếu từ project_company_assignments trước
+-- Xóa các tham chiếu từ workflow_flow_steps trước
+DELETE FROM workflow_flow_steps WHERE company_unit_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa các tham chiếu từ project_phase_handoffs
+DELETE FROM project_phase_handoffs WHERE from_division_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+) OR to_division_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa các tham chiếu từ project_company_assignments
 DELETE FROM project_company_assignments WHERE division_unit_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa các tham chiếu từ workflow_stage_groups
+UPDATE workflow_stage_groups SET division_unit_id = NULL WHERE division_unit_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa các tham chiếu từ company_template_sets
+UPDATE company_template_sets SET division_id = NULL WHERE division_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa các tham chiếu từ companies table
+UPDATE companies SET division_unit_id = NULL WHERE division_unit_id IN (
+  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+);
+
+-- Xóa các tham chiếu từ users table
+UPDATE users SET primary_division_id = NULL WHERE primary_division_id IN (
   SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
 );
 
@@ -19,7 +51,46 @@ DELETE FROM ecosystem_unit_members WHERE unit_id IN (
   SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
 );
 
--- Xóa company units thuộc các khối cũ
+-- Xóa company units thuộc các khối cũ (và tất cả children)
+-- Trước tiên xóa FK references đến company units
+DELETE FROM workflow_flow_steps WHERE company_unit_id IN (
+  SELECT id FROM ecosystem_units WHERE parent_id IN (
+    SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+  )
+);
+
+DELETE FROM project_company_assignments WHERE company_unit_id IN (
+  SELECT id FROM ecosystem_units WHERE parent_id IN (
+    SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+  )
+);
+
+UPDATE company_template_sets SET unit_id = NULL WHERE unit_id IN (
+  SELECT id FROM ecosystem_units WHERE parent_id IN (
+    SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+  )
+);
+
+DELETE FROM ecosystem_unit_stage_groups WHERE unit_id IN (
+  SELECT id FROM ecosystem_units WHERE parent_id IN (
+    SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+  )
+);
+
+DELETE FROM ecosystem_unit_members WHERE unit_id IN (
+  SELECT id FROM ecosystem_units WHERE parent_id IN (
+    SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+  )
+);
+
+-- Xóa tất cả children (departments, teams) của company units
+DELETE FROM ecosystem_units WHERE parent_id IN (
+  SELECT id FROM ecosystem_units WHERE parent_id IN (
+    SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+  )
+);
+
+-- Xóa company units
 DELETE FROM ecosystem_units WHERE parent_id IN (
   SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
 );
