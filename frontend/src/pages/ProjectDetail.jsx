@@ -869,31 +869,36 @@ function ChecklistItem({ item: c, companyUnitId, onReload, taskId }) {
   const parseNotes = (raw) => {
     if (!raw) return { text: '', assignee_id: null };
     if (typeof raw === 'object') return { text: raw.text || '', assignee_id: raw.assignee_id || null };
-    try { const p = JSON.parse(raw); return { text: p.text || '', assignee_id: p.assignee_id || null }; }
-    catch { return { text: raw, assignee_id: null }; }
+    try { 
+      const p = JSON.parse(raw); 
+      return { text: p.text || raw, assignee_id: p.assignee_id || null }; 
+    } catch { 
+      return { text: raw, assignee_id: null }; 
+    }
   };
 
-  const { text: notesDisplay, assignee_id: checklistAssigneeId } = parseNotes(c.notes);
+  const { text: notesDisplay, assignee_id: notesAssigneeId } = parseNotes(c.notes);
+  // Ưu tiên dùng assignee_id từ cột riêng (sau migration), fallback là từ notes JSON (legacy)
+  const checklistAssigneeId = c.assignee_id || notesAssigneeId;
   const assignedUserId = c.assigned_user_id || checklistAssigneeId;
   const attachments = c.attachments || [];
 
   const saveNotes = async () => {
     setEditingNotes(false);
     try {
-      // Always save in JSON format for consistency
-      const newNotes = JSON.stringify({ 
-        text: notesText.trim(), 
-        assignee_id: assignedUserId || null 
-      });
-      await api.put(`/tasks/checklists/${c.id}`, { notes: newNotes });
+      // Chỉ lưu text vào notes, không lưu assignee_id
+      await api.put(`/tasks/checklists/${c.id}`, { notes: notesText.trim() || null });
       onReload?.();
     } catch { }
   };
 
   const handleChecklistAssignee = async (newUserId) => {
     try {
-      const newNotes = JSON.stringify({ text: notesDisplay, assignee_id: newUserId || null });
-      await api.put(`/tasks/checklists/${c.id}`, { notes: newNotes, assigned_user_id: newUserId || null });
+      // Lưu assignee_id vào cột riêng, không vào notes
+      await api.put(`/tasks/checklists/${c.id}`, { 
+        assignee_id: newUserId || null,
+        assigned_user_id: newUserId || null 
+      });
       onReload?.();
     } catch { }
   };

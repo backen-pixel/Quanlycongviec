@@ -149,7 +149,8 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
         checklists: checklists.map(c => ({
           title: c.title,
           attachments: c.attachments || [],
-          notes: c.assignee_id ? JSON.stringify({ assignee_id: c.assignee_id }) : null,
+          assignee_id: c.assignee_id || null,
+          notes: null, // Notes sẽ được thêm sau khi user nhập
         })),
         attachments: files,
       };
