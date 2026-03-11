@@ -103,6 +103,11 @@ DELETE FROM ecosystem_units WHERE parent_id IN (
 DELETE FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division');
 
 -- Xóa users cũ (nếu có)
+-- Trước tiên xóa các tham chiếu đến users
+DELETE FROM notifications WHERE user_id IN (
+  SELECT id FROM users WHERE email IN ('kinhdoanh@tubep.vn', 'sanxuat@tubep.vn', 'vanchuyen@tubep.vn', 'lapdathb@tubep.vn')
+);
+
 DELETE FROM users WHERE email IN ('kinhdoanh@tubep.vn', 'sanxuat@tubep.vn', 'vanchuyen@tubep.vn', 'lapdathb@tubep.vn');
 
 -- 2. TẠO 4 KHỐI (DIVISIONS)
