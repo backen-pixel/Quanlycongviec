@@ -10,6 +10,50 @@ r.use(auth);
 // ═══════════════════════════════════════════════
 
 /**
+ * GET /api/divisions
+ * Lấy danh sách tất cả các Khối
+ */
+r.get('/', async (req, res) => {
+  try {
+    const { data: divisions, error } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, short_name, code, icon, color, description')
+      .eq('level_id', (await supabase.from('ecosystem_levels').select('id').eq('slug', 'division').single()).data.id)
+      .order('code');
+
+    if (error) throw error;
+
+    res.json({ divisions: divisions || [] });
+  } catch (e) {
+    console.error('Get divisions error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/divisions/:divisionId
+ * Lấy thông tin 1 Khối
+ */
+r.get('/:divisionId', async (req, res) => {
+  try {
+    const { divisionId } = req.params;
+
+    const { data: division, error } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, short_name, code, icon, color, description, created_at')
+      .eq('id', divisionId)
+      .single();
+
+    if (error) throw error;
+
+    res.json({ division });
+  } catch (e) {
+    console.error('Get division error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
  * GET /api/divisions/:divisionId/projects-overview
  * Lấy tất cả dự án và nhiệm vụ của Khối
  * Logic: Lấy từ projects.flow_id → workflow_flow_steps → lọc division_unit_id
