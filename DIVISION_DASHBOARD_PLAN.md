@@ -1,14 +1,32 @@
-# Kế Hoạch: Dashboard Theo Khối (Division Dashboard)
+# Kế Hoạch: Hệ Thống Dashboard Đa Cấp (Multi-Level Dashboard System)
 
-## 🎯 Mục Tiêu
+## 🎯 Kiến Trúc Tổng Thể
 
-Tạo dashboard riêng cho từng **Khối** (Division) với:
-- Phân quyền theo cấp bậc (Tập đoàn → Khối → Công ty → Phòng ban)
-- Lọc dữ liệu tự động theo user's company/division
-- Quản lý chi tiết nhiệm vụ theo dự án
-- Dashboard riêng cho từng khối
+```
+┌─────────────────────────────────────────────────────────┐
+│        🏛️ DASHBOARD TỔNG (Group Dashboard)              │
+│        CEO/COO/CFO - Xem toàn công ty                   │
+│        Route: /dashboard                                 │
+└─────────────────────────────────────────────────────────┘
+                          │
+        ┌─────────────────┼─────────────────┐
+        ▼                 ▼                 ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+│ 🏭 KHỐI SẢN XUẤT│ │ 💼 KHỐI KD    │ │ 🛠️ KHỐI HỖ TRỢ │
+│ Division 1    │ │ Division 2    │ │ Division 3    │
+│ /divisions/1  │ │ /divisions/2  │ │ /divisions/3  │
+└───────────────┘ └───────────────┘ └───────────────┘
+```
+
+**Nguyên tắc:**
+- Dashboard tổng (cũ) giữ nguyên cho quản lý tập đoàn
+- Mỗi khối có dashboard riêng biệt với đặc thù riêng
+- Phân quyền tự động theo user's division
+- Deep dive capability (drill down từ tổng → khối → công ty → task)
 
 ---
+
+## 📊 DASHBOARD TỔNG (Group Level) - Giữ Nguyên & Nâng Cấp
 
 ## 📊 Phân Cấp Tổ Chức (Hierarchy)
 
@@ -513,3 +531,395 @@ curl -H "Authorization: Bearer <token>" \
 ---
 
 **🎉 Kết quả:** Mỗi khối có dashboard riêng, phân quyền tự động, quản lý chi tiết theo dự án!
+
+### **Route:** `/dashboard` (giữ nguyên)
+
+### **A. Header với Quick Jump**
+```
+🏛️ Dashboard Tổng - Tập Đoàn TuBep Pro
+────────────────────────────────────────────────────
+📅 Tháng 3/2026          👤 CEO Nguyễn Văn A
+
+Quick Jump: [🏭 Sản xuất] [💼 Kinh doanh] [🛠️ Hỗ trợ]
+```
+
+### **B. KPI Cards - Tổng Quan (Hiện tại - giữ nguyên)**
+```
+┌─────────────┬─────────────┬─────────────┬─────────────┐
+│ 📁 156 dự án│ ✅ 89.3%    │ 👥 254 khách│ 💰 15.6 tỷ   │
+│ +8 mới      │ tasks       │ +12 mới     │ +12.5% ↑    │
+└─────────────┴─────────────┴─────────────┴─────────────┘
+```
+
+### **C. Phân Bổ Dự Án Theo Giai Đoạn (Hiện tại - giữ nguyên)**
+```
+💬 Tư vấn       13 dự án  ▰▰▰▰▰▰▰▰▰▰
+🎨 Thiết kế      4 dự án  ▰▰▰▰▱▱▱▱▱▱
+...
+```
+
+### **D. THÊM MỚI: Overview Theo Khối**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 🏢 Tổng Quan Theo Khối (Clickable Cards)                 │
+├──────────────────────────────────────────────────────────┤
+│ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ │
+│ │ 🏭 Khối Sản xuất │ │ 💼 Khối KD      │ │ 🛠️ Khối Hỗ trợ   │ │
+│ │ 28 dự án        │ │ 45 leads        │ │ 35 đơn hàng     │ │
+│ │ 156 tasks       │ │ 12 hợp đồng     │ │ 28 lắp đặt      │ │
+│ │ 45 nhân sự      │ │ 35 nhân sự      │ │ 22 nhân sự      │ │
+│ │ 🔴 5 cảnh báo   │ │ 🟡 2 cảnh báo   │ │ ✅ Ổn định      │ │
+│ │ [Chi tiết →]    │ │ [Chi tiết →]    │ │ [Chi tiết →]    │ │
+│ └─────────────────┘ └─────────────────┘ └─────────────────┘ │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- Click vào card → Navigate to division dashboard
+- Show summary metrics per division
+- Alert badges (🔴 Critical, 🟡 Warning, ✅ OK)
+- Real-time status updates
+
+### **E. Cảnh Báo & Hoạt Động (Hiện tại - giữ nguyên)**
+```
+⚠️ Cảnh báo: 5 dự án quá hạn, 8 tasks...
+📢 Hoạt động: Recent activities...
+```
+
+### **F. THÊM MỚI: Matrix So Sánh Khối**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 📊 So Sánh Hiệu Suất Giữa Các Khối                       │
+├──────────────────────────────────────────────────────────┤
+│ Metric          │ Sản xuất │ Kinh doanh │ Hỗ trợ       │
+│─────────────────┼──────────┼────────────┼──────────────│
+│ Dự án hoàn tất  │ 24/28 ✅ │ 38/45 🟡   │ 32/35 ✅     │
+│ On-time rate    │ 85.7% ✅ │ 84.4% ✅   │ 91.4% ✅     │
+│ Tasks/người     │ 3.5 🟡   │ 2.8 ✅     │ 4.1 🔴       │
+│ Avg lead time   │ 45 ngày  │ 30 ngày    │ 15 ngày      │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🏭 DASHBOARD KHỐI SẢN XUẤT (Production Division)
+
+### **Route:** `/divisions/production` hoặc `/divisions/:id`
+
+### **Đặc Thù Riêng:**
+- Focus: **Timeline, Material tracking, Quality control**
+- Metrics: **Production output, Efficiency, Defect rate**
+- View: **Gantt chart, Material inventory**
+
+### **A. Header với Breadcrumb**
+```
+🏛️ Tập đoàn > 🏭 Khối Sản xuất
+────────────────────────────────────────────────────
+📅 Tháng 3/2026          👤 Giám đốc Sản xuất - Trần Văn B
+
+[← Quay lại Dashboard Tổng] | [Xuất báo cáo 📄] | [Cài đặt ⚙️]
+```
+
+### **B. KPI Cards - Đặc Thù Sản Xuất**
+```
+┌─────────────┬─────────────┬─────────────┬─────────────┐
+│ 🏭 SẢN LƯỢNG│ ⚙️ HIỆU SUẤT│ 📦 VẬT TƯ   │ ⭐ CHẤT LƯỢNG│
+│ 28 dự án    │ 87% công suất│ 92% đủ     │ 98.5% đạt   │
+│ 156 m²/ngày │ +5% ↑       │ ⚠️ 3 thiếu  │ 2 lỗi/tháng │
+└─────────────┴─────────────┴─────────────┴─────────────┘
+```
+
+**Giải thích:**
+- **Sản lượng**: m² tủ bếp/ngày, số dự án đang làm
+- **Hiệu suất**: % công suất máy móc, năng suất/người
+- **Vật tư**: % đủ nguyên liệu, cảnh báo thiếu
+- **Chất lượng**: % đạt chuẩn, số lỗi/tháng
+
+### **C. Phân Bổ Theo Công Ty (Expandable)**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 🏭 Phân Bổ Sản Xuất Theo Công Ty                         │
+├──────────────────────────────────────────────────────────┤
+│ 🏭 Công ty Xưởng 1 (25 NV, 10 máy)    18 dự án (64%)    │
+│    ▰▰▰▰▰▰▰▰▰▱ [Xem chi tiết ▼]                          │
+│                                                           │
+│    ├─ Đang sản xuất: 12 dự án (45m², deadline 15/03)    │
+│    ├─ Hoàn thiện:     4 dự án (15m², on track)          │
+│    ├─ Đóng gói:       2 dự án (8m², chờ vận chuyển)     │
+│    └─ ⚠️ Cảnh báo: Thiếu gỗ MDF 20mm (50 tấm)           │
+│                                                           │
+│ 🏭 Công ty Xưởng 2 (20 NV, 8 máy)     10 dự án (36%)    │
+│    ▰▰▰▰▰▱▱▱▱▱ [Xem chi tiết ▼]                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- Click expand → Show detailed breakdown
+- Real-time inventory alerts
+- Material shortage warnings
+- Production capacity indicator
+
+### **D. Gantt Chart Timeline - Đặc Thù Sản Xuất**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 📅 Timeline Sản Xuất (2 tuần tới)                        │
+├──────────────────────────────────────────────────────────┤
+│ Dự án         │ Tuần 1        │ Tuần 2        │ Status  │
+│───────────────┼───────────────┼───────────────┼─────────│
+│ TB-045 [X1]   │▰▰▰▰▰▰▰▱▱▱    │               │ 70% ✅  │
+│ TB-046 [X2]   │    ▰▰▰▰▰▱▱▱▱▱│               │ 50% 🟡  │
+│ TB-047 [X1]   │               │▰▰▰▱▱▱▱▱▱▱    │ 30% ⏳  │
+│ TB-048 [X2]   │               │  ▰▰▰▰▱▱▱▱▱▱  │ Chờ VT  │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Chú thích:**
+- [X1] = Xưởng 1, [X2] = Xưởng 2
+- Color: ✅ On track, 🟡 At risk, 🔴 Delayed
+
+### **E. Bảng Vật Tư (Material Tracking) - ĐẶC THÙ**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 📦 Tình Trạng Vật Tư                                     │
+├──────────────────────────────────────────────────────────┤
+│ Vật tư           │ Tồn kho │ Cần dùng │ Status         │
+│──────────────────┼─────────┼──────────┼────────────────│
+│ Gỗ MDF 18mm      │ 500 tấm │ 450 tấm  │ ✅ Đủ (110%)  │
+│ Gỗ MDF 20mm      │ 100 tấm │ 150 tấm  │ 🔴 Thiếu 50   │
+│ Tay nắm inox     │ 200 bộ  │ 180 bộ   │ ✅ Đủ (111%)  │
+│ Ray trượt Blum   │ 80 bộ   │ 95 bộ    │ 🟡 Thiếu 15   │
+│ Phụ kiện tủ      │ 350 bộ  │ 300 bộ   │ ✅ Đủ (117%)  │
+└──────────────────────────────────────────────────────────┘
+
+[Đặt hàng vật tư] [Lịch sử nhập kho] [Báo cáo tồn kho]
+```
+
+### **F. Danh Sách Dự Án Chi Tiết**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 📋 Dự Án Đang Sản Xuất                                   │
+│ Lọc: [Xưởng ▼] [Giai đoạn ▼] [Ưu tiên ▼] [🔍 Tìm]      │
+├──────────────────────────────────────────────────────────┤
+│ TB-2026-045 │ Tủ bếp Vinhomes │ Xưởng 1 │ Sản xuất     │
+│ ▰▰▰▰▰▰▰▱▱▱ 15/20 tasks (75%)                           │
+│ 📅 Deadline: 15/03/2026 (còn 5 ngày) ⚠️ Delay 2 ngày   │
+│ 📦 Vật tư: ✅ Đủ | 👷 NV: 5 người | 💰 120 triệu        │
+│ [Xem tasks] [Timeline] [Báo cáo]                        │
+│                                                           │
+│ TB-2026-046 │ Nhà bếp Golden │ Xưởng 2 │ Hoàn thiện    │
+│ ▰▰▰▰▰▰▰▰▱▱ 8/12 tasks (66%)                            │
+│ 📅 Deadline: 20/03/2026 (còn 10 ngày) ✅ On track      │
+│ 📦 Vật tư: 🟡 Thiếu ray trượt | 👷 NV: 3 | 💰 85 triệu  │
+│ [Xem tasks] [Timeline] [Báo cáo]                        │
+└──────────────────────────────────────────────────────────┘
+```
+
+### **G. Tasks Breakdown Per Project - ĐẶC THÙ**
+```
+┌──────────────────────────────────────────────────────────┐
+│ ✅ Chi Tiết Tasks: TB-2026-045 (Xưởng 1)                 │
+├──────────────────────────────────────────────────────────┤
+│ Stage           │ Tasks        │ Progress │ Assignee     │
+│─────────────────┼──────────────┼──────────┼──────────────│
+│ Kế hoạch SX     │ ✅ Hoàn tất  │ 100%     │ Nguyễn A     │
+│ Chuẩn bị VT     │ ✅ Hoàn tất  │ 100%     │ Trần B       │
+│ Cắt gỗ          │ 🔵 Đang làm  │ 80%      │ Lê C         │
+│ Gia công thùng  │ 🔵 Đang làm  │ 60%      │ Phạm D       │
+│ Lắp phụ kiện    │ ⏳ Chờ       │ 0%       │ (Chưa giao)  │
+│ Sơn/hoàn thiện  │ ⏳ Chờ       │ 0%       │ (Chưa giao)  │
+│ QC kiểm tra     │ ⏳ Chờ       │ 0%       │ (Chưa giao)  │
+│ Đóng gói        │ ⏳ Chờ       │ 0%       │ (Chưa giao)  │
+└──────────────────────────────────────────────────────────┘
+
+[Assign tasks] [Update progress] [Báo cáo vấn đề]
+```
+
+### **H. Quality Control Dashboard - ĐẶC THÙ**
+```
+┌──────────────────────────────────────────────────────────┐
+│ ⭐ Kiểm Soát Chất Lượng                                   │
+├──────────────────────────────────────────────────────────┤
+│ Tháng này:                                                │
+│ • Sản phẩm kiểm tra:  156 bộ                             │
+│ • Đạt chuẩn:          154 bộ (98.7%) ✅                  │
+│ • Lỗi nhỏ:            2 bộ (1.3%) - Đã sửa               │
+│ • Lỗi lớn:            0 bộ (0%) 🎉                       │
+│                                                           │
+│ Top lỗi phổ biến:                                        │
+│ 1. Ray trượt không trơn (2 lần)                          │
+│ 2. Sơn bị lem (1 lần)                                    │
+│                                                           │
+│ [Báo cáo chi tiết] [Lịch sử QC] [Tạo vấn đề mới]       │
+└──────────────────────────────────────────────────────────┘
+```
+
+### **I. Team Performance - Sản Xuất**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 👷 Hiệu Suất Thợ Sản Xuất (Top 5 tuần này)              │
+├──────────────────────────────────────────────────────────┤
+│ 🥇 Nguyễn Văn A │ Xưởng 1 │ 25m² │ 98% chất lượng │⭐⭐⭐⭐⭐│
+│ 🥈 Trần Văn B   │ Xưởng 2 │ 22m² │ 95% chất lượng │⭐⭐⭐⭐  │
+│ 🥉 Lê Văn C     │ Xưởng 1 │ 20m² │ 97% chất lượng │⭐⭐⭐⭐  │
+│ 4. Phạm Văn D   │ Xưởng 2 │ 18m² │ 96% chất lượng │⭐⭐⭐⭐  │
+│ 5. Hoàng Văn E  │ Xưởng 1 │ 17m² │ 94% chất lượng │⭐⭐⭐    │
+└──────────────────────────────────────────────────────────┘
+
+Metrics: m² hoàn thành, % chất lượng, tốc độ, ít lỗi
+```
+
+---
+
+## 💼 DASHBOARD KHỐI KINH DOANH (Sales Division)
+
+### **Route:** `/divisions/sales`
+
+### **Đặc Thù Riêng:**
+- Focus: **Sales pipeline, Lead conversion, Revenue**
+- Metrics: **Leads, Deals closed, Conversion rate, Revenue**
+- View: **Funnel chart, Customer journey**
+
+### **A. Header**
+```
+🏛️ Tập đoàn > 💼 Khối Kinh doanh
+────────────────────────────────────────────────────
+📅 Tháng 3/2026          👤 Giám đốc Kinh doanh - Lê Thị C
+
+[← Quay lại] | [CRM] | [Báo giá] | [Hợp đồng]
+```
+
+### **B. KPI Cards - Đặc Thù Kinh Doanh**
+```
+┌─────────────┬─────────────┬─────────────┬─────────────┐
+│ 🤝 LEADS    │ 💰 DOANH THU│ 📋 BÁO GIÁ  │ 📝 HỢP ĐỒNG  │
+│ 85 leads    │ 8.5 tỷ      │ 45 báo giá  │ 28 HĐ ký    │
+│ +15 mới     │ +18% tháng  │ 12 chốt     │ Conv: 62%   │
+└─────────────┴─────────────┴─────────────┴─────────────┘
+```
+
+### **C. Sales Pipeline Funnel - ĐẶC THÙ**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 🔄 Pipeline Bán Hàng (Funnel)                            │
+├──────────────────────────────────────────────────────────┤
+│                                                           │
+│ Leads đầu vào         ████████████ 85 khách  (100%)     │
+│                              ↓ 80% conversion            │
+│ Tư vấn               █████████    68 khách  (80%)       │
+│                              ↓ 60% conversion            │
+│ Thiết kế             ██████       40 khách  (47%)       │
+│                              ↓ 75% conversion            │
+│ Báo giá              ████         30 khách  (35%)       │
+│                              ↓ 93% conversion            │
+│ Hợp đồng ký          ███          28 khách  (33%) ✅    │
+│                                                           │
+│ Tổng conversion rate: 33% (Benchmark: 30%)               │
+└──────────────────────────────────────────────────────────┘
+```
+
+### **D. Phân Bổ Theo Công Ty (Chi nhánh)**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 🏢 Phân Bổ Kinh Doanh Theo Chi Nhánh                     │
+├──────────────────────────────────────────────────────────┤
+│ 🏢 Chi nhánh Hà Nội (15 NV)      45 leads, 18 deals     │
+│    ▰▰▰▰▰▰▰▰▱▱ 5.2 tỷ (61%)                              │
+│    ▼ Chi tiết:                                            │
+│       • Tư vấn: 20 khách | Thiết kế: 12 | Báo giá: 8    │
+│       • Hợp đồng: 18 ký | Avg deal: 289 triệu            │
+│       • Top sales: Nguyễn D (8 deals)                    │
+│                                                           │
+│ 🏢 Chi nhánh HCM (20 NV)         40 leads, 10 deals     │
+│    ▰▰▰▰▰▱▱▱▱▱ 3.3 tỷ (39%)                              │
+└──────────────────────────────────────────────────────────┘
+```
+
+### **E. Customer Journey Map - ĐẶC THÙ**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 🗺️ Hành Trình Khách Hàng: Vinhomes JSC                   │
+├──────────────────────────────────────────────────────────┤
+│ Timeline:                                                 │
+│ 01/03 │ 📞 Lead đến (Website) → Assign: Nguyễn D        │
+│ 02/03 │ 💬 Tư vấn lần 1 (1h) → Gửi catalog              │
+│ 05/03 │ 🏠 Khảo sát hiện trường → Đo đạc                │
+│ 07/03 │ 🎨 Gửi bản vẽ 3D → Khách yêu cầu sửa            │
+│ 10/03 │ 🎨 Gửi bản vẽ v2 → ✅ Khách OK                   │
+│ 12/03 │ 💰 Gửi báo giá 120 triệu → Chờ phản hồi         │
+│ 15/03 │ 📞 Follow up → Thương lượng giá                 │
+│ 18/03 │ 💰 Báo giá cuối 115 triệu → ✅ Khách đồng ý     │
+│ 20/03 │ 📝 Ký hợp đồng → Cọc 30 triệu                   │
+│ ▶ NEXT│ → Chuyển sang Khối Sản xuất                     │
+└──────────────────────────────────────────────────────────┘
+```
+
+### **F. Lead Management - ĐẶC THÙ**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 🎯 Quản Lý Leads                                         │
+│ Lọc: [Nguồn ▼] [Stage ▼] [Sales ▼] [🔍 Tìm]            │
+├──────────────────────────────────────────────────────────┤
+│ Vinhomes JSC │ Website │ Báo giá │ Nguyễn D │ 🔴 HOT    │
+│ Value: 120 triệu │ Last contact: 2 ngày │ Next: 15/03   │
+│ [👁️ View] [✏️ Edit] [📞 Call] [✉️ Email]                │
+│                                                           │
+│ Golden Real  │ Referral│ Thiết kế│ Trần E   │ 🟡 WARM   │
+│ Value: 85 triệu │ Last contact: 5 ngày │ Next: 18/03    │
+│ [Actions...]                                              │
+└──────────────────────────────────────────────────────────┘
+```
+
+### **G. Top Customers & Revenue**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 🏆 Top Khách Hàng VIP (12 tháng)                         │
+├──────────────────────────────────────────────────────────┤
+│ 1. ABC Corp     │ 12 dự án │ 2.4 tỷ  │ HCM │ ⭐⭐⭐⭐⭐  │
+│ 2. XYZ Ltd      │ 8 dự án  │ 1.6 tỷ  │ HN  │ ⭐⭐⭐⭐⭐  │
+│ 3. Golden Real  │ 5 dự án  │ 1.2 tỷ  │ DN  │ ⭐⭐⭐⭐    │
+│ 4. Vinhomes     │ 4 dự án  │ 980 tr  │ HCM │ ⭐⭐⭐⭐⭐  │
+│ 5. Sunrise Dev  │ 3 dự án  │ 750 tr  │ HN  │ ⭐⭐⭐⭐    │
+│                                                           │
+│ [Xem tất cả] [Export] [Gửi ưu đãi VIP]                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+### **H. Sales Team Leaderboard - ĐẶC THÙ**
+```
+┌──────────────────────────────────────────────────────────┐
+│ 👔 Bảng Xếp Hạng Sales (Tháng này)                       │
+├──────────────────────────────────────────────────────────┤
+│ 🥇 Nguyễn Văn D │ HN  │ 8 deals │ 2.3 tỷ │ Conv: 45% │🏆│
+│ 🥈 Trần Thị E   │ HCM │ 6 deals │ 1.8 tỷ │ Conv: 40% │  │
+│ 🥉 Lê Văn F     │ HN  │ 5 deals │ 1.5 tỷ │ Conv: 38% │  │
+│ 4. Phạm Thị G   │ HCM │ 4 deals │ 1.2 tỷ │ Conv: 35% │  │
+│ 5. Hoàng Văn H  │ HN  │ 3 deals │ 900tr  │ Conv: 30% │  │
+└──────────────────────────────────────────────────────────┘
+
+Metrics: Deals closed, Revenue, Conversion rate, Avg deal size
+```
+
+---
+
+## 🛠️ DASHBOARD KHỐI HỖ TRỢ (Support Division)
+
+### **Route:** `/divisions/support`
+
+### **Đặc Thù Riêng:**
+- Focus: **Logistics, Installation, SLA compliance**
+- Metrics: **Deliveries, Installations, On-time rate, Customer satisfaction**
+- View: **Calendar, Route map, Feedback**
+
+### **A. Header**
+```
+🏛️ Tập đoàn > 🛠️ Khối Hỗ trợ
+────────────────────────────────────────────────────
+📅 Tháng 3/2026          👤 Giám đốc Hỗ trợ - Vũ Văn I
+
+[← Quay lại] | [Lịch trình] | [Bản đồ] | [Đánh giá]
+```
+
+### **B. KPI Cards - Đặc Thù Hỗ Trợ**
+```
+┌─────────────┬─────────────┬─────────────┬─────────────┐
+│ 🚛 VẬN ĐƠN  │ 🔧 LẮP ĐẶT  │ ⏱️ SLA      │ ⭐ HÀ
