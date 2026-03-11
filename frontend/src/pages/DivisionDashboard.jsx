@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { ArrowLeft, Users, FolderOpen, CheckCircle, TrendingUp, AlertTriangle, Clock, Filter } from 'lucide-react';
+import { ArrowLeft, Users, FolderOpen, CheckCircle, TrendingUp, AlertTriangle, Clock, Filter, ListChecks } from 'lucide-react';
 
 export default function DivisionDashboard() {
   const { divisionId } = useParams();
@@ -98,35 +98,46 @@ export default function DivisionDashboard() {
 
       {/* KPI Cards */}
       {kpis && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <KPICard
-            title="Dự Án"
-            value={kpis.projects.total}
-            subtitle={`${kpis.projects.active} đang làm, ${kpis.projects.completed} hoàn thành`}
-            icon={<FolderOpen className="h-6 w-6" />}
-            color="blue"
-          />
-          <KPICard
-            title="Công Việc"
-            value={`${kpis.tasks.completion_rate}%`}
-            subtitle={`${kpis.tasks.completed}/${kpis.tasks.total} tasks hoàn thành`}
-            icon={<CheckCircle className="h-6 w-6" />}
-            color="emerald"
-          />
-          <KPICard
-            title="Nhân Sự"
-            value={kpis.members.total}
-            subtitle="thành viên trong khối"
-            icon={<Users className="h-6 w-6" />}
-            color="purple"
-          />
-          <KPICard
-            title="Tiến Độ"
-            value={`${kpis.progress}%`}
-            subtitle="tỉ lệ hoàn thành chung"
-            icon={<TrendingUp className="h-6 w-6" />}
-            color="amber"
-          />
+        <div className="mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            <KPICard
+              title="Dự Án"
+              value={kpis.projects.total}
+              subtitle={`${kpis.projects.active} đang làm, ${kpis.projects.completed} hoàn thành`}
+              icon={<FolderOpen className="h-6 w-6" />}
+              color="blue"
+            />
+            <KPICard
+              title="Công Việc"
+              value={`${kpis.tasks.completion_rate}%`}
+              subtitle={`${kpis.tasks.completed}/${kpis.tasks.total} tasks hoàn thành`}
+              icon={<CheckCircle className="h-6 w-6" />}
+              color="emerald"
+            />
+            <KPICard
+              title="Nhân Sự"
+              value={kpis.members.total}
+              subtitle="thành viên trong khối"
+              icon={<Users className="h-6 w-6" />}
+              color="purple"
+            />
+            <KPICard
+              title="Tiến Độ"
+              value={`${kpis.progress}%`}
+              subtitle="tỉ lệ hoàn thành chung"
+              icon={<TrendingUp className="h-6 w-6" />}
+              color="amber"
+            />
+          </div>
+
+          {/* Quick Action: View All Projects & Tasks */}
+          <Link
+            to={`/divisions/${divisionId}/projects`}
+            className="flex items-center justify-center gap-2 w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white py-3 px-6 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all"
+          >
+            <ListChecks className="h-5 w-5" />
+            Xem tất cả Dự án & Nhiệm vụ theo Khối
+          </Link>
         </div>
       )}
 

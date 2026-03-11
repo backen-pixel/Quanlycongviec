@@ -35,6 +35,7 @@ import WorkflowHubPage from './pages/WorkflowHubPage';
 import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import DivisionsListPage from './pages/DivisionsListPage';
 import DivisionDashboard from './pages/DivisionDashboard';
+import DivisionProjectsPage from './pages/DivisionProjectsPage';
 import { Settings } from 'lucide-react';
 
 function ProtectedLayout() {
@@ -118,6 +119,7 @@ export default function App() {
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/divisions" element={<DivisionsListPage />} />
             <Route path="/divisions/:divisionId" element={<DivisionDashboard />} />
+            <Route path="/divisions/:divisionId/projects" element={<DivisionProjectsPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
                 <div className="text-center">
