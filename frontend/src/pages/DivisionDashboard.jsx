@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { ArrowLeft, Users, FolderOpen, CheckCircle, TrendingUp, AlertTriangle, Clock, Filter } from 'lucide-react';
 
 export default function DivisionDashboard() {
   const { divisionId } = useParams();
   const [division, setDivision] = useState(null);
+  const [divisions, setDivisions] = useState([]); // All divisions for quick nav
   const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -16,7 +17,17 @@ export default function DivisionDashboard() {
 
   useEffect(() => {
     loadDivisionDashboard();
+    loadAllDivisions();
   }, [divisionId]);
+
+  const loadAllDivisions = async () => {
+    try {
+      const { data } = await api.get('/divisions');
+      setDivisions(data.divisions || []);
+    } catch (err) {
+      console.error('Failed to load divisions list:', err);
+    }
+  };
 
   const loadDivisionDashboard = async () => {
     setLoading(true);
@@ -64,14 +75,24 @@ export default function DivisionDashboard() {
           Quay lại danh sách khối
         </Link>
         
-        <div className="flex items-center gap-4">
-          <span className="text-5xl">{division.icon || '🏢'}</span>
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">{division.name}</h1>
-            {division.description && (
-              <p className="text-gray-600 mt-1">{division.description}</p>
-            )}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <span className="text-5xl">{division.icon || '🏢'}</span>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">{division.name}</h1>
+              {division.description && (
+                <p className="text-gray-600 mt-1">{division.description}</p>
+              )}
+            </div>
           </div>
+
+          {/* Quick Navigation Slider */}
+          {divisions.length > 1 && (
+            <QuickDivisionNav 
+              divisions={divisions} 
+              currentDivisionId={divisionId} 
+            />
+          )}
         </div>
       </div>
 
@@ -152,6 +173,57 @@ export default function DivisionDashboard() {
         <div>
           <AlertsWidget alerts={alerts} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Quick Division Navigation Component
+// ═══════════════════════════════════════════════════════════════════════════
+function QuickDivisionNav({ divisions, currentDivisionId }) {
+  const navigate = useNavigate();
+  
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-4 min-w-[300px]">
+      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+        Chuyển khối nhanh
+      </div>
+      <div className="space-y-2">
+        {divisions.map(div => {
+          const isCurrent = div.id === currentDivisionId;
+          return (
+            <button
+              key={div.id}
+              onClick={() => navigate(`/divisions/${div.id}`)}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all ${
+                isCurrent
+                  ? 'bg-blue-50 border-2 border-blue-400 text-blue-700'
+                  : 'border-2 border-transparent hover:bg-gray-50 hover:border-gray-200'
+              }`}
+            >
+              <span className="text-2xl">{div.icon || '🏢'}</span>
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm font-semibold truncate ${isCurrent ? 'text-blue-900' : 'text-gray-900'}`}>
+                  {div.name}
+                </div>
+                {div.stats && (
+                  <div className="text-xs text-gray-500 flex gap-2">
+                    <span>{div.stats.projects} dự án</span>
+                    {div.stats.alerts > 0 && (
+                      <span className="text-red-600 font-medium">
+                        ⚠️ {div.stats.alerts}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {isCurrent && (
+                <span className="text-blue-600">✓</span>
+              )}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
