@@ -115,42 +115,42 @@ DO $$
 DECLARE
   group_id UUID;
   level_division_id UUID;
+  level_group_id UUID;
   
   division_kd_id UUID;
   division_sx_id UUID;
   division_vc_id UUID;
   division_ld_id UUID;
 BEGIN
-  -- Lấy ID của "Tập đoàn" và Level "Khối"
-  SELECT id INTO group_id FROM ecosystem_units WHERE slug = 'tubep-group' LIMIT 1;
+  -- Lấy ID của Level "Tập đoàn" và Level "Khối"
+  SELECT id INTO level_group_id FROM ecosystem_levels WHERE slug = 'group' LIMIT 1;
   SELECT id INTO level_division_id FROM ecosystem_levels WHERE slug = 'division' LIMIT 1;
+  
+  -- Tìm Tập đoàn (nếu có)
+  SELECT id INTO group_id FROM ecosystem_units 
+  WHERE level_id = level_group_id 
+  ORDER BY created_at 
+  LIMIT 1;
   
   -- Nếu chưa có Tập đoàn, tạo mới
   IF group_id IS NULL THEN
-    INSERT INTO ecosystem_units (name, short_name, slug, code, level_id, parent_id, description, icon, color)
-    VALUES ('Tập đoàn TuBep Pro', 'TUBEP GROUP', 'tubep-group', 'TBP', 
-            (SELECT id FROM ecosystem_levels WHERE slug = 'group'),
+    INSERT INTO ecosystem_units (name, short_name, code, level_id, parent_id, description, icon, color)
+    VALUES ('Tập đoàn TuBep Pro', 'TUBEP GROUP', 'TBP', level_group_id,
             NULL, 'Tập đoàn sản xuất tủ bếp cao cấp', '🏛️', '#1E40AF')
     RETURNING id INTO group_id;
   END IF;
 
   -- Tạo 4 Khối
-  INSERT INTO ecosystem_units (name, short_name, slug, code, level_id, parent_id, description, icon, color)
+  INSERT INTO ecosystem_units (name, short_name, code, level_id, parent_id, description, icon, color)
   VALUES 
-    ('Khối Kinh doanh', 'KINH DOANH', 'kd', 'KD', level_division_id, group_id, 
+    ('Khối Kinh doanh', 'KINH DOANH', 'KD', level_division_id, group_id, 
      'Tư vấn, Thiết kế, Báo giá, Hợp đồng', '💼', '#3B82F6'),
-    ('Khối Sản xuất', 'SẢN XUẤT', 'sx', 'SX', level_division_id, group_id, 
+    ('Khối Sản xuất', 'SẢN XUẤT', 'SX', level_division_id, group_id, 
      'Lên KH, Vật tư, SX thùng, Hoàn thiện, ACS, Đóng gói', '🏭', '#F59E0B'),
-    ('Khối Vận chuyển', 'VẬN CHUYỂN', 'vc', 'VC', level_division_id, group_id, 
+    ('Khối Vận chuyển', 'VẬN CHUYỂN', 'VC', level_division_id, group_id, 
      'Vận chuyển hàng đến công trình', '🚛', '#10B981'),
-    ('Khối Lắp đặt & CSKH', 'LẮP ĐẶT', 'ld', 'LD', level_division_id, group_id, 
+    ('Khối Lắp đặt & CSKH', 'LẮP ĐẶT', 'LD', level_division_id, group_id, 
      'Lắp đặt, Nghiệm thu, Bàn giao, Chăm sóc khách hàng', '🔧', '#EF4444')
-  ON CONFLICT (slug) DO UPDATE SET 
-    name = EXCLUDED.name,
-    short_name = EXCLUDED.short_name,
-    description = EXCLUDED.description,
-    icon = EXCLUDED.icon,
-    color = EXCLUDED.color
   RETURNING id INTO division_kd_id, division_sx_id, division_vc_id, division_ld_id;
 
   -- Gán Stage Groups cho từng Khối
@@ -226,26 +226,26 @@ BEGIN
 
   -- Gán users vào các Khối tương ứng (ecosystem_unit_members)
   INSERT INTO ecosystem_unit_members (unit_id, user_id, role)
-  SELECT u.id, user_kd_id, 'manager' FROM ecosystem_units u WHERE u.slug = 'kd'
+  SELECT u.id, user_kd_id, 'manager' FROM ecosystem_units u WHERE u.code = 'KD' AND u.level_id = level_division_id
   ON CONFLICT (unit_id, user_id) DO UPDATE SET role = 'manager';
 
   INSERT INTO ecosystem_unit_members (unit_id, user_id, role)
-  SELECT u.id, user_sx_id, 'manager' FROM ecosystem_units u WHERE u.slug = 'sx'
+  SELECT u.id, user_sx_id, 'manager' FROM ecosystem_units u WHERE u.code = 'SX' AND u.level_id = level_division_id
   ON CONFLICT (unit_id, user_id) DO UPDATE SET role = 'manager';
 
   INSERT INTO ecosystem_unit_members (unit_id, user_id, role)
-  SELECT u.id, user_vc_id, 'manager' FROM ecosystem_units u WHERE u.slug = 'vc'
+  SELECT u.id, user_vc_id, 'manager' FROM ecosystem_units u WHERE u.code = 'VC' AND u.level_id = level_division_id
   ON CONFLICT (unit_id, user_id) DO UPDATE SET role = 'manager';
 
   INSERT INTO ecosystem_unit_members (unit_id, user_id, role)
-  SELECT u.id, user_ld_id, 'manager' FROM ecosystem_units u WHERE u.slug = 'ld'
+  SELECT u.id, user_ld_id, 'manager' FROM ecosystem_units u WHERE u.code = 'LD' AND u.level_id = level_division_id
   ON CONFLICT (unit_id, user_id) DO UPDATE SET role = 'manager';
 END $$;
 
 -- ═══ HOÀN TẤT ═══
 -- Verify
 SELECT '✅ 4 Khối đã tạo:' AS status;
-SELECT name, short_name, code, slug, icon FROM ecosystem_units 
+SELECT name, short_name, code, icon FROM ecosystem_units 
 WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
 ORDER BY code;
 
