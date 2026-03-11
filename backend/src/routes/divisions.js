@@ -15,10 +15,20 @@ r.use(auth);
  */
 r.get('/', async (req, res) => {
   try {
+    const { data: levelData } = await supabase
+      .from('ecosystem_levels')
+      .select('id')
+      .eq('slug', 'division')
+      .single();
+
+    if (!levelData) {
+      return res.json({ divisions: [] });
+    }
+
     const { data: divisions, error } = await supabase
       .from('ecosystem_units')
-      .select('id, name, short_name, code, icon, color, description')
-      .eq('level_id', (await supabase.from('ecosystem_levels').select('id').eq('slug', 'division').single()).data.id)
+      .select('id, name, short_name, code, description, logo_url, icon, color, order_index')
+      .eq('level_id', levelData.id)
       .order('code');
 
     if (error) throw error;
@@ -40,7 +50,7 @@ r.get('/:divisionId', async (req, res) => {
 
     const { data: division, error } = await supabase
       .from('ecosystem_units')
-      .select('id, name, short_name, code, icon, color, description, created_at')
+      .select('id, name, short_name, code, description, logo_url, icon, color, created_at')
       .eq('id', divisionId)
       .single();
 
