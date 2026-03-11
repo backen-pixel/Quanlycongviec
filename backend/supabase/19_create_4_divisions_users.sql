@@ -26,11 +26,6 @@ UPDATE workflow_stage_groups SET division_unit_id = NULL WHERE division_unit_id 
   SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
 );
 
--- Xóa các tham chiếu từ company_template_sets
-UPDATE company_template_sets SET division_id = NULL WHERE division_id IN (
-  SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
-);
-
 -- Xóa các tham chiếu từ companies table
 UPDATE companies SET division_unit_id = NULL WHERE division_unit_id IN (
   SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
@@ -65,7 +60,16 @@ DELETE FROM project_company_assignments WHERE company_unit_id IN (
   )
 );
 
-UPDATE company_template_sets SET unit_id = NULL WHERE unit_id IN (
+-- Xóa company_template_sets liên quan đến company units (không phải divisions)
+DELETE FROM company_template_tasks WHERE template_set_id IN (
+  SELECT id FROM company_template_sets WHERE unit_id IN (
+    SELECT id FROM ecosystem_units WHERE parent_id IN (
+      SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
+    )
+  )
+);
+
+DELETE FROM company_template_sets WHERE unit_id IN (
   SELECT id FROM ecosystem_units WHERE parent_id IN (
     SELECT id FROM ecosystem_units WHERE level_id = (SELECT id FROM ecosystem_levels WHERE slug = 'division')
   )
