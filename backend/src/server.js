@@ -34,6 +34,7 @@ app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/dashboard-main', require('./routes/dashboardMain'));
 app.use('/api/divisions', require('./routes/divisions'));
 app.use('/api/upload', require('./routes/upload'));
 app.use('/api/templates', require('./routes/templates'));
