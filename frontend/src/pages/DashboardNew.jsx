@@ -1,31 +1,46 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import {
   FolderKanban, CheckSquare, Users, DollarSign, TrendingUp, TrendingDown,
-  AlertTriangle, Clock, Eye, ArrowRight, Award, MapPin, Activity, Bell, ChevronDown, ChevronRight
+  AlertTriangle, Clock, Eye, ArrowRight, Award, MapPin, Activity, Bell,
+  ChevronDown, ChevronRight, Building2, Package, UserCheck
 } from 'lucide-react';
-import { formatVND, getInitials, avatarColor } from '../lib/utils';
+import { formatVND, getInitials, avatarColor, STATUS_LABELS, STATUS_COLORS } from '../lib/utils';
 
 export default function DashboardNew() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [divisions, setDivisions] = useState([]);
   const [overview, setOverview] = useState(null);
   const [workload, setWorkload] = useState([]);
-  const [timeline, setTimeline] = useState({ projects: [], revenue: [] });
-  const [team, setTeam] = useState([]);
   const [alerts, setAlerts] = useState(null);
-  const [customers, setCustomers] = useState({ top_customers: [], geo_distribution: {} });
   const [activities, setActivities] = useState([]);
+  const [divisionData, setDivisionData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState('7d');
+  const [divLoading, setDivLoading] = useState(false);
 
+  const selectedDiv = searchParams.get('khoi');
+
+  // Load divisions list (always)
   useEffect(() => {
-    loadDashboard();
-  }, [period]);
+    api.get('/dashboard/divisions')
+      .then(r => setDivisions(r.data.divisions || []))
+      .catch(() => {});
+  }, []);
 
-  const loadDashboard = async () => {
+  // Load overall dashboard OR division dashboard
+  useEffect(() => {
+    if (selectedDiv) {
+      loadDivisionDashboard(selectedDiv);
+    } else {
+      loadMainDashboard();
+    }
+  }, [selectedDiv]);
+
+  const loadMainDashboard = async () => {
     setLoading(true);
+    setDivisionData(null);
     try {
-      // Load critical data only (fast endpoints)
       const [overviewRes, workloadRes, alertsRes, activityRes] = await Promise.race([
         Promise.all([
           api.get('/dashboard/overview'),
@@ -35,22 +50,14 @@ export default function DashboardNew() {
         ]),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000)),
       ]);
-
       setOverview(overviewRes.data);
       setWorkload(workloadRes.data.divisions || []);
-      console.log('Workload data:', workloadRes.data.divisions); // DEBUG
       setAlerts(alertsRes.data);
       setActivities(activityRes.data.activities || []);
-      
-      // Set empty data for removed widgets
-      setTimeline({ projects: [], revenue: [] });
-      setTeam([]);
-      setCustomers({ top_customers: [], geo_distribution: {} });
     } catch (err) {
       console.error('Failed to load dashboard:', err);
-      // Set default empty data on error
       if (!overview) {
-        setOverview({ 
+        setOverview({
           projects: { total: 0, active: 0, completed: 0, new_7d: 0, overdue: 0 },
           tasks: { total: 0, completed: 0, completion_rate: 0, overdue: 0, blocked: 0 },
           customers: { total: 0, new_7d: 0, vip: 0, return_rate: 0 },
@@ -60,14 +67,33 @@ export default function DashboardNew() {
       setWorkload([]);
       setAlerts({ overdue_projects: 0, overdue_tasks: 0, pending_approvals: 0, unassigned_high_priority: 0, resource_overload: 0 });
       setActivities([]);
-      setTimeline({ projects: [], revenue: [] });
-      setTeam([]);
-      setCustomers({ top_customers: [], geo_distribution: {} });
     }
     setLoading(false);
   };
 
-  if (loading || !overview) {
+  const loadDivisionDashboard = async (divId) => {
+    setDivLoading(true);
+    try {
+      const { data } = await api.get(`/dashboard/division/${divId}`);
+      setDivisionData(data);
+    } catch (err) {
+      console.error('Failed to load division dashboard:', err);
+      setDivisionData(null);
+    }
+    setDivLoading(false);
+  };
+
+  const handleTabChange = (divId) => {
+    if (divId) {
+      setSearchParams({ khoi: divId });
+    } else {
+      setSearchParams({});
+    }
+  };
+
+  const isLoading = selectedDiv ? divLoading : loading;
+
+  if (isLoading && !overview && !divisionData) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
@@ -81,84 +107,97 @@ export default function DashboardNew() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4 sm:p-6 lg:p-8">
       {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">📊 Dashboard</h1>
-            <p className="text-sm text-gray-500 mt-1">Tổng quan hệ thống quản lý TuBep Pro</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={period}
-              onChange={(e) => setPeriod(e.target.value)}
-              className="h-10 px-4 border border-gray-300 rounded-lg text-sm bg-white"
-            >
-              <option value="7d">7 ngày qua</option>
-              <option value="30d">30 ngày qua</option>
-            </select>
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-gray-900 mb-4">📊 Dashboard</h1>
+
+        {/* ══════ DIVISION TABS ══════ */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
+          <button
+            onClick={() => handleTabChange(null)}
+            className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all duration-200 ${
+              !selectedDiv
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300 hover:text-blue-600 hover:shadow-sm'
+            }`}
+          >
+            🏠 Tổng quan
+          </button>
+          {divisions.map(div => (
             <button
-              onClick={loadDashboard}
-              className="h-10 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+              key={div.id}
+              onClick={() => handleTabChange(div.id)}
+              className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all duration-200 flex items-center gap-2 ${
+                selectedDiv === div.id
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300 hover:text-blue-600 hover:shadow-sm'
+              }`}
             >
-              🔄 Làm mới
+              <span>{div.icon}</span>
+              <span>{div.name}</span>
             </button>
-          </div>
+          ))}
         </div>
       </div>
 
+      {/* ══════ CONTENT ══════ */}
+      {isLoading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div>
+        </div>
+      ) : selectedDiv && divisionData ? (
+        <DivisionDashboardContent data={divisionData} />
+      ) : overview ? (
+        <MainDashboardContent
+          overview={overview}
+          workload={workload}
+          alerts={alerts}
+          activities={activities}
+          onRefresh={loadMainDashboard}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN DASHBOARD (Tổng quan) — giữ nguyên layout cũ
+// ═══════════════════════════════════════════════════════════════════════════
+function MainDashboardContent({ overview, workload, alerts, activities, onRefresh }) {
+  return (
+    <>
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <KPICard
-          title="Dự Án"
-          value={overview.projects.total}
+          title="Dự Án" value={overview.projects.total}
           subtitle={`${overview.projects.active} đang làm`}
-          trend={overview.projects.new_7d}
-          trendLabel="mới (7 ngày)"
-          icon={FolderKanban}
-          color="bg-blue-600"
-          bgColor="bg-blue-50"
+          trend={overview.projects.new_7d} trendLabel="mới (7 ngày)"
+          icon={FolderKanban} color="bg-blue-600" bgColor="bg-blue-50"
         />
         <KPICard
-          title="Công Việc"
-          value={`${overview.tasks.completion_rate}%`}
+          title="Công Việc" value={`${overview.tasks.completion_rate}%`}
           subtitle={`${overview.tasks.completed}/${overview.tasks.total}`}
-          trend={overview.tasks.overdue}
-          trendLabel="quá hạn"
-          trendNegative
-          icon={CheckSquare}
-          color="bg-emerald-600"
-          bgColor="bg-emerald-50"
+          trend={overview.tasks.overdue} trendLabel="quá hạn" trendNegative
+          icon={CheckSquare} color="bg-emerald-600" bgColor="bg-emerald-50"
         />
         <KPICard
-          title="Khách Hàng"
-          value={overview.customers.total}
+          title="Khách Hàng" value={overview.customers.total}
           subtitle={`${overview.customers.vip} VIP`}
-          trend={overview.customers.new_7d}
-          trendLabel="mới (7 ngày)"
-          icon={Users}
-          color="bg-purple-600"
-          bgColor="bg-purple-50"
+          trend={overview.customers.new_7d} trendLabel="mới (7 ngày)"
+          icon={Users} color="bg-purple-600" bgColor="bg-purple-50"
         />
         <KPICard
-          title="Doanh Thu"
-          value={formatVND(overview.revenue.total)}
+          title="Doanh Thu" value={formatVND(overview.revenue.total)}
           subtitle={`TB: ${formatVND(overview.revenue.avg_project_value)}`}
-          trend={overview.revenue.growth_pct}
-          trendLabel="% tăng trưởng"
-          icon={DollarSign}
-          color="bg-amber-600"
-          bgColor="bg-amber-50"
+          trend={overview.revenue.growth_pct} trendLabel="% tăng trưởng"
+          icon={DollarSign} color="bg-amber-600" bgColor="bg-amber-50"
         />
       </div>
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        {/* Workload by Division */}
         <div className="lg:col-span-2">
           <WorkloadWidget workload={workload} />
         </div>
-
-        {/* Alerts */}
         <div>
           <AlertsWidget alerts={alerts} />
         </div>
@@ -166,6 +205,171 @@ export default function DashboardNew() {
 
       {/* Activity Feed */}
       <ActivityFeed activities={activities} />
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIVISION DASHBOARD — Nội dung cho 1 Khối
+// ═══════════════════════════════════════════════════════════════════════════
+function DivisionDashboardContent({ data }) {
+  const { division, stats, pipeline, companies, projects } = data;
+
+  const defaultIcons = {
+    'Khối Kinh Doanh': '💼',
+    'Khối Sản Xuất': '🏭',
+    'Khối Vận Chuyển': '🚚',
+    'Khối Lắp Đặt': '🔧',
+  };
+  const icon = division.icon || defaultIcons[division.name] || '🏢';
+
+  return (
+    <div className="space-y-6">
+      {/* Division Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-6 text-white shadow-xl">
+        <div className="flex items-center gap-4">
+          <span className="text-5xl">{icon}</span>
+          <div>
+            <h2 className="text-2xl font-bold">{division.name}</h2>
+            <p className="text-blue-200 text-sm mt-1">{division.description || 'Tổng quan hoạt động khối'}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <KPICard
+          title="Dự Án" value={stats.projects}
+          subtitle={`${stats.active} đang làm`}
+          icon={FolderKanban} color="bg-blue-600" bgColor="bg-blue-50"
+        />
+        <KPICard
+          title="Công Việc" value={stats.tasks}
+          subtitle={`${stats.completion_rate}% hoàn thành`}
+          trend={stats.overdue_tasks} trendLabel="quá hạn" trendNegative
+          icon={CheckSquare} color="bg-emerald-600" bgColor="bg-emerald-50"
+        />
+        <KPICard
+          title="Nhân Sự" value={stats.members}
+          subtitle={`${stats.companies} công ty`}
+          icon={Users} color="bg-purple-600" bgColor="bg-purple-50"
+        />
+        <KPICard
+          title="Cảnh Báo" value={stats.overdue_projects + stats.overdue_tasks}
+          subtitle={`${stats.overdue_projects} DA · ${stats.overdue_tasks} CV quá hạn`}
+          icon={AlertTriangle} color="bg-red-600" bgColor="bg-red-50"
+        />
+      </div>
+
+      {/* Pipeline + Companies */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Pipeline by stage */}
+        <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-6">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5">
+            <TrendingUp className="h-5 w-5 text-blue-600" />
+            Phân Bổ Dự Án Theo Giai Đoạn
+          </h3>
+          {pipeline.length > 0 ? (
+            <div className="space-y-4">
+              {pipeline.map((stage, idx) => {
+                const maxCount = Math.max(...pipeline.map(s => s.count), 1);
+                const pct = (stage.count / maxCount) * 100;
+                return (
+                  <div key={idx} className="group">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                        <span>{stage.icon}</span>
+                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: stage.color }} />
+                        {stage.name}
+                      </span>
+                      <span className="text-sm font-bold text-gray-900">{stage.count} dự án</span>
+                    </div>
+                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.max(pct, stage.count > 0 ? 5 : 0)}%`,
+                          backgroundColor: stage.color || '#3b82f6',
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-400">
+              <TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Chưa có dự án</p>
+            </div>
+          )}
+        </div>
+
+        {/* Companies in this division */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5">
+            <Building2 className="h-5 w-5 text-purple-600" />
+            Công Ty Trong Khối
+          </h3>
+          {companies.length > 0 ? (
+            <div className="space-y-3">
+              {companies.map(c => (
+                <div key={c.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                  <span className="text-2xl">{c.icon || '🏭'}</span>
+                  <span className="text-sm font-medium text-gray-900">{c.name}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-400">
+              <Building2 className="h-12 w-12 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Chưa có công ty</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recent Projects */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <FolderKanban className="h-5 w-5 text-blue-600" />
+            Dự Án Gần Đây
+          </h3>
+        </div>
+        {projects.length > 0 ? (
+          <div className="divide-y divide-gray-100">
+            {projects.map(p => (
+              <Link to={`/projects/${p.id}`} key={p.id}
+                className="flex items-center justify-between py-3.5 first:pt-0 last:pb-0 hover:bg-gray-50 -mx-3 px-3 rounded-lg transition-colors group">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-xs font-bold text-blue-600">{p.code}</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] || 'bg-gray-100 text-gray-600'}`}>
+                      {STATUS_LABELS[p.status] || p.status}
+                    </span>
+                    {p.stage && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ backgroundColor: (p.stage.color || '#94a3b8') + '20', color: p.stage.color || '#94a3b8' }}>
+                        {p.stage.icon} {p.stage.name}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-600">{p.name}</p>
+                  {p.customer_name && <p className="text-xs text-gray-400 mt-0.5">{p.customer_name}</p>}
+                </div>
+                <div className="text-right shrink-0 ml-4">
+                  <p className="text-sm font-semibold text-gray-900">{formatVND(p.estimated_value)}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-gray-400">
+            <FolderKanban className="h-12 w-12 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">Chưa có dự án nào trong khối này</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -176,14 +380,8 @@ export default function DashboardNew() {
 function KPICard({ title, value, subtitle, trend, trendLabel, trendNegative, icon: Icon, color, bgColor }) {
   const trendPositive = !trendNegative && trend > 0;
   const trendColor = trendNegative
-    ? trend > 0
-      ? 'text-red-600'
-      : 'text-emerald-600'
-    : trend > 0
-    ? 'text-emerald-600'
-    : trend < 0
-    ? 'text-red-600'
-    : 'text-gray-500';
+    ? trend > 0 ? 'text-red-600' : 'text-emerald-600'
+    : trend > 0 ? 'text-emerald-600' : trend < 0 ? 'text-red-600' : 'text-gray-500';
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all duration-300 group">
@@ -198,7 +396,7 @@ function KPICard({ title, value, subtitle, trend, trendLabel, trendNegative, ico
       <div>
         <h3 className="text-3xl font-bold text-gray-900 mb-1">{value}</h3>
         <p className="text-sm text-gray-600 mb-2">{subtitle}</p>
-        {trend !== undefined && trend !== null && (
+        {trend !== undefined && trend !== null && trendLabel && (
           <div className={`flex items-center gap-1 text-xs font-medium ${trendColor}`}>
             {trendPositive ? <TrendingUp className="h-3.5 w-3.5" /> : trend < 0 ? <TrendingDown className="h-3.5 w-3.5" /> : null}
             <span>{trend > 0 ? '+' : ''}{trend} {trendLabel}</span>
@@ -210,7 +408,7 @@ function KPICard({ title, value, subtitle, trend, trendLabel, trendNegative, ico
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Workload Widget - Phân bổ công việc theo Giai đoạn
+// Workload Widget
 // ═══════════════════════════════════════════════════════════════════════════
 function WorkloadWidget({ workload }) {
   const maxCount = Math.max(...workload.map(d => d.project_count), 1);
@@ -229,18 +427,13 @@ function WorkloadWidget({ workload }) {
       <div className="space-y-4">
         {workload.map(stage => {
           const percentage = maxCount > 0 ? (stage.project_count / maxCount) * 100 : 0;
-          
           return (
             <div key={stage.id} className="group">
-              {/* Stage bar */}
               <div className="hover:bg-gray-50 rounded-lg p-2 -mx-2 transition-colors">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
                     {stage.icon && <span className="text-base">{stage.icon}</span>}
-                    <span 
-                      className="w-3 h-3 rounded-full" 
-                      style={{ backgroundColor: stage.color }}
-                    />
+                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: stage.color }} />
                     {stage.name}
                   </span>
                   <span className="text-sm font-bold text-gray-900">{stage.project_count} dự án</span>
@@ -258,7 +451,6 @@ function WorkloadWidget({ workload }) {
             </div>
           );
         })}
-
         {workload.length === 0 && (
           <div className="text-center py-8 text-gray-400">
             <TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-50" />
@@ -281,7 +473,6 @@ function AlertsWidget({ alerts }) {
     { label: 'Task ưu tiên cao chưa giao', value: alerts.unassigned_high_priority, color: 'text-purple-600', bg: 'bg-purple-50' },
     { label: 'Nhân viên quá tải', value: alerts.resource_overload, color: 'text-amber-600', bg: 'bg-amber-50' },
   ];
-
   const totalAlerts = Object.values(alerts).reduce((sum, val) => sum + val, 0);
 
   return (
@@ -297,7 +488,7 @@ function AlertsWidget({ alerts }) {
       </div>
       <div className="space-y-3">
         {alertItems.map((item, idx) => (
-          <div key={idx} className={`flex items-center justify-between p-3 rounded-lg ${item.bg} group hover:shadow-sm transition-shadow`}>
+          <div key={idx} className={`flex items-center justify-between p-3 rounded-lg ${item.bg}`}>
             <div className="flex items-center gap-2">
               <AlertTriangle className={`h-4 w-4 ${item.color}`} />
               <span className="text-sm font-medium text-gray-700">{item.label}</span>
@@ -312,95 +503,6 @@ function AlertsWidget({ alerts }) {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Team Widget
-// ═══════════════════════════════════════════════════════════════════════════
-function TeamWidget({ team, period }) {
-  const periodLabel = period === '7d' ? '7 ngày' : '30 ngày';
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-          <Award className="h-5 w-5 text-emerald-600" />
-          Top Performers ({periodLabel})
-        </h2>
-      </div>
-      <div className="space-y-3">
-        {team.slice(0, 5).map((user, idx) => (
-          <div key={user.user_id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-            <div className="text-lg font-bold text-gray-400">{idx + 1}</div>
-            <div
-              className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
-              style={{ backgroundColor: avatarColor(user.name) }}
-            >
-              {getInitials(user.name)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">{user.name}</p>
-              <p className="text-xs text-gray-500">{user.tasks_completed} tasks · {user.projects_owned} projects</p>
-            </div>
-            {idx < 3 && (
-              <span className="text-2xl">{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>
-            )}
-          </div>
-        ))}
-        {team.length === 0 && (
-          <div className="text-center py-8 text-gray-400">
-            <Users className="h-12 w-12 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">Chưa có dữ liệu</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Customers Widget
-// ═══════════════════════════════════════════════════════════════════════════
-function CustomersWidget({ customers }) {
-  const topCustomers = customers.top_customers.slice(0, 5);
-  const geo = customers.geo_distribution;
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-          <Users className="h-5 w-5 text-purple-600" />
-          Khách Hàng VIP
-        </h2>
-      </div>
-      <div className="space-y-3 mb-6">
-        {topCustomers.map((cust, idx) => (
-          <div key={cust.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-            <div className="text-sm font-bold text-gray-400">{idx + 1}</div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">{cust.name}</p>
-              <p className="text-xs text-gray-500">{cust.projects_count} dự án · {formatVND(cust.total_value)}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-      {Object.keys(geo).length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <MapPin className="h-4 w-4" /> Phân Bố Địa Lý
-          </h3>
-          <div className="space-y-2">
-            {Object.entries(geo).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([city, count]) => (
-              <div key={city} className="flex items-center justify-between text-sm">
-                <span className="text-gray-700">{city}</span>
-                <span className="font-semibold text-gray-900">{count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

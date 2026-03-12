@@ -2,3 +2,8 @@
 [dotenv@17.3.1] injecting env (0) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
 🚀 TuBep Pro Backend: http://localhost:4000/api
 ✅ Seed passwords reset OK
+⏰ Deadline check: 9 sắp hạn, 17 quá hạn
+⏰ Deadline check: 9 sắp hạn, 17 quá hạn
+⏰ Deadline check: 9 sắp hạn, 17 quá hạn
+[0mGET /api/divisions [33m401[0m 6.410 ms - 29[0m
+[0mGET /api/divisions [33m401[0m 0.846 ms - 31[0m

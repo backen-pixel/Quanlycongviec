@@ -403,4 +403,192 @@ r.get('/activity', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// DIVISIONS LIST - Danh sách Khối (deduplicated)
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/divisions', async (req, res) => {
+  try {
+    // Get division level
+    const { data: divLevel } = await supabase
+      .from('ecosystem_levels')
+      .select('id')
+      .eq('slug', 'division')
+      .single();
+
+    if (!divLevel) return res.json({ divisions: [] });
+
+    // Get all division units
+    const { data: allUnits } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, icon, color, parent_id')
+      .eq('level_id', divLevel.id)
+      .order('name');
+
+    // Deduplicate by name — prefer units with parent_id (in tree)
+    const byName = {};
+    (allUnits || []).forEach(u => {
+      if (!byName[u.name] || (u.parent_id && !byName[u.name].parent_id)) {
+        byName[u.name] = u;
+      }
+    });
+
+    const divisions = Object.values(byName).sort((a, b) => a.name.localeCompare(b.name));
+
+    // Default icons for known divisions
+    const defaultIcons = {
+      'Khối Kinh Doanh': '💼',
+      'Khối Sản Xuất': '🏭',
+      'Khối Vận Chuyển': '🚚',
+      'Khối Lắp Đặt': '🔧',
+    };
+
+    res.json({
+      divisions: divisions.map(d => ({
+        id: d.id,
+        name: d.name,
+        icon: d.icon || defaultIcons[d.name] || '🏢',
+        color: d.color || '#3b82f6',
+      }))
+    });
+  } catch (e) {
+    console.error('Dashboard divisions list error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIVISION DETAIL - Dashboard cho 1 Khối cụ thể
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/division/:divisionId', async (req, res) => {
+  try {
+    const { divisionId } = req.params;
+    const now = new Date();
+
+    // 1. Get division info
+    const { data: division } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, icon, color, description')
+      .eq('id', divisionId)
+      .single();
+
+    if (!division) return res.status(404).json({ error: 'Khối không tồn tại' });
+
+    // 2. Get flow_ids linked to this division
+    const { data: flowSteps } = await supabase
+      .from('workflow_flow_steps')
+      .select('flow_id, company_unit_id, order_index')
+      .eq('division_unit_id', divisionId);
+
+    const flowIds = [...new Set((flowSteps || []).map(s => s.flow_id))];
+
+    // 3. Get projects using these flows
+    let projects = [];
+    if (flowIds.length > 0) {
+      const { data } = await supabase
+        .from('projects')
+        .select(`
+          id, name, code, status, estimated_value,
+          install_date, completed_date, design_deadline,
+          current_stage_id, flow_id, created_at,
+          customer:customers(id, full_name),
+          stage:workflow_stages!projects_current_stage_id_fkey(id, name, color, icon)
+        `)
+        .in('flow_id', flowIds)
+        .order('created_at', { ascending: false });
+      projects = (data || []).map(p => ({
+        ...p,
+        customer_name: p.customer?.full_name || null,
+      }));
+    }
+
+    // 4. Get tasks for these projects
+    const projectIds = projects.map(p => p.id);
+    let tasks = [];
+    if (projectIds.length > 0) {
+      const { data } = await supabase
+        .from('tasks')
+        .select('id, title, status, priority, due_date, project_id, assignee_id')
+        .in('project_id', projectIds);
+      tasks = data || [];
+    }
+
+    // 5. Get members count
+    const { data: members } = await supabase
+      .from('ecosystem_unit_members')
+      .select('user_id')
+      .eq('unit_id', divisionId);
+
+    // 6. Get company units linked to this division
+    const companyUnitIds = [...new Set((flowSteps || []).map(s => s.company_unit_id).filter(Boolean))];
+    let companies = [];
+    if (companyUnitIds.length > 0) {
+      const { data } = await supabase
+        .from('ecosystem_units')
+        .select('id, name, icon, color')
+        .in('id', companyUnitIds);
+      companies = data || [];
+    }
+
+    // 7. Calculate stats
+    const totalProjects = projects.length;
+    const activeProjects = projects.filter(p => !['completed', 'warranty', 'cancelled'].includes(p.status)).length;
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter(t => t.status === 'done').length;
+    const overdueTasks = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now).length;
+    const overdueProjects = projects.filter(p => p.design_deadline && new Date(p.design_deadline) < now && !['completed', 'warranty', 'cancelled'].includes(p.status)).length;
+
+    // 8. Group projects by stage
+    const stageMap = {};
+    projects.forEach(p => {
+      const stageName = p.stage?.name || 'Chưa xác định';
+      if (!stageMap[stageName]) {
+        stageMap[stageName] = {
+          name: stageName,
+          color: p.stage?.color || '#94a3b8',
+          icon: p.stage?.icon || '📋',
+          count: 0
+        };
+      }
+      stageMap[stageName].count++;
+    });
+    const pipeline = Object.values(stageMap).sort((a, b) => b.count - a.count);
+
+    res.json({
+      division: {
+        id: division.id,
+        name: division.name,
+        icon: division.icon,
+        color: division.color,
+        description: division.description,
+      },
+      stats: {
+        projects: totalProjects,
+        active: activeProjects,
+        tasks: totalTasks,
+        completed_tasks: completedTasks,
+        overdue_tasks: overdueTasks,
+        overdue_projects: overdueProjects,
+        members: (members || []).length,
+        companies: companies.length,
+        completion_rate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
+      },
+      pipeline,
+      companies: companies.map(c => ({ id: c.id, name: c.name, icon: c.icon })),
+      projects: projects.slice(0, 10).map(p => ({
+        id: p.id,
+        name: p.name,
+        code: p.code,
+        status: p.status,
+        estimated_value: p.estimated_value,
+        customer_name: p.customer_name,
+        stage: p.stage,
+        created_at: p.created_at,
+      })),
+    });
+  } catch (e) {
+    console.error('Dashboard division detail error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = r;
