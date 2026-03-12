@@ -317,6 +317,75 @@ r.get('/:divisionId/task-summary', async (req, res) => {
 });
 
 /**
+ * GET /api/divisions/:divisionId/dashboard
+ * Dashboard data for a specific division
+ */
+r.get('/:divisionId/dashboard', async (req, res) => {
+  try {
+    const { divisionId } = req.params;
+
+    // Get flows containing this division
+    const { data: flowSteps } = await supabase
+      .from('workflow_flow_steps')
+      .select('flow_id')
+      .eq('division_unit_id', divisionId);
+
+    if (!flowSteps || flowSteps.length === 0) {
+      return res.json({
+        stats: { projects: 0, active: 0, tasks: 0, members: 0 },
+        projects: [],
+        tasks: [],
+        activities: []
+      });
+    }
+
+    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
+
+    // Get projects
+    const { data: projects } = await supabase
+      .from('projects')
+      .select(`
+        id, name, code, status, start_date, end_date,
+        estimated_value, customer_name, created_at
+      `)
+      .in('flow_id', flowIds)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    const projectIds = (projects || []).map(p => p.id);
+
+    // Get tasks
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('id, title, status, priority, project_id, assigned_to, due_date')
+      .in('project_id', projectIds);
+
+    // Get members count
+    const { data: members } = await supabase
+      .from('ecosystem_unit_members')
+      .select('user_id', { count: 'exact' })
+      .eq('unit_id', divisionId);
+
+    const stats = {
+      projects: projects?.length || 0,
+      active: projects?.filter(p => ['planning', 'in-progress'].includes(p.status)).length || 0,
+      tasks: tasks?.length || 0,
+      members: members?.length || 0
+    };
+
+    res.json({
+      stats,
+      projects: projects || [],
+      tasks: tasks || [],
+      activities: []
+    });
+  } catch (e) {
+    console.error('Get division dashboard error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
  * GET /api/divisions/:divisionId/active-projects
  * Danh sách dự án đang hoạt động của Khối (simplified)
  */

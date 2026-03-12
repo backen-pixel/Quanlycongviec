@@ -17,7 +17,6 @@ const MENU_GROUPS = [
     emoji: '📊',
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-      { to: '/divisions', icon: Building2, label: 'Quản lý theo khối', adminOnly: true },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
       { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
