@@ -44,9 +44,16 @@ export default function AIAssistantChat() {
       const botMsg = { role: 'assistant', content: data.reply, action: data.action };
       setMessages(prev => [...prev, botMsg]);
 
-      // Handle actions
+      // Handle actions from backend
       if (data.action?.action === 'suggest') {
         setSuggestions(data.action.suggestions || []);
+      }
+      if (data.action?.action === 'navigate' && data.action.url) {
+        setTimeout(() => { navigate(data.action.url); setOpen(false); }, 1500);
+      }
+      if (data.created) {
+        // Refresh suggestions after creating something
+        loadSuggestions();
       }
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', content: '❌ Lỗi: ' + (e.response?.data?.error || e.message) }]);
@@ -141,16 +148,36 @@ export default function AIAssistantChat() {
                   m.role === 'user' ? 'bg-blue-600 text-white rounded-br-md' : 'bg-gray-100 text-gray-900 rounded-bl-md'
                 }`}>
                   {m.content}
-                  {/* Action buttons */}
+                  {/* Customer picker for create prompts */}
                   {m.action?.action === 'prompt_create_project' && (
                     <div className="mt-2 pt-2 border-t border-gray-200">
                       <p className="text-[10px] text-gray-500 mb-1">Chọn KH nhanh:</p>
                       <div className="flex flex-wrap gap-1">
-                        {(m.action.customers || []).slice(0, 6).map(c => (
-                          <button key={c.id} onClick={() => sendMessage(`Tạo dự án cho ${c.name}`)}
+                        {(m.action.customers || []).slice(0, 8).map(c => (
+                          <button key={c.id} onClick={() => sendMessage(`Tạo dự án Tủ bếp cho ${c.name}`)}
                             className="text-[10px] px-2 py-1 bg-white border rounded-full hover:bg-blue-50 cursor-pointer text-gray-700">{c.name}</button>
                         ))}
                       </div>
+                    </div>
+                  )}
+                  {m.action?.action === 'prompt_create_lead' && (
+                    <div className="mt-2 pt-2 border-t border-gray-200">
+                      <p className="text-[10px] text-gray-500 mb-1">Chọn KH nhanh:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {(m.action.customers || []).slice(0, 8).map(c => (
+                          <button key={c.id} onClick={() => sendMessage(`Tạo lead Tủ bếp cho ${c.name}`)}
+                            className="text-[10px] px-2 py-1 bg-white border rounded-full hover:bg-blue-50 cursor-pointer text-gray-700">{c.name}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Navigate button for created items */}
+                  {m.action?.action === 'navigate' && (
+                    <div className="mt-2 pt-2 border-t border-gray-200">
+                      <button onClick={() => { navigate(m.action.url); setOpen(false); }}
+                        className="text-[11px] px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer flex items-center gap-1">
+                        <ArrowRight className="h-3 w-3" /> Xem chi tiết
+                      </button>
                     </div>
                   )}
                 </div>
