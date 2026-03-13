@@ -23,6 +23,14 @@ export default function OrderDetail() {
     catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
+  const updateStatus = async (newStatus) => {
+    if (!confirm(`Chuyển trạng thái sang "${STATUS_MAP[newStatus]}"?`)) return;
+    try {
+      await api.put(`/crm/orders/${id}`, { status: newStatus });
+      load();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
   if (loading || !order) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-emerald-600 border-t-transparent rounded-full" /></div>;
 
   const currentStep = STATUS_STEPS.indexOf(order.status);
@@ -41,17 +49,24 @@ export default function OrderDetail() {
         <button onClick={createInvoice} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Receipt className="h-4 w-4" /> Tạo hóa đơn</button>
       </div>
 
-      {/* Progress Steps */}
+      {/* Progress Steps - Clickable */}
       <div className="bg-white rounded-xl border p-5">
         <div className="flex items-center justify-between">
           {STATUS_STEPS.map((step, i) => (
             <div key={step} className="flex items-center flex-1">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${i <= currentStep ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-500'}`}>{i + 1}</div>
+              <button onClick={() => updateStatus(step)}
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold cursor-pointer transition-all ${i <= currentStep ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
+                title={`Chuyển sang: ${STATUS_MAP[step]}`}>{i + 1}</button>
               <span className={`text-xs font-medium ml-2 ${i <= currentStep ? 'text-emerald-700' : 'text-gray-400'}`}>{STATUS_MAP[step]}</span>
               {i < STATUS_STEPS.length - 1 && <div className={`flex-1 h-0.5 mx-3 ${i < currentStep ? 'bg-emerald-500' : 'bg-gray-200'}`} />}
             </div>
           ))}
         </div>
+        {order.status !== 'cancelled' && (
+          <div className="mt-3 flex justify-end">
+            <button onClick={() => updateStatus('cancelled')} className="text-xs text-red-500 hover:text-red-700 cursor-pointer">Hủy đơn hàng</button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
