@@ -578,4 +578,72 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CRM CUSTOMERS - Aggregated customer view
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/customers-overview', async (req, res) => {
+  try {
+    const { data: customers } = await supabase.from('customers').select('*').order('full_name');
+    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, title, estimated_value, stage_id, code, created_at, stage:crm_pipeline_stages(name, icon, is_won)');
+    const { data: quotes } = await supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at');
+    const { data: orders } = await supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at');
+    const { data: invoices } = await supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at');
+
+    const result = customers.map(c => {
+      const cLeads = (leads || []).filter(l => l.customer_id === c.id);
+      const cQuotes = (quotes || []).filter(q => q.customer_id === c.id);
+      const cOrders = (orders || []).filter(o => o.customer_id === c.id);
+      const cInvoices = (invoices || []).filter(i => i.customer_id === c.id);
+      const totalOrders = cOrders.reduce((s, o) => s + (o.total || 0), 0);
+      const totalPaid = cInvoices.reduce((s, i) => s + (i.paid_amount || 0), 0);
+      const totalDebt = cInvoices.reduce((s, i) => s + ((i.total || 0) - (i.paid_amount || 0)), 0);
+      return { ...c, leads: cLeads, quotes: cQuotes, orders: cOrders, invoices: cInvoices,
+        stats: { lead_count: cLeads.length, won_count: cLeads.filter(l => l.stage?.is_won).length,
+          quote_count: cQuotes.length, order_count: cOrders.length, invoice_count: cInvoices.length,
+          total_orders: totalOrders, total_paid: totalPaid, total_debt: totalDebt,
+          lead_value: cLeads.reduce((s, l) => s + (l.estimated_value || 0), 0) }
+      };
+    });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.get('/customers-overview/:id', async (req, res) => {
+  try {
+    const { data: customer } = await supabase.from('customers').select('*').eq('id', req.params.id).single();
+    if (!customer) return res.status(404).json({ error: 'KH không tồn tại' });
+    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, title, code, estimated_value, stage_id, created_at, stage:crm_pipeline_stages(name, icon, color, is_won)').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    const { data: quotes } = await supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    const { data: orders } = await supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    const { data: invoices } = await supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    res.json({ ...customer, leads: leads || [], quotes: quotes || [], orders: orders || [], invoices: invoices || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRM PRODUCTS
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/products-list', async (req, res) => {
+  try {
+    const { data } = await supabase.from('products').select('*').order('name');
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/products/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('products').update({ ...req.body, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/products', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('products').insert(req.body).select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = r;

@@ -330,9 +330,29 @@ function LeadCard({ lead, isDragging, dragListeners, onClick }) {
 function NewLeadModal({ sources, stages, onClose, onSave }) {
   const [form, setForm] = useState({ title: '', customer_id: '', estimated_value: 0, source_id: '', stage_id: stages[0]?.id || '', description: '', probability: 50 });
   const [customers, setCustomers] = useState([]);
+  const [custSearch, setCustSearch] = useState('');
+  const [showNewCust, setShowNewCust] = useState(false);
+  const [newCust, setNewCust] = useState({ full_name: '', phone: '', email: '' });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { api.get('/customers', { params: { limit: 200 } }).then(r => setCustomers(r.data.customers || r.data || [])); }, []);
+
+  const filteredCust = customers.filter(c => {
+    if (!custSearch) return true;
+    const s = custSearch.toLowerCase();
+    return (c.full_name || '').toLowerCase().includes(s) || (c.phone || '').includes(s);
+  });
+
+  const createCustomer = async () => {
+    if (!newCust.full_name) return alert('Nhập tên KH');
+    try {
+      const { data } = await api.post('/customers', newCust);
+      setCustomers(prev => [...prev, data]);
+      setForm(f => ({ ...f, customer_id: data.id }));
+      setShowNewCust(false);
+      setNewCust({ full_name: '', phone: '', email: '' });
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
 
   const save = async () => {
     if (!form.title) return alert('Nhập tên cơ hội');
@@ -343,6 +363,8 @@ function NewLeadModal({ sources, stages, onClose, onSave }) {
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
     setSaving(false);
   };
+
+  const selectedCust = customers.find(c => c.id === form.customer_id);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -359,10 +381,37 @@ function NewLeadModal({ sources, stages, onClose, onSave }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-gray-700">Khách hàng</label>
-              <select value={form.customer_id} onChange={e => setForm(f => ({ ...f, customer_id: e.target.value || null }))} className="w-full h-10 px-3 border rounded-lg text-sm mt-1">
-                <option value="">Chọn KH</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
-              </select>
+              {selectedCust ? (
+                <div className="flex items-center gap-2 mt-1 h-10 px-3 border rounded-lg bg-blue-50">
+                  <span className="text-sm font-medium text-blue-700 flex-1">{selectedCust.full_name} {selectedCust.phone ? `· ${selectedCust.phone}` : ''}</span>
+                  <button onClick={() => setForm(f => ({ ...f, customer_id: '' }))} className="text-gray-400 hover:text-red-500 cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+                </div>
+              ) : (
+                <div className="mt-1 space-y-1">
+                  <input value={custSearch} onChange={e => setCustSearch(e.target.value)} placeholder="Tìm tên, SĐT..." className="w-full h-9 px-3 border rounded-lg text-sm" />
+                  {custSearch && (
+                    <div className="border rounded-lg max-h-28 overflow-y-auto bg-white shadow-lg">
+                      {filteredCust.slice(0, 8).map(c => (
+                        <button key={c.id} onClick={() => { setForm(f => ({ ...f, customer_id: c.id })); setCustSearch(''); }} className="w-full px-3 py-1.5 text-left text-sm hover:bg-blue-50 cursor-pointer flex justify-between">
+                          <span className="font-medium">{c.full_name}</span><span className="text-xs text-gray-400">{c.phone}</span>
+                        </button>
+                      ))}
+                      {filteredCust.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">Không tìm thấy</p>}
+                    </div>
+                  )}
+                  <button onClick={() => setShowNewCust(!showNewCust)} className="text-xs text-blue-600 hover:underline cursor-pointer">+ Tạo KH mới</button>
+                  {showNewCust && (
+                    <div className="border rounded-lg p-2 bg-gray-50 space-y-1">
+                      <input value={newCust.full_name} onChange={e => setNewCust(p => ({ ...p, full_name: e.target.value }))} placeholder="Tên KH *" className="w-full h-8 px-2 border rounded text-xs" />
+                      <div className="grid grid-cols-2 gap-1">
+                        <input value={newCust.phone} onChange={e => setNewCust(p => ({ ...p, phone: e.target.value }))} placeholder="SĐT" className="h-8 px-2 border rounded text-xs" />
+                        <input value={newCust.email} onChange={e => setNewCust(p => ({ ...p, email: e.target.value }))} placeholder="Email" className="h-8 px-2 border rounded text-xs" />
+                      </div>
+                      <button onClick={createCustomer} className="h-7 px-3 bg-emerald-600 text-white rounded text-xs cursor-pointer">Tạo</button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-gray-700">Nguồn</label>

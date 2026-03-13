@@ -2,102 +2,88 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Search, Receipt, Plus, DollarSign } from 'lucide-react';
+import { Search, Receipt, DollarSign, Calendar } from 'lucide-react';
 
-const INV_STATUS = { draft: 'Nháp', issued: 'Đã xuất', sent: 'Đã gửi', paid: 'Đã TT', overdue: 'Quá hạn', cancelled: 'Đã hủy', void: 'Vô hiệu' };
-const INV_COLORS = { draft: 'bg-gray-100 text-gray-600', issued: 'bg-blue-100 text-blue-700', sent: 'bg-indigo-100 text-indigo-700', paid: 'bg-emerald-100 text-emerald-700', overdue: 'bg-red-100 text-red-700', cancelled: 'bg-gray-100 text-gray-400', void: 'bg-gray-100 text-gray-400' };
+const PAY_MAP = { unpaid: 'Chưa TT', partial: 'TT 1 phần', paid: 'Đã TT đủ' };
 const PAY_COLORS = { unpaid: 'bg-red-100 text-red-700', partial: 'bg-amber-100 text-amber-700', paid: 'bg-emerald-100 text-emerald-700' };
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState([]);
   const [search, setSearch] = useState('');
+  const [payFilter, setPayFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
-  const [payModal, setPayModal] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
-  const load = async () => { setLoading(true); const { data } = await api.get('/crm/invoices', { params: { search: search || undefined } }); setInvoices(data || []); setLoading(false); };
+  const load = async () => { setLoading(true); const { data } = await api.get('/crm/invoices'); setInvoices(data || []); setLoading(false); };
 
-  const recordPayment = async (invoiceId, amount, method, ref) => {
-    try {
-      await api.post(`/crm/invoices/${invoiceId}/payments`, { amount: parseFloat(amount), payment_method: method, reference_number: ref });
-      setPayModal(null);
-      load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
-  };
+  const filtered = invoices.filter(i => {
+    if (payFilter && i.payment_status !== payFilter) return false;
+    if (dateFrom && i.created_at < dateFrom) return false;
+    if (dateTo && i.created_at > dateTo + 'T23:59:59') return false;
+    if (search) { const s = search.toLowerCase(); return (i.code||'').toLowerCase().includes(s) || (i.title||'').toLowerCase().includes(s) || (i.customer_name||'').toLowerCase().includes(s); }
+    return true;
+  });
+
+  const totalAmount = invoices.reduce((s, i) => s + (i.total || 0), 0);
+  const totalPaid = invoices.reduce((s, i) => s + (i.paid_amount || 0), 0);
+  const totalDebt = totalAmount - totalPaid;
+  const paySummary = {};
+  invoices.forEach(i => { paySummary[i.payment_status] = (paySummary[i.payment_status] || 0) + 1; });
+
+  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-purple-600 border-t-transparent rounded-full" /></div>;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Receipt className="h-6 w-6 text-purple-600" /> Hóa đơn</h1><p className="text-sm text-gray-500 mt-1">Quản lý hóa đơn & thanh toán</p></div>
+      <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Receipt className="h-6 w-6 text-purple-600" /> Hóa đơn</h1><p className="text-sm text-gray-500 mt-1">{invoices.length} hóa đơn · Tổng {formatVND(totalAmount)}</p></div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase">Tổng hóa đơn</p><p className="text-xl font-bold text-gray-900">{formatVND(totalAmount)}</p></div>
+        <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase">Đã thu</p><p className="text-xl font-bold text-emerald-600">{formatVND(totalPaid)}</p></div>
+        <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase">Còn nợ</p><p className="text-xl font-bold text-red-600">{formatVND(totalDebt)}</p></div>
+      </div>
+
+      {/* Payment tabs */}
+      <div className="flex gap-2 overflow-x-auto">
+        <button onClick={() => setPayFilter('')} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer ${!payFilter ? 'bg-purple-600 text-white border-purple-600' : 'hover:bg-gray-50'}`}>Tất cả ({invoices.length})</button>
+        {Object.entries(PAY_MAP).map(([k, v]) => (paySummary[k] || 0) > 0 && (
+          <button key={k} onClick={() => setPayFilter(payFilter === k ? '' : k)} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap ${payFilter === k ? 'bg-purple-600 text-white border-purple-600' : PAY_COLORS[k]}`}>{v} ({paySummary[k]})</button>
+        ))}
       </div>
 
       <div className="bg-white rounded-xl border p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="relative flex-1 max-w-sm"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" /><input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="Tìm mã, KH..." className="w-full h-10 pl-10 pr-3 border rounded-lg text-sm" /></div>
+        <div className="flex flex-wrap items-center gap-3 mb-5">
+          <div className="relative flex-1 min-w-[200px] max-w-sm"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã, tên, KH..." className="w-full h-10 pl-10 pr-3 border rounded-lg text-sm" /></div>
+          <div className="flex items-center gap-1 text-xs text-gray-500"><Calendar className="h-3.5 w-3.5" />Từ</div>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-10 px-3 border rounded-lg text-sm" />
+          <div className="text-xs text-gray-500">→</div>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-10 px-3 border rounded-lg text-sm" />
+          {(search || payFilter || dateFrom || dateTo) && <button onClick={() => { setSearch(''); setPayFilter(''); setDateFrom(''); setDateTo(''); }} className="text-xs text-red-500 hover:underline cursor-pointer">Xóa lọc</button>}
         </div>
         <table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
-          <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Khách hàng</th>
-          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3 text-right">Đã TT</th><th className="py-3 px-3 text-right">Còn nợ</th>
-          <th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3"></th>
+          <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
+          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3 text-right">Đã thu</th><th className="py-3 px-3 text-right">Còn nợ</th><th className="py-3 px-3">TT</th><th className="py-3 px-3">Ngày</th>
         </tr></thead><tbody>
-          {invoices.map(inv => {
-            const remaining = (inv.total || 0) - (inv.paid_amount || 0);
+          {filtered.map(i => {
+            const debt = (i.total || 0) - (i.paid_amount || 0);
             return (
-              <tr key={inv.id} className="border-b hover:bg-gray-50">
-                <td className="py-3 px-3 font-bold text-purple-600">{inv.code}</td>
-                <td className="py-3 px-3">{inv.customer_name || inv.customer?.full_name || '-'}</td>
-                <td className="py-3 px-3 text-right font-bold">{formatVND(inv.total || 0)}</td>
-                <td className="py-3 px-3 text-right text-emerald-600 font-medium">{formatVND(inv.paid_amount || 0)}</td>
-                <td className="py-3 px-3 text-right text-red-600 font-bold">{remaining > 0 ? formatVND(remaining) : '-'}</td>
-                <td className="py-3 px-3">
-                  <span className={`text-xs px-2 py-0.5 rounded font-medium ${PAY_COLORS[inv.payment_status] || ''}`}>
-                    {inv.payment_status === 'paid' ? 'Đã TT' : inv.payment_status === 'partial' ? 'TT 1 phần' : 'Chưa TT'}
-                  </span>
-                </td>
-                <td className="py-3 px-3 text-gray-500">{formatDate(inv.created_at)}</td>
-                <td className="py-3 px-3">
-                  {inv.payment_status !== 'paid' && (
-                    <button onClick={() => setPayModal({ id: inv.id, code: inv.code, remaining })} className="text-xs text-emerald-600 hover:underline flex items-center gap-1 cursor-pointer">
-                      <DollarSign className="h-3.5 w-3.5" /> Thu tiền
-                    </button>
-                  )}
-                </td>
+              <tr key={i.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/crm/invoices/${i.id}`)}>
+                <td className="py-3 px-3 font-bold text-purple-600">{i.code}</td>
+                <td className="py-3 px-3 font-medium">{i.title || '-'}</td>
+                <td className="py-3 px-3 text-gray-600">{i.customer_name || i.customer?.full_name || '-'}</td>
+                <td className="py-3 px-3 text-right font-bold">{formatVND(i.total || 0)}</td>
+                <td className="py-3 px-3 text-right text-emerald-600 font-medium">{formatVND(i.paid_amount || 0)}</td>
+                <td className="py-3 px-3 text-right font-medium text-red-600">{debt > 0 ? formatVND(debt) : '—'}</td>
+                <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${PAY_COLORS[i.payment_status] || ''}`}>{PAY_MAP[i.payment_status] || i.payment_status}</span></td>
+                <td className="py-3 px-3 text-gray-500">{formatDate(i.created_at)}</td>
               </tr>
             );
           })}
         </tbody></table>
-        {invoices.length === 0 && <p className="text-center text-sm text-gray-400 py-8">Chưa có hóa đơn. Tạo từ Đơn hàng → Tạo HĐ</p>}
-      </div>
-
-      {/* Payment Modal */}
-      {payModal && <PaymentModal invoice={payModal} onPay={recordPayment} onClose={() => setPayModal(null)} />}
-    </div>
-  );
-}
-
-function PaymentModal({ invoice, onPay, onClose }) {
-  const [amount, setAmount] = useState(invoice.remaining);
-  const [method, setMethod] = useState('transfer');
-  const [ref, setRef] = useState('');
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-        <h2 className="text-lg font-bold text-gray-900 mb-4">Thu tiền - {invoice.code}</h2>
-        <div className="space-y-3">
-          <div><label className="text-xs font-medium text-gray-600">Số tiền</label><input type="number" value={amount} onChange={e => setAmount(e.target.value)} className="w-full h-10 px-3 border rounded-lg text-sm mt-1" /></div>
-          <div><label className="text-xs font-medium text-gray-600">Hình thức</label>
-            <select value={method} onChange={e => setMethod(e.target.value)} className="w-full h-10 px-3 border rounded-lg text-sm mt-1">
-              <option value="transfer">Chuyển khoản</option><option value="cash">Tiền mặt</option>
-            </select>
-          </div>
-          <div><label className="text-xs font-medium text-gray-600">Số GD / Ghi chú</label><input value={ref} onChange={e => setRef(e.target.value)} className="w-full h-10 px-3 border rounded-lg text-sm mt-1" /></div>
-        </div>
-        <div className="flex justify-end gap-3 mt-5">
-          <button onClick={onClose} className="h-9 px-4 border rounded-lg text-sm cursor-pointer">Hủy</button>
-          <button onClick={() => onPay(invoice.id, amount, method, ref)} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium cursor-pointer">Xác nhận thu</button>
-        </div>
+        {filtered.length === 0 && <p className="text-center text-sm text-gray-400 py-8">Không có hóa đơn phù hợp</p>}
       </div>
     </div>
   );
