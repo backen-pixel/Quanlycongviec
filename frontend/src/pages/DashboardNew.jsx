@@ -161,10 +161,11 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
               const now = new Date(); const fmt = d => d.toISOString().split('T')[0];
               if (v === '7d') { const from = new Date(now); from.setDate(from.getDate() - 7); setDateFrom(fmt(from)); setDateTo(fmt(now)); onFilter(); }
               else if (v === '30d') { const from = new Date(now); from.setDate(from.getDate() - 30); setDateFrom(fmt(from)); setDateTo(fmt(now)); onFilter(); }
-            }} className="h-8 px-2 bg-white/20 border border-white/30 rounded-lg text-xs text-white [color-scheme:dark]">
+            }} className="h-8 px-2 bg-white/20 border border-white/30 rounded-lg text-xs text-white font-medium [&>option]:text-gray-900 [&>option]:bg-white"
+            style={{ colorScheme: 'dark' }}>
               <option value="custom">Tùy chỉnh</option>
-              <option value="7d">7 ngày</option>
-              <option value="30d">30 ngày</option>
+              <option value="7d">7 ngày qua</option>
+              <option value="30d">30 ngày qua</option>
             </select>
             <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 px-2 bg-white/20 border border-white/30 rounded-lg text-sm text-white [color-scheme:dark]" />
             <span className="text-blue-200 text-xs">→</span>
