@@ -93,6 +93,7 @@ const CRM_MENU_GROUPS = [
     items: [
       { to: '/crm/customers', icon: UserCircle, label: 'Khách hàng' },
       { to: '/crm/products', icon: Package, label: 'Sản phẩm' },
+      { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo' },
     ]
   },
 ];

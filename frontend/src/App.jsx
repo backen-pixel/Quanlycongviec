@@ -25,7 +25,11 @@ import CRMDashboard from './pages/CRMDashboard';
 import QuotationsPage from './pages/QuotationsPage';
 import QuotationForm from './pages/QuotationForm';
 import OrdersPage from './pages/OrdersPage';
+import OrderDetail from './pages/OrderDetail';
 import InvoicesPage from './pages/InvoicesPage';
+import InvoiceDetail from './pages/InvoiceDetail';
+import LeadDetail from './pages/LeadDetail';
+import CRMReports from './pages/CRMReports';
 import StageGroupsPage from './pages/StageGroupsPage';
 import TemplateSetDetailPage from './pages/TemplateSetDetailPage';
 import DepartmentChat from './pages/DepartmentChat';
@@ -120,11 +124,15 @@ export default function App() {
             <Route path="/template-sets/:setId" element={<TemplateSetDetailPage />} />
             <Route path="/permissions" element={<PermissionsPage />} />
             <Route path="/crm" element={<CRMDashboard />} />
+            <Route path="/crm/leads/:id" element={<LeadDetail />} />
             <Route path="/crm/quotations" element={<QuotationsPage />} />
             <Route path="/crm/quotations/new" element={<QuotationForm />} />
             <Route path="/crm/quotations/:id" element={<QuotationForm />} />
             <Route path="/crm/orders" element={<OrdersPage />} />
+            <Route path="/crm/orders/:id" element={<OrderDetail />} />
             <Route path="/crm/invoices" element={<InvoicesPage />} />
+            <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
+            <Route path="/crm/reports" element={<CRMReports />} />
             <Route path="/crm/customers" element={<CustomersPage />} />
             <Route path="/crm/customers/:id" element={<CustomerDetail />} />
             <Route path="/crm/products" element={<ProductsPage />} />
