@@ -223,23 +223,33 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
                 </button>
                 {expandedStage === td.stage && (
                   <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
-                    {td.tasks.map(t => (
-                      <Link to={`/projects/${t.project_id}`} key={t.id} className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 border border-gray-100 transition-colors group">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${t.status === 'done' ? 'bg-emerald-100 text-emerald-700' : t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>{t.status === 'done' ? 'Xong' : t.status === 'in_progress' ? 'Đang làm' : 'Chờ'}</span>
-                            {t.priority && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority] || t.priority}</span>}
-                            <span className="text-[10px] text-blue-600 font-bold">{t.project_code}</span>
+                    {td.tasks.map(t => {
+                      const isDone = t.status === 'done';
+                      const isOverdue = !isDone && t.due_date && new Date(t.due_date) < new Date();
+                      return (
+                      <Link to={`/projects/${t.project_id}`} key={t.id} className={`flex items-center justify-between p-3 rounded-lg transition-colors group ${isDone ? 'bg-emerald-50/50 border border-emerald-200' : isOverdue ? 'bg-red-50/50 border border-red-200' : 'hover:bg-gray-50 border border-gray-100'}`}>
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {/* Checkbox visual */}
+                          <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${isDone ? 'bg-emerald-500 border-emerald-500' : isOverdue ? 'border-red-400' : 'border-gray-300'}`}>
+                            {isDone && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                           </div>
-                          <p className="text-sm text-gray-900 group-hover:text-blue-600 truncate">{t.title}</p>
-                          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                            <span>{t.project_name}</span>
-                            {t.assignee_name && <span className="flex items-center gap-1"><User className="h-3 w-3" />{t.assignee_name}</span>}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${isDone ? 'bg-emerald-100 text-emerald-700' : t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : isOverdue ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>{isDone ? '✓ Xong' : t.status === 'in_progress' ? '▶ Đang làm' : isOverdue ? '⚠ Quá hạn' : '○ Chờ'}</span>
+                              {t.priority && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority] || t.priority}</span>}
+                              <span className="text-[10px] text-blue-600 font-bold">{t.project_code}</span>
+                            </div>
+                            <p className={`text-sm group-hover:text-blue-600 truncate ${isDone ? 'line-through text-gray-400' : 'text-gray-900'}`}>{t.title}</p>
+                            <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                              <span>{t.project_name}</span>
+                              {t.assignee_name && <span className="flex items-center gap-1"><User className="h-3 w-3" />{t.assignee_name}</span>}
+                            </div>
                           </div>
                         </div>
-                        {t.due_date && <span className={`text-xs shrink-0 ml-2 ${t.status !== 'done' && new Date(t.due_date) < new Date() ? 'text-red-600 font-bold' : 'text-gray-500'}`}>{formatDate(t.due_date)}</span>}
+                        {t.due_date && <span className={`text-xs shrink-0 ml-2 font-medium ${isDone ? 'text-emerald-500' : isOverdue ? 'text-red-600 font-bold' : 'text-gray-500'}`}>{isDone ? '✓ ' : ''}{formatDate(t.due_date)}</span>}
                       </Link>
-                    ))}
+                      );
+                    })}
                     {td.tasks.length === 0 && <p className="text-center text-xs text-gray-400 py-4">Không có nhiệm vụ</p>}
                   </div>
                 )}
