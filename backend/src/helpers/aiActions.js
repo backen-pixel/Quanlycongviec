@@ -84,17 +84,20 @@ const ACTIONS = {
 
   // ─── 2. DỰ ÁN ─────────────────────────────────────────────────────────
   create_project: async ({ name, customer_id, estimated_value, template }, userId) => {
-    const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
-    const { data: firstStage } = await supabase.from('workflow_stages').select('id').is('company_id', null).eq('is_active', true).order('order_index').limit(1).single();
-    const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true });
+    // Auto code like projects route
     const year = new Date().getFullYear();
-    const code = `TB-${year}-${String((count || 0) + 1).padStart(3, '0')}`;
+    const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${year}-%`).order('code', { ascending: false }).limit(1);
+    const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) || 0 : 0;
+    const code = `TB-${year}-${String(lastNum + 1).padStart(3, '0')}`;
+
+    const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
+    const { data: firstStage } = await supabase.from('workflow_stages').select('id').eq('slug', 'consulting').single();
 
     const { data, error } = await supabase.from('projects').insert({
-      code, name, status: 'active', customer_id: customer_id || null,
+      code, name, status: 'consulting', customer_id: customer_id || null,
       estimated_value: estimated_value || 0,
-      flow_id: flows?.[0]?.id, current_stage_id: firstStage?.id,
-      created_by: userId,
+      flow_id: flows?.[0]?.id, current_stage_id: firstStage?.id || null,
+      created_by: userId, priority: 'medium',
     }).select('*').single();
     if (error) throw error;
 
