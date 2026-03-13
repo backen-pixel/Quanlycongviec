@@ -48,6 +48,7 @@ import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import { Settings } from 'lucide-react';
 
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
+import AIAssistantChat from './components/AIAssistantChat';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
@@ -88,6 +89,7 @@ function ProtectedLayout() {
         </main>
       </div>
       <PinnedProjectsWidget />
+      <AIAssistantChat />
     </div>
   );
 }
