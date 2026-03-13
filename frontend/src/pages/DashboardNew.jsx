@@ -155,6 +155,17 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
           </div>
           <div className="flex items-center gap-2 bg-white/10 rounded-xl p-2">
             <Calendar className="h-4 w-4 text-blue-200" />
+            <select value={dateFrom === '' && dateTo === '' ? 'custom' : ''} onChange={e => {
+              const v = e.target.value;
+              if (v === 'custom') { setDateFrom(''); setDateTo(''); return; }
+              const now = new Date(); const fmt = d => d.toISOString().split('T')[0];
+              if (v === '7d') { const from = new Date(now); from.setDate(from.getDate() - 7); setDateFrom(fmt(from)); setDateTo(fmt(now)); onFilter(); }
+              else if (v === '30d') { const from = new Date(now); from.setDate(from.getDate() - 30); setDateFrom(fmt(from)); setDateTo(fmt(now)); onFilter(); }
+            }} className="h-8 px-2 bg-white/20 border border-white/30 rounded-lg text-xs text-white [color-scheme:dark]">
+              <option value="custom">Tùy chỉnh</option>
+              <option value="7d">7 ngày</option>
+              <option value="30d">30 ngày</option>
+            </select>
             <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 px-2 bg-white/20 border border-white/30 rounded-lg text-sm text-white [color-scheme:dark]" />
             <span className="text-blue-200 text-xs">→</span>
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 px-2 bg-white/20 border border-white/30 rounded-lg text-sm text-white [color-scheme:dark]" />
@@ -217,34 +228,61 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
                   </div>
                 </button>
                 {expandedStage === td.stage && (
-                  <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
-                    {td.tasks.map(t => {
-                      const isDone = t.status === 'done';
-                      const isOverdue = !isDone && t.due_date && new Date(t.due_date) < new Date();
-                      return (
-                      <Link to={`/projects/${t.project_id}`} key={t.id} className={`flex items-center justify-between p-3 rounded-lg transition-colors group ${isDone ? 'bg-emerald-50/50 border border-emerald-200' : isOverdue ? 'bg-red-50/50 border border-red-200' : 'hover:bg-gray-50 border border-gray-100'}`}>
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          {/* Checkbox visual */}
-                          <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${isDone ? 'bg-emerald-500 border-emerald-500' : isOverdue ? 'border-red-400' : 'border-gray-300'}`}>
-                            {isDone && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${isDone ? 'bg-emerald-100 text-emerald-700' : t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : isOverdue ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>{isDone ? '✓ Xong' : t.status === 'in_progress' ? '▶ Đang làm' : isOverdue ? '⚠ Quá hạn' : '○ Chờ'}</span>
-                              {t.priority && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority] || t.priority}</span>}
-                              <span className="text-[10px] text-blue-600 font-bold">{t.project_code}</span>
+                  <div className="p-4 space-y-3 max-h-[500px] overflow-y-auto">
+                    {(() => {
+                      // Group tasks by project
+                      const byProject = {};
+                      td.tasks.forEach(t => {
+                        const key = t.project_id;
+                        if (!byProject[key]) byProject[key] = { code: t.project_code, name: t.project_name, id: t.project_id, tasks: [] };
+                        byProject[key].tasks.push(t);
+                      });
+                      const projects = Object.values(byProject);
+                      return projects.map(proj => {
+                        const done = proj.tasks.filter(t => t.status === 'done').length;
+                        const total = proj.tasks.length;
+                        const overdue = proj.tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length;
+                        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                        return (
+                          <Link to={`/projects/${proj.id}`} key={proj.id} className="block bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md hover:border-blue-400 transition-all group">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{proj.code}</span>
+                                <h4 className="text-sm font-bold text-gray-900 group-hover:text-blue-600">{proj.name}</h4>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-emerald-600 font-bold">{done}/{total}</span>
+                                {overdue > 0 && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full font-bold">{overdue} trễ</span>}
+                              </div>
                             </div>
-                            <p className={`text-sm group-hover:text-blue-600 truncate ${isDone ? 'line-through text-gray-400' : 'text-gray-900'}`}>{t.title}</p>
-                            <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                              <span>{t.project_name}</span>
-                              {t.assignee_name && <span className="flex items-center gap-1"><User className="h-3 w-3" />{t.assignee_name}</span>}
+                            {/* Progress bar */}
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="text-xs font-medium text-gray-500 w-8 text-right">{pct}%</span>
                             </div>
-                          </div>
-                        </div>
-                        {t.due_date && <span className={`text-xs shrink-0 ml-2 font-medium ${isDone ? 'text-emerald-500' : isOverdue ? 'text-red-600 font-bold' : 'text-gray-500'}`}>{isDone ? '✓ ' : ''}{formatDate(t.due_date)}</span>}
-                      </Link>
-                      );
-                    })}
+                            {/* Task list compact */}
+                            <div className="space-y-1">
+                              {proj.tasks.map(t => {
+                                const isDone = t.status === 'done';
+                                const isOverdue = !isDone && t.due_date && new Date(t.due_date) < new Date();
+                                return (
+                                  <div key={t.id} className={`flex items-center gap-2 py-1 px-2 rounded text-xs ${isDone ? 'text-gray-400' : isOverdue ? 'text-red-700 bg-red-50' : 'text-gray-700'}`}>
+                                    <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${isDone ? 'bg-emerald-500 border-emerald-500' : isOverdue ? 'border-red-400' : 'border-gray-300'}`}>
+                                      {isDone && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                                    </span>
+                                    <span className={`flex-1 truncate ${isDone ? 'line-through' : ''}`}>{t.title}</span>
+                                    {t.assignee_name && <span className="text-gray-400 shrink-0">{t.assignee_name}</span>}
+                                    {t.due_date && <span className={`shrink-0 ${isOverdue ? 'text-red-600 font-bold' : isDone ? 'text-emerald-500' : 'text-gray-400'}`}>{formatDate(t.due_date)}</span>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </Link>
+                        );
+                      });
+                    })()}
                     {td.tasks.length === 0 && <p className="text-center text-xs text-gray-400 py-4">Không có nhiệm vụ</p>}
                   </div>
                 )}
