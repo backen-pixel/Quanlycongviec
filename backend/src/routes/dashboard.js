@@ -577,7 +577,17 @@ r.get('/division/:divisionId', async (req, res) => {
       }
     });
 
-    // 7. Tasks for ALL projects in this division (not just active)
+    // 7. Determine which stage_ids belong to THIS division's group
+    const myStageIds = new Set();
+    (stages || []).forEach(s => {
+      const prefix = s.slug.split('-')[0];
+      const gs = slugToGroup[prefix];
+      if (gs && groupSlugOrder[gs] === myGroupOrder) {
+        myStageIds.add(s.id);
+      }
+    });
+
+    // 8. Tasks — ONLY tasks with stage_id belonging to this division
     const allProjectIds = [...upcoming, ...active, ...completed].map(p => p.id);
     let allTasks = [];
     if (allProjectIds.length > 0) {
@@ -585,7 +595,8 @@ r.get('/division/:divisionId', async (req, res) => {
         .from('tasks')
         .select('id, title, status, priority, due_date, project_id, assignee_id, stage_id, assignee:users!tasks_assignee_id_fkey(id, full_name)')
         .in('project_id', allProjectIds);
-      allTasks = data || [];
+      // Filter: only tasks whose stage_id belongs to this Khối (skip tasks without stage_id)
+      allTasks = (data || []).filter(t => t.stage_id && myStageIds.has(t.stage_id));
     }
 
     // Get stage names for grouping
