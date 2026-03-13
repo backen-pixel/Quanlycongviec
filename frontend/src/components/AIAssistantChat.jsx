@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { Bot, X, Send, Sparkles, Lightbulb, ChevronDown, Loader2, ArrowRight, Minimize2, Maximize2 } from 'lucide-react';
+import { Bot, X, Send, Sparkles, Lightbulb, Loader2, ArrowRight, Minimize2, Maximize2 } from 'lucide-react';
 
 export default function AIAssistantChat() {
   const [open, setOpen] = useState(false);
@@ -14,11 +14,10 @@ export default function AIAssistantChat() {
   const inputRef = useRef(null);
   const navigate = useNavigate();
 
-  // Load suggestions on open
   useEffect(() => {
     if (open && !messages.length) {
       loadSuggestions();
-      setMessages([{ role: 'assistant', content: '👋 Xin chào! Tôi là trợ lý AI của TuBep Pro.\n\nTôi có thể:\n• Gợi ý việc cần làm tiếp\n• Tạo dự án, lead, báo giá\n• Báo cáo nhanh\n• Trả lời câu hỏi\n\nHỏi gì đi! 😊' }]);
+      setMessages([{ role: 'assistant', content: '👋 Chào! Tôi là trợ lý AI TuBep Pro.\n\nTôi thực hiện được:\n• Tạo KH, Lead, Dự án, BG, ĐH, HĐ\n• Thu tiền, chuyển giai đoạn\n• Gợi ý việc, báo cáo\n• Luồng tự động A→Z\n\nGõ "help" để xem lệnh 😊' }]);
     }
   }, [open]);
 
@@ -32,57 +31,34 @@ export default function AIAssistantChat() {
     const msg = text || input.trim();
     if (!msg || loading) return;
     setInput('');
-
-    const userMsg = { role: 'user', content: msg };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages(prev => [...prev, { role: 'user', content: msg }]);
     setLoading(true);
 
     try {
       const conversation = messages.slice(-10);
       const { data } = await api.post('/assistant/chat', { message: msg, conversation });
-
-      const botMsg = { role: 'assistant', content: data.reply, action: data.action };
+      const botMsg = { role: 'assistant', content: data.reply, action: data.action, created: data.created };
       setMessages(prev => [...prev, botMsg]);
 
-      // Handle actions from backend
-      if (data.action?.action === 'suggest') {
-        setSuggestions(data.action.suggestions || []);
-      }
+      if (data.action?.action === 'suggest') setSuggestions(data.action.suggestions || []);
       if (data.action?.action === 'navigate' && data.action.url) {
-        setTimeout(() => { navigate(data.action.url); setOpen(false); }, 1500);
+        setTimeout(() => { navigate(data.action.url); setOpen(false); }, 2000);
       }
-      if (data.created) {
-        // Refresh suggestions after creating something
-        loadSuggestions();
-      }
-    } catch (e) {
-      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Lỗi: ' + (e.response?.data?.error || e.message) }]);
-    }
-    setLoading(false);
-  };
-
-  const executeAction = async (action, actionData) => {
-    setLoading(true);
-    try {
-      const { data } = await api.post('/assistant/execute', { action, data: actionData });
-      setMessages(prev => [...prev, { role: 'assistant', content: data.message || '✅ Đã thực hiện!' }]);
-      if (data.project) {
-        setTimeout(() => navigate(`/projects/${data.project.id}`), 1500);
-      } else if (data.lead) {
-        setTimeout(() => navigate(`/crm/leads/${data.lead.id}`), 1500);
-      }
+      if (data.created) loadSuggestions();
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', content: '❌ ' + (e.response?.data?.error || e.message) }]);
     }
     setLoading(false);
   };
 
-  // Quick actions
   const quickActions = [
-    { label: 'Gợi ý việc cần làm', icon: '💡', msg: 'Gợi ý việc cần làm tiếp theo' },
-    { label: 'Báo cáo nhanh', icon: '📊', msg: 'Báo cáo tổng quan' },
-    { label: 'Quá hạn?', icon: '⚠️', msg: 'Có gì quá hạn không?' },
-    { label: 'Tạo dự án', icon: '🏗️', msg: 'Tạo dự án mới' },
+    { label: '💡 Gợi ý', msg: 'Gợi ý việc cần làm' },
+    { label: '📊 Báo cáo', msg: 'Báo cáo tổng quan' },
+    { label: '🏗️ Tạo DA', msg: 'Tạo dự án' },
+    { label: '🎯 Tạo Lead', msg: 'Tạo lead' },
+    { label: '👤 Tạo KH', msg: 'Tạo KH' },
+    { label: '🚀 Auto', msg: 'Luồng tự động' },
+    { label: '❓ Help', msg: 'help' },
   ];
 
   if (!open) {
@@ -91,9 +67,7 @@ export default function AIAssistantChat() {
         className="fixed bottom-6 left-6 z-50 w-14 h-14 bg-gradient-to-br from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-full shadow-xl flex items-center justify-center cursor-pointer transition-all hover:scale-110 group">
         <Bot className="h-6 w-6" />
         {suggestions.filter(s => s.priority === 'high').length > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center animate-pulse">
-            {suggestions.filter(s => s.priority === 'high').length}
-          </span>
+          <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center animate-pulse">!</span>
         )}
         <span className="absolute left-16 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">Trợ lý AI</span>
       </button>
@@ -124,16 +98,16 @@ export default function AIAssistantChat() {
 
       {!minimized && (
         <>
-          {/* Suggestion Pills */}
+          {/* Alerts */}
           {suggestions.length > 0 && messages.length <= 1 && (
             <div className="px-3 py-2 border-b bg-amber-50 shrink-0">
               <p className="text-[10px] text-amber-700 font-bold mb-1.5 flex items-center gap-1"><Lightbulb className="h-3 w-3" />Cần chú ý:</p>
               <div className="space-y-1">
-                {suggestions.slice(0, 3).map((s, i) => (
-                  <div key={i} onClick={() => s.action && navigate(s.action)} className="flex items-center gap-2 p-1.5 bg-white rounded-lg cursor-pointer hover:bg-amber-100 transition-colors">
+                {suggestions.slice(0,3).map((s,i) => (
+                  <div key={i} onClick={() => s.action && navigate(s.action)} className="flex items-center gap-2 p-1.5 bg-white rounded-lg cursor-pointer hover:bg-amber-100">
                     <span className="text-sm">{s.icon}</span>
                     <span className="text-[11px] text-gray-700 flex-1">{s.message}</span>
-                    <ArrowRight className="h-3 w-3 text-gray-400 shrink-0" />
+                    <ArrowRight className="h-3 w-3 text-gray-400" />
                   </div>
                 ))}
               </div>
@@ -148,30 +122,36 @@ export default function AIAssistantChat() {
                   m.role === 'user' ? 'bg-blue-600 text-white rounded-br-md' : 'bg-gray-100 text-gray-900 rounded-bl-md'
                 }`}>
                   {m.content}
-                  {/* Customer picker for create prompts */}
-                  {m.action?.action === 'prompt_create_project' && (
+
+                  {/* Customer picker buttons */}
+                  {m.action?.action === 'prompt' && m.action.customers && (
                     <div className="mt-2 pt-2 border-t border-gray-200">
-                      <p className="text-[10px] text-gray-500 mb-1">Chọn KH nhanh:</p>
+                      <p className="text-[10px] text-gray-500 mb-1">Chọn KH:</p>
                       <div className="flex flex-wrap gap-1">
-                        {(m.action.customers || []).slice(0, 8).map(c => (
-                          <button key={c.id} onClick={() => sendMessage(`Tạo dự án Tủ bếp cho ${c.name}`)}
-                            className="text-[10px] px-2 py-1 bg-white border rounded-full hover:bg-blue-50 cursor-pointer text-gray-700">{c.name}</button>
+                        {m.action.customers.slice(0,8).map(c => (
+                          <button key={c.id} onClick={() => {
+                            const prefix = m.action.type === 'create_lead' ? 'Tạo lead Tủ bếp cho' : m.action.type === 'create_project' ? 'Tạo dự án Tủ bếp cho' : 'Luồng tự động cho';
+                            sendMessage(`${prefix} ${c.name}`);
+                          }} className="text-[10px] px-2 py-1 bg-white border rounded-full hover:bg-blue-50 cursor-pointer text-gray-700">{c.name}</button>
                         ))}
                       </div>
                     </div>
                   )}
-                  {m.action?.action === 'prompt_create_lead' && (
+
+                  {/* Invoice picker */}
+                  {m.action?.action === 'prompt' && m.action.invoices && (
                     <div className="mt-2 pt-2 border-t border-gray-200">
-                      <p className="text-[10px] text-gray-500 mb-1">Chọn KH nhanh:</p>
+                      <p className="text-[10px] text-gray-500 mb-1">Chọn HĐ:</p>
                       <div className="flex flex-wrap gap-1">
-                        {(m.action.customers || []).slice(0, 8).map(c => (
-                          <button key={c.id} onClick={() => sendMessage(`Tạo lead Tủ bếp cho ${c.name}`)}
-                            className="text-[10px] px-2 py-1 bg-white border rounded-full hover:bg-blue-50 cursor-pointer text-gray-700">{c.name}</button>
+                        {m.action.invoices.slice(0,5).map(inv => (
+                          <button key={inv.id} onClick={() => sendMessage(`Thu 50 triệu HĐ ${inv.code}`)}
+                            className="text-[10px] px-2 py-1 bg-white border rounded-full hover:bg-blue-50 cursor-pointer text-gray-700">{inv.code}</button>
                         ))}
                       </div>
                     </div>
                   )}
-                  {/* Navigate button for created items */}
+
+                  {/* Navigate button */}
                   {m.action?.action === 'navigate' && (
                     <div className="mt-2 pt-2 border-t border-gray-200">
                       <button onClick={() => { navigate(m.action.url); setOpen(false); }}
@@ -180,15 +160,23 @@ export default function AIAssistantChat() {
                       </button>
                     </div>
                   )}
+
+                  {/* Suggest actions */}
+                  {m.action?.action === 'suggest' && m.action.suggestions && (
+                    <div className="mt-2 pt-2 border-t border-gray-200 space-y-1">
+                      {m.action.suggestions.map((s,idx) => (
+                        <div key={idx} onClick={() => navigate(s.action)} className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-200">
+                          <span className="text-xs">{s.icon}</span>
+                          <span className="text-[10px] text-gray-600">{s.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
             {loading && (
-              <div className="flex justify-start">
-                <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-3">
-                  <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
-                </div>
-              </div>
+              <div className="flex justify-start"><div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-3"><Loader2 className="h-4 w-4 animate-spin text-purple-600" /></div></div>
             )}
             <div ref={bottomRef} />
           </div>
@@ -196,10 +184,10 @@ export default function AIAssistantChat() {
           {/* Quick Actions */}
           {messages.length <= 2 && (
             <div className="px-3 py-2 border-t flex gap-1.5 flex-wrap shrink-0">
-              {quickActions.map((q, i) => (
+              {quickActions.map((q,i) => (
                 <button key={i} onClick={() => sendMessage(q.msg)}
-                  className="text-[10px] px-2.5 py-1.5 bg-gray-100 hover:bg-purple-100 rounded-full cursor-pointer text-gray-700 font-medium flex items-center gap-1 whitespace-nowrap">
-                  <span>{q.icon}</span>{q.label}
+                  className="text-[10px] px-2.5 py-1.5 bg-gray-100 hover:bg-purple-100 rounded-full cursor-pointer text-gray-700 font-medium whitespace-nowrap">
+                  {q.label}
                 </button>
               ))}
             </div>
@@ -209,7 +197,7 @@ export default function AIAssistantChat() {
           <div className="px-3 py-2.5 border-t flex items-center gap-2 shrink-0">
             <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-              placeholder="Hỏi gì đi..."
+              placeholder="VD: Tạo dự án Tủ bếp cho Nguyễn A..."
               className="flex-1 h-9 px-3 bg-gray-100 border-0 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
               disabled={loading} />
             <button onClick={() => sendMessage()} disabled={loading || !input.trim()}
