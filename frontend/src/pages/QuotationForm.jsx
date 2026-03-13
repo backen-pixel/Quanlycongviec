@@ -80,6 +80,13 @@ export default function QuotationForm() {
     setSaving(false);
   };
 
+  const updateStatus = async (newStatus) => {
+    try {
+      await api.put(`/crm/quotations/${id}`, { status: newStatus });
+      setForm(f => ({ ...f, status: newStatus }));
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
   const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
   const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, dimensions: '', material: '', color: '' }]);
@@ -90,11 +97,28 @@ export default function QuotationForm() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/crm/quotations')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
-          <h1 className="text-xl font-bold text-gray-900">{isEdit ? 'Sửa báo giá' : 'Tạo báo giá mới'}</h1>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">{isEdit ? 'Sửa báo giá' : 'Tạo báo giá mới'}</h1>
+            {isEdit && form.code && <p className="text-xs text-blue-600 font-bold">{form.code}</p>}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {isEdit && <button onClick={() => window.print()} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 print:hidden"><Printer className="h-4 w-4" /> In PDF</button>}
-          <button onClick={save} disabled={saving} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50 print:hidden">
+        <div className="flex items-center gap-2 print:hidden">
+          {isEdit && (
+            <select value={form.status || 'draft'} onChange={e => updateStatus(e.target.value)}
+              className={`h-9 px-3 rounded-lg text-sm font-medium border-2 cursor-pointer ${
+                form.status === 'accepted' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' :
+                form.status === 'sent' ? 'border-blue-300 bg-blue-50 text-blue-700' :
+                form.status === 'rejected' ? 'border-red-300 bg-red-50 text-red-700' :
+                form.status === 'converted' ? 'border-purple-300 bg-purple-50 text-purple-700' :
+                'border-gray-200'}`}>
+              <option value="draft">📝 Nháp</option>
+              <option value="sent">📤 Đã gửi KH</option>
+              <option value="accepted">✅ KH chấp nhận</option>
+              <option value="rejected">❌ Từ chối</option>
+            </select>
+          )}
+          {isEdit && <button onClick={() => window.print()} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Printer className="h-4 w-4" /> In PDF</button>}
+          <button onClick={save} disabled={saving} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
             <Save className="h-4 w-4" /> {saving ? 'Đang lưu...' : 'Lưu'}
           </button>
         </div>
