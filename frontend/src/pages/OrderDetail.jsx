@@ -26,7 +26,10 @@ export default function OrderDetail() {
   const updateStatus = async (newStatus) => {
     if (!confirm(`Chuyển trạng thái sang "${STATUS_MAP[newStatus]}"?`)) return;
     try {
-      await api.put(`/crm/orders/${id}`, { status: newStatus });
+      const { data } = await api.put(`/crm/orders/${id}`, { status: newStatus });
+      if (data.auto_project) {
+        alert(`🚀 Đã tự động tạo dự án ${data.auto_project.code}!\nĐơn hàng → Project + Tasks đã được gen tự động.`);
+      }
       load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };

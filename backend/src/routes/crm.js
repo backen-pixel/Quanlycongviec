@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { onLeadWon, onOrderConfirmed, onQuotationAccepted, onProjectCompleted, getProjectCRMSummary, getOverdueFollowUps, getStaleLeads } = require('../helpers/autoFlow');
 
 const r = Router();
 r.use(auth);
@@ -191,7 +192,14 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     const { data, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
-    res.json(data);
+
+    // AUTO-FLOW: Lead chốt → tự động tạo Project + Gen Tasks
+    let autoProject = null;
+    if (stage?.is_won) {
+      try { autoProject = await onLeadWon(req.params.id, req.user.userId); } catch (e) { console.error('Auto-flow error:', e.message); }
+    }
+
+    res.json({ ...data, auto_project: autoProject });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -324,13 +332,17 @@ r.put('/quotations/:id', async (req, res) => {
       await supabase.from('quotation_items').insert(itemRows);
     }
 
-    res.json(data);
+    // AUTO-FLOW: BG chấp nhận → auto tạo ĐH + Project
+    let autoResult = null;
+    if (quoteData.status === 'accepted') {
+      try { autoResult = await onQuotationAccepted(req.params.id, req.user.userId); } catch (e) { console.error('Auto-flow BG→ĐH error:', e.message); }
+    }
+
+    res.json({ ...data, auto: autoResult });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
-
-// Convert: Quotation → Order
 r.post('/quotations/:id/convert-to-order', async (req, res) => {
   try {
     const { data: quote } = await supabase.from('quotations').select('*').eq('id', req.params.id).single();
@@ -413,7 +425,14 @@ r.put('/orders/:id', async (req, res) => {
     if (updates.status === 'cancelled' && !updates.cancelled_at) updates.cancelled_at = new Date().toISOString();
     const { data, error } = await supabase.from('orders').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
-    res.json(data);
+
+    // AUTO-FLOW: ĐH xác nhận → tự động tạo Project + Gen Tasks
+    let autoProject = null;
+    if (updates.status === 'confirmed') {
+      try { autoProject = await onOrderConfirmed(req.params.id, req.user.userId); } catch (e) { console.error('Auto-flow error:', e.message); }
+    }
+
+    res.json({ ...data, auto_project: autoProject });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -579,6 +598,16 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PROJECT CRM SUMMARY — Tab CRM trong ProjectDetail
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/project/:projectId/summary', async (req, res) => {
+  try {
+    const summary = await getProjectCRMSummary(req.params.projectId);
+    res.json(summary);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CRM CUSTOMERS - Aggregated customer view
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/customers-overview', async (req, res) => {
@@ -643,6 +672,27 @@ r.post('/products', async (req, res) => {
     const { data, error } = await supabase.from('products').insert(req.body).select('*').single();
     if (error) throw error;
     res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FOLLOW-UP ALERTS
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/alerts/follow-ups', async (req, res) => {
+  try {
+    const overdue = await getOverdueFollowUps();
+    const stale = await getStaleLeads(parseInt(req.query.days) || 7);
+    res.json({ overdue, stale, total: overdue.length + stale.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROJECT COMPLETE → AUTO INVOICE
+// ═══════════════════════════════════════════════════════════════════════════
+r.post('/project/:projectId/auto-invoice', async (req, res) => {
+  try {
+    const invoices = await onProjectCompleted(req.params.projectId, req.user.userId);
+    res.json({ created: invoices.length, invoices });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

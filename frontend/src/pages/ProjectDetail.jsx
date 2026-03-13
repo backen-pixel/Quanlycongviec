@@ -9,12 +9,13 @@ import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
-  Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid
+  Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign
 } from 'lucide-react';
 import UserSelect from '../components/UserSelect';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
 import ProjectFlowTab from '../components/ProjectFlowTab';
+import ProjectCRMTab from '../components/ProjectCRMTab';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
   TASK_STATUS, TASK_COLORS, formatVND, formatDate, formatDateTime,
@@ -442,6 +443,7 @@ export default function ProjectDetail() {
           { id: 'documents', label: 'Tài liệu', icon: FileText },
           { id: 'approvals', label: 'Duyệt', icon: Shield, count: pendingApprovalCount || undefined },
           { id: 'chat', label: 'Trao đổi', icon: MessageSquare, count: project.comments?.length },
+          { id: 'crm', label: 'Bán hàng', icon: DollarSign },
           { id: 'history', label: 'Lịch sử', icon: Clock, count: project.activities?.length },
         ].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)}
@@ -708,6 +710,9 @@ export default function ProjectDetail() {
           {!project.comments?.length && <p className="text-sm text-gray-400 text-center py-6">Chưa có trao đổi</p>}
         </div>
       )}
+
+      {/* ─── CRM / Bán hàng Tab ─── */}
+      {activeTab === 'crm' && <ProjectCRMTab projectId={id} />}
 
       {/* ─── History Tab ─── */}
       {activeTab === 'history' && (

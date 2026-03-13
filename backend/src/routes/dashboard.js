@@ -681,6 +681,18 @@ r.get('/division/:divisionId', async (req, res) => {
       stage: p.stage, created_at: p.created_at,
     }));
 
+    // 11. CRM Revenue for this division's projects
+    const divProjectIds = [...upcoming, ...active, ...completed].map(p => p.id);
+    let crmStats = { total_orders: 0, total_invoiced: 0, total_paid: 0, total_debt: 0 };
+    if (divProjectIds.length > 0) {
+      const { data: divOrders } = await supabase.from('orders').select('total').in('project_id', divProjectIds);
+      const { data: divInvoices } = await supabase.from('invoices').select('total, paid_amount').in('project_id', divProjectIds);
+      crmStats.total_orders = (divOrders || []).reduce((s, o) => s + (o.total || 0), 0);
+      crmStats.total_invoiced = (divInvoices || []).reduce((s, i) => s + (i.total || 0), 0);
+      crmStats.total_paid = (divInvoices || []).reduce((s, i) => s + (i.paid_amount || 0), 0);
+      crmStats.total_debt = crmStats.total_invoiced - crmStats.total_paid;
+    }
+
     res.json({
       division: { id: division.id, name: division.name, icon: division.icon, color: division.color, description: division.description },
       stats: {
@@ -696,6 +708,7 @@ r.get('/division/:divisionId', async (req, res) => {
       completed: fmt(completed),
       companies_detail: companiesDetail,
       task_detail: taskDetail,
+      crm: crmStats,
     });
   } catch (e) {
     console.error('Dashboard division detail error:', e);
