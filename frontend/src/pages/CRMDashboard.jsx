@@ -18,6 +18,7 @@ export default function CRMDashboard() {
   const [leads, setLeads] = useState([]);
   const [stages, setStages] = useState([]);
   const [sources, setSources] = useState([]);
+  const [alerts, setAlerts] = useState(null);
   const [view, setView] = useState('pipeline'); // pipeline | list
   const [showNewLead, setShowNewLead] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -28,16 +29,18 @@ export default function CRMDashboard() {
   const load = async () => {
     setLoading(true);
     try {
-      const [dashRes, leadsRes, stagesRes, sourcesRes] = await Promise.all([
+      const [dashRes, leadsRes, stagesRes, sourcesRes, alertsRes] = await Promise.all([
         api.get('/crm/dashboard'),
         api.get('/crm/leads'),
         api.get('/crm/pipeline-stages'),
         api.get('/crm/sources'),
+        api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
       ]);
       setData(dashRes.data);
       setLeads(leadsRes.data);
       setStages(stagesRes.data);
       setSources(sourcesRes.data);
+      setAlerts(alertsRes.data);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -57,7 +60,11 @@ export default function CRMDashboard() {
     // Optimistic update
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId } : l));
     try {
-      await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId });
+      const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId });
+      // Auto-flow: nếu chốt deal → tự động tạo project
+      if (data.auto_project) {
+        alert(`🚀 Đã tự động tạo dự án ${data.auto_project.code}!\nLead → Project + Tasks đã được gen tự động.`);
+      }
     } catch (e) {
       console.error(e);
       load(); // Revert on error
@@ -116,6 +123,37 @@ export default function CRMDashboard() {
           <p className="text-sm text-gray-500">Đã chốt</p>
         </div>
       </div>
+
+      {/* Follow-up Alerts */}
+      {alerts && alerts.total > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <h3 className="text-sm font-bold text-red-800 mb-2">⚠️ Cần chú ý ({alerts.total})</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {alerts.overdue.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-red-700">📅 Follow-up quá hạn ({alerts.overdue.length})</p>
+                {alerts.overdue.slice(0, 5).map(l => (
+                  <div key={l.id} onClick={() => navigate(`/crm/leads/${l.id}`)} className="flex items-center justify-between p-2 bg-white rounded-lg cursor-pointer hover:bg-red-50 text-xs">
+                    <span className="font-medium text-gray-900">{l.code} — {l.title}</span>
+                    <span className="text-red-600 font-bold">{formatDate(l.next_follow_up)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {alerts.stale.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-amber-700">💤 Không hoạt động &gt;7 ngày ({alerts.stale.length})</p>
+                {alerts.stale.slice(0, 5).map(l => (
+                  <div key={l.id} onClick={() => navigate(`/crm/leads/${l.id}`)} className="flex items-center justify-between p-2 bg-white rounded-lg cursor-pointer hover:bg-amber-50 text-xs">
+                    <span className="font-medium text-gray-900">{l.code} — {l.title}</span>
+                    <span className="text-amber-600">{l.assignee?.full_name || 'Chưa gán'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Pipeline Kanban - Drag & Drop */}
       <div className="bg-white rounded-xl border p-6">

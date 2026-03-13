@@ -82,8 +82,15 @@ export default function QuotationForm() {
 
   const updateStatus = async (newStatus) => {
     try {
-      await api.put(`/crm/quotations/${id}`, { status: newStatus });
+      const { data } = await api.put(`/crm/quotations/${id}`, { status: newStatus });
       setForm(f => ({ ...f, status: newStatus }));
+      // Auto-flow: BG chấp nhận → tự tạo ĐH + Project
+      if (data.auto?.order) {
+        const msg = data.auto.autoProject
+          ? `🚀 Tự động:\n• Tạo đơn hàng ${data.auto.order.code}\n• Tạo dự án ${data.auto.autoProject.code}\n• Gen tasks tự động`
+          : `🚀 Tự động tạo đơn hàng ${data.auto.order.code}`;
+        alert(msg);
+      }
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 

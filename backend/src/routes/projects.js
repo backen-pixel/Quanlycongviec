@@ -1,6 +1,8 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+let autoFlow;
+try { autoFlow = require('../helpers/autoFlow'); } catch (e) { autoFlow = null; }
 const { requirePermission, getAccessibleUnits, checkPermission } = require('../middleware/newPermission');
 
 const r = Router();
@@ -913,6 +915,11 @@ r.put('/:id/stage', async (req, res) => {
         transitioned_by: req.user.userId,
       });
     } catch {} // ignore if table doesn't exist
+
+    // AUTO-FLOW: Sync ĐH status khi project chuyển stage
+    if (autoFlow?.onProjectStageChanged) {
+      try { await autoFlow.onProjectStageChanged(req.params.id, stage.id); } catch (e) { console.error('Auto-flow sync:', e.message); }
+    }
 
     // Auto-update customer status based on stage mapping
     if (data.customer_id) {

@@ -184,6 +184,19 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
         <KPICard title="Trễ Hạn" value={stats.overdue || 0} subtitle={`${stats.overdue_tasks} NV quá hạn`} trendNegative icon={AlertTriangle} color="bg-red-600" bgColor="bg-red-50" />
       </div>
 
+      {/* CRM Revenue per Khối */}
+      {data?.crm && (data.crm.total_orders > 0 || data.crm.total_paid > 0) && (
+        <div className="bg-white rounded-xl border p-5">
+          <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2"><DollarSign className="h-4 w-4 text-emerald-600" />Doanh thu Khối</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-blue-50 rounded-lg p-3"><p className="text-[10px] text-blue-600 uppercase font-medium">Tổng ĐH</p><p className="text-lg font-bold text-blue-700">{formatVND(data.crm.total_orders)}</p></div>
+            <div className="bg-purple-50 rounded-lg p-3"><p className="text-[10px] text-purple-600 uppercase font-medium">Đã xuất HĐ</p><p className="text-lg font-bold text-purple-700">{formatVND(data.crm.total_invoiced)}</p></div>
+            <div className="bg-emerald-50 rounded-lg p-3"><p className="text-[10px] text-emerald-600 uppercase font-medium">Đã thu</p><p className="text-lg font-bold text-emerald-700">{formatVND(data.crm.total_paid)}</p></div>
+            <div className={`rounded-lg p-3 ${data.crm.total_debt > 0 ? 'bg-red-50' : 'bg-gray-50'}`}><p className={`text-[10px] uppercase font-medium ${data.crm.total_debt > 0 ? 'text-red-600' : 'text-gray-500'}`}>Công nợ</p><p className={`text-lg font-bold ${data.crm.total_debt > 0 ? 'text-red-700' : 'text-gray-400'}`}>{formatVND(data.crm.total_debt)}</p></div>
+          </div>
+        </div>
+      )}
+
       {/* Task Detail */}
       {task_detail?.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
