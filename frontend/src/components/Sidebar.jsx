@@ -1,11 +1,12 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor } from '../lib/utils';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
-  UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X
+  UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
+  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -64,11 +65,43 @@ const MENU_GROUPS = [
   }
 ];
 
-function SideLink({ to, icon: Icon, label, collapsed }) {
+// CRM menu structure
+const CRM_MENU_GROUPS = [
+  {
+    id: 'crm-overview',
+    title: '1. Tổng quan',
+    emoji: '📊',
+    items: [
+      { to: '/crm', icon: LayoutDashboard, label: 'Dashboard CRM' },
+    ]
+  },
+  {
+    id: 'crm-sales',
+    title: '2. Bán hàng',
+    emoji: '💰',
+    items: [
+      { to: '/crm', icon: Target, label: 'Pipeline & Leads', end: true },
+      { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
+      { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
+      { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },
+    ]
+  },
+  {
+    id: 'crm-data',
+    title: '3. Dữ liệu',
+    emoji: '📋',
+    items: [
+      { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
+      { to: '/products', icon: Package, label: 'Sản phẩm' },
+    ]
+  },
+];
+
+function SideLink({ to, icon: Icon, label, collapsed, end }) {
   return (
     <NavLink
       to={to}
-      end={to === '/'}
+      end={to === '/' || end}
       className={({ isActive }) =>
         `flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all ${
           isActive
@@ -126,8 +159,11 @@ export default function Sidebar() {
   const appSwitcherRef = useRef(null);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+  const isCRM = location.pathname.startsWith('/crm');
+  const activeMenuGroups = isCRM ? CRM_MENU_GROUPS : MENU_GROUPS;
 
   // Close app switcher on outside click
   useEffect(() => {
@@ -156,9 +192,9 @@ export default function Sidebar() {
               </button>
             </div>
             <div className="flex-1 p-5 space-y-3">
-              {/* Công việc - Active */}
+              {/* Công việc */}
               <button onClick={() => { setShowAppSwitcher(false); navigate('/'); }}
-                className="w-full flex items-center gap-4 p-4 rounded-xl bg-blue-50 border-2 border-blue-200 hover:border-blue-400 transition-all cursor-pointer group">
+                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${!isCRM ? 'bg-blue-50 border-blue-200 hover:border-blue-400' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
                 <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
                   <CheckSquare className="h-6 w-6 text-white" />
                 </div>
@@ -166,11 +202,11 @@ export default function Sidebar() {
                   <h3 className="text-sm font-bold text-gray-900">Công việc</h3>
                   <p className="text-xs text-gray-500 mt-0.5">Quản lý dự án & nhiệm vụ</p>
                 </div>
-                <span className="ml-auto text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>
+                {!isCRM && <span className="ml-auto text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
               </button>
-              {/* CRM - Active */}
+              {/* CRM */}
               <button onClick={() => { setShowAppSwitcher(false); navigate('/crm'); }}
-                className="w-full flex items-center gap-4 p-4 rounded-xl bg-gray-50 border-2 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all cursor-pointer group">
+                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${isCRM ? 'bg-emerald-50 border-emerald-200 hover:border-emerald-400' : 'bg-gray-50 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50'}`}>
                 <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
                   <UserCircle className="h-6 w-6 text-white" />
                 </div>
@@ -178,6 +214,7 @@ export default function Sidebar() {
                   <h3 className="text-sm font-bold text-gray-900">CRM</h3>
                   <p className="text-xs text-gray-500 mt-0.5">Quản lý khách hàng & bán hàng</p>
                 </div>
+                {isCRM && <span className="ml-auto text-[10px] px-2 py-0.5 bg-emerald-600 text-white rounded-full font-bold">Đang dùng</span>}
               </button>
             </div>
             <div className="px-5 py-3 border-t border-gray-100">
@@ -200,13 +237,13 @@ export default function Sidebar() {
           className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-white/10 transition-colors cursor-pointer" title="Chuyển ứng dụng">
           <Grid3X3 className="h-5 w-5 text-white/80 hover:text-white" />
         </button>
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-white/10 text-white text-lg">
-          🏠
+        <div className={`flex items-center justify-center w-8 h-8 rounded-lg text-white text-lg ${isCRM ? 'bg-emerald-500/30' : 'bg-white/10'}`}>
+          {isCRM ? '💼' : '🏠'}
         </div>
         {!collapsed && (
           <div className="flex-1">
-            <h1 className="text-sm font-bold text-white leading-tight">TuBep Pro</h1>
-            <p className="text-[10px] text-[var(--color-sidebar-text)] leading-tight">Quản lý công việc</p>
+            <h1 className="text-sm font-bold text-white leading-tight">{isCRM ? 'CRM' : 'TuBep Pro'}</h1>
+            <p className="text-[10px] text-[var(--color-sidebar-text)] leading-tight">{isCRM ? 'Quản lý bán hàng' : 'Quản lý công việc'}</p>
           </div>
         )}
       </div>
@@ -218,7 +255,7 @@ export default function Sidebar() {
 
       {/* Menu Groups */}
       <div className="flex-1 overflow-y-auto py-2">
-        {MENU_GROUPS.map(group => {
+        {activeMenuGroups.map(group => {
           // Hide admin-only groups for non-admin
           if (group.adminOnly && !isAdmin) return null;
           return <MenuGroup key={group.id} group={group} collapsed={collapsed} isAdmin={isAdmin} />;
