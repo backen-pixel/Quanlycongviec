@@ -9,8 +9,9 @@ import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
-  Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign
+  Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign, Pin
 } from 'lucide-react';
+import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import UserSelect from '../components/UserSelect';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
@@ -152,6 +153,11 @@ export default function ProjectDetail() {
             <div className="flex items-center gap-2 mb-1">
               <span className="text-sm font-bold text-blue-600">{project.code}</span>
               <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[project.status] || ''}`}>{STATUS_LABELS[project.status]}</span>
+              <button onClick={() => { togglePin(id); setProject(p => ({ ...p, _pinToggle: Date.now() })); }}
+                className={`p-1 rounded-lg cursor-pointer transition-all ${isPinned(id) ? 'bg-amber-100 text-amber-600' : 'hover:bg-gray-100 text-gray-300'}`}
+                title={isPinned(id) ? 'Bỏ ghim' : 'Ghim dự án'}>
+                <Pin className="h-4 w-4" />
+              </button>
               {project.priority && <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[project.priority] || ''}`}>{PRIORITY_LABELS[project.priority]}</span>}
             </div>
             <h1 className="text-xl font-bold text-gray-900">{project.name}</h1>
