@@ -88,17 +88,18 @@ app.set('pushNotification', (userId, notification) => {
 server.listen(config.port, () => {
   console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);
 
-  // Auto-fix seed passwords - chạy async sau khi server đã listen
-  setImmediate(async () => {
+  // Defer all heavy tasks 10s after startup (let Render health check pass first)
+  setTimeout(async () => {
+    // Seed passwords — cost 10 instead of 12 (faster)
     try {
       const bcrypt = require('bcryptjs');
       const { supabase } = require('./config/supabase');
       const seedEmails = ['admin@tubep.vn','sales@tubep.vn','designer@tubep.vn','production@tubep.vn','installer@tubep.vn','manager@tubep.vn'];
-      const hash = await bcrypt.hash('admin123', 12);
+      const hash = await bcrypt.hash('admin123', 10);
       await supabase.from('users').update({ password: hash }).in('email', seedEmails);
       console.log('✅ Seed passwords reset OK');
     } catch (e) { console.error('⚠️ Seed passwords:', e.message); }
-  });
+  }, 10000);
 
   // ─── DEADLINE CHECKER — every hour ──
   const checkDeadlines = async () => {
@@ -165,7 +166,7 @@ server.listen(config.port, () => {
     } catch (e) { console.error('Deadline check error:', e.message); }
   };
 
-  // Run immediately then every hour
-  setTimeout(checkDeadlines, 5000);
+  // Run deadline check 30s after start, then every hour
+  setTimeout(checkDeadlines, 30000);
   setInterval(checkDeadlines, 60 * 60 * 1000);
 });
