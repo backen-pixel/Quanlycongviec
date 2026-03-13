@@ -47,6 +47,8 @@ import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 
 import { Settings } from 'lucide-react';
 
+import PinnedProjectsWidget from './components/PinnedProjectsWidget';
+
 function ProtectedLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -85,6 +87,7 @@ function ProtectedLayout() {
           )}
         </main>
       </div>
+      <PinnedProjectsWidget />
     </div>
   );
 }

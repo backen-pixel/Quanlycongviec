@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List, Clock, PlayCircle, CheckSquare, AlertCircle, CalendarClock } from 'lucide-react';
+import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List, Clock, PlayCircle, CheckSquare, AlertCircle, CalendarClock, Pin } from 'lucide-react';
+import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 
 const TIME_FILTERS = [
@@ -57,6 +58,14 @@ export default function Projects() {
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban' | 'plan'
+  const [pinnedSet, setPinnedSet] = useState(new Set());
+
+  const pinToggle = (id) => { togglePin(id); setPinnedSet(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }); };
+
+  useEffect(() => {
+    const ids = JSON.parse(localStorage.getItem('tubep_pinned_projects') || '[]');
+    setPinnedSet(new Set(ids));
+  }, []);
   const [filterTime, setFilterTime] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -435,6 +444,11 @@ export default function Projects() {
                   </div>
                 </div>
                 <div className="text-right shrink-0 flex items-start gap-2">
+                  <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); pinToggle(p.id); }}
+                    className={`p-1 rounded-lg cursor-pointer transition-all ${pinnedSet.has(p.id) ? 'bg-amber-100 text-amber-600' : 'text-gray-300 hover:bg-gray-100 hover:text-gray-500'}`}
+                    title={pinnedSet.has(p.id) ? 'Bỏ ghim' : 'Ghim'}>
+                    <Pin className="h-4 w-4" />
+                  </button>
                   <p className="text-base font-bold text-gray-900">{formatVND(p.estimated_value)}</p>
                   <button onClick={(e) => deleteProject(e, p.id, p.code)}
                     className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer">
