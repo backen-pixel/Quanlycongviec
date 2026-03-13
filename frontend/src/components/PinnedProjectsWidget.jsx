@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Pin, X, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Minimize2, Maximize2 } from 'lucide-react';
+import { Pin, X, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Minimize2, Maximize2, GripVertical } from 'lucide-react';
+import useDraggable from '../hooks/useDraggable';
 
 const STORAGE_KEY = 'tubep_pinned_projects';
 
@@ -65,11 +66,14 @@ export default function PinnedProjectsWidget() {
 
   if (!pinnedIds.length && !open) return null;
 
+  const { pos, dragging, onDragStart } = useDraggable('pinned', { right: 24, bottom: 24 });
+
   // Floating badge (collapsed)
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-50 w-12 h-12 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-xl flex items-center justify-center cursor-pointer transition-all hover:scale-110 group">
+      <button onClick={() => setOpen(true)} onMouseDown={onDragStart} onTouchStart={onDragStart}
+        style={{ right: pos.right, bottom: pos.bottom }}
+        className={`fixed z-50 w-12 h-12 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-xl flex items-center justify-center cursor-grab transition-all hover:scale-110 group ${dragging ? 'cursor-grabbing scale-110 opacity-80' : ''}`}>
         <Pin className="h-5 w-5" />
         <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center">{pinnedIds.length}</span>
         <span className="absolute right-14 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">Dự án đã ghim</span>
@@ -79,13 +83,15 @@ export default function PinnedProjectsWidget() {
 
   // Floating panel (expanded)
   return (
-    <div className={`fixed bottom-6 right-6 z-50 bg-white rounded-2xl shadow-2xl border border-gray-200 transition-all ${minimized ? 'w-72' : 'w-80'}`}
+    <div style={{ right: pos.right, bottom: pos.bottom }}
+      className={`fixed z-50 bg-white rounded-2xl shadow-2xl border border-gray-200 transition-all ${minimized ? 'w-72' : 'w-80'} ${dragging ? 'opacity-90' : ''}`}
       style={{ maxHeight: minimized ? '48px' : '70vh' }}>
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl cursor-pointer"
-        onClick={() => setMinimized(!minimized)}>
+      {/* Header — draggable */}
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl cursor-grab select-none"
+        onMouseDown={onDragStart} onTouchStart={onDragStart}>
         <div className="flex items-center gap-2">
+          <GripVertical className="h-4 w-4 text-blue-200" />
           <Pin className="h-4 w-4 text-white" />
           <span className="text-sm font-bold text-white">Dự án ghim ({pinnedIds.length})</span>
         </div>
