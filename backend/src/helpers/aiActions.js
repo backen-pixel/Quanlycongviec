@@ -150,7 +150,7 @@ const ACTIONS = {
   },
 
   // ─── 4. BÁO GIÁ ───────────────────────────────────────────────────────
-  create_quotation: async ({ customer_id, customer_name, items, discount_value, discount_type, tax_rate, note }, userId) => {
+  create_quotation: async ({ customer_id, customer_name, items, discount_value, discount_type, tax_rate, note, project_id }, userId) => {
     const code = await nextCode('BG');
     const qItems = (items || []).map((item, i) => ({
       item_order: i + 1, product_name: item.name || item.product_name || '',
@@ -167,7 +167,8 @@ const ACTIONS = {
     const { data, error } = await supabase.from('quotations').insert({
       code, customer_id, customer_name, status: 'draft',
       subtotal, discount_type: discount_type || 'amount', discount_value: discount_value || 0,
-      discount_amount: discAmt, tax_rate: tax_rate || 10, tax_amount: taxAmt, total, note, created_by: userId,
+      discount_amount: discAmt, tax_rate: tax_rate || 10, tax_amount: taxAmt, total, note,
+      project_id: project_id || null, created_by: userId,
     }).select('*').single();
     if (error) throw error;
 
@@ -182,13 +183,13 @@ const ACTIONS = {
 
     // Auto tạo ĐH
     const { data: qItems } = await supabase.from('quotation_items').select('*').eq('quotation_id', quotation_id).order('item_order');
-    const orderR = await ACTIONS.create_order({ customer_id: q.customer_id, customer_name: q.customer_name, items: qItems, from_quotation_id: quotation_id }, userId);
+    const orderR = await ACTIONS.create_order({ customer_id: q.customer_id, customer_name: q.customer_name, items: qItems, from_quotation_id: quotation_id, project_id: q.project_id }, userId);
 
     return { success: true, message: `✅ BG ${q.code} chấp nhận!\n${orderR.message}`, navigate: orderR.navigate };
   },
 
   // ─── 5. ĐƠN HÀNG ─────────────────────────────────────────────────────
-  create_order: async ({ customer_id, customer_name, items, from_quotation_id }, userId) => {
+  create_order: async ({ customer_id, customer_name, items, from_quotation_id, project_id }, userId) => {
     const code = await nextCode('DH');
     let orderItems = items || [];
     if (from_quotation_id && !orderItems.length) {
@@ -199,7 +200,8 @@ const ACTIONS = {
 
     const { data, error } = await supabase.from('orders').insert({
       code, customer_id, customer_name, status: 'confirmed',
-      total, paid_amount: 0, quotation_id: from_quotation_id || null, created_by: userId,
+      total, paid_amount: 0, quotation_id: from_quotation_id || null,
+      project_id: project_id || null, created_by: userId,
     }).select('*').single();
     if (error) throw error;
 
@@ -288,21 +290,23 @@ const ACTIONS = {
       results.push(`👤 KH: **${customer.name}**`);
     }
 
-    // 2. Tạo Lead
+    // 2. Tạo DA + Tasks (tạo trước để có project_id link vào lead/BG)
+    const projR = await ACTIONS.create_project({ name: project_name || `Tủ bếp ${customer.name}`, customer_id: customer.id, estimated_value, template: true }, userId);
+    const projectId = projR.data?.id;
+    results.push(`🏗️ ${projR.message}`);
+
+    // 3. Tạo Lead — link project_id
     const leadR = await ACTIONS.create_lead({ title: project_name || `Tủ bếp ${customer.name}`, customer_id: customer.id, estimated_value }, userId);
+    if (leadR.data?.id && projectId) {
+      await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', leadR.data.id);
+    }
     results.push(`🎯 ${leadR.message}`);
 
-    // 3. Tạo BG nếu có items
-    let quotation = null;
+    // 4. Tạo BG nếu có items — link project_id
     if (items && items.length) {
-      const bgR = await ACTIONS.create_quotation({ customer_id: customer.id, customer_name: customer.name, items }, userId);
-      quotation = bgR.data;
+      const bgR = await ACTIONS.create_quotation({ customer_id: customer.id, customer_name: customer.name, items, project_id: projectId }, userId);
       results.push(`📄 ${bgR.message}`);
     }
-
-    // 4. Tạo DA + Tasks
-    const projR = await ACTIONS.create_project({ name: project_name || `Tủ bếp ${customer.name}`, customer_id: customer.id, estimated_value, template: true }, userId);
-    results.push(`🏗️ ${projR.message}`);
 
     return { success: true, message: `🚀 **Hoàn tất luồng tự động!**\n\n${results.join('\n')}`, navigate: projR.navigate };
   },
