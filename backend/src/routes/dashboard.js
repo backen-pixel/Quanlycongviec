@@ -458,68 +458,179 @@ r.get('/divisions', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DIVISION DETAIL - Dashboard cho 1 Khối cụ thể
+// Phân loại dự án:
+//   - "Sắp tới": dự án đang ở giai đoạn TRƯỚC Khối này
+//   - "Đang làm": dự án đang ở giai đoạn CỦA Khối này
+//   - "Đã xong": dự án đã qua giai đoạn của Khối (ở giai đoạn SAU)
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/division/:divisionId', async (req, res) => {
   try {
     const { divisionId } = req.params;
+    const { from: dateFrom, to: dateTo } = req.query;
     const now = new Date();
 
-    // 1. Get division info
+    // 1. Division info
     const { data: division } = await supabase
       .from('ecosystem_units')
       .select('id, name, icon, color, description')
       .eq('id', divisionId)
       .single();
-
     if (!division) return res.status(404).json({ error: 'Khối không tồn tại' });
 
-    // 2. Get flow_ids linked to this division
-    const { data: flowSteps } = await supabase
+    // 2. Stage groups → division mapping (all at once, no N+1)
+    const { data: stageGroups } = await supabase
+      .from('workflow_stage_groups')
+      .select('id, slug, division_unit_id, order_index')
+      .order('order_index');
+
+    // Map: division_unit_id → group order
+    const divGroupOrder = {};
+    (stageGroups || []).forEach(sg => {
+      if (sg.division_unit_id) divGroupOrder[sg.division_unit_id] = sg.order_index;
+    });
+    const myGroupOrder = divGroupOrder[divisionId];
+
+    // Map: group slug → order
+    const groupSlugOrder = {};
+    (stageGroups || []).forEach(sg => { groupSlugOrder[sg.slug] = sg.order_index; });
+
+    // 3. System stages (company_id IS NULL)
+    const { data: stages } = await supabase
+      .from('workflow_stages')
+      .select('id, name, slug, order_index, color, icon')
+      .is('company_id', null)
+      .eq('is_active', true)
+      .order('order_index');
+
+    // Stage slug prefix → group slug
+    const slugToGroup = {
+      'consulting': 'business', 'design': 'business',
+      'quotation': 'business', 'contract': 'business',
+      'production': 'production', 'shipping': 'shipping',
+      'installation': 'installation', 'customer': 'customer-care',
+    };
+
+    // stage_id → group order
+    const stageGroupOrderById = {};
+    const stageById = {};
+    (stages || []).forEach(s => {
+      stageById[s.id] = s;
+      const prefix = s.slug.split('-')[0];
+      const gs = slugToGroup[prefix];
+      if (gs && groupSlugOrder[gs] !== undefined) {
+        stageGroupOrderById[s.id] = groupSlugOrder[gs];
+      }
+    });
+
+    // 4. Flow steps for this division
+    const { data: myFlowSteps } = await supabase
       .from('workflow_flow_steps')
-      .select('flow_id, company_unit_id, order_index')
+      .select('flow_id, order_index, company_unit_id')
       .eq('division_unit_id', divisionId);
 
-    const flowIds = [...new Set((flowSteps || []).map(s => s.flow_id))];
-
-    // 3. Get projects using these flows
-    let projects = [];
-    if (flowIds.length > 0) {
-      const { data } = await supabase
-        .from('projects')
-        .select(`
-          id, name, code, status, estimated_value,
-          install_date, completed_date, design_deadline,
-          current_stage_id, flow_id, created_at,
-          customer:customers(id, full_name),
-          stage:workflow_stages!projects_current_stage_id_fkey(id, name, color, icon)
-        `)
-        .in('flow_id', flowIds)
-        .order('created_at', { ascending: false });
-      projects = (data || []).map(p => ({
-        ...p,
-        customer_name: p.customer?.full_name || null,
-      }));
+    if (!myFlowSteps?.length) {
+      return res.json({
+        division: { id: division.id, name: division.name, icon: division.icon, color: division.color, description: division.description },
+        stats: { upcoming: 0, active: 0, completed: 0, total_tasks: 0, completed_tasks: 0, overdue_tasks: 0, members: 0, companies: 0, completion_rate: 0, total_value: 0 },
+        upcoming: [], active: [], completed: [], companies_detail: [],
+      });
     }
 
-    // 4. Get tasks for these projects
-    const projectIds = projects.map(p => p.id);
-    let tasks = [];
-    if (projectIds.length > 0) {
+    const flowIds = [...new Set(myFlowSteps.map(s => s.flow_id))];
+    const flowCompanyMap = {};
+    myFlowSteps.forEach(s => { flowCompanyMap[s.flow_id] = s.company_unit_id; });
+
+    // 5. Get projects (with optional date filter)
+    let projectQuery = supabase
+      .from('projects')
+      .select('id, name, code, status, estimated_value, current_stage_id, flow_id, created_at, updated_at, customer:customers(id, full_name)')
+      .in('flow_id', flowIds)
+      .order('created_at', { ascending: false });
+    if (dateFrom) projectQuery = projectQuery.gte('created_at', dateFrom);
+    if (dateTo) projectQuery = projectQuery.lte('created_at', dateTo + 'T23:59:59');
+    const { data: rawProjects } = await projectQuery;
+
+    // 6. Classify: upcoming / active / completed
+    const upcoming = [], active = [], completed = [];
+
+    (rawProjects || []).forEach(p => {
+      const stage = stageById[p.current_stage_id] || null;
+      const currentGO = stageGroupOrderById[p.current_stage_id];
+      const companyId = flowCompanyMap[p.flow_id];
+
+      const proj = {
+        id: p.id, name: p.name, code: p.code, status: p.status,
+        estimated_value: p.estimated_value, created_at: p.created_at,
+        customer_name: p.customer?.full_name || null,
+        stage: stage ? { id: stage.id, name: stage.name, color: stage.color, icon: stage.icon } : null,
+        company_unit_id: companyId,
+      };
+
+      if (currentGO === undefined || myGroupOrder === undefined) {
+        upcoming.push(proj);
+      } else if (currentGO < myGroupOrder) {
+        upcoming.push(proj);
+      } else if (currentGO === myGroupOrder) {
+        active.push(proj);
+      } else {
+        completed.push(proj);
+      }
+    });
+
+    // 7. Tasks for ALL projects in this division (not just active)
+    const allProjectIds = [...upcoming, ...active, ...completed].map(p => p.id);
+    let allTasks = [];
+    if (allProjectIds.length > 0) {
       const { data } = await supabase
         .from('tasks')
-        .select('id, title, status, priority, due_date, project_id, assignee_id')
-        .in('project_id', projectIds);
-      tasks = data || [];
+        .select('id, title, status, priority, due_date, project_id, assignee_id, stage_id, assignee:users!tasks_assignee_id_fkey(id, full_name)')
+        .in('project_id', allProjectIds);
+      allTasks = data || [];
     }
 
-    // 5. Get members count
+    // Get stage names for grouping
+    const stageIdsUsed = [...new Set(allTasks.map(t => t.stage_id).filter(Boolean))];
+    let stageNameMap = {};
+    if (stageIdsUsed.length > 0) {
+      const { data: stgs } = await supabase.from('workflow_stages').select('id, name').in('id', stageIdsUsed);
+      (stgs || []).forEach(s => { stageNameMap[s.id] = s.name; });
+    }
+
+    // Tasks for ACTIVE projects only (for active stats)
+    const activeIds = active.map(p => p.id);
+    const activeTasks = allTasks.filter(t => activeIds.includes(t.project_id));
+
+    // Group tasks by stage name for pipeline detail
+    const tasksByStage = {};
+    allTasks.forEach(t => {
+      const stageName = stageNameMap[t.stage_id] || 'Chưa phân loại';
+      if (!tasksByStage[stageName]) tasksByStage[stageName] = { total: 0, done: 0, overdue: 0, tasks: [] };
+      tasksByStage[stageName].total++;
+      if (t.status === 'done') tasksByStage[stageName].done++;
+      if (t.status !== 'done' && t.due_date && new Date(t.due_date) < now) tasksByStage[stageName].overdue++;
+      tasksByStage[stageName].tasks.push({
+        id: t.id, title: t.title, status: t.status, priority: t.priority,
+        due_date: t.due_date, project_id: t.project_id, assignee_id: t.assignee_id,
+        assignee_name: t.assignee?.full_name || null,
+      });
+    });
+
+    // Build task detail with project info
+    const taskDetail = Object.entries(tasksByStage).map(([stage, data]) => ({
+      stage,
+      total: data.total, done: data.done, overdue: data.overdue,
+      completion_rate: data.total > 0 ? Math.round((data.done / data.total) * 100) : 0,
+      tasks: data.tasks.slice(0, 50),
+    }));
+
+    // 8. Members
     const { data: members } = await supabase
       .from('ecosystem_unit_members')
       .select('user_id')
       .eq('unit_id', divisionId);
 
-    // 6. Get company units linked to this division
-    const companyUnitIds = [...new Set((flowSteps || []).map(s => s.company_unit_id).filter(Boolean))];
+    // 9. Companies detail
+    const companyUnitIds = [...new Set(myFlowSteps.map(s => s.company_unit_id).filter(Boolean))];
     let companies = [];
     if (companyUnitIds.length > 0) {
       const { data } = await supabase
@@ -529,61 +640,61 @@ r.get('/division/:divisionId', async (req, res) => {
       companies = data || [];
     }
 
-    // 7. Calculate stats
-    const totalProjects = projects.length;
-    const activeProjects = projects.filter(p => !['completed', 'warranty', 'cancelled'].includes(p.status)).length;
-    const totalTasks = tasks.length;
-    const completedTasks = tasks.filter(t => t.status === 'done').length;
-    const overdueTasks = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now).length;
-    const overdueProjects = projects.filter(p => p.design_deadline && new Date(p.design_deadline) < now && !['completed', 'warranty', 'cancelled'].includes(p.status)).length;
-
-    // 8. Group projects by stage
-    const stageMap = {};
-    projects.forEach(p => {
-      const stageName = p.stage?.name || 'Chưa xác định';
-      if (!stageMap[stageName]) {
-        stageMap[stageName] = {
-          name: stageName,
-          color: p.stage?.color || '#94a3b8',
-          icon: p.stage?.icon || '📋',
-          count: 0
-        };
-      }
-      stageMap[stageName].count++;
+    const companiesDetail = companies.map(c => {
+      const cUp = upcoming.filter(p => p.company_unit_id === c.id).length;
+      const cAct = active.filter(p => p.company_unit_id === c.id).length;
+      const cDone = completed.filter(p => p.company_unit_id === c.id).length;
+      return {
+        id: c.id, name: c.name, icon: c.icon || '🏭', color: c.color,
+        upcoming: cUp, active: cAct, completed: cDone, total: cUp + cAct + cDone,
+      };
     });
-    const pipeline = Object.values(stageMap).sort((a, b) => b.count - a.count);
+
+    // 10. Stats
+    const totalTasks = activeTasks.length;
+    const completedTasks = activeTasks.filter(t => t.status === 'done').length;
+    const overdueTasks = activeTasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now).length;
+    const totalValue = active.reduce((s, p) => s + (p.estimated_value || 0), 0);
+    // Overdue projects: active projects past their deadline
+    const overdueProjects = active.filter(p => {
+      const pTasks = activeTasks.filter(t => t.project_id === p.id);
+      return pTasks.some(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now);
+    }).length;
+
+    // Build project lookup for task detail
+    const allProjectMap = {};
+    [...upcoming, ...active, ...completed].forEach(p => { allProjectMap[p.id] = { code: p.code, name: p.name }; });
+
+    // Enrich task detail with project info
+    taskDetail.forEach(td => {
+      td.tasks.forEach(t => {
+        const proj = allProjectMap[t.project_id];
+        t.project_code = proj?.code || '';
+        t.project_name = proj?.name || '';
+      });
+    });
+
+    const fmt = (arr) => arr.slice(0, 20).map(p => ({
+      id: p.id, name: p.name, code: p.code, status: p.status,
+      estimated_value: p.estimated_value, customer_name: p.customer_name,
+      stage: p.stage, created_at: p.created_at,
+    }));
 
     res.json({
-      division: {
-        id: division.id,
-        name: division.name,
-        icon: division.icon,
-        color: division.color,
-        description: division.description,
-      },
+      division: { id: division.id, name: division.name, icon: division.icon, color: division.color, description: division.description },
       stats: {
-        projects: totalProjects,
-        active: activeProjects,
-        tasks: totalTasks,
-        completed_tasks: completedTasks,
-        overdue_tasks: overdueTasks,
-        overdue_projects: overdueProjects,
-        members: (members || []).length,
-        companies: companies.length,
+        upcoming: upcoming.length, active: active.length, completed: completed.length,
+        overdue: overdueProjects,
+        total_tasks: totalTasks, completed_tasks: completedTasks, overdue_tasks: overdueTasks,
+        members: (members || []).length, companies: companies.length,
         completion_rate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
+        total_value: totalValue,
       },
-      pipeline,
-      companies: companies.map(c => ({ id: c.id, name: c.name, icon: c.icon })),
-      projects: projects.slice(0, 10).map(p => ({
-        id: p.id,
-        name: p.name,
-        code: p.code,
-        status: p.status,
-        estimated_value: p.estimated_value,
-        customer_name: p.customer_name,
-        stage: p.stage,
-        created_at: p.created_at,
-      })),
+      upcoming: fmt(upcoming),
+      active: fmt(active),
+      completed: fmt(completed),
+      companies_detail: companiesDetail,
+      task_detail: taskDetail,
     });
   } catch (e) {
     console.error('Dashboard division detail error:', e);

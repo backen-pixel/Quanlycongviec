@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List, Clock, PlayCircle, CheckSquare, AlertCircle } from 'lucide-react';
+import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List, Clock, PlayCircle, CheckSquare, AlertCircle, CalendarClock } from 'lucide-react';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 
 const TIME_FILTERS = [
@@ -56,7 +56,7 @@ export default function Projects() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban'
+  const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban' | 'plan'
   const [filterTime, setFilterTime] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -137,6 +137,9 @@ export default function Projects() {
             </button>
             <button onClick={() => setViewMode('list')} className={`h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-medium cursor-pointer ${viewMode === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
               <List className="h-3.5 w-3.5" /> Danh sách
+            </button>
+            <button onClick={() => setViewMode('plan')} className={`h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-medium cursor-pointer ${viewMode === 'plan' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
+              <CalendarClock className="h-3.5 w-3.5" /> Kế hoạch
             </button>
           </div>
           <button onClick={() => navigate('/projects/create')}
@@ -325,6 +328,86 @@ export default function Projects() {
                       </Link>
                     ))}
                     {projectsByStatus[col.id].length === 0 && <div className="text-center py-16 text-xs text-gray-300">Trống</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()
+      ) : viewMode === 'plan' ? (
+        /* PLAN VIEW - Kanban theo deadline */
+        (() => {
+          const now = new Date();
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+          const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + (7 - endOfWeek.getDay()));
+          const endOfNextWeek = new Date(endOfWeek); endOfNextWeek.setDate(endOfNextWeek.getDate() + 7);
+
+          const getDeadline = (p) => {
+            return p.design_deadline || p.install_date || p.deadline || null;
+          };
+
+          const PLAN_COLUMNS = [
+            { id: 'overdue', label: '🔴 Quá hạn', color: '#EF4444', filter: (p) => { const d = getDeadline(p); return d && new Date(d) < today && p.status !== 'completed' && p.status !== 'warranty'; } },
+            { id: 'today', label: '🟠 Hạn hôm nay', color: '#F97316', filter: (p) => { const d = getDeadline(p); return d && new Date(d) >= today && new Date(d) < tomorrow; } },
+            { id: 'this_week', label: '🟡 Hạn tuần này', color: '#EAB308', filter: (p) => { const d = getDeadline(p); return d && new Date(d) >= tomorrow && new Date(d) < endOfWeek; } },
+            { id: 'next_week', label: '🔵 Hạn tuần sau', color: '#3B82F6', filter: (p) => { const d = getDeadline(p); return d && new Date(d) >= endOfWeek && new Date(d) < endOfNextWeek; } },
+            { id: 'later', label: '⚪ Hạn sau đó', color: '#6B7280', filter: (p) => { const d = getDeadline(p); return (d && new Date(d) >= endOfNextWeek) || !d; } },
+          ];
+
+          const planData = {};
+          PLAN_COLUMNS.forEach(col => { planData[col.id] = []; });
+          filtered.forEach(proj => {
+            let placed = false;
+            for (const col of PLAN_COLUMNS) {
+              if (col.filter(proj)) { planData[col.id].push(proj); placed = true; break; }
+            }
+            if (!placed) planData['later'].push(proj);
+          });
+
+          return (
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {PLAN_COLUMNS.map(col => (
+                <div key={col.id} className="flex flex-col flex-shrink-0" style={{ width: '320px' }}>
+                  <div className="rounded-t-xl p-4 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
+                    <h3 className="text-base font-bold text-gray-900">{col.label}</h3>
+                    <span className="text-sm text-gray-400">{planData[col.id].length} dự án</span>
+                  </div>
+                  <div className="flex-1 rounded-b-xl border p-3 space-y-3 bg-gray-50/50 overflow-y-auto" style={{ height: '70vh' }}>
+                    {planData[col.id].map(proj => {
+                      const deadline = getDeadline(proj);
+                      const isOverdue = deadline && new Date(deadline) < today && proj.status !== 'completed' && proj.status !== 'warranty';
+                      return (
+                        <Link to={`/projects/${proj.id}`} key={proj.id} className="block bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg hover:border-blue-400 transition-all group">
+                          <div className="flex items-start justify-between gap-2 mb-3">
+                            <span className="text-sm font-bold text-blue-600">{proj.code}</span>
+                            {proj.current_stage && (
+                              <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: proj.current_stage.color + '20', color: proj.current_stage.color }}>
+                                {proj.current_stage.name}
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="text-sm font-bold text-gray-900 mb-2 group-hover:text-blue-600 leading-snug">{proj.name}</h4>
+                          {proj.customers?.full_name && (
+                            <p className="text-xs text-gray-500 mb-2 flex items-center gap-1"><User className="h-3 w-3" />{proj.customers.full_name}</p>
+                          )}
+                          {proj.company && (
+                            <p className="text-xs text-indigo-600 font-medium mb-2 flex items-center gap-1"><Building2 className="h-3 w-3" />{proj.company.short_name || proj.company.name}</p>
+                          )}
+                          {deadline && (
+                            <div className={`flex items-center gap-1.5 text-xs font-medium mt-2 pt-2 border-t border-gray-100 ${isOverdue ? 'text-red-600' : 'text-gray-500'}`}>
+                              <Calendar className="h-3.5 w-3.5" />
+                              <span>{formatDate(deadline)}</span>
+                              {isOverdue && <span className="ml-1 px-1.5 py-0.5 bg-red-100 rounded text-[10px] font-bold">QUÁ HẠN</span>}
+                            </div>
+                          )}
+                          {proj.estimated_value > 0 && (
+                            <p className="text-sm font-bold text-green-600 mt-2">{formatVND(proj.estimated_value)}</p>
+                          )}
+                        </Link>
+                      );
+                    })}
+                    {planData[col.id].length === 0 && <div className="text-center py-16 text-xs text-gray-300">Trống</div>}
                   </div>
                 </div>
               ))}

@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import {
   FolderKanban, CheckSquare, Users, DollarSign, TrendingUp, TrendingDown,
-  AlertTriangle, Clock, Eye, ArrowRight, Award, MapPin, Activity, Bell,
-  ChevronDown, ChevronRight, Building2, Package, UserCheck
+  AlertTriangle, Clock, ArrowRight, Activity, Bell, Building2,
+  ChevronDown, ChevronRight, Filter, Calendar, Search, X, User
 } from 'lucide-react';
-import { formatVND, getInitials, avatarColor, STATUS_LABELS, STATUS_COLORS } from '../lib/utils';
+import { formatVND, getInitials, avatarColor, STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS, formatDate } from '../lib/utils';
 
 export default function DashboardNew() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -18,550 +18,338 @@ export default function DashboardNew() {
   const [divisionData, setDivisionData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [divLoading, setDivLoading] = useState(false);
+  const [divDateFrom, setDivDateFrom] = useState('');
+  const [divDateTo, setDivDateTo] = useState('');
 
   const selectedDiv = searchParams.get('khoi');
 
-  // Load divisions list (always)
   useEffect(() => {
-    api.get('/dashboard/divisions')
-      .then(r => setDivisions(r.data.divisions || []))
-      .catch(() => {});
+    api.get('/dashboard/divisions').then(r => setDivisions(r.data.divisions || [])).catch(() => {});
   }, []);
 
-  // Load overall dashboard OR division dashboard
   useEffect(() => {
-    if (selectedDiv) {
-      loadDivisionDashboard(selectedDiv);
-    } else {
-      loadMainDashboard();
-    }
+    if (selectedDiv) loadDivisionDashboard(selectedDiv);
+    else loadMainDashboard();
   }, [selectedDiv]);
 
   const loadMainDashboard = async () => {
-    setLoading(true);
-    setDivisionData(null);
+    setLoading(true); setDivisionData(null);
     try {
-      const [overviewRes, workloadRes, alertsRes, activityRes] = await Promise.race([
-        Promise.all([
-          api.get('/dashboard/overview'),
-          api.get('/dashboard/workload'),
-          api.get('/dashboard/alerts'),
-          api.get('/dashboard/activity?limit=10'),
-        ]),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000)),
+      const [o, w, a, act] = await Promise.race([
+        Promise.all([api.get('/dashboard/overview'), api.get('/dashboard/workload'), api.get('/dashboard/alerts'), api.get('/dashboard/activity?limit=10')]),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 10000)),
       ]);
-      setOverview(overviewRes.data);
-      setWorkload(workloadRes.data.divisions || []);
-      setAlerts(alertsRes.data);
-      setActivities(activityRes.data.activities || []);
-    } catch (err) {
-      console.error('Failed to load dashboard:', err);
-      if (!overview) {
-        setOverview({
-          projects: { total: 0, active: 0, completed: 0, new_7d: 0, overdue: 0 },
-          tasks: { total: 0, completed: 0, completion_rate: 0, overdue: 0, blocked: 0 },
-          customers: { total: 0, new_7d: 0, vip: 0, return_rate: 0 },
-          revenue: { total: 0, growth_pct: 0, avg_project_value: 0, this_month: 0, last_month: 0 }
-        });
-      }
-      setWorkload([]);
-      setAlerts({ overdue_projects: 0, overdue_tasks: 0, pending_approvals: 0, unassigned_high_priority: 0, resource_overload: 0 });
-      setActivities([]);
+      setOverview(o.data); setWorkload(w.data.divisions || []); setAlerts(a.data); setActivities(act.data.activities || []);
+    } catch {
+      if (!overview) setOverview({ projects:{total:0,active:0,completed:0,new_7d:0,overdue:0}, tasks:{total:0,completed:0,completion_rate:0,overdue:0,blocked:0}, customers:{total:0,new_7d:0,vip:0,return_rate:0}, revenue:{total:0,growth_pct:0,avg_project_value:0,this_month:0,last_month:0} });
+      setWorkload([]); setAlerts({overdue_projects:0,overdue_tasks:0,pending_approvals:0,unassigned_high_priority:0,resource_overload:0}); setActivities([]);
     }
     setLoading(false);
   };
 
-  const loadDivisionDashboard = async (divId) => {
+  const loadDivisionDashboard = async (divId, from, to) => {
     setDivLoading(true);
     try {
-      const { data } = await api.get(`/dashboard/division/${divId}`);
+      const params = {}; if (from) params.from = from; if (to) params.to = to;
+      const { data } = await api.get(`/dashboard/division/${divId}`, { params });
       setDivisionData(data);
-    } catch (err) {
-      console.error('Failed to load division dashboard:', err);
-      setDivisionData(null);
-    }
+    } catch { setDivisionData(null); }
     setDivLoading(false);
   };
 
   const handleTabChange = (divId) => {
-    if (divId) {
-      setSearchParams({ khoi: divId });
-    } else {
-      setSearchParams({});
-    }
+    divId ? setSearchParams({ khoi: divId }) : setSearchParams({});
+    setDivDateFrom(''); setDivDateTo('');
   };
 
-  const isLoading = selectedDiv ? divLoading : loading;
+  const handleDivDateFilter = () => { if (selectedDiv) loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo); };
+  const clearDivDateFilter = () => { setDivDateFrom(''); setDivDateTo(''); if (selectedDiv) loadDivisionDashboard(selectedDiv); };
 
-  if (isLoading && !overview && !divisionData) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <div className="animate-spin h-12 w-12 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-500">Đang tải dashboard...</p>
-        </div>
-      </div>
-    );
-  }
+  const isLoading = selectedDiv ? divLoading : loading;
+  if (isLoading && !overview && !divisionData) return (
+    <div className="flex items-center justify-center h-screen">
+      <div className="text-center"><div className="animate-spin h-12 w-12 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div><p className="text-gray-500">Đang tải...</p></div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4 sm:p-6 lg:p-8">
-      {/* Header */}
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900 mb-4">📊 Dashboard</h1>
-
-        {/* ══════ DIVISION TABS ══════ */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
-          <button
-            onClick={() => handleTabChange(null)}
-            className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all duration-200 ${
-              !selectedDiv
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300 hover:text-blue-600 hover:shadow-sm'
-            }`}
-          >
-            🏠 Tổng quan
-          </button>
-          {divisions.map(div => (
-            <button
-              key={div.id}
-              onClick={() => handleTabChange(div.id)}
-              className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all duration-200 flex items-center gap-2 ${
-                selectedDiv === div.id
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                  : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300 hover:text-blue-600 hover:shadow-sm'
-              }`}
-            >
-              <span>{div.icon}</span>
-              <span>{div.name}</span>
+          <button onClick={() => handleTabChange(null)} className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all ${!selectedDiv ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'}`}>🏠 Tổng quan</button>
+          {divisions.map(d => (
+            <button key={d.id} onClick={() => handleTabChange(d.id)} className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all flex items-center gap-2 ${selectedDiv === d.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'}`}>
+              <span>{d.icon}</span><span>{d.name}</span>
             </button>
           ))}
         </div>
       </div>
-
-      {/* ══════ CONTENT ══════ */}
-      {isLoading ? (
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div>
-        </div>
-      ) : selectedDiv && divisionData ? (
-        <DivisionDashboardContent data={divisionData} />
-      ) : overview ? (
-        <MainDashboardContent
-          overview={overview}
-          workload={workload}
-          alerts={alerts}
-          activities={activities}
-          onRefresh={loadMainDashboard}
-        />
-      ) : null}
+      {isLoading ? <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div></div>
+      : selectedDiv && divisionData ? <DivisionDashboardContent data={divisionData} dateFrom={divDateFrom} dateTo={divDateTo} setDateFrom={setDivDateFrom} setDateTo={setDivDateTo} onFilter={handleDivDateFilter} onClear={clearDivDateFilter} />
+      : overview ? <MainDashboardContent overview={overview} workload={workload} alerts={alerts} activities={activities} /> : null}
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// MAIN DASHBOARD (Tổng quan) — giữ nguyên layout cũ
-// ═══════════════════════════════════════════════════════════════════════════
-function MainDashboardContent({ overview, workload, alerts, activities, onRefresh }) {
-  return (
-    <>
-      {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <KPICard
-          title="Dự Án" value={overview.projects.total}
-          subtitle={`${overview.projects.active} đang làm`}
-          trend={overview.projects.new_7d} trendLabel="mới (7 ngày)"
-          icon={FolderKanban} color="bg-blue-600" bgColor="bg-blue-50"
-        />
-        <KPICard
-          title="Công Việc" value={`${overview.tasks.completion_rate}%`}
-          subtitle={`${overview.tasks.completed}/${overview.tasks.total}`}
-          trend={overview.tasks.overdue} trendLabel="quá hạn" trendNegative
-          icon={CheckSquare} color="bg-emerald-600" bgColor="bg-emerald-50"
-        />
-        <KPICard
-          title="Khách Hàng" value={overview.customers.total}
-          subtitle={`${overview.customers.vip} VIP`}
-          trend={overview.customers.new_7d} trendLabel="mới (7 ngày)"
-          icon={Users} color="bg-purple-600" bgColor="bg-purple-50"
-        />
-        <KPICard
-          title="Doanh Thu" value={formatVND(overview.revenue.total)}
-          subtitle={`TB: ${formatVND(overview.revenue.avg_project_value)}`}
-          trend={overview.revenue.growth_pct} trendLabel="% tăng trưởng"
-          icon={DollarSign} color="bg-amber-600" bgColor="bg-amber-50"
-        />
-      </div>
-
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <div className="lg:col-span-2">
-          <WorkloadWidget workload={workload} />
-        </div>
-        <div>
-          <AlertsWidget alerts={alerts} />
-        </div>
-      </div>
-
-      {/* Activity Feed */}
-      <ActivityFeed activities={activities} />
-    </>
-  );
+function MainDashboardContent({ overview, workload, alerts, activities }) {
+  return (<>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <KPICard title="Dự Án" value={overview.projects.total} subtitle={`${overview.projects.active} đang làm`} trend={overview.projects.new_7d} trendLabel="mới (7 ngày)" icon={FolderKanban} color="bg-blue-600" bgColor="bg-blue-50" />
+      <KPICard title="Công Việc" value={`${overview.tasks.completion_rate}%`} subtitle={`${overview.tasks.completed}/${overview.tasks.total}`} trend={overview.tasks.overdue} trendLabel="quá hạn" trendNegative icon={CheckSquare} color="bg-emerald-600" bgColor="bg-emerald-50" />
+      <KPICard title="Khách Hàng" value={overview.customers.total} subtitle={`${overview.customers.vip} VIP`} trend={overview.customers.new_7d} trendLabel="mới (7 ngày)" icon={Users} color="bg-purple-600" bgColor="bg-purple-50" />
+      <KPICard title="Doanh Thu" value={formatVND(overview.revenue.total)} subtitle={`TB: ${formatVND(overview.revenue.avg_project_value)}`} trend={overview.revenue.growth_pct} trendLabel="% tăng trưởng" icon={DollarSign} color="bg-amber-600" bgColor="bg-amber-50" />
+    </div>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      <div className="lg:col-span-2"><WorkloadWidget workload={workload} /></div>
+      <div><AlertsWidget alerts={alerts} /></div>
+    </div>
+    <ActivityFeed activities={activities} />
+  </>);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DIVISION DASHBOARD — Nội dung cho 1 Khối
+// DIVISION DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════
-function DivisionDashboardContent({ data }) {
-  const { division, stats, pipeline, companies, projects } = data;
+function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDateTo, onFilter, onClear }) {
+  const { division, stats, upcoming, active, completed, companies_detail, task_detail } = data;
+  const [taskFilter, setTaskFilter] = useState({ search: '', assignee: 'all', stage: 'all' });
+  const [expandedStage, setExpandedStage] = useState(null);
 
-  const defaultIcons = {
-    'Khối Kinh Doanh': '💼',
-    'Khối Sản Xuất': '🏭',
-    'Khối Vận Chuyển': '🚚',
-    'Khối Lắp Đặt': '🔧',
-  };
-  const icon = division.icon || defaultIcons[division.name] || '🏢';
+  const icons = { 'Khối Kinh Doanh': '💼', 'Khối Sản Xuất': '🏭', 'Khối Vận Chuyển': '🚚', 'Khối Lắp Đặt': '🔧' };
+  const icon = division.icon || icons[division.name] || '🏢';
+
+  const allAssignees = useMemo(() => {
+    const m = {};
+    (task_detail || []).forEach(td => td.tasks?.forEach(t => { if (t.assignee_id && t.assignee_name) m[t.assignee_id] = t.assignee_name; }));
+    return Object.entries(m).map(([id, name]) => ({ id, name }));
+  }, [task_detail]);
+
+  const filteredTaskDetail = useMemo(() => {
+    if (!task_detail) return [];
+    return task_detail.map(td => {
+      if (taskFilter.stage !== 'all' && td.stage !== taskFilter.stage) return null;
+      let tasks = td.tasks || [];
+      if (taskFilter.search) { const s = taskFilter.search.toLowerCase(); tasks = tasks.filter(t => t.title?.toLowerCase().includes(s) || t.project_code?.toLowerCase().includes(s) || t.project_name?.toLowerCase().includes(s)); }
+      if (taskFilter.assignee !== 'all') tasks = tasks.filter(t => t.assignee_id === taskFilter.assignee);
+      if (tasks.length === 0 && (taskFilter.search || taskFilter.assignee !== 'all')) return null;
+      return { ...td, tasks, total: tasks.length, done: tasks.filter(t => t.status === 'done').length, overdue: tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length, completion_rate: tasks.length > 0 ? Math.round(tasks.filter(t => t.status === 'done').length / tasks.length * 100) : 0 };
+    }).filter(Boolean);
+  }, [task_detail, taskFilter]);
 
   return (
     <div className="space-y-6">
-      {/* Division Header */}
+      {/* Header + Date */}
       <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-6 text-white shadow-xl">
-        <div className="flex items-center gap-4">
-          <span className="text-5xl">{icon}</span>
-          <div>
-            <h2 className="text-2xl font-bold">{division.name}</h2>
-            <p className="text-blue-200 text-sm mt-1">{division.description || 'Tổng quan hoạt động khối'}</p>
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-4">
+            <span className="text-5xl">{icon}</span>
+            <div><h2 className="text-2xl font-bold">{division.name}</h2><p className="text-blue-200 text-sm mt-1">{division.description || 'Tổng quan hoạt động khối'}</p></div>
+          </div>
+          <div className="flex items-center gap-2 bg-white/10 rounded-xl p-2">
+            <Calendar className="h-4 w-4 text-blue-200" />
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 px-2 bg-white/20 border border-white/30 rounded-lg text-sm text-white [color-scheme:dark]" />
+            <span className="text-blue-200 text-xs">→</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 px-2 bg-white/20 border border-white/30 rounded-lg text-sm text-white [color-scheme:dark]" />
+            <button onClick={onFilter} className="h-8 px-3 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-medium">Lọc</button>
+            {(dateFrom || dateTo) && <button onClick={onClear} className="h-8 px-2 bg-red-500/30 hover:bg-red-500/50 rounded-lg text-xs"><X className="h-3 w-3" /></button>}
           </div>
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KPICard
-          title="Dự Án" value={stats.projects}
-          subtitle={`${stats.active} đang làm`}
-          icon={FolderKanban} color="bg-blue-600" bgColor="bg-blue-50"
-        />
-        <KPICard
-          title="Công Việc" value={stats.tasks}
-          subtitle={`${stats.completion_rate}% hoàn thành`}
-          trend={stats.overdue_tasks} trendLabel="quá hạn" trendNegative
-          icon={CheckSquare} color="bg-emerald-600" bgColor="bg-emerald-50"
-        />
-        <KPICard
-          title="Nhân Sự" value={stats.members}
-          subtitle={`${stats.companies} công ty`}
-          icon={Users} color="bg-purple-600" bgColor="bg-purple-50"
-        />
-        <KPICard
-          title="Cảnh Báo" value={stats.overdue_projects + stats.overdue_tasks}
-          subtitle={`${stats.overdue_projects} DA · ${stats.overdue_tasks} CV quá hạn`}
-          icon={AlertTriangle} color="bg-red-600" bgColor="bg-red-50"
-        />
+        <KPICard title="Sắp Tới" value={stats.upcoming} subtitle="dự án chờ đến khối" icon={Clock} color="bg-amber-600" bgColor="bg-amber-50" />
+        <KPICard title="Đang Thực Hiện" value={stats.active} subtitle={`${stats.total_tasks} nhiệm vụ`} icon={FolderKanban} color="bg-blue-600" bgColor="bg-blue-50" />
+        <KPICard title="Đã Hoàn Thành" value={stats.completed} subtitle="đã qua khối" icon={CheckSquare} color="bg-emerald-600" bgColor="bg-emerald-50" />
+        <KPICard title="Trễ Hạn" value={stats.overdue || 0} subtitle={`${stats.overdue_tasks} NV quá hạn`} trendNegative icon={AlertTriangle} color="bg-red-600" bgColor="bg-red-50" />
       </div>
 
-      {/* Pipeline + Companies */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pipeline by stage */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-6">
-          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5">
-            <TrendingUp className="h-5 w-5 text-blue-600" />
-            Phân Bổ Dự Án Theo Giai Đoạn
-          </h3>
-          {pipeline.length > 0 ? (
-            <div className="space-y-4">
-              {pipeline.map((stage, idx) => {
-                const maxCount = Math.max(...pipeline.map(s => s.count), 1);
-                const pct = (stage.count / maxCount) * 100;
-                return (
-                  <div key={idx} className="group">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                        <span>{stage.icon}</span>
-                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: stage.color }} />
-                        {stage.name}
-                      </span>
-                      <span className="text-sm font-bold text-gray-900">{stage.count} dự án</span>
-                    </div>
-                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{
-                          width: `${Math.max(pct, stage.count > 0 ? 5 : 0)}%`,
-                          backgroundColor: stage.color || '#3b82f6',
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-400">
-              <TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Chưa có dự án</p>
-            </div>
-          )}
-        </div>
-
-        {/* Companies in this division */}
+      {/* Companies */}
+      {companies_detail?.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5">
-            <Building2 className="h-5 w-5 text-purple-600" />
-            Công Ty Trong Khối
-          </h3>
-          {companies.length > 0 ? (
-            <div className="space-y-3">
-              {companies.map(c => (
-                <div key={c.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
-                  <span className="text-2xl">{c.icon || '🏭'}</span>
-                  <span className="text-sm font-medium text-gray-900">{c.name}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-400">
-              <Building2 className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Chưa có công ty</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Recent Projects */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-5">
-          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <FolderKanban className="h-5 w-5 text-blue-600" />
-            Dự Án Gần Đây
-          </h3>
-        </div>
-        {projects.length > 0 ? (
-          <div className="divide-y divide-gray-100">
-            {projects.map(p => (
-              <Link to={`/projects/${p.id}`} key={p.id}
-                className="flex items-center justify-between py-3.5 first:pt-0 last:pb-0 hover:bg-gray-50 -mx-3 px-3 rounded-lg transition-colors group">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-xs font-bold text-blue-600">{p.code}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] || 'bg-gray-100 text-gray-600'}`}>
-                      {STATUS_LABELS[p.status] || p.status}
-                    </span>
-                    {p.stage && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ backgroundColor: (p.stage.color || '#94a3b8') + '20', color: p.stage.color || '#94a3b8' }}>
-                        {p.stage.icon} {p.stage.name}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-600">{p.name}</p>
-                  {p.customer_name && <p className="text-xs text-gray-400 mt-0.5">{p.customer_name}</p>}
-                </div>
-                <div className="text-right shrink-0 ml-4">
-                  <p className="text-sm font-semibold text-gray-900">{formatVND(p.estimated_value)}</p>
-                </div>
-              </Link>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-8 text-gray-400">
-            <FolderKanban className="h-12 w-12 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">Chưa có dự án nào trong khối này</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// KPI Card Component
-// ═══════════════════════════════════════════════════════════════════════════
-function KPICard({ title, value, subtitle, trend, trendLabel, trendNegative, icon: Icon, color, bgColor }) {
-  const trendPositive = !trendNegative && trend > 0;
-  const trendColor = trendNegative
-    ? trend > 0 ? 'text-red-600' : 'text-emerald-600'
-    : trend > 0 ? 'text-emerald-600' : trend < 0 ? 'text-red-600' : 'text-gray-500';
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all duration-300 group">
-      <div className="flex items-start justify-between mb-4">
-        <div className={`w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center group-hover:scale-110 transition-transform`}>
-          <Icon className={`h-6 w-6 ${color.replace('bg-', 'text-')}`} />
-        </div>
-        <div className="text-right">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{title}</p>
-        </div>
-      </div>
-      <div>
-        <h3 className="text-3xl font-bold text-gray-900 mb-1">{value}</h3>
-        <p className="text-sm text-gray-600 mb-2">{subtitle}</p>
-        {trend !== undefined && trend !== null && trendLabel && (
-          <div className={`flex items-center gap-1 text-xs font-medium ${trendColor}`}>
-            {trendPositive ? <TrendingUp className="h-3.5 w-3.5" /> : trend < 0 ? <TrendingDown className="h-3.5 w-3.5" /> : null}
-            <span>{trend > 0 ? '+' : ''}{trend} {trendLabel}</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Workload Widget
-// ═══════════════════════════════════════════════════════════════════════════
-function WorkloadWidget({ workload }) {
-  const maxCount = Math.max(...workload.map(d => d.project_count), 1);
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-          <TrendingUp className="h-5 w-5 text-blue-600" />
-          Phân Bổ Dự Án Theo Giai Đoạn
-        </h2>
-        <Link to="/projects" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-          Xem tất cả <ArrowRight className="h-3 w-3" />
-        </Link>
-      </div>
-      <div className="space-y-4">
-        {workload.map(stage => {
-          const percentage = maxCount > 0 ? (stage.project_count / maxCount) * 100 : 0;
-          return (
-            <div key={stage.id} className="group">
-              <div className="hover:bg-gray-50 rounded-lg p-2 -mx-2 transition-colors">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    {stage.icon && <span className="text-base">{stage.icon}</span>}
-                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: stage.color }} />
-                    {stage.name}
-                  </span>
-                  <span className="text-sm font-bold text-gray-900">{stage.project_count} dự án</span>
-                </div>
-                <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500 group-hover:opacity-80"
-                    style={{
-                      width: `${Math.max(percentage, stage.project_count > 0 ? 5 : 0)}%`,
-                      backgroundColor: stage.color || '#3b82f6',
-                    }}
-                  />
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5"><Building2 className="h-5 w-5 text-purple-600" />Chi Tiết Theo Công Ty</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {companies_detail.map(c => (
+              <div key={c.id} className="border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-3 mb-3"><span className="text-2xl">{c.icon || '🏭'}</span><h4 className="text-sm font-bold text-gray-900">{c.name}</h4></div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-amber-50 rounded-lg p-2"><p className="text-lg font-bold text-amber-700">{c.upcoming}</p><p className="text-[10px] text-amber-600">Sắp tới</p></div>
+                  <div className="bg-blue-50 rounded-lg p-2"><p className="text-lg font-bold text-blue-700">{c.active}</p><p className="text-[10px] text-blue-600">Đang làm</p></div>
+                  <div className="bg-emerald-50 rounded-lg p-2"><p className="text-lg font-bold text-emerald-700">{c.completed}</p><p className="text-[10px] text-emerald-600">Đã xong</p></div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-        {workload.length === 0 && (
-          <div className="text-center py-8 text-gray-400">
-            <TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">Chưa có dữ liệu</p>
+            ))}
           </div>
-        )}
+        </div>
+      )}
+
+      {/* 3 Project Columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <ProjectColumn title="⏳ Sắp Tới" projects={upcoming} color="amber" />
+        <ProjectColumn title="🔄 Đang Thực Hiện" projects={active} color="blue" />
+        <ProjectColumn title="✅ Đã Hoàn Thành" projects={completed} color="emerald" />
+      </div>
+
+      {/* Task Detail */}
+      {task_detail?.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5"><CheckSquare className="h-5 w-5 text-blue-600" />Chi Tiết Nhiệm Vụ Theo Quy Trình</h3>
+          <div className="flex items-center gap-2 flex-wrap mb-5 bg-gray-50 rounded-xl p-3">
+            <div className="relative flex-1 min-w-[150px] max-w-[250px]">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              <input value={taskFilter.search} onChange={e => setTaskFilter(f => ({ ...f, search: e.target.value }))} placeholder="Tìm NV / dự án..." className="w-full h-8 pl-8 pr-2 border border-gray-200 rounded-lg text-xs bg-white" />
+            </div>
+            <select value={taskFilter.stage} onChange={e => setTaskFilter(f => ({ ...f, stage: e.target.value }))} className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white">
+              <option value="all">Tất cả quy trình</option>
+              {(task_detail || []).map(td => <option key={td.stage} value={td.stage}>{td.stage}</option>)}
+            </select>
+            <select value={taskFilter.assignee} onChange={e => setTaskFilter(f => ({ ...f, assignee: e.target.value }))} className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white">
+              <option value="all">Tất cả nhân viên</option>
+              {allAssignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            {(taskFilter.search || taskFilter.stage !== 'all' || taskFilter.assignee !== 'all') && (
+              <button onClick={() => setTaskFilter({ search: '', assignee: 'all', stage: 'all' })} className="h-8 px-2 text-red-500 hover:bg-red-50 rounded-lg text-xs flex items-center gap-1"><X className="h-3 w-3" /> Xóa lọc</button>
+            )}
+          </div>
+          <div className="space-y-3">
+            {filteredTaskDetail.map(td => (
+              <div key={td.stage} className="border border-gray-200 rounded-xl overflow-hidden">
+                <button onClick={() => setExpandedStage(expandedStage === td.stage ? null : td.stage)} className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors text-left">
+                  <div className="flex items-center gap-3">
+                    {expandedStage === td.stage ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                    <span className="text-sm font-bold text-gray-900">{td.stage}</span>
+                    <span className="text-xs text-gray-500">{td.total} nhiệm vụ</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">{td.done} xong</span>
+                    {td.overdue > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">{td.overdue} trễ</span>}
+                    <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: `${td.completion_rate}%` }} /></div>
+                    <span className="text-xs font-medium text-gray-600">{td.completion_rate}%</span>
+                  </div>
+                </button>
+                {expandedStage === td.stage && (
+                  <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
+                    {td.tasks.map(t => (
+                      <Link to={`/projects/${t.project_id}`} key={t.id} className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 border border-gray-100 transition-colors group">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${t.status === 'done' ? 'bg-emerald-100 text-emerald-700' : t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>{t.status === 'done' ? 'Xong' : t.status === 'in_progress' ? 'Đang làm' : 'Chờ'}</span>
+                            {t.priority && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${PRIORITY_COLORS[t.priority] || ''}`}>{PRIORITY_LABELS[t.priority] || t.priority}</span>}
+                            <span className="text-[10px] text-blue-600 font-bold">{t.project_code}</span>
+                          </div>
+                          <p className="text-sm text-gray-900 group-hover:text-blue-600 truncate">{t.title}</p>
+                          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                            <span>{t.project_name}</span>
+                            {t.assignee_name && <span className="flex items-center gap-1"><User className="h-3 w-3" />{t.assignee_name}</span>}
+                          </div>
+                        </div>
+                        {t.due_date && <span className={`text-xs shrink-0 ml-2 ${t.status !== 'done' && new Date(t.due_date) < new Date() ? 'text-red-600 font-bold' : 'text-gray-500'}`}>{formatDate(t.due_date)}</span>}
+                      </Link>
+                    ))}
+                    {td.tasks.length === 0 && <p className="text-center text-xs text-gray-400 py-4">Không có nhiệm vụ</p>}
+                  </div>
+                )}
+              </div>
+            ))}
+            {filteredTaskDetail.length === 0 && <p className="text-center text-sm text-gray-400 py-8">Không có nhiệm vụ</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectColumn({ title, projects, color }) {
+  const cls = { amber: 'border-amber-300 bg-amber-50', blue: 'border-blue-300 bg-blue-50', emerald: 'border-emerald-300 bg-emerald-50' };
+  const hdr = { amber: 'bg-amber-100', blue: 'bg-blue-100', emerald: 'bg-emerald-100' };
+  return (
+    <div className={`rounded-xl border-2 ${cls[color]} overflow-hidden`}>
+      <div className={`${hdr[color]} px-4 py-3 flex items-center justify-between`}><h4 className="text-sm font-bold text-gray-900">{title}</h4><span className="text-xs font-bold text-gray-600">{projects.length}</span></div>
+      <div className="p-3 space-y-2 max-h-80 overflow-y-auto">
+        {projects.map(p => (
+          <Link to={`/projects/${p.id}`} key={p.id} className="block bg-white rounded-lg p-3 border border-gray-200 hover:shadow-sm hover:border-blue-300 transition-all">
+            <div className="flex items-center gap-2 mb-1"><span className="text-xs font-bold text-blue-600">{p.code}</span>{p.stage && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: (p.stage.color || '#94a3b8') + '20', color: p.stage.color }}>{p.stage.icon} {p.stage.name}</span>}</div>
+            <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
+            {p.customer_name && <p className="text-xs text-gray-400 mt-0.5">{p.customer_name}</p>}
+            {p.estimated_value > 0 && <p className="text-xs font-bold text-green-600 mt-1">{formatVND(p.estimated_value)}</p>}
+          </Link>
+        ))}
+        {projects.length === 0 && <p className="text-center text-xs text-gray-400 py-6">Trống</p>}
       </div>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Alerts Widget
-// ═══════════════════════════════════════════════════════════════════════════
+function KPICard({ title, value, subtitle, trend, trendLabel, trendNegative, icon: Icon, color, bgColor }) {
+  const tc = trendNegative ? (trend > 0 ? 'text-red-600' : 'text-emerald-600') : (trend > 0 ? 'text-emerald-600' : trend < 0 ? 'text-red-600' : 'text-gray-500');
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all group">
+      <div className="flex items-start justify-between mb-4">
+        <div className={`w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center group-hover:scale-110 transition-transform`}><Icon className={`h-6 w-6 ${color.replace('bg-', 'text-')}`} /></div>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{title}</p>
+      </div>
+      <h3 className="text-3xl font-bold text-gray-900 mb-1">{value}</h3>
+      <p className="text-sm text-gray-600 mb-2">{subtitle}</p>
+      {trend !== undefined && trend !== null && trendLabel && (
+        <div className={`flex items-center gap-1 text-xs font-medium ${tc}`}>
+          {!trendNegative && trend > 0 && <TrendingUp className="h-3.5 w-3.5" />}
+          {trend < 0 && <TrendingDown className="h-3.5 w-3.5" />}
+          <span>{trend > 0 ? '+' : ''}{trend} {trendLabel}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WorkloadWidget({ workload }) {
+  const mx = Math.max(...workload.map(d => d.project_count), 1);
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6">
+      <div className="flex items-center justify-between mb-6"><h2 className="text-lg font-bold text-gray-900 flex items-center gap-2"><TrendingUp className="h-5 w-5 text-blue-600" />Phân Bổ Dự Án Theo Giai Đoạn</h2><Link to="/projects" className="text-xs text-blue-600 hover:underline flex items-center gap-1">Xem tất cả <ArrowRight className="h-3 w-3" /></Link></div>
+      <div className="space-y-4">
+        {workload.map(s => (<div key={s.id} className="group"><div className="hover:bg-gray-50 rounded-lg p-2 -mx-2 transition-colors"><div className="flex items-center justify-between mb-1.5"><span className="text-sm font-medium text-gray-700 flex items-center gap-2">{s.icon && <span>{s.icon}</span>}<span className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />{s.name}</span><span className="text-sm font-bold text-gray-900">{s.project_count} dự án</span></div><div className="h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max((s.project_count/mx)*100, s.project_count > 0 ? 5 : 0)}%`, backgroundColor: s.color || '#3b82f6' }} /></div></div></div>))}
+        {workload.length === 0 && <div className="text-center py-8 text-gray-400"><TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-50" /><p className="text-sm">Chưa có dữ liệu</p></div>}
+      </div>
+    </div>
+  );
+}
+
 function AlertsWidget({ alerts }) {
-  const alertItems = [
+  const items = [
     { label: 'Dự án quá hạn', value: alerts.overdue_projects, color: 'text-red-600', bg: 'bg-red-50' },
     { label: 'Tasks quá hạn', value: alerts.overdue_tasks, color: 'text-orange-600', bg: 'bg-orange-50' },
     { label: 'Phê duyệt chờ', value: alerts.pending_approvals, color: 'text-blue-600', bg: 'bg-blue-50' },
     { label: 'Task ưu tiên cao chưa giao', value: alerts.unassigned_high_priority, color: 'text-purple-600', bg: 'bg-purple-50' },
     { label: 'Nhân viên quá tải', value: alerts.resource_overload, color: 'text-amber-600', bg: 'bg-amber-50' },
   ];
-  const totalAlerts = Object.values(alerts).reduce((sum, val) => sum + val, 0);
-
+  const total = Object.values(alerts).reduce((s, v) => s + v, 0);
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-          <Bell className="h-5 w-5 text-amber-600" />
-          Cảnh Báo
-        </h2>
-        {totalAlerts > 0 && (
-          <span className="px-2.5 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full">{totalAlerts}</span>
-        )}
-      </div>
+      <div className="flex items-center justify-between mb-6"><h2 className="text-lg font-bold text-gray-900 flex items-center gap-2"><Bell className="h-5 w-5 text-amber-600" />Cảnh Báo</h2>{total > 0 && <span className="px-2.5 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full">{total}</span>}</div>
       <div className="space-y-3">
-        {alertItems.map((item, idx) => (
-          <div key={idx} className={`flex items-center justify-between p-3 rounded-lg ${item.bg}`}>
-            <div className="flex items-center gap-2">
-              <AlertTriangle className={`h-4 w-4 ${item.color}`} />
-              <span className="text-sm font-medium text-gray-700">{item.label}</span>
-            </div>
-            <span className={`text-lg font-bold ${item.color}`}>{item.value}</span>
-          </div>
-        ))}
-        {totalAlerts === 0 && (
-          <div className="text-center py-8 text-gray-400">
-            <CheckSquare className="h-12 w-12 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">Không có cảnh báo</p>
-          </div>
-        )}
+        {items.map((it, i) => (<div key={i} className={`flex items-center justify-between p-3 rounded-lg ${it.bg}`}><div className="flex items-center gap-2"><AlertTriangle className={`h-4 w-4 ${it.color}`} /><span className="text-sm font-medium text-gray-700">{it.label}</span></div><span className={`text-lg font-bold ${it.color}`}>{it.value}</span></div>))}
+        {total === 0 && <div className="text-center py-8 text-gray-400"><CheckSquare className="h-12 w-12 mx-auto mb-2 opacity-50" /><p className="text-sm">Không có cảnh báo</p></div>}
       </div>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Activity Feed
-// ═══════════════════════════════════════════════════════════════════════════
 function ActivityFeed({ activities }) {
-  const formatTime = (dateStr) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const minutes = Math.floor(diff / 60000);
-    if (minutes < 1) return 'Vừa xong';
-    if (minutes < 60) return `${minutes} phút trước`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} giờ trước`;
-    return `${Math.floor(hours / 24)} ngày trước`;
-  };
-
-  const getActivityColor = (action) => {
-    if (action === 'create') return 'bg-green-100 text-green-700';
-    if (action === 'update') return 'bg-blue-100 text-blue-700';
-    if (action === 'delete') return 'bg-red-100 text-red-700';
-    return 'bg-gray-100 text-gray-700';
-  };
-
+  const fmtTime = (d) => { const diff = Date.now() - new Date(d).getTime(); const m = Math.floor(diff/60000); if (m < 1) return 'Vừa xong'; if (m < 60) return `${m} phút trước`; const h = Math.floor(m/60); if (h < 24) return `${h} giờ trước`; return `${Math.floor(h/24)} ngày trước`; };
+  const actColor = (a) => a === 'create' ? 'bg-green-100 text-green-700' : a === 'update' ? 'bg-blue-100 text-blue-700' : a === 'delete' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700';
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-          <Activity className="h-5 w-5 text-indigo-600" />
-          Hoạt Động Gần Đây
-        </h2>
-      </div>
+      <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-6"><Activity className="h-5 w-5 text-indigo-600" />Hoạt Động Gần Đây</h2>
       <div className="space-y-3 max-h-96 overflow-y-auto">
-        {activities.map((activity) => (
-          <div key={activity.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-            <div
-              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-              style={{ backgroundColor: avatarColor(activity.user?.full_name) }}
-            >
-              {getInitials(activity.user?.full_name)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm text-gray-900">
-                <span className="font-semibold">{activity.user?.full_name}</span> {activity.description}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">{formatTime(activity.created_at)}</p>
-            </div>
-            <span className={`px-2 py-1 rounded text-xs font-medium ${getActivityColor(activity.action)}`}>
-              {activity.action}
-            </span>
+        {activities.map(a => (
+          <div key={a.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: avatarColor(a.user?.full_name) }}>{getInitials(a.user?.full_name)}</div>
+            <div className="flex-1 min-w-0"><p className="text-sm text-gray-900"><span className="font-semibold">{a.user?.full_name}</span> {a.description}</p><p className="text-xs text-gray-500 mt-1">{fmtTime(a.created_at)}</p></div>
+            <span className={`px-2 py-1 rounded text-xs font-medium ${actColor(a.action)}`}>{a.action}</span>
           </div>
         ))}
-        {activities.length === 0 && (
-          <div className="text-center py-8 text-gray-400">
-            <Activity className="h-12 w-12 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">Chưa có hoạt động</p>
-          </div>
-        )}
+        {activities.length === 0 && <div className="text-center py-8 text-gray-400"><Activity className="h-12 w-12 mx-auto mb-2 opacity-50" /><p className="text-sm">Chưa có hoạt động</p></div>}
       </div>
     </div>
   );
