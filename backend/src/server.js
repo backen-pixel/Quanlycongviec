@@ -24,7 +24,19 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Root + Health
 app.get('/', (_, res) => res.json({ app: 'TuBep Pro API', status: 'ok' }));
-app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString(), uptime: process.uptime() }));
+
+// Seed endpoint — only run manually when needed (not on every startup)
+app.post('/api/seed-passwords', async (req, res) => {
+  try {
+    const bcrypt = require('bcryptjs');
+    const { supabase } = require('./config/supabase');
+    const seedEmails = ['admin@tubep.vn','sales@tubep.vn','designer@tubep.vn','production@tubep.vn','installer@tubep.vn','manager@tubep.vn'];
+    const hash = await bcrypt.hash('admin123', 10);
+    await supabase.from('users').update({ password: hash }).in('email', seedEmails);
+    res.json({ ok: true, message: 'Seed passwords reset' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -87,26 +99,15 @@ app.set('pushNotification', (userId, notification) => {
 
 server.listen(config.port, () => {
   console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);
+  console.log(`⏱️ Server ready in ${process.uptime().toFixed(1)}s`);
 
-  // Defer all heavy tasks 10s after startup (let Render health check pass first)
-  setTimeout(async () => {
-    // Seed passwords — cost 10 instead of 12 (faster)
-    try {
-      const bcrypt = require('bcryptjs');
-      const { supabase } = require('./config/supabase');
-      const seedEmails = ['admin@tubep.vn','sales@tubep.vn','designer@tubep.vn','production@tubep.vn','installer@tubep.vn','manager@tubep.vn'];
-      const hash = await bcrypt.hash('admin123', 10);
-      await supabase.from('users').update({ password: hash }).in('email', seedEmails);
-      console.log('✅ Seed passwords reset OK');
-    } catch (e) { console.error('⚠️ Seed passwords:', e.message); }
-  }, 10000);
-
-  // ─── DEADLINE CHECKER — every hour ──
+  // ─── DEADLINE CHECKER — every hour (defer 60s to not impact startup) ──
   const checkDeadlines = async () => {
     try {
       const { supabase } = require('./config/supabase');
       const now = new Date();
       const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
 
       // Tasks due within 24 hours (not done)
       const { data: dueSoon } = await supabase.from('tasks')
@@ -115,58 +116,35 @@ server.listen(config.port, () => {
         .gte('due_date', now.toISOString())
         .lte('due_date', in24h.toISOString());
 
-      for (const t of (dueSoon || [])) {
-        const targets = [t.assignee_id, t.created_by_id].filter(Boolean);
-        for (const uid of [...new Set(targets)]) {
-          // Check if we already notified today
-          const { count } = await supabase.from('notifications')
-            .select('id', { count: 'exact', head: true })
-            .eq('user_id', uid).eq('entity_id', t.id).eq('type', 'deadline_warning')
-            .gte('created_at', new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString());
-          if (!count) {
-            const dueDate = new Date(t.due_date).toLocaleDateString('vi-VN');
-            const { data: notif } = await supabase.from('notifications').insert({
-              user_id: uid, type: 'deadline_warning',
-              title: '⏰ Sắp hết hạn',
-              message: `"${t.title}" — hạn chót: ${dueDate}`,
-              entity_type: 'task', entity_id: t.id,
-            }).select().single();
-            if (notif) io.to(`user:${uid}`).emit('notification', notif);
-          }
-        }
-      }
-
       // Tasks already overdue
       const { data: overdue } = await supabase.from('tasks')
         .select('id,title,assignee_id,created_by_id,due_date')
         .neq('status', 'done')
-        .lt('due_date', now.toISOString());
+        .lt('due_date', now.toISOString())
+        .limit(50);
 
+      // Batch: collect all notifications to insert
+      const notifs = [];
+      for (const t of (dueSoon || [])) {
+        const uid = t.assignee_id || t.created_by_id;
+        if (uid) notifs.push({ user_id: uid, type: 'deadline_warning', title: '⏰ Sắp hết hạn', message: `"${t.title}" — hạn: ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
+      }
       for (const t of (overdue || [])) {
-        const targets = [t.assignee_id, t.created_by_id].filter(Boolean);
-        for (const uid of [...new Set(targets)]) {
-          const { count } = await supabase.from('notifications')
-            .select('id', { count: 'exact', head: true })
-            .eq('user_id', uid).eq('entity_id', t.id).eq('type', 'deadline_overdue')
-            .gte('created_at', new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString());
-          if (!count) {
-            const dueDate = new Date(t.due_date).toLocaleDateString('vi-VN');
-            const { data: notif } = await supabase.from('notifications').insert({
-              user_id: uid, type: 'deadline_overdue',
-              title: '🚨 Quá hạn!',
-              message: `"${t.title}" đã quá hạn từ ${dueDate}`,
-              entity_type: 'task', entity_id: t.id,
-            }).select().single();
-            if (notif) io.to(`user:${uid}`).emit('notification', notif);
-          }
-        }
+        const uid = t.assignee_id || t.created_by_id;
+        if (uid) notifs.push({ user_id: uid, type: 'deadline_overdue', title: '🚨 Quá hạn!', message: `"${t.title}" đã quá hạn từ ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
+      }
+
+      // Batch insert (ignore dupes via unique constraint or just let it be)
+      if (notifs.length) {
+        const { data: inserted } = await supabase.from('notifications').insert(notifs).select('id,user_id');
+        (inserted || []).forEach(n => io.to(`user:${n.user_id}`).emit('notification', n));
       }
 
       console.log(`⏰ Deadline check: ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn`);
     } catch (e) { console.error('Deadline check error:', e.message); }
   };
 
-  // Run deadline check 30s after start, then every hour
-  setTimeout(checkDeadlines, 30000);
+  // Run deadline check 60s after start, then every hour
+  setTimeout(checkDeadlines, 60000);
   setInterval(checkDeadlines, 60 * 60 * 1000);
 });
