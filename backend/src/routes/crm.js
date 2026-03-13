@@ -404,6 +404,21 @@ r.get('/orders/:id', async (req, res) => {
   }
 });
 
+r.put('/orders/:id', async (req, res) => {
+  try {
+    const updates = { ...req.body, updated_at: new Date().toISOString() };
+    if (updates.status === 'confirmed' && !updates.confirmed_at) updates.confirmed_at = new Date().toISOString();
+    if (updates.status === 'shipped' && !updates.shipped_at) updates.shipped_at = new Date().toISOString();
+    if (updates.status === 'delivered' && !updates.delivered_at) updates.delivered_at = new Date().toISOString();
+    if (updates.status === 'cancelled' && !updates.cancelled_at) updates.cancelled_at = new Date().toISOString();
+    const { data, error } = await supabase.from('orders').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/orders', async (req, res) => {
   try {
     const { items, ...orderData } = req.body;
@@ -524,6 +539,40 @@ r.post('/invoices/:id/payments', async (req, res) => {
     }).eq('id', req.params.id);
 
     res.status(201).json(payment);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Convert Lead → Project
+r.post('/leads/:id/convert-to-project', async (req, res) => {
+  try {
+    const { data: lead } = await supabase.from('crm_leads').select('*, customer:customers(id, full_name)').eq('id', req.params.id).single();
+    if (!lead) return res.status(404).json({ error: 'Lead không tồn tại' });
+
+    // Get default flow
+    const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
+    const flowId = flows?.[0]?.id || null;
+
+    // Get first stage
+    const { data: firstStage } = await supabase.from('workflow_stages').select('id').is('company_id', null).eq('is_active', true).order('order_index').limit(1).single();
+
+    // Create project code
+    const year = new Date().getFullYear();
+    const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true });
+    const code = `TB-${year}-${String((count || 0) + 1).padStart(3, '0')}`;
+
+    const { data: project, error } = await supabase.from('projects').insert({
+      code, name: lead.title, status: 'active', customer_id: lead.customer_id,
+      estimated_value: lead.estimated_value, flow_id: flowId,
+      current_stage_id: firstStage?.id, created_by: req.user.userId,
+    }).select('*').single();
+    if (error) throw error;
+
+    // Link lead to project
+    await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+
+    res.status(201).json(project);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

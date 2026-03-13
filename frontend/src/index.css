@@ -73,3 +73,13 @@ select.input {
   50% { opacity: 0.4; }
 }
 .animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+
+/* Print styles for PDF export */
+@media print {
+  aside, .print\\:hidden, button.print\\:hidden, nav { display: none !important; }
+  body { background: white !important; }
+  .max-w-5xl { max-width: 100% !important; }
+  .rounded-xl { border-radius: 0 !important; }
+  .shadow-2xl, .shadow-xl, .shadow-lg, .shadow-md { box-shadow: none !important; }
+  * { print-color-adjust: exact !important; -webkit-print-color-adjust: exact !important; }
+}

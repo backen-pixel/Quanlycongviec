@@ -5,7 +5,7 @@ import { formatVND, formatDate } from '../lib/utils';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, PhoneCall, Users as UsersIcon, FileText,
-  ChevronRight, Edit3, Trash2, X, Save, Building2
+  ChevronRight, Edit3, Trash2, X, Save, Building2, FolderKanban
 } from 'lucide-react';
 
 const ACTIVITY_TYPES = [
@@ -57,6 +57,15 @@ export default function LeadDetail() {
     navigate('/crm');
   };
 
+  const convertToProject = async () => {
+    if (!confirm('Tạo dự án từ lead này? Lead sẽ được link với dự án mới.')) return;
+    try {
+      const { data } = await api.post(`/crm/leads/${id}/convert-to-project`);
+      alert(`Đã tạo dự án ${data.code}`);
+      load();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
   if (loading || !lead) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
 
   const currentStageIdx = stages.findIndex(s => s.id === lead.stage_id);
@@ -74,6 +83,11 @@ export default function LeadDetail() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => navigate(`/crm/quotations/new?lead_id=${id}&customer_id=${lead.customer_id || ''}`)} className="h-9 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"><FileText className="h-4 w-4" /> Tạo báo giá</button>
+          {!lead.project_id ? (
+            <button onClick={convertToProject} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"><FolderKanban className="h-4 w-4" /> Tạo dự án</button>
+          ) : (
+            <Link to={`/projects/${lead.project_id}`} className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-1.5"><FolderKanban className="h-4 w-4" /> Xem dự án</Link>
+          )}
           <button onClick={() => setShowEdit(true)} className="h-9 px-3 border rounded-lg text-sm flex items-center gap-1.5 cursor-pointer hover:bg-gray-50"><Edit3 className="h-4 w-4" /> Sửa</button>
           <button onClick={deleteLead} className="h-9 px-3 text-red-500 border border-red-200 rounded-lg text-sm flex items-center gap-1.5 cursor-pointer hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
         </div>

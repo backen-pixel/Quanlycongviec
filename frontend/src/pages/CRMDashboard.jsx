@@ -1,12 +1,15 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import {
   TrendingUp, Users, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
-  FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent
+  FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical
 } from 'lucide-react';
+import { DndContext, DragOverlay, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { useSortable } from '@dnd-kit/sortable';
+import { useDroppable } from '@dnd-kit/core';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -49,6 +52,17 @@ export default function CRMDashboard() {
   }, [stages, leads]);
 
   const kpis = data?.kpis || {};
+
+  const handleMoveStage = useCallback(async (leadId, newStageId) => {
+    // Optimistic update
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId } : l));
+    try {
+      await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId });
+    } catch (e) {
+      console.error(e);
+      load(); // Revert on error
+    }
+  }, []);
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
 
@@ -103,10 +117,10 @@ export default function CRMDashboard() {
         </div>
       </div>
 
-      {/* Pipeline Kanban */}
+      {/* Pipeline Kanban - Drag & Drop */}
       <div className="bg-white rounded-xl border p-6">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-bold text-gray-900">📊 Pipeline bán hàng</h2>
+          <h2 className="text-lg font-bold text-gray-900">📊 Pipeline bán hàng <span className="text-xs text-gray-400 font-normal ml-2">Kéo thả để chuyển stage</span></h2>
           <div className="flex items-center gap-2">
             <Link to="/crm/quotations" className="text-xs text-blue-600 hover:underline flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> Báo giá</Link>
             <Link to="/crm/orders" className="text-xs text-emerald-600 hover:underline flex items-center gap-1 ml-3"><ShoppingCart className="h-3.5 w-3.5" /> Đơn hàng</Link>
@@ -114,49 +128,24 @@ export default function CRMDashboard() {
           </div>
         </div>
 
-        <div className="flex gap-3 overflow-x-auto pb-4">
-          {pipeline.map(stage => (
-            <div key={stage.id} className="flex flex-col flex-shrink-0" style={{ width: '260px' }}>
-              <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: stage.color, borderTopWidth: '4px' }}>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
-                    <span>{stage.icon}</span> {stage.name}
-                  </h3>
-                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold">{stage.leads.length}</span>
-                </div>
-                {stage.leads.length > 0 && (
-                  <p className="text-xs text-gray-400 mt-1">{formatVND(stage.leads.reduce((s, l) => s + (l.estimated_value || 0), 0))}</p>
-                )}
+        <PipelineKanban pipeline={pipeline} stages={stages} onMoveStage={handleMoveStage} navigate={navigate} />
+      </div>
+
+      {/* Mini Pipeline Funnel Chart */}
+      <div className="bg-white rounded-xl border p-6">
+        <h3 className="text-base font-bold text-gray-900 mb-4">📈 Phễu chuyển đổi</h3>
+        <div className="flex items-end gap-2 justify-center" style={{ height: '120px' }}>
+          {pipeline.map((s, i) => {
+            const maxCount = Math.max(...pipeline.map(p => p.count), 1);
+            const h = Math.max((s.count / maxCount) * 100, s.count > 0 ? 12 : 4);
+            return (
+              <div key={s.id} className="flex flex-col items-center flex-1 max-w-[100px]">
+                <span className="text-xs font-bold text-gray-900 mb-1">{s.count}</span>
+                <div className="w-full rounded-t-lg transition-all" style={{ height: `${h}%`, backgroundColor: s.color, minHeight: '4px' }} />
+                <span className="text-[9px] text-gray-500 mt-1 text-center leading-tight">{s.icon}<br />{s.name}</span>
               </div>
-              <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ maxHeight: '60vh' }}>
-                {stage.leads.map(lead => (
-                  <div key={lead.id} onClick={() => navigate(`/crm/leads/${lead.id}`)}
-                    className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md hover:border-blue-400 transition-all cursor-pointer group">
-                    <div className="flex items-start justify-between gap-1 mb-2">
-                      <span className="text-[10px] text-blue-600 font-bold">{lead.code}</span>
-                      {lead.source && <span className="text-[10px]">{lead.source.icon}</span>}
-                    </div>
-                    <h4 className="text-xs font-bold text-gray-900 group-hover:text-blue-600 mb-1 leading-snug">{lead.title}</h4>
-                    {lead.customer && (
-                      <p className="text-[11px] text-gray-500 flex items-center gap-1 mb-1"><Users className="h-3 w-3" />{lead.customer.full_name}</p>
-                    )}
-                    {lead.estimated_value > 0 && (
-                      <p className="text-xs font-bold text-green-600">{formatVND(lead.estimated_value)}</p>
-                    )}
-                    {lead.assignee && (
-                      <p className="text-[10px] text-gray-400 mt-1">{lead.assignee.full_name}</p>
-                    )}
-                    {lead.next_follow_up && (
-                      <div className={`text-[10px] mt-1 flex items-center gap-1 ${new Date(lead.next_follow_up) < new Date() ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
-                        <Calendar className="h-3 w-3" />{formatDate(lead.next_follow_up)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {stage.leads.length === 0 && <p className="text-center py-8 text-xs text-gray-300">Chưa có lead</p>}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -231,6 +220,109 @@ export default function CRMDashboard() {
 
       {/* New Lead Modal */}
       {showNewLead && <NewLeadModal sources={sources} stages={stages} onClose={() => setShowNewLead(false)} onSave={() => { setShowNewLead(false); load(); }} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PIPELINE KANBAN with Drag & Drop
+// ═══════════════════════════════════════════════════════════════════════════
+function PipelineKanban({ pipeline, stages, onMoveStage, navigate }) {
+  const [activeId, setActiveId] = useState(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const allLeads = useMemo(() => {
+    const m = {};
+    pipeline.forEach(s => s.leads.forEach(l => { m[l.id] = l; }));
+    return m;
+  }, [pipeline]);
+
+  const handleDragStart = (event) => setActiveId(event.active.id);
+  const handleDragEnd = (event) => {
+    setActiveId(null);
+    const { active, over } = event;
+    if (!over) return;
+    const leadId = active.id;
+    const overId = over.id;
+    // overId can be a stage id (droppable) or another lead id
+    let targetStageId = stages.find(s => s.id === overId)?.id;
+    if (!targetStageId) {
+      // Find which stage the over lead belongs to
+      const overLead = allLeads[overId];
+      targetStageId = overLead?.stage_id;
+    }
+    if (targetStageId && allLeads[leadId]?.stage_id !== targetStageId) {
+      onMoveStage(leadId, targetStageId);
+    }
+  };
+
+  const activeLead = activeId ? allLeads[activeId] : null;
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <div className="flex gap-3 overflow-x-auto pb-4">
+        {pipeline.map(stage => (
+          <StageColumn key={stage.id} stage={stage} navigate={navigate} />
+        ))}
+      </div>
+      <DragOverlay>
+        {activeLead ? <LeadCard lead={activeLead} isDragging /> : null}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+function StageColumn({ stage, navigate }) {
+  const { setNodeRef, isOver } = useDroppable({ id: stage.id });
+  return (
+    <div className="flex flex-col flex-shrink-0" style={{ width: '260px' }}>
+      <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: stage.color, borderTopWidth: '4px' }}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold text-gray-900 flex items-center gap-1.5"><span>{stage.icon}</span> {stage.name}</h3>
+          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold">{stage.leads.length}</span>
+        </div>
+        {stage.leads.length > 0 && <p className="text-xs text-gray-400 mt-1">{formatVND(stage.leads.reduce((s, l) => s + (l.estimated_value || 0), 0))}</p>}
+      </div>
+      <div ref={setNodeRef} className={`flex-1 rounded-b-xl border p-2 space-y-2 overflow-y-auto transition-colors ${isOver ? 'bg-blue-50 border-blue-300' : 'bg-gray-50/50'}`} style={{ maxHeight: '60vh', minHeight: '120px' }}>
+        {stage.leads.map(lead => <DraggableLeadCard key={lead.id} lead={lead} navigate={navigate} />)}
+        {stage.leads.length === 0 && <p className="text-center py-8 text-xs text-gray-300">Kéo lead vào đây</p>}
+      </div>
+    </div>
+  );
+}
+
+function DraggableLeadCard({ lead, navigate }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({ id: lead.id });
+  const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.4 : 1 } : {};
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <LeadCard lead={lead} dragListeners={listeners} onClick={() => navigate(`/crm/leads/${lead.id}`)} />
+    </div>
+  );
+}
+
+function LeadCard({ lead, isDragging, dragListeners, onClick }) {
+  return (
+    <div onClick={onClick}
+      className={`bg-white rounded-lg border border-gray-200 p-3 transition-all cursor-pointer group ${isDragging ? 'shadow-xl border-blue-400 rotate-2' : 'hover:shadow-md hover:border-blue-400'}`}>
+      <div className="flex items-start justify-between gap-1 mb-2">
+        <div className="flex items-center gap-1">
+          <span {...dragListeners} className="cursor-grab active:cursor-grabbing p-0.5 hover:bg-gray-100 rounded" onClick={e => e.stopPropagation()}>
+            <GripVertical className="h-3 w-3 text-gray-300" />
+          </span>
+          <span className="text-[10px] text-blue-600 font-bold">{lead.code}</span>
+        </div>
+        {lead.source && <span className="text-[10px]">{lead.source?.icon}</span>}
+      </div>
+      <h4 className="text-xs font-bold text-gray-900 group-hover:text-blue-600 mb-1 leading-snug">{lead.title}</h4>
+      {lead.customer && <p className="text-[11px] text-gray-500 flex items-center gap-1 mb-1"><Users className="h-3 w-3" />{lead.customer.full_name}</p>}
+      {lead.estimated_value > 0 && <p className="text-xs font-bold text-green-600">{formatVND(lead.estimated_value)}</p>}
+      {lead.assignee && <p className="text-[10px] text-gray-400 mt-1">{lead.assignee.full_name}</p>}
+      {lead.next_follow_up && (
+        <div className={`text-[10px] mt-1 flex items-center gap-1 ${new Date(lead.next_follow_up) < new Date() ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
+          <Calendar className="h-3 w-3" />{formatDate(lead.next_follow_up)}
+        </div>
+      )}
     </div>
   );
 }

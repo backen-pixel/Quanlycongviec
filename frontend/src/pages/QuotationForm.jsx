@@ -93,7 +93,8 @@ export default function QuotationForm() {
           <h1 className="text-xl font-bold text-gray-900">{isEdit ? 'Sửa báo giá' : 'Tạo báo giá mới'}</h1>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={save} disabled={saving} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
+          {isEdit && <button onClick={() => window.print()} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 print:hidden"><Printer className="h-4 w-4" /> In PDF</button>}
+          <button onClick={save} disabled={saving} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50 print:hidden">
             <Save className="h-4 w-4" /> {saving ? 'Đang lưu...' : 'Lưu'}
           </button>
         </div>
