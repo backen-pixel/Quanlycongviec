@@ -5,9 +5,9 @@ import { getInitials, avatarColor } from '../lib/utils';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
-  UserPlus, Building2, Building, Network, Layers, GitBranch, Shield
+  UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -122,10 +122,21 @@ function MenuGroup({ group, collapsed, isAdmin }) {
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
+  const [showAppSwitcher, setShowAppSwitcher] = useState(false);
+  const appSwitcherRef = useRef(null);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+
+  // Close app switcher on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (appSwitcherRef.current && !appSwitcherRef.current.contains(e.target)) setShowAppSwitcher(false);
+    };
+    if (showAppSwitcher) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showAppSwitcher]);
 
   const doLogout = () => {
     logout();
@@ -133,13 +144,62 @@ export default function Sidebar() {
   };
 
   return (
-    <aside
+    <>
+      {/* App Switcher Panel */}
+      {showAppSwitcher && (
+        <div className="fixed inset-0 z-50 flex">
+          <div ref={appSwitcherRef} className="w-[300px] bg-white shadow-2xl border-r border-gray-200 flex flex-col animate-slide-in">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h2 className="text-base font-bold text-gray-900">Ứng dụng</h2>
+              <button onClick={() => setShowAppSwitcher(false)} className="p-1 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer">
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="flex-1 p-5 space-y-3">
+              {/* Công việc - Active */}
+              <button onClick={() => { setShowAppSwitcher(false); navigate('/'); }}
+                className="w-full flex items-center gap-4 p-4 rounded-xl bg-blue-50 border-2 border-blue-200 hover:border-blue-400 transition-all cursor-pointer group">
+                <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                  <CheckSquare className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-sm font-bold text-gray-900">Công việc</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Quản lý dự án & nhiệm vụ</p>
+                </div>
+                <span className="ml-auto text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>
+              </button>
+              {/* CRM - Coming soon */}
+              <div className="w-full flex items-center gap-4 p-4 rounded-xl bg-gray-50 border-2 border-gray-200 opacity-60 cursor-not-allowed">
+                <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0">
+                  <UserCircle className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-sm font-bold text-gray-900">CRM</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Quản lý khách hàng & bán hàng</p>
+                </div>
+                <span className="ml-auto text-[10px] px-2 py-0.5 bg-gray-400 text-white rounded-full font-bold">Sắp ra</span>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100">
+              <p className="text-[10px] text-gray-400 text-center">TuBep Pro © 2026</p>
+            </div>
+          </div>
+          {/* Overlay */}
+          <div className="flex-1 bg-black/30" onClick={() => setShowAppSwitcher(false)} />
+        </div>
+      )}
+
+      <aside
       className={`flex flex-col bg-[var(--color-sidebar)] transition-all duration-200 relative ${
         collapsed ? 'w-[60px]' : 'w-[240px]'
       }`}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-14 border-b border-white/10 shrink-0">
+      {/* App Switcher Button + Logo */}
+      <div className="flex items-center gap-2 px-3 h-14 border-b border-white/10 shrink-0">
+        <button onClick={() => setShowAppSwitcher(!showAppSwitcher)}
+          className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-white/10 transition-colors cursor-pointer" title="Chuyển ứng dụng">
+          <Grid3X3 className="h-5 w-5 text-white/80 hover:text-white" />
+        </button>
         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-white/10 text-white text-lg">
           🏠
         </div>
@@ -202,5 +262,6 @@ export default function Sidebar() {
         {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
       </button>
     </aside>
+    </>
   );
 }
