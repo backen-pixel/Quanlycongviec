@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { Bot, X, Send, Sparkles, Lightbulb, Loader2, ArrowRight, Minimize2, Maximize2 } from 'lucide-react';
+import { Bot, X, Send, Sparkles, Lightbulb, Loader2, ArrowRight, Minimize2, Maximize2, GripVertical } from 'lucide-react';
+import useDraggable from '../hooks/useDraggable';
 
 export default function AIAssistantChat() {
   const [open, setOpen] = useState(false);
@@ -13,6 +14,7 @@ export default function AIAssistantChat() {
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const navigate = useNavigate();
+  const drag = useDraggable('ai_chat', { right: 24, bottom: 88 });
 
   useEffect(() => {
     if (open && !messages.length) {
@@ -63,8 +65,9 @@ export default function AIAssistantChat() {
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)}
-        className="fixed bottom-6 left-6 z-50 w-14 h-14 bg-gradient-to-br from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-full shadow-xl flex items-center justify-center cursor-pointer transition-all hover:scale-110 group">
+      <button onClick={() => setOpen(true)} onMouseDown={drag.onDragStart} onTouchStart={drag.onDragStart}
+        style={{ right: drag.pos.right, bottom: drag.pos.bottom }}
+        className={`fixed z-50 w-14 h-14 bg-gradient-to-br from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-full shadow-xl flex items-center justify-center cursor-grab transition-all hover:scale-110 group ${drag.dragging ? 'cursor-grabbing scale-110 opacity-80' : ''}`}>
         <Bot className="h-6 w-6" />
         {suggestions.filter(s => s.priority === 'high').length > 0 && (
           <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center animate-pulse">!</span>
@@ -75,13 +78,15 @@ export default function AIAssistantChat() {
   }
 
   return (
-    <div className={`fixed bottom-6 left-6 z-50 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col transition-all ${minimized ? 'w-80 h-12' : 'w-96'}`}
+    <div style={{ right: drag.pos.right, bottom: drag.pos.bottom }}
+      className={`fixed z-50 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col transition-all ${minimized ? 'w-80 h-12' : 'w-96'} ${drag.dragging ? 'opacity-90' : ''}`}
       style={{ maxHeight: minimized ? '48px' : '75vh' }}>
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-t-2xl cursor-pointer shrink-0"
-        onClick={() => setMinimized(!minimized)}>
+      <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-t-2xl cursor-grab select-none shrink-0"
+        onMouseDown={drag.onDragStart} onTouchStart={drag.onDragStart}>
         <div className="flex items-center gap-2">
+          <GripVertical className="h-4 w-4 text-purple-200" />
           <Bot className="h-5 w-5 text-white" />
           <span className="text-sm font-bold text-white">Trợ lý AI</span>
           <Sparkles className="h-3.5 w-3.5 text-purple-200" />
