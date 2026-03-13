@@ -184,13 +184,6 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
         </div>
       )}
 
-      {/* 3 Project Columns */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <ProjectColumn title="⏳ Sắp Tới" projects={upcoming} color="amber" />
-        <ProjectColumn title="🔄 Đang Thực Hiện" projects={active} color="blue" />
-        <ProjectColumn title="✅ Đã Hoàn Thành" projects={completed} color="emerald" />
-      </div>
-
       {/* Task Detail */}
       {task_detail?.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
