@@ -125,6 +125,9 @@ export default function App() {
             <Route path="/crm/quotations/:id" element={<QuotationForm />} />
             <Route path="/crm/orders" element={<OrdersPage />} />
             <Route path="/crm/invoices" element={<InvoicesPage />} />
+            <Route path="/crm/customers" element={<CustomersPage />} />
+            <Route path="/crm/customers/:id" element={<CustomerDetail />} />
+            <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
