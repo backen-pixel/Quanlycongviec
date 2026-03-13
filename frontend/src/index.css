@@ -76,7 +76,7 @@ select.input {
 
 /* Print styles for PDF export */
 @media print {
-  aside, .print\\:hidden, button.print\\:hidden, nav { display: none !important; }
+  aside, nav, [data-print-hide] { display: none !important; }
   body { background: white !important; }
   .max-w-5xl { max-width: 100% !important; }
   .rounded-xl { border-radius: 0 !important; }

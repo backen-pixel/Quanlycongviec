@@ -109,7 +109,7 @@ export default function QuotationForm() {
             {isEdit && form.code && <p className="text-xs text-blue-600 font-bold">{form.code}</p>}
           </div>
         </div>
-        <div className="flex items-center gap-2 print:hidden">
+        <div className="flex items-center gap-2" data-print-hide>
           {isEdit && (
             <select value={form.status || 'draft'} onChange={e => updateStatus(e.target.value)}
               className={`h-9 px-3 rounded-lg text-sm font-medium border-2 cursor-pointer ${
