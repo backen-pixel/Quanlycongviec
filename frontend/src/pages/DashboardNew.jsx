@@ -113,7 +113,7 @@ function MainDashboardContent({ overview, workload, alerts, activities }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDateTo, onFilter, onClear }) {
   const { division, stats, upcoming, active, completed, companies_detail, task_detail } = data;
-  const [taskFilter, setTaskFilter] = useState({ search: '', assignee: 'all', stage: 'all' });
+  const [taskFilter, setTaskFilter] = useState({ search: '', assignee: 'all', stage: 'all', status: 'all' });
   const [expandedStage, setExpandedStage] = useState(null);
 
   const icons = { 'Khối Kinh Doanh': '💼', 'Khối Sản Xuất': '🏭', 'Khối Vận Chuyển': '🚚', 'Khối Lắp Đặt': '🔧' };
@@ -132,7 +132,14 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
       let tasks = td.tasks || [];
       if (taskFilter.search) { const s = taskFilter.search.toLowerCase(); tasks = tasks.filter(t => t.title?.toLowerCase().includes(s) || t.project_code?.toLowerCase().includes(s) || t.project_name?.toLowerCase().includes(s)); }
       if (taskFilter.assignee !== 'all') tasks = tasks.filter(t => t.assignee_id === taskFilter.assignee);
-      if (tasks.length === 0 && (taskFilter.search || taskFilter.assignee !== 'all')) return null;
+      if (taskFilter.status !== 'all') {
+        const now = new Date();
+        if (taskFilter.status === 'pending') tasks = tasks.filter(t => t.status !== 'done' && t.status !== 'in_progress');
+        else if (taskFilter.status === 'in_progress') tasks = tasks.filter(t => t.status === 'in_progress');
+        else if (taskFilter.status === 'done') tasks = tasks.filter(t => t.status === 'done');
+        else if (taskFilter.status === 'overdue') tasks = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < now);
+      }
+      if (tasks.length === 0 && (taskFilter.search || taskFilter.assignee !== 'all' || taskFilter.status !== 'all')) return null;
       return { ...td, tasks, total: tasks.length, done: tasks.filter(t => t.status === 'done').length, overdue: tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length, completion_rate: tasks.length > 0 ? Math.round(tasks.filter(t => t.status === 'done').length / tasks.length * 100) : 0 };
     }).filter(Boolean);
   }, [task_detail, taskFilter]);
@@ -165,25 +172,6 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
         <KPICard title="Trễ Hạn" value={stats.overdue || 0} subtitle={`${stats.overdue_tasks} NV quá hạn`} trendNegative icon={AlertTriangle} color="bg-red-600" bgColor="bg-red-50" />
       </div>
 
-      {/* Companies */}
-      {companies_detail?.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5"><Building2 className="h-5 w-5 text-purple-600" />Chi Tiết Theo Công Ty</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {companies_detail.map(c => (
-              <div key={c.id} className="border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-3 mb-3"><span className="text-2xl">{c.icon || '🏭'}</span><h4 className="text-sm font-bold text-gray-900">{c.name}</h4></div>
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-amber-50 rounded-lg p-2"><p className="text-lg font-bold text-amber-700">{c.upcoming}</p><p className="text-[10px] text-amber-600">Sắp tới</p></div>
-                  <div className="bg-blue-50 rounded-lg p-2"><p className="text-lg font-bold text-blue-700">{c.active}</p><p className="text-[10px] text-blue-600">Đang làm</p></div>
-                  <div className="bg-emerald-50 rounded-lg p-2"><p className="text-lg font-bold text-emerald-700">{c.completed}</p><p className="text-[10px] text-emerald-600">Đã xong</p></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Task Detail */}
       {task_detail?.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -201,8 +189,15 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
               <option value="all">Tất cả nhân viên</option>
               {allAssignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
-            {(taskFilter.search || taskFilter.stage !== 'all' || taskFilter.assignee !== 'all') && (
-              <button onClick={() => setTaskFilter({ search: '', assignee: 'all', stage: 'all' })} className="h-8 px-2 text-red-500 hover:bg-red-50 rounded-lg text-xs flex items-center gap-1"><X className="h-3 w-3" /> Xóa lọc</button>
+            <select value={taskFilter.status} onChange={e => setTaskFilter(f => ({ ...f, status: e.target.value }))} className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white">
+              <option value="all">Tất cả trạng thái</option>
+              <option value="pending">○ Chưa làm</option>
+              <option value="in_progress">▶ Đang làm</option>
+              <option value="done">✓ Đã xong</option>
+              <option value="overdue">⚠ Quá hạn</option>
+            </select>
+            {(taskFilter.search || taskFilter.stage !== 'all' || taskFilter.assignee !== 'all' || taskFilter.status !== 'all') && (
+              <button onClick={() => setTaskFilter({ search: '', assignee: 'all', stage: 'all', status: 'all' })} className="h-8 px-2 text-red-500 hover:bg-red-50 rounded-lg text-xs flex items-center gap-1"><X className="h-3 w-3" /> Xóa lọc</button>
             )}
           </div>
           <div className="space-y-3">
