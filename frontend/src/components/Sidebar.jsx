@@ -168,17 +168,17 @@ export default function Sidebar() {
                 </div>
                 <span className="ml-auto text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>
               </button>
-              {/* CRM - Coming soon */}
-              <div className="w-full flex items-center gap-4 p-4 rounded-xl bg-gray-50 border-2 border-gray-200 opacity-60 cursor-not-allowed">
-                <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0">
+              {/* CRM - Active */}
+              <button onClick={() => { setShowAppSwitcher(false); navigate('/crm'); }}
+                className="w-full flex items-center gap-4 p-4 rounded-xl bg-gray-50 border-2 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all cursor-pointer group">
+                <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
                   <UserCircle className="h-6 w-6 text-white" />
                 </div>
                 <div className="text-left">
                   <h3 className="text-sm font-bold text-gray-900">CRM</h3>
                   <p className="text-xs text-gray-500 mt-0.5">Quản lý khách hàng & bán hàng</p>
                 </div>
-                <span className="ml-auto text-[10px] px-2 py-0.5 bg-gray-400 text-white rounded-full font-bold">Sắp ra</span>
-              </div>
+              </button>
             </div>
             <div className="px-5 py-3 border-t border-gray-100">
               <p className="text-[10px] text-gray-400 text-center">TuBep Pro © 2026</p>
