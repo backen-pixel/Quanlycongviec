@@ -21,6 +21,11 @@ import WorkflowSettings from './pages/WorkflowSettings';
 import ApprovalRulesPage from './pages/ApprovalRulesPage';
 import EcosystemPage from './pages/EcosystemPage';
 import EcosystemLevelsPage from './pages/EcosystemLevelsPage';
+import CRMDashboard from './pages/CRMDashboard';
+import QuotationsPage from './pages/QuotationsPage';
+import QuotationForm from './pages/QuotationForm';
+import OrdersPage from './pages/OrdersPage';
+import InvoicesPage from './pages/InvoicesPage';
 import StageGroupsPage from './pages/StageGroupsPage';
 import TemplateSetDetailPage from './pages/TemplateSetDetailPage';
 import DepartmentChat from './pages/DepartmentChat';
@@ -114,6 +119,12 @@ export default function App() {
             <Route path="/template-sets" element={<WorkflowHubPage />} />
             <Route path="/template-sets/:setId" element={<TemplateSetDetailPage />} />
             <Route path="/permissions" element={<PermissionsPage />} />
+            <Route path="/crm" element={<CRMDashboard />} />
+            <Route path="/crm/quotations" element={<QuotationsPage />} />
+            <Route path="/crm/quotations/new" element={<QuotationForm />} />
+            <Route path="/crm/quotations/:id" element={<QuotationForm />} />
+            <Route path="/crm/orders" element={<OrdersPage />} />
+            <Route path="/crm/invoices" element={<InvoicesPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
