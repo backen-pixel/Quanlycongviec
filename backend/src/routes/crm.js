@@ -1,7 +1,9 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
-const { onLeadWon, onOrderConfirmed, onQuotationAccepted, onProjectCompleted, getProjectCRMSummary, getOverdueFollowUps, getStaleLeads } = require('../helpers/autoFlow');
+let autoFlowFns = {};
+try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
+const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [] } = autoFlowFns;
 
 const r = Router();
 r.use(auth);

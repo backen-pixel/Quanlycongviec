@@ -50,7 +50,7 @@ app.use('/api/flows', require('./routes/flows'));
 app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/crm', require('./routes/crm'));
-app.use('/api/assistant', require('./routes/assistant'));
+try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
 
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {
