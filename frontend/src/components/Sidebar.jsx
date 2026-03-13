@@ -91,8 +91,8 @@ const CRM_MENU_GROUPS = [
     title: '3. Dữ liệu',
     emoji: '📋',
     items: [
-      { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
-      { to: '/products', icon: Package, label: 'Sản phẩm' },
+      { to: '/crm/customers', icon: UserCircle, label: 'Khách hàng' },
+      { to: '/crm/products', icon: Package, label: 'Sản phẩm' },
     ]
   },
 ];
