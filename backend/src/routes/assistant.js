@@ -1,14 +1,3 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// AI ASSISTANT ENGINE — Chat thông minh cho TuBep Pro
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Chức năng:
-// 1. Gợi ý việc cần làm tiếp theo
-// 2. Tạo dự án qua chat (hỏi KH, luồng, template)
-// 3. Tạo lead, báo giá, tasks qua chat
-// 4. Báo cáo nhanh (doanh thu, tiến độ, quá hạn)
-// 5. Trả lời câu hỏi về dữ liệu
-
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
@@ -16,17 +5,20 @@ const { supabase } = require('../config/supabase');
 const r = Router();
 r.use(auth);
 
-// ─── CONTEXT BUILDER: Thu thập data cho AI ──────────────────────────────
+// ─── CONTEXT BUILDER ────────────────────────────────────────────────────
 
 async function buildContext(userId) {
-  const [projects, tasks, leads, orders, invoices, customers, stages] = await Promise.all([
+  const [projects, tasks, leads, orders, invoices, customers, stages, flows] = await Promise.all([
     supabase.from('projects').select('id, code, name, status, estimated_value, current_stage_id, customer_id').eq('status', 'active').order('created_at', { ascending: false }).limit(20),
     supabase.from('tasks').select('id, title, status, priority, due_date, project_id, assignee_id').eq('assignee_id', userId).neq('status', 'done').order('due_date').limit(30),
-    supabase.from('crm_leads').select('id, code, title, estimated_value, stage_id, customer_id, next_follow_up, stage:crm_pipeline_stages(name, is_won, is_lost)').is('actual_close_date', null).order('created_at', { ascending: false }).limit(20),
+    supabase.from('crm_leads').select('id, code, title, estimated_value, stage_id, customer_id, next_follow_up, stage:crm_pipeline_stages(name, is_won, is_lost)').is('actual_close_date', null).order('created_at', { ascending: false }).limit(20).maybeSingle() ? 
+      supabase.from('crm_leads').select('id, code, title, estimated_value, stage_id, customer_id, next_follow_up, stage:crm_pipeline_stages(name, is_won, is_lost)').is('actual_close_date', null).order('created_at', { ascending: false }).limit(20) :
+      { data: [] },
     supabase.from('orders').select('id, code, total, status, paid_amount').neq('status', 'delivered').neq('status', 'cancelled').limit(20),
     supabase.from('invoices').select('id, code, total, paid_amount, payment_status').neq('payment_status', 'paid').limit(20),
     supabase.from('customers').select('id, full_name, phone').order('full_name').limit(50),
     supabase.from('workflow_stages').select('id, name, slug, order_index').is('company_id', null).eq('is_active', true).order('order_index'),
+    supabase.from('workflow_flows').select('id, name').limit(5),
   ]);
 
   const overdueTasks = (tasks.data || []).filter(t => t.due_date && new Date(t.due_date) < new Date());
@@ -45,11 +37,67 @@ async function buildContext(userId) {
     pendingOrders: (orders.data || []).length,
     unpaidInvoices: unpaidInvoices.length,
     totalDebt,
-    customers: (customers.data || []).slice(0, 30).map(c => ({ id: c.id, name: c.full_name })),
+    customers: (customers.data || []).map(c => ({ id: c.id, name: c.full_name, phone: c.phone })),
     stages: (stages.data || []).map(s => ({ id: s.id, name: s.name, slug: s.slug })),
+    flows: (flows.data || []).map(f => ({ id: f.id, name: f.name })),
     projects: (projects.data || []).slice(0, 10).map(p => ({ id: p.id, code: p.code, name: p.name, status: p.status })),
     leads: (leads.data || []).slice(0, 10).map(l => ({ id: l.id, code: l.code, title: l.title, stage: l.stage?.name })),
   };
+}
+
+// ─── HELPER: Create project ─────────────────────────────────────────────
+
+async function createProject({ name, customer_id, estimated_value, template }, userId) {
+  const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
+  const { data: firstStage } = await supabase.from('workflow_stages').select('id').is('company_id', null).eq('is_active', true).order('order_index').limit(1).single();
+  const year = new Date().getFullYear();
+  const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true });
+  const code = `TB-${year}-${String((count || 0) + 1).padStart(3, '0')}`;
+
+  const { data: project, error } = await supabase.from('projects').insert({
+    code, name, status: 'active',
+    customer_id: customer_id || null,
+    estimated_value: estimated_value || 0,
+    flow_id: flows?.[0]?.id, current_stage_id: firstStage?.id,
+    created_by: userId,
+  }).select('*').single();
+  if (error) throw error;
+
+  if (template) {
+    try { const { generateTasksForProject } = require('../helpers/autoFlow'); await generateTasksForProject(project.id, userId); } catch {}
+  }
+
+  return project;
+}
+
+// ─── HELPER: Create lead ────────────────────────────────────────────────
+
+async function createLead({ title, customer_id, estimated_value }, userId) {
+  const year = new Date().getFullYear();
+  const { data: seqs } = await supabase.from('code_sequences').select('current_number, year').eq('prefix', 'LEAD').single();
+  let num = 1;
+  if (seqs) { num = seqs.year === year ? (seqs.current_number || 0) + 1 : 1; await supabase.from('code_sequences').update({ current_number: num, year }).eq('prefix', 'LEAD'); }
+  else { await supabase.from('code_sequences').insert({ prefix: 'LEAD', current_number: 1, year }); }
+  const code = `LEAD-${year}-${String(num).padStart(3, '0')}`;
+
+  const { data: stages } = await supabase.from('crm_pipeline_stages').select('id').order('order_index').limit(1);
+  const { data: lead, error } = await supabase.from('crm_leads').insert({
+    code, title, customer_id: customer_id || null,
+    estimated_value: estimated_value || 0,
+    stage_id: stages?.[0]?.id, created_by: userId,
+  }).select('*').single();
+  if (error) throw error;
+  return lead;
+}
+
+// ─── HELPER: Find customer by name ──────────────────────────────────────
+
+function findCustomer(name, customers) {
+  if (!name) return null;
+  const n = name.toLowerCase().trim();
+  return customers.find(c => c.name.toLowerCase() === n) ||
+    customers.find(c => c.name.toLowerCase().includes(n)) ||
+    customers.find(c => n.includes(c.name.toLowerCase()));
 }
 
 // ─── SUGGEST NEXT ACTIONS ───────────────────────────────────────────────
@@ -58,44 +106,65 @@ async function suggestNextActions(userId) {
   const ctx = await buildContext(userId);
   const suggestions = [];
 
-  // Priority 1: Overdue tasks
   if (ctx.overdueTasks > 0) {
     suggestions.push({ priority: 'high', icon: '🔴', type: 'overdue_tasks',
-      message: `Bạn có ${ctx.overdueTasks} nhiệm vụ quá hạn cần hoàn thành ngay`,
-      detail: ctx.overdueTasksList.join(', '), action: '/my-tasks' });
+      message: `${ctx.overdueTasks} nhiệm vụ quá hạn`, detail: ctx.overdueTasksList.join(', '), action: '/my-tasks' });
   }
-
-  // Priority 2: Follow-up overdue
   if (ctx.overdueFollowUps > 0) {
     suggestions.push({ priority: 'high', icon: '📞', type: 'follow_up',
-      message: `${ctx.overdueFollowUps} lead cần follow-up (quá hạn)`,
-      detail: ctx.overdueFollowUpsList.join(', '), action: '/crm' });
+      message: `${ctx.overdueFollowUps} lead cần follow-up`, detail: ctx.overdueFollowUpsList.join(', '), action: '/crm' });
   }
-
-  // Priority 3: Unpaid invoices
   if (ctx.unpaidInvoices > 0) {
-    const fmt = new Intl.NumberFormat('vi-VN').format(ctx.totalDebt);
     suggestions.push({ priority: 'medium', icon: '💰', type: 'collect_payment',
-      message: `${ctx.unpaidInvoices} hóa đơn chưa thu (${fmt}đ)`,
-      action: '/crm/invoices' });
+      message: `${ctx.unpaidInvoices} hóa đơn chưa thu (${new Intl.NumberFormat('vi-VN').format(ctx.totalDebt)}đ)`, action: '/crm/invoices' });
   }
-
-  // Priority 4: Pending tasks
   if (ctx.myTasks > 0 && ctx.overdueTasks === 0) {
     suggestions.push({ priority: 'low', icon: '📋', type: 'do_tasks',
-      message: `Bạn có ${ctx.myTasks} nhiệm vụ đang chờ`, action: '/my-tasks' });
+      message: `${ctx.myTasks} nhiệm vụ đang chờ`, action: '/my-tasks' });
   }
-
-  // Priority 5: Open leads
   if (ctx.openLeads > 0) {
     suggestions.push({ priority: 'low', icon: '🎯', type: 'nurture_leads',
-      message: `${ctx.openLeads} cơ hội đang mở — hãy chăm sóc`, action: '/crm' });
+      message: `${ctx.openLeads} cơ hội đang mở`, action: '/crm' });
   }
-
   return { suggestions, context: ctx };
 }
 
-// ─── AI CHAT ENDPOINT ───────────────────────────────────────────────────
+// ─── SMART PARSER: Nhận diện ý định + trích xuất data ────────────────────
+
+function parseCreateProject(msg, customers) {
+  // "Tạo dự án Tủ bếp Anh Minh cho Nguyễn Văn Minh giá 150 triệu"
+  const m = msg.match(/(?:tạo|thêm)\s+dự\s*án\s+(.+?)(?:\s+(?:cho|khách|kh)\s+(.+?))?(?:\s+(?:giá|giá trị|value)\s+(\d[\d.,]*)\s*(triệu|tr|nghìn|k)?)?$/i);
+  if (!m) return null;
+
+  const name = m[1]?.replace(/(?:cho|khách|kh)\s+.*/i, '').trim();
+  const customerName = m[2]?.replace(/(?:giá|giá trị|value)\s+.*/i, '').trim();
+  let value = parseFloat((m[3] || '0').replace(/[.,]/g, ''));
+  const unit = m[4]?.toLowerCase();
+  if (unit === 'triệu' || unit === 'tr') value *= 1000000;
+  else if (unit === 'nghìn' || unit === 'k') value *= 1000;
+
+  const customer = findCustomer(customerName, customers);
+
+  return { name: name || 'Dự án mới', customer_id: customer?.id, customer_name: customer?.name || customerName, estimated_value: value, template: true };
+}
+
+function parseCreateLead(msg, customers) {
+  const m = msg.match(/(?:tạo|thêm)\s+lead\s+(.+?)(?:\s+(?:khách|kh|cho)\s+(.+?))?(?:\s+(?:giá|giá trị|value)\s+(\d[\d.,]*)\s*(triệu|tr|nghìn|k)?)?$/i);
+  if (!m) return null;
+
+  const title = m[1]?.replace(/(?:cho|khách|kh)\s+.*/i, '').trim();
+  const customerName = m[2]?.replace(/(?:giá|giá trị|value)\s+.*/i, '').trim();
+  let value = parseFloat((m[3] || '0').replace(/[.,]/g, ''));
+  const unit = m[4]?.toLowerCase();
+  if (unit === 'triệu' || unit === 'tr') value *= 1000000;
+  else if (unit === 'nghìn' || unit === 'k') value *= 1000;
+
+  const customer = findCustomer(customerName, customers);
+
+  return { title: title || 'Lead mới', customer_id: customer?.id, customer_name: customer?.name || customerName, estimated_value: value };
+}
+
+// ─── MAIN CHAT ──────────────────────────────────────────────────────────
 
 r.post('/chat', async (req, res) => {
   try {
@@ -103,58 +172,172 @@ r.post('/chat', async (req, res) => {
     if (!message) return res.status(400).json({ error: 'Nhập tin nhắn' });
 
     const ctx = await buildContext(req.user.userId);
-
-    // Check if OpenAI key is configured
     const apiKey = process.env.OPENAI_API_KEY;
 
+    // ── RULE-BASED: Try parse direct actions first (works with or without AI) ──
+    const msg = message.toLowerCase().trim();
+
+    // Direct create project
+    if (msg.match(/(tạo|thêm)\s+(dự\s*án|project)/)) {
+      const parsed = parseCreateProject(message, ctx.customers);
+
+      if (parsed && parsed.name && parsed.name !== 'Dự án mới') {
+        // Enough info → create directly
+        try {
+          const project = await createProject(parsed, req.user.userId);
+          return res.json({
+            reply: `✅ **Đã tạo dự án thành công!**\n\n📁 Mã: **${project.code}**\n📝 Tên: ${parsed.name}\n👤 KH: ${parsed.customer_name || 'Chưa chọn'}\n💰 Giá trị: ${new Intl.NumberFormat('vi-VN').format(parsed.estimated_value || 0)}đ\n📋 Nhiệm vụ mẫu: Đã tạo\n\n🔗 Click để xem →`,
+            action: { action: 'navigate', url: `/projects/${project.id}` },
+            created: { type: 'project', id: project.id, code: project.code },
+          });
+        } catch (e) {
+          return res.json({ reply: `❌ Lỗi tạo dự án: ${e.message}` });
+        }
+      }
+
+      // Not enough info → ask with customer list
+      const customerList = ctx.customers.slice(0, 15).map((c, i) => `${i + 1}. ${c.name}`).join('\n');
+      return res.json({
+        reply: `🏗️ **Tạo dự án mới**\n\nVui lòng cho biết:\n• Tên dự án? (VD: "Tủ bếp căn hộ A.Minh")\n• Khách hàng?\n\n📋 **Chọn KH:**\n${customerList}\n\n💡 Gõ: "Tạo dự án [tên] cho [tên KH]"\nVD: "Tạo dự án Tủ bếp gỗ sồi cho ${ctx.customers[0]?.name || 'Nguyễn Văn A'}"`,
+        action: { action: 'prompt_create_project', customers: ctx.customers.slice(0, 15) },
+      });
+    }
+
+    // Direct create lead
+    if (msg.match(/(tạo|thêm)\s+(lead|cơ hội)/)) {
+      const parsed = parseCreateLead(message, ctx.customers);
+
+      if (parsed && parsed.title && parsed.title !== 'Lead mới') {
+        try {
+          const lead = await createLead(parsed, req.user.userId);
+          return res.json({
+            reply: `✅ **Đã tạo lead thành công!**\n\n🎯 Mã: **${lead.code}**\n📝 Tên: ${parsed.title}\n👤 KH: ${parsed.customer_name || 'Chưa chọn'}\n💰 Giá trị: ${new Intl.NumberFormat('vi-VN').format(parsed.estimated_value || 0)}đ`,
+            action: { action: 'navigate', url: `/crm/leads/${lead.id}` },
+            created: { type: 'lead', id: lead.id, code: lead.code },
+          });
+        } catch (e) {
+          return res.json({ reply: `❌ Lỗi tạo lead: ${e.message}` });
+        }
+      }
+
+      const customerList = ctx.customers.slice(0, 15).map((c, i) => `${i + 1}. ${c.name}`).join('\n');
+      return res.json({
+        reply: `🎯 **Tạo Lead mới**\n\nVui lòng cho biết:\n• Tên cơ hội?\n• Khách hàng?\n• Giá trị ước tính?\n\n📋 **Chọn KH:**\n${customerList}\n\n💡 Gõ: "Tạo lead [tên] cho [tên KH] giá [số] triệu"`,
+        action: { action: 'prompt_create_lead', customers: ctx.customers.slice(0, 15) },
+      });
+    }
+
+    // Suggest
+    if (msg.match(/(làm gì|việc gì|gợi ý|tiếp theo|nên làm|suggest|next)/)) {
+      const { suggestions } = await suggestNextActions(req.user.userId);
+      if (!suggestions.length) return res.json({ reply: '✅ Không có việc gấp! Tốt lắm 👏' });
+      const lines = suggestions.map(s => `${s.icon} **${s.message}**${s.detail ? `\n   _${s.detail}_` : ''}`);
+      return res.json({ reply: `📋 **Việc cần làm:**\n\n${lines.join('\n\n')}`, action: { action: 'suggest', suggestions } });
+    }
+
+    // Report
+    if (msg.match(/(báo cáo|thống kê|doanh thu|report|tổng quan|overview)/)) {
+      const fmt = (n) => new Intl.NumberFormat('vi-VN').format(n);
+      return res.json({ reply: `📊 **Tổng quan:**\n\n🏗️ Dự án: **${ctx.activeProjects}**\n📋 Nhiệm vụ: **${ctx.myTasks}** (${ctx.overdueTasks} quá hạn)\n🎯 Lead: **${ctx.openLeads}**\n📦 Đơn hàng: **${ctx.pendingOrders}**\n💰 Công nợ: **${fmt(ctx.totalDebt)}đ** (${ctx.unpaidInvoices} HĐ)` });
+    }
+
+    // Overdue
+    if (msg.match(/(quá hạn|trễ hạn|overdue|muộn)/)) {
+      if (ctx.overdueTasks === 0 && ctx.overdueFollowUps === 0) return res.json({ reply: '✅ Không có gì quá hạn! 👏' });
+      let reply = '⚠️ **Quá hạn:**\n\n';
+      if (ctx.overdueTasks > 0) reply += `🔴 ${ctx.overdueTasks} nhiệm vụ: ${ctx.overdueTasksList.join(', ')}\n`;
+      if (ctx.overdueFollowUps > 0) reply += `📞 ${ctx.overdueFollowUps} follow-up: ${ctx.overdueFollowUpsList.join(', ')}`;
+      return res.json({ reply });
+    }
+
+    // Greeting
+    if (msg.match(/^(xin chào|hello|hi|chào|hey)/)) {
+      return res.json({ reply: `👋 Chào bạn! Tôi là trợ lý TuBep Pro.\n\n• ${ctx.myTasks} nhiệm vụ (${ctx.overdueTasks} quá hạn)\n• ${ctx.openLeads} cơ hội\n• ${ctx.unpaidInvoices} HĐ chưa thu\n\nTôi giúp gì?` });
+    }
+
+    // Pipeline
+    if (msg.match(/(pipeline|phễu|funnel)/)) {
+      const stageCount = {};
+      ctx.leads.forEach(l => { const s = l.stage || '?'; stageCount[s] = (stageCount[s] || 0) + 1; });
+      return res.json({ reply: `🎯 **Pipeline:**\n\n${Object.entries(stageCount).map(([s, c]) => `• ${s}: ${c}`).join('\n')}\n\nTổng: ${ctx.openLeads} leads` });
+    }
+
+    // Customers
+    if (msg.match(/(khách hàng|customer|danh sách kh)/)) {
+      return res.json({ reply: `👥 **KH (${ctx.customers.length}):**\n\n${ctx.customers.slice(0, 15).map(c => `• ${c.name}${c.phone ? ` — ${c.phone}` : ''}`).join('\n')}` });
+    }
+
+    // Help
+    if (msg.match(/(help|trợ giúp|hướng dẫn|lệnh)/)) {
+      return res.json({ reply: `🤖 **Lệnh:**\n\n• "Tạo dự án [tên] cho [KH]" → tạo ngay\n• "Tạo lead [tên] cho [KH] giá [số] triệu"\n• "Gợi ý việc cần làm"\n• "Báo cáo tổng quan"\n• "Quá hạn gì?"\n• "Danh sách khách hàng"\n• Hoặc hỏi tự do (cần OpenAI key)` });
+    }
+
+    // ── OPENAI: Free-form chat ──
     if (apiKey) {
-      // Use OpenAI
-      const aiResponse = await callOpenAI(apiKey, message, conversation, ctx, req.user);
+      const aiResponse = await callOpenAI(apiKey, message, conversation, ctx);
+      
+      // If AI returns action, execute it
+      if (aiResponse.action?.action === 'create_project' && aiResponse.action.data) {
+        try {
+          const d = aiResponse.action.data;
+          const customer = d.customer_id ? null : findCustomer(d.customer_name, ctx.customers);
+          const project = await createProject({ ...d, customer_id: d.customer_id || customer?.id, template: true }, req.user.userId);
+          return res.json({
+            reply: `${aiResponse.reply}\n\n✅ Đã tạo: **${project.code}**`,
+            action: { action: 'navigate', url: `/projects/${project.id}` },
+            created: { type: 'project', id: project.id, code: project.code },
+          });
+        } catch (e) {
+          return res.json({ reply: `${aiResponse.reply}\n\n❌ Lỗi tạo: ${e.message}` });
+        }
+      }
+
+      if (aiResponse.action?.action === 'create_lead' && aiResponse.action.data) {
+        try {
+          const d = aiResponse.action.data;
+          const customer = d.customer_id ? null : findCustomer(d.customer_name, ctx.customers);
+          const lead = await createLead({ ...d, customer_id: d.customer_id || customer?.id }, req.user.userId);
+          return res.json({
+            reply: `${aiResponse.reply}\n\n✅ Đã tạo: **${lead.code}**`,
+            action: { action: 'navigate', url: `/crm/leads/${lead.id}` },
+            created: { type: 'lead', id: lead.id, code: lead.code },
+          });
+        } catch (e) {
+          return res.json({ reply: `${aiResponse.reply}\n\n❌ Lỗi tạo: ${e.message}` });
+        }
+      }
+
       return res.json(aiResponse);
     }
 
-    // Fallback: Smart rule-based assistant
-    const response = await ruleBasedAssistant(message, ctx, req.user.userId);
-    res.json(response);
+    // Default
+    res.json({ reply: `Tôi hiểu: "${message}"\n\nThử:\n• "Tạo dự án [tên] cho [KH]"\n• "Gợi ý việc cần làm"\n• "Báo cáo"\n\n💡 Thêm OPENAI_API_KEY để chat tự do.` });
   } catch (e) {
-    console.error('AI Chat error:', e.message);
+    console.error('Chat error:', e);
     res.status(500).json({ error: e.message });
   }
 });
 
-// ─── OPENAI INTEGRATION ────────────────────────────────────────────────
+// ─── OPENAI ─────────────────────────────────────────────────────────────
 
-async function callOpenAI(apiKey, message, conversation, ctx, user) {
-  const systemPrompt = `Bạn là trợ lý AI của TuBep Pro — hệ thống quản lý công việc và CRM cho công ty tủ bếp.
+async function callOpenAI(apiKey, message, conversation, ctx) {
+  const systemPrompt = `Bạn là trợ lý AI của TuBep Pro — quản lý công việc & CRM tủ bếp.
 
-NGỮ CẢNH HIỆN TẠI:
-- ${ctx.activeProjects} dự án đang chạy
-- ${ctx.myTasks} nhiệm vụ chưa xong (${ctx.overdueTasks} quá hạn)
-- ${ctx.openLeads} lead/cơ hội đang mở (${ctx.overdueFollowUps} quá hạn follow-up)
-- ${ctx.pendingOrders} đơn hàng đang xử lý
-- ${ctx.unpaidInvoices} hóa đơn chưa thu (nợ: ${new Intl.NumberFormat('vi-VN').format(ctx.totalDebt)}đ)
+CONTEXT:
+- ${ctx.activeProjects} dự án, ${ctx.myTasks} tasks (${ctx.overdueTasks} quá hạn)
+- ${ctx.openLeads} leads, ${ctx.pendingOrders} ĐH, ${ctx.unpaidInvoices} HĐ chưa thu
+- Nợ: ${new Intl.NumberFormat('vi-VN').format(ctx.totalDebt)}đ
 
-DANH SÁCH KHÁCH HÀNG: ${ctx.customers.map(c => `${c.name} (${c.id.slice(0,8)})`).join(', ')}
-DỰ ÁN: ${ctx.projects.map(p => `${p.code}: ${p.name}`).join(', ')}
-LEADS: ${ctx.leads.map(l => `${l.code}: ${l.title} [${l.stage}]`).join(', ')}
-QUY TRÌNH: ${ctx.stages.map(s => s.name).join(' → ')}
+KH: ${ctx.customers.slice(0, 20).map(c => `${c.name}(${c.id.slice(0,8)})`).join(', ')}
+DA: ${ctx.projects.map(p => `${p.code}:${p.name}`).join(', ')}
 
-KHẢ NĂNG:
-1. Gợi ý việc cần làm tiếp theo
-2. Hướng dẫn tạo dự án, lead, báo giá
-3. Báo cáo nhanh: doanh thu, tiến độ, quá hạn
-4. Trả lời câu hỏi về dữ liệu
-5. Khi user muốn TẠO gì đó, trả JSON action
+QUAN TRỌNG - KHI USER MUỐN TẠO:
+Trả JSON block chính xác format này (trong \`\`\`json):
+Tạo dự án: {"action":"create_project","data":{"name":"tên","customer_id":"id hoặc null","customer_name":"tên KH","estimated_value":0}}
+Tạo lead: {"action":"create_lead","data":{"title":"tên","customer_id":"id hoặc null","customer_name":"tên KH","estimated_value":0}}
 
-KHI USER MUỐN TẠO/THỰC HIỆN:
-Trả response bình thường + thêm field "action" nếu cần thực hiện:
-- Tạo dự án: {"action":"create_project","data":{"name":"...","customer_id":"...","template":true}}
-- Tạo lead: {"action":"create_lead","data":{"title":"...","customer_id":"...","estimated_value":0}}
-- Gợi ý: {"action":"suggest","suggestions":[...]}
-- Báo cáo: {"action":"report","type":"revenue|overdue|pipeline"}
-
-Trả lời bằng tiếng Việt, ngắn gọn, thân thiện. Dùng emoji.
-Nếu thiếu thông tin để tạo, hãy HỎI (đừng tự đoán).`;
+Luôn match tên KH với danh sách KH ở trên để lấy đúng customer_id.
+Trả lời tiếng Việt, ngắn gọn, có emoji.`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -168,156 +351,41 @@ Nếu thiếu thông tin để tạo, hãy HỎI (đừng tự đoán).`;
     body: JSON.stringify({ model: 'gpt-4o-mini', messages, temperature: 0.7, max_tokens: 1000 }),
   });
 
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`OpenAI error: ${response.status} ${err}`);
-  }
+  if (!response.ok) throw new Error(`OpenAI: ${response.status}`);
 
   const data = await response.json();
   const content = data.choices[0].message.content;
 
-  // Try parse action from AI response
   let action = null;
   try {
-    const actionMatch = content.match(/```json\n([\s\S]*?)\n```/);
-    if (actionMatch) action = JSON.parse(actionMatch[1]);
+    const m = content.match(/```json\s*([\s\S]*?)\s*```/);
+    if (m) action = JSON.parse(m[1]);
   } catch {}
 
-  return { reply: content.replace(/```json\n[\s\S]*?\n```/g, '').trim(), action, source: 'openai' };
+  return { reply: content.replace(/```json\s*[\s\S]*?\s*```/g, '').trim(), action, source: 'openai' };
 }
 
-// ─── RULE-BASED FALLBACK (không cần API key) ────────────────────────────
-
-async function ruleBasedAssistant(message, ctx, userId) {
-  const msg = message.toLowerCase().trim();
-
-  // Greeting
-  if (msg.match(/^(xin chào|hello|hi|chào|hey)/)) {
-    return { reply: `👋 Xin chào! Tôi là trợ lý AI của TuBep Pro.\n\nHiện tại bạn có:\n• ${ctx.myTasks} nhiệm vụ (${ctx.overdueTasks} quá hạn)\n• ${ctx.openLeads} cơ hội bán hàng\n• ${ctx.unpaidInvoices} hóa đơn chưa thu\n\nTôi có thể giúp gì?` };
-  }
-
-  // Suggest / What to do
-  if (msg.match(/(làm gì|việc gì|gợi ý|tiếp theo|nên làm|suggest|next)/)) {
-    const { suggestions } = await suggestNextActions(userId);
-    if (!suggestions.length) return { reply: '✅ Tuyệt vời! Không có việc gấp. Bạn có thể chăm sóc lead hoặc kiểm tra tiến độ dự án.' };
-    const lines = suggestions.map(s => `${s.icon} **${s.message}**${s.detail ? `\n   _${s.detail}_` : ''}`);
-    return { reply: `📋 **Việc cần làm:**\n\n${lines.join('\n\n')}`, action: { action: 'suggest', suggestions } };
-  }
-
-  // Report / Stats
-  if (msg.match(/(báo cáo|thống kê|doanh thu|report|tổng quan|overview)/)) {
-    const fmt = (n) => new Intl.NumberFormat('vi-VN').format(n);
-    return { reply: `📊 **Tổng quan nhanh:**\n\n🏗️ Dự án đang chạy: **${ctx.activeProjects}**\n📋 Nhiệm vụ của bạn: **${ctx.myTasks}** (${ctx.overdueTasks} quá hạn)\n🎯 Lead đang mở: **${ctx.openLeads}**\n📦 ĐH đang xử lý: **${ctx.pendingOrders}**\n💰 Công nợ: **${fmt(ctx.totalDebt)}đ** (${ctx.unpaidInvoices} HĐ)`,
-      action: { action: 'report', type: 'overview' } };
-  }
-
-  // Overdue
-  if (msg.match(/(quá hạn|trễ hạn|overdue|muộn)/)) {
-    if (ctx.overdueTasks === 0 && ctx.overdueFollowUps === 0) return { reply: '✅ Không có gì quá hạn! Tốt lắm 👏' };
-    let reply = '⚠️ **Quá hạn:**\n\n';
-    if (ctx.overdueTasks > 0) reply += `🔴 ${ctx.overdueTasks} nhiệm vụ: ${ctx.overdueTasksList.join(', ')}\n`;
-    if (ctx.overdueFollowUps > 0) reply += `📞 ${ctx.overdueFollowUps} follow-up: ${ctx.overdueFollowUpsList.join(', ')}`;
-    return { reply };
-  }
-
-  // Create project
-  if (msg.match(/(tạo dự án|dự án mới|create project|thêm dự án)/)) {
-    return {
-      reply: '🏗️ **Tạo dự án mới**\n\nChọn thông tin:\n1. Khách hàng?\n2. Tên dự án?\n3. Giá trị ước tính?\n4. Dùng mẫu nhiệm vụ mặc định?\n\nHoặc gõ: "Tạo dự án [tên] cho [khách hàng]"',
-      action: { action: 'prompt_create_project', customers: ctx.customers.slice(0, 10) },
-    };
-  }
-
-  // Create lead
-  if (msg.match(/(tạo lead|lead mới|thêm cơ hội|cơ hội mới)/)) {
-    return {
-      reply: '🎯 **Tạo Lead mới**\n\nCần thông tin:\n1. Tên cơ hội?\n2. Khách hàng?\n3. Giá trị ước tính?\n\nHoặc gõ: "Tạo lead [tên] KH [tên KH] giá trị [số]"',
-      action: { action: 'prompt_create_lead', customers: ctx.customers.slice(0, 10) },
-    };
-  }
-
-  // Pipeline
-  if (msg.match(/(pipeline|phễu|funnel|lead.*giai đoạn)/)) {
-    const stageCount = {};
-    ctx.leads.forEach(l => { const s = l.stage || 'Chưa rõ'; stageCount[s] = (stageCount[s] || 0) + 1; });
-    const lines = Object.entries(stageCount).map(([s, c]) => `• ${s}: ${c}`);
-    return { reply: `🎯 **Pipeline:**\n\n${lines.join('\n')}\n\nTổng: ${ctx.openLeads} leads` };
-  }
-
-  // Customer list
-  if (msg.match(/(khách hàng|customer|danh sách kh)/)) {
-    const list = ctx.customers.slice(0, 10).map(c => `• ${c.name}`).join('\n');
-    return { reply: `👥 **Khách hàng (top 10):**\n\n${list}\n\n_Tổng: ${ctx.customers.length} KH_` };
-  }
-
-  // Help
-  if (msg.match(/(help|trợ giúp|hướng dẫn|commands|lệnh)/)) {
-    return { reply: `🤖 **Tôi có thể giúp:**\n\n• "Gợi ý việc cần làm"\n• "Báo cáo tổng quan"\n• "Quá hạn gì?"\n• "Tạo dự án mới"\n• "Tạo lead mới"\n• "Pipeline đang thế nào?"\n• "Danh sách khách hàng"\n• Hoặc hỏi bất kỳ câu hỏi nào!` };
-  }
-
-  // Default
-  return { reply: `Tôi hiểu bạn muốn: "${message}"\n\nTôi có thể:\n• Gợi ý việc cần làm\n• Báo cáo nhanh\n• Tạo dự án/lead\n• Trả lời câu hỏi\n\n💡 _Để thông minh hơn, thêm OPENAI_API_KEY vào biến môi trường._` };
-}
-
-// ─── ENDPOINTS ──────────────────────────────────────────────────────────
+// ─── SUGGESTIONS ENDPOINT ───────────────────────────────────────────────
 
 r.get('/suggestions', async (req, res) => {
-  try {
-    const result = await suggestNextActions(req.user.userId);
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  try { res.json(await suggestNextActions(req.user.userId)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Execute action from AI
+// ─── EXECUTE ENDPOINT (backup) ──────────────────────────────────────────
+
 r.post('/execute', async (req, res) => {
   try {
     const { action, data } = req.body;
-
     if (action === 'create_project') {
-      const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
-      const { data: firstStage } = await supabase.from('workflow_stages').select('id').is('company_id', null).eq('is_active', true).order('order_index').limit(1).single();
-      const year = new Date().getFullYear();
-      const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true });
-      const code = `TB-${year}-${String((count || 0) + 1).padStart(3, '0')}`;
-
-      const { data: project, error } = await supabase.from('projects').insert({
-        code, name: data.name, status: 'active',
-        customer_id: data.customer_id || null,
-        estimated_value: data.estimated_value || 0,
-        flow_id: flows?.[0]?.id, current_stage_id: firstStage?.id,
-        created_by: req.user.userId,
-      }).select('*').single();
-      if (error) throw error;
-
-      // Gen tasks if template requested
-      if (data.template) {
-        const { generateTasksForProject } = require('../helpers/autoFlow');
-        await generateTasksForProject(project.id, req.user.userId);
-      }
-
-      return res.json({ success: true, project, message: `✅ Đã tạo dự án ${code}` });
+      const project = await createProject(data, req.user.userId);
+      return res.json({ success: true, project, message: `✅ Đã tạo ${project.code}` });
     }
-
     if (action === 'create_lead') {
-      const { data: seqs } = await supabase.from('code_sequences').select('current_number, year').eq('prefix', 'LEAD').single();
-      const year = new Date().getFullYear();
-      let num = 1;
-      if (seqs) { num = seqs.year === year ? (seqs.current_number || 0) + 1 : 1; await supabase.from('code_sequences').update({ current_number: num, year }).eq('prefix', 'LEAD'); }
-      else { await supabase.from('code_sequences').insert({ prefix: 'LEAD', current_number: 1, year }); }
-      const code = `LEAD-${year}-${String(num).padStart(3, '0')}`;
-
-      const { data: stages } = await supabase.from('crm_pipeline_stages').select('id').order('order_index').limit(1);
-      const { data: lead, error } = await supabase.from('crm_leads').insert({
-        code, title: data.title, customer_id: data.customer_id || null,
-        estimated_value: data.estimated_value || 0,
-        stage_id: stages?.[0]?.id, created_by: req.user.userId,
-      }).select('*').single();
-      if (error) throw error;
-
-      return res.json({ success: true, lead, message: `✅ Đã tạo lead ${code}` });
+      const lead = await createLead(data, req.user.userId);
+      return res.json({ success: true, lead, message: `✅ Đã tạo ${lead.code}` });
     }
-
-    res.status(400).json({ error: `Action "${action}" chưa được hỗ trợ` });
+    res.status(400).json({ error: `Action "${action}" chưa hỗ trợ` });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
