@@ -3,6 +3,8 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 let autoFlow;
 try { autoFlow = require('../helpers/autoFlow'); } catch (e) { autoFlow = null; }
+let stageFlow;
+try { stageFlow = require('../helpers/stageFlow'); } catch (e) { stageFlow = null; }
 const { requirePermission, getAccessibleUnits, checkPermission } = require('../middleware/newPermission');
 
 const r = Router();
@@ -958,116 +960,50 @@ r.put('/:id/stage', async (req, res) => {
       stageLines = wlData || [];
     } catch { }
 
-    // Auto-create stage tasks from TEMPLATES (if available) or fallback defaults
-    const { data: templates } = await supabase.from('task_templates')
-      .select('*').eq('stage_id', stage.id).eq('is_active', true).order('order_index');
-
+    // Auto-create stage tasks from FLOW TEMPLATE (new logic) or fallback
     let createdTasks = [];
-
-    if (stageLines.length > 0) {
-      // ── CREATE TASKS FOR EACH WORKFLOW LINE ──
-      for (const line of stageLines) {
-        const lineAssignee = line.assignee_id || stageAssigneeId;
-        if (templates?.length) {
-          const { data: ins } = await supabase.from('tasks').insert(templates.map((t, i) => ({
-            project_id: data.id, stage_id: stage.id, title: `${t.title} — ${line.label}`,
-            description: t.description || null, priority: t.priority || 'medium', status: 'pending',
-            created_by_id: req.user.userId, order_index: i, assignee_id: lineAssignee,
-            estimated_hours: t.estimated_hours || null, task_type: 'project',
-            workflow_line_id: line.id,
-          }))).select();
-          const lineTasks = ins || [];
-          createdTasks.push(...lineTasks);
-          for (const tmpl of templates) {
-            if (tmpl.checklist_items?.length) {
-              const newTask = lineTasks.find(t => t.title === `${tmpl.title} — ${line.label}`);
-              if (newTask) {
-                await supabase.from('task_checklists').insert(
-                  tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
-                );
-              }
-            }
-          }
-        } else {
-          const stageDefaultTasks = {
-            design: [{ title: 'Thiết kế bản vẽ 2D', priority: 'high' },{ title: 'Thiết kế 3D render', priority: 'medium' },{ title: 'Khách duyệt bản thiết kế', priority: 'high' }],
-            quotation: [{ title: 'Bóc tách vật tư', priority: 'high' },{ title: 'Lập báo giá chi tiết', priority: 'high' },{ title: 'Gửi báo giá cho khách', priority: 'medium' }],
-            contract: [{ title: 'Soạn hợp đồng', priority: 'high' },{ title: 'Khách ký hợp đồng', priority: 'high' },{ title: 'Thu tiền cọc', priority: 'urgent' }],
-            production: [{ title: 'Đặt mua vật tư', priority: 'high' },{ title: 'Gia công CNC', priority: 'high' },{ title: 'Lắp ráp', priority: 'medium' },{ title: 'Sơn / dán bề mặt', priority: 'medium' },{ title: 'Kiểm tra chất lượng', priority: 'high' }],
-            shipping: [{ title: 'Đóng gói sản phẩm', priority: 'medium' },{ title: 'Sắp xếp xe vận chuyển', priority: 'medium' },{ title: 'Giao hàng đến công trình', priority: 'high' }],
-            installation: [{ title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },{ title: 'Lắp đặt tại công trình', priority: 'high' },{ title: 'Nghiệm thu với khách hàng', priority: 'urgent' }],
-            'customer-care': [{ title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' },{ title: 'Xử lý bảo hành (nếu có)', priority: 'high' }],
-          };
-          const defTasks = stageDefaultTasks[stage_slug] || [];
-          if (defTasks.length) {
-            const { data: ins } = await supabase.from('tasks').insert(defTasks.map((t, i) => ({
-              project_id: data.id, stage_id: stage.id, title: `${t.title} — ${line.label}`,
-              priority: t.priority, status: 'pending', created_by_id: req.user.userId,
-              order_index: i, assignee_id: lineAssignee, task_type: 'project',
-              workflow_line_id: line.id,
-            }))).select();
-            createdTasks.push(...(ins || []));
-          }
+    if (stageFlow) {
+      try {
+        const result = await stageFlow.createStageTasksFromFlow(
+          data.id, stage.id, stage_slug, req.user.userId, stageAssigneeId
+        );
+        createdTasks = result.tasks || [];
+        if (result.flowStep) {
+          console.log(`[StageFlow] ${data.code || data.id}: ${stage_slug} → Khối ${result.flowStep.division?.name || '?'}, template: ${result.templateSet?.name || 'fallback'}, ${createdTasks.length} tasks`);
         }
-        if (line.assignee_id) {
-          const lineTaskCount = createdTasks.filter(t => t.workflow_line_id === line.id).length;
-          if (lineTaskCount) {
-            await createNotification(req, line.assignee_id, 'task_assigned',
-              `📌 ${lineTaskCount} NV "${line.label}"`, `GĐ "${stage.name}" — DA ${fullProj?.code}`, 'project', data.id);
-          }
-        }
+      } catch (e) {
+        console.error('[StageFlow] Error:', e.message);
       }
-    } else {
-      // ── LEGACY: single-person tasks ──
-      if (templates?.length) {
-        const { data: inserted } = await supabase.from('tasks').insert(templates.map((t, i) => ({
+    }
+
+    // Legacy fallback: if stageFlow not available or created 0 tasks
+    if (!createdTasks.length && !stageFlow) {
+      const stageDefaultTasks = {
+        design: [{ title: 'Thiết kế bản vẽ 2D', priority: 'high' },{ title: 'Thiết kế 3D render', priority: 'medium' },{ title: 'Khách duyệt bản thiết kế', priority: 'high' }],
+        quotation: [{ title: 'Bóc tách vật tư', priority: 'high' },{ title: 'Lập báo giá chi tiết', priority: 'high' },{ title: 'Gửi báo giá cho khách', priority: 'medium' }],
+        contract: [{ title: 'Soạn hợp đồng', priority: 'high' },{ title: 'Khách ký hợp đồng', priority: 'high' },{ title: 'Thu tiền cọc', priority: 'urgent' }],
+        production: [{ title: 'Đặt mua vật tư', priority: 'high' },{ title: 'Gia công CNC', priority: 'high' },{ title: 'Lắp ráp', priority: 'medium' },{ title: 'Kiểm tra chất lượng', priority: 'high' }],
+        shipping: [{ title: 'Đóng gói sản phẩm', priority: 'medium' },{ title: 'Sắp xếp xe vận chuyển', priority: 'medium' },{ title: 'Giao hàng đến công trình', priority: 'high' }],
+        installation: [{ title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },{ title: 'Lắp đặt tại công trình', priority: 'high' },{ title: 'Nghiệm thu với khách hàng', priority: 'urgent' }],
+        'customer-care': [{ title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' },{ title: 'Xử lý bảo hành (nếu có)', priority: 'high' }],
+      };
+      const tasks = stageDefaultTasks[stage_slug];
+      if (tasks) {
+        const { data: inserted } = await supabase.from('tasks').insert(tasks.map((t, i) => ({
           project_id: data.id, stage_id: stage.id, title: t.title,
-          description: t.description || null,
-          priority: t.priority || 'medium', status: 'pending',
-          created_by_id: req.user.userId, order_index: i,
-          assignee_id: stageAssigneeId,
-          estimated_hours: t.estimated_hours || null,
-          task_type: 'project',
+          priority: t.priority, status: 'pending', created_by_id: req.user.userId,
+          order_index: i, assignee_id: stageAssigneeId, task_type: 'project',
         }))).select();
         createdTasks = inserted || [];
-        for (const tmpl of templates) {
-          if (tmpl.checklist_items?.length) {
-            const newTask = createdTasks.find(t => t.title === tmpl.title);
-            if (newTask) {
-              await supabase.from('task_checklists').insert(
-                tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
-              );
-            }
-          }
-        }
-      } else {
-        const stageDefaultTasks = {
-          design: [{ title: 'Thiết kế bản vẽ 2D', priority: 'high' },{ title: 'Thiết kế 3D render', priority: 'medium' },{ title: 'Khách duyệt bản thiết kế', priority: 'high' }],
-          quotation: [{ title: 'Bóc tách vật tư', priority: 'high' },{ title: 'Lập báo giá chi tiết', priority: 'high' },{ title: 'Gửi báo giá cho khách', priority: 'medium' }],
-          contract: [{ title: 'Soạn hợp đồng', priority: 'high' },{ title: 'Khách ký hợp đồng', priority: 'high' },{ title: 'Thu tiền cọc', priority: 'urgent' }],
-          production: [{ title: 'Đặt mua vật tư', priority: 'high' },{ title: 'Gia công CNC', priority: 'high' },{ title: 'Lắp ráp', priority: 'medium' },{ title: 'Sơn / dán bề mặt', priority: 'medium' },{ title: 'Kiểm tra chất lượng', priority: 'high' }],
-          shipping: [{ title: 'Đóng gói sản phẩm', priority: 'medium' },{ title: 'Sắp xếp xe vận chuyển', priority: 'medium' },{ title: 'Giao hàng đến công trình', priority: 'high' }],
-          installation: [{ title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },{ title: 'Lắp đặt tại công trình', priority: 'high' },{ title: 'Nghiệm thu với khách hàng', priority: 'urgent' }],
-          'customer-care': [{ title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' },{ title: 'Xử lý bảo hành (nếu có)', priority: 'high' }],
-        };
-        const tasks = stageDefaultTasks[stage_slug];
-        if (tasks) {
-          const { data: inserted } = await supabase.from('tasks').insert(tasks.map((t, i) => ({
-            project_id: data.id, stage_id: stage.id, title: t.title,
-            priority: t.priority, status: 'pending', created_by_id: req.user.userId,
-            order_index: i, assignee_id: stageAssigneeId, task_type: 'project',
-          }))).select();
-          createdTasks = inserted || [];
-        }
       }
+    }
 
-      // Notify stage person about their new tasks (legacy)
-      if (stageAssigneeId && createdTasks.length) {
-        await createNotification(req, stageAssigneeId, 'task_assigned',
-          `📌 ${createdTasks.length} nhiệm vụ mới`,
-          `GĐ "${stage.name}" — ${createdTasks.length} NV — DA ${fullProj?.code}`,
-          'project', data.id);
-      }
+    // Notify about new tasks
+    if (stageAssigneeId && createdTasks.length) {
+      await createNotification(req, stageAssigneeId, 'task_assigned',
+        `📌 ${createdTasks.length} nhiệm vụ mới`,
+        `GĐ "${stage.name}" — ${createdTasks.length} NV — DA ${fullProj?.code}`,
+        'project', data.id);
     }
 
     // Log
