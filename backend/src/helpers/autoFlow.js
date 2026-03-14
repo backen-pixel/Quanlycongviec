@@ -55,17 +55,32 @@ async function onLeadWon(leadId, userId) {
   const { data: lead } = await supabase.from('crm_leads')
     .select('*, customer:customers(id, full_name)')
     .eq('id', leadId).single();
-  if (!lead || lead.project_id) return null;
+  if (!lead) return null;
 
-  const project = await createProjectFromLead(lead, userId);
-  const taskCount = await generateTasksForProject(project.id, userId);
+  // DA đã tạo khi tạo Lead → chỉ cần link BG/ĐH nếu có
+  let project = null;
+  if (lead.project_id) {
+    const { data: p } = await supabase.from('projects').select('*').eq('id', lead.project_id).single();
+    project = p;
+  } else {
+    // Trường hợp lead cũ chưa có project → tạo mới
+    project = await createProjectFromLead(lead, userId);
+  }
+
+  // Link existing quotations/orders to project
+  if (project) {
+    await Promise.all([
+      supabase.from('quotations').update({ project_id: project.id }).eq('lead_id', leadId).is('project_id', null),
+      supabase.from('orders').update({ project_id: project.id }).eq('lead_id', leadId).is('project_id', null),
+    ]);
+  }
 
   // Log activity
   await supabase.from('crm_activities').insert({
-    lead_id: leadId, type: 'note', title: '🚀 Tự động tạo dự án',
-    description: `Dự án ${project.code} + ${taskCount || 0} tasks được tạo tự động khi chốt deal`,
+    lead_id: leadId, type: 'note', title: '🎉 Chốt thành công!',
+    description: `Lead chốt deal${project ? ' — DA: ' + project.code : ''}`,
     created_by: userId,
-  });
+  }).catch(() => {});
 
   return project;
 }
@@ -74,19 +89,23 @@ async function createProjectFromLead(lead, userId) {
   const [flowId, firstStageId, code] = await Promise.all([getDefaultFlow(), getFirstStage(), nextProjectCode()]);
 
   const { data: project, error } = await supabase.from('projects').insert({
-    code, name: lead.title, status: 'active', customer_id: lead.customer_id,
+    code, name: lead.title, status: 'consulting', customer_id: lead.customer_id,
     estimated_value: lead.estimated_value, flow_id: flowId,
     current_stage_id: firstStageId, created_by: userId,
   }).select('*').single();
   if (error) throw error;
 
-  // Link everything to project
-  await Promise.all([
-    supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', lead.id),
-    supabase.from('quotations').update({ project_id: project.id }).eq('lead_id', lead.id),
-    supabase.from('orders').update({ project_id: project.id }).eq('lead_id', lead.id),
-    supabase.from('invoices').update({ project_id: project.id }).eq('lead_id', lead.id),
-  ]);
+  // Link lead to project
+  await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', lead.id);
+
+  // Auto create tasks for Tư vấn stage using stageFlow
+  let stageFlow = null;
+  try { stageFlow = require('./stageFlow'); } catch {}
+  if (stageFlow && firstStageId) {
+    try {
+      await stageFlow.createStageTasksFromFlow(project.id, firstStageId, 'consulting', userId, null);
+    } catch (e) { console.error('Auto tasks consulting:', e.message); }
+  }
 
   return project;
 }
