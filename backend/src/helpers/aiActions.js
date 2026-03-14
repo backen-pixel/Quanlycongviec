@@ -280,6 +280,117 @@ const ACTIONS = {
     return { success: true, message: `✅ Giao **${data.title}** → ${assignee_name || 'NV'}` };
   },
 
+  // ─── UPDATE PROJECT ───────────────────────────────────────────────────
+  update_project: async ({ project_id, updates }) => {
+    const allowed = ['name','status','priority','estimated_value','install_address','kitchen_type','material','install_date','design_deadline','description','sales_person_id','designer_id','project_manager_id','supervisor_id'];
+    const clean = {}; for (const k of allowed) if (updates[k] !== undefined) clean[k] = updates[k];
+    clean.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('projects').update(clean).eq('id', project_id).select('code,name').single();
+    if (error) throw error;
+    return { success: true, message: `✅ Cập nhật DA **${data.code}**: ${Object.keys(clean).filter(k=>k!=='updated_at').join(', ')}`, navigate: `/projects/${project_id}` };
+  },
+
+  // ─── DELETE PROJECT ───────────────────────────────────────────────────
+  delete_project: async ({ project_id }) => {
+    await supabase.from('tasks').delete().eq('project_id', project_id);
+    const { data, error } = await supabase.from('projects').delete().eq('id', project_id).select('code,name').single();
+    if (error) throw error;
+    return { success: true, message: `🗑️ Đã xóa DA **${data.code}: ${data.name}**` };
+  },
+
+  // ─── UPDATE TASK ──────────────────────────────────────────────────────
+  update_task: async ({ task_id, updates }) => {
+    const allowed = ['title','status','priority','due_date','description','assignee_id'];
+    const clean = {}; for (const k of allowed) if (updates[k] !== undefined) clean[k] = updates[k];
+    if (clean.status === 'done') clean.completed_at = new Date().toISOString();
+    const { data, error } = await supabase.from('tasks').update(clean).eq('id', task_id).select('title').single();
+    if (error) throw error;
+    return { success: true, message: `✅ Cập nhật NV **${data.title}**` };
+  },
+
+  // ─── DELETE TASK ──────────────────────────────────────────────────────
+  delete_task: async ({ task_id }) => {
+    const { data, error } = await supabase.from('tasks').delete().eq('id', task_id).select('title').single();
+    if (error) throw error;
+    return { success: true, message: `🗑️ Đã xóa NV **${data.title}**` };
+  },
+
+  // ─── SEARCH ───────────────────────────────────────────────────────────
+  search: async ({ query }) => {
+    const q = `%${query}%`;
+    const [projects, customers, tasks, leads] = await Promise.all([
+      supabase.from('projects').select('id,code,name,status').ilike('name', q).limit(5),
+      supabase.from('customers').select('id,full_name,phone').or(`full_name.ilike.${q},phone.ilike.${q}`).limit(5),
+      supabase.from('tasks').select('id,title,status,project:projects(code)').ilike('title', q).limit(5),
+      supabase.from('crm_leads').select('id,code,title,stage:crm_pipeline_stages(name)').ilike('title', q).limit(5),
+    ]);
+    const results = [];
+    (projects.data||[]).forEach(p => results.push(`🏗️ ${p.code}: ${p.name} (${p.status})`));
+    (customers.data||[]).forEach(c => results.push(`👤 ${c.full_name} ${c.phone||''}`));
+    (tasks.data||[]).forEach(t => results.push(`📋 ${t.project?.code||''} ${t.title} (${t.status})`));
+    (leads.data||[]).forEach(l => results.push(`🎯 ${l.code}: ${l.title} → ${l.stage?.name||'?'}`));
+    return { success: true, message: results.length ? `🔍 **Kết quả "${query}":**\n\n${results.join('\n')}` : `🔍 Không tìm thấy "${query}"` };
+  },
+
+  // ─── LIST TASKS BY PROJECT ────────────────────────────────────────────
+  list_tasks: async ({ project_id, status }) => {
+    let q = supabase.from('tasks').select('id,title,status,priority,due_date,assignee:users!tasks_assignee_id_fkey(full_name),stage:workflow_stages(name)').eq('project_id', project_id).order('created_at');
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q.limit(30);
+    if (error) throw error;
+    const statusIcon = { done: '✅', in_progress: '🔵', pending: '⏳', review: '🔍' };
+    const prioIcon = { high: '🔴', medium: '🟡', low: '🟢' };
+    return { success: true, message: `📋 **${(data||[]).length} nhiệm vụ:**\n\n${(data||[]).map(t => 
+      `${statusIcon[t.status]||'⚪'} ${prioIcon[t.priority]||''} ${t.title} — ${t.assignee?.full_name||'?'}${t.due_date ? ' (hạn: '+new Date(t.due_date).toLocaleDateString('vi')+')' : ''}`
+    ).join('\n') || 'Chưa có task'}` };
+  },
+
+  // ─── PROJECT DETAIL ───────────────────────────────────────────────────
+  project_detail: async ({ project_id }) => {
+    const { data: p, error } = await supabase.from('projects').select(`
+      id,code,name,status,priority,estimated_value,install_address,created_at,
+      customer:customers(full_name,phone),
+      current_stage:workflow_stages(name),
+      tasks(id,title,status,priority,due_date)
+    `).eq('id', project_id).single();
+    if (error) throw error;
+    const tasks = p.tasks || [];
+    const done = tasks.filter(t => t.status === 'done').length;
+    const overdue = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length;
+    return { success: true, message: `📊 **${p.code}: ${p.name}**\n\n👤 KH: ${p.customer?.full_name||'—'} (${p.customer?.phone||''})\n📍 GĐ: ${p.current_stage?.name||p.status}\n💰 GT: ${fmt(p.estimated_value)}đ\n🏠 ĐC: ${p.install_address||'—'}\n⚡ ƯT: ${p.priority}\n\n📋 **NV:** ${done}/${tasks.length} xong${overdue ? ` | 🔴 ${overdue} quá hạn` : ''}\n📅 Tạo: ${new Date(p.created_at).toLocaleDateString('vi')}`, navigate: `/projects/${project_id}` };
+  },
+
+  // ─── CUSTOMER DETAIL ──────────────────────────────────────────────────
+  customer_detail: async ({ customer_id }) => {
+    const { data: c } = await supabase.from('customers').select('*').eq('id', customer_id).single();
+    if (!c) throw new Error('KH không tồn tại');
+    const { data: projects } = await supabase.from('projects').select('id,code,name,status').eq('customer_id', customer_id).limit(10);
+    return { success: true, message: `👤 **${c.full_name}**\n📞 ${c.phone||'—'} | ✉️ ${c.email||'—'}\n🏠 ${c.address||'—'}\n\n🏗️ **DA:** ${(projects||[]).length}\n${(projects||[]).map(p => `• ${p.code}: ${p.name} (${p.status})`).join('\n') || 'Chưa có DA'}` };
+  },
+
+  // ─── DELETE CUSTOMER ──────────────────────────────────────────────────
+  delete_customer: async ({ customer_id }) => {
+    const { data, error } = await supabase.from('customers').delete().eq('id', customer_id).select('full_name').single();
+    if (error) throw error;
+    return { success: true, message: `🗑️ Đã xóa KH **${data.full_name}**` };
+  },
+
+  // ─── DELETE LEAD ──────────────────────────────────────────────────────
+  delete_lead: async ({ lead_id }) => {
+    const { data, error } = await supabase.from('crm_leads').delete().eq('id', lead_id).select('code,title').single();
+    if (error) throw error;
+    return { success: true, message: `🗑️ Đã xóa lead **${data.code}: ${data.title}**` };
+  },
+
+  // ─── ASSIGN PROJECT PERSONS ───────────────────────────────────────────
+  assign_project_person: async ({ project_id, role, user_id, user_name }) => {
+    const roleMap = { 'kinh doanh':'sales_person_id', 'thiết kế':'designer_id', 'quản lý':'project_manager_id', 'giám sát':'supervisor_id' };
+    const col = roleMap[role] || role + '_id';
+    const { error } = await supabase.from('projects').update({ [col]: user_id }).eq('id', project_id);
+    if (error) throw error;
+    return { success: true, message: `✅ Giao ${role} → **${user_name || 'NV'}**`, navigate: `/projects/${project_id}` };
+  },
+
   // ─── 9. FULL FLOW — TỰ ĐỘNG TỪ A-Z ──────────────────────────────────
   full_flow: async ({ customer_name, customer_phone, project_name, items, estimated_value }, userId, ctx) => {
     const results = [];

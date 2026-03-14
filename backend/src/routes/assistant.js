@@ -155,6 +155,87 @@ function parseIntent(msg, ctx) {
     return { action: 'accept_quotation', data: {} };
   }
 
+  // Search
+  if (m.match(/(tìm|search|tìm kiếm|tra cứu)\s+(.+)/)) {
+    const match = m.match(/(?:tìm|search|tìm kiếm|tra cứu)\s+(.+?)$/i);
+    return { action: 'search', data: { query: match?.[1]?.trim() }};
+  }
+
+  // Update project
+  if (m.match(/(cập nhật|sửa|update|đổi)\s+(dự án|da|project)/)) {
+    const projMatch = m.match(/(?:dự án|da|project)\s+(.+?)(?:\s+(?:thành|→|->|=)\s+(.+?))?$/i);
+    const project = findProject(projMatch?.[1], ctx.projects);
+    // Parse updates from text
+    const updates = {};
+    const prioMatch = m.match(/(?:ưu tiên|priority)\s*(cao|thấp|trung bình|high|medium|low)/i);
+    if (prioMatch) updates.priority = { 'cao':'high', 'thấp':'low', 'trung bình':'medium' }[prioMatch[1]] || prioMatch[1];
+    const nameMatch = m.match(/(?:tên|name)\s*(?:thành|→|=|:)\s*(.+?)$/i);
+    if (nameMatch) updates.name = nameMatch[1].trim();
+    const valMatch = m.match(/(?:giá|gt|value)\s*(\d[\d.,]*)\s*(triệu|tr)?/i);
+    if (valMatch) updates.estimated_value = parseValue(valMatch[0]);
+    return { action: 'update_project', data: { project_id: project?.id, updates }};
+  }
+
+  // Delete project
+  if (m.match(/(xóa|delete|hủy)\s+(dự án|da|project)/)) {
+    const projMatch = m.match(/(?:dự án|da|project)\s+(.+?)$/i);
+    const project = findProject(projMatch?.[1], ctx.projects);
+    return { action: 'delete_project', data: { project_id: project?.id }};
+  }
+
+  // Update task
+  if (m.match(/(cập nhật|sửa|update|đổi)\s+(nhiệm vụ|nv|task)/)) {
+    return { action: 'update_task', data: {} };
+  }
+
+  // Delete task
+  if (m.match(/(xóa|delete)\s+(nhiệm vụ|nv|task)/)) {
+    return { action: 'delete_task', data: {} };
+  }
+
+  // List tasks of project
+  if (m.match(/(xem|list|danh sách)\s*(nhiệm vụ|nv|task|việc)\s*(của|dự án|da|project)?/)) {
+    const projMatch = m.match(/(?:của|dự án|da|project)\s+(.+?)$/i);
+    const project = findProject(projMatch?.[1], ctx.projects);
+    return { action: 'list_tasks', data: { project_id: project?.id }};
+  }
+
+  // Project detail
+  if (m.match(/(xem|chi tiết|detail)\s*(dự án|da|project)\s+/)) {
+    const projMatch = m.match(/(?:dự án|da|project)\s+(.+?)$/i);
+    const project = findProject(projMatch?.[1], ctx.projects);
+    return { action: 'project_detail', data: { project_id: project?.id }};
+  }
+
+  // Customer detail
+  if (m.match(/(xem|chi tiết)\s*(khách|kh|customer)\s+/)) {
+    const custMatch = m.match(/(?:khách|kh|customer)\s+(.+?)$/i);
+    const customer = findCustomer(custMatch?.[1], ctx.customers);
+    return { action: 'customer_detail', data: { customer_id: customer?.id }};
+  }
+
+  // Delete customer
+  if (m.match(/(xóa|delete)\s+(khách|kh|customer)/)) {
+    const custMatch = m.match(/(?:khách|kh|customer)\s+(.+?)$/i);
+    const customer = findCustomer(custMatch?.[1], ctx.customers);
+    return { action: 'delete_customer', data: { customer_id: customer?.id }};
+  }
+
+  // Delete lead
+  if (m.match(/(xóa|delete)\s+lead/)) {
+    const match = m.match(/lead\s+(.+?)$/i);
+    const lead = findLead(match?.[1], ctx.leads);
+    return { action: 'delete_lead', data: { lead_id: lead?.id }};
+  }
+
+  // Assign project person
+  if (m.match(/(giao|assign|phân công)\s+(kinh doanh|thiết kế|quản lý|giám sát)/)) {
+    const match = m.match(/(?:giao|assign|phân công)\s+(kinh doanh|thiết kế|quản lý|giám sát)\s+(?:cho|→|=)?\s*(.+?)(?:\s+(?:dự án|da)\s+(.+?))?$/i);
+    const user = ctx.users.find(u => u.name?.toLowerCase().includes(match?.[2]?.toLowerCase()));
+    const project = findProject(match?.[3], ctx.projects);
+    return { action: 'assign_project_person', data: { project_id: project?.id, role: match?.[1], user_id: user?.id, user_name: user?.name || match?.[2] }};
+  }
+
   // Suggest
   if (m.match(/(làm gì|việc gì|gợi ý|tiếp theo|nên làm|suggest|next)/)) return { action: 'suggest' };
 
@@ -354,7 +435,7 @@ r.post('/chat', async (req, res) => {
     }
 
     if (intent.action === 'help') {
-      return res.json({ reply: `🤖 **Tôi làm được:**\n\n**Tạo:**\n• "Tạo KH Nguyễn A SĐT 090xxx"\n• "Tạo dự án Tủ bếp cho Nguyễn A giá 150tr"\n• "Tạo lead Tủ bếp gỗ sồi cho Trần B"\n• "Tạo báo giá/đơn hàng/hóa đơn"\n\n**Hành động:**\n• "Chuyển giai đoạn DA TB-2026-001"\n• "Thu 50 triệu"\n• "Ghi cuộc gọi: tư vấn KH"\n\n**Tự động:**\n• "Luồng tự động cho Nguyễn A DA Tủ bếp"\n\n**Thống kê:**\n• "Báo cáo" — tổng hợp DA + NV + doanh thu\n• "Doanh thu" — chi tiết thu/nợ/tháng\n• "Quá hạn" — DA + NV + follow-up quá hạn\n• "Danh sách KH/DA"` });
+      return res.json({ reply: `🤖 **AI — Điều khiển TOÀN BỘ hệ thống:**\n\n**🆕 Tạo:**\n• "Tạo KH Nguyễn A SĐT 090xxx"\n• "Tạo dự án Tủ bếp cho Nguyễn A giá 150tr"\n• "Tạo lead/báo giá/đơn hàng/hóa đơn"\n• "Tạo NV [tên] cho DA [code]"\n• "Luồng tự động cho [KH] DA [tên]"\n\n**✏️ Sửa/Xóa:**\n• "Sửa DA [code] giá 200tr"\n• "Xóa DA/KH/Lead/NV [tên]"\n• "Đổi ưu tiên DA [code] cao"\n\n**👥 Phân công:**\n• "Giao kinh doanh cho Nguyễn A DA [code]"\n• "Giao NV [tên] cho [NV]"\n• "Chuyển giai đoạn DA [code]"\n\n**💰 Tài chính:**\n• "Thu 50 triệu"\n• "Duyệt BG"\n• "Doanh thu" / "Công nợ"\n\n**📊 Thống kê:**\n• "Báo cáo" — tổng hợp\n• "Quá hạn" — DA + NV\n• "Doanh thu" — thu/nợ\n\n**🔍 Tra cứu:**\n• "Tìm [tên KH/DA/NV]"\n• "Xem DA [code]"\n• "Xem NV của DA [code]"\n• "Xem KH [tên]"\n• "Danh sách KH/DA"` });
     }
 
     // ── OPENAI FALLBACK ──
