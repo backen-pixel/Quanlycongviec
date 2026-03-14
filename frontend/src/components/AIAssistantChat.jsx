@@ -116,7 +116,7 @@ export default function AIAssistantChat() {
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap ${
                   m.role === 'user' ? 'bg-blue-600 text-white rounded-br-md' : 'bg-gray-100 text-gray-900 rounded-bl-md'}`}>
-                  {m.content}
+                  {(m.content || '').replace(/\[WIZARD:\w+:\d+\]/g, '').replace(/\[DATA:\w+=.*?\]/g, '').trim()}
                   {m.action?.action === 'prompt' && m.action.customers && (
                     <div className="mt-2 pt-2 border-t border-gray-200">
                       {m.action.flows?.length > 0 && (
