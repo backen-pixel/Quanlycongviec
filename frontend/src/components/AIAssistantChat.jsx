@@ -47,11 +47,12 @@ export default function AIAssistantChat() {
   };
 
   const quickActions = [
-    { label: '💡 Gợi ý', msg: 'Gợi ý việc cần làm' },
     { label: '📊 Báo cáo', msg: 'Báo cáo tổng quan' },
+    { label: '⚠️ Quá hạn', msg: 'Quá hạn' },
+    { label: '💰 Doanh thu', msg: 'Doanh thu' },
     { label: '🏗️ Tạo DA', msg: 'Tạo dự án' },
-    { label: '🎯 Lead', msg: 'Tạo lead' },
-    { label: '👤 KH', msg: 'Tạo KH' },
+    { label: '👤 Tạo KH', msg: 'Tạo khách hàng' },
+    { label: '🔍 Tìm', msg: 'Tìm ' },
     { label: '🚀 Auto', msg: 'Luồng tự động' },
     { label: '❓ Help', msg: 'help' },
   ];
