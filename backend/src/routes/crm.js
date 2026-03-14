@@ -3,7 +3,7 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
-const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [] } = autoFlowFns;
+const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [], createProjectFromLead = async () => null } = autoFlowFns;
 
 const r = Router();
 r.use(auth);
@@ -156,7 +156,23 @@ r.post('/leads', async (req, res) => {
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
       .single();
     if (error) throw error;
-    res.status(201).json(data);
+
+    // AUTO: Tạo Lead = bắt đầu Tư vấn → auto tạo DA + tasks
+    let autoProject = null;
+    try {
+      const { createProjectFromLead } = autoFlowFns;
+      if (createProjectFromLead && !data.project_id) {
+        autoProject = await createProjectFromLead(data, req.user.userId);
+        // Log activity
+        await supabase.from('crm_activities').insert({
+          lead_id: data.id, type: 'note', title: '🏗️ Tự động tạo dự án',
+          description: `Dự án ${autoProject.code} + tasks Tư vấn tạo tự động khi tạo Lead`,
+          created_by: req.user.userId,
+        }).catch(() => {});
+      }
+    } catch (e) { console.error('Auto create project on lead:', e.message); }
+
+    res.status(201).json({ ...data, autoProject });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

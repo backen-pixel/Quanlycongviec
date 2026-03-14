@@ -132,7 +132,18 @@ const ACTIONS = {
       stage_id: pipeStages?.[0]?.id, created_by: userId,
     }).select('*').single();
     if (error) throw error;
-    return { success: true, message: `✅ Tạo lead **${code}**: ${title} | ${fmt(estimated_value)}đ`, data, navigate: `/crm/leads/${data.id}` };
+
+    // AUTO: Tạo Lead = Tạo DA + Tasks Tư vấn ngay
+    let autoProject = null;
+    try {
+      const autoFlow = require('./autoFlow');
+      if (autoFlow.createProjectFromLead) {
+        autoProject = await autoFlow.createProjectFromLead(data, userId);
+      }
+    } catch (e) { console.error('Auto create project on lead:', e.message); }
+
+    const projMsg = autoProject ? ` + DA **${autoProject.code}**` : '';
+    return { success: true, message: `✅ Tạo lead **${code}**: ${title} | ${fmt(estimated_value)}đ${projMsg}`, data, navigate: autoProject ? `/projects/${autoProject.id}` : `/crm/leads/${data.id}` };
   },
 
   move_lead: async ({ lead_id, stage_name }) => {
@@ -405,25 +416,25 @@ const ACTIONS = {
       results.push(`👤 KH: **${customer.name}**`);
     }
 
-    // 2. Tạo DA + Tasks (tạo trước để có project_id link vào lead/BG)
-    const projR = await ACTIONS.create_project({ name: project_name || `Tủ bếp ${customer.name}`, customer_id: customer.id, estimated_value, template: true }, userId);
-    const projectId = projR.data?.id;
-    results.push(`🏗️ ${projR.message}`);
-
-    // 3. Tạo Lead — link project_id
+    // 2. Tạo Lead → auto tạo DA + Tasks Tư vấn (logic mới)
     const leadR = await ACTIONS.create_lead({ title: project_name || `Tủ bếp ${customer.name}`, customer_id: customer.id, estimated_value }, userId);
-    if (leadR.data?.id && projectId) {
-      await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', leadR.data.id);
-    }
     results.push(`🎯 ${leadR.message}`);
 
-    // 4. Tạo BG nếu có items — link project_id
-    if (items && items.length) {
+    // Get project_id from lead (auto-created)
+    let projectId = null;
+    if (leadR.data?.id) {
+      const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', leadR.data.id).single();
+      projectId = lead?.project_id;
+    }
+
+    // 3. Tạo BG nếu có items — link project_id
+    if (items && items.length && projectId) {
       const bgR = await ACTIONS.create_quotation({ customer_id: customer.id, customer_name: customer.name, items, project_id: projectId }, userId);
       results.push(`📄 ${bgR.message}`);
     }
 
-    return { success: true, message: `🚀 **Hoàn tất luồng tự động!**\n\n${results.join('\n')}`, navigate: projR.navigate };
+    const navigateTo = projectId ? `/projects/${projectId}` : leadR.navigate;
+    return { success: true, message: `🚀 **Hoàn tất luồng tự động!**\n\n${results.join('\n')}`, navigate: navigateTo };
   },
 };
 
