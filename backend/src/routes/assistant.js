@@ -14,6 +14,7 @@ async function buildContext(userId) {
     supabase.from('customers').select('id,full_name,phone').order('full_name').limit(100),
     supabase.from('workflow_stages').select('id,name,slug,order_index').is('company_id',null).eq('is_active',true).order('order_index'),
     supabase.from('users').select('id,full_name,email,role').limit(50),
+    supabase.from('workflow_flows').select('id,name').order('name'),
   ]);
   
   // CRM tables may not exist yet - safe queries
@@ -42,6 +43,7 @@ async function buildContext(userId) {
     customers: (results[2].data||[]).map(c => ({ id:c.id, name:c.full_name, phone:c.phone })),
     stages: (results[3].data||[]).map(s => ({ id:s.id, name:s.name, slug:s.slug })),
     users: (results[4].data||[]).map(u => ({ id:u.id, name:u.full_name, email:u.email, role:u.role })),
+    flows: (results[5].data||[]).map(f => ({ id:f.id, name:f.name })),
     projects: (results[0].data||[]).slice(0,10).map(p => ({ id:p.id, code:p.code, name:p.name, status:p.status })),
     leads: (leads.data||[]).slice(0,10).map(l => ({ id:l.id, code:l.code, title:l.title, stage:l.stage?.name })),
     orders: (orders.data||[]).slice(0,10).map(o => ({ id:o.id, code:o.code, total:o.total, status:o.status })),
@@ -157,10 +159,13 @@ function parseIntent(msg, ctx) {
   if (m.match(/(làm gì|việc gì|gợi ý|tiếp theo|nên làm|suggest|next)/)) return { action: 'suggest' };
 
   // Report
-  if (m.match(/(báo cáo|thống kê|doanh thu|report|tổng quan|overview)/)) return { action: 'report' };
+  if (m.match(/(báo cáo|thống kê|report|tổng quan|overview)/)) return { action: 'report' };
+
+  // Revenue
+  if (m.match(/(doanh thu|revenue|tiền|thu nhập|lợi nhuận|công nợ)/)) return { action: 'revenue' };
 
   // Overdue
-  if (m.match(/(quá hạn|trễ hạn|overdue|muộn)/)) return { action: 'overdue' };
+  if (m.match(/(quá hạn|trễ hạn|overdue|muộn|deadline)/)) return { action: 'overdue' };
 
   // Greeting
   if (m.match(/^(xin chào|hello|hi|chào|hey)/)) return { action: 'greeting' };
@@ -193,7 +198,8 @@ r.post('/chat', async (req, res) => {
       // Need more info?
       if (intent.action === 'create_project' && (!data.name || data.name.length < 2)) {
         const list = ctx.customers.slice(0,15).map((c,i) => `${i+1}. ${c.name}`).join('\n');
-        return res.json({ reply: `🏗️ **Tạo dự án**\n\nGõ: "Tạo dự án [tên] cho [KH] giá [số] triệu"\n\n📋 KH:\n${list}`, action: { action: 'prompt', type: 'create_project', customers: ctx.customers.slice(0,15) }});
+        const flowList = ctx.flows.map((f,i) => `${i+1}. ${f.name}`).join('\n');
+        return res.json({ reply: `🏗️ **Tạo dự án**\n\n📋 **Chọn luồng:**\n${flowList || '(chưa có luồng)'}\n\n👥 **Chọn KH:**\n${list}\n\nGõ: "Tạo dự án [tên] cho [KH] giá [số] triệu"\n_(Dùng luồng + bộ nhiệm vụ mặc định)_`, action: { action: 'prompt', type: 'create_project', customers: ctx.customers.slice(0,15), flows: ctx.flows }});
       }
       if (intent.action === 'create_lead' && (!data.title || data.title.length < 2)) {
         const list = ctx.customers.slice(0,15).map((c,i) => `${i+1}. ${c.name}`).join('\n');
@@ -236,15 +242,103 @@ r.post('/chat', async (req, res) => {
     }
 
     if (intent.action === 'report') {
-      return res.json({ reply: `📊 **Tổng quan:**\n\n🏗️ DA: **${ctx.activeProjects}**\n📋 NV: **${ctx.myTasks}** (${ctx.overdueTasks} quá hạn)\n🎯 Lead: **${ctx.openLeads}**\n📦 ĐH: **${ctx.pendingOrders}**\n💰 Nợ: **${fmt(ctx.totalDebt)}đ** (${ctx.unpaidInvoices} HĐ)` });
+      // Deep statistics
+      const [allProjects, allTasks, revenueData] = await Promise.all([
+        supabase.from('projects').select('id,code,name,status,estimated_value,created_at').order('created_at',{ascending:false}).limit(100),
+        supabase.from('tasks').select('id,status,due_date').limit(500),
+        supabase.from('orders').select('id,total,status,paid_amount').limit(200),
+      ]);
+      const projects = allProjects.data || [];
+      const tasks = allTasks.data || [];
+      const orders = revenueData.data || [];
+
+      const pByStatus = {};
+      projects.forEach(p => { pByStatus[p.status] = (pByStatus[p.status]||0) + 1; });
+      const totalValue = projects.reduce((s,p) => s + (p.estimated_value||0), 0);
+
+      const tDone = tasks.filter(t => t.status === 'done').length;
+      const tOverdue = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length;
+      const tRate = tasks.length ? Math.round(tDone/tasks.length*100) : 0;
+
+      const totalRevenue = orders.reduce((s,o) => s + (o.total||0), 0);
+      const totalPaid = orders.reduce((s,o) => s + (o.paid_amount||0), 0);
+
+      // This month
+      const thisMonth = new Date(); thisMonth.setDate(1); thisMonth.setHours(0,0,0,0);
+      const newThisMonth = projects.filter(p => new Date(p.created_at) >= thisMonth).length;
+      const revenueThisMonth = orders.filter(o => new Date(o.created_at) >= thisMonth).reduce((s,o) => s + (o.total||0), 0);
+
+      return res.json({ reply: `📊 **BÁO CÁO TỔNG HỢP**\n\n🏗️ **Dự án:** ${projects.length} tổng\n${Object.entries(pByStatus).map(([k,v]) => `   • ${k}: ${v}`).join('\n')}\n   💰 Tổng giá trị: ${fmt(totalValue)}đ\n   📈 Mới tháng này: ${newThisMonth}\n\n📋 **Nhiệm vụ:** ${tasks.length} tổng\n   ✅ Hoàn thành: ${tDone} (${tRate}%)\n   🔴 Quá hạn: ${tOverdue}\n   ⏳ Còn lại: ${tasks.length - tDone}\n\n💰 **Doanh thu:**\n   📦 Tổng ĐH: ${fmt(totalRevenue)}đ\n   ✅ Đã thu: ${fmt(totalPaid)}đ\n   ❗ Còn nợ: ${fmt(totalRevenue - totalPaid)}đ\n   📈 Tháng này: ${fmt(revenueThisMonth)}đ\n\n🎯 **CRM:**\n   • ${ctx.openLeads} lead đang mở\n   • ${ctx.pendingOrders} ĐH đang xử lý\n   • ${ctx.unpaidInvoices} HĐ chưa thu` });
     }
 
     if (intent.action === 'overdue') {
-      if (!ctx.overdueTasks && !ctx.overdueFollowUps) return res.json({ reply: '✅ Không quá hạn! 👏' });
-      let r = '⚠️ **Quá hạn:**\n';
-      if (ctx.overdueTasks) r += `\n🔴 ${ctx.overdueTasks} NV: ${ctx.overdueTasksList.join(', ')}`;
-      if (ctx.overdueFollowUps) r += `\n📞 ${ctx.overdueFollowUps} follow-up: ${ctx.overdueFollowUpsList.join(', ')}`;
-      return res.json({ reply: r });
+      // Detailed overdue report
+      const [overdueProj, overdueTasks] = await Promise.all([
+        supabase.from('projects').select('id,code,name,install_date,design_deadline').neq('status','completed').neq('status','cancelled').or('install_date.lt.'+new Date().toISOString()+',design_deadline.lt.'+new Date().toISOString()).limit(20),
+        supabase.from('tasks').select('id,title,due_date,assignee:users!tasks_assignee_id_fkey(full_name),project:projects(code)').neq('status','done').lt('due_date',new Date().toISOString()).order('due_date').limit(20),
+      ]);
+      const op = overdueProj.data || [];
+      const ot = overdueTasks.data || [];
+
+      let reply = '⚠️ **BÁO CÁO QUÁ HẠN**\n\n';
+
+      if (op.length) {
+        reply += `🏗️ **${op.length} DA quá deadline:**\n`;
+        op.slice(0,10).forEach(p => {
+          const date = p.install_date || p.design_deadline;
+          reply += `• ${p.code}: ${p.name} (hạn: ${new Date(date).toLocaleDateString('vi')})\n`;
+        });
+        reply += '\n';
+      }
+
+      if (ot.length) {
+        reply += `📋 **${ot.length} NV quá hạn:**\n`;
+        ot.slice(0,10).forEach(t => {
+          reply += `• ${t.project?.code || '—'}: ${t.title} — ${t.assignee?.full_name || '?'} (hạn: ${new Date(t.due_date).toLocaleDateString('vi')})\n`;
+        });
+        reply += '\n';
+      }
+
+      if (ctx.overdueFollowUps > 0) {
+        reply += `📞 **${ctx.overdueFollowUps} follow-up quá hạn:**\n${ctx.overdueFollowUpsList.join('\n')}\n`;
+      }
+
+      if (!op.length && !ot.length && !ctx.overdueFollowUps) reply = '✅ Không có gì quá hạn! 👏';
+      return res.json({ reply });
+    }
+
+    if (intent.action === 'revenue') {
+      const [orders, invoices, payments] = await Promise.all([
+        supabase.from('orders').select('id,code,total,status,paid_amount,customer_name,created_at').order('created_at',{ascending:false}).limit(100),
+        supabase.from('invoices').select('id,code,total,paid_amount,payment_status,customer_name').limit(100),
+        supabase.from('payment_records').select('id,amount,payment_method,created_at').order('created_at',{ascending:false}).limit(50),
+      ]);
+      const allOrders = orders.data || [];
+      const allInv = invoices.data || [];
+      const allPay = payments.data || [];
+
+      const totalRevenue = allOrders.reduce((s,o) => s + (o.total||0), 0);
+      const totalPaid = allInv.reduce((s,i) => s + (i.paid_amount||0), 0);
+      const totalDebt = allInv.filter(i => i.payment_status !== 'paid').reduce((s,i) => s + ((i.total||0)-(i.paid_amount||0)), 0);
+
+      // This month
+      const thisMonth = new Date(); thisMonth.setDate(1); thisMonth.setHours(0,0,0,0);
+      const revenueMonth = allOrders.filter(o => new Date(o.created_at) >= thisMonth).reduce((s,o) => s + (o.total||0), 0);
+      const paidMonth = allPay.filter(p => new Date(p.created_at) >= thisMonth).reduce((s,p) => s + (p.amount||0), 0);
+
+      // Top 5 unpaid
+      const unpaid = allInv.filter(i => i.payment_status !== 'paid').sort((a,b) => ((b.total||0)-(b.paid_amount||0)) - ((a.total||0)-(a.paid_amount||0)));
+
+      let reply = `💰 **BÁO CÁO DOANH THU**\n\n📦 Tổng ĐH: **${fmt(totalRevenue)}đ** (${allOrders.length} đơn)\n✅ Đã thu: **${fmt(totalPaid)}đ**\n❗ Công nợ: **${fmt(totalDebt)}đ**\n\n📈 **Tháng này:**\n• ĐH mới: ${fmt(revenueMonth)}đ\n• Thu tiền: ${fmt(paidMonth)}đ`;
+
+      if (unpaid.length) {
+        reply += `\n\n🔴 **Top công nợ:**`;
+        unpaid.slice(0,5).forEach(i => {
+          reply += `\n• ${i.code}: ${i.customer_name||'?'} — còn ${fmt((i.total||0)-(i.paid_amount||0))}đ`;
+        });
+      }
+
+      return res.json({ reply });
     }
 
     if (intent.action === 'greeting') {
@@ -260,7 +354,7 @@ r.post('/chat', async (req, res) => {
     }
 
     if (intent.action === 'help') {
-      return res.json({ reply: `🤖 **Tôi làm được:**\n\n**Tạo:**\n• "Tạo KH Nguyễn A SĐT 090xxx"\n• "Tạo dự án Tủ bếp cho Nguyễn A giá 150tr"\n• "Tạo lead Tủ bếp gỗ sồi cho Trần B"\n• "Tạo báo giá cho Nguyễn A"\n• "Tạo đơn hàng cho Nguyễn A"\n\n**Hành động:**\n• "Chuyển giai đoạn DA TB-2026-001"\n• "Chuyển lead LEAD-001 sang Chốt"\n• "Hoàn thành NV [tên]"\n• "Thu 50 triệu"\n• "Ghi cuộc gọi: tư vấn KH"\n\n**Tự động:**\n• "Luồng tự động cho Nguyễn A DA Tủ bếp"\n  → Tạo KH + Lead + BG + DA + Tasks\n\n**Xem:**\n• "Gợi ý việc cần làm"\n• "Báo cáo"\n• "Quá hạn?"\n• "Danh sách KH/DA"` });
+      return res.json({ reply: `🤖 **Tôi làm được:**\n\n**Tạo:**\n• "Tạo KH Nguyễn A SĐT 090xxx"\n• "Tạo dự án Tủ bếp cho Nguyễn A giá 150tr"\n• "Tạo lead Tủ bếp gỗ sồi cho Trần B"\n• "Tạo báo giá/đơn hàng/hóa đơn"\n\n**Hành động:**\n• "Chuyển giai đoạn DA TB-2026-001"\n• "Thu 50 triệu"\n• "Ghi cuộc gọi: tư vấn KH"\n\n**Tự động:**\n• "Luồng tự động cho Nguyễn A DA Tủ bếp"\n\n**Thống kê:**\n• "Báo cáo" — tổng hợp DA + NV + doanh thu\n• "Doanh thu" — chi tiết thu/nợ/tháng\n• "Quá hạn" — DA + NV + follow-up quá hạn\n• "Danh sách KH/DA"` });
     }
 
     // ── OPENAI FALLBACK ──

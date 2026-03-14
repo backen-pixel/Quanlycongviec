@@ -39,7 +39,7 @@ export default function PinnedProjectsWidget() {
   useEffect(() => {
     if (!open || !pinnedIds.length) { setProjects([]); return; }
     setLoading(true);
-    Promise.all(pinnedIds.map(id => api.get(`/projects/${id}`).then(r => r.data).catch(() => null)))
+    Promise.all(pinnedIds.map(id => api.get(`/projects/${id}`).then(r => r.data?.project || r.data).catch(() => null)))
       .then(r => setProjects(r.filter(Boolean)))
       .catch(() => {})
       .finally(() => setLoading(false));
