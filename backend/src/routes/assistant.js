@@ -263,6 +263,166 @@ function parseIntent(msg, ctx) {
   return { action: 'unknown' };
 }
 
+// ─── WIZARD: Multi-step project creation ────────────────────────────────
+function extractWizardData(conversation) {
+  // Extract data collected from wizard steps in conversation
+  const data = {};
+  for (const m of conversation) {
+    const flowMatch = m.content?.match(/\[DATA:flow_id=(.+?)\]/);
+    const flowNameMatch = m.content?.match(/\[DATA:flow_name=(.+?)\]/);
+    const custMatch = m.content?.match(/\[DATA:customer_id=(.+?)\]/);
+    const custNameMatch = m.content?.match(/\[DATA:customer_name=(.+?)\]/);
+    const newCustMatch = m.content?.match(/\[DATA:new_customer=(.+?)\]/);
+    const newCustPhoneMatch = m.content?.match(/\[DATA:new_customer_phone=(.+?)\]/);
+    const nameMatch = m.content?.match(/\[DATA:project_name=(.+?)\]/);
+    const valueMatch = m.content?.match(/\[DATA:estimated_value=(.+?)\]/);
+    const addrMatch = m.content?.match(/\[DATA:install_address=(.+?)\]/);
+    if (flowMatch) data.flow_id = flowMatch[1];
+    if (flowNameMatch) data.flow_name = flowNameMatch[1];
+    if (custMatch) data.customer_id = custMatch[1];
+    if (custNameMatch) data.customer_name = custNameMatch[1];
+    if (newCustMatch) data.new_customer = newCustMatch[1];
+    if (newCustPhoneMatch) data.new_customer_phone = newCustPhoneMatch[1];
+    if (nameMatch) data.project_name = nameMatch[1];
+    if (valueMatch) data.estimated_value = parseFloat(valueMatch[1]);
+    if (addrMatch) data.install_address = addrMatch[1];
+  }
+  return data;
+}
+
+async function handleWizard(wizType, step, answer, conversation, ctx, userId, res) {
+  if (wizType !== 'project') return res.json({ reply: 'Wizard không hợp lệ' });
+
+  const ans = answer.trim();
+  const data = extractWizardData(conversation);
+
+  // Cancel
+  if (ans.match(/^(hủy|cancel|thôi|bỏ)$/i)) {
+    return res.json({ reply: '❌ Đã hủy tạo dự án.' });
+  }
+
+  // Step 1: Choose flow → Step 2: Customer
+  if (step === 1) {
+    const num = parseInt(ans);
+    let flow = null;
+    if (num > 0 && num <= ctx.flows.length) {
+      flow = ctx.flows[num - 1];
+    } else {
+      flow = ctx.flows.find(f => f.name.toLowerCase().includes(ans.toLowerCase()));
+    }
+    if (!flow && ctx.flows.length) {
+      return res.json({ reply: `❌ Không tìm thấy luồng "${ans}". Nhập lại số (1-${ctx.flows.length}):\n[WIZARD:project:1]` });
+    }
+
+    const flowId = flow?.id || 'default';
+    const flowName = flow?.name || 'Mặc định';
+    const custList = ctx.customers.map((c,i) => `**${i+1}.** ${c.name}${c.phone ? ' ('+c.phone+')' : ''}`).join('\n');
+
+    return res.json({
+      reply: `✅ Luồng: **${flowName}**\n\n👤 **Bước 2/5: Khách hàng**\n${custList || '_(chưa có KH)_'}\n\nNhập số chọn KH cũ, hoặc "mới [tên] [SĐT]" để tạo mới:\nVD: "1" hoặc "mới Nguyễn Văn A 0901234567"\n[WIZARD:project:2]\n[DATA:flow_id=${flowId}][DATA:flow_name=${flowName}]`,
+      action: { action: 'wizard', step: 2, customers: ctx.customers }
+    });
+  }
+
+  // Step 2: Customer → Step 3: Project name
+  if (step === 2) {
+    let custId = null, custName = null, isNew = false, newPhone = null;
+    const newMatch = ans.match(/^(?:mới|new|tạo mới)\s+(.+?)(?:\s+(\d{9,11}))?$/i);
+
+    if (newMatch) {
+      isNew = true;
+      custName = newMatch[1].replace(/\s*\d{9,11}\s*$/, '').trim();
+      newPhone = newMatch[2] || null;
+    } else {
+      const num = parseInt(ans);
+      let customer = null;
+      if (num > 0 && num <= ctx.customers.length) {
+        customer = ctx.customers[num - 1];
+      } else {
+        customer = findCustomer(ans, ctx.customers);
+      }
+      if (!customer) {
+        return res.json({ reply: `❌ Không tìm thấy KH "${ans}".\nNhập số (1-${ctx.customers.length}) hoặc "mới [tên] [SĐT]":\n[WIZARD:project:2]\n[DATA:flow_id=${data.flow_id}][DATA:flow_name=${data.flow_name}]` });
+      }
+      custId = customer.id;
+      custName = customer.name;
+    }
+
+    const dataTag = isNew
+      ? `[DATA:new_customer=${custName}]${newPhone ? '[DATA:new_customer_phone='+newPhone+']' : ''}`
+      : `[DATA:customer_id=${custId}][DATA:customer_name=${custName}]`;
+
+    return res.json({
+      reply: `✅ KH: **${custName}**${isNew ? ' _(mới)_' : ''}\n\n📝 **Bước 3/5: Tên dự án**\n\nNhập tên dự án:\nVD: "Tủ bếp gỗ sồi biệt thự"\n[WIZARD:project:3]\n[DATA:flow_id=${data.flow_id}][DATA:flow_name=${data.flow_name}]${dataTag}`
+    });
+  }
+
+  // Step 3: Project name → Step 4: Value
+  if (step === 3) {
+    if (ans.length < 2) {
+      return res.json({ reply: `❌ Tên quá ngắn. Nhập lại tên dự án:\n[WIZARD:project:3]\n[DATA:flow_id=${data.flow_id}][DATA:flow_name=${data.flow_name}]${data.customer_id ? '[DATA:customer_id='+data.customer_id+'][DATA:customer_name='+data.customer_name+']' : '[DATA:new_customer='+data.new_customer+']'+(data.new_customer_phone ? '[DATA:new_customer_phone='+data.new_customer_phone+']' : '')}` });
+    }
+
+    const prevData = `[DATA:flow_id=${data.flow_id}][DATA:flow_name=${data.flow_name}]${data.customer_id ? '[DATA:customer_id='+data.customer_id+'][DATA:customer_name='+data.customer_name+']' : '[DATA:new_customer='+data.new_customer+']'+(data.new_customer_phone ? '[DATA:new_customer_phone='+data.new_customer_phone+']' : '')}`;
+
+    return res.json({
+      reply: `✅ Tên DA: **${ans}**\n\n💰 **Bước 4/5: Giá trị dự án**\n\nNhập giá trị (VNĐ):\nVD: "150 triệu", "200tr", "1.5 tỷ"\nHoặc "bỏ qua" nếu chưa biết\n[WIZARD:project:4]\n${prevData}[DATA:project_name=${ans}]`
+    });
+  }
+
+  // Step 4: Value → Step 5: Address
+  if (step === 4) {
+    const value = ans.match(/bỏ qua|skip/i) ? 0 : parseValue(ans);
+    const prevData = `[DATA:flow_id=${data.flow_id}][DATA:flow_name=${data.flow_name}]${data.customer_id ? '[DATA:customer_id='+data.customer_id+'][DATA:customer_name='+data.customer_name+']' : '[DATA:new_customer='+data.new_customer+']'+(data.new_customer_phone ? '[DATA:new_customer_phone='+data.new_customer_phone+']' : '')}[DATA:project_name=${data.project_name}]`;
+
+    return res.json({
+      reply: `✅ Giá trị: **${value ? fmt(value) + 'đ' : 'Chưa xác định'}**\n\n📍 **Bước 5/5: Địa chỉ lắp đặt**\n\nNhập địa chỉ:\nVD: "123 Nguyễn Huệ, Q1, HCM"\nHoặc "bỏ qua"\n[WIZARD:project:5]\n${prevData}[DATA:estimated_value=${value}]`
+    });
+  }
+
+  // Step 5: Address → CONFIRM & CREATE
+  if (step === 5) {
+    const address = ans.match(/bỏ qua|skip/i) ? null : ans;
+
+    // Collect all data
+    const flowId = data.flow_id === 'default' ? null : data.flow_id;
+    const flowName = data.flow_name || 'Mặc định';
+    const projectName = data.project_name;
+    const estimatedValue = data.estimated_value || 0;
+
+    // Create customer if new
+    let customerId = data.customer_id;
+    let customerName = data.customer_name || data.new_customer;
+    if (data.new_customer && !data.customer_id) {
+      const custR = await ACTIONS.create_customer({ name: data.new_customer, phone: data.new_customer_phone }, userId);
+      customerId = custR.data.id;
+      customerName = custR.data.full_name;
+    }
+
+    // Create project
+    const projR = await ACTIONS.create_project({
+      name: projectName,
+      customer_id: customerId,
+      estimated_value: estimatedValue,
+      flow_id: flowId,
+      template: true,
+    }, userId);
+
+    // Update address if provided
+    if (address && projR.data?.id) {
+      await supabase.from('projects').update({ install_address: address }).eq('id', projR.data.id);
+    }
+
+    return res.json({
+      reply: `🎉 **Tạo dự án thành công!**\n\n📋 **${projR.data?.code}: ${projectName}**\n👤 KH: ${customerName}${data.new_customer ? ' _(mới)_' : ''}\n📍 Luồng: ${flowName}\n💰 GT: ${estimatedValue ? fmt(estimatedValue) + 'đ' : '—'}\n🏠 ĐC: ${address || '—'}\n\n✅ Đã tạo + bộ NV mặc định`,
+      action: { action: 'navigate', url: `/projects/${projR.data?.id}` },
+      created: { type: 'project', id: projR.data?.id }
+    });
+  }
+
+  return res.json({ reply: 'Wizard lỗi. Gõ "Tạo dự án" để bắt đầu lại.' });
+}
+
 // ─── MAIN CHAT ──────────────────────────────────────────────────────────
 r.post('/chat', async (req, res) => {
   try {
@@ -270,18 +430,31 @@ r.post('/chat', async (req, res) => {
     if (!message) return res.status(400).json({ error: 'Nhập tin nhắn' });
 
     const ctx = await buildContext(req.user.userId);
+
+    // ── CHECK WIZARD STATE (multi-step creation) ──
+    const lastAssistant = [...conversation].reverse().find(m => m.role === 'assistant');
+    const wizardMatch = lastAssistant?.content?.match(/\[WIZARD:(\w+):(\d+)\]/);
+    if (wizardMatch) {
+      const [, wizType, stepStr] = wizardMatch;
+      const step = parseInt(stepStr);
+      return handleWizard(wizType, step, message, conversation, ctx, req.user.userId, res);
+    }
+
     const intent = parseIntent(message, ctx);
+
+    // ── PROJECT CREATION WIZARD — start ──
+    if (intent.action === 'create_project') {
+      const flowList = ctx.flows.map((f,i) => `**${i+1}.** ${f.name}`).join('\n');
+      return res.json({
+        reply: `🏗️ **Tạo dự án mới**\n\n📋 **Bước 1/5: Chọn luồng**\n${flowList || '_(chưa có luồng — sẽ dùng mặc định)_'}\n\nNhập số (VD: "1") hoặc tên luồng:\n[WIZARD:project:1]`,
+        action: { action: 'wizard', type: 'create_project', step: 1, flows: ctx.flows }
+      });
+    }
 
     // ── EXECUTABLE ACTIONS ──
     if (ACTIONS[intent.action]) {
       const data = intent.data || {};
 
-      // Need more info?
-      if (intent.action === 'create_project' && (!data.name || data.name.length < 2)) {
-        const list = ctx.customers.slice(0,15).map((c,i) => `${i+1}. ${c.name}`).join('\n');
-        const flowList = ctx.flows.map((f,i) => `${i+1}. ${f.name}`).join('\n');
-        return res.json({ reply: `🏗️ **Tạo dự án**\n\n📋 **Chọn luồng:**\n${flowList || '(chưa có luồng)'}\n\n👥 **Chọn KH:**\n${list}\n\nGõ: "Tạo dự án [tên] cho [KH] giá [số] triệu"\n_(Dùng luồng + bộ nhiệm vụ mặc định)_`, action: { action: 'prompt', type: 'create_project', customers: ctx.customers.slice(0,15), flows: ctx.flows }});
-      }
       if (intent.action === 'create_lead' && (!data.title || data.title.length < 2)) {
         const list = ctx.customers.slice(0,15).map((c,i) => `${i+1}. ${c.name}`).join('\n');
         return res.json({ reply: `🎯 **Tạo lead**\n\nGõ: "Tạo lead [tên] cho [KH] giá [số] triệu"\n\n📋 KH:\n${list}`, action: { action: 'prompt', type: 'create_lead', customers: ctx.customers.slice(0,15) }});
