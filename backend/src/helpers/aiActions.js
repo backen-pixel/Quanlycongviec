@@ -83,14 +83,18 @@ const ACTIONS = {
   },
 
   // ─── 2. DỰ ÁN ─────────────────────────────────────────────────────────
-  create_project: async ({ name, customer_id, estimated_value, template }, userId) => {
+  create_project: async ({ name, customer_id, estimated_value, template, flow_id }, userId) => {
     // Auto code like projects route
     const year = new Date().getFullYear();
     const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${year}-%`).order('code', { ascending: false }).limit(1);
     const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) || 0 : 0;
     const code = `TB-${year}-${String(lastNum + 1).padStart(3, '0')}`;
 
-    const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
+    // Use provided flow_id or default
+    if (!flow_id) {
+      const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
+      flow_id = flows?.[0]?.id || null;
+    }
     const { data: firstStage } = await supabase.from('workflow_stages').select('id').eq('slug', 'consulting').single();
 
     const { data, error } = await supabase.from('projects').insert({

@@ -118,7 +118,18 @@ export default function AIAssistantChat() {
                   {m.content}
                   {m.action?.action === 'prompt' && m.action.customers && (
                     <div className="mt-2 pt-2 border-t border-gray-200">
-                      <p className="text-[10px] text-gray-500 mb-1">Chọn KH:</p>
+                      {m.action.flows?.length > 0 && (
+                        <div className="mb-2">
+                          <p className="text-[10px] text-gray-500 mb-1">📋 Luồng:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {m.action.flows.map(f => (
+                              <span key={f.id} className="text-[10px] px-2 py-1 bg-indigo-50 border border-indigo-200 rounded-full text-indigo-700">{f.name}</span>
+                            ))}
+                          </div>
+                          <p className="text-[9px] text-gray-400 mt-1">_(Dùng luồng + bộ NV mặc định)_</p>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-gray-500 mb-1">👥 Chọn KH:</p>
                       <div className="flex flex-wrap gap-1">
                         {m.action.customers.slice(0,8).map(c => (
                           <button key={c.id} onClick={() => sendMessage(`${m.action.type === 'create_lead' ? 'Tạo lead Tủ bếp cho' : 'Tạo dự án Tủ bếp cho'} ${c.name}`)}
