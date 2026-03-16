@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { Pin, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Minimize2, Maximize2, GripVertical } from 'lucide-react';
+import { Pin, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Minimize2, Maximize2, GripVertical, Square, CheckSquare } from 'lucide-react';
 import useDraggable from '../hooks/useDraggable';
 
 const STORAGE_KEY = 'tubep_pinned_projects';
@@ -53,10 +53,8 @@ export default function PinnedProjectsWidget() {
     window.dispatchEvent(new CustomEvent('pinned-changed'));
   };
 
-  // Hidden when no pins
   if (!pinnedIds.length && !open) return null;
 
-  // Collapsed button
   if (!open) {
     return (
       <div style={{ position: 'fixed', right: pos.right, bottom: pos.bottom, zIndex: 50 }}
@@ -68,12 +66,9 @@ export default function PinnedProjectsWidget() {
     );
   }
 
-  // Expanded panel
   return (
     <div style={{ position: 'fixed', right: pos.right, bottom: pos.bottom, zIndex: 50, maxHeight: minimized ? 48 : '70vh' }}
-      className={`bg-white rounded-2xl shadow-2xl border border-gray-200 transition-all ${minimized ? 'w-72' : 'w-80'} ${dragging ? 'opacity-90' : ''}`}>
-
-      {/* Header — drag handle */}
+      className={`bg-white rounded-2xl shadow-2xl border border-gray-200 transition-all ${minimized ? 'w-72' : 'w-96'} ${dragging ? 'opacity-90' : ''}`}>
       <div className="flex items-center justify-between px-4 py-3 border-b bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl cursor-grab select-none"
         onMouseDown={onDragStart} onTouchStart={onDragStart}>
         <div className="flex items-center gap-2">
@@ -90,7 +85,6 @@ export default function PinnedProjectsWidget() {
           </button>
         </div>
       </div>
-
       {!minimized && (
         <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 48px)' }}>
           {loading ? (
@@ -117,7 +111,26 @@ function PinnedCard({ project: p, expanded, onToggle, onUnpin }) {
   const done = tasks.filter(t => t.status === 'done').length;
   const overdue = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length;
   const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
-  const stage = p.current_stage?.name || '—';
+  const stageName = p.current_stage?.name || '—';
+  const [openStages, setOpenStages] = useState({});
+
+  // Group tasks by stage
+  const stageGroups = {};
+  const stageOrder = [];
+  tasks.forEach(t => {
+    const sName = t.stage?.name || 'Không có quy trình';
+    const sSlug = t.stage?.slug || '_none';
+    if (!stageGroups[sSlug]) {
+      stageGroups[sSlug] = { name: sName, color: t.stage?.color || '#6b7280', icon: t.stage?.icon || '📋', slug: sSlug, order: t.stage?.order_index ?? 999, tasks: [] };
+      stageOrder.push(sSlug);
+    }
+    stageGroups[sSlug].tasks.push(t);
+  });
+  stageOrder.sort((a, b) => (stageGroups[a].order - stageGroups[b].order));
+
+  const toggleStage = (slug) => {
+    setOpenStages(prev => ({ ...prev, [slug]: !prev[slug] }));
+  };
 
   return (
     <div className="bg-gray-50 rounded-xl border border-gray-100 overflow-hidden">
@@ -139,22 +152,61 @@ function PinnedCard({ project: p, expanded, onToggle, onUnpin }) {
           <div className={`h-full rounded-full ${pct >= 100 ? 'bg-emerald-500' : overdue ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
         </div>
         <div className="flex justify-between mt-0.5">
-          <span className="text-[9px] text-gray-400">{stage}</span>
+          <span className="text-[9px] text-gray-400">{stageName}</span>
           <span className="text-[9px] text-gray-400">{done}/{tasks.length}</span>
         </div>
       </div>
       {expanded && (
         <div className="px-3 pb-3 border-t border-gray-100">
-          <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+          <div className="mt-2 max-h-64 overflow-y-auto space-y-1">
             {!tasks.length ? <p className="text-[10px] text-gray-400 text-center py-2">Chưa có task</p> :
-              tasks.slice(0, 15).map(t => (
-                <div key={t.id} className={`flex items-center gap-1.5 text-[11px] py-0.5 ${t.status === 'done' ? 'text-gray-400 line-through' : ''}`}>
-                  {t.status === 'done' ? <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" /> :
-                    t.due_date && new Date(t.due_date) < new Date() ? <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" /> :
-                    <Clock className="h-3 w-3 text-gray-300 shrink-0" />}
-                  <span className="truncate flex-1">{t.title}</span>
-                </div>
-              ))}
+              stageOrder.map(slug => {
+                const group = stageGroups[slug];
+                const isOpen = openStages[slug] !== false; // default open
+                const groupDone = group.tasks.filter(t => t.status === 'done').length;
+                return (
+                  <div key={slug} className="border border-gray-200 rounded-lg overflow-hidden">
+                    {/* Stage header — collapsible */}
+                    <button onClick={() => toggleStage(slug)}
+                      className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[11px] font-bold hover:bg-gray-100 cursor-pointer"
+                      style={{ borderLeft: `3px solid ${group.color}` }}>
+                      <span>{group.icon}</span>
+                      <span className="flex-1 text-left truncate">{group.name}</span>
+                      <span className="text-[9px] font-normal text-gray-400">{groupDone}/{group.tasks.length}</span>
+                      {isOpen ? <ChevronUp className="h-3 w-3 text-gray-400 shrink-0" /> : <ChevronDown className="h-3 w-3 text-gray-400 shrink-0" />}
+                    </button>
+                    {/* Tasks inside stage */}
+                    {isOpen && (
+                      <div className="px-2 pb-1.5 space-y-0.5">
+                        {group.tasks.map(t => (
+                          <div key={t.id}>
+                            <div className={`flex items-center gap-1.5 text-[11px] py-0.5 ${t.status === 'done' ? 'text-gray-400 line-through' : ''}`}>
+                              {t.status === 'done' ? <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" /> :
+                                t.due_date && new Date(t.due_date) < new Date() ? <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" /> :
+                                <Clock className="h-3 w-3 text-gray-300 shrink-0" />}
+                              <span className="truncate flex-1">{t.title}</span>
+                            </div>
+                            {/* Checklists */}
+                            {t.checklists && t.checklists.length > 0 && (
+                              <div className="ml-4 space-y-0.5 mt-0.5">
+                                {t.checklists.map(c => (
+                                  <div key={c.id} className={`flex items-center gap-1 text-[10px] ${c.is_completed ? 'text-gray-400 line-through' : 'text-gray-600'}`}>
+                                    {c.is_completed
+                                      ? <CheckSquare className="h-2.5 w-2.5 text-emerald-500 shrink-0" />
+                                      : <Square className="h-2.5 w-2.5 text-gray-300 shrink-0" />}
+                                    <span className="truncate">{c.title}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            }
           </div>
           <Link to={`/projects/${p.id}`} className="block mt-2 text-center text-[10px] text-blue-600 hover:underline font-medium" data-no-drag>Xem chi tiết →</Link>
         </div>

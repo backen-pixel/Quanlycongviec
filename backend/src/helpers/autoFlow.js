@@ -53,21 +53,28 @@ async function getFirstStage() {
 
 async function onLeadWon(leadId, userId) {
   const { data: lead } = await supabase.from('crm_leads')
-    .select('*, customer:customers(id, full_name)')
+    .select('*, customer:customers(id, full_name), type')
     .eq('id', leadId).single();
   if (!lead) return null;
 
-  // DA đã tạo khi tạo Lead → chỉ cần link BG/ĐH nếu có
+  // For deals that reached "Thắng" stage, just log (no project creation, project already exists)
+  if (lead.type === 'deal') {
+    await supabase.from('crm_activities').insert({
+      lead_id: leadId, type: 'note', title: '🎉 Deal Thắng!',
+      description: `Deal chốt thành công`,
+      created_by: userId,
+    }).catch(() => {});
+    return { code: lead.project_id ? 'existing' : null, existing: true };
+  }
+
+  // For leads (backwards compatibility): this should not be called for leads with new flow
+  // Links existing quotations/orders to project if lead was converted
   let project = null;
   if (lead.project_id) {
     const { data: p } = await supabase.from('projects').select('*').eq('id', lead.project_id).single();
     project = p;
-  } else {
-    // Trường hợp lead cũ chưa có project → tạo mới
-    project = await createProjectFromLead(lead, userId);
   }
 
-  // Link existing quotations/orders to project
   if (project) {
     await Promise.all([
       supabase.from('quotations').update({ project_id: project.id }).eq('lead_id', leadId).is('project_id', null),
@@ -75,7 +82,6 @@ async function onLeadWon(leadId, userId) {
     ]);
   }
 
-  // Log activity
   await supabase.from('crm_activities').insert({
     lead_id: leadId, type: 'note', title: '🎉 Chốt thành công!',
     description: `Lead chốt deal${project ? ' — DA: ' + project.code : ''}`,
@@ -85,8 +91,9 @@ async function onLeadWon(leadId, userId) {
   return project;
 }
 
-async function createProjectFromLead(lead, userId) {
-  const [flowId, firstStageId, code] = await Promise.all([getDefaultFlow(), getFirstStage(), nextProjectCode()]);
+async function createProjectFromLead(lead, userId, overrideFlowId) {
+  const [defaultFlowId, firstStageId, code] = await Promise.all([getDefaultFlow(), getFirstStage(), nextProjectCode()]);
+  const flowId = overrideFlowId || lead.flow_id || defaultFlowId;
 
   const { data: project, error } = await supabase.from('projects').insert({
     code, name: lead.title, status: 'consulting', customer_id: lead.customer_id,

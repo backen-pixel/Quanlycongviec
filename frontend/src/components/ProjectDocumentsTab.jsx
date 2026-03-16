@@ -22,12 +22,23 @@ export default function ProjectDocumentsTab({ projectId, project }) {
   const [approvals, setApprovals] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [checklists, setChecklists] = useState({});
+  const [leadDocuments, setLeadDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedStage, setExpandedStage] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // Load lead documents (if project linked to a lead)
+      try {
+        const { data: leadData } = await api.get(`/crm/leads`).catch(() => ({ data: [] }));
+        const linkedLead = leadData.find(l => l.project_id === projectId);
+        if (linkedLead) {
+          const { data: docs } = await api.get(`/crm/leads/${linkedLead.id}/documents`).catch(() => ({ data: [] }));
+          setLeadDocuments(docs || []);
+        }
+      } catch {}
+
       // Load approved/auto-approved approvals
       const { data: appData } = await api.get(`/approvals/project/${projectId}`);
       const approved = (appData.approvals || []).filter(a => a.status === 'approved' || a.status === 'auto_approved');
@@ -125,6 +136,32 @@ export default function ProjectDocumentsTab({ projectId, project }) {
 
   return (
     <div className="space-y-4">
+      {/* Lead Documents Section - at the top */}
+      {leadDocuments.length > 0 && (
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <FileText className="h-5 w-5 text-amber-600" />
+            <h3 className="text-sm font-bold text-amber-900">📋 Tài liệu khách hàng (từ Lead)</h3>
+          </div>
+          <div className="space-y-2">
+            {leadDocuments.map(doc => (
+              <div key={doc.id} className="flex items-center gap-2 p-2 bg-white rounded-lg border border-amber-100">
+                <FileText className="h-4 w-4 text-amber-600 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">{doc.name}</p>
+                  <p className="text-xs text-gray-500">{doc.doc_type} • {doc.file_name}</p>
+                </div>
+                {doc.file_url && (
+                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+                    Mở
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-2">
         <FolderOpen className="h-4 w-4 text-blue-600" />
