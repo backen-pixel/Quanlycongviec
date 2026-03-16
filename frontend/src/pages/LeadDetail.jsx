@@ -96,7 +96,7 @@ export default function LeadDetail() {
   const stages = lead.type === 'deal' ? stagesDeal : stagesLead;
   const currentStageIdx = stages.findIndex(s => s.id === lead.stage_id);
   const isPipelineComplete = stages.some(s => s.id === lead.stage_id && s.is_won);
-  const canConvert = lead.type === 'lead' && !lead.project_id;
+  const canConvert = (lead.type === 'lead' || !lead.type || lead.type === '') && !lead.project_id;
 
   const deleteDocument = async (docId) => {
     if (!confirm('Xóa tài liệu?')) return;
