@@ -70,7 +70,7 @@ r.get('/:id', async (req, res) => {
 r.post('/', async (req, res) => {
   try {
     const b = req.body;
-    if (!b.full_name || !b.phone) return res.status(400).json({ error: 'Thiếu tên hoặc SĐT' });
+    if (!b.full_name) return res.status(400).json({ error: 'Thiếu tên khách hàng' });
     const { data, error } = await supabase.from('customers').insert({
       full_name: b.full_name, phone: b.phone, email: b.email || null,
       address: b.address || null, district: b.district || null, city: b.city || null,
