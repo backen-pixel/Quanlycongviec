@@ -449,7 +449,7 @@ r.get('/projects/:projectId/flow', async (req, res) => {
       .select(`*,
         division:ecosystem_units!project_company_assignments_division_unit_id_fkey(id,name,short_name,code,
           level:ecosystem_levels(id,name,icon,color),
-          stage_group:workflow_stage_groups(id,name,slug,icon,color)
+          stage_group:workflow_stage_groups!ecosystem_units_stage_group_id_fkey(id,name,slug,icon,color)
         ),
         company:ecosystem_units!project_company_assignments_company_unit_id_fkey(id,name,short_name,code),
         template_set:company_template_sets(id,name,project_type)
