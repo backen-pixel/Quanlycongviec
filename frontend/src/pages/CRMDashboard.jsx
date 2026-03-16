@@ -454,46 +454,46 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays }) {
   );
 }
 
-// New Lead Modal - Professional Style
+// New Lead Modal - Auto create customer
 function NewLeadModal({ onClose, sources, type }) {
   const [formData, setFormData] = useState({
     title: '',
-    customer_id: '',
+    customer_name: '',
+    customer_phone: '',
     source_id: '',
     estimated_value: 0,
     probability: 50,
   });
-  const [customers, setCustomers] = useState([]);
-  const [searchCustomer, setSearchCustomer] = useState('');
-  const [selectedCustomerName, setSelectedCustomerName] = useState('');
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (searchCustomer.length > 0) {
-      api.get('/customers', { params: { search: searchCustomer } })
-        .then(res => setCustomers(res.data?.customers || res.data || []))
-        .catch(() => setCustomers([]));
-    }
-  }, [searchCustomer]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.title) return alert('Nhập tên lead');
+    if (!formData.customer_name) return alert('Nhập tên khách hàng');
     
     setSaving(true);
     try {
-      // Get first lead stage
+      // 1. Create customer first
+      const { data: customer } = await api.post('/customers', {
+        full_name: formData.customer_name,
+        phone: formData.customer_phone || null,
+      });
+      const customerId = customer?.id || customer?.customer?.id;
+
+      // 2. Get first lead stage
       const { data: stages } = await api.get('/crm/pipeline-stages', { params: { type: 'lead' } });
       const firstStage = stages?.[0];
 
+      // 3. Create lead with customer_id
       await api.post('/crm/leads', {
-        ...formData,
+        title: formData.title,
+        customer_id: customerId || null,
+        source_id: formData.source_id || null,
         type: 'lead',
         stage_id: firstStage?.id,
         estimated_value: parseFloat(formData.estimated_value) || 0,
         probability: parseInt(formData.probability) || 50,
       });
-      alert('Đã thêm lead mới');
       onClose();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
@@ -505,56 +505,47 @@ function NewLeadModal({ onClose, sources, type }) {
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl max-w-md w-full p-6">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-gray-900">Thêm {type === 'lead' ? 'Lead' : 'Deal'} mới</h2>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition"><X className="h-5 w-5 text-gray-500" /></button>
+          <h2 className="text-xl font-bold text-gray-900">Thêm Lead mới</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-500" /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">Tên {type === 'lead' ? 'lead' : 'deal'} *</label>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">Tên lead *</label>
             <input
               type="text"
               required
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              placeholder="VD: Dự án tủ bếp..."
+              placeholder="VD: Tủ bếp gỗ sồi nhà anh A..."
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">Khách hàng</label>
-            <div className="relative">
+          <div className="bg-blue-50 rounded-lg p-4 space-y-3">
+            <p className="text-xs font-bold text-blue-800 uppercase">👤 Khách hàng mới</p>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Tên khách hàng *</label>
               <input
                 type="text"
-                value={selectedCustomerName || searchCustomer}
-                onChange={(e) => {
-                  setSearchCustomer(e.target.value);
-                  if (!e.target.value) setSelectedCustomerName('');
-                }}
+                required
+                value={formData.customer_name}
+                onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                placeholder="Tìm khách hàng..."
+                placeholder="Nguyễn Văn A"
               />
-              {customers.length > 0 && searchCustomer && !selectedCustomerName && (
-                <div className="absolute top-full mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg z-10 max-h-40 overflow-y-auto">
-                  {customers.map(c => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => {
-                        setFormData({ ...formData, customer_id: c.id });
-                        setSelectedCustomerName(c.full_name);
-                        setSearchCustomer('');
-                        setCustomers([]);
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-b-0"
-                    >
-                      {c.full_name}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Số điện thoại</label>
+              <input
+                type="text"
+                value={formData.customer_phone}
+                onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                placeholder="0901234567"
+              />
+            </div>
+            <p className="text-xs text-blue-600">Thông tin chi tiết sẽ nhập thêm ở trang Lead</p>
           </div>
 
           <div>
@@ -599,14 +590,14 @@ function NewLeadModal({ onClose, sources, type }) {
             <button
               type="submit"
               disabled={saving}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-all duration-200 disabled:opacity-50 text-sm"
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-all duration-200 disabled:opacity-50 text-sm cursor-pointer"
             >
-              {saving ? 'Đang lưu...' : 'Thêm'}
+              {saving ? 'Đang tạo...' : 'Tạo Lead'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-all duration-200 text-sm"
+              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-all duration-200 text-sm cursor-pointer"
             >
               Hủy
             </button>
