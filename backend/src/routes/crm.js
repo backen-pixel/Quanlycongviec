@@ -390,7 +390,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     // ═══════════════════════════════════════════════════════════════
     let allCreatedTasks = [];
     try {
-      // Get flow steps with tasks and checklists
+      // Get flow steps
       const { data: flowSteps } = await supabase
         .from('workflow_flow_steps')
         .select(`
@@ -401,28 +401,34 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
         .eq('flow_id', flow_id)
         .order('order_index');
 
+      console.log(`Convert-to-deal: flow ${flow_id} has ${flowSteps?.length || 0} steps`);
+
       if (flowSteps?.length) {
         for (const step of flowSteps) {
           // Save project_company_assignment
           try {
-            await supabase.from('project_company_assignments').upsert({
-              project_id: project.id,
-              division_unit_id: step.division_unit_id,
-              company_unit_id: step.company_unit_id,
-              template_set_id: step.template_set_id || null,
-              order_index: step.order_index || 0,
-              status: step.order_index === 0 ? 'in_progress' : 'pending',
-              started_at: step.order_index === 0 ? new Date().toISOString() : null,
-            }, { onConflict: 'project_id,division_unit_id' });
+            if (step.division_unit_id) {
+              await supabase.from('project_company_assignments').upsert({
+                project_id: project.id,
+                division_unit_id: step.division_unit_id,
+                company_unit_id: step.company_unit_id,
+                template_set_id: step.template_set_id || null,
+                order_index: step.order_index || 0,
+                status: step.order_index === 0 ? 'in_progress' : 'pending',
+                started_at: step.order_index === 0 ? new Date().toISOString() : null,
+              }, { onConflict: 'project_id,division_unit_id' });
+            }
           } catch (e) { console.error('Assignment upsert:', e.message); }
 
-          // Get flow step tasks
+          // Try 1: Get flow_step_tasks (custom tasks for this step)
           const { data: flowTasks } = await supabase
             .from('flow_step_tasks')
             .select('*, checklists:flow_step_task_checklists(*)')
             .eq('flow_step_id', step.id)
             .eq('is_active', true)
             .order('order_index');
+
+          console.log(`  Step ${step.order_index} (stage ${step.stage_id}): ${flowTasks?.length || 0} flow_step_tasks, template_set: ${step.template_set_id || 'none'}`);
 
           if (flowTasks?.length) {
             for (const t of flowTasks) {
@@ -542,6 +548,45 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           }
         }
+      }
+
+      // ═══ FALLBACK: If no tasks created from flow, generate default tasks for all stages ═══
+      if (allCreatedTasks.length === 0) {
+        console.log('Convert-to-deal: No tasks from flow, generating defaults');
+        const { data: allStages } = await supabase.from('workflow_stages')
+          .select('id, slug, name')
+          .eq('is_active', true)
+          .is('company_id', null)
+          .order('order_index');
+
+        const stageDefaultTasks = {
+          consulting: [{ title: 'Tư vấn khách hàng', priority: 'high' }, { title: 'Khảo sát hiện trạng', priority: 'medium' }],
+          design: [{ title: 'Thiết kế bản vẽ 2D', priority: 'high' }, { title: 'Thiết kế 3D render', priority: 'medium' }, { title: 'Khách duyệt bản thiết kế', priority: 'high' }],
+          quotation: [{ title: 'Bóc tách vật tư', priority: 'high' }, { title: 'Lập báo giá chi tiết', priority: 'high' }, { title: 'Gửi báo giá cho khách', priority: 'medium' }],
+          contract: [{ title: 'Soạn hợp đồng', priority: 'high' }, { title: 'Khách ký hợp đồng', priority: 'high' }, { title: 'Thu tiền cọc', priority: 'urgent' }],
+          production: [{ title: 'Đặt mua vật tư', priority: 'high' }, { title: 'Gia công CNC', priority: 'high' }, { title: 'Lắp ráp', priority: 'medium' }, { title: 'Sơn / dán bề mặt', priority: 'medium' }, { title: 'Kiểm tra chất lượng', priority: 'high' }],
+          shipping: [{ title: 'Đóng gói sản phẩm', priority: 'medium' }, { title: 'Sắp xếp xe vận chuyển', priority: 'medium' }, { title: 'Giao hàng đến công trình', priority: 'high' }],
+          installation: [{ title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' }, { title: 'Lắp đặt tại công trình', priority: 'high' }, { title: 'Nghiệm thu với khách hàng', priority: 'urgent' }],
+          'customer-care': [{ title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' }, { title: 'Xử lý bảo hành (nếu có)', priority: 'high' }],
+        };
+
+        for (const stage of (allStages || [])) {
+          const tasks = stageDefaultTasks[stage.slug] || [];
+          for (let i = 0; i < tasks.length; i++) {
+            const { data: task } = await supabase.from('tasks').insert({
+              project_id: project.id,
+              stage_id: stage.id,
+              title: tasks[i].title,
+              priority: tasks[i].priority || 'medium',
+              status: 'pending',
+              order_index: i,
+              created_by_id: req.user.userId,
+              task_type: 'project',
+            }).select().single();
+            if (task) allCreatedTasks.push(task);
+          }
+        }
+        console.log(`Convert-to-deal: Generated ${allCreatedTasks.length} default tasks`);
       }
     } catch (flowErr) {
       console.error('Flow task generation error:', flowErr);
