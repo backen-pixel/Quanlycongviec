@@ -923,6 +923,34 @@ r.put('/:id/stage', async (req, res) => {
       try { await autoFlow.onProjectStageChanged(req.params.id, stage.id); } catch (e) { console.error('Auto-flow sync:', e.message); }
     }
 
+    // AUTO-SYNC: Project stage → CRM Deal pipeline stage
+    try {
+      // Map workflow stage slug → deal pipeline stage name
+      const STAGE_TO_DEAL_PIPELINE = {
+        consulting: 'Deal mới',
+        design: 'Deal mới',
+        quotation: 'Báo giá',
+        contract: 'Ký hợp đồng',
+        production: 'Ký hợp đồng',
+        shipping: 'Ký hợp đồng',
+        installation: 'Ký hợp đồng',
+        'customer-care': 'Thắng',
+      };
+      const prefix = stage_slug?.split('-')?.[0] || stage_slug;
+      const dealPipelineName = STAGE_TO_DEAL_PIPELINE[prefix];
+      if (dealPipelineName) {
+        const { data: pStage } = await supabase.from('crm_pipeline_stages')
+          .select('id').eq('name', dealPipelineName).eq('pipeline_type', 'deal').eq('is_active', true).limit(1).single();
+        if (pStage) {
+          // Only update deals (type='deal') linked to this project
+          await supabase.from('crm_leads')
+            .update({ stage_id: pStage.id, updated_at: new Date().toISOString() })
+            .eq('project_id', req.params.id)
+            .eq('type', 'deal');
+        }
+      }
+    } catch (_) { /* ignore - CRM tables may not exist */ }
+
     // Auto-update customer status based on stage mapping
     if (data.customer_id) {
       try {
