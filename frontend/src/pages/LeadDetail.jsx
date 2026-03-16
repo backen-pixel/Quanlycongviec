@@ -711,43 +711,77 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
               <div className="space-y-3">
                 {flowPreview.steps.map((step, i) => {
                   const levelInfo = step.division?.level;
-                  const taskCount = step.tasks?.length || step.task_count || 0;
-                  const checklistCount = step.tasks?.reduce((sum, t) => sum + (t.checklists?.length || 0), 0) || 0;
+                  // Collect all tasks: template tasks + process tasks
+                  const templateTasks = step.tasks || [];
+                  const processes = step.processes || [];
+                  const processTasks = processes.flatMap(p => (p.tasks || []).map(t => ({ ...t, _processName: p.name, _processIcon: p.icon })));
+                  const allTasks = [...templateTasks, ...processTasks];
+                  const totalChecklists = allTasks.reduce((sum, t) => sum + (t.checklists?.length || 0), 0);
+
                   return (
                     <div key={step.id || i} className="bg-white rounded-lg p-3 border border-blue-100">
+                      {/* Step header */}
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-bold text-white bg-blue-500 rounded-full w-5 h-5 flex items-center justify-center">{i + 1}</span>
                           <span className="text-sm font-bold text-gray-900">
                             {step.division?.name || 'Khối ' + (i + 1)}
                           </span>
-                          {levelInfo && <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: levelInfo.color + '20', color: levelInfo.color }}>{levelInfo.icon} {levelInfo.name}</span>}
+                          {levelInfo && <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: (levelInfo.color || '#6366F1') + '20', color: levelInfo.color || '#6366F1' }}>{levelInfo.icon} {levelInfo.name}</span>}
                         </div>
                         <div className="flex items-center gap-2 text-xs text-gray-500">
-                          {taskCount > 0 && <span>📌 {taskCount} NV</span>}
-                          {checklistCount > 0 && <span>☑️ {checklistCount} CL</span>}
+                          {allTasks.length > 0 && <span>📌 {allTasks.length} NV</span>}
+                          {totalChecklists > 0 && <span>☑️ {totalChecklists} CL</span>}
                         </div>
                       </div>
+
                       {step.company?.name && (
                         <p className="text-xs text-gray-600 ml-7">🏢 {step.company.name}</p>
                       )}
                       {step.template_set?.name && (
                         <p className="text-xs text-gray-600 ml-7">📦 Bộ mẫu: {step.template_set.name}</p>
                       )}
-                      {/* Show tasks */}
-                      {step.tasks?.length > 0 && (
-                        <div className="ml-7 mt-2 space-y-1">
-                          {step.tasks.slice(0, 5).map((t, j) => (
-                            <div key={t.id || j} className="flex items-center gap-2 text-xs text-gray-700">
-                              <span className="text-gray-400">•</span>
-                              <span>{t.title}</span>
-                              {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} checklist)</span>}
+
+                      {/* Processes */}
+                      {processes.length > 0 && (
+                        <div className="ml-7 mt-2 space-y-2">
+                          {processes.map((proc, pi) => (
+                            <div key={proc.id || pi} className="bg-gray-50 rounded-lg p-2 border">
+                              <p className="text-xs font-bold text-gray-800 mb-1">{proc.icon || '⚙️'} {proc.name} <span className="font-normal text-gray-500">({proc.tasks?.length || 0} NV)</span></p>
+                              {proc.tasks?.length > 0 && (
+                                <div className="space-y-0.5 ml-2">
+                                  {proc.tasks.slice(0, 4).map((t, j) => (
+                                    <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-600">
+                                      <span className="text-gray-300">•</span>
+                                      <span>{t.title}</span>
+                                      {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} CL)</span>}
+                                    </div>
+                                  ))}
+                                  {proc.tasks.length > 4 && <p className="text-xs text-blue-500 ml-3">+{proc.tasks.length - 4} NV khác</p>}
+                                </div>
+                              )}
                             </div>
                           ))}
-                          {step.tasks.length > 5 && (
-                            <p className="text-xs text-blue-600 ml-3">...và {step.tasks.length - 5} nhiệm vụ khác</p>
-                          )}
                         </div>
+                      )}
+
+                      {/* Template tasks (if no processes) */}
+                      {processes.length === 0 && templateTasks.length > 0 && (
+                        <div className="ml-7 mt-2 space-y-0.5">
+                          {templateTasks.slice(0, 5).map((t, j) => (
+                            <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-600">
+                              <span className="text-gray-300">•</span>
+                              <span>{t.title}</span>
+                              {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} CL)</span>}
+                            </div>
+                          ))}
+                          {templateTasks.length > 5 && <p className="text-xs text-blue-500 ml-3">+{templateTasks.length - 5} NV khác</p>}
+                        </div>
+                      )}
+
+                      {/* Empty state */}
+                      {allTasks.length === 0 && processes.length === 0 && (
+                        <p className="text-xs text-gray-400 ml-7 mt-1 italic">Chưa có nhiệm vụ (sẽ dùng mặc định)</p>
                       )}
                     </div>
                   );
@@ -755,7 +789,15 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
               </div>
               <div className="mt-3 pt-2 border-t border-blue-200 flex items-center gap-4 text-xs text-blue-700">
                 <span>🔄 {flowPreview.steps.length} bước</span>
-                <span>📌 {flowPreview.steps.reduce((s, st) => s + (st.tasks?.length || st.task_count || 0), 0)} nhiệm vụ</span>
+                <span>📌 {flowPreview.steps.reduce((s, st) => {
+                  const tpl = st.tasks?.length || 0;
+                  const proc = (st.processes || []).reduce((ps, p) => ps + (p.tasks?.length || 0), 0);
+                  return s + tpl + proc;
+                }, 0)} nhiệm vụ</span>
+                <span>☑️ {flowPreview.steps.reduce((s, st) => {
+                  const all = [...(st.tasks || []), ...(st.processes || []).flatMap(p => p.tasks || [])];
+                  return s + all.reduce((cs, t) => cs + (t.checklists?.length || 0), 0);
+                }, 0)} checklist</span>
               </div>
             </div>
           )}
