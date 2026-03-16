@@ -336,62 +336,60 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       .single();
 
     if (!firstDealStage) {
-      return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên' });
+      return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên. Hãy chạy SQL migration 20_lead_deal_pipeline.sql' });
     }
 
-    // Get consulting stage (stage 3 in deal pipeline for task completion)
-    const { data: consultingStage } = await supabase
+    // Get consulting stage
+    const { data: consultingStages } = await supabase
       .from('workflow_stages')
       .select('id')
       .eq('slug', 'consulting')
-      .is('company_id', null)
       .eq('is_active', true)
-      .limit(1)
-      .single();
+      .limit(1);
+    const consultingStageId = consultingStages?.[0]?.id || null;
 
-    // Create project — use same code logic as projects.js (MAX from projects table)
+    // Generate project code (same logic as projects.js)
     const yr = new Date().getFullYear();
     const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${yr}-%`).order('code', { ascending: false }).limit(1);
     const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) : 0;
     const code = `TB-${yr}-${String(lastNum + 1).padStart(3, '0')}`;
+
+    // Create project
+    const projectInsert = {
+      code,
+      name: lead.title,
+      status: 'consulting',
+      customer_id: lead.customer_id,
+      flow_id: flow_id || null,
+      created_by: req.user.userId,
+    };
+    if (lead.estimated_value) projectInsert.estimated_value = lead.estimated_value;
+    if (consultingStageId) projectInsert.current_stage_id = consultingStageId;
+
     const { data: project, error: projectError } = await supabase
       .from('projects')
-      .insert({
-        code,
-        name: lead.title,
-        status: 'consulting',
-        customer_id: lead.customer_id,
-        estimated_value: lead.estimated_value,
-        flow_id,
-        current_stage_id: consultingStage?.id,
-        created_by: req.user.userId,
-      })
+      .insert(projectInsert)
       .select('*')
       .single();
 
     if (projectError) throw projectError;
 
-    // Auto-create tasks for consulting stage
-    let stageFlow = null;
-    try { stageFlow = require('../helpers/stageFlow'); } catch {}
-    if (stageFlow && consultingStage?.id) {
+    // Auto-create tasks for consulting stage then complete them
+    if (consultingStageId) {
       try {
-        const tasks = await stageFlow.createStageTasksFromFlow(project.id, consultingStage.id, 'consulting', req.user.userId, null);
-        // Auto-complete consulting tasks (since lead→deal means consulting is done)
+        const stageFlow = require('../helpers/stageFlow');
+        const tasks = await stageFlow.createStageTasksFromFlow(project.id, consultingStageId, 'consulting', req.user.userId, null);
         if (tasks?.length) {
           await supabase
             .from('tasks')
             .update({ status: 'completed', completed_at: new Date().toISOString() })
             .eq('project_id', project.id)
-            .eq('stage_id', consultingStage.id);
+            .eq('stage_id', consultingStageId);
         }
       } catch (e) { console.error('Auto tasks consulting:', e.message); }
     }
 
-    // Copy lead documents to project context (keep lead_documents linked)
-    // No need to copy - they'll be queried via lead_id in ProjectDocumentsTab
-
-    // Update lead: convert to deal
+    // Update lead → deal
     const { data: updatedLead, error: leadError } = await supabase
       .from('crm_leads')
       .update({
@@ -406,16 +404,16 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     if (leadError) throw leadError;
 
-    // Log activity
-    await supabase.from('crm_activities')
-      .insert({
+    // Log activity (no .catch — use try/catch)
+    try {
+      await supabase.from('crm_activities').insert({
         lead_id: req.params.id,
         type: 'note',
         title: '🚀 Chuyển sang Deal',
         description: `Lead chuyển thành Deal — Dự án ${project.code} đã tạo`,
         created_by: req.user.userId,
-      })
-      .catch(() => {});
+      });
+    } catch (_) {}
 
     res.status(201).json({
       lead: updatedLead,
@@ -423,6 +421,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       message: `Đã chuyển Lead sang Deal. Dự án ${project.code} đã được tạo.`,
     });
   } catch (e) {
+    console.error('Convert to deal error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -473,8 +472,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
             title: '🎉 Deal Thắng!',
             description: `Deal đã chốt thành công`,
             created_by: req.user.userId,
-          })
-          .catch(() => {});
+          });
       } catch (e) { console.error('Auto-flow error:', e.message); }
     }
 
