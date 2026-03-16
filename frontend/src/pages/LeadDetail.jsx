@@ -33,6 +33,7 @@ export default function LeadDetail() {
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
+  const [activeTab, setActiveTab] = useState('documents');
 
   useEffect(() => { load(); }, [id]);
 
@@ -184,58 +185,124 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      {/* Pipeline Progress */}
-      <div className="bg-white rounded-xl border p-4">
-        <div className="flex items-center gap-1 overflow-x-auto pb-2">
+      {/* Pipeline Progress - MISA Style Stepper */}
+      <div className="bg-white rounded-xl border p-6">
+        <div className="flex items-center justify-center gap-2 overflow-x-auto pb-4">
           {stages.map((s, i) => {
             const isCurrent = s.id === lead.stage_id;
             const isPast = i < currentStageIdx;
+            const isNext = i === currentStageIdx + 1;
+            
             return (
-              <button key={s.id} onClick={() => moveStage(s.id)}
-                className={`flex-1 min-w-[120px] py-2 px-3 rounded-lg text-xs font-bold text-center transition-all cursor-pointer ${
-                  isCurrent ? 'text-white shadow-md' : isPast ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}
-                style={isCurrent ? { backgroundColor: s.color } : {}}>
-                <span>{s.icon} {s.name}</span>
-              </button>
+              <div key={s.id} className="flex items-center flex-shrink-0">
+                {/* Circle */}
+                <button 
+                  onClick={() => moveStage(s.id)}
+                  className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all cursor-pointer relative ${
+                    isPast ? 'bg-emerald-500 text-white' 
+                    : isCurrent ? 'text-white animate-pulse' 
+                    : 'border-2 border-gray-300 text-gray-500'
+                  }`}
+                  style={isCurrent ? { backgroundColor: s.color } : {}}
+                  title={`Click để chuyển sang ${s.name}`}
+                >
+                  {isPast ? '✓' : isCurrent ? s.icon || '●' : s.icon || '○'}
+                </button>
+                
+                {/* Stage Name - below circle */}
+                <div className="absolute top-16 w-20 text-center">
+                  <p className={`text-xs font-medium truncate ${
+                    isCurrent ? 'text-gray-900 font-bold' : 'text-gray-600'
+                  }`}>
+                    {s.name}
+                  </p>
+                </div>
+                
+                {/* Connecting Line */}
+                {i < stages.length - 1 && (
+                  <div className={`w-12 h-0.5 mx-2 ${
+                    isPast ? 'bg-emerald-500' : 'bg-gray-200'
+                  }`} />
+                )}
+              </div>
             );
           })}
         </div>
+        {/* Spacer for stage names */}
+        <div className="h-6" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Customer Info */}
         <div className="lg:col-span-1 space-y-4">
           {/* Customer Card - Inline Edit */}
-          <div className="bg-white rounded-xl border p-5 space-y-3">
+          <div className="bg-white rounded-xl border p-5 space-y-4">
             <h3 className="text-sm font-bold text-gray-900 uppercase">Khách hàng</h3>
             
             {customer ? (
               <div className="space-y-3">
-                {['full_name', 'phone', 'email', 'address', 'company', 'tax_code'].map(field => (
-                  <div key={field} className="group">
-                    <p className="text-xs text-gray-500 mb-0.5">{field === 'full_name' ? 'Tên' : field === 'phone' ? 'SĐT' : field === 'email' ? 'Email' : field === 'address' ? 'Địa chỉ' : field === 'company' ? 'Công ty' : 'Mã số thuế'}</p>
-                    {editingField === field ? (
-                      <div className="flex gap-1">
-                        <input
-                          type={field === 'email' ? 'email' : 'text'}
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          className="flex-1 h-8 px-2 border rounded text-sm"
-                          autoFocus
-                        />
-                        <button onClick={() => saveField(field)} className="px-2 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">
-                          <Save className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <p className="text-sm font-medium text-gray-900 hover:bg-gray-50 p-1 rounded cursor-pointer group-hover:bg-gray-50"
-                        onClick={() => startEditField(field, customer[field])}>
-                        {customer[field] || '—'} <Edit2 className="h-3 w-3 inline opacity-0 group-hover:opacity-100 ml-1" />
+                {/* Contact Info Section */}
+                <div className="space-y-3">
+                  {['full_name', 'phone', 'email'].map(field => (
+                    <div key={field} className="group">
+                      <p className="text-xs text-gray-500 mb-0.5 font-medium">
+                        {field === 'full_name' ? '👤 Tên' : field === 'phone' ? '📞 SĐT' : '✉️ Email'}
                       </p>
-                    )}
-                  </div>
-                ))}
+                      {editingField === field ? (
+                        <div className="flex gap-1">
+                          <input
+                            type={field === 'email' ? 'email' : 'text'}
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            className="flex-1 h-8 px-2 border rounded text-sm"
+                            autoFocus
+                          />
+                          <button onClick={() => saveField(field)} className="px-2 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">
+                            <Save className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-sm font-medium text-gray-900 hover:bg-gray-50 p-1 rounded cursor-pointer group-hover:bg-gray-50"
+                          onClick={() => startEditField(field, customer[field])}>
+                          {customer[field] || '—'} <Edit2 className="h-3 w-3 inline opacity-0 group-hover:opacity-100 ml-1" />
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Divider */}
+                <div className="border-t border-gray-100" />
+
+                {/* Business Info Section */}
+                <div className="space-y-3">
+                  {['address', 'company', 'tax_code'].map(field => (
+                    <div key={field} className="group">
+                      <p className="text-xs text-gray-500 mb-0.5 font-medium">
+                        {field === 'address' ? '📍 Địa chỉ' : field === 'company' ? '🏢 Công ty' : '🧾 MST'}
+                      </p>
+                      {editingField === field ? (
+                        <div className="flex gap-1">
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            className="flex-1 h-8 px-2 border rounded text-sm"
+                            autoFocus
+                          />
+                          <button onClick={() => saveField(field)} className="px-2 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">
+                            <Save className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-sm font-medium text-gray-900 hover:bg-gray-50 p-1 rounded cursor-pointer group-hover:bg-gray-50"
+                          onClick={() => startEditField(field, customer[field])}>
+                          {customer[field] || '—'} <Edit2 className="h-3 w-3 inline opacity-0 group-hover:opacity-100 ml-1" />
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : (
               <p className="text-sm text-gray-500">Chưa chọn khách hàng</p>
@@ -245,108 +312,164 @@ export default function LeadDetail() {
           {/* Lead Info */}
           <div className="bg-white rounded-xl border p-5 space-y-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase">Thông tin</h3>
-            <div className="space-y-2">
+            <div className="space-y-3">
               {lead.estimated_value > 0 && (
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">Giá trị</p>
+                  <p className="text-xs text-gray-500">💰 Giá trị</p>
                   <p className="text-sm font-bold text-emerald-600">{formatVND(lead.estimated_value)}</p>
                 </div>
               )}
               {lead.probability && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">Xác suất</p>
-                  <p className="text-sm font-bold text-blue-600">{lead.probability}%</p>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs text-gray-500">📊 Xác suất</p>
+                    <p className="text-sm font-bold text-blue-600">{lead.probability}%</p>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                    <div 
+                      className="bg-blue-600 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${lead.probability}%` }}
+                    />
+                  </div>
                 </div>
               )}
               {lead.source && (
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">Nguồn</p>
+                  <p className="text-xs text-gray-500">🔗 Nguồn</p>
                   <p className="text-sm font-medium">{lead.source.icon} {lead.source.name}</p>
                 </div>
               )}
               {lead.assignee && (
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">Phụ trách</p>
-                  <p className="text-sm font-medium">👤 {lead.assignee.full_name}</p>
+                  <p className="text-xs text-gray-500">👤 Phụ trách</p>
+                  <p className="text-sm font-medium">{lead.assignee.full_name}</p>
                 </div>
               )}
               {lead.expected_close_date && (
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">Dự kiến chốt</p>
+                  <p className="text-xs text-gray-500">📅 Dự kiến chốt</p>
                   <p className="text-sm font-medium">{formatDate(lead.expected_close_date)}</p>
                 </div>
               )}
             </div>
           </div>
+
+          {/* Quick Stats Card */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center">
+              <p className="text-xs text-gray-600 mb-1">Hoạt động</p>
+              <p className="text-xl font-bold text-blue-600">{activities.length}</p>
+            </div>
+            <div className="bg-amber-50 rounded-lg border border-amber-100 p-3 text-center">
+              <p className="text-xs text-gray-600 mb-1">Tài liệu</p>
+              <p className="text-xl font-bold text-amber-600">{documents.length}</p>
+            </div>
+            <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
+              <p className="text-xs text-gray-600 mb-1">Cuộc gọi</p>
+              <p className="text-xl font-bold text-purple-600">{activities.filter(a => a.type === 'call').length}</p>
+            </div>
+          </div>
         </div>
 
-        {/* Right: Documents + Activities */}
+        {/* Right: Documents + Activities with Tabs */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Documents Section */}
-          <div className="bg-white rounded-xl border p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-gray-900 uppercase">📋 Tài liệu khách hàng</h3>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setShowAddDoc(true)} className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
-                  <Plus className="h-3.5 w-3.5" /> Nhập văn bản
-                </button>
-                <button onClick={uploadDocument} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
-                  <FileUp className="h-3.5 w-3.5" /> Upload file
-                </button>
-              </div>
-            </div>
-
-            {documents.length === 0 ? (
-              <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
-                <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-                <p className="text-sm text-gray-500">Chưa có tài liệu</p>
-                <p className="text-xs text-gray-400 mt-1">Upload file hoặc nhập văn bản để thêm tài liệu</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {documents.map(doc => (
-                  <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Activities */}
-          <div className="bg-white rounded-xl border p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-gray-900 uppercase">Hoạt động</h3>
-              <button onClick={() => setShowAddActivity(true)} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
-                <Plus className="h-3.5 w-3.5" /> Thêm
+          {/* Tab Switcher */}
+          <div className="bg-white rounded-xl border">
+            <div className="flex border-b">
+              <button
+                onClick={() => setActiveTab('documents')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'documents'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                📋 Tài liệu ({documents.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('activities')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'activities'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                💬 Hoạt động ({activities.length})
               </button>
             </div>
 
-            {activities.length === 0 ? (
-              <div className="text-center py-8">
-                <MessageSquare className="h-10 w-10 text-gray-200 mx-auto mb-2" />
-                <p className="text-sm text-gray-400">Chưa có hoạt động</p>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {activities.map(act => {
-                  const typeInfo = ACTIVITY_TYPES.find(t => t.value === act.type) || ACTIVITY_TYPES[4];
-                  return (
-                    <div key={act.id} className="p-3 bg-gray-50 rounded-lg border">
-                      <div className="flex items-start gap-2">
-                        <span className="text-lg shrink-0">{typeInfo.icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-medium text-gray-900">{act.title}</p>
-                            <span className="text-[10px] text-gray-400">{formatDate(act.activity_date)}</span>
-                          </div>
-                          {act.description && <p className="text-xs text-gray-600 mt-1">{act.description}</p>}
-                          {act.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {act.outcome}</p>}
-                        </div>
+            {/* Tab Content */}
+            <div className="p-5">
+              {activeTab === 'documents' ? (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => setShowAddDoc(true)} className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                        <Plus className="h-3.5 w-3.5" /> Nhập văn bản
+                      </button>
+                      <button onClick={uploadDocument} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                        <FileUp className="h-3.5 w-3.5" /> Upload file
+                      </button>
+                    </div>
+                  </div>
+
+                  {documents.length === 0 ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
+                      <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                      <p className="text-sm text-gray-500">Chưa có tài liệu</p>
+                      <p className="text-xs text-gray-400 mt-1">Upload file hoặc nhập văn bản để thêm tài liệu</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {documents.map(doc => (
+                        <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <button onClick={() => setShowAddActivity(true)} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                      <Plus className="h-3.5 w-3.5" /> Thêm
+                    </button>
+                  </div>
+
+                  {activities.length === 0 ? (
+                    <div className="text-center py-8">
+                      <MessageSquare className="h-10 w-10 text-gray-200 mx-auto mb-2" />
+                      <p className="text-sm text-gray-400">Chưa có hoạt động</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {/* Vertical timeline line */}
+                      <div className="relative">
+                        <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-300 to-blue-100" />
+                        {activities.map((act, idx) => {
+                          const typeInfo = ACTIVITY_TYPES.find(t => t.value === act.type) || ACTIVITY_TYPES[4];
+                          return (
+                            <div key={act.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4">
+                              <div className="absolute -left-5 top-4 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
+                              <div className="flex items-start gap-2">
+                                <span className="text-lg shrink-0">{typeInfo.icon}</span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-sm font-medium text-gray-900">{act.title}</p>
+                                    <span className="text-[10px] text-gray-400">{formatDate(act.activity_date)}</span>
+                                  </div>
+                                  {act.description && <p className="text-xs text-gray-600 mt-1">{act.description}</p>}
+                                  {act.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {act.outcome}</p>}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>

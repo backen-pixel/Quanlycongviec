@@ -8,9 +8,6 @@ import {
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle
 } from 'lucide-react';
-import { DndContext, DragOverlay, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { useSortable } from '@dnd-kit/sortable';
-import { useDroppable } from '@dnd-kit/core';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -275,7 +272,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
       </div>
       <div>
         <p className="text-xs text-gray-500 font-semibold uppercase mb-1">{label}</p>
-        <p className="text-3xl font-bold text-gray-900">{value}</p>
+        <p className="text-2xl md:text-3xl font-bold text-gray-900">{value}</p>
         {trend && <p className="text-xs text-emerald-600 mt-2">↑ {trend}%</p>}
       </div>
     </div>
@@ -284,23 +281,53 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
 
 // Kanban Stage Card - MISA Style
 function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays }) {
-  const { setNodeRef, isOver } = useDroppable({ id: stage.id });
+  const [isOverColumn, setIsOverColumn] = useState(false);
   
   const stageColor = stage.color || '#e5e7eb';
   
+  const handleColumnDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setIsOverColumn(true);
+  };
+
+  const handleColumnDragLeave = (e) => {
+    // Only leave if dragging out of the column completely
+    if (e.target === e.currentTarget) {
+      setIsOverColumn(false);
+    }
+  };
+
+  const handleColumnDrop = (e) => {
+    e.preventDefault();
+    setIsOverColumn(false);
+    const leadId = e.dataTransfer.getData('leadId');
+    if (leadId) {
+      onMoveStage(leadId, stage.id);
+    }
+  };
+  
   return (
     <div
-      ref={setNodeRef}
-      className={`flex-shrink-0 w-96 rounded-lg overflow-hidden transition-all duration-200 ${isOver ? 'ring-2 ring-blue-400' : ''}`}
+      onDragOver={handleColumnDragOver}
+      onDragLeave={handleColumnDragLeave}
+      onDrop={handleColumnDrop}
+      className={`flex-shrink-0 w-96 rounded-lg overflow-hidden transition-all duration-200 ${
+        isOverColumn 
+          ? 'ring-2 ring-blue-500 ring-dashed' 
+          : ''
+      }`}
     >
       {/* Colored Header Bar */}
       <div
-        className="h-1 w-full"
+        className="h-1.5 w-full"
         style={{ backgroundColor: stageColor }}
       />
       
       {/* Stage Header */}
-      <div className="bg-white border border-gray-200 border-t-0 p-4">
+      <div className={`bg-white border border-gray-200 border-t-0 p-4 transition-all ${
+        isOverColumn ? 'bg-blue-50' : ''
+      }`}>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="text-lg">{stage.icon || '📌'}</span>
@@ -318,10 +345,14 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
       </div>
       
       {/* Cards Container */}
-      <div className="bg-gray-50 border border-gray-200 border-t-0 p-3 min-h-96 max-h-96 overflow-y-auto space-y-3">
+      <div className={`bg-gray-50 border border-gray-200 border-t-0 p-3 min-h-96 max-h-96 overflow-y-auto space-y-3 transition-all ${
+        isOverColumn ? 'bg-blue-50' : ''
+      }`}>
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
-            <p className="text-sm">Kéo lead vào đây</p>
+            <p className="text-sm flex items-center gap-1">
+              {isOverColumn ? '⬇️ Thả vào đây' : '📥 Kéo lead vào đây'}
+            </p>
           </div>
         ) : (
           items.map(item => (
@@ -342,30 +373,9 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
 
 // Kanban Item Card - MISA Style
 function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
-  const [draggedOver, setDraggedOver] = useState(false);
-
   const handleDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('leadId', item.id);
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDraggedOver(true);
-  };
-
-  const handleDragLeave = () => {
-    setDraggedOver(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDraggedOver(false);
-    const leadId = e.dataTransfer.getData('leadId');
-    if (leadId && leadId !== item.id.toString()) {
-      onMoveStage(leadId, stage.id);
-    }
   };
 
   const getInitials = (name) => {
@@ -379,11 +389,8 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
     <div
       draggable
       onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
       onClick={() => window.location.href = `/crm/leads/${item.id}`}
-      className={`bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md transition-all duration-200 cursor-move group`}
+      className={`bg-white rounded-lg border border-gray-200 p-3 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg`}
       style={{
         borderLeft: `3px solid ${stageColor}`,
       }}
@@ -458,6 +465,7 @@ function NewLeadModal({ onClose, sources, type }) {
   });
   const [customers, setCustomers] = useState([]);
   const [searchCustomer, setSearchCustomer] = useState('');
+  const [selectedCustomerName, setSelectedCustomerName] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -519,12 +527,15 @@ function NewLeadModal({ onClose, sources, type }) {
             <div className="relative">
               <input
                 type="text"
-                value={searchCustomer}
-                onChange={(e) => setSearchCustomer(e.target.value)}
+                value={selectedCustomerName || searchCustomer}
+                onChange={(e) => {
+                  setSearchCustomer(e.target.value);
+                  if (!e.target.value) setSelectedCustomerName('');
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                 placeholder="Tìm khách hàng..."
               />
-              {customers.length > 0 && searchCustomer && (
+              {customers.length > 0 && searchCustomer && !selectedCustomerName && (
                 <div className="absolute top-full mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg z-10 max-h-40 overflow-y-auto">
                   {customers.map(c => (
                     <button
@@ -532,6 +543,7 @@ function NewLeadModal({ onClose, sources, type }) {
                       type="button"
                       onClick={() => {
                         setFormData({ ...formData, customer_id: c.id });
+                        setSelectedCustomerName(c.full_name);
                         setSearchCustomer('');
                         setCustomers([]);
                       }}
