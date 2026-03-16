@@ -46,7 +46,7 @@ export default function LeadDetail() {
         api.get(`/crm/leads/${id}/documents`).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
-        api.get('/workflow-flows').catch(() => ({ data: [] })),
+        api.get('/flows').then(r => r.data?.flows || r.data || []).catch(() => []),
       ]);
       setLead(leadRes);
       setCustomer(leadRes?.customer);
@@ -54,7 +54,7 @@ export default function LeadDetail() {
       setDocuments(docRes.data || []);
       setStagesLead(stagesLeadRes.data || []);
       setStagesDeal(stagesDealRes.data || []);
-      setFlows(flowsRes.data || []);
+      setFlows(flowsRes || []);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -186,50 +186,45 @@ export default function LeadDetail() {
       </div>
 
       {/* Pipeline Progress - MISA Style Stepper */}
-      <div className="bg-white rounded-xl border p-6">
-        <div className="flex items-center justify-center gap-2 overflow-x-auto pb-4">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+        <div className="flex items-start justify-between overflow-x-auto">
           {stages.map((s, i) => {
             const isCurrent = s.id === lead.stage_id;
             const isPast = i < currentStageIdx;
-            const isNext = i === currentStageIdx + 1;
             
             return (
-              <div key={s.id} className="flex items-center flex-shrink-0">
-                {/* Circle */}
-                <button 
-                  onClick={() => moveStage(s.id)}
-                  className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all cursor-pointer relative ${
-                    isPast ? 'bg-emerald-500 text-white' 
-                    : isCurrent ? 'text-white animate-pulse' 
-                    : 'border-2 border-gray-300 text-gray-500'
-                  }`}
-                  style={isCurrent ? { backgroundColor: s.color } : {}}
-                  title={`Click để chuyển sang ${s.name}`}
-                >
-                  {isPast ? '✓' : isCurrent ? s.icon || '●' : s.icon || '○'}
-                </button>
-                
-                {/* Stage Name - below circle */}
-                <div className="absolute top-16 w-20 text-center">
-                  <p className={`text-xs font-medium truncate ${
-                    isCurrent ? 'text-gray-900 font-bold' : 'text-gray-600'
+              <div key={s.id} className="flex items-start flex-1 min-w-0">
+                {/* Step: circle + name stacked vertically */}
+                <div className="flex flex-col items-center flex-shrink-0" style={{ minWidth: 70 }}>
+                  <button 
+                    onClick={() => moveStage(s.id)}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 cursor-pointer ${
+                      isPast ? 'bg-emerald-500 text-white shadow-sm' 
+                      : isCurrent ? 'text-white shadow-lg ring-4 ring-blue-100' 
+                      : 'border-2 border-gray-300 text-gray-400 hover:border-gray-400'
+                    }`}
+                    style={isCurrent ? { backgroundColor: s.color || '#3B82F6' } : {}}
+                    title={s.name}
+                  >
+                    {isPast ? '✓' : s.icon || (i + 1)}
+                  </button>
+                  <p className={`mt-2 text-xs text-center leading-tight max-w-[80px] ${
+                    isCurrent ? 'text-gray-900 font-bold' : isPast ? 'text-emerald-600 font-medium' : 'text-gray-500'
                   }`}>
                     {s.name}
                   </p>
                 </div>
                 
-                {/* Connecting Line */}
+                {/* Connecting line */}
                 {i < stages.length - 1 && (
-                  <div className={`w-12 h-0.5 mx-2 ${
-                    isPast ? 'bg-emerald-500' : 'bg-gray-200'
-                  }`} />
+                  <div className="flex-1 flex items-center pt-5 px-1">
+                    <div className={`w-full h-0.5 ${isPast ? 'bg-emerald-400' : 'bg-gray-200'}`} />
+                  </div>
                 )}
               </div>
             );
           })}
         </div>
-        {/* Spacer for stage names */}
-        <div className="h-6" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
