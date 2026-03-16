@@ -547,6 +547,81 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
               }
             }
           }
+
+          // Also: generate tasks from processes linked to this step
+          try {
+            const { data: stepProcs } = await supabase.from('flow_step_processes')
+              .select('*, process:company_processes(id,name,icon,order_index)')
+              .eq('flow_step_id', step.id)
+              .order('order_index');
+
+            if (stepProcs?.length) {
+              for (const sp of stepProcs) {
+                const proc = sp.process;
+                if (!proc) continue;
+
+                const { data: procTasks } = await supabase.from('company_process_tasks')
+                  .select('*, checklists:company_process_checklists(*)')
+                  .eq('process_id', proc.id)
+                  .order('order_index');
+
+                console.log(`    Process ${proc.name}: ${procTasks?.length || 0} tasks`);
+
+                for (const t of (procTasks || [])) {
+                  let deadline = null;
+                  if (t.deadline_days > 0 || t.deadline_hours > 0) {
+                    const d = new Date();
+                    if (t.deadline_days > 0) d.setDate(d.getDate() + t.deadline_days);
+                    if (t.deadline_hours > 0) d.setHours(d.getHours() + t.deadline_hours);
+                    deadline = d.toISOString();
+                  }
+
+                  const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                    project_id: project.id,
+                    stage_id: step.stage_id || t.stage_id,
+                    title: t.title,
+                    description: t.description || null,
+                    assignee_id: t.assigned_user_id || null,
+                    priority: t.priority || 'medium',
+                    status: 'pending',
+                    order_index: t.order_index,
+                    created_by_id: req.user.userId,
+                    deadline,
+                    task_type: 'project',
+                    metadata: { process_id: proc.id, process_task_id: t.id, flow_step_id: step.id },
+                  }).select().single();
+
+                  if (taskErr) { console.error('Process task error:', taskErr); continue; }
+
+                  // Create checklists from process task
+                  if (t.checklists?.length && task) {
+                    for (const c of t.checklists) {
+                      try {
+                        let clDeadline = null;
+                        if (c.deadline_days > 0 || c.deadline_hours > 0) {
+                          const dl = new Date();
+                          if (c.deadline_days > 0) dl.setDate(dl.getDate() + c.deadline_days);
+                          if (c.deadline_hours > 0) dl.setHours(dl.getHours() + c.deadline_hours);
+                          clDeadline = dl.toISOString();
+                        }
+                        await supabase.from('task_checklists').insert({
+                          task_id: task.id,
+                          label: c.label || c.title,
+                          order_index: c.order_index || 0,
+                          is_required: c.is_required || false,
+                          is_completed: false,
+                          assigned_user_id: c.assigned_user_id || null,
+                          deadline: clDeadline,
+                        });
+                      } catch (ce) { console.warn('Process checklist:', ce.message); }
+                    }
+                  }
+
+                  if (task) allCreatedTasks.push(task);
+                }
+              }
+            }
+          } catch (procErr) { console.error('Process tasks error:', procErr.message); }
         }
       }
 
