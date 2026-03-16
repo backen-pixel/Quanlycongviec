@@ -336,8 +336,18 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       .single();
 
     if (!firstDealStage) {
-      return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên. Hãy chạy SQL migration 20_lead_deal_pipeline.sql' });
+      return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên. Hãy chạy SQL migration.' });
     }
+
+    // Get "Chuyển Deal" stage (is_won in lead pipeline) to mark lead as won
+    const { data: leadWonStages } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('pipeline_type', 'lead')
+      .eq('is_won', true)
+      .eq('is_active', true)
+      .limit(1);
+    const leadWonStageId = leadWonStages?.[0]?.id || lead.stage_id;
 
     // Get consulting stage
     const { data: consultingStages } = await supabase
@@ -348,7 +358,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       .limit(1);
     const consultingStageId = consultingStages?.[0]?.id || null;
 
-    // Generate project code (same logic as projects.js)
+    // Generate project code
     const yr = new Date().getFullYear();
     const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${yr}-%`).order('code', { ascending: false }).limit(1);
     const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) : 0;
@@ -360,7 +370,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       name: lead.title,
       status: 'consulting',
       customer_id: lead.customer_id,
-      flow_id: flow_id || null,
+      flow_id: flow_id,
       created_by: req.user.userId,
     };
     if (lead.estimated_value) projectInsert.estimated_value = lead.estimated_value;
@@ -374,22 +384,185 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     if (projectError) throw projectError;
 
-    // Auto-create tasks for consulting stage then complete them
-    if (consultingStageId) {
-      try {
-        const stageFlow = require('../helpers/stageFlow');
-        const tasks = await stageFlow.createStageTasksFromFlow(project.id, consultingStageId, 'consulting', req.user.userId, null);
-        if (tasks?.length) {
-          await supabase
-            .from('tasks')
-            .update({ status: 'completed', completed_at: new Date().toISOString() })
-            .eq('project_id', project.id)
-            .eq('stage_id', consultingStageId);
+    // ═══════════════════════════════════════════════════════════════
+    // Generate ALL tasks from flow (flow_steps → flow_step_tasks → checklists)
+    // Same logic as projects.js POST flow_assignments
+    // ═══════════════════════════════════════════════════════════════
+    let allCreatedTasks = [];
+    try {
+      // Get flow steps with tasks and checklists
+      const { data: flowSteps } = await supabase
+        .from('workflow_flow_steps')
+        .select(`
+          id, order_index, stage_id, division_unit_id, company_unit_id, template_set_id,
+          division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name),
+          company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name)
+        `)
+        .eq('flow_id', flow_id)
+        .order('order_index');
+
+      if (flowSteps?.length) {
+        for (const step of flowSteps) {
+          // Save project_company_assignment
+          try {
+            await supabase.from('project_company_assignments').upsert({
+              project_id: project.id,
+              division_unit_id: step.division_unit_id,
+              company_unit_id: step.company_unit_id,
+              template_set_id: step.template_set_id || null,
+              order_index: step.order_index || 0,
+              status: step.order_index === 0 ? 'in_progress' : 'pending',
+              started_at: step.order_index === 0 ? new Date().toISOString() : null,
+            }, { onConflict: 'project_id,division_unit_id' });
+          } catch (e) { console.error('Assignment upsert:', e.message); }
+
+          // Get flow step tasks
+          const { data: flowTasks } = await supabase
+            .from('flow_step_tasks')
+            .select('*, checklists:flow_step_task_checklists(*)')
+            .eq('flow_step_id', step.id)
+            .eq('is_active', true)
+            .order('order_index');
+
+          if (flowTasks?.length) {
+            for (const t of flowTasks) {
+              // Calculate deadline
+              let deadline = null;
+              if (t.deadline_days > 0 || t.deadline_hours > 0) {
+                const now = new Date();
+                if (t.deadline_days > 0) now.setDate(now.getDate() + t.deadline_days);
+                if (t.deadline_hours > 0) now.setHours(now.getHours() + t.deadline_hours);
+                deadline = now.toISOString();
+              }
+
+              // Determine assignee
+              let finalAssignee = t.assigned_user_id || null;
+              if (!finalAssignee && t.assignee_field && project[t.assignee_field + '_id']) {
+                finalAssignee = project[t.assignee_field + '_id'];
+              }
+
+              const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                project_id: project.id,
+                stage_id: t.stage_id,
+                title: t.title,
+                description: t.description || null,
+                assignee_id: finalAssignee,
+                priority: t.priority || 'medium',
+                status: 'pending',
+                order_index: t.order_index,
+                created_by_id: req.user.userId,
+                deadline: deadline,
+                estimated_hours: t.estimated_days ? t.estimated_days * 8 : null,
+                task_type: 'project',
+                metadata: {
+                  flow_step_task_id: t.id,
+                  flow_step_id: step.id,
+                },
+              }).select().single();
+
+              if (taskErr) { console.error('Task create error:', taskErr); continue; }
+
+              // Create checklists
+              if (t.checklists?.length && task) {
+                for (const c of t.checklists) {
+                  let checklistDeadline = null;
+                  if (c.deadline_days > 0 || c.deadline_hours > 0) {
+                    const dl = new Date();
+                    if (c.deadline_days > 0) dl.setDate(dl.getDate() + c.deadline_days);
+                    if (c.deadline_hours > 0) dl.setHours(dl.getHours() + c.deadline_hours);
+                    checklistDeadline = dl.toISOString();
+                  }
+                  try {
+                    await supabase.from('task_checklists').insert({
+                      task_id: task.id,
+                      label: c.label,
+                      order_index: c.order_index || 0,
+                      is_required: c.is_required || false,
+                      is_completed: false,
+                      assigned_user_id: c.assigned_user_id || finalAssignee,
+                      deadline: checklistDeadline,
+                    });
+                  } catch (ce) { console.warn('Checklist insert:', ce.message); }
+                }
+              }
+
+              if (task) allCreatedTasks.push(task);
+            }
+          } else if (step.template_set_id) {
+            // Fallback: use template_set tasks
+            const { data: tplTasks } = await supabase.from('company_template_tasks')
+              .select('*, checklists:company_template_checklists(*)')
+              .eq('template_set_id', step.template_set_id)
+              .eq('is_active', true)
+              .order('order_index');
+
+            if (tplTasks?.length) {
+              for (const t of tplTasks) {
+                let deadline = null;
+                if (t.deadline_days > 0) {
+                  const d = new Date();
+                  d.setDate(d.getDate() + t.deadline_days);
+                  deadline = d.toISOString();
+                }
+
+                const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                  project_id: project.id,
+                  stage_id: t.stage_id,
+                  title: t.title,
+                  description: t.description || null,
+                  assignee_id: t.assigned_user_id || null,
+                  priority: t.priority || 'medium',
+                  status: 'pending',
+                  order_index: t.order_index,
+                  created_by_id: req.user.userId,
+                  deadline: deadline,
+                  task_type: 'project',
+                  metadata: { template_task_id: t.id, template_set_id: step.template_set_id },
+                }).select().single();
+
+                if (taskErr) { console.error('Template task error:', taskErr); continue; }
+
+                // Create checklists from template
+                if (t.checklists?.length && task) {
+                  for (const c of t.checklists) {
+                    try {
+                      await supabase.from('task_checklists').insert({
+                        task_id: task.id,
+                        label: c.label || c.title,
+                        order_index: c.order_index || 0,
+                        is_required: c.is_required || false,
+                        is_completed: false,
+                      });
+                    } catch (ce) { console.warn('Template checklist:', ce.message); }
+                  }
+                }
+
+                if (task) allCreatedTasks.push(task);
+              }
+            }
+          }
         }
-      } catch (e) { console.error('Auto tasks consulting:', e.message); }
+      }
+    } catch (flowErr) {
+      console.error('Flow task generation error:', flowErr);
     }
 
-    // Update lead → deal
+    // ═══════════════════════════════════════════════════════════════
+    // Auto-complete consulting tasks (tư vấn xong vì lead→deal)
+    // ═══════════════════════════════════════════════════════════════
+    if (consultingStageId) {
+      try {
+        await supabase
+          .from('tasks')
+          .update({ status: 'completed', completed_at: new Date().toISOString() })
+          .eq('project_id', project.id)
+          .eq('stage_id', consultingStageId);
+      } catch (e) { console.error('Auto complete consulting:', e.message); }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Update lead → deal + mark lead pipeline as WON (Chuyển Deal)
+    // ═══════════════════════════════════════════════════════════════
     const { data: updatedLead, error: leadError } = await supabase
       .from('crm_leads')
       .update({
@@ -404,13 +577,13 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     if (leadError) throw leadError;
 
-    // Log activity (no .catch — use try/catch)
+    // Log activity
     try {
       await supabase.from('crm_activities').insert({
         lead_id: req.params.id,
         type: 'note',
         title: '🚀 Chuyển sang Deal',
-        description: `Lead chuyển thành Deal — Dự án ${project.code} đã tạo`,
+        description: `Lead chuyển thành Deal — Dự án ${project.code} đã tạo (${allCreatedTasks.length} nhiệm vụ)`,
         created_by: req.user.userId,
       });
     } catch (_) {}
@@ -418,7 +591,8 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     res.status(201).json({
       lead: updatedLead,
       project,
-      message: `Đã chuyển Lead sang Deal. Dự án ${project.code} đã được tạo.`,
+      tasks_created: allCreatedTasks.length,
+      message: `Đã chuyển Lead sang Deal. Dự án ${project.code} đã được tạo với ${allCreatedTasks.length} nhiệm vụ.`,
     });
   } catch (e) {
     console.error('Convert to deal error:', e);
