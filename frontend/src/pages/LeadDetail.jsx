@@ -638,8 +638,26 @@ function AddDocumentModal({ onClose, onSave }) {
 function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuccess }) {
   const [selectedFlow, setSelectedFlow] = useState('');
   const [converting, setConverting] = useState(false);
+  const [flowPreview, setFlowPreview] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
 
   const canConvert = customer?.full_name && customer?.phone && documents?.length > 0;
+
+  // Load flow preview when flow selected
+  useEffect(() => {
+    if (!selectedFlow) { setFlowPreview(null); return; }
+    const flow = flows.find(f => f.id === selectedFlow);
+    if (flow?.steps?.length) {
+      setFlowPreview(flow);
+    } else {
+      // Fetch full flow details
+      setLoadingPreview(true);
+      api.get(`/flows/${selectedFlow}`)
+        .then(r => setFlowPreview(r.data?.flow || r.data))
+        .catch(() => setFlowPreview(null))
+        .finally(() => setLoadingPreview(false));
+    }
+  }, [selectedFlow]);
 
   const handleConvert = async () => {
     if (!selectedFlow) return alert('Chọn luồng quy trình');
@@ -656,41 +674,106 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md p-6">
-        <h2 className="text-lg font-bold mb-4">🚀 Chuyển Lead sang Deal</h2>
+      <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold">🚀 Chuyển Lead sang Deal</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
+        </div>
 
-        <div className="space-y-4 mb-6 max-h-96 overflow-y-auto">
+        <div className="space-y-4 mb-6">
           {/* Validation Checklist */}
-          <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+          <div className="bg-gray-50 rounded-xl p-4 space-y-2">
             <p className="text-xs font-bold text-gray-700 uppercase">Yêu cầu:</p>
             <div className={`text-sm flex items-center gap-2 ${customer?.full_name && customer?.phone ? 'text-emerald-600' : 'text-red-600'}`}>
-              <span className="text-lg">{customer?.full_name && customer?.phone ? '✅' : '❌'}</span>
-              Khách hàng: {customer?.full_name || '—'}, {customer?.phone || '—'}
+              {customer?.full_name && customer?.phone ? '✅' : '❌'} Khách hàng: {customer?.full_name || '—'}, {customer?.phone || 'Chưa có SĐT'}
             </div>
             <div className={`text-sm flex items-center gap-2 ${documents?.length > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              <span className="text-lg">{documents?.length > 0 ? '✅' : '❌'}</span>
-              Tài liệu: {documents?.length || 0} file
+              {documents?.length > 0 ? '✅' : '❌'} Tài liệu: {documents?.length || 0} tài liệu
             </div>
           </div>
 
           {/* Flow Selection */}
           <div>
-            <label className="text-sm font-medium">Luồng quy trình *</label>
-            <select value={selectedFlow} onChange={(e) => setSelectedFlow(e.target.value)} className="w-full h-10 px-3 border rounded mt-2 text-sm">
+            <label className="text-sm font-bold text-gray-900">Chọn luồng quy trình *</label>
+            <select value={selectedFlow} onChange={(e) => setSelectedFlow(e.target.value)} className="w-full h-10 px-3 border border-gray-300 rounded-lg mt-2 text-sm focus:ring-2 focus:ring-blue-500">
               <option value="">-- Chọn luồng --</option>
-              {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+              {flows.map(f => <option key={f.id} value={f.id}>{f.name} {f.is_default ? '⭐' : ''}</option>)}
             </select>
           </div>
+
+          {/* Flow Preview */}
+          {loadingPreview && (
+            <div className="text-center py-4"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full mx-auto" /></div>
+          )}
+          {flowPreview && flowPreview.steps?.length > 0 && (
+            <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
+              <p className="text-xs font-bold text-blue-800 uppercase mb-3">📋 Tổng quan luồng: {flowPreview.name}</p>
+              <div className="space-y-3">
+                {flowPreview.steps.map((step, i) => {
+                  const levelInfo = step.division?.level;
+                  const taskCount = step.tasks?.length || step.task_count || 0;
+                  const checklistCount = step.tasks?.reduce((sum, t) => sum + (t.checklists?.length || 0), 0) || 0;
+                  return (
+                    <div key={step.id || i} className="bg-white rounded-lg p-3 border border-blue-100">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-white bg-blue-500 rounded-full w-5 h-5 flex items-center justify-center">{i + 1}</span>
+                          <span className="text-sm font-bold text-gray-900">
+                            {step.division?.name || 'Khối ' + (i + 1)}
+                          </span>
+                          {levelInfo && <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: levelInfo.color + '20', color: levelInfo.color }}>{levelInfo.icon} {levelInfo.name}</span>}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          {taskCount > 0 && <span>📌 {taskCount} NV</span>}
+                          {checklistCount > 0 && <span>☑️ {checklistCount} CL</span>}
+                        </div>
+                      </div>
+                      {step.company?.name && (
+                        <p className="text-xs text-gray-600 ml-7">🏢 {step.company.name}</p>
+                      )}
+                      {step.template_set?.name && (
+                        <p className="text-xs text-gray-600 ml-7">📦 Bộ mẫu: {step.template_set.name}</p>
+                      )}
+                      {/* Show tasks */}
+                      {step.tasks?.length > 0 && (
+                        <div className="ml-7 mt-2 space-y-1">
+                          {step.tasks.slice(0, 5).map((t, j) => (
+                            <div key={t.id || j} className="flex items-center gap-2 text-xs text-gray-700">
+                              <span className="text-gray-400">•</span>
+                              <span>{t.title}</span>
+                              {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} checklist)</span>}
+                            </div>
+                          ))}
+                          {step.tasks.length > 5 && (
+                            <p className="text-xs text-blue-600 ml-3">...và {step.tasks.length - 5} nhiệm vụ khác</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 pt-2 border-t border-blue-200 flex items-center gap-4 text-xs text-blue-700">
+                <span>🔄 {flowPreview.steps.length} bước</span>
+                <span>📌 {flowPreview.steps.reduce((s, st) => s + (st.tasks?.length || st.task_count || 0), 0)} nhiệm vụ</span>
+              </div>
+            </div>
+          )}
+          {flowPreview && (!flowPreview.steps || flowPreview.steps.length === 0) && (
+            <div className="bg-amber-50 rounded-xl p-4 border border-amber-200">
+              <p className="text-xs text-amber-700">⚠️ Luồng này chưa có bước quy trình. Hệ thống sẽ tạo nhiệm vụ mặc định cho tất cả giai đoạn.</p>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 h-10 border rounded font-medium">Hủy</button>
+          <button onClick={onClose} className="flex-1 h-10 border rounded-lg font-medium cursor-pointer">Hủy</button>
           <button
             onClick={handleConvert}
             disabled={!canConvert || !selectedFlow || converting}
-            className="flex-1 h-10 bg-emerald-600 text-white rounded font-medium disabled:opacity-50"
+            className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium disabled:opacity-50 cursor-pointer transition-colors"
           >
-            {converting ? 'Đang xử lý...' : 'Chuyển Deal'}
+            {converting ? 'Đang xử lý...' : '🚀 Chuyển Deal & Tạo Dự Án'}
           </button>
         </div>
       </div>
