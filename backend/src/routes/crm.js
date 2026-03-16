@@ -176,8 +176,13 @@ r.get('/leads', async (req, res) => {
 r.post('/leads', async (req, res) => {
   try {
     const code = await nextCode('LEAD');
+    // Clean empty strings → null for UUID fields
+    const body = { ...req.body };
+    ['customer_id', 'source_id', 'stage_id', 'assigned_to'].forEach(f => {
+      if (body[f] === '' || body[f] === undefined) body[f] = null;
+    });
     const { data, error } = await supabase.from('crm_leads')
-      .insert({ ...req.body, code, type: 'lead', created_by: req.user.userId })
+      .insert({ ...body, code, type: 'lead', created_by: req.user.userId })
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
       .single();
     if (error) throw error;
