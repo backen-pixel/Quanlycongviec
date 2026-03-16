@@ -640,30 +640,69 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
   const [converting, setConverting] = useState(false);
   const [flowPreview, setFlowPreview] = useState(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  // { stepId: { selectedSetId, tasks: [], loading } }
+  const [stepTemplateSets, setStepTemplateSets] = useState({});
 
   const canConvert = customer?.full_name && customer?.phone && documents?.length > 0;
 
   // Load flow preview when flow selected
   useEffect(() => {
-    if (!selectedFlow) { setFlowPreview(null); return; }
-    const flow = flows.find(f => f.id === selectedFlow);
-    if (flow?.steps?.length) {
-      setFlowPreview(flow);
-    } else {
-      // Fetch full flow details
-      setLoadingPreview(true);
-      api.get(`/flows/${selectedFlow}`)
-        .then(r => setFlowPreview(r.data?.flow || r.data))
-        .catch(() => setFlowPreview(null))
-        .finally(() => setLoadingPreview(false));
-    }
+    if (!selectedFlow) { setFlowPreview(null); setStepTemplateSets({}); return; }
+    setLoadingPreview(true);
+    api.get(`/flows/${selectedFlow}`)
+      .then(r => {
+        const flow = r.data?.flow || r.data;
+        setFlowPreview(flow);
+        // Auto-select default template_set for each step
+        const initial = {};
+        for (const step of (flow.steps || [])) {
+          const sets = step.template_sets || [];
+          const defaultSet = sets.find(s => s.is_default) || sets[0];
+          initial[step.id] = { selectedSetId: step.template_set_id || defaultSet?.id || '', tasks: [], loading: false };
+        }
+        setStepTemplateSets(initial);
+        // Load tasks for auto-selected sets
+        for (const step of (flow.steps || [])) {
+          const setId = initial[step.id]?.selectedSetId;
+          if (setId) loadTemplateTasks(step.id, setId, initial);
+        }
+      })
+      .catch(() => setFlowPreview(null))
+      .finally(() => setLoadingPreview(false));
   }, [selectedFlow]);
+
+  const loadTemplateTasks = async (stepId, templateSetId, currentState) => {
+    if (!templateSetId) {
+      setStepTemplateSets(prev => ({ ...prev, [stepId]: { ...prev[stepId], selectedSetId: '', tasks: [] } }));
+      return;
+    }
+    setStepTemplateSets(prev => ({ ...prev, [stepId]: { ...prev[stepId], selectedSetId: templateSetId, loading: true } }));
+    try {
+      const { data } = await api.get(`/company-templates/template-sets/${templateSetId}/tasks`);
+      const tasks = data?.tasks || data || [];
+      setStepTemplateSets(prev => ({ ...prev, [stepId]: { ...prev[stepId], tasks, loading: false } }));
+    } catch {
+      setStepTemplateSets(prev => ({ ...prev, [stepId]: { ...prev[stepId], tasks: [], loading: false } }));
+    }
+  };
+
+  const handleTemplateSetChange = (stepId, setId) => {
+    loadTemplateTasks(stepId, setId);
+  };
 
   const handleConvert = async () => {
     if (!selectedFlow) return alert('Chọn luồng quy trình');
     setConverting(true);
     try {
-      const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`, { flow_id: selectedFlow });
+      // Build step_template_sets map: { step_id: template_set_id }
+      const stsMap = {};
+      for (const [stepId, info] of Object.entries(stepTemplateSets)) {
+        if (info.selectedSetId) stsMap[stepId] = info.selectedSetId;
+      }
+      const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`, {
+        flow_id: selectedFlow,
+        step_template_sets: stsMap,
+      });
       alert(`✅ ${data.message}`);
       onSuccess();
     } catch (e) {
@@ -672,9 +711,31 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
     setConverting(false);
   };
 
+  // Count totals
+  const getTotals = () => {
+    if (!flowPreview?.steps) return { steps: 0, tasks: 0, checklists: 0 };
+    let tasks = 0, checklists = 0;
+    for (const step of flowPreview.steps) {
+      // Process tasks
+      for (const proc of (step.processes || [])) {
+        tasks += proc.tasks?.length || 0;
+        checklists += (proc.tasks || []).reduce((s, t) => s + (t.checklists?.length || 0), 0);
+      }
+      // Template set tasks
+      const stInfo = stepTemplateSets[step.id];
+      if (stInfo?.tasks?.length) {
+        tasks += stInfo.tasks.length;
+        checklists += stInfo.tasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
+      }
+    }
+    return { steps: flowPreview.steps.length, tasks, checklists };
+  };
+
+  const totals = getTotals();
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">🚀 Chuyển Lead sang Deal</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
@@ -711,12 +772,17 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
               <div className="space-y-3">
                 {flowPreview.steps.map((step, i) => {
                   const levelInfo = step.division?.level;
-                  // Collect all tasks: template tasks + process tasks
-                  const templateTasks = step.tasks || [];
                   const processes = step.processes || [];
-                  const processTasks = processes.flatMap(p => (p.tasks || []).map(t => ({ ...t, _processName: p.name, _processIcon: p.icon })));
-                  const allTasks = [...templateTasks, ...processTasks];
-                  const totalChecklists = allTasks.reduce((sum, t) => sum + (t.checklists?.length || 0), 0);
+                  const templateSets = step.template_sets || [];
+                  const stInfo = stepTemplateSets[step.id] || {};
+                  const selectedTplTasks = stInfo.tasks || [];
+
+                  // Count for this step
+                  const procTaskCount = processes.reduce((s, p) => s + (p.tasks?.length || 0), 0);
+                  const tplTaskCount = selectedTplTasks.length;
+                  const totalTasks = procTaskCount + tplTaskCount;
+                  const totalCL = processes.reduce((s, p) => s + (p.tasks || []).reduce((cs, t) => cs + (t.checklists?.length || 0), 0), 0)
+                    + selectedTplTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
 
                   return (
                     <div key={step.id || i} className="bg-white rounded-lg p-3 border border-blue-100">
@@ -724,27 +790,23 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-bold text-white bg-blue-500 rounded-full w-5 h-5 flex items-center justify-center">{i + 1}</span>
-                          <span className="text-sm font-bold text-gray-900">
-                            {step.division?.name || 'Khối ' + (i + 1)}
-                          </span>
+                          <span className="text-sm font-bold text-gray-900">{step.division?.name || 'Khối ' + (i + 1)}</span>
                           {levelInfo && <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: (levelInfo.color || '#6366F1') + '20', color: levelInfo.color || '#6366F1' }}>{levelInfo.icon} {levelInfo.name}</span>}
                         </div>
                         <div className="flex items-center gap-2 text-xs text-gray-500">
-                          {allTasks.length > 0 && <span>📌 {allTasks.length} NV</span>}
-                          {totalChecklists > 0 && <span>☑️ {totalChecklists} CL</span>}
+                          {totalTasks > 0 && <span>📌 {totalTasks} NV</span>}
+                          {totalCL > 0 && <span>☑️ {totalCL} CL</span>}
                         </div>
                       </div>
 
                       {step.company?.name && (
                         <p className="text-xs text-gray-600 ml-7">🏢 {step.company.name}</p>
                       )}
-                      {step.template_set?.name && (
-                        <p className="text-xs text-gray-600 ml-7">📦 Bộ mẫu: {step.template_set.name}</p>
-                      )}
 
-                      {/* Processes */}
+                      {/* Processes (fixed, always shown) */}
                       {processes.length > 0 && (
                         <div className="ml-7 mt-2 space-y-2">
+                          <p className="text-xs font-bold text-gray-700">🔄 Quy trình cố định:</p>
                           {processes.map((proc, pi) => (
                             <div key={proc.id || pi} className="bg-gray-50 rounded-lg p-2 border">
                               <p className="text-xs font-bold text-gray-800 mb-1">{proc.icon || '⚙️'} {proc.name} <span className="font-normal text-gray-500">({proc.tasks?.length || 0} NV)</span></p>
@@ -765,22 +827,45 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
                         </div>
                       )}
 
-                      {/* Template tasks (if no processes) */}
-                      {processes.length === 0 && templateTasks.length > 0 && (
-                        <div className="ml-7 mt-2 space-y-0.5">
-                          {templateTasks.slice(0, 5).map((t, j) => (
-                            <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-600">
-                              <span className="text-gray-300">•</span>
-                              <span>{t.title}</span>
-                              {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} CL)</span>}
+                      {/* Template Set Selection */}
+                      {templateSets.length > 0 && (
+                        <div className="ml-7 mt-2">
+                          <p className="text-xs font-bold text-gray-700 mb-1">📦 Bộ nhiệm vụ mẫu:</p>
+                          <select
+                            value={stInfo.selectedSetId || ''}
+                            onChange={(e) => handleTemplateSetChange(step.id, e.target.value)}
+                            className="w-full h-8 px-2 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">-- Không chọn bộ mẫu --</option>
+                            {templateSets.map(s => (
+                              <option key={s.id} value={s.id}>
+                                {s.name} {s.is_default ? '⭐' : ''} {s.unit?.name ? `(${s.unit.name})` : ''}
+                              </option>
+                            ))}
+                          </select>
+
+                          {/* Loading indicator */}
+                          {stInfo.loading && <div className="text-xs text-blue-500 mt-1">Đang tải nhiệm vụ...</div>}
+
+                          {/* Template tasks preview */}
+                          {!stInfo.loading && selectedTplTasks.length > 0 && (
+                            <div className="mt-2 bg-emerald-50 rounded-lg p-2 border border-emerald-200 space-y-0.5">
+                              {selectedTplTasks.slice(0, 6).map((t, j) => (
+                                <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-700">
+                                  <span className="text-emerald-400">•</span>
+                                  <span>{t.title}</span>
+                                  {t.stage?.name && <span className="text-gray-400 text-[10px]">[{t.stage.name}]</span>}
+                                  {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} CL)</span>}
+                                </div>
+                              ))}
+                              {selectedTplTasks.length > 6 && <p className="text-xs text-emerald-600 ml-3">+{selectedTplTasks.length - 6} NV khác</p>}
                             </div>
-                          ))}
-                          {templateTasks.length > 5 && <p className="text-xs text-blue-500 ml-3">+{templateTasks.length - 5} NV khác</p>}
+                          )}
                         </div>
                       )}
 
                       {/* Empty state */}
-                      {allTasks.length === 0 && processes.length === 0 && (
+                      {totalTasks === 0 && processes.length === 0 && templateSets.length === 0 && (
                         <p className="text-xs text-gray-400 ml-7 mt-1 italic">Chưa có nhiệm vụ (sẽ dùng mặc định)</p>
                       )}
                     </div>
@@ -788,16 +873,9 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
                 })}
               </div>
               <div className="mt-3 pt-2 border-t border-blue-200 flex items-center gap-4 text-xs text-blue-700">
-                <span>🔄 {flowPreview.steps.length} bước</span>
-                <span>📌 {flowPreview.steps.reduce((s, st) => {
-                  const tpl = st.tasks?.length || 0;
-                  const proc = (st.processes || []).reduce((ps, p) => ps + (p.tasks?.length || 0), 0);
-                  return s + tpl + proc;
-                }, 0)} nhiệm vụ</span>
-                <span>☑️ {flowPreview.steps.reduce((s, st) => {
-                  const all = [...(st.tasks || []), ...(st.processes || []).flatMap(p => p.tasks || [])];
-                  return s + all.reduce((cs, t) => cs + (t.checklists?.length || 0), 0);
-                }, 0)} checklist</span>
+                <span>🔄 {totals.steps} bước</span>
+                <span>📌 {totals.tasks} nhiệm vụ</span>
+                <span>☑️ {totals.checklists} checklist</span>
               </div>
             </div>
           )}

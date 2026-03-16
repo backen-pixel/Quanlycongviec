@@ -297,7 +297,8 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
 
 r.post('/leads/:id/convert-to-deal', async (req, res) => {
   try {
-    const { flow_id } = req.body;
+    const { flow_id, step_template_sets } = req.body;
+    // step_template_sets = { step_id: template_set_id, ... } — user's choice per step
     const { data: lead } = await supabase
       .from('crm_leads')
       .select('*, customer:customers(id, full_name, phone)')
@@ -405,14 +406,15 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
       if (flowSteps?.length) {
         for (const step of flowSteps) {
-          // Save project_company_assignment
+          // Save project_company_assignment (use user-chosen template_set if provided)
+          const chosenTemplateSetId = (step_template_sets && step_template_sets[step.id]) || step.template_set_id || null;
           try {
             if (step.division_unit_id) {
               await supabase.from('project_company_assignments').upsert({
                 project_id: project.id,
                 division_unit_id: step.division_unit_id,
                 company_unit_id: step.company_unit_id,
-                template_set_id: step.template_set_id || null,
+                template_set_id: chosenTemplateSetId,
                 order_index: step.order_index || 0,
                 status: step.order_index === 0 ? 'in_progress' : 'pending',
                 started_at: step.order_index === 0 ? new Date().toISOString() : null,
@@ -494,11 +496,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
               if (task) allCreatedTasks.push(task);
             }
-          } else if (step.template_set_id) {
-            // Fallback: use template_set tasks
+          } else if (chosenTemplateSetId) {
+            // Fallback: use template_set tasks (from user choice or step default)
             const { data: tplTasks } = await supabase.from('company_template_tasks')
               .select('*, checklists:company_template_checklists(*)')
-              .eq('template_set_id', step.template_set_id)
+              .eq('template_set_id', chosenTemplateSetId)
               .eq('is_active', true)
               .order('order_index');
 
@@ -523,7 +525,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                   created_by_id: req.user.userId,
                   deadline: deadline,
                   task_type: 'project',
-                  metadata: { template_task_id: t.id, template_set_id: step.template_set_id },
+                  metadata: { template_task_id: t.id, template_set_id: chosenTemplateSetId },
                 }).select().single();
 
                 if (taskErr) { console.error('Template task error:', taskErr); continue; }
