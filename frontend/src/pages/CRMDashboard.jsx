@@ -471,6 +471,10 @@ function NewLeadModal({ onClose, sources, type }) {
     if (!formData.title) return alert('Nhập tên lead');
     if (!formData.customer_name) return alert('Nhập tên khách hàng');
     
+    if (!formData.customer_phone) {
+      if (!confirm('⚠️ Chưa có số điện thoại khách hàng.\nBạn có thể nhập sau ở trang chi tiết Lead.\n\nTiếp tục tạo Lead?')) return;
+    }
+    
     setSaving(true);
     try {
       // 1. Create customer first
