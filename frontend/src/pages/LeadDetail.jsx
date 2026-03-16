@@ -30,7 +30,7 @@ export default function LeadDetail() {
   const [loading, setLoading] = useState(true);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [showConvertModal, setShowConvertModal] = useState(false);
-  const [showDocuments, setShowDocuments] = useState(true);
+  const [showAddDoc, setShowAddDoc] = useState(false);
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
 
@@ -117,25 +117,40 @@ export default function LeadDetail() {
       if (!file) return;
       try {
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('files', file); // backend expects 'files' field
         const { data: uploadRes } = await api.post('/upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
+        const uploaded = uploadRes.files?.[0];
+        if (!uploaded) throw new Error('Upload thất bại');
         // Create document record
         const { data: doc } = await api.post(`/crm/leads/${id}/documents`, {
           name: file.name.replace(/\.[^.]+$/, ''),
-          doc_type: file.type.startsWith('image/') ? 'image' : file.name.endsWith('.dwg') || file.name.endsWith('.dxf') ? 'drawing' : 'other',
-          file_url: uploadRes.url || uploadRes.file_url,
-          file_name: file.name,
-          file_size: file.size,
-          mime_type: file.type,
+          doc_type: file.type.startsWith('image/') ? 'image' : file.name.match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+          file_url: uploaded.file_url,
+          file_name: uploaded.file_name,
+          file_size: uploaded.file_size,
+          mime_type: uploaded.mime_type,
         });
         setDocuments(prev => [doc, ...prev]);
       } catch (err) {
-        alert(err.response?.data?.error || 'Upload lỗi');
+        alert(err.response?.data?.error || err.message || 'Upload lỗi');
       }
     };
     input.click();
+  };
+
+  const addTextDocument = async (name, docType, notes) => {
+    try {
+      const { data: doc } = await api.post(`/crm/leads/${id}/documents`, {
+        name,
+        doc_type: docType || 'other',
+        notes,
+      });
+      setDocuments(prev => [doc, ...prev]);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Lỗi');
+    }
   };
 
   return (
@@ -268,44 +283,33 @@ export default function LeadDetail() {
         {/* Right: Documents + Activities */}
         <div className="lg:col-span-2 space-y-6">
           {/* Documents Section */}
-          {lead.type === 'lead' && (
-            <div className="bg-white rounded-xl border p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-bold text-gray-900 uppercase">📋 Tài liệu khách hàng</h3>
-                <button
-                  onClick={() => setShowDocuments(!showDocuments)}
-                  className="text-xs text-blue-600 hover:text-blue-700"
-                >
-                  {showDocuments ? 'Ẩn' : 'Hiện'}
+          <div className="bg-white rounded-xl border p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-gray-900 uppercase">📋 Tài liệu khách hàng</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowAddDoc(true)} className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                  <Plus className="h-3.5 w-3.5" /> Nhập văn bản
+                </button>
+                <button onClick={uploadDocument} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                  <FileUp className="h-3.5 w-3.5" /> Upload file
                 </button>
               </div>
-
-              {showDocuments && (
-                <div>
-                  {documents.length === 0 ? (
-                    <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
-                      <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-                      <p className="text-sm text-gray-500">Chưa upload tài liệu</p>
-                      <p className="text-xs text-gray-400 mt-1">Cần ít nhất 1 tài liệu để chuyển sang Deal</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {documents.map(doc => (
-                        <DocumentRow key={doc.id} doc={doc} onDelete={() => { deleteDocument(doc.id); }} />
-                      ))}
-                    </div>
-                  )}
-
-                  <button
-                    onClick={uploadDocument}
-                    className="mt-4 w-full h-9 border-2 border-dashed border-blue-300 rounded-lg text-sm text-blue-600 hover:bg-blue-50 flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <FileUp className="h-4 w-4" /> Upload tài liệu
-                  </button>
-                </div>
-              )}
             </div>
-          )}
+
+            {documents.length === 0 ? (
+              <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
+                <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">Chưa có tài liệu</p>
+                <p className="text-xs text-gray-400 mt-1">Upload file hoặc nhập văn bản để thêm tài liệu</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {documents.map(doc => (
+                  <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Activities */}
           <div className="bg-white rounded-xl border p-5">
@@ -349,6 +353,15 @@ export default function LeadDetail() {
 
       {/* Modals */}
       {showAddActivity && <AddActivityModal leadId={id} onClose={() => setShowAddActivity(false)} onSave={() => { setShowAddActivity(false); load(); }} />}
+      {showAddDoc && (
+        <AddDocumentModal
+          onClose={() => setShowAddDoc(false)}
+          onSave={(name, docType, notes) => {
+            addTextDocument(name, docType, notes);
+            setShowAddDoc(false);
+          }}
+        />
+      )}
       {showConvertModal && (
         <ConvertToDeadModal
           leadId={id}
@@ -363,19 +376,45 @@ export default function LeadDetail() {
   );
 }
 
+const DOC_TYPES = [
+  { value: 'requirement', label: 'Yêu cầu KH', icon: '📝' },
+  { value: 'drawing', label: 'Bản vẽ', icon: '📐' },
+  { value: 'image', label: 'Hình ảnh', icon: '🖼️' },
+  { value: 'contract', label: 'Hợp đồng', icon: '📄' },
+  { value: 'measurement', label: 'Số đo', icon: '📏' },
+  { value: 'other', label: 'Khác', icon: '📎' },
+];
+
 function DocumentRow({ doc, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+  const typeInfo = DOC_TYPES.find(t => t.value === doc.doc_type) || DOC_TYPES[5];
+  const isFile = !!doc.file_url;
+
   return (
-    <div className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border">
-      <div className="flex items-center gap-2 flex-1">
-        <FileText className="h-4 w-4 text-blue-600 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
-          <p className="text-xs text-gray-500">{doc.doc_type}</p>
+    <div className="bg-gray-50 rounded-lg border overflow-hidden">
+      <div className="flex items-center justify-between p-3">
+        <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer" onClick={() => doc.notes && setExpanded(!expanded)}>
+          <span className="text-lg shrink-0">{typeInfo.icon}</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
+            <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}</p>
+          </div>
+          {isFile && (
+            <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>
+              Mở
+            </a>
+          )}
+          {doc.notes && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
         </div>
+        <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
-      <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-600 rounded">
-        <Trash2 className="h-4 w-4" />
-      </button>
+      {expanded && doc.notes && (
+        <div className="px-3 pb-3 pt-0">
+          <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -424,6 +463,54 @@ function AddActivityModal({ leadId, onClose, onSave }) {
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className="flex-1 h-9 border rounded text-sm">Hủy</button>
           <button onClick={save} disabled={saving} className="flex-1 h-9 bg-blue-600 text-white rounded text-sm">{saving ? 'Đang lưu...' : 'Lưu'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddDocumentModal({ onClose, onSave }) {
+  const [name, setName] = useState('');
+  const [docType, setDocType] = useState('requirement');
+  const [notes, setNotes] = useState('');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold">📝 Thêm tài liệu văn bản</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-gray-700">Tên tài liệu *</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="VD: Yêu cầu khách hàng, Kích thước bếp..." className="w-full h-9 px-3 border rounded-lg text-sm mt-1" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700">Loại</label>
+            <select value={docType} onChange={e => setDocType(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm mt-1">
+              {DOC_TYPES.map(t => <option key={t.value} value={t.value}>{t.icon} {t.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700">Nội dung *</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={6}
+              className="w-full px-3 py-2 border rounded-lg text-sm mt-1"
+              placeholder="Nhập nội dung tài liệu, yêu cầu khách hàng, ghi chú kích thước, chất liệu mong muốn..."
+            />
+          </div>
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button onClick={onClose} className="flex-1 h-9 border rounded-lg text-sm cursor-pointer">Hủy</button>
+          <button
+            onClick={() => { if (!name.trim()) return alert('Nhập tên tài liệu'); if (!notes.trim()) return alert('Nhập nội dung'); onSave(name, docType, notes); }}
+            className="flex-1 h-9 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium cursor-pointer"
+          >
+            Lưu tài liệu
+          </button>
         </div>
       </div>
     </div>
