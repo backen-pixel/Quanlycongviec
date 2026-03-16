@@ -349,8 +349,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       .limit(1)
       .single();
 
-    // Create project
-    const code = await nextCode('TB');
+    // Create project — use same code logic as projects.js (MAX from projects table)
+    const yr = new Date().getFullYear();
+    const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${yr}-%`).order('code', { ascending: false }).limit(1);
+    const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) : 0;
+    const code = `TB-${yr}-${String(lastNum + 1).padStart(3, '0')}`;
     const { data: project, error: projectError } = await supabase
       .from('projects')
       .insert({
