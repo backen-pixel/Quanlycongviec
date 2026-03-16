@@ -356,7 +356,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       .insert({
         code,
         name: lead.title,
-        status: 'active',
+        status: 'consulting',
         customer_id: lead.customer_id,
         estimated_value: lead.estimated_value,
         flow_id,
@@ -862,7 +862,7 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
     const code = `TB-${year}-${String((count || 0) + 1).padStart(3, '0')}`;
 
     const { data: project, error } = await supabase.from('projects').insert({
-      code, name: lead.title, status: 'active', customer_id: lead.customer_id,
+      code, name: lead.title, status: 'consulting', customer_id: lead.customer_id,
       estimated_value: lead.estimated_value, flow_id: flowId,
       current_stage_id: firstStage?.id, created_by: req.user.userId,
     }).select('*').single();
