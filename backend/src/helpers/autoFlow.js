@@ -32,9 +32,10 @@ async function nextCode(prefix) {
 }
 
 async function nextProjectCode() {
-  const year = new Date().getFullYear();
-  const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true });
-  return `TB-${year}-${String((count || 0) + 1).padStart(3, '0')}`;
+  const yr = new Date().getFullYear();
+  const { data } = await supabase.from('projects').select('code').like('code', `TB-${yr}-%`).order('code', { ascending: false }).limit(1);
+  const lastNum = data?.[0]?.code ? parseInt(data[0].code.split('-').pop()) : 0;
+  return `TB-${yr}-${String(lastNum + 1).padStart(3, '0')}`;
 }
 
 async function getDefaultFlow() {
