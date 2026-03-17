@@ -497,7 +497,10 @@ export default function ProjectDetail() {
                       <div className="flex items-center gap-3">
                         <span className="flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">{aIdx + 1}</span>
                         <div>
-                          <h4 className="text-sm font-semibold text-gray-900">{assignment.company?.name || 'N/A'}</h4>
+                          <h4 className="text-sm font-semibold text-gray-900">{assignment.division?.name || assignment.company?.name || 'N/A'}</h4>
+                          {assignment.company && assignment.division && (
+                            <p className="text-xs text-gray-500">🏢 {assignment.company.name}</p>
+                          )}
                           {assignment.template_set && (
                             <p className="text-xs text-gray-500">📋 {assignment.template_set.name}</p>
                           )}

@@ -555,7 +555,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                         }
                         await supabase.from('task_checklists').insert({
                           task_id: task.id,
-                          label: c.label || c.title,
+                          title: c.label || c.title,
                           order_index: c.order_index || 0,
                           is_required: c.is_required || false,
                           is_completed: false,
@@ -613,7 +613,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                     try {
                       await supabase.from('task_checklists').insert({
                         task_id: task.id,
-                        label: c.label || c.title,
+                        title: c.label || c.title,
                         order_index: c.order_index || 0,
                         is_required: c.is_required || false,
                         is_completed: false,
