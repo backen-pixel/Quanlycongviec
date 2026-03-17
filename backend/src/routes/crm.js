@@ -477,11 +477,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           }
 
-          console.log(`  Step ${step.order_index} (defaultStage=${defaultStageId?.substring(0,8)||'none'}): template_set=${resolvedTemplateSetId || 'none'}`);
-
           // Resolve stage_ids for this step's division
           const stepStageIds = divStageMap[step.division_unit_id] || [];
           const defaultStageId = stepStageIds[0] || null;
+
+          console.log(`  Step ${step.order_index} (defaultStage=${defaultStageId?.substring(0,8)||'none'}): template_set=${resolvedTemplateSetId || 'none'}`);
 
           // Save project_company_assignment
           try {
