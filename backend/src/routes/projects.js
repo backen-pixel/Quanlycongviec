@@ -267,31 +267,49 @@ r.get('/:id', requirePermission('projects', 'view'), async (req, res) => {
       try {
         const { data: assignments } = await supabase.from('project_company_assignments').select(`
           *,
+          division:ecosystem_units!project_company_assignments_division_unit_id_fkey(id,name,short_name),
           company:ecosystem_units!project_company_assignments_company_unit_id_fkey(id,name,short_name),
           template_set:company_template_sets(id,name,description,is_default)
-        `).eq('project_id', data.id);
+        `).eq('project_id', data.id).order('order_index');
         flowAssignments = assignments || [];
 
-        // For each assignment, load tasks with checklists
-        for (const assignment of flowAssignments) {
-          // Tasks có metadata.template_set_id = assignment.template_set_id
-          // Hoặc lấy tất cả tasks của project rồi filter theo metadata
-          const { data: tasks } = await supabase.from('tasks').select(`
-            *,
-            assignee:users!tasks_assignee_id_fkey(id,full_name,avatar,email),
-            stage:workflow_stages(id,name,slug,color),
-            checklists:task_checklists(id,title,is_completed,order_index,notes,attachments)
-          `).eq('project_id', data.id)
-            .eq('task_type', 'project')
-            .order('order_index');
+        // Load ALL project tasks once (instead of per-assignment)
+        const { data: allTasks } = await supabase.from('tasks').select(`
+          *,
+          assignee:users!tasks_assignee_id_fkey(id,full_name,avatar,email),
+          stage:workflow_stages(id,name,slug,color),
+          checklists:task_checklists(id,title,is_completed,order_index,notes,attachments)
+        `).eq('project_id', data.id)
+          .eq('task_type', 'project')
+          .order('order_index');
 
-          // Filter tasks belonging to this assignment's template_set
-          const assignmentTasks = (tasks || []).filter(t => {
+        // Build map: flow_step_id → division_unit_id (from flow steps)
+        let stepToDivMap = {};
+        if (data.flow_id) {
+          const { data: flowSteps } = await supabase.from('workflow_flow_steps')
+            .select('id, division_unit_id')
+            .eq('flow_id', data.flow_id);
+          for (const fs of (flowSteps || [])) {
+            stepToDivMap[fs.id] = fs.division_unit_id;
+          }
+        }
+
+        // Assign tasks to each assignment by matching:
+        // 1. task.metadata.flow_step_id → stepToDivMap → division_unit_id === assignment.division_unit_id
+        // 2. OR task.metadata.template_set_id === assignment.template_set_id
+        const usedTaskIds = new Set();
+        for (const assignment of flowAssignments) {
+          const assignmentTasks = (allTasks || []).filter(t => {
             const meta = t.metadata || {};
-            return meta.template_set_id === assignment.template_set_id;
+            // Match by flow_step → division
+            if (meta.flow_step_id && stepToDivMap[meta.flow_step_id] === assignment.division_unit_id) return true;
+            // Match by template_set
+            if (meta.template_set_id && meta.template_set_id === assignment.template_set_id) return true;
+            return false;
           });
 
           assignment.tasks = assignmentTasks;
+          assignmentTasks.forEach(t => usedTaskIds.add(t.id));
 
           // Calculate progress
           const total = assignmentTasks.length;
