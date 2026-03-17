@@ -653,19 +653,11 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
       .then(r => {
         const flow = r.data?.flow || r.data;
         setFlowPreview(flow);
-        // Auto-select default template_set for each step
         const initial = {};
         for (const step of (flow.steps || [])) {
-          const sets = step.template_sets || [];
-          const defaultSet = sets.find(s => s.is_default) || sets[0];
-          initial[step.id] = { selectedSetId: step.template_set_id || defaultSet?.id || '', tasks: [], loading: false };
+          initial[step.id] = { selectedSetId: '', tasks: [], loading: false };
         }
         setStepTemplateSets(initial);
-        // Load tasks for auto-selected sets
-        for (const step of (flow.steps || [])) {
-          const setId = initial[step.id]?.selectedSetId;
-          if (setId) loadTemplateTasks(step.id, setId, initial);
-        }
       })
       .catch(() => setFlowPreview(null))
       .finally(() => setLoadingPreview(false));
@@ -721,7 +713,11 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
         tasks += proc.tasks?.length || 0;
         checklists += (proc.tasks || []).reduce((s, t) => s + (t.checklists?.length || 0), 0);
       }
-      // Template set tasks
+      // Flow step tasks (primary tasks from flow)
+      const flowStepTasks = step.tasks || [];
+      tasks += flowStepTasks.length;
+      checklists += flowStepTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
+      // Template set tasks (only if user explicitly selected, as fallback)
       const stInfo = stepTemplateSets[step.id];
       if (stInfo?.tasks?.length) {
         tasks += stInfo.tasks.length;
@@ -773,15 +769,18 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
                 {flowPreview.steps.map((step, i) => {
                   const levelInfo = step.division?.level;
                   const processes = step.processes || [];
+                  const flowStepTasks = step.tasks || [];
                   const templateSets = step.template_sets || [];
                   const stInfo = stepTemplateSets[step.id] || {};
                   const selectedTplTasks = stInfo.tasks || [];
 
-                  // Count for this step
                   const procTaskCount = processes.reduce((s, p) => s + (p.tasks?.length || 0), 0);
+                  const flowTaskCount = flowStepTasks.length;
                   const tplTaskCount = selectedTplTasks.length;
-                  const totalTasks = procTaskCount + tplTaskCount;
+                  const hasFlowTasks = procTaskCount > 0 || flowTaskCount > 0;
+                  const totalTasks = procTaskCount + flowTaskCount + tplTaskCount;
                   const totalCL = processes.reduce((s, p) => s + (p.tasks || []).reduce((cs, t) => cs + (t.checklists?.length || 0), 0), 0)
+                    + flowStepTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0)
                     + selectedTplTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
 
                   return (
@@ -827,14 +826,35 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
                         </div>
                       )}
 
-                      {/* Template Set Selection */}
+                      {/* Flow step tasks (primary tasks from the selected flow) */}
+                      {flowStepTasks.length > 0 && (
+                        <div className="ml-7 mt-2">
+                          <p className="text-xs font-bold text-gray-700 mb-1">📋 Nhiệm vụ từ luồng ({flowStepTasks.length} NV):</p>
+                          <div className="bg-blue-50 rounded-lg p-2 border border-blue-200 space-y-0.5">
+                            {flowStepTasks.slice(0, 6).map((t, j) => (
+                              <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-700">
+                                <span className="text-blue-400">•</span>
+                                <span>{t.title}</span>
+                                {t.stage?.name && <span className="text-gray-400 text-[10px]">[{t.stage.name}]</span>}
+                                {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} CL)</span>}
+                              </div>
+                            ))}
+                            {flowStepTasks.length > 6 && <p className="text-xs text-blue-600 ml-3">+{flowStepTasks.length - 6} NV khác</p>}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Template Set Selection — only shown as fallback when step has no flow tasks */}
                       {templateSets.length > 0 && (
                         <div className="ml-7 mt-2">
-                          <p className="text-xs font-bold text-gray-700 mb-1">📦 Bộ nhiệm vụ mẫu:</p>
+                          <p className="text-xs font-bold text-gray-700 mb-1">
+                            {hasFlowTasks ? '📦 Bộ nhiệm vụ mẫu (không dùng — đã có NV từ luồng):' : '📦 Bộ nhiệm vụ mẫu (dự phòng):'}
+                          </p>
                           <select
                             value={stInfo.selectedSetId || ''}
                             onChange={(e) => handleTemplateSetChange(step.id, e.target.value)}
-                            className="w-full h-8 px-2 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
+                            disabled={hasFlowTasks}
+                            className={`w-full h-8 px-2 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500 ${hasFlowTasks ? 'opacity-50 cursor-not-allowed' : ''}`}
                           >
                             <option value="">-- Không chọn bộ mẫu --</option>
                             {templateSets.map(s => (
@@ -844,10 +864,8 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
                             ))}
                           </select>
 
-                          {/* Loading indicator */}
                           {stInfo.loading && <div className="text-xs text-blue-500 mt-1">Đang tải nhiệm vụ...</div>}
 
-                          {/* Template tasks preview */}
                           {!stInfo.loading && selectedTplTasks.length > 0 && (
                             <div className="mt-2 bg-emerald-50 rounded-lg p-2 border border-emerald-200 space-y-0.5">
                               {selectedTplTasks.slice(0, 6).map((t, j) => (
