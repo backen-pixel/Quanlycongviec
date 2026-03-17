@@ -299,6 +299,10 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
   try {
     const { flow_id, step_template_sets } = req.body;
     // step_template_sets = { step_id: template_set_id, ... } — user's choice per step
+    console.log('=== CONVERT-TO-DEAL REQUEST ===');
+    console.log('flow_id:', flow_id);
+    console.log('step_template_sets:', JSON.stringify(step_template_sets));
+    console.log('step_template_sets keys:', step_template_sets ? Object.keys(step_template_sets) : 'null');
     const { data: lead } = await supabase
       .from('crm_leads')
       .select('*, customer:customers(id, full_name, phone)')
@@ -395,7 +399,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       const { data: flowSteps } = await supabase
         .from('workflow_flow_steps')
         .select(`
-          id, order_index, stage_id, division_unit_id, company_unit_id, template_set_id,
+          id, order_index, division_unit_id, company_unit_id, template_set_id,
           division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name),
           company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name)
         `)
@@ -404,10 +408,48 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
       console.log(`Convert-to-deal: flow ${flow_id} has ${flowSteps?.length || 0} steps`);
 
+      // Pre-load: map division_unit_id → stage_group → workflow_stage.id
+      // So we can assign correct stage_id to tasks
+      const divStageMap = {}; // { division_unit_id: [stage_id, ...] }
+      try {
+        const { data: stageGroups } = await supabase.from('workflow_stage_groups')
+          .select('id, slug, division_unit_id')
+          .eq('is_active', true);
+        const { data: globalStages } = await supabase.from('workflow_stages')
+          .select('id, slug, order_index')
+          .is('company_id', null)
+          .eq('is_active', true)
+          .order('order_index');
+
+        // Map stage_group slug → workflow stages
+        const slugToStageMap = {
+          'business': ['consulting', 'design', 'quotation', 'contract'],
+          'production': ['production'],
+          'shipping': ['shipping'],
+          'installation': ['installation', 'customer-care'],
+          'customer-care': ['customer-care'],
+        };
+
+        for (const sg of (stageGroups || [])) {
+          if (!sg.division_unit_id) continue;
+          const stageSlugs = slugToStageMap[sg.slug] || [];
+          const stageIds = stageSlugs
+            .map(slug => (globalStages || []).find(s => s.slug === slug)?.id)
+            .filter(Boolean);
+          if (stageIds.length) {
+            divStageMap[sg.division_unit_id] = stageIds;
+          }
+        }
+        console.log('  divStageMap:', Object.fromEntries(
+          Object.entries(divStageMap).map(([k,v]) => [k.substring(0,8), v.map(id=>id.substring(0,8))])
+        ));
+      } catch (e) { console.error('Stage map error:', e.message); }
+
       if (flowSteps?.length) {
         for (const step of flowSteps) {
           // ── Resolve template set: user-chosen > step default > auto-find default for company ──
           let resolvedTemplateSetId = (step_template_sets && step_template_sets[step.id]) || step.template_set_id || null;
+          console.log(`  Step ${step.id} (order=${step.order_index}): user_chose=${step_template_sets ? step_template_sets[step.id] || 'none' : 'no map'}, step_default=${step.template_set_id || 'none'}, resolved=${resolvedTemplateSetId || 'none'}`);
 
           // Auto-find default template set if none specified
           if (!resolvedTemplateSetId && step.company_unit_id) {
@@ -435,7 +477,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           }
 
-          console.log(`  Step ${step.order_index} (stage ${step.stage_id}): template_set=${resolvedTemplateSetId || 'none'}`);
+          console.log(`  Step ${step.order_index} (defaultStage=${defaultStageId?.substring(0,8)||'none'}): template_set=${resolvedTemplateSetId || 'none'}`);
+
+          // Resolve stage_ids for this step's division
+          const stepStageIds = divStageMap[step.division_unit_id] || [];
+          const defaultStageId = stepStageIds[0] || null;
 
           // Save project_company_assignment
           try {
@@ -482,10 +528,10 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
                   const { data: task, error: taskErr } = await supabase.from('tasks').insert({
                     project_id: project.id,
-                    stage_id: t.stage_id || step.stage_id,
+                    stage_id: t.stage_id || defaultStageId,
                     title: t.title,
                     description: t.description || null,
-                    assignee_id: t.assigned_user_id || null,
+                    assignee_id: t.assigned_user_id || t.default_assignee_id || null,
                     priority: t.priority || 'medium',
                     status: 'pending',
                     order_index: t.order_index,
@@ -547,10 +593,10 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
                 const { data: task, error: taskErr } = await supabase.from('tasks').insert({
                   project_id: project.id,
-                  stage_id: t.stage_id || step.stage_id,
+                  stage_id: t.stage_id || defaultStageId,
                   title: t.title,
                   description: t.description || null,
-                  assignee_id: t.assigned_user_id || null,
+                  assignee_id: t.assigned_user_id || t.default_assignee_id || null,
                   priority: t.priority || 'medium',
                   status: 'pending',
                   order_index: t.order_index,
