@@ -645,19 +645,43 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
 
   const canConvert = customer?.full_name && customer?.phone && documents?.length > 0;
 
-  // Load flow preview when flow selected
+  // Auto-select default flow on mount
+  useEffect(() => {
+    if (!selectedFlow && flows?.length) {
+      const defaultFlow = flows.find(f => f.is_default) || flows[0];
+      if (defaultFlow) setSelectedFlow(defaultFlow.id);
+    }
+  }, [flows]);
+
+  // Load flow preview when flow selected + auto-select default template sets
   useEffect(() => {
     if (!selectedFlow) { setFlowPreview(null); setStepTemplateSets({}); return; }
     setLoadingPreview(true);
     api.get(`/flows/${selectedFlow}`)
-      .then(r => {
+      .then(async (r) => {
         const flow = r.data?.flow || r.data;
         setFlowPreview(flow);
         const initial = {};
         for (const step of (flow.steps || [])) {
-          initial[step.id] = { selectedSetId: '', tasks: [], loading: false };
+          // Auto-select default template set (is_default) for each step
+          const defaultSet = (step.template_sets || []).find(s => s.is_default);
+          const autoSetId = defaultSet?.id || '';
+          initial[step.id] = { selectedSetId: autoSetId, tasks: [], loading: !!autoSetId };
         }
         setStepTemplateSets(initial);
+        // Auto-load tasks for default template sets
+        for (const step of (flow.steps || [])) {
+          const autoSetId = initial[step.id]?.selectedSetId;
+          if (autoSetId) {
+            try {
+              const { data } = await api.get(`/company-templates/template-sets/${autoSetId}/tasks`);
+              const tasks = data?.tasks || data || [];
+              setStepTemplateSets(prev => ({ ...prev, [step.id]: { ...prev[step.id], tasks, loading: false } }));
+            } catch {
+              setStepTemplateSets(prev => ({ ...prev, [step.id]: { ...prev[step.id], tasks: [], loading: false } }));
+            }
+          }
+        }
       })
       .catch(() => setFlowPreview(null))
       .finally(() => setLoadingPreview(false));
