@@ -422,10 +422,10 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           } catch (e) { console.error('Assignment upsert:', e.message); }
 
-          // ═══ TASK GENERATION ORDER ═══
-          // 1. Processes (always — these are the main tasks from flow)
-          // 2. User-chosen template set (additional, if selected)
-          // 3. flow_step_tasks (only if NO processes AND no template set)
+          // ═══ TASK GENERATION ORDER (fixed) ═══
+          // 1. Processes (flow_step_processes → company_process_tasks) — always
+          // 2. Flow step tasks (flow_step_tasks) — the primary tasks from the flow
+          // 3. Template set (company_template_tasks) — only if step has NO processes AND NO flow_step_tasks
 
           let stepHasTasks = false;
 
@@ -459,7 +459,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
                   const { data: task, error: taskErr } = await supabase.from('tasks').insert({
                     project_id: project.id,
-                    stage_id: step.stage_id || t.stage_id,
+                    stage_id: t.stage_id || step.stage_id,
                     title: t.title,
                     description: t.description || null,
                     assignee_id: t.assigned_user_id || null,
@@ -503,63 +503,8 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           } catch (procErr) { console.error('Process tasks error:', procErr.message); }
 
-          // ── 2. Generate tasks from user-chosen TEMPLATE SET ──
-          if (chosenTemplateSetId) {
-            const { data: tplTasks } = await supabase.from('company_template_tasks')
-              .select('*, checklists:company_template_checklists(*)')
-              .eq('template_set_id', chosenTemplateSetId)
-              .eq('is_active', true)
-              .order('order_index');
-
-            console.log(`  Step ${step.order_index}: template_set ${chosenTemplateSetId} → ${tplTasks?.length || 0} tasks`);
-
-            if (tplTasks?.length) {
-              for (const t of tplTasks) {
-                let deadline = null;
-                if (t.deadline_days > 0) {
-                  const d = new Date();
-                  d.setDate(d.getDate() + t.deadline_days);
-                  deadline = d.toISOString();
-                }
-
-                const { data: task, error: taskErr } = await supabase.from('tasks').insert({
-                  project_id: project.id,
-                  stage_id: t.stage_id || step.stage_id,
-                  title: t.title,
-                  description: t.description || null,
-                  assignee_id: t.assigned_user_id || null,
-                  priority: t.priority || 'medium',
-                  status: 'pending',
-                  order_index: t.order_index,
-                  created_by_id: req.user.userId,
-                  deadline: deadline,
-                  task_type: 'project',
-                  metadata: { template_task_id: t.id, template_set_id: chosenTemplateSetId, flow_step_id: step.id },
-                }).select().single();
-
-                if (taskErr) { console.error('Template task error:', taskErr); continue; }
-
-                if (t.checklists?.length && task) {
-                  for (const c of t.checklists) {
-                    try {
-                      await supabase.from('task_checklists').insert({
-                        task_id: task.id,
-                        label: c.label || c.title,
-                        order_index: c.order_index || 0,
-                        is_required: c.is_required || false,
-                        is_completed: false,
-                      });
-                    } catch (ce) { console.warn('Template checklist:', ce.message); }
-                  }
-                }
-
-                if (task) { allCreatedTasks.push(task); stepHasTasks = true; }
-              }
-            }
-          }
-
-          // ── 3. Fallback: flow_step_tasks (only if no processes AND no template) ──
-          if (!stepHasTasks) {
+          // ── 2. Generate tasks from FLOW STEP TASKS (primary flow tasks) ──
+          try {
             const { data: flowTasks } = await supabase
               .from('flow_step_tasks')
               .select('*, checklists:flow_step_task_checklists(*)')
@@ -568,7 +513,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
               .order('order_index');
 
             if (flowTasks?.length) {
-              console.log(`  Step ${step.order_index}: fallback flow_step_tasks → ${flowTasks.length}`);
+              console.log(`  Step ${step.order_index}: flow_step_tasks → ${flowTasks.length} tasks`);
               for (const t of flowTasks) {
                 let deadline = null;
                 if (t.deadline_days > 0 || t.deadline_hours > 0) {
@@ -612,7 +557,63 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                   }
                 }
 
-                if (task) allCreatedTasks.push(task);
+                if (task) { allCreatedTasks.push(task); stepHasTasks = true; }
+              }
+            }
+          } catch (flowTaskErr) { console.error('Flow step tasks error:', flowTaskErr.message); }
+
+          // ── 3. Fallback: Template set (only if NO processes AND NO flow_step_tasks) ──
+          if (!stepHasTasks && chosenTemplateSetId) {
+            const { data: tplTasks } = await supabase.from('company_template_tasks')
+              .select('*, checklists:company_template_checklists(*)')
+              .eq('template_set_id', chosenTemplateSetId)
+              .eq('is_active', true)
+              .order('order_index');
+
+            console.log(`  Step ${step.order_index}: fallback template_set ${chosenTemplateSetId} → ${tplTasks?.length || 0} tasks`);
+
+            if (tplTasks?.length) {
+              for (const t of tplTasks) {
+                let deadline = null;
+                if (t.deadline_days > 0) {
+                  const d = new Date();
+                  d.setDate(d.getDate() + t.deadline_days);
+                  deadline = d.toISOString();
+                }
+
+                const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                  project_id: project.id,
+                  stage_id: t.stage_id || step.stage_id,
+                  title: t.title,
+                  description: t.description || null,
+                  assignee_id: t.assigned_user_id || null,
+                  priority: t.priority || 'medium',
+                  status: 'pending',
+                  order_index: t.order_index,
+                  created_by_id: req.user.userId,
+                  deadline: deadline,
+                  task_type: 'project',
+                  metadata: { template_task_id: t.id, template_set_id: chosenTemplateSetId, flow_step_id: step.id },
+                }).select().single();
+
+                if (taskErr) { console.error('Template task error:', taskErr); continue; }
+
+                if (t.checklists?.length && task) {
+                  for (const c of t.checklists) {
+                    try {
+                      await supabase.from('task_checklists').insert({
+                        task_id: task.id,
+                        label: c.label || c.title,
+                        order_index: c.order_index || 0,
+                        is_required: c.is_required || false,
+                        is_completed: false,
+                        assigned_user_id: c.assigned_user_id || null,
+                      });
+                    } catch (ce) { console.warn('Template checklist:', ce.message); }
+                  }
+                }
+
+                if (task) { allCreatedTasks.push(task); stepHasTasks = true; }
               }
             }
           }
