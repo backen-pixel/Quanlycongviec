@@ -708,20 +708,23 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
     if (!flowPreview?.steps) return { steps: 0, tasks: 0, checklists: 0 };
     let tasks = 0, checklists = 0;
     for (const step of flowPreview.steps) {
-      // Process tasks
       for (const proc of (step.processes || [])) {
         tasks += proc.tasks?.length || 0;
         checklists += (proc.tasks || []).reduce((s, t) => s + (t.checklists?.length || 0), 0);
       }
-      // Flow step tasks (primary tasks from flow)
       const flowStepTasks = step.tasks || [];
-      tasks += flowStepTasks.length;
-      checklists += flowStepTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
-      // Template set tasks (only if user explicitly selected, as fallback)
       const stInfo = stepTemplateSets[step.id];
-      if (stInfo?.tasks?.length) {
+      const userChose = !!stInfo?.selectedSetId;
+      if (userChose && stInfo?.tasks?.length) {
         tasks += stInfo.tasks.length;
         checklists += stInfo.tasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
+      } else {
+        tasks += flowStepTasks.length;
+        checklists += flowStepTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
+        if (stInfo?.tasks?.length) {
+          tasks += stInfo.tasks.length;
+          checklists += stInfo.tasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
+        }
       }
     }
     return { steps: flowPreview.steps.length, tasks, checklists };
@@ -778,10 +781,12 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
                   const flowTaskCount = flowStepTasks.length;
                   const tplTaskCount = selectedTplTasks.length;
                   const hasFlowTasks = procTaskCount > 0 || flowTaskCount > 0;
-                  const totalTasks = procTaskCount + flowTaskCount + tplTaskCount;
+                  const userChoseTemplate = !!stInfo.selectedSetId;
+                  const totalTasks = procTaskCount + (userChoseTemplate ? tplTaskCount : flowTaskCount + tplTaskCount);
+                  const flowCL = flowStepTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
+                  const tplCL = selectedTplTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
                   const totalCL = processes.reduce((s, p) => s + (p.tasks || []).reduce((cs, t) => cs + (t.checklists?.length || 0), 0), 0)
-                    + flowStepTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0)
-                    + selectedTplTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
+                    + (userChoseTemplate ? tplCL : flowCL + tplCL);
 
                   return (
                     <div key={step.id || i} className="bg-white rounded-lg p-3 border border-blue-100">
@@ -828,8 +833,11 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
 
                       {/* Flow step tasks (primary tasks from the selected flow) */}
                       {flowStepTasks.length > 0 && (
-                        <div className="ml-7 mt-2">
-                          <p className="text-xs font-bold text-gray-700 mb-1">📋 Nhiệm vụ từ luồng ({flowStepTasks.length} NV):</p>
+                        <div className={`ml-7 mt-2 ${userChoseTemplate ? 'opacity-40' : ''}`}>
+                          <p className="text-xs font-bold text-gray-700 mb-1">
+                            📋 Nhiệm vụ từ luồng ({flowStepTasks.length} NV)
+                            {userChoseTemplate && <span className="text-orange-500 font-normal ml-1">— sẽ bị thay bởi bộ mẫu đã chọn</span>}
+                          </p>
                           <div className="bg-blue-50 rounded-lg p-2 border border-blue-200 space-y-0.5">
                             {flowStepTasks.slice(0, 6).map((t, j) => (
                               <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-700">
@@ -844,17 +852,20 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
                         </div>
                       )}
 
-                      {/* Template Set Selection — only shown as fallback when step has no flow tasks */}
+                      {/* Template Set Selection — user can override flow tasks by choosing a template set */}
                       {templateSets.length > 0 && (
                         <div className="ml-7 mt-2">
                           <p className="text-xs font-bold text-gray-700 mb-1">
-                            {hasFlowTasks ? '📦 Bộ nhiệm vụ mẫu (không dùng — đã có NV từ luồng):' : '📦 Bộ nhiệm vụ mẫu (dự phòng):'}
+                            {hasFlowTasks
+                              ? (stInfo.selectedSetId
+                                ? '📦 Bộ nhiệm vụ mẫu (sẽ thay thế NV từ luồng):'
+                                : '📦 Bộ nhiệm vụ mẫu (chọn để thay thế NV từ luồng):')
+                              : '📦 Bộ nhiệm vụ mẫu:'}
                           </p>
                           <select
                             value={stInfo.selectedSetId || ''}
                             onChange={(e) => handleTemplateSetChange(step.id, e.target.value)}
-                            disabled={hasFlowTasks}
-                            className={`w-full h-8 px-2 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500 ${hasFlowTasks ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            className="w-full h-8 px-2 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
                           >
                             <option value="">-- Không chọn bộ mẫu --</option>
                             {templateSets.map(s => (
