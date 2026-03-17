@@ -422,14 +422,142 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           } catch (e) { console.error('Assignment upsert:', e.message); }
 
+<<<<<<< HEAD
           // ═══ TASK GENERATION ORDER (fixed) ═══
           // 1. Processes (flow_step_processes → company_process_tasks) — always
           // 2. Flow step tasks (flow_step_tasks) — the primary tasks from the flow
           // 3. Template set (company_template_tasks) — only if step has NO processes AND NO flow_step_tasks
+=======
+          // Try 1: Get flow_step_tasks (custom tasks for this step)
+          const { data: flowTasks } = await supabase
+            .from('flow_step_tasks')
+            .select('*, checklists:flow_step_task_checklists(*)')
+            .eq('flow_step_id', step.id)
+            .eq('is_active', true)
+            .order('order_index');
+>>>>>>> parent of 15f8efb (Fix: gen tasks ưu tiên processes trước, template set sau, flow_step_tasks cuối)
 
-          let stepHasTasks = false;
+          console.log(`  Step ${step.order_index} (stage ${step.stage_id}): ${flowTasks?.length || 0} flow_step_tasks, template_set: ${step.template_set_id || 'none'}`);
 
-          // ── 1. Generate tasks from PROCESSES linked to this step ──
+          if (flowTasks?.length) {
+            for (const t of flowTasks) {
+              // Calculate deadline
+              let deadline = null;
+              if (t.deadline_days > 0 || t.deadline_hours > 0) {
+                const now = new Date();
+                if (t.deadline_days > 0) now.setDate(now.getDate() + t.deadline_days);
+                if (t.deadline_hours > 0) now.setHours(now.getHours() + t.deadline_hours);
+                deadline = now.toISOString();
+              }
+
+              // Determine assignee
+              let finalAssignee = t.assigned_user_id || null;
+              if (!finalAssignee && t.assignee_field && project[t.assignee_field + '_id']) {
+                finalAssignee = project[t.assignee_field + '_id'];
+              }
+
+              const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                project_id: project.id,
+                stage_id: t.stage_id,
+                title: t.title,
+                description: t.description || null,
+                assignee_id: finalAssignee,
+                priority: t.priority || 'medium',
+                status: 'pending',
+                order_index: t.order_index,
+                created_by_id: req.user.userId,
+                deadline: deadline,
+                estimated_hours: t.estimated_days ? t.estimated_days * 8 : null,
+                task_type: 'project',
+                metadata: {
+                  flow_step_task_id: t.id,
+                  flow_step_id: step.id,
+                },
+              }).select().single();
+
+              if (taskErr) { console.error('Task create error:', taskErr); continue; }
+
+              // Create checklists
+              if (t.checklists?.length && task) {
+                for (const c of t.checklists) {
+                  let checklistDeadline = null;
+                  if (c.deadline_days > 0 || c.deadline_hours > 0) {
+                    const dl = new Date();
+                    if (c.deadline_days > 0) dl.setDate(dl.getDate() + c.deadline_days);
+                    if (c.deadline_hours > 0) dl.setHours(dl.getHours() + c.deadline_hours);
+                    checklistDeadline = dl.toISOString();
+                  }
+                  try {
+                    await supabase.from('task_checklists').insert({
+                      task_id: task.id,
+                      label: c.label,
+                      order_index: c.order_index || 0,
+                      is_required: c.is_required || false,
+                      is_completed: false,
+                      assigned_user_id: c.assigned_user_id || finalAssignee,
+                      deadline: checklistDeadline,
+                    });
+                  } catch (ce) { console.warn('Checklist insert:', ce.message); }
+                }
+              }
+
+              if (task) allCreatedTasks.push(task);
+            }
+          } else if (chosenTemplateSetId) {
+            // Fallback: use template_set tasks (from user choice or step default)
+            const { data: tplTasks } = await supabase.from('company_template_tasks')
+              .select('*, checklists:company_template_checklists(*)')
+              .eq('template_set_id', chosenTemplateSetId)
+              .eq('is_active', true)
+              .order('order_index');
+
+            if (tplTasks?.length) {
+              for (const t of tplTasks) {
+                let deadline = null;
+                if (t.deadline_days > 0) {
+                  const d = new Date();
+                  d.setDate(d.getDate() + t.deadline_days);
+                  deadline = d.toISOString();
+                }
+
+                const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                  project_id: project.id,
+                  stage_id: t.stage_id,
+                  title: t.title,
+                  description: t.description || null,
+                  assignee_id: t.assigned_user_id || null,
+                  priority: t.priority || 'medium',
+                  status: 'pending',
+                  order_index: t.order_index,
+                  created_by_id: req.user.userId,
+                  deadline: deadline,
+                  task_type: 'project',
+                  metadata: { template_task_id: t.id, template_set_id: chosenTemplateSetId },
+                }).select().single();
+
+                if (taskErr) { console.error('Template task error:', taskErr); continue; }
+
+                // Create checklists from template
+                if (t.checklists?.length && task) {
+                  for (const c of t.checklists) {
+                    try {
+                      await supabase.from('task_checklists').insert({
+                        task_id: task.id,
+                        label: c.label || c.title,
+                        order_index: c.order_index || 0,
+                        is_required: c.is_required || false,
+                        is_completed: false,
+                      });
+                    } catch (ce) { console.warn('Template checklist:', ce.message); }
+                  }
+                }
+
+                if (task) allCreatedTasks.push(task);
+              }
+            }
+          }
+
+          // Also: generate tasks from processes linked to this step
           try {
             const { data: stepProcs } = await supabase.from('flow_step_processes')
               .select('*, process:company_processes(id,name,icon,order_index)')
@@ -474,6 +602,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
                   if (taskErr) { console.error('Process task error:', taskErr); continue; }
 
+                  // Create checklists from process task
                   if (t.checklists?.length && task) {
                     for (const c of t.checklists) {
                       try {
@@ -497,11 +626,12 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                     }
                   }
 
-                  if (task) { allCreatedTasks.push(task); stepHasTasks = true; }
+                  if (task) allCreatedTasks.push(task);
                 }
               }
             }
           } catch (procErr) { console.error('Process tasks error:', procErr.message); }
+<<<<<<< HEAD
 
           // ── 2. Generate tasks from FLOW STEP TASKS (primary flow tasks) ──
           try {
@@ -617,6 +747,8 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
               }
             }
           }
+=======
+>>>>>>> parent of 15f8efb (Fix: gen tasks ưu tiên processes trước, template set sau, flow_step_tasks cuối)
         }
       }
 
