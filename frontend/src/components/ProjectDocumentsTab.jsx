@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import {
   FileText, Paperclip, ChevronDown, ChevronRight, CheckCircle2, ShieldCheck,
-  FolderOpen, ClipboardList, StickyNote, Image
+  FolderOpen, ClipboardList, StickyNote, Image, FileSearch, ExternalLink, Download
 } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 
@@ -115,36 +115,15 @@ export default function ProjectDocumentsTab({ projectId, project }) {
     <div className="space-y-4">
       {/* Lead Documents Section */}
       {leadDocuments.length > 0 && (
-        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-4">
-          <div className="flex items-center gap-2 mb-3">
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 overflow-hidden">
+          <div className="flex items-center gap-2 p-4 pb-3">
             <FileText className="h-5 w-5 text-amber-600" />
-            <h3 className="text-sm font-bold text-amber-900">📋 Tài liệu khách hàng (từ Lead)</h3>
-            <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{leadDocuments.length}</span>
+            <h3 className="text-sm font-bold text-amber-900">📋 Tài liệu từ Lead / Deal</h3>
+            <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{leadDocuments.length} tài liệu</span>
           </div>
-          <div className="space-y-2">
+          <div className="px-4 pb-4 space-y-2">
             {leadDocuments.map(doc => (
-              <div key={doc.id} className="flex items-center gap-2 p-2 bg-white rounded-lg border border-amber-100">
-                {doc.doc_type === 'image' ? (
-                  <Image className="h-4 w-4 text-amber-600 shrink-0" />
-                ) : (
-                  <FileText className="h-4 w-4 text-amber-600 shrink-0" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">{doc.title || doc.name}</p>
-                  <div className="flex items-center gap-2 text-[10px] text-gray-500">
-                    <span>{doc.doc_type || 'Tài liệu'}</span>
-                    {doc.creator && <span>• {doc.creator.full_name}</span>}
-                    {doc.created_at && <span>• {formatDateTime(doc.created_at)}</span>}
-                  </div>
-                  {doc.content && <p className="text-xs text-gray-600 mt-1 line-clamp-2">{doc.content}</p>}
-                </div>
-                {doc.file_url && (
-                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-blue-600 hover:underline px-2 py-1 bg-blue-50 rounded shrink-0">
-                    Mở
-                  </a>
-                )}
-              </div>
+              <LeadDocumentCard key={doc.id} doc={doc} />
             ))}
           </div>
         </div>
@@ -311,6 +290,115 @@ export default function ProjectDocumentsTab({ projectId, project }) {
           <FolderOpen className="h-10 w-10 mx-auto mb-2 opacity-30" />
           <p className="text-sm">Chưa có tài liệu quy trình</p>
           <p className="text-[10px] mt-1">Tài liệu sẽ tự động xuất hiện khi các giai đoạn được duyệt</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ Lead Document Card — expandable with full detail ═══
+const DOC_TYPE_MAP = {
+  requirement: { label: 'Yêu cầu KH', icon: '📝', color: 'text-blue-600 bg-blue-50' },
+  drawing: { label: 'Bản vẽ', icon: '📐', color: 'text-purple-600 bg-purple-50' },
+  image: { label: 'Hình ảnh', icon: '🖼️', color: 'text-pink-600 bg-pink-50' },
+  contract: { label: 'Hợp đồng', icon: '📄', color: 'text-emerald-600 bg-emerald-50' },
+  measurement: { label: 'Số đo', icon: '📏', color: 'text-orange-600 bg-orange-50' },
+  note: { label: 'Ghi chú', icon: '📝', color: 'text-amber-600 bg-amber-50' },
+  other: { label: 'Khác', icon: '📎', color: 'text-gray-600 bg-gray-50' },
+};
+
+function LeadDocumentCard({ doc }) {
+  const [expanded, setExpanded] = useState(false);
+  const typeInfo = DOC_TYPE_MAP[doc.doc_type] || DOC_TYPE_MAP.other;
+  const isFile = !!doc.file_url;
+  const isImage = doc.doc_type === 'image' || doc.mime_type?.startsWith('image/') ||
+    /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_url || doc.file_name || '');
+  const hasNotes = doc.notes?.trim();
+  const hasContent = hasNotes || isFile;
+
+  return (
+    <div className="bg-white rounded-lg border border-amber-100 overflow-hidden hover:shadow-sm transition-shadow">
+      {/* Header - always visible */}
+      <div
+        className={`flex items-center gap-3 p-3 ${hasContent ? 'cursor-pointer hover:bg-amber-50/50' : ''}`}
+        onClick={() => hasContent && setExpanded(!expanded)}
+      >
+        <span className={`text-xs font-medium px-2 py-1 rounded-full shrink-0 ${typeInfo.color}`}>
+          {typeInfo.icon} {typeInfo.label}
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-gray-900 truncate">{doc.name}</p>
+          <div className="flex items-center gap-2 text-[10px] text-gray-400 mt-0.5">
+            {doc.creator && <span>{doc.creator.full_name}</span>}
+            {doc.created_at && <span>• {formatDateTime(doc.created_at)}</span>}
+            {isFile && <span>• {doc.file_name}</span>}
+            {doc.file_size && <span>• {(doc.file_size / 1024).toFixed(0)} KB</span>}
+          </div>
+        </div>
+
+        {/* Quick preview: truncated notes */}
+        {hasNotes && !expanded && (
+          <p className="text-xs text-gray-500 truncate max-w-[200px] hidden sm:block">{doc.notes}</p>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-1 shrink-0">
+          {isFile && (
+            <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              onClick={e => e.stopPropagation()} title="Mở file">
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
+          {hasContent && (
+            <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+          )}
+        </div>
+      </div>
+
+      {/* Expanded content */}
+      {expanded && (
+        <div className="border-t border-amber-100 p-3 space-y-3 bg-amber-50/30">
+          {/* Text content */}
+          {hasNotes && (
+            <div className="bg-white rounded-lg p-3 border border-gray-100">
+              <div className="flex items-center gap-1.5 mb-2">
+                <StickyNote className="h-3 w-3 text-amber-500" />
+                <span className="text-[10px] font-semibold text-gray-400 uppercase">Nội dung</span>
+              </div>
+              <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{doc.notes}</p>
+            </div>
+          )}
+
+          {/* File preview */}
+          {isFile && (
+            <div className="bg-white rounded-lg p-3 border border-gray-100">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Paperclip className="h-3 w-3 text-blue-500" />
+                <span className="text-[10px] font-semibold text-gray-400 uppercase">File đính kèm</span>
+              </div>
+
+              {isImage ? (
+                <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="block">
+                  <img src={doc.file_url} alt={doc.name} loading="lazy"
+                    className="max-h-64 rounded-lg border object-contain hover:opacity-90 transition-opacity" />
+                </a>
+              ) : (
+                <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                  <FileText className="h-8 w-8 text-gray-400" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-blue-600 truncate">{doc.file_name || doc.name}</p>
+                    <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                      {doc.mime_type && <span>{doc.mime_type}</span>}
+                      {doc.file_size && <span>{(doc.file_size / 1024).toFixed(0)} KB</span>}
+                    </div>
+                  </div>
+                  <Download className="h-4 w-4 text-gray-400" />
+                </a>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
