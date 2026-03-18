@@ -20,8 +20,6 @@ function stageIcon(s) {
 
 export default function ProjectDocumentsTab({ projectId, project }) {
   const [approvals, setApprovals] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [checklists, setChecklists] = useState({});
   const [leadDocuments, setLeadDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedStage, setExpandedStage] = useState(null);
@@ -29,39 +27,24 @@ export default function ProjectDocumentsTab({ projectId, project }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Load lead documents (if project linked to a lead)
-      try {
-        const { data: leadData } = await api.get(`/crm/leads`).catch(() => ({ data: [] }));
-        const linkedLead = leadData.find(l => l.project_id === projectId);
-        if (linkedLead) {
-          const { data: docs } = await api.get(`/crm/leads/${linkedLead.id}/documents`).catch(() => ({ data: [] }));
-          setLeadDocuments(docs || []);
-        }
-      } catch {}
+      // Parallel fetch — 2 requests only (no N+1!)
+      const [leadDocsRes, approvalsRes] = await Promise.allSettled([
+        api.get(`/crm/project/${projectId}/lead-documents`),
+        api.get(`/approvals/project/${projectId}`),
+      ]);
 
-      // Load approved/auto-approved approvals
-      const { data: appData } = await api.get(`/approvals/project/${projectId}`);
-      const approved = (appData.approvals || []).filter(a => a.status === 'approved' || a.status === 'auto_approved');
-      setApprovals(approved);
-
-      // Load tasks with stage info
-      const projTasks = project?.tasks || [];
-      setTasks(projTasks);
-
-      // Load checklists for all tasks
-      const checklistMap = {};
-      for (const task of projTasks) {
-        try {
-          const { data } = await api.get(`/tasks/${task.id}`);
-          if (data.task?.checklists?.length) {
-            checklistMap[task.id] = data.task.checklists;
-          }
-        } catch {}
+      if (leadDocsRes.status === 'fulfilled') {
+        setLeadDocuments(leadDocsRes.value.data || []);
       }
-      setChecklists(checklistMap);
+
+      if (approvalsRes.status === 'fulfilled') {
+        const approved = (approvalsRes.value.data.approvals || [])
+          .filter(a => a.status === 'approved' || a.status === 'auto_approved');
+        setApprovals(approved);
+      }
     } catch {}
     setLoading(false);
-  }, [projectId, project?.tasks]);
+  }, [projectId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -71,7 +54,9 @@ export default function ProjectDocumentsTab({ projectId, project }) {
     </div>
   );
 
-  // Group approvals by stage
+  // Use tasks + checklists from project (already loaded by ProjectDetail)
+  const tasks = project?.tasks || [];
+
   const STAGE_FLOW = [
     { slug: 'consulting', status: 'consulting', label: 'Tư vấn' },
     { slug: 'design', status: 'designing', label: 'Thiết kế' },
@@ -85,13 +70,9 @@ export default function ProjectDocumentsTab({ projectId, project }) {
 
   // Build stage documents
   const stageDocuments = STAGE_FLOW.map(sf => {
-    // Approvals for this stage
     const stageApprovals = approvals.filter(a => a.stage?.slug === sf.slug);
-
-    // Tasks for this stage
     const stageTasks = tasks.filter(t => t.stage?.slug === sf.slug);
 
-    // Collect all files and notes from approvals
     const approvalDocs = stageApprovals.map(a => ({
       type: 'approval',
       status: a.status,
@@ -104,9 +85,9 @@ export default function ProjectDocumentsTab({ projectId, project }) {
       decided_at: a.decided_at,
     }));
 
-    // Collect files/notes from task checklists
+    // Use checklists already included in project.tasks (loaded by ProjectDetail)
     const taskDocs = stageTasks.map(task => {
-      const taskChecklists = checklists[task.id] || [];
+      const taskChecklists = task.checklists || [];
       const checklistDocs = taskChecklists
         .filter(c => c.notes?.trim() || (c.attachments || []).length > 0)
         .map(c => ({
@@ -116,15 +97,11 @@ export default function ProjectDocumentsTab({ projectId, project }) {
           attachments: c.attachments || [],
           is_completed: c.is_completed,
         }));
-      return {
-        task,
-        checklists: checklistDocs,
-      };
+      return { task, checklists: checklistDocs };
     }).filter(td => td.checklists.length > 0);
 
     const hasContent = approvalDocs.length > 0 || taskDocs.length > 0;
 
-    // Count total files
     let totalFiles = 0;
     approvalDocs.forEach(d => { totalFiles += d.attachments.length; });
     taskDocs.forEach(td => td.checklists.forEach(c => { totalFiles += c.attachments.length; }));
@@ -136,23 +113,34 @@ export default function ProjectDocumentsTab({ projectId, project }) {
 
   return (
     <div className="space-y-4">
-      {/* Lead Documents Section - at the top */}
+      {/* Lead Documents Section */}
       {leadDocuments.length > 0 && (
         <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-4">
           <div className="flex items-center gap-2 mb-3">
             <FileText className="h-5 w-5 text-amber-600" />
             <h3 className="text-sm font-bold text-amber-900">📋 Tài liệu khách hàng (từ Lead)</h3>
+            <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{leadDocuments.length}</span>
           </div>
           <div className="space-y-2">
             {leadDocuments.map(doc => (
               <div key={doc.id} className="flex items-center gap-2 p-2 bg-white rounded-lg border border-amber-100">
-                <FileText className="h-4 w-4 text-amber-600 shrink-0" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-900">{doc.name}</p>
-                  <p className="text-xs text-gray-500">{doc.doc_type} • {doc.file_name}</p>
+                {doc.doc_type === 'image' ? (
+                  <Image className="h-4 w-4 text-amber-600 shrink-0" />
+                ) : (
+                  <FileText className="h-4 w-4 text-amber-600 shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{doc.title || doc.name}</p>
+                  <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                    <span>{doc.doc_type || 'Tài liệu'}</span>
+                    {doc.creator && <span>• {doc.creator.full_name}</span>}
+                    {doc.created_at && <span>• {formatDateTime(doc.created_at)}</span>}
+                  </div>
+                  {doc.content && <p className="text-xs text-gray-600 mt-1 line-clamp-2">{doc.content}</p>}
                 </div>
                 {doc.file_url && (
-                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:underline px-2 py-1 bg-blue-50 rounded shrink-0">
                     Mở
                   </a>
                 )}
@@ -181,7 +169,6 @@ export default function ProjectDocumentsTab({ projectId, project }) {
 
           return (
             <div key={sd.slug} className="bg-white rounded-xl border overflow-hidden">
-              {/* Stage header */}
               <button
                 onClick={() => setExpandedStage(isExpanded ? null : sd.slug)}
                 className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer transition-colors"
@@ -211,10 +198,8 @@ export default function ProjectDocumentsTab({ projectId, project }) {
                 {isExpanded ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
               </button>
 
-              {/* Expanded content */}
               {isExpanded && (
                 <div className="px-3 pb-3 space-y-3 border-t border-gray-100">
-
                   {/* Approval documents */}
                   {sd.approvalDocs.map((doc, di) => (
                     <div key={`approval-${di}`} className="bg-emerald-50/50 rounded-lg p-3 mt-3">
@@ -228,14 +213,11 @@ export default function ProjectDocumentsTab({ projectId, project }) {
                           {doc.status === 'auto_approved' ? 'Tự động duyệt' : 'Đã duyệt'}
                         </span>
                         {doc.requester && (
-                          <span className="text-[10px] text-gray-500">
-                            bởi {doc.requester.full_name}
-                          </span>
+                          <span className="text-[10px] text-gray-500">bởi {doc.requester.full_name}</span>
                         )}
                         <span className="text-[10px] text-gray-400">· {formatDateTime(doc.decided_at || doc.created_at)}</span>
                       </div>
 
-                      {/* Notes from requester */}
                       {doc.notes && (
                         <div className="bg-white rounded-lg p-2.5 mb-2">
                           <label className="text-[9px] font-semibold text-gray-400 uppercase block mb-0.5">📝 Ghi chú chuyển giao</label>
@@ -243,7 +225,6 @@ export default function ProjectDocumentsTab({ projectId, project }) {
                         </div>
                       )}
 
-                      {/* Approve notes from manager */}
                       {doc.approve_notes && (
                         <div className="bg-white rounded-lg p-2.5 mb-2">
                           <label className="text-[9px] font-semibold text-emerald-500 uppercase block mb-0.5">
@@ -253,7 +234,6 @@ export default function ProjectDocumentsTab({ projectId, project }) {
                         </div>
                       )}
 
-                      {/* Files */}
                       {doc.attachments.length > 0 && (
                         <div className="space-y-1">
                           {doc.attachments.map((f, fi) => (
@@ -278,7 +258,6 @@ export default function ProjectDocumentsTab({ projectId, project }) {
                           </div>
                         )}
                       </div>
-
                       <div className="space-y-2 ml-5">
                         {td.checklists.map((cl, ci) => (
                           <div key={ci} className="bg-white rounded-lg p-2.5">
@@ -290,7 +269,6 @@ export default function ProjectDocumentsTab({ projectId, project }) {
                               )}
                               <span className="text-[11px] font-medium text-gray-700">{cl.title}</span>
                             </div>
-
                             {cl.notes && (
                               <div className="ml-5 mb-1">
                                 <p className="text-[10px] text-gray-600 whitespace-pre-wrap flex items-start gap-1">
@@ -299,7 +277,6 @@ export default function ProjectDocumentsTab({ projectId, project }) {
                                 </p>
                               </div>
                             )}
-
                             {cl.attachments.length > 0 && (
                               <div className="ml-5 space-y-1">
                                 {cl.attachments.map((f, fi) => (
@@ -319,7 +296,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
         })}
       </div>
 
-      {/* Empty stages (no content) */}
+      {/* Empty stages */}
       {stageDocuments.filter(s => !s.hasContent).length > 0 && (
         <div className="text-[10px] text-gray-400 flex flex-wrap gap-1">
           <span>Chưa có tài liệu:</span>
@@ -329,7 +306,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
         </div>
       )}
 
-      {totalDocs === 0 && (
+      {totalDocs === 0 && !leadDocuments.length && (
         <div className="text-center py-10 text-gray-400">
           <FolderOpen className="h-10 w-10 mx-auto mb-2 opacity-30" />
           <p className="text-sm">Chưa có tài liệu quy trình</p>
@@ -340,7 +317,6 @@ export default function ProjectDocumentsTab({ projectId, project }) {
   );
 }
 
-// ═══ File display component ═══
 function FileItem({ file: f, index, small }) {
   const isImage = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(f.file_url || f.file_name || '');
 
@@ -348,7 +324,7 @@ function FileItem({ file: f, index, small }) {
     <a href={f.file_url} target="_blank" rel="noopener noreferrer"
       className={`flex items-center gap-2 bg-white rounded-lg hover:bg-gray-50 transition-colors ${small ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
       {isImage ? (
-        <img src={f.file_url} alt="" className={`${small ? 'h-6 w-6' : 'h-8 w-8'} rounded object-cover shrink-0`} />
+        <img src={f.file_url} alt="" className={`${small ? 'h-6 w-6' : 'h-8 w-8'} rounded object-cover shrink-0`} loading="lazy" />
       ) : (
         <FileText className={`${small ? 'h-3 w-3' : 'h-4 w-4'} text-gray-400 shrink-0`} />
       )}
