@@ -181,6 +181,29 @@ r.post('/import', async (req, res) => {
       }
     }
 
+    // After import: auto-extract code parts
+    if (mode !== 'preview' && (results.created > 0 || results.updated > 0)) {
+      try {
+        const fieldMap = {
+          group: 'code_group', spec: 'code_spec', standard: 'code_standard',
+          category: 'code_category', style: 'code_style', glass: 'code_glass',
+          type_standard: 'code_type_std', side: 'code_side', size: 'code_size',
+        };
+        const { data: allProds } = await supabase.from('products').select(
+          'code_group,code_spec,code_standard,code_category,code_style,code_glass,code_type_std,code_side,code_size'
+        );
+        for (const [partType, dbCol] of Object.entries(fieldMap)) {
+          const vals = [...new Set((allProds || []).map(p => (p[dbCol] || '').toString().trim()).filter(Boolean))];
+          for (let i = 0; i < vals.length; i++) {
+            await supabase.from('product_code_parts').upsert({
+              part_type: partType, code: vals[i], name: vals[i], order_index: i + 1, is_active: true,
+            }, { onConflict: 'part_type,code' }).catch(() => {});
+          }
+        }
+        console.log('Auto-extracted code parts after import');
+      } catch (e) { console.warn('Code parts extract:', e.message); }
+    }
+
     res.json({
       message: mode === 'preview'
         ? `Preview ${results.preview.length} sản phẩm`
@@ -443,6 +466,45 @@ r.delete('/:productId/structures/:structId', async (req, res) => {
     await supabase.from('product_structures').delete().eq('id', req.params.structId);
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══════════════════════════════════════════
+// AUTO-EXTRACT code parts from existing products
+// ═══════════════════════════════════════════
+r.post('/code-parts/auto-extract', async (req, res) => {
+  try {
+    const fieldMap = {
+      group: 'code_group', spec: 'code_spec', standard: 'code_standard',
+      category: 'code_category', style: 'code_style', glass: 'code_glass',
+      type_standard: 'code_type_std', side: 'code_side', size: 'code_size',
+    };
+
+    // Get all products
+    const { data: products } = await supabase.from('products').select(
+      'code_group,code_spec,code_standard,code_category,code_style,code_glass,code_type_std,code_side,code_size'
+    );
+
+    let created = 0;
+    for (const [partType, dbCol] of Object.entries(fieldMap)) {
+      // Collect unique non-empty values
+      const values = [...new Set((products || []).map(p => (p[dbCol] || '').toString().trim()).filter(Boolean))];
+      
+      for (let i = 0; i < values.length; i++) {
+        const code = values[i];
+        // Upsert — don't duplicate
+        const { error } = await supabase.from('product_code_parts').upsert({
+          part_type: partType,
+          code,
+          name: code, // Use code as name for now (user can edit later)
+          order_index: i + 1,
+          is_active: true,
+        }, { onConflict: 'part_type,code' });
+        if (!error) created++;
+      }
+    }
+
+    res.json({ message: `Đã tạo ${created} mã thành phần từ ${products?.length || 0} sản phẩm` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = r;

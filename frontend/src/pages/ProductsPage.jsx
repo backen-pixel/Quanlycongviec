@@ -518,11 +518,24 @@ function CodePartsManager({ codeParts, onReload }) {
     try { await api.delete(`/products/code-parts/${id}`); onReload(); } catch { alert('Lỗi xóa'); }
   };
 
+  const syncCodeParts = async () => {
+    try {
+      const { data } = await api.post('/products/code-parts/auto-extract');
+      alert(data.message);
+      onReload();
+    } catch (e) { alert('Lỗi: ' + (e.response?.data?.error || e.message)); }
+  };
+
   return (
     <div className="bg-white rounded-xl border p-4 space-y-2">
-      <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-        <Settings className="h-4 w-4 text-gray-500" /> Quản lý cấu trúc mã thành phẩm
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+          <Settings className="h-4 w-4 text-gray-500" /> Quản lý cấu trúc mã thành phẩm
+        </h3>
+        <button onClick={syncCodeParts} className="h-7 px-3 bg-blue-100 text-blue-700 rounded-lg text-[10px] hover:bg-blue-200 flex items-center gap-1 cursor-pointer">
+          🔄 Đồng bộ từ SP đã import
+        </button>
+      </div>
       <p className="text-xs text-gray-500">Mã thành phẩm = Nhóm SP - Quy cách - Tiêu chuẩn - Loại - Hình thức - Kính - Chuẩn loại - Hông - Kích thước</p>
 
       {CODE_PART_ORDER.map(type => {
