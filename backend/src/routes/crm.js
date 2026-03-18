@@ -506,9 +506,15 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
               .order('order_index');
 
             if (stepProcs?.length) {
-              for (const sp of stepProcs) {
+              for (let procIdx = 0; procIdx < stepProcs.length; procIdx++) {
+                const sp = stepProcs[procIdx];
                 const proc = sp.process;
                 if (!proc) continue;
+
+                // Map process to correct stage:
+                // Each process in a Khối corresponds to a stage in order
+                // e.g. KD: process 0→consulting, 1→design, 2→quotation
+                const processStageId = stepStageIds[procIdx] || defaultStageId;
 
                 const { data: procTasks } = await supabase.from('company_process_tasks')
                   .select('*, checklists:company_process_checklists(*)')
@@ -528,7 +534,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
                   const { data: task, error: taskErr } = await supabase.from('tasks').insert({
                     project_id: project.id,
-                    stage_id: t.stage_id || defaultStageId,
+                    stage_id: t.stage_id || processStageId,
                     title: t.title,
                     description: t.description || null,
                     assignee_id: t.assigned_user_id || t.default_assignee_id || null,
@@ -544,26 +550,22 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                   if (taskErr) { console.error('Process task error:', taskErr); continue; }
 
                   if (t.checklists?.length && task) {
+                    console.log(`      → ${t.checklists.length} checklists to insert for task ${task.id.substring(0,8)}`);
                     for (const c of t.checklists) {
                       try {
-                        let clDeadline = null;
-                        if (c.deadline_days > 0 || c.deadline_hours > 0) {
-                          const dl = new Date();
-                          if (c.deadline_days > 0) dl.setDate(dl.getDate() + c.deadline_days);
-                          if (c.deadline_hours > 0) dl.setHours(dl.getHours() + c.deadline_hours);
-                          clDeadline = dl.toISOString();
-                        }
-                        await supabase.from('task_checklists').insert({
+                        const clInsert = {
                           task_id: task.id,
-                          title: c.label || c.title,
+                          title: c.title || c.label,
                           order_index: c.order_index || 0,
-                          is_required: c.is_required || false,
                           is_completed: false,
-                          assigned_user_id: c.assigned_user_id || null,
-                          deadline: clDeadline,
-                        });
-                      } catch (ce) { console.warn('Process checklist:', ce.message); }
+                        };
+                        const { data: clResult, error: clError } = await supabase.from('task_checklists').insert(clInsert).select().single();
+                        if (clError) console.error('      ❌ Checklist insert error:', clError.message, JSON.stringify(clInsert));
+                        else console.log('      ✅ CL:', c.title);
+                      } catch (ce) { console.warn('      ❌ Process checklist exception:', ce.message); }
                     }
+                  } else if (task) {
+                    console.log(`      → 0 checklists for task ${task.id.substring(0,8)}`);
                   }
 
                   if (task) allCreatedTasks.push(task);
