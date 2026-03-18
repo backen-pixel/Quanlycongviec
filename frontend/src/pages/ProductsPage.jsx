@@ -70,7 +70,35 @@ export default function ProductsPage() {
         const wb = XLSX.read(ev.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws);
-        setImportData({ fileName: file.name, rows, total: rows.length });
+        // Parse all rows immediately for preview
+        const parsed = rows.map((row, i) => {
+          const p = {
+            stt: i + 1,
+            code_group: (row['Nhóm SP'] || row.code_group || '').toString().trim(),
+            code_spec: (row['Mã quy cách'] || row.code_spec || '').toString().trim(),
+            code_standard: (row['Mã tiêu chuẩn'] || row.code_standard || '').toString().trim(),
+            code_category: (row['Mã loại/phân loại'] || row.code_category || '').toString().trim(),
+            code_style: (row['Mã hình thức'] || row.code_style || '').toString().trim(),
+            code_glass: (row['Mã kính'] || row.code_glass || '').toString().trim(),
+            code_type_std: (row['Mã chuẩn loại'] || row.code_type_std || '').toString().trim(),
+            code_side: (row['Mã hông'] || row.code_side || '').toString().trim(),
+            code_size: (row['Mã kích thước'] || row.code_size || '').toString().trim(),
+            code: (row['MÃ THÀNH PHẨM'] || row.code || '').toString().trim(),
+            name: (row['TÊN THÀNH PHẨM'] || row.name || '').toString().trim(),
+            selling_price: parseFloat(row['GIÁ BÁN GỒM VAT 10%'] || row.selling_price || 0) || 0,
+            base_price: parseFloat(row['GIÁ BÁN CHƯA VAT 10%'] || row.base_price || 0) || 0,
+            unit: (row['Đơn vị tính'] || row.unit || 'cái').toString().trim(),
+          };
+          // Auto-gen code
+          if (!p.code) p.code = [p.code_group, p.code_spec, p.code_standard, p.code_category, p.code_style, p.code_glass, p.code_type_std, p.code_side, p.code_size].filter(Boolean).join('-');
+          // Auto-calc price
+          if (!p.selling_price && p.base_price) p.selling_price = Math.round(p.base_price * 1.1);
+          if (!p.base_price && p.selling_price) p.base_price = Math.round(p.selling_price / 1.1);
+          // Validate
+          p._error = !p.name ? 'Thiếu tên SP' : null;
+          return p;
+        });
+        setImportData({ fileName: file.name, rows, parsed, total: parsed.length });
         setShowImport(true);
       } catch (err) { alert('Lỗi đọc file: ' + err.message); }
     };
@@ -189,45 +217,95 @@ export default function ProductsPage() {
       {/* Add/Edit Modal */}
       {showAdd && <ProductFormModal codeParts={codeParts} editId={editId} onClose={() => { setShowAdd(false); setEditId(null); }} onSaved={load} />}
 
-      {/* Import Preview Modal */}
+      {/* Import Preview Modal — full table immediately */}
       {showImport && importData && (
-        <Modal title={`📥 Import Excel — ${importData.fileName}`} onClose={() => { setShowImport(false); setImportData(null); }} size="lg">
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600">Tìm thấy <strong>{importData.total}</strong> dòng dữ liệu</p>
-
-            {importData.preview?.length > 0 && (
-              <div className="max-h-64 overflow-auto border rounded-lg">
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-gray-50 border-b"><th className="p-2">Dòng</th><th className="p-2">Mã</th><th className="p-2">Tên</th><th className="p-2 text-right">Giá VAT</th><th className="p-2">ĐVT</th></tr></thead>
-                  <tbody>
-                    {importData.preview.map((r, i) => (
-                      <tr key={i} className="border-b"><td className="p-2">{r.row}</td><td className="p-2 font-mono">{r.code}</td><td className="p-2">{r.name}</td><td className="p-2 text-right">{formatVND(r.selling_price)}</td><td className="p-2">{r.unit}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-emerald-50 to-blue-50">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <FileSpreadsheet className="h-5 w-5 text-emerald-600" /> Import: {importData.fileName}
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {importData.total} sản phẩm • {importData.parsed.filter(p => !p._error).length} hợp lệ
+                  {importData.parsed.some(p => p._error) && <span className="text-red-500 ml-1">• {importData.parsed.filter(p => p._error).length} lỗi</span>}
+                </p>
               </div>
-            )}
-
-            {importData.errors?.length > 0 && (
-              <div className="bg-red-50 rounded-lg p-3 text-xs text-red-700">
-                <p className="font-bold mb-1">⚠️ Lỗi:</p>
-                {importData.errors.map((e, i) => <p key={i}>Dòng {e.row}: {e.error}</p>)}
-              </div>
-            )}
-
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => doImport('preview')} className="h-9 px-4 bg-gray-100 text-gray-700 rounded-lg text-xs hover:bg-gray-200 flex items-center gap-1.5 cursor-pointer">
-                <Eye className="h-3.5 w-3.5" /> Xem trước
-              </button>
-              <button onClick={() => doImport('upsert')} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 flex items-center gap-1.5 cursor-pointer">
-                <Upload className="h-3.5 w-3.5" /> Import (cập nhật nếu trùng mã)
-              </button>
-              <button onClick={() => doImport('insert')} className="h-9 px-4 bg-emerald-600 text-white rounded-lg text-xs hover:bg-emerald-700 flex items-center gap-1.5 cursor-pointer">
-                <Plus className="h-3.5 w-3.5" /> Import (tạo mới tất cả)
+              <button onClick={() => { setShowImport(false); setImportData(null); }} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer">
+                <X className="h-5 w-5 text-gray-500" />
               </button>
             </div>
+
+            {/* Table */}
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-gray-100 text-left text-[10px] font-bold text-gray-500 uppercase">
+                    <th className="p-2 w-8">STT</th>
+                    <th className="p-2">Nhóm</th>
+                    <th className="p-2">Quy cách</th>
+                    <th className="p-2">T.Chuẩn</th>
+                    <th className="p-2">Loại</th>
+                    <th className="p-2">H.Thức</th>
+                    <th className="p-2">Kính</th>
+                    <th className="p-2">C.Loại</th>
+                    <th className="p-2">Hông</th>
+                    <th className="p-2">K.Thước</th>
+                    <th className="p-2 bg-blue-50 font-bold">MÃ THÀNH PHẨM</th>
+                    <th className="p-2 bg-blue-50 font-bold min-w-[200px]">TÊN THÀNH PHẨM</th>
+                    <th className="p-2 text-right bg-emerald-50">GIÁ (VAT)</th>
+                    <th className="p-2 text-right">GIÁ (chưa VAT)</th>
+                    <th className="p-2">ĐVT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importData.parsed.map((p, i) => (
+                    <tr key={i} className={`border-b hover:bg-gray-50 ${p._error ? 'bg-red-50' : ''}`}>
+                      <td className="p-2 text-gray-400">{p.stt}</td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_group || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_spec || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_standard || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_category || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_style || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_glass || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_type_std || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_side || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_size || '-'}</span></td>
+                      <td className="p-2 bg-blue-50/50"><span className="font-mono text-xs font-bold text-blue-700">{p.code || '—'}</span></td>
+                      <td className="p-2 bg-blue-50/50 font-medium text-gray-900">
+                        {p.name || <span className="text-red-500 italic">Thiếu tên</span>}
+                      </td>
+                      <td className="p-2 text-right font-semibold text-emerald-600 bg-emerald-50/50">{p.selling_price ? formatVND(p.selling_price) : '-'}</td>
+                      <td className="p-2 text-right text-gray-600">{p.base_price ? formatVND(p.base_price) : '-'}</td>
+                      <td className="p-2 text-gray-500">{p.unit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t bg-gray-50 flex items-center justify-between">
+              <div className="text-xs text-gray-500">
+                Tổng: <strong>{importData.total}</strong> SP
+                {importData.parsed.some(p => p.selling_price) && (
+                  <> • Tổng giá trị: <strong className="text-emerald-600">{formatVND(importData.parsed.reduce((s, p) => s + (p.selling_price || 0), 0))}</strong></>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => { setShowImport(false); setImportData(null); }}
+                  className="h-9 px-4 bg-gray-200 text-gray-700 rounded-lg text-xs hover:bg-gray-300 cursor-pointer">
+                  Hủy
+                </button>
+                <button onClick={() => doImport('upsert')} disabled={!importData.parsed.some(p => !p._error)}
+                  className="h-9 px-5 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50">
+                  <Upload className="h-3.5 w-3.5" /> Xác nhận Import ({importData.parsed.filter(p => !p._error).length} SP)
+                </button>
+              </div>
+            </div>
           </div>
-        </Modal>
+        </div>
       )}
     </div>
   );
