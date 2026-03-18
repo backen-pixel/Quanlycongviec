@@ -7,6 +7,189 @@ const r = Router();
 r.use(auth);
 
 // ═══════════════════════════════════════════
+// PRODUCT CODE PARTS (Thành phần mã sản phẩm)
+// ═══════════════════════════════════════════
+const CODE_PART_TYPES = ['group', 'spec', 'standard', 'category', 'style', 'glass', 'type_standard', 'side', 'size'];
+const CODE_PART_LABELS = {
+  group: 'Nhóm SP', spec: 'Quy cách', standard: 'Tiêu chuẩn', category: 'Loại/Phân loại',
+  style: 'Hình thức', glass: 'Kính', type_standard: 'Chuẩn loại', side: 'Hông', size: 'Kích thước quy ước',
+};
+
+// Get all code parts grouped by type
+r.get('/code-parts', async (req, res) => {
+  try {
+    const { data } = await supabase.from('product_code_parts')
+      .select('*').eq('is_active', true).order('order_index');
+    // Group by part_type
+    const grouped = {};
+    CODE_PART_TYPES.forEach(t => { grouped[t] = { label: CODE_PART_LABELS[t], items: [] }; });
+    (data || []).forEach(d => {
+      if (grouped[d.part_type]) grouped[d.part_type].items.push(d);
+    });
+    res.json({ codeParts: grouped, types: CODE_PART_TYPES, labels: CODE_PART_LABELS });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// CRUD code parts
+r.post('/code-parts', async (req, res) => {
+  try {
+    const { part_type, code, name, description, order_index } = req.body;
+    if (!CODE_PART_TYPES.includes(part_type)) return res.status(400).json({ error: 'Loại không hợp lệ' });
+    const { data, error } = await supabase.from('product_code_parts').insert({
+      part_type, code: code.toUpperCase(), name, description: description || null, order_index: order_index || 0,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/code-parts/:id', async (req, res) => {
+  try {
+    const update = {};
+    ['code', 'name', 'description', 'order_index', 'is_active'].forEach(f => {
+      if (req.body[f] !== undefined) update[f] = req.body[f];
+    });
+    if (update.code) update.code = update.code.toUpperCase();
+    const { data, error } = await supabase.from('product_code_parts').update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.delete('/code-parts/:id', async (req, res) => {
+  try {
+    await supabase.from('product_code_parts').delete().eq('id', req.params.id);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════
+// AUTO-GENERATE PRODUCT CODE from parts
+// ═══════════════════════════════════════════
+function buildProductCode(parts) {
+  // parts = { group: 'TB', spec: 'L', standard: 'TC', category: 'GO', style: 'HĐ', glass: 'KK', type_standard: 'A', side: 'HT', size: 'M' }
+  return CODE_PART_TYPES.map(t => parts[t] || '').filter(Boolean).join('-');
+}
+
+// ═══════════════════════════════════════════
+// EXCEL IMPORT / EXPORT
+// ═══════════════════════════════════════════
+
+// Export products to Excel (returns JSON rows — frontend builds xlsx)
+r.get('/export', async (req, res) => {
+  try {
+    const { category_id, status } = req.query;
+    let q = supabase.from('products').select('*, category:product_categories(name)').order('code');
+    if (category_id) q = q.eq('category_id', category_id);
+    if (status && status !== 'all') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const rows = (data || []).map((p, i) => ({
+      'STT': i + 1,
+      'Nhóm SP': p.code_group || '',
+      'Mã quy cách': p.code_spec || '',
+      'Mã tiêu chuẩn': p.code_standard || '',
+      'Mã loại/phân loại': p.code_category || '',
+      'Mã hình thức': p.code_style || '',
+      'Mã kính': p.code_glass || '',
+      'Mã chuẩn loại': p.code_type_std || '',
+      'Mã hông': p.code_side || '',
+      'Mã kích thước': p.code_size || '',
+      'MÃ THÀNH PHẨM': p.code,
+      'TÊN THÀNH PHẨM': p.name,
+      'GIÁ BÁN GỒM VAT 10%': p.selling_price || 0,
+      'GIÁ BÁN CHƯA VAT 10%': p.base_price || 0,
+      'Đơn vị tính': p.unit || 'cái',
+    }));
+
+    res.json({ rows, total: rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Import products from parsed Excel data (frontend sends JSON array)
+r.post('/import', async (req, res) => {
+  try {
+    const { rows, mode = 'upsert' } = req.body; // mode: 'insert' | 'upsert' | 'preview'
+    if (!rows?.length) return res.status(400).json({ error: 'Không có dữ liệu' });
+
+    const results = { created: 0, updated: 0, errors: [], preview: [] };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // Excel row (header = 1)
+      try {
+        // Map columns (flexible — accept both VN and EN keys)
+        const code = (row['MÃ THÀNH PHẨM'] || row.code || '').toString().trim();
+        const name = (row['TÊN THÀNH PHẨM'] || row.name || '').toString().trim();
+        const sellingPrice = parseFloat(row['GIÁ BÁN GỒM VAT 10%'] || row.selling_price || 0) || 0;
+        const basePrice = parseFloat(row['GIÁ BÁN CHƯA VAT 10%'] || row.base_price || 0) || 0;
+        const unit = (row['Đơn vị tính'] || row.unit || 'cái').toString().trim();
+
+        // Code parts
+        const codeGroup = (row['Nhóm SP'] || row.code_group || '').toString().trim();
+        const codeSpec = (row['Mã quy cách'] || row.code_spec || '').toString().trim();
+        const codeStandard = (row['Mã tiêu chuẩn'] || row.code_standard || '').toString().trim();
+        const codeCategory = (row['Mã loại/phân loại'] || row.code_category || '').toString().trim();
+        const codeStyle = (row['Mã hình thức'] || row.code_style || '').toString().trim();
+        const codeGlass = (row['Mã kính'] || row.code_glass || '').toString().trim();
+        const codeTypeStd = (row['Mã chuẩn loại'] || row.code_type_std || '').toString().trim();
+        const codeSide = (row['Mã hông'] || row.code_side || '').toString().trim();
+        const codeSize = (row['Mã kích thước'] || row.code_size || '').toString().trim();
+
+        if (!name) { results.errors.push({ row: rowNum, error: 'Thiếu tên sản phẩm' }); continue; }
+
+        // Auto-gen code if empty
+        const finalCode = code || buildProductCode({ group: codeGroup, spec: codeSpec, standard: codeStandard, category: codeCategory, style: codeStyle, glass: codeGlass, type_standard: codeTypeStd, side: codeSide, size: codeSize });
+
+        // Auto-calc price
+        const finalSellingPrice = sellingPrice || (basePrice ? Math.round(basePrice * 1.1) : 0);
+        const finalBasePrice = basePrice || (sellingPrice ? Math.round(sellingPrice / 1.1) : 0);
+
+        const productData = {
+          name, unit,
+          selling_price: finalSellingPrice,
+          base_price: finalBasePrice,
+          code_group: codeGroup || null, code_spec: codeSpec || null, code_standard: codeStandard || null,
+          code_category: codeCategory || null, code_style: codeStyle || null, code_glass: codeGlass || null,
+          code_type_std: codeTypeStd || null, code_side: codeSide || null, code_size: codeSize || null,
+          status: 'active', updated_at: new Date().toISOString(),
+        };
+
+        if (mode === 'preview') {
+          results.preview.push({ row: rowNum, code: finalCode, name, selling_price: finalSellingPrice, base_price: finalBasePrice, unit, action: 'preview' });
+          continue;
+        }
+
+        if (mode === 'upsert' && finalCode) {
+          // Check existing by code
+          const { data: existing } = await supabase.from('products').select('id').eq('code', finalCode).limit(1).single();
+          if (existing) {
+            await supabase.from('products').update(productData).eq('id', existing.id);
+            results.updated++;
+            continue;
+          }
+        }
+
+        // Insert new
+        productData.code = finalCode || `SP-${String(Date.now()).slice(-6)}`;
+        await supabase.from('products').insert(productData);
+        results.created++;
+      } catch (rowErr) {
+        results.errors.push({ row: rowNum, error: rowErr.message || 'Lỗi không xác định' });
+      }
+    }
+
+    res.json({
+      message: mode === 'preview'
+        ? `Preview ${results.preview.length} sản phẩm`
+        : `Import hoàn tất: ${results.created} tạo mới, ${results.updated} cập nhật, ${results.errors.length} lỗi`,
+      ...results,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════
 // PRODUCT CATEGORIES (Loại sản phẩm)
 // ═══════════════════════════════════════════
 
@@ -95,17 +278,35 @@ r.get('/:id', async (req, res) => {
 r.post('/', async (req, res) => {
   try {
     const b = req.body;
-    // Auto-gen code
-    const { count } = await supabase.from('products').select('id', { count: 'exact', head: true });
-    const code = b.code || `SP-${String((count || 0) + 1).padStart(4, '0')}`;
+    // Auto-gen code from parts or sequential
+    let code = b.code;
+    if (!code && (b.code_group || b.code_spec)) {
+      code = buildProductCode(b);
+    }
+    if (!code) {
+      const { count } = await supabase.from('products').select('id', { count: 'exact', head: true });
+      code = `SP-${String((count || 0) + 1).padStart(4, '0')}`;
+    }
+
+    // Auto-calc prices
+    const sellingPrice = b.selling_price || (b.base_price ? Math.round(b.base_price * 1.1) : 0);
+    const basePrice = b.base_price || (b.selling_price ? Math.round(b.selling_price / 1.1) : 0);
+
     const { data, error } = await supabase.from('products').insert({
       code, name: b.name, description: b.description || null,
       category_id: b.category_id || null, sku: b.sku || null, unit: b.unit || 'cái',
-      base_price: b.base_price || 0, cost_price: b.cost_price || 0,
+      base_price: basePrice, cost_price: b.cost_price || 0, selling_price: sellingPrice,
+      vat_rate: b.vat_rate ?? 10,
       image_url: b.image_url || null, dimensions: b.dimensions || null,
       material: b.material || null, color: b.color || null, finish: b.finish || null,
       specifications: b.specifications || null, status: 'active',
       stock_quantity: b.stock_quantity || 0, min_stock: b.min_stock || 0, tags: b.tags || [],
+      // Code parts
+      code_group: b.code_group || null, code_spec: b.code_spec || null,
+      code_standard: b.code_standard || null, code_category: b.code_category || null,
+      code_style: b.code_style || null, code_glass: b.code_glass || null,
+      code_type_std: b.code_type_std || null, code_side: b.code_side || null,
+      code_size: b.code_size || null,
     }).select('*, category:product_categories(id,name)').single();
     if (error) throw error;
     res.status(201).json({ product: data });
@@ -117,9 +318,23 @@ r.put('/:id', async (req, res) => {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     const fields = ['name', 'description', 'category_id', 'sku', 'unit', 'base_price', 'cost_price',
+      'selling_price', 'vat_rate',
       'image_url', 'dimensions', 'material', 'color', 'finish', 'specifications', 'status',
-      'stock_quantity', 'min_stock', 'tags'];
+      'stock_quantity', 'min_stock', 'tags',
+      'code_group', 'code_spec', 'code_standard', 'code_category', 'code_style',
+      'code_glass', 'code_type_std', 'code_side', 'code_size'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+
+    // Auto-calc price if one provided
+    if (b.selling_price && !b.base_price) update.base_price = Math.round(b.selling_price / 1.1);
+    if (b.base_price && !b.selling_price) update.selling_price = Math.round(b.base_price * 1.1);
+
+    // Auto-regen code from parts
+    if (b.code_group || b.code_spec) {
+      const merged = { ...b };
+      update.code = buildProductCode(merged);
+    }
+
     const { data, error } = await supabase.from('products').update(update).eq('id', req.params.id)
       .select('*, category:product_categories(id,name)').single();
     if (error) throw error;
