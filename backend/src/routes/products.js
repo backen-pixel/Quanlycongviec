@@ -115,27 +115,38 @@ r.post('/import', async (req, res) => {
 
     const results = { created: 0, updated: 0, errors: [], preview: [] };
 
+    // Fuzzy key finder — match Vietnamese headers case-insensitive
+    const findKey = (row, patterns) => {
+      const keys = Object.keys(row);
+      for (const pat of patterns) {
+        const p = pat.toLowerCase();
+        const found = keys.find(k => k.toLowerCase().includes(p));
+        if (found) return row[found];
+      }
+      return '';
+    };
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowNum = i + 2; // Excel row (header = 1)
       try {
-        // Map columns (flexible — accept both VN and EN keys)
-        const code = (row['MÃ THÀNH PHẨM'] || row.code || '').toString().trim();
-        const name = (row['TÊN THÀNH PHẨM'] || row.name || '').toString().trim();
-        const sellingPrice = parseFloat(row['GIÁ BÁN GỒM VAT 10%'] || row.selling_price || 0) || 0;
-        const basePrice = parseFloat(row['GIÁ BÁN CHƯA VAT 10%'] || row.base_price || 0) || 0;
-        const unit = (row['Đơn vị tính'] || row.unit || 'cái').toString().trim();
+        // Map columns flexibly
+        const code = (findKey(row, ['mã thành phẩm', 'ma thanh pham']) || '').toString().trim();
+        const name = (findKey(row, ['tên thành phẩm', 'ten thanh pham']) || '').toString().trim();
+        const sellingPrice = parseFloat(findKey(row, ['gồm vat', 'gom vat', 'giá bán gồm']) || 0) || 0;
+        const basePrice = parseFloat(findKey(row, ['chưa vat', 'chua vat', 'giá bán chưa']) || 0) || 0;
+        const unit = (findKey(row, ['đơn vị', 'don vi', 'unit']) || 'cái').toString().trim();
 
         // Code parts
-        const codeGroup = (row['Nhóm SP'] || row.code_group || '').toString().trim();
-        const codeSpec = (row['Mã quy cách'] || row.code_spec || '').toString().trim();
-        const codeStandard = (row['Mã tiêu chuẩn'] || row.code_standard || '').toString().trim();
-        const codeCategory = (row['Mã loại/phân loại'] || row.code_category || '').toString().trim();
-        const codeStyle = (row['Mã hình thức'] || row.code_style || '').toString().trim();
-        const codeGlass = (row['Mã kính'] || row.code_glass || '').toString().trim();
-        const codeTypeStd = (row['Mã chuẩn loại'] || row.code_type_std || '').toString().trim();
-        const codeSide = (row['Mã hông'] || row.code_side || '').toString().trim();
-        const codeSize = (row['Mã kích thước'] || row.code_size || '').toString().trim();
+        const codeGroup = (findKey(row, ['nhóm sp', 'nhom sp']) || '').toString().trim();
+        const codeSpec = (findKey(row, ['quy cách', 'quy cach']) || '').toString().trim();
+        const codeStandard = (findKey(row, ['tiêu chuẩn', 'tieu chuan']) || '').toString().trim();
+        const codeCategory = (findKey(row, ['loại', 'phân loại']) || '').toString().trim();
+        const codeStyle = (findKey(row, ['hình thức', 'hinh thuc']) || '').toString().trim();
+        const codeGlass = (findKey(row, ['kính', 'kinh']) || '').toString().trim();
+        const codeTypeStd = (findKey(row, ['chuẩn loại', 'chuan loai']) || '').toString().trim();
+        const codeSide = (findKey(row, ['hông', 'hong']) || '').toString().trim();
+        const codeSize = (findKey(row, ['kích thước', 'kich thuoc']) || '').toString().trim();
 
         if (!name) { results.errors.push({ row: rowNum, error: 'Thiếu tên sản phẩm' }); continue; }
 
