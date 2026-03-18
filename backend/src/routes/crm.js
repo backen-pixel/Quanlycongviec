@@ -579,7 +579,6 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             const { data: tplTasks } = await supabase.from('company_template_tasks')
               .select('*, checklists:company_template_checklists(*)')
               .eq('template_set_id', resolvedTemplateSetId)
-              .eq('is_active', true)
               .order('order_index');
 
             console.log(`    Template set ${resolvedTemplateSetId}: ${tplTasks?.length || 0} tasks`);
@@ -611,16 +610,17 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                 if (taskErr) { console.error('Template task error:', taskErr); continue; }
 
                 if (t.checklists?.length && task) {
+                  console.log(`      → ${t.checklists.length} template checklists for task ${task.id.substring(0,8)}`);
                   for (const c of t.checklists) {
                     try {
-                      await supabase.from('task_checklists').insert({
+                      const { error: clErr } = await supabase.from('task_checklists').insert({
                         task_id: task.id,
-                        title: c.label || c.title,
+                        title: c.title || c.label,
                         order_index: c.order_index || 0,
-                        is_required: c.is_required || false,
                         is_completed: false,
                       });
-                    } catch (ce) { console.warn('Template checklist:', ce.message); }
+                      if (clErr) console.error('      ❌ Template CL error:', clErr.message);
+                    } catch (ce) { console.warn('      ❌ Template checklist:', ce.message); }
                   }
                 }
 
