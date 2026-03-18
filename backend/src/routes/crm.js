@@ -498,8 +498,75 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           } catch (e) { console.error('Assignment upsert:', e.message); }
 
-          // ── 1. Generate tasks from PROCESSES linked to this step (always) ──
-          try {
+          // ═══ TASK GENERATION: Bộ Mẫu ưu tiên, Processes là fallback ═══
+          // Nếu có bộ mẫu (user chọn hoặc default) VÀ bộ mẫu có tasks → dùng bộ mẫu
+          // Nếu không có bộ mẫu hoặc bộ mẫu rỗng → dùng processes
+
+          let usedTemplateSet = false;
+
+          // ── TRY: Generate tasks from TEMPLATE SET first ──
+          if (resolvedTemplateSetId) {
+            const { data: tplTasks } = await supabase.from('company_template_tasks')
+              .select('*, checklists:company_template_checklists(*)')
+              .eq('template_set_id', resolvedTemplateSetId)
+              .order('order_index');
+
+            console.log(`    Template set ${resolvedTemplateSetId.substring(0,8)}: ${tplTasks?.length || 0} tasks`);
+
+            if (tplTasks?.length) {
+              usedTemplateSet = true;
+              for (const t of tplTasks) {
+                let deadline = null;
+                if (t.deadline_days > 0) {
+                  const d = new Date();
+                  d.setDate(d.getDate() + t.deadline_days);
+                  deadline = d.toISOString();
+                }
+
+                // Map template task stage_id, fallback to default
+                const taskStageId = t.stage_id || defaultStageId;
+
+                const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                  project_id: project.id,
+                  stage_id: taskStageId,
+                  title: t.title,
+                  description: t.description || null,
+                  assignee_id: t.assigned_user_id || t.default_assignee_id || null,
+                  priority: t.priority || 'medium',
+                  status: 'pending',
+                  order_index: t.order_index,
+                  created_by_id: req.user.userId,
+                  deadline,
+                  task_type: 'project',
+                  metadata: { template_task_id: t.id, template_set_id: resolvedTemplateSetId, flow_step_id: step.id },
+                }).select().single();
+
+                if (taskErr) { console.error('Template task error:', taskErr); continue; }
+
+                if (t.checklists?.length && task) {
+                  console.log(`      → ${t.checklists.length} template checklists for task ${task.id.substring(0,8)}`);
+                  for (const c of t.checklists) {
+                    try {
+                      const { error: clErr } = await supabase.from('task_checklists').insert({
+                        task_id: task.id,
+                        title: c.title || c.label,
+                        order_index: c.order_index || 0,
+                        is_completed: false,
+                      });
+                      if (clErr) console.error('      ❌ Template CL error:', clErr.message);
+                    } catch (ce) { console.warn('      ❌ Template checklist:', ce.message); }
+                  }
+                }
+
+                if (task) allCreatedTasks.push(task);
+              }
+            }
+          }
+
+          // ── FALLBACK: Generate tasks from PROCESSES (only if no template tasks) ──
+          if (!usedTemplateSet) {
+            console.log(`    No template tasks → using processes`);
+            try {
             const { data: stepProcs } = await supabase.from('flow_step_processes')
               .select('*, process:company_processes(id,name,icon,order_index)')
               .eq('flow_step_id', step.id)
@@ -573,61 +640,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
               }
             }
           } catch (procErr) { console.error('Process tasks error:', procErr.message); }
-
-          // ── 2. Generate tasks from TEMPLATE SET (user-chosen or auto-default) ──
-          if (resolvedTemplateSetId) {
-            const { data: tplTasks } = await supabase.from('company_template_tasks')
-              .select('*, checklists:company_template_checklists(*)')
-              .eq('template_set_id', resolvedTemplateSetId)
-              .order('order_index');
-
-            console.log(`    Template set ${resolvedTemplateSetId}: ${tplTasks?.length || 0} tasks`);
-
-            if (tplTasks?.length) {
-              for (const t of tplTasks) {
-                let deadline = null;
-                if (t.deadline_days > 0) {
-                  const d = new Date();
-                  d.setDate(d.getDate() + t.deadline_days);
-                  deadline = d.toISOString();
-                }
-
-                const { data: task, error: taskErr } = await supabase.from('tasks').insert({
-                  project_id: project.id,
-                  stage_id: t.stage_id || defaultStageId,
-                  title: t.title,
-                  description: t.description || null,
-                  assignee_id: t.assigned_user_id || t.default_assignee_id || null,
-                  priority: t.priority || 'medium',
-                  status: 'pending',
-                  order_index: t.order_index,
-                  created_by_id: req.user.userId,
-                  deadline,
-                  task_type: 'project',
-                  metadata: { template_task_id: t.id, template_set_id: resolvedTemplateSetId, flow_step_id: step.id },
-                }).select().single();
-
-                if (taskErr) { console.error('Template task error:', taskErr); continue; }
-
-                if (t.checklists?.length && task) {
-                  console.log(`      → ${t.checklists.length} template checklists for task ${task.id.substring(0,8)}`);
-                  for (const c of t.checklists) {
-                    try {
-                      const { error: clErr } = await supabase.from('task_checklists').insert({
-                        task_id: task.id,
-                        title: c.title || c.label,
-                        order_index: c.order_index || 0,
-                        is_completed: false,
-                      });
-                      if (clErr) console.error('      ❌ Template CL error:', clErr.message);
-                    } catch (ce) { console.warn('      ❌ Template checklist:', ce.message); }
-                  }
-                }
-
-                if (task) allCreatedTasks.push(task);
-              }
-            }
-          }
+          } // end if (!usedTemplateSet)
         }
       }
 
