@@ -69,11 +69,61 @@ export default function ProductsPage() {
       try {
         const wb = XLSX.read(ev.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws);
-        console.log('Excel headers:', rows[0] ? Object.keys(rows[0]) : 'empty');
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        console.log('Excel total rows:', rows.length);
+        console.log('First row keys:', rows[0] ? Object.keys(rows[0]) : 'empty');
+        console.log('First 3 rows:', rows.slice(0, 3));
+
+        // Smart header detection: find row that contains 'MÃ THÀNH PHẨM' or 'TÊN THÀNH PHẨM'
+        // xlsx sheet_to_json uses first row as headers by default
+        // If headers are wrong (merged cells / multi-row header), try with header option
+        let actualRows = rows;
+
+        // Check if first row parsed correctly — look for key containing 'THÀNH PHẨM'
+        const firstRowKeys = rows[0] ? Object.keys(rows[0]) : [];
+        const hasCorrectHeaders = firstRowKeys.some(k => 
+          k.includes('THÀNH PHẨM') || k.includes('thành phẩm') || 
+          k.includes('nhóm sp') || k.includes('đơn vị')
+        );
+
+        if (!hasCorrectHeaders && rows.length > 0) {
+          // Headers might be on row 2 or 3 — try raw parse
+          console.log('Headers not detected, trying raw parse...');
+          const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+          
+          // Find header row (contains 'MÃ THÀNH PHẨM' or 'TÊN THÀNH PHẨM')
+          let headerIdx = -1;
+          for (let r = 0; r < Math.min(rawRows.length, 10); r++) {
+            const rowStr = rawRows[r].join('|').toLowerCase();
+            if (rowStr.includes('thành phẩm') || rowStr.includes('nhóm sp') || rowStr.includes('đơn vị')) {
+              headerIdx = r;
+              break;
+            }
+          }
+
+          if (headerIdx >= 0) {
+            console.log('Found header at row:', headerIdx);
+            const headers = rawRows[headerIdx].map(h => (h ?? '').toString().trim());
+            actualRows = [];
+            for (let r = headerIdx + 1; r < rawRows.length; r++) {
+              const vals = rawRows[r];
+              if (!vals || vals.every(v => v === '' || v === null || v === undefined)) continue;
+              const obj = {};
+              headers.forEach((h, ci) => { if (h) obj[h] = vals[ci] ?? ''; });
+              actualRows.push(obj);
+            }
+            console.log('Parsed', actualRows.length, 'data rows with headers:', headers.filter(Boolean));
+          }
+        }
+
+        // Filter out empty rows
+        actualRows = actualRows.filter(row => {
+          const vals = Object.values(row);
+          return vals.some(v => v !== '' && v !== null && v !== undefined && v !== 0);
+        });
 
         // Exact header keys matching user's Excel structure
-        const parsed = rows.map((row, i) => {
+        const parsed = actualRows.map((row, i) => {
           const g = (k) => (row[k] ?? '').toString().trim();
           const p = {
             stt: i + 1,
@@ -244,9 +294,9 @@ export default function ProductsPage() {
             <div className="flex-1 overflow-auto">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 z-10">
-                  <tr className="bg-gray-100 text-left text-[10px] font-bold text-gray-500 uppercase">
+                    <tr className="bg-gray-100 text-left text-[10px] font-bold text-gray-500 uppercase">
                     <th className="p-2 w-8">STT</th>
-                    <th className="p-2">Nhóm</th>
+                    <th className="p-2">Nhóm SP</th>
                     <th className="p-2">Quy cách</th>
                     <th className="p-2">T.Chuẩn</th>
                     <th className="p-2">Loại</th>
