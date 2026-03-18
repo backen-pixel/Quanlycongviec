@@ -144,6 +144,21 @@ export default function ProductsPage() {
           };
           // Auto-gen code
           if (!p.code) p.code = [p.code_group, p.code_spec, p.code_standard, p.code_category, p.code_style, p.code_glass, p.code_type_std, p.code_side, p.code_size].filter(Boolean).join('-');
+          
+          // Reverse: if individual codes are empty but MÃ THÀNH PHẨM exists → split it
+          if (p.code && !p.code_group) {
+            const parts = p.code.split('-');
+            // Map parts back to code fields (best effort)
+            if (parts.length >= 1) p.code_group = parts[0] || '';
+            if (parts.length >= 2) p.code_spec = parts[1] || '';
+            if (parts.length >= 3) p.code_standard = parts[2] || '';
+            if (parts.length >= 4) p.code_category = parts[3] || '';
+            if (parts.length >= 5) p.code_style = parts[4] || '';
+            if (parts.length >= 6) p.code_glass = parts[5] || '';
+            if (parts.length >= 7) p.code_type_std = parts[6] || '';
+            if (parts.length >= 8) p.code_side = parts[7] || '';
+            if (parts.length >= 9) p.code_size = parts[8] || '';
+          }
           // Auto-calc price
           if (!p.selling_price && p.base_price) p.selling_price = Math.round(p.base_price * 1.1);
           if (!p.base_price && p.selling_price) p.base_price = Math.round(p.selling_price / 1.1);
@@ -316,15 +331,15 @@ export default function ProductsPage() {
                   {importData.parsed.map((p, i) => (
                     <tr key={i} className={`border-b hover:bg-gray-50 ${p._error ? 'bg-red-50' : ''}`}>
                       <td className="p-2 text-gray-400">{p.stt}</td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_group || '-'}</span></td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_spec || '-'}</span></td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_standard || '-'}</span></td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_category || '-'}</span></td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_style || '-'}</span></td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_glass || '-'}</span></td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_type_std || '-'}</span></td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_side || '-'}</span></td>
-                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]">{p.code_size || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_group}>{p.code_group || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_spec}>{p.code_spec || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_standard}>{p.code_standard || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_category}>{p.code_category || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_style}>{p.code_style || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_glass}>{p.code_glass || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_type_std}>{p.code_type_std || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_side}>{p.code_side || '-'}</span></td>
+                      <td className="p-2"><span className="font-mono bg-gray-100 px-1 rounded text-[10px]" title={p.code_size}>{p.code_size || '-'}</span></td>
                       <td className="p-2 bg-blue-50/50"><span className="font-mono text-xs font-bold text-blue-700">{p.code || '—'}</span></td>
                       <td className="p-2 bg-blue-50/50 font-medium text-gray-900">
                         {p.name || <span className="text-red-500 italic">Thiếu tên</span>}
