@@ -69,116 +69,100 @@ export default function ProductsPage() {
       try {
         const wb = XLSX.read(ev.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        console.log('Excel total rows:', rows.length);
-        console.log('First row keys:', rows[0] ? Object.keys(rows[0]) : 'empty');
-        console.log('First 3 rows:', rows.slice(0, 3));
+        
+        // Raw parse — handle multi-row headers + duplicate "mã" columns
+        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-        // Smart header detection: find row that contains 'MÃ THÀNH PHẨM' or 'TÊN THÀNH PHẨM'
-        // xlsx sheet_to_json uses first row as headers by default
-        // If headers are wrong (merged cells / multi-row header), try with header option
-        let actualRows = rows;
-
-        // Check if first row parsed correctly — look for key containing 'THÀNH PHẨM'
-        const firstRowKeys = rows[0] ? Object.keys(rows[0]) : [];
-        const hasCorrectHeaders = firstRowKeys.some(k => 
-          k.includes('THÀNH PHẨM') || k.includes('thành phẩm') || 
-          k.includes('nhóm sp') || k.includes('đơn vị')
-        );
-
-        if (!hasCorrectHeaders && rows.length > 0) {
-          // Headers might be on row 2 or 3 — try raw parse
-          console.log('Headers not detected, trying raw parse...');
-          const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-          
-          // Find header row (contains 'MÃ THÀNH PHẨM' or 'TÊN THÀNH PHẨM')
-          let headerIdx = -1;
-          for (let r = 0; r < Math.min(rawRows.length, 10); r++) {
-            const rowStr = rawRows[r].join('|').toLowerCase();
-            if (rowStr.includes('thành phẩm') || rowStr.includes('nhóm sp') || rowStr.includes('đơn vị')) {
-              headerIdx = r;
-              break;
-            }
-          }
-
-          if (headerIdx >= 0) {
-            console.log('Found header at row:', headerIdx);
-            const headers = rawRows[headerIdx].map(h => (h ?? '').toString().trim());
-            actualRows = [];
-            for (let r = headerIdx + 1; r < rawRows.length; r++) {
-              const vals = rawRows[r];
-              if (!vals || vals.every(v => v === '' || v === null || v === undefined)) continue;
-              const obj = {};
-              headers.forEach((h, ci) => { if (h) obj[h] = vals[ci] ?? ''; });
-              actualRows.push(obj);
-            }
-            console.log('Parsed', actualRows.length, 'data rows with headers:', headers.filter(Boolean));
-          }
+        // Find header row (contains 'thành phẩm' or 'đơn vị')
+        let headerIdx = 0;
+        for (let r = 0; r < Math.min(rawRows.length, 10); r++) {
+          const rowStr = (rawRows[r] || []).map(v => (v ?? '').toString().toLowerCase()).join('|');
+          if (rowStr.includes('thành phẩm') || rowStr.includes('đơn vị')) { headerIdx = r; break; }
         }
+        const headerCells = (rawRows[headerIdx] || []).map(h => (h ?? '').toString().trim());
+        console.log('Headers:', headerCells);
 
-        // Filter out empty rows
-        actualRows = actualRows.filter(row => {
-          const vals = Object.values(row);
-          return vals.some(v => v !== '' && v !== null && v !== undefined && v !== 0);
-        });
-
-        // Exact header keys matching user's Excel structure
-        const parsed = actualRows.map((row, i) => {
-          const g = (k) => (row[k] ?? '').toString().trim();
-          const p = {
-            stt: i + 1,
-            code_group: g('nhóm sp'),
-            code_spec: g('mã quy cách'),
-            code_standard: g('mã tiêu chuẩn'),
-            code_category: g('mã loại/ phân loại'),
-            code_style: g('mã hình thức'),
-            code_glass: g('mã kính'),
-            code_type_std: g('mã chuẩn loại'),
-            code_side: g('mã hông'),
-            code_size: g('mã Kích thước quy ước'),
-            code: g('MÃ THÀNH PHẨM'),
-            name: g('TÊN THÀNH PHẨM'),
-            selling_price: parseFloat(row['GIÁ BÁN GỒM VAT 10%'] || 0) || 0,
-            base_price: parseFloat(row['GIÁ BÁN CHƯA VAT 10%'] || 0) || 0,
-            unit: g('đơn vị tính') || 'cái',
-          };
-          // Reverse: split MÃ THÀNH PHẨM to get code parts
-          // Always use MÃ THÀNH PHẨM as source of truth for codes
-          // The "nhóm sp" column contains full name (e.g. "Tủ bếp trên"), not the code
-          if (p.code) {
-            const parts = p.code.split('-');
-            // Store original names from Excel columns (for display)
-            p._name_group = p.code_group; // "Tủ bếp trên"
-            p._name_spec = p.code_spec;
-            p._name_standard = p.code_standard;
-            p._name_category = p.code_category;
-            p._name_style = p.code_style;
-            p._name_glass = p.code_glass;
-            p._name_type_std = p.code_type_std;
-            p._name_side = p.code_side;
-            p._name_size = p.code_size;
-            // Override with actual codes from MÃ THÀNH PHẨM
-            p.code_group = parts[0] || '';
-            p.code_spec = parts[1] || '';
-            p.code_standard = parts[2] || '';
-            p.code_category = parts[3] || '';
-            p.code_style = parts[4] || '';
-            p.code_glass = parts[5] || '';
-            p.code_type_std = parts[6] || '';
-            p.code_side = parts[7] || '';
-            p.code_size = parts[8] || '';
-          } else {
-            // No MÃ THÀNH PHẨM → gen from parts
-            p.code = [p.code_group, p.code_spec, p.code_standard, p.code_category, p.code_style, p.code_glass, p.code_type_std, p.code_side, p.code_size].filter(Boolean).join('-');
+        // Find column index by pattern
+        const findCol = (patterns) => {
+          for (const pat of patterns) {
+            const p = pat.toLowerCase();
+            const idx = headerCells.findIndex(h => h.toLowerCase().includes(p));
+            if (idx >= 0) return idx;
           }
-          // Auto-calc price
+          return -1;
+        };
+
+        // Each group has 2 cols: [tên đầy đủ] [mã]. Find name col, then code col = name+1 if header is "mã"
+        const findPair = (namePatterns) => {
+          const ni = findCol(namePatterns);
+          if (ni < 0) return { ni: -1, ci: -1 };
+          const next = headerCells[ni + 1]?.toLowerCase() || '';
+          return { ni, ci: (next === 'mã' || next === 'ma') ? ni + 1 : -1 };
+        };
+
+        const C = {
+          group: findPair(['nhóm sp', 'nhom sp']),
+          spec: findPair(['quy cách', 'quy cach']),
+          standard: findPair(['tiêu chuẩn', 'tieu chuan']),
+          category: findPair(['loại', 'phân loại']),
+          style: findPair(['hình thức', 'hinh thuc']),
+          glass: findPair(['kính', 'kinh']),
+          type_std: findPair(['chuẩn loại', 'chuan loai']),
+          side: findPair(['hông', 'hong']),
+          size: findPair(['kích thước', 'kich thuoc']),
+        };
+        const cFullCode = findCol(['mã thành phẩm']);
+        const cName = findCol(['tên thành phẩm']);
+        const cSellPrice = findCol(['gồm vat', 'giá bán gồm']);
+        const cBasePrice = findCol(['chưa vat', 'giá bán chưa']);
+        const cUnit = findCol(['đơn vị', 'don vi']);
+
+        // Parse data rows
+        const parsed = [];
+        for (let r = headerIdx + 1; r < rawRows.length; r++) {
+          const v = rawRows[r];
+          if (!v || v.every(x => x === '' || x == null)) continue;
+          const gv = (i) => i >= 0 ? (v[i] ?? '').toString().trim() : '';
+          const gn = (i) => i >= 0 ? (parseFloat(v[i]) || 0) : 0;
+
+          const p = {
+            stt: parsed.length + 1,
+            _name_group: gv(C.group.ni), _name_spec: gv(C.spec.ni), _name_standard: gv(C.standard.ni),
+            _name_category: gv(C.category.ni), _name_style: gv(C.style.ni), _name_glass: gv(C.glass.ni),
+            _name_type_std: gv(C.type_std.ni), _name_side: gv(C.side.ni), _name_size: gv(C.size.ni),
+            code_group: gv(C.group.ci), code_spec: gv(C.spec.ci), code_standard: gv(C.standard.ci),
+            code_category: gv(C.category.ci), code_style: gv(C.style.ci), code_glass: gv(C.glass.ci),
+            code_type_std: gv(C.type_std.ci), code_side: gv(C.side.ci), code_size: gv(C.size.ci),
+            code: gv(cFullCode), name: gv(cName),
+            selling_price: gn(cSellPrice), base_price: gn(cBasePrice),
+            unit: gv(cUnit) || 'cái',
+          };
+
+          // Fallback: split MÃ THÀNH PHẨM if individual codes empty
+          if (p.code && !p.code_group) {
+            const pts = p.code.split('-');
+            p.code_group=pts[0]||''; p.code_spec=pts[1]||''; p.code_standard=pts[2]||'';
+            p.code_category=pts[3]||''; p.code_style=pts[4]||''; p.code_glass=pts[5]||'';
+            p.code_type_std=pts[6]||''; p.code_side=pts[7]||''; p.code_size=pts[8]||'';
+          }
           if (!p.selling_price && p.base_price) p.selling_price = Math.round(p.base_price * 1.1);
           if (!p.base_price && p.selling_price) p.base_price = Math.round(p.selling_price / 1.1);
-          // Validate
+          if (!p.code) p.code = [p.code_group,p.code_spec,p.code_standard,p.code_category,p.code_style,p.code_glass,p.code_type_std,p.code_side,p.code_size].filter(Boolean).join('-');
           p._error = !p.name ? 'Thiếu tên SP' : null;
-          return p;
-        });
-        setImportData({ fileName: file.name, rows, parsed, total: parsed.length });
+          parsed.push(p);
+        }
+
+        // Build normalized rows for backend
+        const importRows = parsed.map(p => ({
+          'MÃ THÀNH PHẨM': p.code, 'TÊN THÀNH PHẨM': p.name,
+          'GIÁ BÁN GỒM VAT 10%': p.selling_price, 'GIÁ BÁN CHƯA VAT 10%': p.base_price,
+          'đơn vị tính': p.unit, 'nhóm sp': p.code_group, 'mã quy cách': p.code_spec,
+          'mã tiêu chuẩn': p.code_standard, 'mã loại/ phân loại': p.code_category,
+          'mã hình thức': p.code_style, 'mã kính': p.code_glass, 'mã chuẩn loại': p.code_type_std,
+          'mã hông': p.code_side, 'mã Kích thước quy ước': p.code_size,
+        }));
+
+        setImportData({ fileName: file.name, rows: importRows, parsed, total: parsed.length });
         setShowImport(true);
       } catch (err) { alert('Lỗi đọc file: ' + err.message); }
     };
