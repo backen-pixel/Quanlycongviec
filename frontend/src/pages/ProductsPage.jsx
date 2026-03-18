@@ -1,278 +1,436 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import Modal from '../components/Modal';
-import { Plus, Search, Package, Layers, Wrench, Trash2, Tag } from 'lucide-react';
+import { Plus, Search, Package, Upload, Download, Trash2, Edit3, Save, X, Settings, ChevronDown, ChevronRight, Eye, FileSpreadsheet } from 'lucide-react';
 import { formatVND } from '../lib/utils';
+import * as XLSX from 'xlsx';
 
-const COMP_CATS = { panel: 'Tấm/Panel', hardware: 'Phụ kiện', accessory: 'Linh kiện', surface: 'Bề mặt', other: 'Khác' };
-const COMP_CAT_COLORS = { panel: 'bg-blue-100 text-blue-700', hardware: 'bg-purple-100 text-purple-700', accessory: 'bg-amber-100 text-amber-700', surface: 'bg-emerald-100 text-emerald-700', other: 'bg-gray-100 text-gray-600' };
-
-function Spinner() { return <div className="flex items-center justify-center py-16"><svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>; }
-function Empty({ icon: I, text }) { return <div className="text-center py-16"><I className="h-12 w-12 mx-auto text-gray-300 mb-3" /><p className="text-sm text-gray-400">{text}</p></div>; }
+const CODE_PART_ORDER = ['group','spec','standard','category','style','glass','type_standard','side','size'];
+const CODE_PART_VN = {
+  group:'Nhóm SP', spec:'Quy cách', standard:'Tiêu chuẩn', category:'Loại/Phân loại',
+  style:'Hình thức', glass:'Kính', type_standard:'Chuẩn loại', side:'Hông', size:'Kích thước',
+};
 
 export default function ProductsPage() {
-  const [tab, setTab] = useState('products');
-  return (
-    <div className="space-y-5 max-w-7xl">
-      <div><h1 className="text-2xl font-bold text-gray-900">Quản lý sản phẩm</h1><p className="text-sm text-gray-500 mt-0.5">Sản phẩm, danh mục, vật tư & cấu trúc BOM</p></div>
-      <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5 w-fit">
-        {[{ id: 'products', label: 'Sản phẩm', icon: Package }, { id: 'categories', label: 'Danh mục', icon: Layers }, { id: 'components', label: 'Vật tư', icon: Wrench }].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`h-9 px-4 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer ${tab === t.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
-            <t.icon className="h-4 w-4" />{t.label}
-          </button>
-        ))}
-      </div>
-      {tab === 'products' && <ProductsTab />}
-      {tab === 'categories' && <CategoriesTab />}
-      {tab === 'components' && <ComponentsTab />}
-    </div>
-  );
-}
-
-// ═══ PRODUCTS ═══
-function ProductsTab() {
   const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
+  const [codeParts, setCodeParts] = useState({});
+  const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
-  const [filterCat, setFilterCat] = useState('');
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [showDetail, setShowDetail] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [showImport, setShowImport] = useState(false);
+  const [showCodeParts, setShowCodeParts] = useState(false);
+  const [importData, setImportData] = useState(null);
 
-  const load = () => { setLoading(true); api.get('/products', { params: { search: search || undefined, category_id: filterCat || undefined } }).then(r => setProducts(r.data.products || [])).catch(() => {}).finally(() => setLoading(false)); };
-  useEffect(() => { load(); api.get('/products/categories').then(r => setCategories(r.data.categories || [])); }, []);
-  useEffect(load, [filterCat]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [prodRes, codeRes] = await Promise.allSettled([
+        api.get('/products', { params: { search, limit: 200 } }),
+        api.get('/products/code-parts'),
+      ]);
+      if (prodRes.status === 'fulfilled') {
+        setProducts(prodRes.value.data.products || []);
+        setTotal(prodRes.value.data.total || 0);
+      }
+      if (codeRes.status === 'fulfilled') {
+        setCodeParts(codeRes.value.data.codeParts || {});
+      }
+    } catch {}
+    setLoading(false);
+  }, [search]);
 
-  const del = async (e, id) => { e.stopPropagation(); if (!confirm('Xóa SP?')) return; await api.delete(`/products/${id}`); load(); };
+  useEffect(() => { load(); }, [load]);
+
+  // ── Export Excel ──
+  const exportExcel = async () => {
+    try {
+      const { data } = await api.get('/products/export');
+      if (!data.rows?.length) return alert('Không có sản phẩm để xuất');
+      const ws = XLSX.utils.json_to_sheet(data.rows);
+      // Set column widths
+      ws['!cols'] = [
+        {wch:5},{wch:10},{wch:12},{wch:12},{wch:15},{wch:12},{wch:10},{wch:12},{wch:10},{wch:12},
+        {wch:20},{wch:30},{wch:20},{wch:20},{wch:12}
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Sản phẩm');
+      XLSX.writeFile(wb, `SanPham_${new Date().toISOString().slice(0,10)}.xlsx`);
+    } catch (e) { alert('Lỗi xuất: ' + e.message); }
+  };
+
+  // ── Import Excel ──
+  const handleImportFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws);
+        setImportData({ fileName: file.name, rows, total: rows.length });
+        setShowImport(true);
+      } catch (err) { alert('Lỗi đọc file: ' + err.message); }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  };
+
+  const doImport = async (mode) => {
+    if (!importData?.rows?.length) return;
+    try {
+      const { data } = await api.post('/products/import', { rows: importData.rows, mode });
+      alert(data.message);
+      if (mode !== 'preview') { setShowImport(false); setImportData(null); load(); }
+      else { setImportData(prev => ({ ...prev, preview: data.preview, errors: data.errors })); }
+    } catch (e) { alert('Lỗi import: ' + (e.response?.data?.error || e.message)); }
+  };
+
+  // ── Delete ──
+  const del = async (id) => {
+    if (!confirm('Xóa sản phẩm này?')) return;
+    try { await api.delete(`/products/${id}`); load(); } catch (e) { alert('Lỗi xóa'); }
+  };
+
+  // ── Download template ──
+  const downloadTemplate = () => {
+    const headers = ['STT','Nhóm SP','Mã quy cách','Mã tiêu chuẩn','Mã loại/phân loại','Mã hình thức','Mã kính','Mã chuẩn loại','Mã hông','Mã kích thước','MÃ THÀNH PHẨM','TÊN THÀNH PHẨM','GIÁ BÁN GỒM VAT 10%','GIÁ BÁN CHƯA VAT 10%','Đơn vị tính'];
+    const sample = [1,'TB','L','TC','GO','HĐ','KK','A','H2','M','TB-L-TC-GO-HĐ-KK-A-H2-M','Tủ bếp gỗ sồi chữ L tiêu chuẩn',55000000,50000000,'bộ'];
+    const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
+    ws['!cols'] = headers.map((h) => ({wch: Math.max(h.length + 2, 12)}));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+    XLSX.writeFile(wb, 'Template_SanPham.xlsx');
+  };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative max-w-xs"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="Tìm sản phẩm..." className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white" /></div>
-          <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className="h-9 px-3 border rounded-lg text-sm bg-white">
-            <option value="">Tất cả danh mục</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Package className="h-6 w-6 text-blue-600" /> Sản Phẩm
+          </h1>
+          <p className="text-sm text-gray-500 mt-0.5">{total} sản phẩm</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4" /> Thêm SP</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setShowCodeParts(!showCodeParts)} className="h-9 px-3 bg-gray-100 text-gray-700 rounded-lg text-xs hover:bg-gray-200 flex items-center gap-1.5 cursor-pointer">
+            <Settings className="h-3.5 w-3.5" /> Cấu trúc mã
+          </button>
+          <button onClick={downloadTemplate} className="h-9 px-3 bg-gray-100 text-gray-700 rounded-lg text-xs hover:bg-gray-200 flex items-center gap-1.5 cursor-pointer">
+            <FileSpreadsheet className="h-3.5 w-3.5" /> Mẫu Excel
+          </button>
+          <label className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-xs hover:bg-emerald-200 flex items-center gap-1.5 cursor-pointer">
+            <Upload className="h-3.5 w-3.5" /> Import Excel
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="hidden" />
+          </label>
+          <button onClick={exportExcel} className="h-9 px-3 bg-blue-100 text-blue-700 rounded-lg text-xs hover:bg-blue-200 flex items-center gap-1.5 cursor-pointer">
+            <Download className="h-3.5 w-3.5" /> Export Excel
+          </button>
+          <button onClick={() => { setEditId(null); setShowAdd(true); }} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 flex items-center gap-1.5 cursor-pointer">
+            <Plus className="h-3.5 w-3.5" /> Thêm SP
+          </button>
+        </div>
       </div>
-      {loading ? <Spinner /> : products.length === 0 ? <Empty icon={Package} text="Chưa có sản phẩm" /> : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {products.map(p => (
-            <div key={p.id} onClick={() => setShowDetail(p.id)} className="bg-white rounded-xl border p-4 hover:shadow-md hover:border-gray-300 transition-all cursor-pointer group">
-              <div className="flex items-start justify-between mb-2">
-                <div><span className="text-xs font-bold text-blue-600">{p.code}</span>{p.category && <span className="text-[10px] text-gray-400 ml-2">{p.category.name}</span>}</div>
-                <button onClick={(e) => del(e, p.id)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
-              </div>
-              <h3 className="text-sm font-semibold text-gray-900 mb-1">{p.name}</h3>
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-lg font-bold text-gray-900">{formatVND(p.base_price)}</span>
-                <div className="flex items-center gap-2 text-xs text-gray-500">{p.material && <span className="bg-gray-100 px-2 py-0.5 rounded">{p.material}</span>}<span>Kho: {p.stock_quantity}</span></div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      <ProductFormModal open={showCreate} onClose={() => setShowCreate(false)} onSaved={load} categories={categories} />
-      {showDetail && <ProductDetailModal productId={showDetail} open={!!showDetail} onClose={() => setShowDetail(null)} onUpdated={load} />}
-    </div>
-  );
-}
 
-// ═══ CATEGORIES ═══
-function CategoriesTab() {
-  const [cats, setCats] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '' });
-  const load = () => { setLoading(true); api.get('/products/categories').then(r => setCats(r.data.categories || [])).finally(() => setLoading(false)); };
-  useEffect(load, []);
-  const create = async (e) => { e.preventDefault(); if (!form.name.trim()) return; await api.post('/products/categories', form); setForm({ name: '', description: '' }); setShowCreate(false); load(); };
-  const del = async (id) => { if (!confirm('Xóa?')) return; try { await api.delete(`/products/categories/${id}`); load(); } catch (err) { alert(err.response?.data?.error || 'Lỗi'); } };
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end"><button onClick={() => setShowCreate(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4" /> Thêm danh mục</button></div>
-      {loading ? <Spinner /> : cats.length === 0 ? <Empty icon={Layers} text="Chưa có danh mục" /> : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{cats.map(c => (
-          <div key={c.id} className="bg-white rounded-xl border p-4 flex items-center gap-3 group">
-            <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center"><Tag className="h-5 w-5 text-blue-600" /></div>
-            <div className="flex-1"><h3 className="text-sm font-semibold">{c.name}</h3>{c.description && <p className="text-xs text-gray-500">{c.description}</p>}</div>
-            <button onClick={() => del(c.id)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-4 w-4" /></button>
-          </div>
-        ))}</div>
-      )}
-      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Thêm danh mục" size="sm">
-        <form onSubmit={create} className="space-y-4">
-          <div><label className="block text-sm font-medium mb-1">Tên *</label><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Mô tả</label><textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="input min-h-[60px]" /></div>
-          <div className="flex justify-end gap-2"><button type="button" onClick={() => setShowCreate(false)} className="h-9 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button><button type="submit" className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer">Tạo</button></div>
-        </form>
-      </Modal>
-    </div>
-  );
-}
-
-// ═══ COMPONENTS (Vật tư) ═══
-function ComponentsTab() {
-  const [comps, setComps] = useState([]);
-  const [search, setSearch] = useState('');
-  const [filterCat, setFilterCat] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const load = () => { setLoading(true); api.get('/products/components/list', { params: { search: search || undefined, category: filterCat || undefined } }).then(r => setComps(r.data.components || [])).catch(() => {}).finally(() => setLoading(false)); };
-  useEffect(load, [filterCat]);
-  const del = async (e, id) => { e.stopPropagation(); if (!confirm('Xóa?')) return; try { await api.delete(`/products/components/${id}`); load(); } catch (err) { alert(err.response?.data?.error || 'Lỗi'); } };
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative max-w-xs"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="Tìm vật tư..." className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white" /></div>
-          <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className="h-9 px-3 border rounded-lg text-sm bg-white"><option value="">Tất cả loại</option>{Object.entries(COMP_CATS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-        </div>
-        <button onClick={() => setShowCreate(true)} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"><Plus className="h-4 w-4" /> Thêm vật tư</button>
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã, tên sản phẩm..."
+          className="w-full h-10 pl-10 pr-4 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
       </div>
-      {loading ? <Spinner /> : comps.length === 0 ? <Empty icon={Wrench} text="Chưa có vật tư" /> : (
-        <div className="bg-white rounded-xl border overflow-hidden">
-          <table className="w-full text-sm"><thead className="bg-gray-50 border-b"><tr>
-            <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Mã</th><th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Tên</th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Loại</th><th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Đơn giá</th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Tồn kho</th><th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">NCC</th><th className="w-10"></th>
-          </tr></thead><tbody className="divide-y">{comps.map(c => (
-            <tr key={c.id} className="hover:bg-gray-50">
-              <td className="px-4 py-3 font-medium text-blue-600">{c.code}</td><td className="px-4 py-3 font-medium text-gray-900">{c.name}</td>
-              <td className="px-4 py-3"><span className={`text-[10px] px-2 py-0.5 rounded-full ${COMP_CAT_COLORS[c.category] || ''}`}>{COMP_CATS[c.category] || c.category}</span></td>
-              <td className="px-4 py-3 font-medium">{formatVND(c.unit_price)}/{c.unit}</td>
-              <td className={`px-4 py-3 ${c.stock_quantity <= c.min_stock ? 'text-red-600 font-bold' : ''}`}>{c.stock_quantity}</td>
-              <td className="px-4 py-3 text-gray-500 text-xs">{c.supplier || '—'}</td>
-              <td className="px-4 py-2"><button onClick={(e) => del(e, c.id)} className="text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-4 w-4" /></button></td>
+
+      {/* Code Parts Manager */}
+      {showCodeParts && <CodePartsManager codeParts={codeParts} onReload={load} />}
+
+      {/* Products Table */}
+      <div className="bg-white rounded-xl border overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 border-b text-left text-xs font-semibold text-gray-500 uppercase">
+              <th className="p-3 w-10">STT</th>
+              <th className="p-3">Mã thành phẩm</th>
+              <th className="p-3">Tên thành phẩm</th>
+              <th className="p-3 text-right">Giá bán (VAT)</th>
+              <th className="p-3 text-right">Giá chưa VAT</th>
+              <th className="p-3">ĐVT</th>
+              <th className="p-3 text-center w-20"></th>
             </tr>
-          ))}</tbody></table>
-        </div>
-      )}
-      <ComponentFormModal open={showCreate} onClose={() => setShowCreate(false)} onSaved={load} />
-    </div>
-  );
-}
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={7} className="p-8 text-center text-gray-400">Đang tải...</td></tr>
+            ) : products.length === 0 ? (
+              <tr><td colSpan={7} className="p-8 text-center text-gray-400">Chưa có sản phẩm</td></tr>
+            ) : products.map((p, i) => (
+              <tr key={p.id} className="border-b hover:bg-gray-50">
+                <td className="p-3 text-gray-400">{i + 1}</td>
+                <td className="p-3">
+                  <span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">{p.code}</span>
+                </td>
+                <td className="p-3 font-medium text-gray-900">{p.name}</td>
+                <td className="p-3 text-right font-semibold text-emerald-600">{formatVND(p.selling_price || 0)}</td>
+                <td className="p-3 text-right text-gray-600">{formatVND(p.base_price || 0)}</td>
+                <td className="p-3 text-gray-500">{p.unit}</td>
+                <td className="p-3 text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    <button onClick={() => { setEditId(p.id); setShowAdd(true); }} className="p-1.5 hover:bg-blue-50 rounded text-blue-600 cursor-pointer"><Edit3 className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => del(p.id)} className="p-1.5 hover:bg-red-50 rounded text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-// ═══ MODALS ═══
-function ProductFormModal({ open, onClose, onSaved, categories }) {
-  const [form, setForm] = useState({});
-  const [loading, setLoading] = useState(false);
-  useEffect(() => { if (open) setForm({ name: '', description: '', category_id: '', material: '', base_price: '', cost_price: '', unit: 'cái', stock_quantity: '0' }); }, [open]);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const submit = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/products', { ...form, base_price: +form.base_price || 0, cost_price: +form.cost_price || 0, stock_quantity: +form.stock_quantity || 0 }); onSaved?.(); onClose(); } catch { } setLoading(false); };
-  return (
-    <Modal open={open} onClose={onClose} title="Thêm sản phẩm" size="md">
-      <form onSubmit={submit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-sm font-medium mb-1">Tên SP *</label><input value={form.name || ''} onChange={e => set('name', e.target.value)} required className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Danh mục</label><select value={form.category_id || ''} onChange={e => set('category_id', e.target.value || null)} className="input"><option value="">— Chọn —</option>{categories?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-          <div><label className="block text-sm font-medium mb-1">Chất liệu</label><input value={form.material || ''} onChange={e => set('material', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Đơn vị</label><input value={form.unit || ''} onChange={e => set('unit', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Giá bán</label><input type="number" value={form.base_price || ''} onChange={e => set('base_price', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Giá vốn</label><input type="number" value={form.cost_price || ''} onChange={e => set('cost_price', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Tồn kho</label><input type="number" value={form.stock_quantity || ''} onChange={e => set('stock_quantity', e.target.value)} className="input" /></div>
-        </div>
-        <div><label className="block text-sm font-medium mb-1">Mô tả</label><textarea value={form.description || ''} onChange={e => set('description', e.target.value)} className="input min-h-[60px]" /></div>
-        <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="h-10 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button><button type="submit" disabled={loading} className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer">{loading ? 'Tạo...' : 'Tạo SP'}</button></div>
-      </form>
-    </Modal>
-  );
-}
+      {/* Add/Edit Modal */}
+      {showAdd && <ProductFormModal codeParts={codeParts} editId={editId} onClose={() => { setShowAdd(false); setEditId(null); }} onSaved={load} />}
 
-function ComponentFormModal({ open, onClose, onSaved }) {
-  const [form, setForm] = useState({});
-  const [loading, setLoading] = useState(false);
-  useEffect(() => { if (open) setForm({ name: '', category: 'other', unit: 'cái', unit_price: '', supplier: '', material: '', stock_quantity: '0', min_stock: '5' }); }, [open]);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const submit = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/products/components', { ...form, unit_price: +form.unit_price || 0, stock_quantity: +form.stock_quantity || 0, min_stock: +form.min_stock || 5 }); onSaved?.(); onClose(); } catch { } setLoading(false); };
-  return (
-    <Modal open={open} onClose={onClose} title="Thêm vật tư / thành phần" size="md">
-      <form onSubmit={submit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-sm font-medium mb-1">Tên *</label><input value={form.name || ''} onChange={e => set('name', e.target.value)} required className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Loại</label><select value={form.category || ''} onChange={e => set('category', e.target.value)} className="input">{Object.entries(COMP_CATS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
-          <div><label className="block text-sm font-medium mb-1">Đơn giá</label><input type="number" value={form.unit_price || ''} onChange={e => set('unit_price', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Đơn vị</label><input value={form.unit || ''} onChange={e => set('unit', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">NCC</label><input value={form.supplier || ''} onChange={e => set('supplier', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Chất liệu</label><input value={form.material || ''} onChange={e => set('material', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Tồn kho</label><input type="number" value={form.stock_quantity || ''} onChange={e => set('stock_quantity', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Tồn tối thiểu</label><input type="number" value={form.min_stock || ''} onChange={e => set('min_stock', e.target.value)} className="input" /></div>
-        </div>
-        <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="h-10 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button><button type="submit" disabled={loading} className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer">{loading ? 'Tạo...' : 'Tạo'}</button></div>
-      </form>
-    </Modal>
-  );
-}
+      {/* Import Preview Modal */}
+      {showImport && importData && (
+        <Modal title={`📥 Import Excel — ${importData.fileName}`} onClose={() => { setShowImport(false); setImportData(null); }} size="lg">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">Tìm thấy <strong>{importData.total}</strong> dòng dữ liệu</p>
 
-function ProductDetailModal({ productId, open, onClose, onUpdated }) {
-  const [product, setProduct] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [components, setComponents] = useState([]);
-  const [addComp, setAddComp] = useState({ component_id: '', quantity: 1 });
-  const reload = () => api.get(`/products/${productId}`).then(r => setProduct(r.data.product));
-
-  useEffect(() => { if (!open || !productId) return; setLoading(true); reload().finally(() => setLoading(false)); api.get('/products/components/list', { params: { limit: 200 } }).then(r => setComponents(r.data.components || [])); }, [open, productId]);
-
-  const addBom = async () => { if (!addComp.component_id) return; await api.post(`/products/${productId}/structures`, addComp); setAddComp({ component_id: '', quantity: 1 }); reload(); onUpdated?.(); };
-  const delBom = async (sid) => { await api.delete(`/products/${productId}/structures/${sid}`); reload(); };
-
-  if (!open) return null;
-  return (
-    <Modal open={open} onClose={onClose} title={product?.name || 'Sản phẩm'} size="lg">
-      {loading || !product ? <Spinner /> : (
-        <div className="space-y-5">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-[11px] text-gray-500">Mã SP</p><p className="font-bold text-blue-600">{product.code}</p></div>
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-[11px] text-gray-500">Giá bán</p><p className="font-bold">{formatVND(product.base_price)}</p></div>
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-[11px] text-gray-500">Giá vốn</p><p className="font-bold">{formatVND(product.cost_price)}</p></div>
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-[11px] text-gray-500">Chi phí BOM</p><p className="font-bold text-orange-600">{formatVND(product.bomCost)}</p></div>
-          </div>
-          <div className="grid grid-cols-3 gap-3 text-xs text-gray-600">
-            {product.material && <p>Chất liệu: <strong>{product.material}</strong></p>}
-            {product.category && <p>Danh mục: <strong>{product.category.name}</strong></p>}
-            <p>Tồn kho: <strong>{product.stock_quantity}</strong></p>
-          </div>
-
-          <div><h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2"><Layers className="h-4 w-4" /> Cấu trúc sản phẩm (BOM)</h3>
-            {product.structures?.length > 0 && (
-              <div className="bg-white rounded-lg border overflow-hidden mb-3">
-                <table className="w-full text-sm"><thead className="bg-gray-50"><tr>
-                  <th className="text-left px-3 py-2 text-xs text-gray-500">Mã</th><th className="text-left px-3 py-2 text-xs text-gray-500">Vật tư</th>
-                  <th className="text-left px-3 py-2 text-xs text-gray-500">Loại</th><th className="text-right px-3 py-2 text-xs text-gray-500">SL</th>
-                  <th className="text-right px-3 py-2 text-xs text-gray-500">Đơn giá</th><th className="text-right px-3 py-2 text-xs text-gray-500">Thành tiền</th><th className="w-8"></th>
-                </tr></thead><tbody className="divide-y">{product.structures.map(s => {
-                  const cost = (s.component?.unit_price || 0) * (s.quantity || 0);
-                  return (
-                    <tr key={s.id} className="hover:bg-gray-50">
-                      <td className="px-3 py-2 text-blue-600 font-medium text-xs">{s.component?.code}</td>
-                      <td className="px-3 py-2 font-medium">{s.component?.name}</td>
-                      <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full ${COMP_CAT_COLORS[s.component?.category] || ''}`}>{COMP_CATS[s.component?.category] || ''}</span></td>
-                      <td className="px-3 py-2 text-right">{s.quantity} {s.component?.unit}</td>
-                      <td className="px-3 py-2 text-right text-xs">{formatVND(s.component?.unit_price)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{formatVND(cost)}</td>
-                      <td className="px-3 py-2"><button onClick={() => delBom(s.id)} className="text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button></td>
-                    </tr>
-                  );
-                })}</tbody>
-                <tfoot className="bg-gray-50 font-semibold"><tr><td colSpan="5" className="px-3 py-2 text-right text-xs">Tổng BOM:</td><td className="px-3 py-2 text-right text-orange-600">{formatVND(product.bomCost)}</td><td></td></tr></tfoot>
+            {importData.preview?.length > 0 && (
+              <div className="max-h-64 overflow-auto border rounded-lg">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-gray-50 border-b"><th className="p-2">Dòng</th><th className="p-2">Mã</th><th className="p-2">Tên</th><th className="p-2 text-right">Giá VAT</th><th className="p-2">ĐVT</th></tr></thead>
+                  <tbody>
+                    {importData.preview.map((r, i) => (
+                      <tr key={i} className="border-b"><td className="p-2">{r.row}</td><td className="p-2 font-mono">{r.code}</td><td className="p-2">{r.name}</td><td className="p-2 text-right">{formatVND(r.selling_price)}</td><td className="p-2">{r.unit}</td></tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
             )}
-            <div className="flex gap-2 items-end">
-              <div className="flex-1"><label className="block text-xs font-medium mb-1">Vật tư</label>
-                <select value={addComp.component_id} onChange={e => setAddComp(a => ({ ...a, component_id: e.target.value }))} className="input">
-                  <option value="">— Chọn vật tư —</option>
-                  {components.map(c => <option key={c.id} value={c.id}>{c.code} — {c.name} ({formatVND(c.unit_price)}/{c.unit})</option>)}
-                </select></div>
-              <div className="w-24"><label className="block text-xs font-medium mb-1">SL</label>
-                <input type="number" step="0.5" min="0.1" value={addComp.quantity} onChange={e => setAddComp(a => ({ ...a, quantity: +e.target.value }))} className="input" /></div>
-              <button onClick={addBom} className="h-10 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-emerald-700 shrink-0">+ Thêm</button>
+
+            {importData.errors?.length > 0 && (
+              <div className="bg-red-50 rounded-lg p-3 text-xs text-red-700">
+                <p className="font-bold mb-1">⚠️ Lỗi:</p>
+                {importData.errors.map((e, i) => <p key={i}>Dòng {e.row}: {e.error}</p>)}
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => doImport('preview')} className="h-9 px-4 bg-gray-100 text-gray-700 rounded-lg text-xs hover:bg-gray-200 flex items-center gap-1.5 cursor-pointer">
+                <Eye className="h-3.5 w-3.5" /> Xem trước
+              </button>
+              <button onClick={() => doImport('upsert')} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 flex items-center gap-1.5 cursor-pointer">
+                <Upload className="h-3.5 w-3.5" /> Import (cập nhật nếu trùng mã)
+              </button>
+              <button onClick={() => doImport('insert')} className="h-9 px-4 bg-emerald-600 text-white rounded-lg text-xs hover:bg-emerald-700 flex items-center gap-1.5 cursor-pointer">
+                <Plus className="h-3.5 w-3.5" /> Import (tạo mới tất cả)
+              </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
+    </div>
+  );
+}
+
+// ═══ Product Form Modal ═══
+function ProductFormModal({ codeParts, editId, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: '', unit: 'bộ', selling_price: '', base_price: '', description: '',
+    code_group: '', code_spec: '', code_standard: '', code_category: '',
+    code_style: '', code_glass: '', code_type_std: '', code_side: '', code_size: '',
+  });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (editId) {
+      api.get(`/products/${editId}`).then(({ data }) => {
+        const p = data.product;
+        setForm({
+          name: p.name || '', unit: p.unit || 'bộ',
+          selling_price: p.selling_price || '', base_price: p.base_price || '',
+          description: p.description || '',
+          code_group: p.code_group || '', code_spec: p.code_spec || '',
+          code_standard: p.code_standard || '', code_category: p.code_category || '',
+          code_style: p.code_style || '', code_glass: p.code_glass || '',
+          code_type_std: p.code_type_std || '', code_side: p.code_side || '',
+          code_size: p.code_size || '',
+        });
+      });
+    }
+  }, [editId]);
+
+  const generatedCode = CODE_PART_ORDER.map(t => form['code_' + (t === 'type_standard' ? 'type_std' : t)] || '').filter(Boolean).join('-');
+
+  const set = (k, v) => {
+    const next = { ...form, [k]: v };
+    // Auto-calc price
+    if (k === 'selling_price' && v) next.base_price = Math.round(parseFloat(v) / 1.1);
+    if (k === 'base_price' && v) next.selling_price = Math.round(parseFloat(v) * 1.1);
+    setForm(next);
+  };
+
+  const save = async () => {
+    if (!form.name) return alert('Nhập tên sản phẩm');
+    setLoading(true);
+    try {
+      if (editId) await api.put(`/products/${editId}`, { ...form, selling_price: +form.selling_price || 0, base_price: +form.base_price || 0 });
+      else await api.post('/products', { ...form, selling_price: +form.selling_price || 0, base_price: +form.base_price || 0 });
+      onSaved(); onClose();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setLoading(false);
+  };
+
+  return (
+    <Modal title={editId ? '✏️ Sửa sản phẩm' : '➕ Thêm sản phẩm'} onClose={onClose} size="lg">
+      <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+        {/* Code Preview */}
+        {generatedCode && (
+          <div className="bg-blue-50 rounded-lg p-3 flex items-center gap-2">
+            <span className="text-xs text-blue-600 font-medium">Mã thành phẩm:</span>
+            <span className="font-mono text-sm font-bold text-blue-800">{generatedCode}</span>
+          </div>
+        )}
+
+        {/* Code Parts Grid */}
+        <div>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">Cấu trúc mã</h3>
+          <div className="grid grid-cols-3 gap-2">
+            {CODE_PART_ORDER.map(t => {
+              const key = 'code_' + (t === 'type_standard' ? 'type_std' : t);
+              const items = codeParts[t]?.items || [];
+              return (
+                <div key={t}>
+                  <label className="text-[10px] font-medium text-gray-500 block mb-0.5">{CODE_PART_VN[t]}</label>
+                  <select value={form[key]} onChange={e => set(key, e.target.value)}
+                    className="w-full h-8 text-xs border rounded-lg px-2 bg-white">
+                    <option value="">--</option>
+                    {items.map(it => <option key={it.id} value={it.code}>{it.code} - {it.name}</option>)}
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Basic Info */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-gray-700 block mb-1">Tên thành phẩm *</label>
+            <input value={form.name} onChange={e => set('name', e.target.value)}
+              className="w-full h-9 px-3 border rounded-lg text-sm" placeholder="VD: Tủ bếp gỗ sồi chữ L tiêu chuẩn" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700 block mb-1">Giá bán gồm VAT 10%</label>
+            <input type="number" value={form.selling_price} onChange={e => set('selling_price', e.target.value)}
+              className="w-full h-9 px-3 border rounded-lg text-sm" placeholder="55,000,000" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700 block mb-1">Giá bán chưa VAT 10%</label>
+            <input type="number" value={form.base_price} onChange={e => set('base_price', e.target.value)}
+              className="w-full h-9 px-3 border rounded-lg text-sm" placeholder="50,000,000" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700 block mb-1">Đơn vị tính</label>
+            <select value={form.unit} onChange={e => set('unit', e.target.value)}
+              className="w-full h-9 px-3 border rounded-lg text-sm bg-white">
+              {['bộ','cái','m²','m dài','chiếc','tấm','thanh'].map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700 block mb-1">Mô tả</label>
+            <input value={form.description} onChange={e => set('description', e.target.value)}
+              className="w-full h-9 px-3 border rounded-lg text-sm" placeholder="Ghi chú..." />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2 mt-4 pt-3 border-t">
+        <button onClick={onClose} className="h-9 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm cursor-pointer">Hủy</button>
+        <button onClick={save} disabled={loading} className="h-9 px-6 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50">
+          <Save className="h-4 w-4" /> {loading ? 'Đang lưu...' : 'Lưu'}
+        </button>
+      </div>
     </Modal>
+  );
+}
+
+// ═══ Code Parts Manager ═══
+function CodePartsManager({ codeParts, onReload }) {
+  const [expanded, setExpanded] = useState(null);
+  const [adding, setAdding] = useState(null); // part_type
+  const [newCode, setNewCode] = useState('');
+  const [newName, setNewName] = useState('');
+
+  const addPart = async (type) => {
+    if (!newCode.trim() || !newName.trim()) return;
+    try {
+      await api.post('/products/code-parts', { part_type: type, code: newCode.trim(), name: newName.trim() });
+      setAdding(null); setNewCode(''); setNewName('');
+      onReload();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
+  const delPart = async (id) => {
+    if (!confirm('Xóa mã này?')) return;
+    try { await api.delete(`/products/code-parts/${id}`); onReload(); } catch { alert('Lỗi xóa'); }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border p-4 space-y-2">
+      <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+        <Settings className="h-4 w-4 text-gray-500" /> Quản lý cấu trúc mã thành phẩm
+      </h3>
+      <p className="text-xs text-gray-500">Mã thành phẩm = Nhóm SP - Quy cách - Tiêu chuẩn - Loại - Hình thức - Kính - Chuẩn loại - Hông - Kích thước</p>
+
+      {CODE_PART_ORDER.map(type => {
+        const group = codeParts[type] || { label: CODE_PART_VN[type], items: [] };
+        const isOpen = expanded === type;
+
+        return (
+          <div key={type} className="border rounded-lg overflow-hidden">
+            <button onClick={() => setExpanded(isOpen ? null : type)}
+              className="w-full flex items-center justify-between p-2.5 hover:bg-gray-50 cursor-pointer text-left">
+              <div className="flex items-center gap-2">
+                {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400" />}
+                <span className="text-xs font-semibold text-gray-700">{CODE_PART_VN[type]}</span>
+                <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{group.items.length}</span>
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); setAdding(type); setExpanded(type); }}
+                className="text-[10px] text-blue-600 hover:underline cursor-pointer">+ Thêm</button>
+            </button>
+
+            {isOpen && (
+              <div className="border-t px-3 pb-2 space-y-1">
+                {group.items.map(it => (
+                  <div key={it.id} className="flex items-center justify-between py-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-bold">{it.code}</span>
+                      <span className="text-xs text-gray-700">{it.name}</span>
+                    </div>
+                    <button onClick={() => delPart(it.id)} className="text-red-400 hover:text-red-600 cursor-pointer">
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+
+                {adding === type && (
+                  <div className="flex items-center gap-2 pt-1 border-t">
+                    <input value={newCode} onChange={e => setNewCode(e.target.value)} placeholder="Mã" className="w-16 h-7 px-2 border rounded text-xs" />
+                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Tên" className="flex-1 h-7 px-2 border rounded text-xs" />
+                    <button onClick={() => addPart(type)} className="h-7 px-2 bg-blue-600 text-white rounded text-xs cursor-pointer">Lưu</button>
+                    <button onClick={() => setAdding(null)} className="h-7 px-2 bg-gray-100 rounded text-xs cursor-pointer">Hủy</button>
+                  </div>
+                )}
+
+                {group.items.length === 0 && adding !== type && (
+                  <p className="text-[10px] text-gray-400 py-1">Chưa có mã nào</p>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
