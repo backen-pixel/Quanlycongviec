@@ -70,24 +70,38 @@ export default function ProductsPage() {
         const wb = XLSX.read(ev.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws);
+        console.log('Excel headers:', rows[0] ? Object.keys(rows[0]) : 'empty');
+        console.log('First row:', rows[0]);
+
+        // Fuzzy header matching — find the right key from row object
+        const findKey = (row, patterns) => {
+          const keys = Object.keys(row);
+          for (const pat of patterns) {
+            const p = pat.toLowerCase();
+            const found = keys.find(k => k.toLowerCase().includes(p));
+            if (found) return row[found];
+          }
+          return '';
+        };
+
         // Parse all rows immediately for preview
         const parsed = rows.map((row, i) => {
           const p = {
             stt: i + 1,
-            code_group: (row['Nhóm SP'] || row.code_group || '').toString().trim(),
-            code_spec: (row['Mã quy cách'] || row.code_spec || '').toString().trim(),
-            code_standard: (row['Mã tiêu chuẩn'] || row.code_standard || '').toString().trim(),
-            code_category: (row['Mã loại/phân loại'] || row.code_category || '').toString().trim(),
-            code_style: (row['Mã hình thức'] || row.code_style || '').toString().trim(),
-            code_glass: (row['Mã kính'] || row.code_glass || '').toString().trim(),
-            code_type_std: (row['Mã chuẩn loại'] || row.code_type_std || '').toString().trim(),
-            code_side: (row['Mã hông'] || row.code_side || '').toString().trim(),
-            code_size: (row['Mã kích thước'] || row.code_size || '').toString().trim(),
-            code: (row['MÃ THÀNH PHẨM'] || row.code || '').toString().trim(),
-            name: (row['TÊN THÀNH PHẨM'] || row.name || '').toString().trim(),
-            selling_price: parseFloat(row['GIÁ BÁN GỒM VAT 10%'] || row.selling_price || 0) || 0,
-            base_price: parseFloat(row['GIÁ BÁN CHƯA VAT 10%'] || row.base_price || 0) || 0,
-            unit: (row['Đơn vị tính'] || row.unit || 'cái').toString().trim(),
+            code_group: findKey(row, ['nhóm sp', 'nhom sp', 'group']).toString().trim(),
+            code_spec: findKey(row, ['quy cách', 'quy cach', 'spec']).toString().trim(),
+            code_standard: findKey(row, ['tiêu chuẩn', 'tieu chuan', 'standard']).toString().trim(),
+            code_category: findKey(row, ['loại', 'phân loại', 'phan loai', 'category']).toString().trim(),
+            code_style: findKey(row, ['hình thức', 'hinh thuc', 'style']).toString().trim(),
+            code_glass: findKey(row, ['kính', 'kinh', 'glass']).toString().trim(),
+            code_type_std: findKey(row, ['chuẩn loại', 'chuan loai', 'type_standard']).toString().trim(),
+            code_side: findKey(row, ['hông', 'hong', 'side']).toString().trim(),
+            code_size: findKey(row, ['kích thước', 'kich thuoc', 'size']).toString().trim(),
+            code: findKey(row, ['mã thành phẩm', 'ma thanh pham', 'MÃ THÀNH PHẨM']).toString().trim(),
+            name: findKey(row, ['tên thành phẩm', 'ten thanh pham', 'TÊN THÀNH PHẨM']).toString().trim(),
+            selling_price: parseFloat(findKey(row, ['gồm vat', 'gom vat', 'giá bán gồm', 'gia ban gom']) || 0) || 0,
+            base_price: parseFloat(findKey(row, ['chưa vat', 'chua vat', 'giá bán chưa', 'gia ban chua']) || 0) || 0,
+            unit: (findKey(row, ['đơn vị', 'don vi', 'unit']) || 'cái').toString().trim(),
           };
           // Auto-gen code
           if (!p.code) p.code = [p.code_group, p.code_spec, p.code_standard, p.code_category, p.code_style, p.code_glass, p.code_type_std, p.code_side, p.code_size].filter(Boolean).join('-');
