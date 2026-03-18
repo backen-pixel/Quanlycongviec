@@ -1165,6 +1165,34 @@ r.get('/project/:projectId/summary', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Project Lead Documents — fast lookup by project_id (no full leads scan)
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/project/:projectId/lead-documents', async (req, res) => {
+  try {
+    // Find lead linked to this project
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .eq('project_id', req.params.projectId)
+      .limit(1)
+      .single();
+
+    if (!lead) return res.json([]);
+
+    const { data: docs } = await supabase
+      .from('lead_documents')
+      .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
+      .eq('lead_id', lead.id)
+      .order('created_at', { ascending: false });
+
+    res.json(docs || []);
+  } catch (e) {
+    // No lead found → empty
+    res.json([]);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CRM CUSTOMERS - Aggregated customer view
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/customers-overview', async (req, res) => {
