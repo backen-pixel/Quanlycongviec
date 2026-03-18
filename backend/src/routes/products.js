@@ -87,20 +87,20 @@ r.get('/export', async (req, res) => {
 
     const rows = (data || []).map((p, i) => ({
       'STT': i + 1,
-      'Nhóm SP': p.code_group || '',
-      'Mã quy cách': p.code_spec || '',
-      'Mã tiêu chuẩn': p.code_standard || '',
-      'Mã loại/phân loại': p.code_category || '',
-      'Mã hình thức': p.code_style || '',
-      'Mã kính': p.code_glass || '',
-      'Mã chuẩn loại': p.code_type_std || '',
-      'Mã hông': p.code_side || '',
-      'Mã kích thước': p.code_size || '',
+      'nhóm sp': p.code_group || '',
+      'mã quy cách': p.code_spec || '',
+      'mã tiêu chuẩn': p.code_standard || '',
+      'mã loại/ phân loại': p.code_category || '',
+      'mã hình thức': p.code_style || '',
+      'mã kính': p.code_glass || '',
+      'mã chuẩn loại': p.code_type_std || '',
+      'mã hông': p.code_side || '',
+      'mã Kích thước quy ước': p.code_size || '',
       'MÃ THÀNH PHẨM': p.code,
       'TÊN THÀNH PHẨM': p.name,
       'GIÁ BÁN GỒM VAT 10%': p.selling_price || 0,
       'GIÁ BÁN CHƯA VAT 10%': p.base_price || 0,
-      'Đơn vị tính': p.unit || 'cái',
+      'đơn vị tính': p.unit || 'cái',
     }));
 
     res.json({ rows, total: rows.length });
@@ -115,38 +115,28 @@ r.post('/import', async (req, res) => {
 
     const results = { created: 0, updated: 0, errors: [], preview: [] };
 
-    // Fuzzy key finder — match Vietnamese headers case-insensitive
-    const findKey = (row, patterns) => {
-      const keys = Object.keys(row);
-      for (const pat of patterns) {
-        const p = pat.toLowerCase();
-        const found = keys.find(k => k.toLowerCase().includes(p));
-        if (found) return row[found];
-      }
-      return '';
-    };
+    // Helper: get value from row by exact key
+    const g = (row, key) => (row[key] ?? '').toString().trim();
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const rowNum = i + 2; // Excel row (header = 1)
+      const rowNum = i + 2;
       try {
-        // Map columns flexibly
-        const code = (findKey(row, ['mã thành phẩm', 'ma thanh pham']) || '').toString().trim();
-        const name = (findKey(row, ['tên thành phẩm', 'ten thanh pham']) || '').toString().trim();
-        const sellingPrice = parseFloat(findKey(row, ['gồm vat', 'gom vat', 'giá bán gồm']) || 0) || 0;
-        const basePrice = parseFloat(findKey(row, ['chưa vat', 'chua vat', 'giá bán chưa']) || 0) || 0;
-        const unit = (findKey(row, ['đơn vị', 'don vi', 'unit']) || 'cái').toString().trim();
+        const code = g(row, 'MÃ THÀNH PHẨM');
+        const name = g(row, 'TÊN THÀNH PHẨM');
+        const sellingPrice = parseFloat(row['GIÁ BÁN GỒM VAT 10%'] || 0) || 0;
+        const basePrice = parseFloat(row['GIÁ BÁN CHƯA VAT 10%'] || 0) || 0;
+        const unit = g(row, 'đơn vị tính') || 'cái';
 
-        // Code parts
-        const codeGroup = (findKey(row, ['nhóm sp', 'nhom sp']) || '').toString().trim();
-        const codeSpec = (findKey(row, ['quy cách', 'quy cach']) || '').toString().trim();
-        const codeStandard = (findKey(row, ['tiêu chuẩn', 'tieu chuan']) || '').toString().trim();
-        const codeCategory = (findKey(row, ['loại', 'phân loại']) || '').toString().trim();
-        const codeStyle = (findKey(row, ['hình thức', 'hinh thuc']) || '').toString().trim();
-        const codeGlass = (findKey(row, ['kính', 'kinh']) || '').toString().trim();
-        const codeTypeStd = (findKey(row, ['chuẩn loại', 'chuan loai']) || '').toString().trim();
-        const codeSide = (findKey(row, ['hông', 'hong']) || '').toString().trim();
-        const codeSize = (findKey(row, ['kích thước', 'kich thuoc']) || '').toString().trim();
+        const codeGroup = g(row, 'nhóm sp');
+        const codeSpec = g(row, 'mã quy cách');
+        const codeStandard = g(row, 'mã tiêu chuẩn');
+        const codeCategory = g(row, 'mã loại/ phân loại');
+        const codeStyle = g(row, 'mã hình thức');
+        const codeGlass = g(row, 'mã kính');
+        const codeTypeStd = g(row, 'mã chuẩn loại');
+        const codeSide = g(row, 'mã hông');
+        const codeSize = g(row, 'mã Kích thước quy ước');
 
         if (!name) { results.errors.push({ row: rowNum, error: 'Thiếu tên sản phẩm' }); continue; }
 
