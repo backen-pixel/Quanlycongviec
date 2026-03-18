@@ -71,37 +71,26 @@ export default function ProductsPage() {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws);
         console.log('Excel headers:', rows[0] ? Object.keys(rows[0]) : 'empty');
-        console.log('First row:', rows[0]);
 
-        // Fuzzy header matching — find the right key from row object
-        const findKey = (row, patterns) => {
-          const keys = Object.keys(row);
-          for (const pat of patterns) {
-            const p = pat.toLowerCase();
-            const found = keys.find(k => k.toLowerCase().includes(p));
-            if (found) return row[found];
-          }
-          return '';
-        };
-
-        // Parse all rows immediately for preview
+        // Exact header keys matching user's Excel structure
         const parsed = rows.map((row, i) => {
+          const g = (k) => (row[k] ?? '').toString().trim();
           const p = {
             stt: i + 1,
-            code_group: findKey(row, ['nhóm sp', 'nhom sp', 'group']).toString().trim(),
-            code_spec: findKey(row, ['quy cách', 'quy cach', 'spec']).toString().trim(),
-            code_standard: findKey(row, ['tiêu chuẩn', 'tieu chuan', 'standard']).toString().trim(),
-            code_category: findKey(row, ['loại', 'phân loại', 'phan loai', 'category']).toString().trim(),
-            code_style: findKey(row, ['hình thức', 'hinh thuc', 'style']).toString().trim(),
-            code_glass: findKey(row, ['kính', 'kinh', 'glass']).toString().trim(),
-            code_type_std: findKey(row, ['chuẩn loại', 'chuan loai', 'type_standard']).toString().trim(),
-            code_side: findKey(row, ['hông', 'hong', 'side']).toString().trim(),
-            code_size: findKey(row, ['kích thước', 'kich thuoc', 'size']).toString().trim(),
-            code: findKey(row, ['mã thành phẩm', 'ma thanh pham', 'MÃ THÀNH PHẨM']).toString().trim(),
-            name: findKey(row, ['tên thành phẩm', 'ten thanh pham', 'TÊN THÀNH PHẨM']).toString().trim(),
-            selling_price: parseFloat(findKey(row, ['gồm vat', 'gom vat', 'giá bán gồm', 'gia ban gom']) || 0) || 0,
-            base_price: parseFloat(findKey(row, ['chưa vat', 'chua vat', 'giá bán chưa', 'gia ban chua']) || 0) || 0,
-            unit: (findKey(row, ['đơn vị', 'don vi', 'unit']) || 'cái').toString().trim(),
+            code_group: g('nhóm sp'),
+            code_spec: g('mã quy cách'),
+            code_standard: g('mã tiêu chuẩn'),
+            code_category: g('mã loại/ phân loại'),
+            code_style: g('mã hình thức'),
+            code_glass: g('mã kính'),
+            code_type_std: g('mã chuẩn loại'),
+            code_side: g('mã hông'),
+            code_size: g('mã Kích thước quy ước'),
+            code: g('MÃ THÀNH PHẨM'),
+            name: g('TÊN THÀNH PHẨM'),
+            selling_price: parseFloat(row['GIÁ BÁN GỒM VAT 10%'] || 0) || 0,
+            base_price: parseFloat(row['GIÁ BÁN CHƯA VAT 10%'] || 0) || 0,
+            unit: g('đơn vị tính') || 'cái',
           };
           // Auto-gen code
           if (!p.code) p.code = [p.code_group, p.code_spec, p.code_standard, p.code_category, p.code_style, p.code_glass, p.code_type_std, p.code_side, p.code_size].filter(Boolean).join('-');
@@ -138,8 +127,8 @@ export default function ProductsPage() {
 
   // ── Download template ──
   const downloadTemplate = () => {
-    const headers = ['STT','Nhóm SP','Mã quy cách','Mã tiêu chuẩn','Mã loại/phân loại','Mã hình thức','Mã kính','Mã chuẩn loại','Mã hông','Mã kích thước','MÃ THÀNH PHẨM','TÊN THÀNH PHẨM','GIÁ BÁN GỒM VAT 10%','GIÁ BÁN CHƯA VAT 10%','Đơn vị tính'];
-    const sample = [1,'TB','L','TC','GO','HĐ','KK','A','H2','M','TB-L-TC-GO-HĐ-KK-A-H2-M','Tủ bếp gỗ sồi chữ L tiêu chuẩn',55000000,50000000,'bộ'];
+    const headers = ['STT','nhóm sp','mã quy cách','mã tiêu chuẩn','mã loại/ phân loại','mã hình thức','mã kính','mã chuẩn loại','mã hông','mã Kích thước quy ước','MÃ THÀNH PHẨM','TÊN THÀNH PHẨM','GIÁ BÁN GỒM VAT 10%','GIÁ BÁN CHƯA VAT 10%','đơn vị tính'];
+    const sample = [1,'BEPTR','L','N','nhỏ','trên','4L','T','380','TB-BEPTR-L-N','Tủ bếp trên nhỏ kính 4ly',5500000,5000000,'cái'];
     const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
     ws['!cols'] = headers.map((h) => ({wch: Math.max(h.length + 2, 12)}));
     const wb = XLSX.utils.book_new();
