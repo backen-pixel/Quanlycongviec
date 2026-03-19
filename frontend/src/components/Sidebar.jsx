@@ -94,6 +94,7 @@ const CRM_MENU_GROUPS = [
       { to: '/crm/customers', icon: UserCircle, label: 'Khách hàng' },
       { to: '/crm/products', icon: Package, label: 'Sản phẩm' },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo' },
+      { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline' },
     ]
   },
 ];

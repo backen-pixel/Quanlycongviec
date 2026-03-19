@@ -30,6 +30,7 @@ import InvoicesPage from './pages/InvoicesPage';
 import InvoiceDetail from './pages/InvoiceDetail';
 import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
+import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
 // CRMProductsPage removed — merged into ProductsPage
 import StageGroupsPage from './pages/StageGroupsPage';
@@ -140,6 +141,7 @@ export default function App() {
             <Route path="/crm/invoices" element={<InvoicesPage />} />
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<CRMReports />} />
+            <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
