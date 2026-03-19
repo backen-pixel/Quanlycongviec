@@ -33,7 +33,7 @@ async function nextCode(prefix) {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/dashboard', async (req, res) => {
   try {
-    const { type = 'lead' } = req.query; // 'lead' or 'deal'
+    const { type = 'lead', company_id } = req.query; // 'lead' or 'deal'
 
     // Pipeline stages for the specified type
     const { data: stages } = await supabase
@@ -43,11 +43,13 @@ r.get('/dashboard', async (req, res) => {
       .eq('pipeline_type', type)
       .order('order_index');
 
-    // Leads/Deals count per stage
-    const { data: leads } = await supabase
+    // Leads/Deals count per stage (with optional company filter)
+    let leadsQuery = supabase
       .from('crm_leads')
       .select('id, stage_id, estimated_value, probability, type')
       .eq('type', type);
+    if (company_id) leadsQuery = leadsQuery.eq('company_id', company_id);
+    const { data: leads } = await leadsQuery;
 
     const stageStats = (stages || []).map(s => {
       const stageLeads = (leads || []).filter(l => l.stage_id === s.id);
@@ -296,9 +298,9 @@ r.get('/sources', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/leads', async (req, res) => {
   try {
-    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead' } = req.query;
+    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead', company_id } = req.query;
     let q = supabase.from('crm_leads')
-      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name)')
+      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
       .eq('type', type) // Filter by type: lead or deal
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
@@ -306,6 +308,7 @@ r.get('/leads', async (req, res) => {
     if (stage_id) q = q.eq('stage_id', stage_id);
     if (assigned_to) q = q.eq('assigned_to', assigned_to);
     if (source_id) q = q.eq('source_id', source_id);
+    if (company_id) q = q.eq('company_id', company_id);
     if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%`);
 
     const { data, error } = await q;
@@ -321,7 +324,7 @@ r.post('/leads', async (req, res) => {
     const code = await nextCode('LEAD');
     // Clean empty strings → null for UUID fields
     const body = { ...req.body };
-    ['customer_id', 'source_id', 'stage_id', 'assigned_to'].forEach(f => {
+    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id'].forEach(f => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
     const { data, error } = await supabase.from('crm_leads')

@@ -6,7 +6,7 @@ import {
   TrendingUp, Users, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
-  Zap, CheckCircle2, TrendingDown, AlertTriangle
+  Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2
 } from 'lucide-react';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
@@ -19,6 +19,8 @@ export default function CRMDashboard() {
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   const [sources, setSources] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [filterCompany, setFilterCompany] = useState('');
   const [alerts, setAlerts] = useState(null);
   const [pipelineType, setPipelineType] = useState('lead'); // lead | deal
   const [showNewLead, setShowNewLead] = useState(false);
@@ -26,19 +28,22 @@ export default function CRMDashboard() {
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [filterCompany]);
 
   const load = async () => {
     setLoading(true);
+    const companyParam = filterCompany ? { company_id: filterCompany } : {};
     try {
-      const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: 'lead' } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/dashboard', { params: { type: 'deal' } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/leads', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
-        api.get('/crm/leads', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
+      const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes] = await Promise.all([
+        api.get('/crm/dashboard', { params: { type: 'lead', ...companyParam } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/dashboard', { params: { type: 'deal', ...companyParam } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/leads', { params: { type: 'lead', ...companyParam } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: { type: 'deal', ...companyParam } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
         api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
+        api.get('/companies').catch(() => ({ data: { companies: [] } })),
       ]);
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
@@ -47,6 +52,7 @@ export default function CRMDashboard() {
       setStagesLead(stagesLeadRes.data);
       setStagesDeal(stagesDealRes.data);
       setSources(sourcesRes.data);
+      setCompanies(companiesRes.data?.companies || companiesRes.data || []);
       setAlerts(alertsRes.data);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -165,6 +171,26 @@ export default function CRMDashboard() {
         </button>
       </div>
 
+      {/* Company Filter */}
+      {companies.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <Building2 className="h-4 w-4 text-gray-500" />
+          <span className="text-sm font-medium text-gray-600">Công ty:</span>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <button onClick={() => setFilterCompany('')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all cursor-pointer ${
+                !filterCompany ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
+              }`}>Tất cả</button>
+            {companies.map(c => (
+              <button key={c.id} onClick={() => setFilterCompany(c.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all cursor-pointer ${
+                  filterCompany === c.id ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
+                }`}>{c.short_name || c.name}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* KPI Summary Row - MISA Style */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {pipelineType === 'lead' ? (
@@ -254,7 +280,9 @@ export default function CRMDashboard() {
         <NewLeadModal
           onClose={() => { setShowNewLead(false); load(); }}
           sources={sources}
+          companies={companies}
           type={pipelineType}
+          defaultCompanyId={filterCompany}
         />
       )}
     </div>
@@ -455,12 +483,13 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays }) {
 }
 
 // New Lead Modal - Auto create customer
-function NewLeadModal({ onClose, sources, type }) {
+function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId }) {
   const [formData, setFormData] = useState({
     title: '',
     customer_name: '',
     customer_phone: '',
     source_id: '',
+    company_id: defaultCompanyId || '',
     estimated_value: 0,
     probability: 50,
   });
@@ -493,6 +522,7 @@ function NewLeadModal({ onClose, sources, type }) {
         title: formData.title,
         customer_id: customerId || null,
         source_id: formData.source_id || null,
+        company_id: formData.company_id || null,
         type: 'lead',
         stage_id: firstStage?.id,
         estimated_value: parseFloat(formData.estimated_value) || 0,
@@ -525,6 +555,22 @@ function NewLeadModal({ onClose, sources, type }) {
               placeholder="VD: Tủ bếp gỗ sồi nhà anh A..."
             />
           </div>
+
+          {(companies || []).length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty</label>
+              <select
+                value={formData.company_id}
+                onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              >
+                <option value="">-- Chọn công ty --</option>
+                {(companies || []).map(c => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="bg-blue-50 rounded-lg p-4 space-y-3">
             <p className="text-xs font-bold text-blue-800 uppercase">👤 Khách hàng mới</p>
