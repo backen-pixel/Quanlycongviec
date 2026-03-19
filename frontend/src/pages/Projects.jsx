@@ -73,13 +73,35 @@ export default function Projects() {
   const [filterCustomer, setFilterCustomer] = useState('all');
   const [filterPerson, setFilterPerson] = useState('all');
   const [companies, setCompanies] = useState([]);
+  const [companyEmployees, setCompanyEmployees] = useState([]);
+  const [taskAssigneeMap, setTaskAssigneeMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [showAdvFilter, setShowAdvFilter] = useState(false);
 
   const load = () => {
     setLoading(true);
     api.get('/projects', { params: { search: search || undefined, limit: 500 } })
-      .then(r => setProjects(r.data.projects || []))
+      .then(r => {
+        setProjects(r.data.projects || []);
+        // Load task assignee mapping: project_id → [user_id, ...]
+        const projectIds = (r.data.projects || []).map(p => p.id);
+        if (projectIds.length > 0) {
+          api.get('/tasks', { params: { project_ids: projectIds.join(','), limit: 5000, fields: 'id,project_id,assignee_id' } })
+            .then(tr => {
+              const map = {};
+              (tr.data.tasks || []).forEach(t => {
+                if (t.assignee_id) {
+                  if (!map[t.project_id]) map[t.project_id] = new Set();
+                  map[t.project_id].add(t.assignee_id);
+                }
+              });
+              // Convert sets to arrays
+              Object.keys(map).forEach(k => { map[k] = [...map[k]]; });
+              setTaskAssigneeMap(map);
+            })
+            .catch(() => {});
+        }
+      })
       .catch(() => setProjects([]))
       .finally(() => setLoading(false));
   };
@@ -92,6 +114,18 @@ export default function Projects() {
       .catch(() => api.get('/companies/my/list').then(r => setCompanies(r.data.companies || [])).catch(() => {}));
   }, []);
 
+  // Load employees when company filter changes
+  useEffect(() => {
+    if (filterCompany && filterCompany !== 'all') {
+      api.get(`/companies/${filterCompany}/employees`)
+        .then(r => setCompanyEmployees(r.data.employees || []))
+        .catch(() => setCompanyEmployees([]));
+    } else {
+      setCompanyEmployees([]);
+    }
+    setFilterPerson('all'); // Reset person filter when company changes
+  }, [filterCompany]);
+
   const deleteProject = async (e, id, code) => {
     e.preventDefault();
     e.stopPropagation();
@@ -101,11 +135,21 @@ export default function Projects() {
 
   // Apply client-side filters
   let filtered = filterByTime(projects, filterTime, dateFrom, dateTo);
-  if (filterCompany !== 'all') filtered = filtered.filter(p => p.company_id === filterCompany);
+  if (filterCompany !== 'all') filtered = filtered.filter(p => p.company_id === filterCompany || p.company?.id === filterCompany);
   if (filterCustomer !== 'all') filtered = filtered.filter(p => p.customer_id === filterCustomer);
-  if (filterPerson !== 'all') filtered = filtered.filter(p =>
-    p.sales_person_id === filterPerson || p.designer_id === filterPerson || p.project_manager_id === filterPerson
-  );
+  if (filterPerson !== 'all') filtered = filtered.filter(p => {
+    // Check project-level person fields
+    const projectPersons = [
+      p.sales_person_id, p.designer_id, p.project_manager_id,
+      p.consulting_person_id, p.design_person_id, p.quotation_person_id,
+      p.contract_person_id, p.production_person_id, p.shipping_person_id,
+      p.installation_person_id, p.care_person_id, p.supervisor_id, p.created_by
+    ];
+    if (projectPersons.includes(filterPerson)) return true;
+    // Check task assignees
+    const assignees = taskAssigneeMap[p.id] || [];
+    return assignees.includes(filterPerson);
+  });
 
   // Extract unique customers and persons from projects for filter dropdowns
   const uniqueCustomers = [];
@@ -119,14 +163,42 @@ export default function Projects() {
 
   const uniquePersons = [];
   const seenPerson = new Set();
-  projects.forEach(p => {
-    [p.sales_person, p.designer, p.project_manager].forEach(per => {
-      if (per?.id && !seenPerson.has(per.id)) {
-        seenPerson.add(per.id);
-        uniquePersons.push({ id: per.id, name: per.full_name });
+  if (companyEmployees.length > 0) {
+    // When company is selected: show employees from that company
+    companyEmployees.forEach(emp => {
+      if (emp?.id && !seenPerson.has(emp.id)) {
+        seenPerson.add(emp.id);
+        uniquePersons.push({ id: emp.id, name: emp.full_name });
       }
     });
-  });
+  } else {
+    // No company selected: build from project person fields + task assignees
+    projects.forEach(p => {
+      [p.sales_person, p.designer, p.project_manager].forEach(per => {
+        if (per?.id && !seenPerson.has(per.id)) {
+          seenPerson.add(per.id);
+          uniquePersons.push({ id: per.id, name: per.full_name });
+        }
+      });
+    });
+    // Also add unique assignees from tasks
+    Object.values(taskAssigneeMap).forEach(assignees => {
+      assignees.forEach(uid => {
+        if (!seenPerson.has(uid)) {
+          seenPerson.add(uid);
+          // Try to find the name from projects data
+          let name = null;
+          for (const p of projects) {
+            for (const per of [p.sales_person, p.designer, p.project_manager]) {
+              if (per?.id === uid) { name = per.full_name; break; }
+            }
+            if (name) break;
+          }
+          uniquePersons.push({ id: uid, name: name || uid.slice(0, 8) + '...' });
+        }
+      });
+    });
+  }
 
   const hasActiveFilters = filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all' || dateFrom || dateTo;
 

@@ -325,44 +325,23 @@ r.get('/:divisionId/dashboard', async (req, res) => {
     const { divisionId } = req.params;
     const { company_id } = req.query;
 
-    // Get flows containing this division (with company info)
+    // Get companies belonging to this division (from companies table)
+    const { data: divCompanies } = await supabase
+      .from('companies')
+      .select('id, name, short_name, logo_url')
+      .eq('division_unit_id', divisionId)
+      .order('name');
+    const companies = divCompanies || [];
+
+    // Get flows containing this division
     const { data: flowSteps } = await supabase
       .from('workflow_flow_steps')
-      .select('flow_id, company_unit_id, company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name,icon,color)')
+      .select('flow_id, company_unit_id')
       .eq('division_unit_id', divisionId);
 
     if (!flowSteps || flowSteps.length === 0) {
       return res.json({
-        stats: { projects: 0, active: 0, tasks: 0, members: 0 },
-        projects: [],
-        tasks: [],
-        activities: [],
-        companies: []
-      });
-    }
-
-    // Build unique companies list for this division
-    const companiesMap = {};
-    flowSteps.forEach(step => {
-      if (step.company && step.company.id && !companiesMap[step.company.id]) {
-        companiesMap[step.company.id] = step.company;
-      }
-    });
-    const companies = Object.values(companiesMap).sort((a, b) =>
-      (a.name || '').localeCompare(b.name || '', 'vi')
-    );
-
-    // If company_id filter is set, only use flow_ids that match
-    let filteredFlowSteps = flowSteps;
-    if (company_id) {
-      filteredFlowSteps = flowSteps.filter(s => s.company_unit_id === company_id);
-    }
-
-    const flowIds = [...new Set(filteredFlowSteps.map(s => s.flow_id))];
-
-    if (flowIds.length === 0) {
-      return res.json({
-        stats: { projects: 0, active: 0, tasks: 0, members: 0 },
+        stats: { projects: 0, active: 0, tasks: 0, members: 0, overdue: 0, completed: 0 },
         projects: [],
         tasks: [],
         activities: [],
@@ -370,30 +349,26 @@ r.get('/:divisionId/dashboard', async (req, res) => {
       });
     }
 
-    // Map flow_id → company for display
-    const flowCompanyMap = {};
-    filteredFlowSteps.forEach(step => {
-      if (!flowCompanyMap[step.flow_id] && step.company) {
-        flowCompanyMap[step.flow_id] = step.company;
-      }
-    });
+    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
 
-    // Get projects
-    const { data: projects } = await supabase
+    // Build project query — filter by company_id on projects table directly
+    let projectQuery = supabase
       .from('projects')
       .select(`
         id, name, code, status, start_date, end_date,
-        estimated_value, customer_name, created_at, flow_id
+        estimated_value, customer_name, created_at, flow_id, company_id,
+        company:companies(id, name, short_name)
       `)
       .in('flow_id', flowIds)
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(50);
 
-    // Attach company to each project
-    const projectsWithCompany = (projects || []).map(p => ({
-      ...p,
-      company: flowCompanyMap[p.flow_id] || null
-    }));
+    // Apply company filter using companies.id (not ecosystem_unit id)
+    if (company_id) {
+      projectQuery = projectQuery.eq('company_id', company_id);
+    }
+
+    const { data: projects } = await projectQuery;
 
     const projectIds = (projects || []).map(p => p.id);
 
@@ -401,42 +376,53 @@ r.get('/:divisionId/dashboard', async (req, res) => {
     const { data: tasks } = projectIds.length > 0
       ? await supabase
           .from('tasks')
-          .select('id, title, status, priority, project_id, assigned_to, due_date')
+          .select('id, title, status, priority, project_id, assignee_id, due_date')
           .in('project_id', projectIds)
       : { data: [] };
 
-    // Get members count — if company filter, get company members; otherwise division members
-    let memberCount = 0;
+    // Get employees count from company or division
+    let employees = [];
     if (company_id) {
-      const { data: members } = await supabase
-        .from('ecosystem_unit_members')
-        .select('user_id')
-        .eq('unit_id', company_id);
-      memberCount = members?.length || 0;
+      const { data: emps } = await supabase
+        .from('user_companies')
+        .select('user:users(id, full_name, avatar, role)')
+        .eq('company_id', company_id);
+      employees = (emps || []).map(e => e.user).filter(Boolean);
     } else {
-      const { data: members } = await supabase
-        .from('ecosystem_unit_members')
-        .select('user_id')
-        .eq('unit_id', divisionId);
-      memberCount = members?.length || 0;
+      // Get all employees across all companies in this division
+      const companyIds = companies.map(c => c.id);
+      if (companyIds.length > 0) {
+        const { data: emps } = await supabase
+          .from('user_companies')
+          .select('user:users(id, full_name, avatar, role), company_id')
+          .in('company_id', companyIds);
+        const seen = new Set();
+        (emps || []).forEach(e => {
+          if (e.user && !seen.has(e.user.id)) {
+            seen.add(e.user.id);
+            employees.push(e.user);
+          }
+        });
+      }
     }
 
     const allTasks = tasks || [];
     const stats = {
-      projects: projectsWithCompany.length,
-      active: projectsWithCompany.filter(p => ['planning', 'in-progress'].includes(p.status)).length,
+      projects: (projects || []).length,
+      active: (projects || []).filter(p => !['completed', 'warranty', 'cancelled'].includes(p.status)).length,
       tasks: allTasks.length,
-      members: memberCount,
+      members: employees.length,
       overdue: allTasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length,
       completed: allTasks.filter(t => t.status === 'done').length
     };
 
     res.json({
       stats,
-      projects: projectsWithCompany,
+      projects: projects || [],
       tasks: allTasks,
       activities: [],
-      companies
+      companies,
+      employees
     });
   } catch (e) {
     console.error('Get division dashboard error:', e);
