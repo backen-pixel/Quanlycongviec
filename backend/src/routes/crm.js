@@ -127,12 +127,100 @@ r.get('/dashboard', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PIPELINES — Ống bán hàng theo Công ty
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/pipelines', async (req, res) => {
+  try {
+    let q = supabase.from('crm_pipelines').select('*, company:companies(id, name)').order('is_default', { ascending: false }).order('name');
+    if (req.query.active !== 'false') q = q.eq('is_active', true);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.get('/pipelines/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('crm_pipelines')
+      .select('*, company:companies(id, name), stages:crm_pipeline_stages(*)').eq('id', req.params.id).single();
+    if (error) throw error;
+    if (data?.stages) data.stages.sort((a, b) => a.order_index - b.order_index);
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/pipelines', async (req, res) => {
+  try {
+    const b = req.body;
+    if (!b.name) return res.status(400).json({ error: 'Thiếu tên pipeline' });
+    const { data, error } = await supabase.from('crm_pipelines').insert({
+      name: b.name, company_id: b.company_id || null, description: b.description || null,
+      is_default: b.is_default || false, is_active: true,
+    }).select('*, company:companies(id, name)').single();
+    if (error) throw error;
+
+    // Auto-create default stages (lead + deal)
+    const defaultLead = [
+      { name: 'Mới', icon: '🆕', color: '#94A3B8', order_index: 1 },
+      { name: 'Đã liên hệ', icon: '📞', color: '#3B82F6', order_index: 2 },
+      { name: 'Đang tư vấn', icon: '💬', color: '#8B5CF6', order_index: 3 },
+      { name: 'Chờ phản hồi', icon: '⏳', color: '#F59E0B', order_index: 4 },
+      { name: 'Chuyển Deal', icon: '✅', color: '#10B981', order_index: 5, is_won: true },
+      { name: 'Mất', icon: '❌', color: '#EF4444', order_index: 6, is_lost: true },
+    ];
+    const defaultDeal = [
+      { name: 'Deal mới', icon: '🆕', color: '#06B6D4', order_index: 1 },
+      { name: 'Báo giá', icon: '💰', color: '#F59E0B', order_index: 2 },
+      { name: 'Đàm phán', icon: '🤝', color: '#8B5CF6', order_index: 3 },
+      { name: 'Ký hợp đồng', icon: '📝', color: '#3B82F6', order_index: 4 },
+      { name: 'Thắng', icon: '🏆', color: '#10B981', order_index: 5, is_won: true },
+      { name: 'Thua', icon: '❌', color: '#EF4444', order_index: 6, is_lost: true },
+    ];
+    const stages = [
+      ...defaultLead.map(s => ({ ...s, pipeline_id: data.id, pipeline_type: 'lead', is_active: true })),
+      ...defaultDeal.map(s => ({ ...s, pipeline_id: data.id, pipeline_type: 'deal', is_active: true })),
+    ];
+    await supabase.from('crm_pipeline_stages').insert(stages);
+
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/pipelines/:id', async (req, res) => {
+  try {
+    const update = {};
+    ['name', 'company_id', 'description', 'is_default', 'is_active'].forEach(f => {
+      if (req.body[f] !== undefined) update[f] = req.body[f];
+    });
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('crm_pipelines').update(update)
+      .eq('id', req.params.id).select('*, company:companies(id, name)').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.delete('/pipelines/:id', async (req, res) => {
+  try {
+    // Check leads using this pipeline
+    const { count } = await supabase.from('crm_leads').select('id', { count: 'exact', head: true })
+      .eq('pipeline_id', req.params.id);
+    if (count > 0) return res.status(400).json({ error: `Không thể xóa — ${count} lead/deal đang dùng pipeline này` });
+    // Delete stages first, then pipeline
+    await supabase.from('crm_pipeline_stages').delete().eq('pipeline_id', req.params.id);
+    await supabase.from('crm_pipelines').delete().eq('id', req.params.id);
+    res.json({ message: 'Đã xóa pipeline' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PIPELINE STAGES (CRUD)
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/pipeline-stages', async (req, res) => {
-  const { type } = req.query;
+  const { type, pipeline_id } = req.query;
   let q = supabase.from('crm_pipeline_stages').select('*').order('pipeline_type').order('order_index');
   if (type) q = q.eq('pipeline_type', type);
+  if (pipeline_id) q = q.eq('pipeline_id', pipeline_id);
   if (req.query.all !== 'true') q = q.eq('is_active', true);
   const { data } = await q;
   res.json(data || []);
@@ -142,13 +230,15 @@ r.post('/pipeline-stages', async (req, res) => {
   try {
     const b = req.body;
     if (!b.name || !b.pipeline_type) return res.status(400).json({ error: 'Thiếu tên hoặc loại pipeline' });
-    // Auto order_index
-    const { data: existing } = await supabase.from('crm_pipeline_stages')
+    // Auto order_index within pipeline_id + pipeline_type
+    let orderQ = supabase.from('crm_pipeline_stages')
       .select('order_index').eq('pipeline_type', b.pipeline_type).order('order_index', { ascending: false }).limit(1);
+    if (b.pipeline_id) orderQ = orderQ.eq('pipeline_id', b.pipeline_id);
+    const { data: existing } = await orderQ;
     const nextOrder = (existing?.[0]?.order_index || 0) + 1;
     const { data, error } = await supabase.from('crm_pipeline_stages').insert({
-      name: b.name, pipeline_type: b.pipeline_type, color: b.color || '#94A3B8',
-      icon: b.icon || null, order_index: b.order_index ?? nextOrder,
+      name: b.name, pipeline_type: b.pipeline_type, pipeline_id: b.pipeline_id || null,
+      color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
       is_won: b.is_won || false, is_lost: b.is_lost || false, is_active: true,
     }).select().single();
     if (error) throw error;

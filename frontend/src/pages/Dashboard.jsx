@@ -201,20 +201,35 @@ function PlayCircle(props) {
 function DivisionContent({ divisionId, divisions }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [companies, setCompanies] = useState([]);
+  const [selectedCompany, setSelectedCompany] = useState('');
 
   const division = divisions.find(d => d.id === divisionId);
 
   useEffect(() => {
+    // Reset company filter when switching division
+    setSelectedCompany('');
+  }, [divisionId]);
+
+  useEffect(() => {
     if (!divisionId) return;
     setLoading(true);
-    api.get(`/divisions/${divisionId}/dashboard`)
-      .then(r => setData(r.data))
+    const params = {};
+    if (selectedCompany) params.company_id = selectedCompany;
+    api.get(`/divisions/${divisionId}/dashboard`, { params })
+      .then(r => {
+        setData(r.data);
+        // Only update companies list on first load (no filter) to keep full list
+        if (!selectedCompany && r.data.companies) {
+          setCompanies(r.data.companies);
+        }
+      })
       .catch(err => {
         console.error('Failed to load division data:', err);
         setData(null);
       })
       .finally(() => setLoading(false));
-  }, [divisionId]);
+  }, [divisionId, selectedCompany]);
 
   if (loading) {
     return (
@@ -250,22 +265,62 @@ function DivisionContent({ divisionId, divisions }) {
         </div>
       </div>
 
+      {/* Company Filter */}
+      {companies.length > 0 && (
+        <div className="flex items-center gap-3 animate-fade-in">
+          <Building2 className="h-4 w-4 text-gray-500" />
+          <span className="text-sm font-medium text-gray-600">Công ty:</span>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <button
+              onClick={() => setSelectedCompany('')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
+                !selectedCompany
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
+              }`}
+            >
+              Tất cả
+            </button>
+            {companies.map(company => (
+              <button
+                key={company.id}
+                onClick={() => setSelectedCompany(company.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                  selectedCompany === company.id
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
+                }`}
+              >
+                {company.icon && <span>{company.icon}</span>}
+                {company.short_name || company.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Stats grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Tổng dự án" value={stats?.projects || 0} icon={FolderKanban} color="text-indigo-600" bgColor="bg-indigo-50" />
         <StatCard title="Đang hoạt động" value={stats?.active || 0} icon={TrendingUp} color="text-blue-600" bgColor="bg-blue-50" />
         <StatCard title="Công việc" value={stats?.tasks || 0} icon={CheckSquare} color="text-emerald-600" bgColor="bg-emerald-50" />
-        <StatCard title="Nhân sự" value={stats?.members || 0} icon={User} color="text-purple-600" bgColor="bg-purple-50" />
+        <StatCard title="Quá hạn" value={stats?.overdue || 0} icon={AlertTriangle} color="text-red-600" bgColor="bg-red-50" />
       </div>
 
       {/* Projects List */}
       {projects && projects.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-5 animate-fade-in">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-gray-900">Dự án trong khối</h2>
+            <h2 className="text-sm font-semibold text-gray-900">
+              Dự án trong khối
+              {selectedCompany && companies.find(c => c.id === selectedCompany) && (
+                <span className="text-gray-400 font-normal"> — {companies.find(c => c.id === selectedCompany)?.name}</span>
+              )}
+            </h2>
+            <span className="text-xs text-gray-400">{projects.length} dự án</span>
           </div>
           <div className="divide-y divide-gray-100">
-            {projects.slice(0, 5).map(p => (
+            {projects.slice(0, 10).map(p => (
               <Link to={`/projects/${p.id}`} key={p.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0 hover:bg-gray-50 -mx-2 px-2 rounded-lg transition-colors cursor-pointer">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
@@ -273,8 +328,15 @@ function DivisionContent({ divisionId, divisions }) {
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] || 'bg-gray-100 text-gray-600'}`}>
                       {STATUS_LABELS[p.status] || p.status}
                     </span>
+                    {p.company && !selectedCompany && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">
+                        {p.company.icon && <span className="mr-0.5">{p.company.icon}</span>}
+                        {p.company.short_name || p.company.name}
+                      </span>
+                    )}
                   </div>
                   <p className="text-sm text-gray-700 truncate">{p.name}</p>
+                  {p.customer_name && <p className="text-xs text-gray-400">{p.customer_name}</p>}
                 </div>
                 <div className="text-right shrink-0 ml-4">
                   <p className="text-sm font-semibold text-gray-900">{formatVND(p.estimated_value)}</p>
