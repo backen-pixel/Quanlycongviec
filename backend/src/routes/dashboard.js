@@ -414,10 +414,25 @@ r.get('/divisions', async (req, res) => {
       .eq('level_id', divLevel.id)
       .order('name');
 
-    // Deduplicate by name — prefer units with parent_id (in tree)
+    // Check which units have companies linked
+    const unitIds = (allUnits || []).map(u => u.id);
+    let companyCounts = {};
+    if (unitIds.length > 0) {
+      const { data: companyData } = await supabase
+        .from('companies')
+        .select('division_unit_id')
+        .in('division_unit_id', unitIds);
+      (companyData || []).forEach(c => {
+        companyCounts[c.division_unit_id] = (companyCounts[c.division_unit_id] || 0) + 1;
+      });
+    }
+
+    // Deduplicate by name — prefer units that have companies linked
     const byName = {};
     (allUnits || []).forEach(u => {
-      if (!byName[u.name] || (u.parent_id && !byName[u.name].parent_id)) {
+      const hasCompanies = (companyCounts[u.id] || 0) > 0;
+      const existingHasCompanies = byName[u.name] ? (companyCounts[byName[u.name].id] || 0) > 0 : false;
+      if (!byName[u.name] || (hasCompanies && !existingHasCompanies)) {
         byName[u.name] = u;
       }
     });
