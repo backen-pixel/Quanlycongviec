@@ -226,9 +226,59 @@ r.put('/leads/:id', async (req, res) => {
 });
 
 r.delete('/leads/:id', async (req, res) => {
-  const { error } = await supabase.from('crm_leads').delete().eq('id', req.params.id);
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true });
+  try {
+    // Get lead info + linked project
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id, title, project_id')
+      .eq('id', req.params.id).single();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
+
+    // Delete linked project if exists (cascade: tasks, checklists, comments, etc.)
+    if (lead.project_id) {
+      console.log(`Deleting lead ${lead.id} → cascade delete project ${lead.project_id}`);
+
+      // Delete task sub-tables first
+      const { data: taskIds } = await supabase.from('tasks').select('id').eq('project_id', lead.project_id);
+      if (taskIds?.length) {
+        const ids = taskIds.map(t => t.id);
+        await supabase.from('task_checklists').delete().in('task_id', ids).catch(() => {});
+        await supabase.from('task_comments').delete().in('task_id', ids).catch(() => {});
+        await supabase.from('task_participants').delete().in('task_id', ids).catch(() => {});
+        await supabase.from('task_time_logs').delete().in('task_id', ids).catch(() => {});
+        await supabase.from('file_attachments').delete().eq('entity_type', 'task').in('entity_id', ids).catch(() => {});
+      }
+
+      // Delete project related tables
+      await supabase.from('tasks').delete().eq('project_id', lead.project_id).catch(() => {});
+      await supabase.from('project_comments').delete().eq('project_id', lead.project_id).catch(() => {});
+      await supabase.from('stage_transitions').delete().eq('project_id', lead.project_id).catch(() => {});
+      await supabase.from('project_workflow_lines').delete().eq('project_id', lead.project_id).catch(() => {});
+      await supabase.from('project_products').delete().eq('project_id', lead.project_id).catch(() => {});
+      await supabase.from('project_company_assignments').delete().eq('project_id', lead.project_id).catch(() => {});
+      await supabase.from('project_approvals').delete().eq('project_id', lead.project_id).catch(() => {});
+      await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id).catch(() => {});
+      await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id).catch(() => {});
+
+      // Delete the project
+      await supabase.from('projects').delete().eq('id', lead.project_id);
+      console.log(`Project ${lead.project_id} deleted`);
+    }
+
+    // Delete lead documents
+    await supabase.from('lead_documents').delete().eq('lead_id', lead.id).catch(() => {});
+
+    // Delete lead activities
+    await supabase.from('lead_activities').delete().eq('lead_id', lead.id).catch(() => {});
+
+    // Delete lead
+    const { error } = await supabase.from('crm_leads').delete().eq('id', lead.id);
+    if (error) throw error;
+
+    res.json({ success: true, message: `Đã xóa lead "${lead.title}"${lead.project_id ? ' và dự án liên kết' : ''}` });
+  } catch (e) {
+    console.error('Delete lead error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
