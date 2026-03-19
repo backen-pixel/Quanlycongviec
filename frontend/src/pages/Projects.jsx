@@ -69,10 +69,13 @@ export default function Projects() {
   const [filterTime, setFilterTime] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [filterDivision, setFilterDivision] = useState('all');
   const [filterCompany, setFilterCompany] = useState('all');
   const [filterCustomer, setFilterCustomer] = useState('all');
   const [filterPerson, setFilterPerson] = useState('all');
+  const [divisions, setDivisions] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [allCompanies, setAllCompanies] = useState([]);
   const [companyEmployees, setCompanyEmployees] = useState([]);
   const [taskAssigneeMap, setTaskAssigneeMap] = useState({});
   const [loading, setLoading] = useState(true);
@@ -109,10 +112,32 @@ export default function Projects() {
   useEffect(load, []);
 
     useEffect(() => {
-    // Load companies
-    api.get('/companies').then(r => setCompanies(r.data.companies || []))
-      .catch(() => api.get('/companies/my/list').then(r => setCompanies(r.data.companies || [])).catch(() => {}));
+    // Load divisions + companies
+    api.get('/divisions').then(r => setDivisions(r.data.divisions || [])).catch(() => {});
+    api.get('/companies').then(r => {
+      const cos = r.data.companies || [];
+      setAllCompanies(cos);
+      setCompanies(cos);
+    }).catch(() => api.get('/companies/my/list').then(r => {
+      const cos = r.data.companies || [];
+      setAllCompanies(cos);
+      setCompanies(cos);
+    }).catch(() => {}));
   }, []);
+
+  // Cascade: division → filter companies
+  useEffect(() => {
+    if (filterDivision && filterDivision !== 'all') {
+      const filtered = allCompanies.filter(c => c.division_unit_id === filterDivision);
+      setCompanies(filtered);
+      // If current company not in filtered list, reset
+      if (filterCompany !== 'all' && !filtered.find(c => c.id === filterCompany)) {
+        setFilterCompany('all');
+      }
+    } else {
+      setCompanies(allCompanies);
+    }
+  }, [filterDivision, allCompanies]);
 
   // Load employees when company filter changes
   useEffect(() => {
@@ -120,11 +145,27 @@ export default function Projects() {
       api.get(`/companies/${filterCompany}/employees`)
         .then(r => setCompanyEmployees(r.data.employees || []))
         .catch(() => setCompanyEmployees([]));
+    } else if (filterDivision && filterDivision !== 'all') {
+      // Load all employees from companies in this division
+      const divCompanies = allCompanies.filter(c => c.division_unit_id === filterDivision);
+      if (divCompanies.length > 0) {
+        Promise.all(divCompanies.map(c => api.get(`/companies/${c.id}/employees`).then(r => r.data.employees || []).catch(() => [])))
+          .then(results => {
+            const all = [];
+            const seen = new Set();
+            results.flat().forEach(emp => {
+              if (emp?.id && !seen.has(emp.id)) { seen.add(emp.id); all.push(emp); }
+            });
+            setCompanyEmployees(all);
+          });
+      } else {
+        setCompanyEmployees([]);
+      }
     } else {
       setCompanyEmployees([]);
     }
-    setFilterPerson('all'); // Reset person filter when company changes
-  }, [filterCompany]);
+    setFilterPerson('all'); // Reset person filter when company/division changes
+  }, [filterCompany, filterDivision]);
 
   const deleteProject = async (e, id, code) => {
     e.preventDefault();
@@ -135,6 +176,10 @@ export default function Projects() {
 
   // Apply client-side filters
   let filtered = filterByTime(projects, filterTime, dateFrom, dateTo);
+  if (filterDivision !== 'all') {
+    const divCompanyIds = allCompanies.filter(c => c.division_unit_id === filterDivision).map(c => c.id);
+    filtered = filtered.filter(p => divCompanyIds.includes(p.company_id) || divCompanyIds.includes(p.company?.id));
+  }
   if (filterCompany !== 'all') filtered = filtered.filter(p => p.company_id === filterCompany || p.company?.id === filterCompany);
   if (filterCustomer !== 'all') filtered = filtered.filter(p => p.customer_id === filterCustomer);
   if (filterPerson !== 'all') filtered = filtered.filter(p => {
@@ -200,7 +245,7 @@ export default function Projects() {
     });
   }
 
-  const hasActiveFilters = filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all' || dateFrom || dateTo;
+  const hasActiveFilters = filterDivision !== 'all' || filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all' || dateFrom || dateTo;
 
   return (
     <div className="space-y-5 max-w-7xl">
@@ -252,11 +297,11 @@ export default function Projects() {
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-700">Bộ lọc nâng cao</h3>
             {hasActiveFilters && (
-              <button onClick={() => { setFilterTime('all'); setDateFrom(''); setDateTo(''); setFilterCompany('all'); setFilterCustomer('all'); setFilterPerson('all'); }}
+              <button onClick={() => { setFilterTime('all'); setDateFrom(''); setDateTo(''); setFilterDivision('all'); setFilterCompany('all'); setFilterCustomer('all'); setFilterPerson('all'); }}
                 className="text-xs text-red-500 hover:text-red-600 cursor-pointer flex items-center gap-1"><X className="h-3 w-3" /> Xóa bộ lọc</button>
             )}
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {/* Time */}
             <div>
               <label className="block text-[11px] font-medium text-gray-500 mb-1"><Calendar className="h-3 w-3 inline mr-1" />Thời gian</label>
@@ -271,12 +316,28 @@ export default function Projects() {
                 </div>
               )}
             </div>
+            {/* Division (Khối) */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-500 mb-1"><Building2 className="h-3 w-3 inline mr-1" />Khối</label>
+              <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
+                <option value="all">Tất cả khối</option>
+                {divisions.map(d => <option key={d.id} value={d.id}>{d.icon || ''} {d.name}</option>)}
+              </select>
+            </div>
             {/* Company */}
             <div>
               <label className="block text-[11px] font-medium text-gray-500 mb-1"><Building2 className="h-3 w-3 inline mr-1" />Công ty</label>
               <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                <option value="all">Tất cả công ty</option>
+                <option value="all">Tất cả công ty{filterDivision !== 'all' ? ` (${companies.length})` : ''}</option>
                 {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+              </select>
+            </div>
+            {/* Person (NV) */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-500 mb-1"><User className="h-3 w-3 inline mr-1" />Nhân viên</label>
+              <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
+                <option value="all">Tất cả NV{(filterCompany !== 'all' || filterDivision !== 'all') && companyEmployees.length > 0 ? ` (${companyEmployees.length})` : ''}</option>
+                {uniquePersons.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
             {/* Customer */}
@@ -285,14 +346,6 @@ export default function Projects() {
               <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
                 <option value="all">Tất cả KH</option>
                 {uniqueCustomers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            {/* Person */}
-            <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1"><User className="h-3 w-3 inline mr-1" />NV chịu trách nhiệm</label>
-              <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                <option value="all">Tất cả NV</option>
-                {uniquePersons.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
           </div>
