@@ -38,6 +38,7 @@ import TemplateSetDetailPage from './pages/TemplateSetDetailPage';
 import DepartmentChat from './pages/DepartmentChat';
 import WorkflowFlowsPage from './pages/WorkflowFlowsPage';
 import CompanyProcessesPage from './pages/CompanyProcessesPage';
+import PDFSettingsPage from './pages/PDFSettingsPage';
 import CreateProject from './pages/CreateProject';
 import CreateProjectNew from './pages/CreateProjectNew';
 import TemplateSetsPage from './pages/TemplateSetsPage';
@@ -142,6 +143,7 @@ export default function App() {
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<CRMReports />} />
             <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />
+            <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />

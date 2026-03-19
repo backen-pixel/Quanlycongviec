@@ -1588,167 +1588,330 @@ function formatVNDPdf(n) {
   return new Intl.NumberFormat('vi-VN').format(Math.round(n));
 }
 
+// Load company settings (from data file or default config)
+const path = require('path');
+const fs = require('fs');
+const defaultCompanyInfo = require('../config/companyInfo');
+
+function getCompanyInfo() {
+  try {
+    const filePath = path.join(__dirname, '../../data/company-info.json');
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      return { ...defaultCompanyInfo, ...JSON.parse(raw) };
+    }
+  } catch (e) { /* fallback to default */ }
+  return { ...defaultCompanyInfo };
+}
+
+// Register Vietnamese-capable fonts
+const fontRegular = path.join(__dirname, '../../assets/fonts/DejaVuSans.ttf');
+const fontBold = path.join(__dirname, '../../assets/fonts/DejaVuSans-Bold.ttf');
+
 function generateDocPdf(res, doc, items, docType) {
-  const pdf = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
-  
+  const company = getCompanyInfo();
+  const margin = 40;
+  const pdf = new PDFDocument({ size: 'A4', margin, bufferPages: true });
+
+  // Register Vietnamese fonts
+  pdf.registerFont('VN', fontRegular);
+  pdf.registerFont('VN-Bold', fontBold);
+
   res.setHeader('Content-Type', 'application/pdf');
   const safeCode = (doc.code || 'unknown').replace(/[^a-zA-Z0-9\-]/g, '_');
   res.setHeader('Content-Disposition', `inline; filename="${safeCode}.pdf"`);
   pdf.pipe(res);
 
-  const pageW = pdf.page.width - 80; // 40 margin each side
+  const pageW = pdf.page.width - margin * 2;
+  const tableX = margin;
 
-  // ── Company Header ──
-  pdf.fontSize(14).font('Helvetica-Bold').text('CONG TY TNHH THUONG MAI VA DICH VU', 40, 40, { align: 'center', width: pageW });
-  pdf.fontSize(9).font('Helvetica').text('Dia chi: 123 Nguyen Van Linh, Quan 7, TP.HCM', { align: 'center', width: pageW });
-  pdf.text('DT: 028-1234-5678 | Email: info@company.vn', { align: 'center', width: pageW });
-  pdf.text('MST: 0312345678', { align: 'center', width: pageW });
-  pdf.moveDown(0.5);
-  pdf.moveTo(40, pdf.y).lineTo(40 + pageW, pdf.y).lineWidth(1).stroke('#333');
-  pdf.moveDown(0.8);
+  // ════════════════════════════════════════════════════════════════════
+  // COMPANY HEADER (logo left, info right)
+  // ════════════════════════════════════════════════════════════════════
+  const headerStartY = margin;
+  const logoW = 80;
+  const infoX = margin + logoW + 15;
+  const infoW = pageW - logoW - 15;
 
-  // ── Document Title ──
-  let title = '';
-  if (docType === 'quotation') title = 'BAO GIA';
-  else if (docType === 'order') title = 'DON HANG';
-  else title = 'HOA DON BAN HANG';
+  // Try to draw logo
+  let logoDrawn = false;
+  if (company.logoPath) {
+    try {
+      const logoFile = path.resolve(__dirname, '../../', company.logoPath);
+      if (fs.existsSync(logoFile)) {
+        pdf.image(logoFile, margin, headerStartY, { width: logoW, height: 70 });
+        logoDrawn = true;
+      }
+    } catch (e) { /* skip logo */ }
+  }
+
+  const textStartX = logoDrawn ? infoX : margin;
+  const textWidth = logoDrawn ? infoW : pageW;
+
+  // Company name
+  pdf.font('VN-Bold').fontSize(13).fillColor('#1a1a1a');
+  pdf.text(company.name, textStartX, headerStartY, { width: textWidth });
   
-  pdf.fontSize(18).font('Helvetica-Bold').text(title, { align: 'center', width: pageW });
-  pdf.fontSize(10).font('Helvetica').text(`So: ${doc.code || ''}`, { align: 'center', width: pageW });
-  if (doc.created_at) pdf.text(`Ngay: ${new Date(doc.created_at).toLocaleDateString('vi-VN')}`, { align: 'center', width: pageW });
-  pdf.moveDown(1);
+  // Addresses
+  pdf.font('VN').fontSize(8).fillColor('#444');
+  (company.addresses || []).forEach(addr => {
+    pdf.text(addr, textStartX, pdf.y, { width: textWidth });
+  });
 
-  // ── Customer Info ──
-  pdf.fontSize(10).font('Helvetica-Bold').text('THONG TIN KHACH HANG', 40);
-  pdf.moveDown(0.3);
-  pdf.fontSize(9).font('Helvetica');
-  if (doc.customer_name) pdf.text(`Khach hang: ${doc.customer_name}`, 40);
-  if (doc.customer_phone) pdf.text(`Dien thoai: ${doc.customer_phone}`, 40);
-  if (doc.customer_address) pdf.text(`Dia chi: ${doc.customer_address}`, 40);
-  if (doc.customer?.tax_code) pdf.text(`MST: ${doc.customer.tax_code}`, 40);
+  // Website
+  if (company.website) {
+    pdf.fillColor('#2563EB').text(company.website, textStartX, pdf.y, { width: textWidth, link: company.website });
+    pdf.fillColor('#444');
+  }
+
+  // Hotline & contacts
+  if (company.hotline) {
+    pdf.font('VN-Bold').fontSize(8).fillColor('#444');
+    pdf.text(`Hotline: ${company.hotline}`, textStartX, pdf.y, { width: textWidth, continued: false });
+  }
+  (company.contacts || []).forEach(c => {
+    pdf.font('VN').fontSize(8).fillColor('#444');
+    pdf.text(c, textStartX, pdf.y, { width: textWidth });
+  });
+  if (company.taxCode) {
+    pdf.font('VN').fontSize(8).text(`MST: ${company.taxCode}`, textStartX, pdf.y, { width: textWidth });
+  }
+
+  // Separator line
+  const afterHeaderY = Math.max(pdf.y, headerStartY + 75) + 8;
+  pdf.moveTo(margin, afterHeaderY).lineTo(margin + pageW, afterHeaderY).lineWidth(1.5).strokeColor('#2563EB').stroke();
+
+  // ════════════════════════════════════════════════════════════════════
+  // DOCUMENT TITLE
+  // ════════════════════════════════════════════════════════════════════
+  let title = '';
+  if (docType === 'quotation') title = company.quotationTitle || 'BÁO GIÁ KHỐI LƯỢNG CÔNG TRÌNH';
+  else if (docType === 'order') title = company.orderTitle || 'ĐƠN HÀNG';
+  else title = company.invoiceTitle || 'HÓA ĐƠN BÁN HÀNG';
+
+  pdf.y = afterHeaderY + 15;
+  pdf.font('VN-Bold').fontSize(16).fillColor('#1a1a1a');
+  pdf.text(title, margin, pdf.y, { align: 'center', width: pageW });
+  
+  pdf.font('VN').fontSize(9).fillColor('#555');
+  pdf.text(`Số: ${doc.code || ''}`, margin, pdf.y, { align: 'center', width: pageW });
+  if (doc.created_at) {
+    pdf.text(`Ngày: ${new Date(doc.created_at).toLocaleDateString('vi-VN')}`, margin, pdf.y, { align: 'center', width: pageW });
+  }
   pdf.moveDown(0.8);
 
-  // ── Items Table ──
-  const colWidths = [28, 160, 38, 35, 72, 80, 38, 70];
-  const colLabels = ['STT', 'Ten hang hoa', 'DVT', 'SL', 'Don gia', 'Thanh tien', '%VAT', 'Tien thue'];
-  const colAligns = ['center', 'left', 'center', 'right', 'right', 'right', 'right', 'right'];
-  const tableX = 40;
-  let tableY = pdf.y;
-  const rowH = 20;
-  const headerH = 22;
+  // ════════════════════════════════════════════════════════════════════
+  // GREETING TEXT
+  // ════════════════════════════════════════════════════════════════════
+  if (company.greeting) {
+    pdf.font('VN').fontSize(9).fillColor('#333');
+    const shortName = company.name.replace(/^Công Ty /i, '').split(' ').pop() || company.name;
+    pdf.text(`${company.name} ${company.greeting}`, margin, pdf.y, { width: pageW });
+    if (docType === 'quotation') {
+      pdf.text(`${shortName} xin gửi đến quý khách bảng báo giá khối lượng công trình như sau:`, margin, pdf.y, { width: pageW });
+    }
+    pdf.moveDown(0.5);
+  }
 
-  // Draw header
+  // ════════════════════════════════════════════════════════════════════
+  // CUSTOMER INFO
+  // ════════════════════════════════════════════════════════════════════
+  pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
+  if (doc.customer_name) pdf.text(`Khách hàng: ${doc.customer_name}`, margin);
+  pdf.font('VN').fontSize(9).fillColor('#333');
+  if (doc.customer_phone) pdf.text(`Điện thoại: ${doc.customer_phone}`, margin);
+  if (doc.customer_address) pdf.text(`Địa chỉ: ${doc.customer_address}`, margin);
+  if (doc.customer?.tax_code) pdf.text(`MST: ${doc.customer.tax_code}`, margin);
+  pdf.moveDown(0.6);
+
+  // ════════════════════════════════════════════════════════════════════
+  // ITEMS TABLE
+  // ════════════════════════════════════════════════════════════════════
+  // Column definitions: STT | Hạng mục thi công | ĐVT | Quy cách | Số lượng | Diện tích | Đơn giá | Thành tiền | %VAT | Tiền thuế | Ghi chú
+  const colWidths = [25, 120, 30, 55, 35, 45, 60, 65, 28, 52];
+  const colLabels = ['STT', 'Hạng mục thi công', 'ĐVT', 'Quy cách', 'SL', 'D.tích (m²)', 'Đơn giá', 'Thành tiền', 'VAT%', 'Tiền thuế'];
+  const colAligns = ['center', 'left', 'center', 'center', 'right', 'right', 'right', 'right', 'right', 'right'];
+
+  let tableY = pdf.y;
+  const rowH = 22;
+  const headerH = 26;
+
+  // Draw header background
   pdf.rect(tableX, tableY, pageW, headerH).fill('#2563EB');
-  pdf.font('Helvetica-Bold').fontSize(8).fillColor('#FFFFFF');
+  pdf.font('VN-Bold').fontSize(7).fillColor('#FFFFFF');
   let cx = tableX;
   for (let c = 0; c < colLabels.length; c++) {
-    const align = colAligns[c];
-    const padding = align === 'right' ? colWidths[c] - 4 : (align === 'center' ? 0 : 4);
-    pdf.text(colLabels[c], cx + (align === 'center' ? 0 : (align === 'right' ? 0 : 4)), tableY + 6, {
-      width: colWidths[c] - (align === 'center' ? 0 : 4),
-      align,
-    });
+    pdf.text(colLabels[c], cx + 2, tableY + 4, { width: colWidths[c] - 4, align: colAligns[c] });
     cx += colWidths[c];
   }
   tableY += headerH;
   pdf.fillColor('#000000');
 
+  // Draw column lines for header
+  pdf.strokeColor('#FFFFFF').lineWidth(0.3);
+  cx = tableX;
+  for (let c = 0; c < colWidths.length; c++) {
+    if (c > 0) pdf.moveTo(cx, tableY - headerH).lineTo(cx, tableY).stroke();
+    cx += colWidths[c];
+  }
+
   // Draw rows
-  pdf.font('Helvetica').fontSize(8);
   (items || []).forEach((item, idx) => {
-    // Check page break
     if (tableY + rowH > pdf.page.height - 120) {
       pdf.addPage();
-      tableY = 40;
+      tableY = margin;
     }
 
-    const bg = idx % 2 === 0 ? '#F9FAFB' : '#FFFFFF';
+    const bg = idx % 2 === 0 ? '#F8FAFC' : '#FFFFFF';
     pdf.rect(tableX, tableY, pageW, rowH).fill(bg);
     pdf.fillColor('#000000');
 
-    const amount = item.amount || 0;
+    const amount = item.amount || ((item.quantity || 0) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100));
     const vatRate = item.vat_rate || 0;
     const vatAmount = item.vat_amount || (amount * vatRate / 100);
+    const area = item.dimensions ? '' : ''; // area comes from quantity * dimensions if applicable
+    
     const values = [
       String(idx + 1),
       item.name || '',
       item.unit || '',
+      item.dimensions || '',
       String(item.quantity || 0),
+      item.dimensions ? '' : '',
       formatVNDPdf(item.unit_price || 0),
       formatVNDPdf(amount),
       vatRate > 0 ? `${vatRate}%` : '0',
       formatVNDPdf(vatAmount),
     ];
+
     cx = tableX;
+    pdf.font('VN').fontSize(7).fillColor('#1a1a1a');
     for (let c = 0; c < values.length; c++) {
-      const align = colAligns[c];
-      pdf.text(values[c], cx + (align === 'right' ? 0 : (align === 'center' ? 0 : 4)), tableY + 5, {
-        width: colWidths[c] - (align === 'center' ? 0 : 4),
-        align,
-      });
+      pdf.text(values[c], cx + 2, tableY + 5, { width: colWidths[c] - 4, align: colAligns[c] });
       cx += colWidths[c];
     }
-    // Draw row border
-    pdf.moveTo(tableX, tableY + rowH).lineTo(tableX + pageW, tableY + rowH).lineWidth(0.3).strokeColor('#E5E7EB').stroke();
+
+    // Row border
+    pdf.moveTo(tableX, tableY + rowH).lineTo(tableX + pageW, tableY + rowH).lineWidth(0.3).strokeColor('#D1D5DB').stroke();
+    
+    // Column lines
+    cx = tableX;
+    pdf.strokeColor('#E5E7EB').lineWidth(0.2);
+    for (let c = 0; c < colWidths.length; c++) {
+      if (c > 0) pdf.moveTo(cx, tableY).lineTo(cx, tableY + rowH).stroke();
+      cx += colWidths[c];
+    }
+
     tableY += rowH;
   });
 
-  // Bottom border
-  pdf.moveTo(tableX, tableY).lineTo(tableX + pageW, tableY).lineWidth(0.5).strokeColor('#333').stroke();
-  tableY += 10;
+  // Table outer border
+  const tableStartY = pdf.y; // approximate
+  pdf.rect(tableX, pdf.y, pageW, 0).strokeColor('#333').lineWidth(0.5);
+  pdf.moveTo(tableX, tableY).lineTo(tableX + pageW, tableY).lineWidth(0.8).strokeColor('#333').stroke();
 
-  // ── Totals ──
-  const subtotal = (items || []).reduce((s, i) => s + (i.amount || 0), 0);
+  // ════════════════════════════════════════════════════════════════════
+  // TOTALS
+  // ════════════════════════════════════════════════════════════════════
+  tableY += 8;
+  const subtotal = (items || []).reduce((s, i) => s + (i.amount || ((i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100))), 0);
   const discountAmt = doc.discount_amount || 0;
   const afterDiscount = subtotal - discountAmt;
-  const totalVat = (items || []).reduce((s, i) => s + (i.vat_amount || (i.amount || 0) * (i.vat_rate || 0) / 100), 0);
+  const totalVat = (items || []).reduce((s, i) => {
+    const amt = i.amount || ((i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100));
+    return s + (i.vat_amount || (amt * (i.vat_rate || 0) / 100));
+  }, 0);
   const total = afterDiscount + totalVat;
 
-  const rightX = tableX + pageW - 200;
-  pdf.font('Helvetica').fontSize(9);
+  const rightX = tableX + pageW - 220;
+  const valX = rightX + 120;
+  const valW = 100;
 
-  const drawTotalLine = (label, value, bold, color) => {
-    if (bold) pdf.font('Helvetica-Bold').fontSize(11);
-    else pdf.font('Helvetica').fontSize(9);
-    if (color) pdf.fillColor(color); else pdf.fillColor('#000000');
-    pdf.text(label, rightX, tableY, { width: 110, align: 'left' });
-    pdf.text(value, rightX + 110, tableY, { width: 90, align: 'right' });
-    tableY += bold ? 18 : 15;
-    pdf.fillColor('#000000');
+  const drawTotal = (label, value, opts = {}) => {
+    const { bold, color, underline } = opts;
+    pdf.font(bold ? 'VN-Bold' : 'VN').fontSize(bold ? 10 : 9);
+    pdf.fillColor(color || '#1a1a1a');
+    pdf.text(label, rightX, tableY, { width: 120, align: 'left' });
+    pdf.text(value, valX, tableY, { width: valW, align: 'right' });
+    if (underline) {
+      tableY += (bold ? 16 : 14);
+      pdf.moveTo(rightX, tableY - 2).lineTo(rightX + 220, tableY - 2).lineWidth(0.5).strokeColor('#333').stroke();
+      tableY += 4;
+    } else {
+      tableY += (bold ? 16 : 14);
+    }
+    pdf.fillColor('#1a1a1a');
   };
 
-  drawTotalLine('Tong tien hang:', formatVNDPdf(subtotal));
-  if (discountAmt > 0) drawTotalLine('Chiet khau:', '-' + formatVNDPdf(discountAmt));
-  if (discountAmt > 0) drawTotalLine('Sau chiet khau:', formatVNDPdf(afterDiscount));
-  drawTotalLine('Thue GTGT:', formatVNDPdf(totalVat));
-  pdf.moveTo(rightX, tableY - 2).lineTo(rightX + 200, tableY - 2).lineWidth(0.5).strokeColor('#333').stroke();
-  tableY += 4;
-  drawTotalLine('TONG CONG:', formatVNDPdf(total) + ' VND', true, '#1D4ED8');
+  drawTotal('Cộng tiền hàng:', formatVNDPdf(subtotal) + ' đ');
+  if (discountAmt > 0) drawTotal('Chiết khấu:', '-' + formatVNDPdf(discountAmt) + ' đ');
+  if (discountAmt > 0) drawTotal('Sau chiết khấu:', formatVNDPdf(afterDiscount) + ' đ');
+  drawTotal('Thuế GTGT:', formatVNDPdf(totalVat) + ' đ');
+  drawTotal('TỔNG CỘNG:', formatVNDPdf(total) + ' VNĐ', { bold: true, color: '#1D4ED8', underline: true });
 
-  // ── Payment Terms ──
-  tableY += 10;
+  // ════════════════════════════════════════════════════════════════════
+  // PAYMENT TERMS & NOTES
+  // ════════════════════════════════════════════════════════════════════
+  tableY += 6;
   if (doc.payment_terms) {
-    pdf.font('Helvetica').fontSize(8).fillColor('#555');
-    pdf.text(`Dieu khoan thanh toan: ${doc.payment_terms}`, 40, tableY, { width: pageW });
-    tableY += 15;
+    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
+    pdf.text('Điều khoản thanh toán:', margin, tableY, { width: pageW });
+    tableY = pdf.y + 2;
+    pdf.font('VN').fontSize(8).fillColor('#333');
+    pdf.text(doc.payment_terms, margin + 10, tableY, { width: pageW - 10 });
+    tableY = pdf.y + 6;
   }
+
+  if (doc.valid_until) {
+    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
+    pdf.text(`Hiệu lực báo giá: đến ngày ${new Date(doc.valid_until).toLocaleDateString('vi-VN')}`, margin, tableY, { width: pageW });
+    tableY = pdf.y + 4;
+  }
+
+  if (company.warrantyText) {
+    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
+    pdf.text('Bảo hành:', margin, tableY, { width: pageW });
+    tableY = pdf.y + 2;
+    pdf.font('VN').fontSize(8).fillColor('#333');
+    pdf.text(company.warrantyText, margin + 10, tableY, { width: pageW - 10 });
+    tableY = pdf.y + 6;
+  }
+
   if (doc.notes) {
-    pdf.font('Helvetica').fontSize(8).fillColor('#555');
-    pdf.text(`Ghi chu: ${doc.notes}`, 40, tableY, { width: pageW });
-    tableY += 15;
+    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
+    pdf.text('Ghi chú:', margin, tableY, { width: pageW });
+    tableY = pdf.y + 2;
+    pdf.font('VN').fontSize(8).fillColor('#333');
+    pdf.text(doc.notes, margin + 10, tableY, { width: pageW - 10 });
+    tableY = pdf.y + 6;
   }
 
-  // ── Signatures ──
-  if (tableY + 80 > pdf.page.height - 40) pdf.addPage();
-  tableY = Math.max(tableY + 20, pdf.y + 20);
+  // Bank info
+  if (company.bankAccount && company.bankName) {
+    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
+    pdf.text('Thông tin chuyển khoản:', margin, tableY, { width: pageW });
+    tableY = pdf.y + 2;
+    pdf.font('VN').fontSize(8).fillColor('#333');
+    pdf.text(`STK: ${company.bankAccount} — ${company.bankName}`, margin + 10, tableY, { width: pageW - 10 });
+    tableY = pdf.y + 6;
+  }
 
-  pdf.font('Helvetica-Bold').fontSize(9).fillColor('#000');
-  pdf.text('Nguoi mua hang', 40, tableY, { width: pageW / 2, align: 'center' });
-  pdf.text('Nguoi ban hang', 40 + pageW / 2, tableY, { width: pageW / 2, align: 'center' });
+  // ════════════════════════════════════════════════════════════════════
+  // SIGNATURES
+  // ════════════════════════════════════════════════════════════════════
+  if (tableY + 90 > pdf.page.height - margin) pdf.addPage();
+  tableY = Math.max(tableY + 25, pdf.y + 25);
+
+  const sigLeft = company.signatureLeft || 'Đại diện khách hàng';
+  const sigRight = company.signatureRight || 'Đại diện công ty';
+
+  pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
+  pdf.text(sigLeft, margin, tableY, { width: pageW / 2, align: 'center' });
+  pdf.text(sigRight, margin + pageW / 2, tableY, { width: pageW / 2, align: 'center' });
   tableY += 14;
-  pdf.font('Helvetica').fontSize(8).fillColor('#888');
-  pdf.text('(Ky, ghi ro ho ten)', 40, tableY, { width: pageW / 2, align: 'center' });
-  pdf.text('(Ky, ghi ro ho ten)', 40 + pageW / 2, tableY, { width: pageW / 2, align: 'center' });
+  pdf.font('VN').fontSize(7).fillColor('#888');
+  pdf.text('(Ký, ghi rõ họ tên)', margin, tableY, { width: pageW / 2, align: 'center' });
+  pdf.text('(Ký, ghi rõ họ tên)', margin + pageW / 2, tableY, { width: pageW / 2, align: 'center' });
 
   pdf.end();
 }
