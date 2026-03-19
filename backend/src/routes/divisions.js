@@ -25,7 +25,7 @@ r.get('/', async (req, res) => {
       return res.json({ divisions: [] });
     }
 
-    const { data: divisions, error } = await supabase
+    const { data: allDivisions, error } = await supabase
       .from('ecosystem_units')
       .select('id, name, short_name, code, description, logo_url, icon, color, order_index')
       .eq('level_id', levelData.id)
@@ -33,7 +33,14 @@ r.get('/', async (req, res) => {
 
     if (error) throw error;
 
-    res.json({ divisions: divisions || [] });
+    // Filter: only return divisions that have at least 1 company linked
+    const { data: companyCounts } = await supabase
+      .from('companies')
+      .select('division_unit_id');
+    const activeDivIds = new Set((companyCounts || []).map(c => c.division_unit_id).filter(Boolean));
+    const divisions = (allDivisions || []).filter(d => activeDivIds.has(d.id));
+
+    res.json({ divisions });
   } catch (e) {
     console.error('Get divisions error:', e);
     res.status(500).json({ error: e.message });
