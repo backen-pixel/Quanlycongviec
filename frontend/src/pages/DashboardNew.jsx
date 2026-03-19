@@ -20,6 +20,7 @@ export default function DashboardNew() {
   const [divLoading, setDivLoading] = useState(false);
   const [divDateFrom, setDivDateFrom] = useState('');
   const [divDateTo, setDivDateTo] = useState('');
+  const [divCompanyId, setDivCompanyId] = useState('');
 
   const selectedDiv = searchParams.get('khoi');
 
@@ -47,10 +48,13 @@ export default function DashboardNew() {
     setLoading(false);
   };
 
-  const loadDivisionDashboard = async (divId, from, to) => {
+  const loadDivisionDashboard = async (divId, from, to, companyId) => {
     setDivLoading(true);
     try {
-      const params = {}; if (from) params.from = from; if (to) params.to = to;
+      const params = {};
+      if (from) params.from = from;
+      if (to) params.to = to;
+      if (companyId) params.company_id = companyId;
       const { data } = await api.get(`/dashboard/division/${divId}`, { params });
       setDivisionData(data);
     } catch { setDivisionData(null); }
@@ -59,11 +63,15 @@ export default function DashboardNew() {
 
   const handleTabChange = (divId) => {
     divId ? setSearchParams({ khoi: divId }) : setSearchParams({});
-    setDivDateFrom(''); setDivDateTo('');
+    setDivDateFrom(''); setDivDateTo(''); setDivCompanyId('');
   };
 
-  const handleDivDateFilter = () => { if (selectedDiv) loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo); };
-  const clearDivDateFilter = () => { setDivDateFrom(''); setDivDateTo(''); if (selectedDiv) loadDivisionDashboard(selectedDiv); };
+  const handleDivDateFilter = () => { if (selectedDiv) loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo, divCompanyId); };
+  const clearDivDateFilter = () => { setDivDateFrom(''); setDivDateTo(''); if (selectedDiv) loadDivisionDashboard(selectedDiv, '', '', divCompanyId); };
+  const handleCompanyFilter = (companyId) => {
+    setDivCompanyId(companyId);
+    if (selectedDiv) loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo, companyId);
+  };
 
   const isLoading = selectedDiv ? divLoading : loading;
   if (isLoading && !overview && !divisionData) return (
@@ -86,7 +94,7 @@ export default function DashboardNew() {
         </div>
       </div>
       {isLoading ? <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div></div>
-      : selectedDiv && divisionData ? <DivisionDashboardContent data={divisionData} dateFrom={divDateFrom} dateTo={divDateTo} setDateFrom={setDivDateFrom} setDateTo={setDivDateTo} onFilter={handleDivDateFilter} onClear={clearDivDateFilter} />
+      : selectedDiv && divisionData ? <DivisionDashboardContent data={divisionData} dateFrom={divDateFrom} dateTo={divDateTo} setDateFrom={setDivDateFrom} setDateTo={setDivDateTo} onFilter={handleDivDateFilter} onClear={clearDivDateFilter} selectedCompany={divCompanyId} onCompanyChange={handleCompanyFilter} />
       : overview ? <MainDashboardContent overview={overview} workload={workload} alerts={alerts} activities={activities} /> : null}
     </div>
   );
@@ -111,8 +119,8 @@ function MainDashboardContent({ overview, workload, alerts, activities }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // DIVISION DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════
-function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDateTo, onFilter, onClear }) {
-  const { division, stats, upcoming, active, completed, companies_detail, task_detail } = data;
+function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDateTo, onFilter, onClear, selectedCompany, onCompanyChange }) {
+  const { division, stats, upcoming, active, completed, companies_detail, companies_list, task_detail } = data;
   const [taskFilter, setTaskFilter] = useState({ search: '', assignee: 'all', stage: 'all', status: 'all' });
   const [expandedStage, setExpandedStage] = useState(null);
 
@@ -175,6 +183,26 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
           </div>
         </div>
       </div>
+
+      {/* Company Filter */}
+      {(companies_list || []).length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <Building2 className="h-4 w-4 text-gray-500" />
+          <span className="text-sm font-medium text-gray-600">Công ty:</span>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <button onClick={() => onCompanyChange('')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all cursor-pointer ${
+                !selectedCompany ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
+              }`}>Tất cả</button>
+            {(companies_list || []).map(c => (
+              <button key={c.id} onClick={() => onCompanyChange(c.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all cursor-pointer ${
+                  selectedCompany === c.id ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
+                }`}>{c.short_name || c.name}</button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

@@ -139,33 +139,75 @@ export default function Projects() {
     }
   }, [filterDivision, allCompanies]);
 
-  // Load employees when company filter changes
+  // Load employees when company/division filter changes
   useEffect(() => {
     if (filterCompany && filterCompany !== 'all') {
-      api.get(`/companies/${filterCompany}/employees`)
-        .then(r => setCompanyEmployees(r.data.employees || []))
-        .catch(() => setCompanyEmployees([]));
+      // Load employees who created projects in this company OR are assigned tasks
+      loadRelevantEmployees([filterCompany]);
     } else if (filterDivision && filterDivision !== 'all') {
-      // Load all employees from companies in this division
-      const divCompanies = allCompanies.filter(c => c.division_unit_id === filterDivision);
-      if (divCompanies.length > 0) {
-        Promise.all(divCompanies.map(c => api.get(`/companies/${c.id}/employees`).then(r => r.data.employees || []).catch(() => [])))
-          .then(results => {
-            const all = [];
-            const seen = new Set();
-            results.flat().forEach(emp => {
-              if (emp?.id && !seen.has(emp.id)) { seen.add(emp.id); all.push(emp); }
-            });
-            setCompanyEmployees(all);
-          });
+      const divCompanyIds = allCompanies.filter(c => c.division_unit_id === filterDivision).map(c => c.id);
+      if (divCompanyIds.length > 0) {
+        loadRelevantEmployees(divCompanyIds);
       } else {
         setCompanyEmployees([]);
       }
     } else {
       setCompanyEmployees([]);
     }
-    setFilterPerson('all'); // Reset person filter when company/division changes
-  }, [filterCompany, filterDivision]);
+    setFilterPerson('all');
+  }, [filterCompany, filterDivision, projects, taskAssigneeMap]);
+
+  // Build list of relevant employees: project creators + task assignees
+  const loadRelevantEmployees = (companyIds) => {
+    // Get project creators for these companies
+    const relevantProjects = projects.filter(p => companyIds.includes(p.company_id) || companyIds.includes(p.company?.id));
+    const creatorIds = new Set(relevantProjects.map(p => p.created_by).filter(Boolean));
+    
+    // Get task assignees for these projects
+    relevantProjects.forEach(p => {
+      const assignees = taskAssigneeMap[p.id] || [];
+      assignees.forEach(uid => creatorIds.add(uid));
+    });
+
+    if (creatorIds.size === 0) {
+      setCompanyEmployees([]);
+      return;
+    }
+
+    // Try to resolve names from project data first
+    const employees = [];
+    const seen = new Set();
+    
+    // From project person fields
+    relevantProjects.forEach(p => {
+      [p.sales_person, p.designer, p.project_manager, p.created_by_user].forEach(per => {
+        if (per?.id && creatorIds.has(per.id) && !seen.has(per.id)) {
+          seen.add(per.id);
+          employees.push({ id: per.id, full_name: per.full_name });
+        }
+      });
+    });
+
+    // For remaining IDs, fetch from API
+    const remaining = [...creatorIds].filter(id => !seen.has(id));
+    if (remaining.length > 0) {
+      // Fetch from any company endpoint
+      const firstCompany = companyIds[0];
+      api.get(`/companies/${firstCompany}/employees`)
+        .then(r => {
+          (r.data.employees || []).forEach(emp => {
+            if (creatorIds.has(emp.id) && !seen.has(emp.id)) {
+              seen.add(emp.id);
+              employees.push(emp);
+            }
+          });
+          setCompanyEmployees([...employees]);
+        })
+        .catch(() => setCompanyEmployees([...employees]));
+    } else {
+      setCompanyEmployees(employees);
+    }
+  };
 
   const deleteProject = async (e, id, code) => {
     e.preventDefault();

@@ -456,7 +456,7 @@ r.get('/divisions', async (req, res) => {
 r.get('/division/:divisionId', async (req, res) => {
   try {
     const { divisionId } = req.params;
-    const { from: dateFrom, to: dateTo } = req.query;
+    const { from: dateFrom, to: dateTo, company_id } = req.query;
     const now = new Date();
 
     // 1. Division info
@@ -522,7 +522,7 @@ r.get('/division/:divisionId', async (req, res) => {
       return res.json({
         division: { id: division.id, name: division.name, icon: division.icon, color: division.color, description: division.description },
         stats: { upcoming: 0, active: 0, completed: 0, total_tasks: 0, completed_tasks: 0, overdue_tasks: 0, members: 0, companies: 0, completion_rate: 0, total_value: 0 },
-        upcoming: [], active: [], completed: [], companies_detail: [],
+        upcoming: [], active: [], completed: [], companies_list: [], companies_detail: [],
       });
     }
 
@@ -530,14 +530,22 @@ r.get('/division/:divisionId', async (req, res) => {
     const flowCompanyMap = {};
     myFlowSteps.forEach(s => { flowCompanyMap[s.flow_id] = s.company_unit_id; });
 
-    // 5. Get projects (with optional date filter)
+    // Get companies from companies table (linked via division_unit_id)
+    const { data: divCompanies } = await supabase
+      .from('companies')
+      .select('id, name, short_name, logo_url')
+      .eq('division_unit_id', divisionId)
+      .order('name');
+
+    // 5. Get projects (with optional date + company filter)
     let projectQuery = supabase
       .from('projects')
-      .select('id, name, code, status, estimated_value, current_stage_id, flow_id, created_at, updated_at, customer:customers(id, full_name)')
+      .select('id, name, code, status, estimated_value, current_stage_id, flow_id, created_at, updated_at, company_id, customer:customers(id, full_name)')
       .in('flow_id', flowIds)
       .order('created_at', { ascending: false });
     if (dateFrom) projectQuery = projectQuery.gte('created_at', dateFrom);
     if (dateTo) projectQuery = projectQuery.lte('created_at', dateTo + 'T23:59:59');
+    if (company_id) projectQuery = projectQuery.eq('company_id', company_id);
     const { data: rawProjects } = await projectQuery;
 
     // 6. Classify: upcoming / active / completed
@@ -699,13 +707,14 @@ r.get('/division/:divisionId', async (req, res) => {
         upcoming: upcoming.length, active: active.length, completed: completed.length,
         overdue: overdueProjects,
         total_tasks: totalTasks, completed_tasks: completedTasks, overdue_tasks: overdueTasks,
-        members: (members || []).length, companies: companies.length,
+        members: (members || []).length, companies: (divCompanies || []).length,
         completion_rate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
         total_value: totalValue,
       },
       upcoming: fmt(upcoming),
       active: fmt(active),
       completed: fmt(completed),
+      companies_list: divCompanies || [],
       companies_detail: companiesDetail,
       task_detail: taskDetail,
       crm: crmStats,
