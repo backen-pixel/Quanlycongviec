@@ -1,20 +1,34 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
 import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download } from 'lucide-react';
+
+const PAYMENT_OPTIONS = [
+  'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
+  'Thanh toán 100% khi ký HĐ',
+  'Thanh toán 30% đặt cọc, 40% giao hàng, 30% hoàn thiện',
+  'Thanh toán khi bàn giao',
+  'Thanh toán trong vòng 30 ngày',
+  'Khác',
+];
 
 export default function QuotationForm() {
   const { id } = useParams();
   const isEdit = !!id;
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const todayISO = new Date().toISOString().slice(0, 10);
 
   const [form, setForm] = useState({
     title: '', customer_id: '', customer_name: '', customer_phone: '', customer_address: '',
-    valid_until: '', payment_terms: 'Thanh toán 50% khi ký hợp đồng, 50% khi bàn giao',
-    delivery_terms: '', notes: '',
+    valid_until: todayISO, payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
+    delivery_terms: '', notes: '', lead_id: '',
     discount_type: 'percent', discount_value: 0,
   });
+  const [customPaymentTerms, setCustomPaymentTerms] = useState('');
+  const [isCustomPayment, setIsCustomPayment] = useState(false);
   const [items, setItems] = useState([{ name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '' }]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -26,13 +40,16 @@ export default function QuotationForm() {
     if (isEdit) {
       api.get(`/crm/quotations/${id}`).then(r => {
         const d = r.data;
+        const pt = d.payment_terms || '';
+        const isPreset = PAYMENT_OPTIONS.includes(pt);
         setForm({
           title: d.title || '', customer_id: d.customer_id || '', customer_name: d.customer_name || '',
           customer_phone: d.customer_phone || '', customer_address: d.customer_address || '',
-          valid_until: d.valid_until || '', payment_terms: d.payment_terms || '', delivery_terms: d.delivery_terms || '',
+          valid_until: d.valid_until || '', payment_terms: isPreset ? pt : 'Khác', delivery_terms: d.delivery_terms || '',
           notes: d.notes || '', discount_type: d.discount_type || 'percent', discount_value: d.discount_value || 0,
           lead_id: d.lead_id, project_id: d.project_id,
         });
+        if (!isPreset && pt) { setIsCustomPayment(true); setCustomPaymentTerms(pt); }
         if (d.items?.length) setItems(d.items.map(i => ({
           name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: i.quantity || 1,
           unit_price: i.unit_price || 0, discount_percent: i.discount_percent || 0,
@@ -40,6 +57,23 @@ export default function QuotationForm() {
           dimensions: i.dimensions || '', material: i.material || '', color: i.color || '', product_id: i.product_id,
         })));
       });
+    } else {
+      // Auto-fill from lead/deal if lead_id in URL
+      const leadId = searchParams.get('lead_id');
+      if (leadId) {
+        api.get(`/crm/leads/${leadId}/detail`).then(r => {
+          const lead = r.data;
+          setForm(f => ({
+            ...f,
+            lead_id: leadId,
+            title: lead.title || f.title,
+            customer_id: lead.customer_id || f.customer_id,
+            customer_name: lead.customer?.full_name || lead.contact_name || f.customer_name,
+            customer_phone: lead.customer?.phone || lead.phone || f.customer_phone,
+            customer_address: lead.customer?.address || lead.address || f.customer_address,
+          }));
+        }).catch(() => { /* lead not found, ignore */ });
+      }
     }
   }, [id]);
 
@@ -80,7 +114,8 @@ export default function QuotationForm() {
     if (!form.title && !form.customer_name) return alert('Nhập tiêu đề hoặc khách hàng');
     setSaving(true);
     try {
-      const payload = { ...form, items: calcs.rows };
+      const effectivePayment = isCustomPayment ? customPaymentTerms : form.payment_terms;
+      const payload = { ...form, payment_terms: effectivePayment, items: calcs.rows };
       if (isEdit) await api.put(`/crm/quotations/${id}`, payload);
       else { const { data } = await api.post('/crm/quotations', payload); navigate(`/crm/quotations/${data.id}`, { replace: true }); return; }
       navigate('/crm/quotations');
@@ -272,7 +307,16 @@ export default function QuotationForm() {
           </div>
           <div>
             <label className="text-xs font-medium text-gray-600">Điều khoản thanh toán</label>
-            <input value={form.payment_terms} onChange={e => setForm(f => ({ ...f, payment_terms: e.target.value }))} className="w-full h-10 px-3 border rounded-lg text-sm mt-1" />
+            <select value={isCustomPayment ? 'Khác' : form.payment_terms} onChange={e => {
+              const val = e.target.value;
+              if (val === 'Khác') { setIsCustomPayment(true); setForm(f => ({ ...f, payment_terms: 'Khác' })); }
+              else { setIsCustomPayment(false); setCustomPaymentTerms(''); setForm(f => ({ ...f, payment_terms: val })); }
+            }} className="w-full h-10 px-3 border rounded-lg text-sm mt-1">
+              {PAYMENT_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+            {isCustomPayment && (
+              <input value={customPaymentTerms} onChange={e => setCustomPaymentTerms(e.target.value)} placeholder="Nhập điều khoản thanh toán..." className="w-full h-10 px-3 border rounded-lg text-sm mt-2" />
+            )}
           </div>
           <div className="md:col-span-2">
             <label className="text-xs font-medium text-gray-600">Ghi chú</label>

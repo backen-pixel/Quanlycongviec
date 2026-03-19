@@ -2,10 +2,16 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Search, Receipt, DollarSign, Calendar } from 'lucide-react';
+import { Search, Receipt, DollarSign, Calendar, Download } from 'lucide-react';
 
 const PAY_MAP = { unpaid: 'Chưa TT', partial: 'TT 1 phần', paid: 'Đã TT đủ' };
 const PAY_COLORS = { unpaid: 'bg-red-100 text-red-700', partial: 'bg-amber-100 text-amber-700', paid: 'bg-emerald-100 text-emerald-700' };
+
+function downloadPdf(type, id, code) {
+  api.get(`/crm/${type}/${id}/pdf`, { responseType: 'blob' })
+    .then(r => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' })); a.download = `${(code || type).replace(/[^a-zA-Z0-9\-]/g, '_')}.pdf`; a.click(); URL.revokeObjectURL(a.href); })
+    .catch(() => alert('Lỗi tải PDF'));
+}
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState([]);
@@ -65,7 +71,7 @@ export default function InvoicesPage() {
         </div>
         <table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
           <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3 text-right">Đã thu</th><th className="py-3 px-3 text-right">Còn nợ</th><th className="py-3 px-3">TT</th><th className="py-3 px-3">Ngày</th>
+          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3 text-right">Đã thu</th><th className="py-3 px-3 text-right">Còn nợ</th><th className="py-3 px-3">TT</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th>
         </tr></thead><tbody>
           {filtered.map(i => {
             const debt = (i.total || 0) - (i.paid_amount || 0);
@@ -79,6 +85,7 @@ export default function InvoicesPage() {
                 <td className="py-3 px-3 text-right font-medium text-red-600">{debt > 0 ? formatVND(debt) : '—'}</td>
                 <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${PAY_COLORS[i.payment_status] || ''}`}>{PAY_MAP[i.payment_status] || i.payment_status}</span></td>
                 <td className="py-3 px-3 text-gray-500">{formatDate(i.created_at)}</td>
+                <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('invoices', i.id, i.code); }} className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
               </tr>
             );
           })}
