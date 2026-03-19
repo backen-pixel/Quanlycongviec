@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { ArrowLeft, Receipt, User, Phone, MapPin, DollarSign, Plus, X, Building2 } from 'lucide-react';
+import { ArrowLeft, Receipt, User, Phone, MapPin, DollarSign, Plus, X, Building2, Download, Printer } from 'lucide-react';
 
 export default function InvoiceDetail() {
   const { id } = useParams();
@@ -22,10 +22,34 @@ export default function InvoiceDetail() {
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
+  const downloadPdf = async () => {
+    try {
+      const response = await api.get(`/crm/invoices/${id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${invoice?.code || 'hoa-don'}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { alert('Lỗi tải PDF'); }
+  };
+
+  const printInvoice = async () => {
+    try {
+      const response = await api.get(`/crm/invoices/${id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const printWindow = window.open(url);
+      if (printWindow) {
+        printWindow.addEventListener('load', () => { printWindow.print(); });
+      }
+    } catch (e) { alert('Lỗi in hóa đơn'); }
+  };
+
   if (loading || !invoice) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-purple-600 border-t-transparent rounded-full" /></div>;
 
   const remaining = (invoice.total || 0) - (invoice.paid_amount || 0);
   const paidPct = invoice.total > 0 ? Math.min(((invoice.paid_amount || 0) / invoice.total) * 100, 100) : 0;
+  const totalVat = (invoice.items || []).reduce((s, i) => s + (i.vat_amount || (i.amount || 0) * (i.vat_rate || 0) / 100), 0);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -37,9 +61,13 @@ export default function InvoiceDetail() {
             <h1 className="text-xl font-bold text-gray-900">{invoice.title || 'Hóa đơn'}</h1>
           </div>
         </div>
-        {remaining > 0 && (
-          <button onClick={() => setShowPay(true)} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><DollarSign className="h-4 w-4" /> Thu tiền</button>
-        )}
+        <div className="flex items-center gap-2">
+          <button onClick={downloadPdf} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Download className="h-4 w-4" /> Xuất PDF</button>
+          <button onClick={printInvoice} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Printer className="h-4 w-4" /> In hóa đơn</button>
+          {remaining > 0 && (
+            <button onClick={() => setShowPay(true)} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><DollarSign className="h-4 w-4" /> Thu tiền</button>
+          )}
+        </div>
       </div>
 
       {/* Payment Progress */}
@@ -91,32 +119,38 @@ export default function InvoiceDetail() {
           </div>
         </div>
 
-        {/* Right: Items */}
+        {/* Right: Items with VAT */}
         <div className="lg:col-span-2 bg-white rounded-xl border p-5">
           <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-4">Chi tiết hàng hóa</h3>
           <table className="w-full text-sm">
             <thead><tr className="border-b text-xs text-gray-500 uppercase">
               <th className="py-2 text-left">#</th><th className="py-2 text-left">Tên</th><th className="py-2 text-left">ĐVT</th>
               <th className="py-2 text-right">SL</th><th className="py-2 text-right">Đơn giá</th><th className="py-2 text-right">Thành tiền</th>
+              <th className="py-2 text-right">%VAT</th><th className="py-2 text-right">Tiền thuế</th>
             </tr></thead>
             <tbody>
-              {(invoice.items || []).map((item, i) => (
-                <tr key={item.id} className="border-b">
-                  <td className="py-2 text-gray-400">{i + 1}</td>
-                  <td className="py-2 font-medium text-gray-900">{item.name}</td>
-                  <td className="py-2 text-gray-500">{item.unit}</td>
-                  <td className="py-2 text-right">{item.quantity}</td>
-                  <td className="py-2 text-right">{formatVND(item.unit_price)}</td>
-                  <td className="py-2 text-right font-medium">{formatVND(item.amount)}</td>
-                </tr>
-              ))}
+              {(invoice.items || []).map((item, i) => {
+                const vatAmount = item.vat_amount || (item.amount || 0) * (item.vat_rate || 0) / 100;
+                return (
+                  <tr key={item.id} className="border-b">
+                    <td className="py-2 text-gray-400">{i + 1}</td>
+                    <td className="py-2 font-medium text-gray-900">{item.name}</td>
+                    <td className="py-2 text-gray-500">{item.unit}</td>
+                    <td className="py-2 text-right">{item.quantity}</td>
+                    <td className="py-2 text-right">{formatVND(item.unit_price)}</td>
+                    <td className="py-2 text-right font-medium">{formatVND(item.amount)}</td>
+                    <td className="py-2 text-right text-gray-500">{item.vat_rate || 0}%</td>
+                    <td className="py-2 text-right text-gray-600">{formatVND(vatAmount)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <div className="flex justify-end mt-4">
             <div className="w-72 space-y-1.5 text-sm">
               <div className="flex justify-between"><span className="text-gray-500">Tổng tiền hàng</span><span>{formatVND(invoice.subtotal)}</span></div>
               {invoice.discount_amount > 0 && <div className="flex justify-between"><span className="text-gray-500">Chiết khấu</span><span className="text-red-600">-{formatVND(invoice.discount_amount)}</span></div>}
-              {invoice.tax_amount > 0 && <div className="flex justify-between"><span className="text-gray-500">VAT ({invoice.tax_rate}%)</span><span>{formatVND(invoice.tax_amount)}</span></div>}
+              {totalVat > 0 && <div className="flex justify-between"><span className="text-gray-500">Thuế GTGT</span><span>{formatVND(totalVat)}</span></div>}
               <div className="flex justify-between border-t pt-2 text-base font-bold"><span>TỔNG CỘNG</span><span className="text-purple-600">{formatVND(invoice.total)}</span></div>
             </div>
           </div>

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
-import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer } from 'lucide-react';
+import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download } from 'lucide-react';
 
 export default function QuotationForm() {
   const { id } = useParams();
@@ -13,9 +13,9 @@ export default function QuotationForm() {
     title: '', customer_id: '', customer_name: '', customer_phone: '', customer_address: '',
     valid_until: '', payment_terms: 'Thanh toán 50% khi ký hợp đồng, 50% khi bàn giao',
     delivery_terms: '', notes: '',
-    discount_type: 'percent', discount_value: 0, tax_rate: 10,
+    discount_type: 'percent', discount_value: 0,
   });
-  const [items, setItems] = useState([{ name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, dimensions: '', material: '', color: '' }]);
+  const [items, setItems] = useState([{ name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '' }]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -31,11 +31,12 @@ export default function QuotationForm() {
           customer_phone: d.customer_phone || '', customer_address: d.customer_address || '',
           valid_until: d.valid_until || '', payment_terms: d.payment_terms || '', delivery_terms: d.delivery_terms || '',
           notes: d.notes || '', discount_type: d.discount_type || 'percent', discount_value: d.discount_value || 0,
-          tax_rate: d.tax_rate ?? 10, lead_id: d.lead_id, project_id: d.project_id,
+          lead_id: d.lead_id, project_id: d.project_id,
         });
         if (d.items?.length) setItems(d.items.map(i => ({
           name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: i.quantity || 1,
           unit_price: i.unit_price || 0, discount_percent: i.discount_percent || 0,
+          vat_rate: i.vat_rate || 0,
           dimensions: i.dimensions || '', material: i.material || '', color: i.color || '', product_id: i.product_id,
         })));
       });
@@ -49,24 +50,31 @@ export default function QuotationForm() {
     else setForm(f => ({ ...f, customer_id: cid }));
   };
 
-  // Add product to items
+  // Add product to items — auto-fill vat_rate from product
   const addProduct = (pid) => {
     const p = products.find(x => x.id === pid);
-    if (p) setItems(prev => [...prev, { product_id: p.id, name: p.name, description: p.description || '', unit: p.unit || 'bộ', quantity: 1, unit_price: p.base_price || 0, discount_percent: 0, dimensions: p.dimensions || '', material: p.material || '', color: p.color || '' }]);
+    if (p) setItems(prev => [...prev, {
+      product_id: p.id, name: p.name, description: p.description || '', unit: p.unit || 'bộ',
+      quantity: 1, unit_price: p.base_price || 0, discount_percent: 0,
+      vat_rate: p.vat_rate || 0,
+      dimensions: p.dimensions || '', material: p.material || '', color: p.color || '',
+    }]);
   };
 
-  // Calculations
+  // Calculations with per-item VAT
   const calcs = useMemo(() => {
-    const rows = items.map(i => ({
-      ...i,
-      amount: (i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100),
-    }));
+    const rows = items.map(i => {
+      const amount = (i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100);
+      const vatRate = i.vat_rate || 0;
+      const vatAmount = amount * vatRate / 100;
+      return { ...i, amount, vat_rate: vatRate, vat_amount: vatAmount };
+    });
     const subtotal = rows.reduce((s, r) => s + r.amount, 0);
     const discountAmt = form.discount_type === 'percent' ? subtotal * (form.discount_value || 0) / 100 : (form.discount_value || 0);
     const afterDiscount = subtotal - discountAmt;
-    const taxAmt = afterDiscount * (form.tax_rate || 0) / 100;
-    return { rows, subtotal, discountAmt, afterDiscount, taxAmt, total: afterDiscount + taxAmt };
-  }, [items, form.discount_type, form.discount_value, form.tax_rate]);
+    const totalVat = rows.reduce((s, r) => s + r.vat_amount, 0);
+    return { rows, subtotal, discountAmt, afterDiscount, totalVat, total: afterDiscount + totalVat };
+  }, [items, form.discount_type, form.discount_value]);
 
   const save = async () => {
     if (!form.title && !form.customer_name) return alert('Nhập tiêu đề hoặc khách hàng');
@@ -94,9 +102,21 @@ export default function QuotationForm() {
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
+  const downloadPdf = async () => {
+    try {
+      const response = await api.get(`/crm/quotations/${id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${form.code || 'bao-gia'}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { alert('Lỗi tải PDF'); }
+  };
+
   const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
-  const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, dimensions: '', material: '', color: '' }]);
+  const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '' }]);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -124,7 +144,7 @@ export default function QuotationForm() {
               <option value="rejected">❌ Từ chối</option>
             </select>
           )}
-          {isEdit && <button onClick={() => window.print()} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Printer className="h-4 w-4" /> In PDF</button>}
+          {isEdit && <button onClick={downloadPdf} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Download className="h-4 w-4" /> Xuất PDF</button>}
           <button onClick={save} disabled={saving} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
             <Save className="h-4 w-4" /> {saving ? 'Đang lưu...' : 'Lưu'}
           </button>
@@ -161,7 +181,7 @@ export default function QuotationForm() {
         </div>
       </div>
 
-      {/* Items Table - MISA style */}
+      {/* Items Table - MISA style with per-item VAT */}
       <div className="bg-white rounded-xl border p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-bold text-gray-900">Chi tiết hàng hóa / dịch vụ</h2>
@@ -180,17 +200,20 @@ export default function QuotationForm() {
           <table className="w-full text-sm">
             <thead><tr className="bg-gray-50 text-xs text-gray-500 uppercase">
               <th className="py-2 px-2 text-left w-8">#</th>
-              <th className="py-2 px-2 text-left min-w-[200px]">Tên hàng hóa</th>
-              <th className="py-2 px-2 text-left w-20">ĐVT</th>
-              <th className="py-2 px-2 text-right w-20">SL</th>
-              <th className="py-2 px-2 text-right w-32">Đơn giá</th>
-              <th className="py-2 px-2 text-right w-16">CK%</th>
-              <th className="py-2 px-2 text-right w-32">Thành tiền</th>
+              <th className="py-2 px-2 text-left min-w-[180px]">Tên hàng hóa</th>
+              <th className="py-2 px-2 text-left w-16">ĐVT</th>
+              <th className="py-2 px-2 text-right w-16">SL</th>
+              <th className="py-2 px-2 text-right w-28">Đơn giá</th>
+              <th className="py-2 px-2 text-right w-14">CK%</th>
+              <th className="py-2 px-2 text-right w-28">Thành tiền</th>
+              <th className="py-2 px-2 text-right w-16">%VAT</th>
+              <th className="py-2 px-2 text-right w-28">Tiền thuế</th>
               <th className="py-2 px-2 w-10"></th>
             </tr></thead>
             <tbody>
               {items.map((item, idx) => {
                 const amount = (item.quantity || 0) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
+                const vatAmount = amount * (item.vat_rate || 0) / 100;
                 return (
                   <tr key={idx} className="border-b hover:bg-blue-50/30">
                     <td className="py-2 px-2 text-gray-400">{idx + 1}</td>
@@ -205,6 +228,8 @@ export default function QuotationForm() {
                     <td className="py-2 px-2"><input type="number" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
                     <td className="py-2 px-2"><input type="number" value={item.discount_percent} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
                     <td className="py-2 px-2 text-right font-medium text-gray-900">{formatVND(amount)}</td>
+                    <td className="py-2 px-2"><input type="number" value={item.vat_rate || 0} onChange={e => updateItem(idx, 'vat_rate', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2 text-right text-gray-600">{formatVND(vatAmount)}</td>
                     <td className="py-2 px-2"><button onClick={() => removeItem(idx)} className="p-1 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-4 w-4" /></button></td>
                   </tr>
                 );
@@ -213,7 +238,7 @@ export default function QuotationForm() {
           </table>
         </div>
 
-        {/* Totals - MISA style */}
+        {/* Totals - per-item VAT style */}
         <div className="flex justify-end mt-4">
           <div className="w-80 space-y-2">
             <div className="flex justify-between text-sm"><span className="text-gray-500">Tổng tiền hàng:</span><span className="font-medium">{formatVND(calcs.subtotal)}</span></div>
@@ -227,14 +252,8 @@ export default function QuotationForm() {
               </div>
               <span className="font-medium text-red-600">-{formatVND(calcs.discountAmt)}</span>
             </div>
-            <div className="flex items-center justify-between text-sm gap-2">
-              <span className="text-gray-500">VAT:</span>
-              <div className="flex items-center gap-1">
-                <input type="number" value={form.tax_rate} onChange={e => setForm(f => ({ ...f, tax_rate: parseFloat(e.target.value) || 0 }))} className="w-14 h-7 px-2 border rounded text-xs text-right" />
-                <span className="text-xs">%</span>
-              </div>
-              <span className="font-medium">{formatVND(calcs.taxAmt)}</span>
-            </div>
+            <div className="flex justify-between text-sm"><span className="text-gray-500">Cộng tiền hàng sau CK:</span><span className="font-medium">{formatVND(calcs.afterDiscount)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-gray-500">Thuế GTGT:</span><span className="font-medium">{formatVND(calcs.totalVat)}</span></div>
             <div className="flex justify-between text-base font-bold border-t pt-2 mt-2">
               <span>TỔNG CỘNG:</span>
               <span className="text-blue-600">{formatVND(calcs.total)}</span>
