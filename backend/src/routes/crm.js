@@ -130,14 +130,66 @@ r.get('/dashboard', async (req, res) => {
 // PIPELINE STAGES (CRUD)
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/pipeline-stages', async (req, res) => {
-  const { type = 'lead' } = req.query; // Filter by lead or deal
-  const { data } = await supabase
-    .from('crm_pipeline_stages')
-    .select('*')
-    .eq('is_active', true)
-    .eq('pipeline_type', type)
-    .order('order_index');
+  const { type } = req.query;
+  let q = supabase.from('crm_pipeline_stages').select('*').order('pipeline_type').order('order_index');
+  if (type) q = q.eq('pipeline_type', type);
+  if (req.query.all !== 'true') q = q.eq('is_active', true);
+  const { data } = await q;
   res.json(data || []);
+});
+
+r.post('/pipeline-stages', async (req, res) => {
+  try {
+    const b = req.body;
+    if (!b.name || !b.pipeline_type) return res.status(400).json({ error: 'Thiếu tên hoặc loại pipeline' });
+    // Auto order_index
+    const { data: existing } = await supabase.from('crm_pipeline_stages')
+      .select('order_index').eq('pipeline_type', b.pipeline_type).order('order_index', { ascending: false }).limit(1);
+    const nextOrder = (existing?.[0]?.order_index || 0) + 1;
+    const { data, error } = await supabase.from('crm_pipeline_stages').insert({
+      name: b.name, pipeline_type: b.pipeline_type, color: b.color || '#94A3B8',
+      icon: b.icon || null, order_index: b.order_index ?? nextOrder,
+      is_won: b.is_won || false, is_lost: b.is_lost || false, is_active: true,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/pipeline-stages/:id', async (req, res) => {
+  try {
+    const b = req.body;
+    const update = {};
+    ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active'].forEach(f => {
+      if (b[f] !== undefined) update[f] = b[f];
+    });
+    const { data, error } = await supabase.from('crm_pipeline_stages').update(update)
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.delete('/pipeline-stages/:id', async (req, res) => {
+  try {
+    // Check if any leads use this stage
+    const { count } = await supabase.from('crm_leads').select('id', { count: 'exact', head: true })
+      .eq('stage_id', req.params.id);
+    if (count > 0) return res.status(400).json({ error: `Không thể xóa — ${count} lead/deal đang dùng giai đoạn này` });
+    await supabase.from('crm_pipeline_stages').delete().eq('id', req.params.id);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Reorder pipeline stages
+r.put('/pipeline-stages-reorder', async (req, res) => {
+  try {
+    const { stages } = req.body; // [{ id, order_index }]
+    for (const s of stages || []) {
+      await supabase.from('crm_pipeline_stages').update({ order_index: s.order_index }).eq('id', s.id);
+    }
+    res.json({ message: 'Đã sắp xếp lại' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
