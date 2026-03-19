@@ -202,14 +202,22 @@ function DivisionContent({ divisionId, divisions }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [companies, setCompanies] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState('');
+  const [selectedEmployee, setSelectedEmployee] = useState('');
 
   const division = divisions.find(d => d.id === divisionId);
 
   useEffect(() => {
-    // Reset company filter when switching division
+    // Reset filters when switching division
     setSelectedCompany('');
+    setSelectedEmployee('');
   }, [divisionId]);
+
+  useEffect(() => {
+    // Reset employee when company changes
+    setSelectedEmployee('');
+  }, [selectedCompany]);
 
   useEffect(() => {
     if (!divisionId) return;
@@ -219,9 +227,13 @@ function DivisionContent({ divisionId, divisions }) {
     api.get(`/divisions/${divisionId}/dashboard`, { params })
       .then(r => {
         setData(r.data);
-        // Only update companies list on first load (no filter) to keep full list
-        if (!selectedCompany && r.data.companies) {
+        // Always update companies list from response (backend always returns full list)
+        if (r.data.companies) {
           setCompanies(r.data.companies);
+        }
+        // Update employees list
+        if (r.data.employees) {
+          setEmployees(r.data.employees);
         }
       })
       .catch(err => {
@@ -252,6 +264,23 @@ function DivisionContent({ divisionId, divisions }) {
 
   const { stats, projects, tasks, activities } = data;
 
+  // Filter projects by employee (check task assignees)
+  const filteredProjects = selectedEmployee
+    ? (projects || []).filter(p => {
+        const projectTasks = (tasks || []).filter(t => t.project_id === p.id);
+        return projectTasks.some(t => t.assignee_id === selectedEmployee);
+      })
+    : projects;
+
+  // Recalculate stats when employee filter is active
+  const displayStats = selectedEmployee ? {
+    ...stats,
+    projects: filteredProjects.length,
+    active: filteredProjects.filter(p => !['completed', 'warranty', 'cancelled'].includes(p.status)).length,
+    tasks: (tasks || []).filter(t => t.assignee_id === selectedEmployee).length,
+    overdue: (tasks || []).filter(t => t.assignee_id === selectedEmployee && t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length,
+  } : stats;
+
   return (
     <div className="space-y-6">
       {/* Division Header */}
@@ -267,7 +296,7 @@ function DivisionContent({ divisionId, divisions }) {
 
       {/* Company Filter */}
       {companies.length > 0 && (
-        <div className="flex items-center gap-3 animate-fade-in">
+        <div className="flex items-center gap-3 flex-wrap animate-fade-in">
           <Building2 className="h-4 w-4 text-gray-500" />
           <span className="text-sm font-medium text-gray-600">Công ty:</span>
           <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -291,8 +320,43 @@ function DivisionContent({ divisionId, divisions }) {
                     : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
                 }`}
               >
-                {company.icon && <span>{company.icon}</span>}
                 {company.short_name || company.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Employee Filter */}
+      {employees.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap animate-fade-in">
+          <User className="h-4 w-4 text-gray-500" />
+          <span className="text-sm font-medium text-gray-600">Nhân viên:</span>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <button
+              onClick={() => setSelectedEmployee('')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
+                !selectedEmployee
+                  ? 'bg-purple-600 text-white shadow-sm'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:border-purple-300'
+              }`}
+            >
+              Tất cả
+            </button>
+            {employees.map(emp => (
+              <button
+                key={emp.id}
+                onClick={() => setSelectedEmployee(emp.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                  selectedEmployee === emp.id
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'bg-white text-gray-600 border border-gray-200 hover:border-purple-300'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ backgroundColor: avatarColor(emp.full_name) }}>
+                  {getInitials(emp.full_name)}
+                </span>
+                {emp.full_name}
               </button>
             ))}
           </div>
@@ -301,14 +365,14 @@ function DivisionContent({ divisionId, divisions }) {
 
       {/* Stats grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Tổng dự án" value={stats?.projects || 0} icon={FolderKanban} color="text-indigo-600" bgColor="bg-indigo-50" />
-        <StatCard title="Đang hoạt động" value={stats?.active || 0} icon={TrendingUp} color="text-blue-600" bgColor="bg-blue-50" />
-        <StatCard title="Công việc" value={stats?.tasks || 0} icon={CheckSquare} color="text-emerald-600" bgColor="bg-emerald-50" />
-        <StatCard title="Quá hạn" value={stats?.overdue || 0} icon={AlertTriangle} color="text-red-600" bgColor="bg-red-50" />
+        <StatCard title="Tổng dự án" value={displayStats?.projects || 0} icon={FolderKanban} color="text-indigo-600" bgColor="bg-indigo-50" />
+        <StatCard title="Đang hoạt động" value={displayStats?.active || 0} icon={TrendingUp} color="text-blue-600" bgColor="bg-blue-50" />
+        <StatCard title="Công việc" value={displayStats?.tasks || 0} icon={CheckSquare} color="text-emerald-600" bgColor="bg-emerald-50" />
+        <StatCard title="Quá hạn" value={displayStats?.overdue || 0} icon={AlertTriangle} color="text-red-600" bgColor="bg-red-50" />
       </div>
 
       {/* Projects List */}
-      {projects && projects.length > 0 && (
+      {filteredProjects && filteredProjects.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-5 animate-fade-in">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-gray-900">
@@ -316,11 +380,14 @@ function DivisionContent({ divisionId, divisions }) {
               {selectedCompany && companies.find(c => c.id === selectedCompany) && (
                 <span className="text-gray-400 font-normal"> — {companies.find(c => c.id === selectedCompany)?.name}</span>
               )}
+              {selectedEmployee && employees.find(e => e.id === selectedEmployee) && (
+                <span className="text-purple-400 font-normal"> — {employees.find(e => e.id === selectedEmployee)?.full_name}</span>
+              )}
             </h2>
-            <span className="text-xs text-gray-400">{projects.length} dự án</span>
+            <span className="text-xs text-gray-400">{filteredProjects.length} dự án</span>
           </div>
           <div className="divide-y divide-gray-100">
-            {projects.slice(0, 10).map(p => (
+            {filteredProjects.slice(0, 10).map(p => (
               <Link to={`/projects/${p.id}`} key={p.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0 hover:bg-gray-50 -mx-2 px-2 rounded-lg transition-colors cursor-pointer">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
@@ -348,10 +415,18 @@ function DivisionContent({ divisionId, divisions }) {
       )}
 
       {/* Empty State */}
-      {(!projects || projects.length === 0) && (
+      {(!filteredProjects || filteredProjects.length === 0) && (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center animate-fade-in">
           <Building2 className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">Chưa có dự án nào trong khối này</p>
+          <p className="text-gray-500 text-sm">
+            {selectedCompany || selectedEmployee ? 'Không có dự án phù hợp với bộ lọc' : 'Chưa có dự án nào trong khối này'}
+          </p>
+          {(selectedCompany || selectedEmployee) && (
+            <button onClick={() => { setSelectedCompany(''); setSelectedEmployee(''); }}
+              className="mt-2 text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer">
+              Xóa bộ lọc
+            </button>
+          )}
         </div>
       )}
     </div>

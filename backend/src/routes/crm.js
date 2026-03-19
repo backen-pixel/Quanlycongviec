@@ -561,6 +561,26 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) : 0;
     const code = `TB-${yr}-${String(lastNum + 1).padStart(3, '0')}`;
 
+    // Resolve company_id from flow → flow_steps → ecosystem_unit → companies
+    let resolvedCompanyId = null;
+    try {
+      const { data: firstStep } = await supabase
+        .from('workflow_flow_steps')
+        .select('company_unit_id')
+        .eq('flow_id', flow_id)
+        .order('order_index')
+        .limit(1)
+        .single();
+      if (firstStep?.company_unit_id) {
+        const { data: ecoUnit } = await supabase
+          .from('ecosystem_units')
+          .select('company_id')
+          .eq('id', firstStep.company_unit_id)
+          .single();
+        resolvedCompanyId = ecoUnit?.company_id || null;
+      }
+    } catch (e) { /* ignore — company_id is optional */ }
+
     // Create project
     const projectInsert = {
       code,
@@ -570,6 +590,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       flow_id: flow_id,
       created_by: req.user.userId,
     };
+    if (resolvedCompanyId) projectInsert.company_id = resolvedCompanyId;
     if (lead.estimated_value) projectInsert.estimated_value = lead.estimated_value;
     if (consultingStageId) projectInsert.current_stage_id = consultingStageId;
 
