@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const PDFDocument = require('pdfkit');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
 const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [], createProjectFromLead = async () => null } = autoFlowFns;
@@ -1036,13 +1037,19 @@ r.post('/quotations', async (req, res) => {
     const { items, ...quoteData } = req.body;
     const code = await nextCode('BG');
     
-    // Calc totals
-    const subtotal = (items || []).reduce((s, i) => s + (i.amount || 0), 0);
+    // Calc totals with per-item VAT
+    const processedItems = (items || []).map(item => {
+      const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
+      const vatRate = item.vat_rate || 0;
+      const vatAmount = amount * vatRate / 100;
+      return { ...item, amount, vat_rate: vatRate, vat_amount: vatAmount };
+    });
+    const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
       : (quoteData.discount_value || 0);
     const afterDiscount = subtotal - discountAmt;
-    const taxAmt = afterDiscount * (quoteData.tax_rate || 10) / 100;
+    const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
     
     const { data: quote, error } = await supabase.from('quotations')
       .insert({
@@ -1053,11 +1060,10 @@ r.post('/quotations', async (req, res) => {
       .select('*').single();
     if (error) throw error;
 
-    // Insert items
-    if (items?.length) {
-      const itemRows = items.map((item, i) => ({
+    // Insert items with vat_rate and vat_amount
+    if (processedItems.length) {
+      const itemRows = processedItems.map((item, i) => ({
         ...item, quotation_id: quote.id, item_order: i,
-        amount: (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100),
       }));
       await supabase.from('quotation_items').insert(itemRows);
     }
@@ -1072,12 +1078,19 @@ r.put('/quotations/:id', async (req, res) => {
   try {
     const { items, ...quoteData } = req.body;
     
-    const subtotal = (items || []).reduce((s, i) => s + (i.amount || 0), 0);
+    // Calc totals with per-item VAT
+    const processedItems = (items || []).map(item => {
+      const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
+      const vatRate = item.vat_rate || 0;
+      const vatAmount = amount * vatRate / 100;
+      return { ...item, amount, vat_rate: vatRate, vat_amount: vatAmount };
+    });
+    const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
       : (quoteData.discount_value || 0);
     const afterDiscount = subtotal - discountAmt;
-    const taxAmt = afterDiscount * (quoteData.tax_rate || 10) / 100;
+    const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
 
     const { data, error } = await supabase.from('quotations')
       .update({
@@ -1088,12 +1101,11 @@ r.put('/quotations/:id', async (req, res) => {
       .eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
-    // Replace items
+    // Replace items with vat_rate and vat_amount
     await supabase.from('quotation_items').delete().eq('quotation_id', req.params.id);
-    if (items?.length) {
-      const itemRows = items.map((item, i) => ({
+    if (processedItems.length) {
+      const itemRows = processedItems.map((item, i) => ({
         ...item, quotation_id: req.params.id, item_order: i, id: undefined,
-        amount: (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100),
       }));
       await supabase.from('quotation_items').insert(itemRows);
     }
@@ -1128,13 +1140,14 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
     }).select('*').single();
     if (error) throw error;
 
-    // Copy items
+    // Copy items (carry vat_rate + vat_amount)
     if (qItems?.length) {
       const oItems = qItems.map(qi => ({
         order_id: order.id, product_id: qi.product_id, quotation_item_id: qi.id,
         item_order: qi.item_order, name: qi.name, description: qi.description,
         unit: qi.unit, quantity: qi.quantity, unit_price: qi.unit_price,
         discount_percent: qi.discount_percent, amount: qi.amount,
+        vat_rate: qi.vat_rate || 0, vat_amount: qi.vat_amount || 0,
         dimensions: qi.dimensions, material: qi.material, color: qi.color, notes: qi.notes,
       }));
       await supabase.from('order_items').insert(oItems);
@@ -1208,10 +1221,16 @@ r.post('/orders', async (req, res) => {
   try {
     const { items, ...orderData } = req.body;
     const code = await nextCode('DH');
-    const subtotal = (items || []).reduce((s, i) => s + (i.amount || 0), 0);
+    const processedItems = (items || []).map(item => {
+      const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
+      const vatRate = item.vat_rate || 0;
+      const vatAmount = amount * vatRate / 100;
+      return { ...item, amount, vat_rate: vatRate, vat_amount: vatAmount };
+    });
+    const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = orderData.discount_type === 'percent' ? subtotal * (orderData.discount_value || 0) / 100 : (orderData.discount_value || 0);
     const afterDiscount = subtotal - discountAmt;
-    const taxAmt = afterDiscount * (orderData.tax_rate || 10) / 100;
+    const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
 
     const { data, error } = await supabase.from('orders').insert({
       ...orderData, code, subtotal, discount_amount: discountAmt,
@@ -1219,10 +1238,9 @@ r.post('/orders', async (req, res) => {
     }).select('*').single();
     if (error) throw error;
 
-    if (items?.length) {
-      await supabase.from('order_items').insert(items.map((item, i) => ({
+    if (processedItems.length) {
+      await supabase.from('order_items').insert(processedItems.map((item, i) => ({
         ...item, order_id: data.id, item_order: i,
-        amount: (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100),
       })));
     }
     res.status(201).json(data);
@@ -1256,7 +1274,9 @@ r.post('/orders/:id/create-invoice', async (req, res) => {
         invoice_id: invoice.id, product_id: oi.product_id, order_item_id: oi.id,
         item_order: oi.item_order, name: oi.name, description: oi.description,
         unit: oi.unit, quantity: oi.quantity, unit_price: oi.unit_price,
-        discount_percent: oi.discount_percent, amount: oi.amount, notes: oi.notes,
+        discount_percent: oi.discount_percent, amount: oi.amount,
+        vat_rate: oi.vat_rate || 0, vat_amount: oi.vat_amount || 0,
+        notes: oi.notes,
       })));
     }
 
@@ -1557,6 +1577,221 @@ r.post('/leads/:id/sync-stage', async (req, res) => {
       .eq('id', lead.project_id).single();
 
     res.json({ lead, project });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PDF GENERATION HELPER
+// ═══════════════════════════════════════════════════════════════════════════
+function formatVNDPdf(n) {
+  if (!n && n !== 0) return '0';
+  return new Intl.NumberFormat('vi-VN').format(Math.round(n));
+}
+
+function generateDocPdf(res, doc, items, docType) {
+  const pdf = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
+  
+  res.setHeader('Content-Type', 'application/pdf');
+  const safeCode = (doc.code || 'unknown').replace(/[^a-zA-Z0-9\-]/g, '_');
+  res.setHeader('Content-Disposition', `inline; filename="${safeCode}.pdf"`);
+  pdf.pipe(res);
+
+  const pageW = pdf.page.width - 80; // 40 margin each side
+
+  // ── Company Header ──
+  pdf.fontSize(14).font('Helvetica-Bold').text('CONG TY TNHH THUONG MAI VA DICH VU', 40, 40, { align: 'center', width: pageW });
+  pdf.fontSize(9).font('Helvetica').text('Dia chi: 123 Nguyen Van Linh, Quan 7, TP.HCM', { align: 'center', width: pageW });
+  pdf.text('DT: 028-1234-5678 | Email: info@company.vn', { align: 'center', width: pageW });
+  pdf.text('MST: 0312345678', { align: 'center', width: pageW });
+  pdf.moveDown(0.5);
+  pdf.moveTo(40, pdf.y).lineTo(40 + pageW, pdf.y).lineWidth(1).stroke('#333');
+  pdf.moveDown(0.8);
+
+  // ── Document Title ──
+  let title = '';
+  if (docType === 'quotation') title = 'BAO GIA';
+  else if (docType === 'order') title = 'DON HANG';
+  else title = 'HOA DON BAN HANG';
+  
+  pdf.fontSize(18).font('Helvetica-Bold').text(title, { align: 'center', width: pageW });
+  pdf.fontSize(10).font('Helvetica').text(`So: ${doc.code || ''}`, { align: 'center', width: pageW });
+  if (doc.created_at) pdf.text(`Ngay: ${new Date(doc.created_at).toLocaleDateString('vi-VN')}`, { align: 'center', width: pageW });
+  pdf.moveDown(1);
+
+  // ── Customer Info ──
+  pdf.fontSize(10).font('Helvetica-Bold').text('THONG TIN KHACH HANG', 40);
+  pdf.moveDown(0.3);
+  pdf.fontSize(9).font('Helvetica');
+  if (doc.customer_name) pdf.text(`Khach hang: ${doc.customer_name}`, 40);
+  if (doc.customer_phone) pdf.text(`Dien thoai: ${doc.customer_phone}`, 40);
+  if (doc.customer_address) pdf.text(`Dia chi: ${doc.customer_address}`, 40);
+  if (doc.customer?.tax_code) pdf.text(`MST: ${doc.customer.tax_code}`, 40);
+  pdf.moveDown(0.8);
+
+  // ── Items Table ──
+  const colWidths = [28, 160, 38, 35, 72, 80, 38, 70];
+  const colLabels = ['STT', 'Ten hang hoa', 'DVT', 'SL', 'Don gia', 'Thanh tien', '%VAT', 'Tien thue'];
+  const colAligns = ['center', 'left', 'center', 'right', 'right', 'right', 'right', 'right'];
+  const tableX = 40;
+  let tableY = pdf.y;
+  const rowH = 20;
+  const headerH = 22;
+
+  // Draw header
+  pdf.rect(tableX, tableY, pageW, headerH).fill('#2563EB');
+  pdf.font('Helvetica-Bold').fontSize(8).fillColor('#FFFFFF');
+  let cx = tableX;
+  for (let c = 0; c < colLabels.length; c++) {
+    const align = colAligns[c];
+    const padding = align === 'right' ? colWidths[c] - 4 : (align === 'center' ? 0 : 4);
+    pdf.text(colLabels[c], cx + (align === 'center' ? 0 : (align === 'right' ? 0 : 4)), tableY + 6, {
+      width: colWidths[c] - (align === 'center' ? 0 : 4),
+      align,
+    });
+    cx += colWidths[c];
+  }
+  tableY += headerH;
+  pdf.fillColor('#000000');
+
+  // Draw rows
+  pdf.font('Helvetica').fontSize(8);
+  (items || []).forEach((item, idx) => {
+    // Check page break
+    if (tableY + rowH > pdf.page.height - 120) {
+      pdf.addPage();
+      tableY = 40;
+    }
+
+    const bg = idx % 2 === 0 ? '#F9FAFB' : '#FFFFFF';
+    pdf.rect(tableX, tableY, pageW, rowH).fill(bg);
+    pdf.fillColor('#000000');
+
+    const amount = item.amount || 0;
+    const vatRate = item.vat_rate || 0;
+    const vatAmount = item.vat_amount || (amount * vatRate / 100);
+    const values = [
+      String(idx + 1),
+      item.name || '',
+      item.unit || '',
+      String(item.quantity || 0),
+      formatVNDPdf(item.unit_price || 0),
+      formatVNDPdf(amount),
+      vatRate > 0 ? `${vatRate}%` : '0',
+      formatVNDPdf(vatAmount),
+    ];
+    cx = tableX;
+    for (let c = 0; c < values.length; c++) {
+      const align = colAligns[c];
+      pdf.text(values[c], cx + (align === 'right' ? 0 : (align === 'center' ? 0 : 4)), tableY + 5, {
+        width: colWidths[c] - (align === 'center' ? 0 : 4),
+        align,
+      });
+      cx += colWidths[c];
+    }
+    // Draw row border
+    pdf.moveTo(tableX, tableY + rowH).lineTo(tableX + pageW, tableY + rowH).lineWidth(0.3).strokeColor('#E5E7EB').stroke();
+    tableY += rowH;
+  });
+
+  // Bottom border
+  pdf.moveTo(tableX, tableY).lineTo(tableX + pageW, tableY).lineWidth(0.5).strokeColor('#333').stroke();
+  tableY += 10;
+
+  // ── Totals ──
+  const subtotal = (items || []).reduce((s, i) => s + (i.amount || 0), 0);
+  const discountAmt = doc.discount_amount || 0;
+  const afterDiscount = subtotal - discountAmt;
+  const totalVat = (items || []).reduce((s, i) => s + (i.vat_amount || (i.amount || 0) * (i.vat_rate || 0) / 100), 0);
+  const total = afterDiscount + totalVat;
+
+  const rightX = tableX + pageW - 200;
+  pdf.font('Helvetica').fontSize(9);
+
+  const drawTotalLine = (label, value, bold, color) => {
+    if (bold) pdf.font('Helvetica-Bold').fontSize(11);
+    else pdf.font('Helvetica').fontSize(9);
+    if (color) pdf.fillColor(color); else pdf.fillColor('#000000');
+    pdf.text(label, rightX, tableY, { width: 110, align: 'left' });
+    pdf.text(value, rightX + 110, tableY, { width: 90, align: 'right' });
+    tableY += bold ? 18 : 15;
+    pdf.fillColor('#000000');
+  };
+
+  drawTotalLine('Tong tien hang:', formatVNDPdf(subtotal));
+  if (discountAmt > 0) drawTotalLine('Chiet khau:', '-' + formatVNDPdf(discountAmt));
+  if (discountAmt > 0) drawTotalLine('Sau chiet khau:', formatVNDPdf(afterDiscount));
+  drawTotalLine('Thue GTGT:', formatVNDPdf(totalVat));
+  pdf.moveTo(rightX, tableY - 2).lineTo(rightX + 200, tableY - 2).lineWidth(0.5).strokeColor('#333').stroke();
+  tableY += 4;
+  drawTotalLine('TONG CONG:', formatVNDPdf(total) + ' VND', true, '#1D4ED8');
+
+  // ── Payment Terms ──
+  tableY += 10;
+  if (doc.payment_terms) {
+    pdf.font('Helvetica').fontSize(8).fillColor('#555');
+    pdf.text(`Dieu khoan thanh toan: ${doc.payment_terms}`, 40, tableY, { width: pageW });
+    tableY += 15;
+  }
+  if (doc.notes) {
+    pdf.font('Helvetica').fontSize(8).fillColor('#555');
+    pdf.text(`Ghi chu: ${doc.notes}`, 40, tableY, { width: pageW });
+    tableY += 15;
+  }
+
+  // ── Signatures ──
+  if (tableY + 80 > pdf.page.height - 40) pdf.addPage();
+  tableY = Math.max(tableY + 20, pdf.y + 20);
+
+  pdf.font('Helvetica-Bold').fontSize(9).fillColor('#000');
+  pdf.text('Nguoi mua hang', 40, tableY, { width: pageW / 2, align: 'center' });
+  pdf.text('Nguoi ban hang', 40 + pageW / 2, tableY, { width: pageW / 2, align: 'center' });
+  tableY += 14;
+  pdf.font('Helvetica').fontSize(8).fillColor('#888');
+  pdf.text('(Ky, ghi ro ho ten)', 40, tableY, { width: pageW / 2, align: 'center' });
+  pdf.text('(Ky, ghi ro ho ten)', 40 + pageW / 2, tableY, { width: pageW / 2, align: 'center' });
+
+  pdf.end();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PDF EXPORT ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/quotations/:id/pdf', async (req, res) => {
+  try {
+    const { data: quote } = await supabase.from('quotations')
+      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code)')
+      .eq('id', req.params.id).single();
+    if (!quote) return res.status(404).json({ error: 'Khong tim thay bao gia' });
+    const { data: items } = await supabase.from('quotation_items')
+      .select('*, product:products(id, name, code)')
+      .eq('quotation_id', req.params.id).order('item_order');
+    generateDocPdf(res, quote, items || [], 'quotation');
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.get('/orders/:id/pdf', async (req, res) => {
+  try {
+    const { data: order } = await supabase.from('orders')
+      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code)')
+      .eq('id', req.params.id).single();
+    if (!order) return res.status(404).json({ error: 'Khong tim thay don hang' });
+    const { data: items } = await supabase.from('order_items')
+      .select('*, product:products(id, name, code)')
+      .eq('order_id', req.params.id).order('item_order');
+    generateDocPdf(res, order, items || [], 'order');
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.get('/invoices/:id/pdf', async (req, res) => {
+  try {
+    const { data: invoice } = await supabase.from('invoices')
+      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code)')
+      .eq('id', req.params.id).single();
+    if (!invoice) return res.status(404).json({ error: 'Khong tim thay hoa don' });
+    const { data: items } = await supabase.from('invoice_items')
+      .select('*, product:products(id, name, code)')
+      .eq('invoice_id', req.params.id).order('item_order');
+    generateDocPdf(res, invoice, items || [], 'invoice');
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

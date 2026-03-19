@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { ArrowLeft, ShoppingCart, Receipt, User, Phone, MapPin, Package, Calendar, Truck } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Receipt, User, Phone, MapPin, Package, Calendar, Truck, Download } from 'lucide-react';
 
 const STATUS_MAP = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
 const STATUS_COLORS = { draft: 'bg-gray-100 text-gray-600', confirmed: 'bg-blue-100 text-blue-700', processing: 'bg-amber-100 text-amber-700', shipped: 'bg-indigo-100 text-indigo-700', delivered: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-red-100 text-red-700' };
@@ -34,10 +34,23 @@ export default function OrderDetail() {
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
+  const downloadPdf = async () => {
+    try {
+      const response = await api.get(`/crm/orders/${id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${order?.code || 'don-hang'}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { alert('Lỗi tải PDF'); }
+  };
+
   if (loading || !order) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-emerald-600 border-t-transparent rounded-full" /></div>;
 
   const currentStep = STATUS_STEPS.indexOf(order.status);
   const remaining = (order.total || 0) - (order.paid_amount || 0);
+  const totalVat = (order.items || []).reduce((s, i) => s + (i.vat_amount || (i.amount || 0) * (i.vat_rate || 0) / 100), 0);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -49,7 +62,10 @@ export default function OrderDetail() {
             <h1 className="text-xl font-bold text-gray-900">{order.title || 'Đơn hàng'}</h1>
           </div>
         </div>
-        <button onClick={createInvoice} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Receipt className="h-4 w-4" /> Tạo hóa đơn</button>
+        <div className="flex items-center gap-2">
+          <button onClick={downloadPdf} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Download className="h-4 w-4" /> Xuất PDF</button>
+          <button onClick={createInvoice} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Receipt className="h-4 w-4" /> Tạo hóa đơn</button>
+        </div>
       </div>
 
       {/* Progress Steps - Clickable */}
@@ -102,25 +118,31 @@ export default function OrderDetail() {
             <thead><tr className="border-b text-xs text-gray-500 uppercase">
               <th className="py-2 text-left">#</th><th className="py-2 text-left">Tên</th><th className="py-2 text-left">ĐVT</th>
               <th className="py-2 text-right">SL</th><th className="py-2 text-right">Đơn giá</th><th className="py-2 text-right">Thành tiền</th>
+              <th className="py-2 text-right">%VAT</th><th className="py-2 text-right">Tiền thuế</th>
             </tr></thead>
             <tbody>
-              {(order.items || []).map((item, i) => (
-                <tr key={item.id} className="border-b">
-                  <td className="py-2 text-gray-400">{i + 1}</td>
-                  <td className="py-2"><p className="font-medium text-gray-900">{item.name}</p>{item.description && <p className="text-[10px] text-gray-400">{item.description}</p>}</td>
-                  <td className="py-2 text-gray-500">{item.unit}</td>
-                  <td className="py-2 text-right">{item.quantity}</td>
-                  <td className="py-2 text-right">{formatVND(item.unit_price)}</td>
-                  <td className="py-2 text-right font-medium">{formatVND(item.amount)}</td>
-                </tr>
-              ))}
+              {(order.items || []).map((item, i) => {
+                const vatAmount = item.vat_amount || (item.amount || 0) * (item.vat_rate || 0) / 100;
+                return (
+                  <tr key={item.id} className="border-b">
+                    <td className="py-2 text-gray-400">{i + 1}</td>
+                    <td className="py-2"><p className="font-medium text-gray-900">{item.name}</p>{item.description && <p className="text-[10px] text-gray-400">{item.description}</p>}</td>
+                    <td className="py-2 text-gray-500">{item.unit}</td>
+                    <td className="py-2 text-right">{item.quantity}</td>
+                    <td className="py-2 text-right">{formatVND(item.unit_price)}</td>
+                    <td className="py-2 text-right font-medium">{formatVND(item.amount)}</td>
+                    <td className="py-2 text-right text-gray-500">{item.vat_rate || 0}%</td>
+                    <td className="py-2 text-right text-gray-600">{formatVND(vatAmount)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <div className="flex justify-end mt-4">
             <div className="w-72 space-y-1.5 text-sm">
               <div className="flex justify-between"><span className="text-gray-500">Tổng tiền hàng</span><span>{formatVND(order.subtotal)}</span></div>
               {order.discount_amount > 0 && <div className="flex justify-between"><span className="text-gray-500">Chiết khấu</span><span className="text-red-600">-{formatVND(order.discount_amount)}</span></div>}
-              {order.tax_amount > 0 && <div className="flex justify-between"><span className="text-gray-500">VAT ({order.tax_rate}%)</span><span>{formatVND(order.tax_amount)}</span></div>}
+              {totalVat > 0 && <div className="flex justify-between"><span className="text-gray-500">Thuế GTGT</span><span>{formatVND(totalVat)}</span></div>}
               <div className="flex justify-between border-t pt-2 text-base font-bold"><span>TỔNG CỘNG</span><span className="text-emerald-600">{formatVND(order.total)}</span></div>
             </div>
           </div>
