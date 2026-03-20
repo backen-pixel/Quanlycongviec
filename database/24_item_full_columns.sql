@@ -1,0 +1,38 @@
+-- 24: Add full item columns to quotation_items, order_items, invoice_items
+-- Columns: product_code, height, width, length, weight, discount_amount, tax_amount, total, promo_code, is_promo
+
+-- QUOTATION_ITEMS
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS product_code TEXT;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS height NUMERIC;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS width NUMERIC;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS length NUMERIC;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS weight NUMERIC;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS tax_amount NUMERIC DEFAULT 0;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS total NUMERIC DEFAULT 0;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS promo_code TEXT;
+ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS is_promo BOOLEAN DEFAULT FALSE;
+
+-- ORDER_ITEMS
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS product_code TEXT;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS height NUMERIC;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS width NUMERIC;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS length NUMERIC;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS weight NUMERIC;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tax_amount NUMERIC DEFAULT 0;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS total NUMERIC DEFAULT 0;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS promo_code TEXT;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS is_promo BOOLEAN DEFAULT FALSE;
+
+-- INVOICE_ITEMS
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS product_code TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS height NUMERIC;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS width NUMERIC;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS length NUMERIC;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS weight NUMERIC;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS tax_amount NUMERIC DEFAULT 0;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS total NUMERIC DEFAULT 0;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS promo_code TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS is_promo BOOLEAN DEFAULT FALSE;

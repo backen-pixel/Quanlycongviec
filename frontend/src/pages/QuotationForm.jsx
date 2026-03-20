@@ -29,7 +29,11 @@ export default function QuotationForm() {
   });
   const [customPaymentTerms, setCustomPaymentTerms] = useState('');
   const [isCustomPayment, setIsCustomPayment] = useState(false);
-  const [items, setItems] = useState([{ name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '' }]);
+  const [items, setItems] = useState([{
+    name: '', description: '', product_code: '', unit: 'bộ', quantity: 1, unit_price: 0,
+    discount_percent: 0, vat_rate: 0, height: '', width: '', length: '', weight: '',
+    dimensions: '', material: '', color: '', promo_code: '', is_promo: false,
+  }]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -51,10 +55,13 @@ export default function QuotationForm() {
         });
         if (!isPreset && pt) { setIsCustomPayment(true); setCustomPaymentTerms(pt); }
         if (d.items?.length) setItems(d.items.map(i => ({
-          name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: i.quantity || 1,
+          name: i.name, description: i.description || '', product_code: i.product_code || '',
+          unit: i.unit || 'bộ', quantity: i.quantity || 1,
           unit_price: i.unit_price || 0, discount_percent: i.discount_percent || 0,
           vat_rate: i.vat_rate || 0,
-          dimensions: i.dimensions || '', material: i.material || '', color: i.color || '', product_id: i.product_id,
+          height: i.height || '', width: i.width || '', length: i.length || '', weight: i.weight || '',
+          dimensions: i.dimensions || '', material: i.material || '', color: i.color || '',
+          product_id: i.product_id, promo_code: i.promo_code || '', is_promo: i.is_promo || false,
         })));
       });
     } else {
@@ -88,20 +95,26 @@ export default function QuotationForm() {
   const addProduct = (pid) => {
     const p = products.find(x => x.id === pid);
     if (p) setItems(prev => [...prev, {
-      product_id: p.id, name: p.name, description: p.description || '', unit: p.unit || 'bộ',
+      product_id: p.id, name: p.name, description: p.description || '',
+      product_code: p.code || '', unit: p.unit || 'bộ',
       quantity: 1, unit_price: p.base_price || 0, discount_percent: 0,
       vat_rate: p.vat_rate || 0,
+      height: '', width: '', length: '', weight: '',
       dimensions: p.dimensions || '', material: p.material || '', color: p.color || '',
+      promo_code: '', is_promo: false,
     }]);
   };
 
   // Calculations with per-item VAT
   const calcs = useMemo(() => {
     const rows = items.map(i => {
-      const amount = (i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100);
+      const grossAmount = (i.quantity || 0) * (i.unit_price || 0);
+      const discountAmount = grossAmount * (i.discount_percent || 0) / 100;
+      const amount = grossAmount - discountAmount;
       const vatRate = i.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
-      return { ...i, amount, vat_rate: vatRate, vat_amount: vatAmount };
+      const total = amount + vatAmount;
+      return { ...i, amount, discount_amount: discountAmount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total };
     });
     const subtotal = rows.reduce((s, r) => s + r.amount, 0);
     const discountAmt = form.discount_type === 'percent' ? subtotal * (form.discount_value || 0) / 100 : (form.discount_value || 0);
@@ -233,39 +246,53 @@ export default function QuotationForm() {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="bg-gray-50 text-xs text-gray-500 uppercase">
-              <th className="py-2 px-2 text-left w-8">#</th>
-              <th className="py-2 px-2 text-left min-w-[180px]">Tên hàng hóa</th>
-              <th className="py-2 px-2 text-left w-16">ĐVT</th>
-              <th className="py-2 px-2 text-right w-16">SL</th>
-              <th className="py-2 px-2 text-right w-28">Đơn giá</th>
-              <th className="py-2 px-2 text-right w-14">CK%</th>
-              <th className="py-2 px-2 text-right w-28">Thành tiền</th>
-              <th className="py-2 px-2 text-right w-16">%VAT</th>
-              <th className="py-2 px-2 text-right w-28">Tiền thuế</th>
-              <th className="py-2 px-2 w-10"></th>
+            <thead><tr className="bg-gray-50 text-[10px] text-gray-500 uppercase">
+              <th className="py-2 px-1 text-left w-8">STT</th>
+              <th className="py-2 px-1 text-left w-20">Mã HH</th>
+              <th className="py-2 px-1 text-left min-w-[160px]">Tên hàng hóa</th>
+              <th className="py-2 px-1 text-left min-w-[120px]">Diễn giải</th>
+              <th className="py-2 px-1 text-center w-12">ĐVT</th>
+              <th className="py-2 px-1 text-right w-14">Cao</th>
+              <th className="py-2 px-1 text-right w-14">Rộng</th>
+              <th className="py-2 px-1 text-right w-14">Dài</th>
+              <th className="py-2 px-1 text-right w-14">TL(kg)</th>
+              <th className="py-2 px-1 text-right w-12">SL</th>
+              <th className="py-2 px-1 text-right w-24">Đơn giá</th>
+              <th className="py-2 px-1 text-right w-24">Thành tiền</th>
+              <th className="py-2 px-1 text-right w-12">CK%</th>
+              <th className="py-2 px-1 text-right w-20">Tiền CK</th>
+              <th className="py-2 px-1 text-right w-12">%VAT</th>
+              <th className="py-2 px-1 text-right w-20">Tiền thuế</th>
+              <th className="py-2 px-1 text-right w-24">Tổng tiền</th>
+              <th className="py-2 px-1 text-left w-16">CTKM</th>
+              <th className="py-2 px-1 text-center w-10">KM</th>
+              <th className="py-2 px-1 w-8"></th>
             </tr></thead>
             <tbody>
               {items.map((item, idx) => {
-                const amount = (item.quantity || 0) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
-                const vatAmount = amount * (item.vat_rate || 0) / 100;
+                const row = calcs.rows[idx] || {};
                 return (
                   <tr key={idx} className="border-b hover:bg-blue-50/30">
-                    <td className="py-2 px-2 text-gray-400">{idx + 1}</td>
-                    <td className="py-2 px-2">
-                      <input value={item.name} onChange={e => updateItem(idx, 'name', e.target.value)} placeholder="Tên sản phẩm / dịch vụ" className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent" />
-                      {(item.dimensions || item.material) && (
-                        <p className="text-[10px] text-gray-400 mt-0.5">{[item.dimensions, item.material, item.color].filter(Boolean).join(' · ')}</p>
-                      )}
-                    </td>
-                    <td className="py-2 px-2"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-center" /></td>
-                    <td className="py-2 px-2"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2"><input type="number" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2"><input type="number" value={item.discount_percent} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2 text-right font-medium text-gray-900">{formatVND(amount)}</td>
-                    <td className="py-2 px-2"><input type="number" value={item.vat_rate || 0} onChange={e => updateItem(idx, 'vat_rate', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2 text-right text-gray-600">{formatVND(vatAmount)}</td>
-                    <td className="py-2 px-2"><button onClick={() => removeItem(idx)} className="p-1 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-4 w-4" /></button></td>
+                    <td className="py-1.5 px-1 text-gray-400 text-xs">{idx + 1}</td>
+                    <td className="py-1.5 px-1"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
+                    <td className="py-1.5 px-1"><input value={item.name} onChange={e => updateItem(idx, 'name', e.target.value)} placeholder="Tên sản phẩm" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
+                    <td className="py-1.5 px-1"><input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
+                    <td className="py-1.5 px-1"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-center" /></td>
+                    <td className="py-1.5 px-1"><input type="number" value={item.height || ''} onChange={e => updateItem(idx, 'height', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1.5 px-1"><input type="number" value={item.width || ''} onChange={e => updateItem(idx, 'width', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1.5 px-1"><input type="number" value={item.length || ''} onChange={e => updateItem(idx, 'length', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1.5 px-1"><input type="number" value={item.weight || ''} onChange={e => updateItem(idx, 'weight', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1.5 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1.5 px-1"><input type="number" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1.5 px-1 text-right text-xs font-medium text-gray-900">{formatVND(row.amount || 0)}</td>
+                    <td className="py-1.5 px-1"><input type="number" value={item.discount_percent || 0} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1.5 px-1 text-right text-xs text-orange-600">{formatVND(row.discount_amount || 0)}</td>
+                    <td className="py-1.5 px-1"><input type="number" value={item.vat_rate || 0} onChange={e => updateItem(idx, 'vat_rate', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1.5 px-1 text-right text-xs text-gray-600">{formatVND(row.tax_amount || 0)}</td>
+                    <td className="py-1.5 px-1 text-right text-xs font-bold text-blue-700">{formatVND(row.total || 0)}</td>
+                    <td className="py-1.5 px-1"><input value={item.promo_code || ''} onChange={e => updateItem(idx, 'promo_code', e.target.value)} placeholder="" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
+                    <td className="py-1.5 px-1 text-center"><input type="checkbox" checked={item.is_promo || false} onChange={e => updateItem(idx, 'is_promo', e.target.checked)} className="h-3.5 w-3.5 rounded cursor-pointer" /></td>
+                    <td className="py-1.5 px-1"><button onClick={() => removeItem(idx)} className="p-0.5 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button></td>
                   </tr>
                 );
               })}
