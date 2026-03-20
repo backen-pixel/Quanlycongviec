@@ -573,9 +573,9 @@ r.get('/planner/board', async (req, res) => {
     const isAdmin = req.user.role === 'admin';
     const { company_id, division_id } = req.query;
 
-    // Get tasks with assignees
+    // Get tasks with assignees (project tasks)
     let query = supabase.from('tasks')
-      .select('id, title, status, priority, due_date, planner_order, assignee_id, project_id, project:projects(id, code, name, company_id, deadline, current_stage_id)')
+      .select('id, title, status, priority, due_date, planner_order, assignee_id, project_id, task_type, project:projects(id, code, name, company_id, deadline, current_stage_id)')
       .not('assignee_id', 'is', null)
       .order('planner_order', { ascending: true })
       .order('due_date', { ascending: true, nullsFirst: false });
@@ -583,8 +583,26 @@ r.get('/planner/board', async (req, res) => {
     const { data: tasks, error } = await query;
     if (error) throw error;
 
+    // Also get personal tasks (task_type = 'personal')
+    const { data: personalTasks } = await supabase.from('tasks')
+      .select('id, title, status, priority, due_date, planner_order, assignee_id, created_by_id, task_type')
+      .eq('task_type', 'personal')
+      .order('planner_order', { ascending: true })
+      .order('due_date', { ascending: true, nullsFirst: false });
+
+    // Merge: personal tasks belong to their creator (or assignee if set)
+    const allTasks = [...(tasks || [])];
+    (personalTasks || []).forEach(pt => {
+      // Avoid duplicates (personal task might already be in tasks if it has assignee)
+      if (!allTasks.find(t => t.id === pt.id)) {
+        pt.assignee_id = pt.assignee_id || pt.created_by_id;
+        pt._isPersonal = true;
+        allTasks.push(pt);
+      }
+    });
+
     // Get all assignee user info
-    const assigneeIds = [...new Set((tasks || []).map(t => t.assignee_id))];
+    const assigneeIds = [...new Set(allTasks.map(t => t.assignee_id).filter(Boolean))];
     let users = [];
     if (assigneeIds.length > 0) {
       const { data: userData } = await supabase.from('users').select('id, full_name, avatar_url, role').in('id', assigneeIds);
@@ -592,9 +610,9 @@ r.get('/planner/board', async (req, res) => {
     }
 
     // Filter by company if needed
-    let filteredTasks = tasks || [];
+    let filteredTasks = allTasks;
     if (company_id) {
-      filteredTasks = filteredTasks.filter(t => t.project?.company_id === company_id);
+      filteredTasks = filteredTasks.filter(t => t._isPersonal || t.project?.company_id === company_id);
     }
 
     // Group by assignee
