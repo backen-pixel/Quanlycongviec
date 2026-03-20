@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import TaskDetailModal from '../components/TaskDetailModal';
+import { TourButton } from '../components/WebTour';
+import { myTasksTour } from '../lib/tourSteps';
 import {
   CheckSquare, Clock, AlertTriangle, Calendar, Filter, User,
   ChevronDown, Inbox, PlayCircle, Eye, CheckCircle
@@ -77,9 +79,12 @@ export default function MyTasks() {
   return (
     <div className="space-y-5 max-w-5xl">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Việc của tôi</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Quản lý công việc cá nhân</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Việc của tôi</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Quản lý công việc cá nhân</p>
+        </div>
+        <TourButton steps={myTasksTour} />
       </div>
 
       {/* Stats */}

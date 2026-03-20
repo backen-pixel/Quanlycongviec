@@ -17,6 +17,8 @@ import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
 import ProjectFlowTab from '../components/ProjectFlowTab';
 import ProjectCRMTab from '../components/ProjectCRMTab';
+import { TourButton } from '../components/WebTour';
+import { projectDetailTour } from '../lib/tourSteps';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
   TASK_STATUS, TASK_COLORS, formatVND, formatDate, formatDateTime,
@@ -178,6 +180,7 @@ export default function ProjectDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <TourButton steps={projectDetailTour} />
           {canAdvance && nextStage && approvalRule?.mode === 'auto' && (
             <button onClick={() => setShowAdvance(true)}
               className="h-9 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 cursor-pointer flex items-center gap-1 animate-pulse">

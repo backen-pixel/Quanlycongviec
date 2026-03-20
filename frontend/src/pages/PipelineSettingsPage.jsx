@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff } from 'lucide-react';
+import { TourButton } from '../components/WebTour';
+import { pipelineSettingsTour } from '../lib/tourSteps';
 
 const COLORS = ['#94A3B8','#3B82F6','#8B5CF6','#F59E0B','#F97316','#10B981','#EF4444','#EC4899','#06B6D4','#6366F1'];
 const ICONS = ['🆕','📞','💬','📋','📧','⏳','🤝','💰','📝','✅','❌','🎯','🔥','⭐','🏆'];
@@ -173,12 +175,15 @@ export default function PipelineSettingsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Settings className="h-6 w-6 text-blue-600" />
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Cài đặt Pipeline</h1>
-          <p className="text-sm text-gray-500">Quản lý giai đoạn cho Lead và Deal</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Settings className="h-6 w-6 text-blue-600" />
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">Cài đặt Pipeline</h1>
+            <p className="text-sm text-gray-500">Quản lý giai đoạn cho Lead và Deal</p>
+          </div>
         </div>
+        <TourButton steps={pipelineSettingsTour} />
       </div>
 
       {/* Edit Form (floating) */}

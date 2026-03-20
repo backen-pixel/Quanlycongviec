@@ -4,6 +4,8 @@ import api from '../lib/api';
 import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List, Clock, PlayCircle, CheckSquare, AlertCircle, CalendarClock, Pin } from 'lucide-react';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
+import { TourButton } from '../components/WebTour';
+import { projectsTour } from '../lib/tourSteps';
 
 const TIME_FILTERS = [
   { id: 'all', label: 'Tất cả' },
@@ -298,8 +300,9 @@ export default function Projects() {
           <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{filtered.length} dự án{hasActiveFilters ? ' (đã lọc)' : ''}</p>
         </div>
         <div className="flex items-center gap-2">
+          <TourButton steps={projectsTour} />
           {/* View toggle */}
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
+          <div data-tour="view-toggle" className="flex bg-gray-100 rounded-lg p-0.5">
             <button onClick={() => setViewMode('kanban')} className={`h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-medium cursor-pointer ${viewMode === 'kanban' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
               <LayoutGrid className="h-3.5 w-3.5" /> Kanban
             </button>
@@ -310,7 +313,7 @@ export default function Projects() {
               <CalendarClock className="h-3.5 w-3.5" /> Kế hoạch
             </button>
           </div>
-          <button onClick={() => navigate('/projects/create')}
+          <button data-tour="create-project" onClick={() => navigate('/projects/create')}
             className="h-9 px-3 sm:px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
             <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Tạo dự án</span>
           </button>
@@ -335,7 +338,7 @@ export default function Projects() {
 
       {/* Advanced filters panel */}
       {showAdvFilter && (
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div data-tour="project-filters" className="bg-white rounded-xl border p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-700">Bộ lọc nâng cao</h3>
             {hasActiveFilters && (

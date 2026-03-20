@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { Save, ArrowLeft, Building2, Phone, Globe, CreditCard, FileText } from 'lucide-react';
+import { TourButton } from '../components/WebTour';
+import { pdfSettingsTour } from '../lib/tourSteps';
 
 export default function PDFSettingsPage() {
   const navigate = useNavigate();
@@ -56,9 +58,12 @@ export default function PDFSettingsPage() {
             <p className="text-xs text-gray-500">Thông tin hiển thị trên báo giá, đơn hàng, hóa đơn</p>
           </div>
         </div>
-        <button onClick={save} disabled={saving} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
-          <Save className="h-4 w-4" /> {saving ? 'Đang lưu...' : saved ? '✅ Đã lưu!' : 'Lưu'}
-        </button>
+        <div className="flex items-center gap-2">
+          <TourButton steps={pdfSettingsTour} />
+          <button onClick={save} disabled={saving} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
+            <Save className="h-4 w-4" /> {saving ? 'Đang lưu...' : saved ? '✅ Đã lưu!' : 'Lưu'}
+          </button>
+        </div>
       </div>
 
       {/* Company Info */}

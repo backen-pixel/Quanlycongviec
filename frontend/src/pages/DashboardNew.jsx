@@ -7,6 +7,8 @@ import {
   ChevronDown, ChevronRight, Filter, Calendar, Search, X, User
 } from 'lucide-react';
 import { formatVND, getInitials, avatarColor, STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS, formatDate } from '../lib/utils';
+import { TourButton } from '../components/WebTour';
+import { dashboardTour } from '../lib/tourSteps';
 
 export default function DashboardNew() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -83,8 +85,11 @@ export default function DashboardNew() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4 sm:p-6 lg:p-8">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">📊 Dashboard</h1>
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-3xl font-bold text-gray-900">📊 Dashboard</h1>
+          <TourButton steps={dashboardTour} />
+        </div>
+        <div data-tour="division-tabs" className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
           <button onClick={() => handleTabChange(null)} className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all ${!selectedDiv ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'}`}>🏠 Tổng quan</button>
           {divisions.map(d => (
             <button key={d.id} onClick={() => handleTabChange(d.id)} className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all flex items-center gap-2 ${selectedDiv === d.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'}`}>
@@ -186,7 +191,7 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
 
       {/* Company Filter */}
       {(companies_list || []).length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap">
+        <div data-tour="company-filter" className="flex items-center gap-3 flex-wrap">
           <Building2 className="h-4 w-4 text-gray-500" />
           <span className="text-sm font-medium text-gray-600">Công ty:</span>
           <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -205,7 +210,7 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div data-tour="kpi-cards" className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KPICard title="Sắp Tới" value={stats.upcoming} subtitle="dự án chờ đến khối" icon={Clock} color="bg-amber-600" bgColor="bg-amber-50" />
         <KPICard title="Đang Thực Hiện" value={stats.active} subtitle={`${stats.total_tasks} nhiệm vụ`} icon={FolderKanban} color="bg-blue-600" bgColor="bg-blue-50" />
         <KPICard title="Đã Hoàn Thành" value={stats.completed} subtitle="đã qua khối" icon={CheckSquare} color="bg-emerald-600" bgColor="bg-emerald-50" />
@@ -227,7 +232,7 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
 
       {/* Task Detail */}
       {task_detail?.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div data-tour="task-detail" className="bg-white rounded-xl border border-gray-200 p-6">
           <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5"><CheckSquare className="h-5 w-5 text-blue-600" />Chi Tiết Nhiệm Vụ Theo Quy Trình</h3>
           <div className="flex items-center gap-2 flex-wrap mb-5 bg-gray-50 rounded-xl p-3">
             <div className="relative flex-1 min-w-[150px] max-w-[250px]">
