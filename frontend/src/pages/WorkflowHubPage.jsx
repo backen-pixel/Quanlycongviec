@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { GitBranch, Layers, ClipboardList, ArrowRight, Lightbulb, CheckCircle2 } from 'lucide-react';
+import { TourButton } from '../components/WebTour';
+import { workflowHubTour } from '../lib/tourSteps';
 import CompanyProcessesPage from './CompanyProcessesPage';
 import TemplateSetsPage from './TemplateSetsPage';
 import WorkflowFlowsPage from './WorkflowFlowsPage';
@@ -29,13 +31,16 @@ export default function WorkflowHubPage() {
   return (
     <div className="space-y-4 max-w-6xl">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-          ⚙️ Quản Lý Quy Trình
-        </h1>
-        <p className="text-xs text-gray-500 mt-0.5">
-          Thiết lập quy trình nội bộ → tạo bộ mẫu → xây dựng luồng công việc
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            ⚙️ Quản Lý Quy Trình
+          </h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Thiết lập quy trình nội bộ → tạo bộ mẫu → xây dựng luồng công việc
+          </p>
+        </div>
+        <TourButton steps={workflowHubTour} />
       </div>
 
       {/* Guide Banner */}

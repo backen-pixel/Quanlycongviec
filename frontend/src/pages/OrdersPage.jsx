@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
+import { TourButton } from '../components/WebTour';
+import { ordersTour } from '../lib/tourSteps';
 import { Search, ShoppingCart, Receipt, Calendar, Download } from 'lucide-react';
 
 const ORDER_STATUS = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
@@ -49,7 +51,10 @@ export default function OrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><ShoppingCart className="h-6 w-6 text-emerald-600" /> Đơn hàng</h1><p className="text-sm text-gray-500 mt-1">{orders.length} đơn · {formatVND(totalValue)}</p></div>
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><ShoppingCart className="h-6 w-6 text-emerald-600" /> Đơn hàng</h1><p className="text-sm text-gray-500 mt-1">{orders.length} đơn · {formatVND(totalValue)}</p></div>
+        <TourButton steps={ordersTour} />
+      </div>
 
       {/* Status tabs */}
       <div className="flex gap-2 overflow-x-auto">

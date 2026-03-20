@@ -4,6 +4,8 @@ import Modal from '../components/Modal';
 import UserRolesModal from '../components/UserRolesModal';
 import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
+import { TourButton } from '../components/WebTour';
+import { usersTour } from '../lib/tourSteps';
 
 const ROLES = { admin: 'Admin', manager: 'Quản lý', sales: 'Kinh doanh', designer: 'Thiết kế', production: 'Sản xuất', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
 const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', staff: 'bg-gray-100 text-gray-600' };
@@ -84,10 +86,13 @@ export default function UsersPage() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><UsersIcon className="h-6 w-6 text-gray-400" /> Quản lý nhân viên</h1>
           <p className="text-sm text-gray-500 mt-0.5">{stats.total || users.length} nhân viên</p>
         </div>
-        <button onClick={() => { setEditUser(null); setShowCreate(true); }}
+        <div className="flex items-center gap-2">
+          <TourButton steps={usersTour} />
+          <button data-tour="add-user" onClick={() => { setEditUser(null); setShowCreate(true); }}
           className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
           <Plus className="h-4 w-4" /> Thêm NV
         </button>
+        </div>
       </div>
 
       {/* Role filter chips */}

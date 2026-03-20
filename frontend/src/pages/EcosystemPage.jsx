@@ -4,6 +4,8 @@ import { useAuth } from '../lib/auth';
 import Modal from '../components/Modal';
 import EcosystemSetupWizard from '../components/EcosystemSetupWizard';
 import EcosystemListView from '../components/EcosystemListView';
+import { TourButton } from '../components/WebTour';
+import { ecosystemTour } from '../lib/tourSteps';
 import {
   Plus, ChevronRight, ChevronDown, Users, Trash2, Layers,
   Edit, Shield, FolderKanban, Network, Save, X, UserPlus, Crown, User,
@@ -73,13 +75,7 @@ export default function EcosystemPage() {
         
         <div className="flex items-center gap-2">
           {/* Help button */}
-          <button
-            onClick={() => setShowGuide(!showGuide)}
-            className="h-9 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-gray-200 cursor-pointer"
-          >
-            <HelpCircle className="h-4 w-4" />
-            Hướng dẫn
-          </button>
+          <TourButton steps={ecosystemTour} />
 
           {/* View mode toggle */}
           <div className="flex bg-gray-100 rounded-lg p-1">

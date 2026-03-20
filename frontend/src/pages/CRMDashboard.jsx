@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
+import { TourButton } from '../components/WebTour';
+import { crmTour } from '../lib/tourSteps';
 import {
   TrendingUp, Users, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
@@ -149,14 +151,15 @@ export default function CRMDashboard() {
           <h1 className="text-3xl font-bold text-gray-900">CRM</h1>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={() => setShowNewLead(true)} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer transition-all duration-200">
+          <TourButton steps={crmTour} />
+          <button data-tour="add-lead" onClick={() => setShowNewLead(true)} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer transition-all duration-200">
             <Plus className="h-4 w-4" /> + Thêm {pipelineType === 'lead' ? 'Lead' : 'Deal'}
           </button>
         </div>
       </div>
 
       {/* Pill-style Tab Switcher */}
-      <div className="inline-flex gap-1 bg-gray-200 rounded-full p-1">
+      <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-gray-200 rounded-full p-1">
         <button
           onClick={() => setPipelineType('lead')}
           className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
@@ -173,7 +176,7 @@ export default function CRMDashboard() {
 
       {/* Company Filter */}
       {companies.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap">
+        <div data-tour="crm-company-filter" className="flex items-center gap-3 flex-wrap">
           <Building2 className="h-4 w-4 text-gray-500" />
           <span className="text-sm font-medium text-gray-600">Công ty:</span>
           <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -192,7 +195,7 @@ export default function CRMDashboard() {
       )}
 
       {/* KPI Summary Row - MISA Style */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div data-tour="crm-kpis" className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {pipelineType === 'lead' ? (
           <>
             <KPICard
@@ -267,7 +270,7 @@ export default function CRMDashboard() {
       </div>
 
       {/* Kanban View - MISA Style */}
-      <div className="rounded-xl overflow-hidden">
+      <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
         <KanbanView 
           pipeline={currentPipeline} 
           onMoveStage={handleMoveStage}

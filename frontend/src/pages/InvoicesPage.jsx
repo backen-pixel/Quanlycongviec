@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
+import { TourButton } from '../components/WebTour';
+import { invoicesTour } from '../lib/tourSteps';
 import { Search, Receipt, DollarSign, Calendar, Download } from 'lucide-react';
 
 const PAY_MAP = { unpaid: 'Chưa TT', partial: 'TT 1 phần', paid: 'Đã TT đủ' };
@@ -43,7 +45,10 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-6">
-      <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Receipt className="h-6 w-6 text-purple-600" /> Hóa đơn</h1><p className="text-sm text-gray-500 mt-1">{invoices.length} hóa đơn · Tổng {formatVND(totalAmount)}</p></div>
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Receipt className="h-6 w-6 text-purple-600" /> Hóa đơn</h1><p className="text-sm text-gray-500 mt-1">{invoices.length} hóa đơn · Tổng {formatVND(totalAmount)}</p></div>
+        <TourButton steps={invoicesTour} />
+      </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-4">

@@ -3,6 +3,8 @@ import api from '../lib/api';
 import Modal from '../components/Modal';
 import UserSelect from '../components/UserSelect';
 import { Plus, Building2, Search, Users, Trash2, Edit, FolderKanban, UserPlus, X } from 'lucide-react';
+import { TourButton } from '../components/WebTour';
+import { companiesPageTour } from '../lib/tourSteps';
 import { getInitials, avatarColor, ROLE_LABELS } from '../lib/utils';
 
 export default function CompaniesPage() {
@@ -65,10 +67,13 @@ export default function CompaniesPage() {
           <h1 className="text-2xl font-bold text-gray-900">Quản lý công ty</h1>
           <p className="text-sm text-gray-500">{companies.length} công ty</p>
         </div>
-        <button onClick={() => setShowCreate(true)}
-          className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
-          <Plus className="h-4 w-4" /> Thêm công ty
-        </button>
+        <div className="flex items-center gap-2">
+          <TourButton steps={companiesPageTour} />
+          <button data-tour="add-company" onClick={() => setShowCreate(true)}
+            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
+            <Plus className="h-4 w-4" /> Thêm công ty
+          </button>
+        </div>
       </div>
 
       {/* Search */}
