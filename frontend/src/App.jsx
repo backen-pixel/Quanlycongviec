@@ -52,6 +52,8 @@ import { Settings } from 'lucide-react';
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
 import AIAssistantChat from './components/AIAssistantChat';
 import { TourProvider } from './components/TourProvider';
+import { ThemeProvider } from './components/ThemeProvider';
+import ThemeSettingsPage from './pages/ThemeSettingsPage';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
@@ -78,9 +80,14 @@ function ProtectedLayout() {
   const isFullscreen = fullscreenPages.some(p => location.pathname.startsWith(p));
 
   return (
-    <div className="flex h-screen bg-[var(--color-page-bg)]">
+    <div className="flex h-screen bg-[var(--color-page-bg)] relative">
+      {/* Background image layer */}
+      <div className="absolute inset-0 pointer-events-none z-0"
+        style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }} />
+      <div className="absolute inset-0 pointer-events-none z-0"
+        style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
       <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative z-10">
         <main className="flex-1 overflow-y-auto w-full">
           {isFullscreen ? (
             <Outlet />
@@ -101,6 +108,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <ThemeProvider>
         <TourProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -146,6 +154,7 @@ export default function App() {
             <Route path="/crm/reports" element={<CRMReports />} />
             <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
+            <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
@@ -160,6 +169,7 @@ export default function App() {
           </Route>
         </Routes>
         </TourProvider>
+        </ThemeProvider>
       </BrowserRouter>
     </AuthProvider>
   );

@@ -27,8 +27,8 @@ html, body, #root {
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #c1c9d6; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #a0aec0; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb, #c1c9d6); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover, #a0aec0); }
 
 /* Form inputs */
 .input {
