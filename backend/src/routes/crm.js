@@ -1411,7 +1411,51 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
     // Link lead to project
     await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
 
-    res.status(201).json(project);
+    // ── AUTO-GENERATE TASKS FOR ALL STAGES ──
+    const allStageSlugs = ['consulting', 'design', 'quotation', 'contract', 'production', 'shipping', 'installation', 'customer-care'];
+    let totalCreated = 0;
+
+    for (const slug of allStageSlugs) {
+      try {
+        // Find stage (exact match first, then pattern)
+        let stg = null;
+        const { data: exact } = await supabase.from('workflow_stages').select('id, name, slug').eq('slug', slug).single();
+        if (exact) stg = exact;
+        else {
+          const { data: pattern } = await supabase.from('workflow_stages').select('id, name, slug').ilike('slug', slug + '%').limit(1);
+          stg = pattern?.[0];
+        }
+        if (!stg) continue;
+
+        // Load templates from task_templates
+        const { data: templates } = await supabase.from('task_templates')
+          .select('*').eq('stage_id', stg.id).eq('is_active', true).order('order_index');
+        if (!templates?.length) continue;
+
+        // Create tasks
+        const { data: ins } = await supabase.from('tasks').insert(templates.map((t, i) => ({
+          project_id: project.id, stage_id: stg.id, title: t.title,
+          description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+          created_by_id: req.user.userId, order_index: i, task_type: 'project',
+          estimated_hours: t.estimated_hours || null,
+        }))).select();
+
+        // Create checklists
+        for (const tmpl of templates) {
+          if (tmpl.checklist_items?.length) {
+            const newTask = (ins || []).find(t2 => t2.title === tmpl.title);
+            if (newTask) {
+              await supabase.from('task_checklists').insert(
+                tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
+              );
+            }
+          }
+        }
+        totalCreated += (ins?.length || 0);
+      } catch (e) { console.warn(`convert-to-project: auto-tasks ${slug} failed:`, e.message); }
+    }
+
+    res.status(201).json({ ...project, tasks_created: totalCreated });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
