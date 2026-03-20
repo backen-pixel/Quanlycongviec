@@ -956,6 +956,41 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       }
     }
 
+    // ── AUTO-FILL MISSING STAGES from task_templates ──
+    // Flow templates (company_template_tasks) may not cover all 8 stages
+    // Fill gaps from task_templates (old system) to ensure complete task set
+    const allStageSlugs = ['consulting','design','quotation','contract','production','shipping','installation','customer-care'];
+    for (const slug of allStageSlugs) {
+      try {
+        const { data: stg } = await supabase.from('workflow_stages').select('id,name,slug').eq('slug', slug).single();
+        if (!stg) continue;
+        // Skip if tasks already created for this stage
+        const { data: existing } = await supabase.from('tasks').select('id').eq('project_id', projectId).eq('stage_id', stg.id).limit(1);
+        if (existing?.length) continue;
+        // Load from task_templates
+        const { data: templates } = await supabase.from('task_templates').select('*').eq('stage_id', stg.id).eq('is_active', true).order('order_index');
+        if (!templates?.length) continue;
+        const { data: ins } = await supabase.from('tasks').insert(templates.map((t, i) => ({
+          project_id: projectId, stage_id: stg.id, title: t.title,
+          description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+          created_by_id: req.user.userId, order_index: i, task_type: 'project',
+          estimated_hours: t.estimated_hours || null,
+        }))).select();
+        // Create checklists
+        for (const tmpl of templates) {
+          if (tmpl.checklist_items?.length) {
+            const newTask = (ins || []).find(t2 => t2.title === tmpl.title);
+            if (newTask) {
+              await supabase.from('task_checklists').insert(
+                tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
+              );
+            }
+          }
+        }
+        allCreatedTasks.push(...(ins || []));
+      } catch (e) { console.warn(`create-with-flow: auto-fill ${slug} failed:`, e.message); }
+    }
+
     // Activity log
     await logActivity(req.user.userId, 'created', 'project', projectId,
       `Tạo dự án ${code}: ${b.name}${b.flow_id ? ' (theo luồng)' : ''}`);
