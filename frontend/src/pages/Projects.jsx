@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import api from '../lib/api';
-import { Plus, Search, Phone, MapPin, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, LayoutGrid, List, Clock, PlayCircle, CheckSquare, AlertCircle, CalendarClock, Pin } from 'lucide-react';
+import { Plus, Search, Settings, Phone, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, List, CalendarClock, Pin, ChevronLeft, ChevronRight } from 'lucide-react';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { TourButton } from '../components/WebTour';
@@ -18,8 +19,17 @@ const TIME_FILTERS = [
   { id: 'custom', label: 'Tùy chọn' },
 ];
 
+const STATUS_COLUMNS = [
+  { id: 'pending', label: 'Đang chờ', color: '#6b7280', statuses: ['consulting', 'designing', 'quoting'] },
+  { id: 'processing', label: 'Chờ xử lý', color: '#f59e0b', statuses: ['contract_signed'] },
+  { id: 'working', label: 'Đang làm', color: '#3b82f6', statuses: ['producing', 'shipping', 'installing'] },
+  { id: 'review', label: 'Chờ kiểm tra', color: '#8b5cf6', statuses: [] },
+  { id: 'done', label: 'Hoàn thành', color: '#10b981', statuses: ['completed'] },
+  { id: 'blocked', label: 'Bị chặn', color: '#ef4444', statuses: [] },
+  { id: 'paused', label: 'Tạm hoãn', color: '#64748b', statuses: ['on_hold'] },
+];
+
 function fmtD(d) { return d.toISOString().slice(0,10); }
-function defRange() { const n=new Date(); return { from: fmtD(new Date(n.getFullYear(),n.getMonth(),1)), to: fmtD(new Date(n.getFullYear(),n.getMonth()+1,0)) }; }
 
 function filterByTime(items, tf, dFrom, dTo) {
   if (tf === 'all' && !dFrom && !dTo) return items;
@@ -40,37 +50,13 @@ function filterByTime(items, tf, dFrom, dTo) {
   return items.filter(i => { const d = i.created_at ? new Date(i.created_at) : null; return d && d >= start; });
 }
 
-// Fallback stages (used if API hasn't loaded yet)
-const DEFAULT_KANBAN_STAGES = [
-  { slug: 'consulting', label: 'Tư vấn', color: '#8B5CF6', path: '/stage/consulting' },
-  { slug: 'design', label: 'Thiết kế', color: '#EC4899', path: '/stage/design' },
-  { slug: 'quotation', label: 'Báo giá', color: '#F59E0B', path: '/stage/quotation' },
-  { slug: 'contract', label: 'Hợp đồng', color: '#10B981', path: '/stage/contract' },
-  { slug: 'production', label: 'Sản xuất', color: '#F97316', path: '/stage/production' },
-  { slug: 'shipping', label: 'Vận chuyển', color: '#06B6D4', path: '/stage/shipping' },
-  { slug: 'installation', label: 'Lắp đặt', color: '#3B82F6', path: '/stage/installation' },
-  { slug: 'customer-care', label: 'CSKH', color: '#EF4444', path: '/stage/customer-care' },
-];
-
-// Helper: get current_stage slug from project
-function projStageSlug(p) {
-  return p.current_stage?.slug || '';
-}
-
 export default function Projects() {
   const navigate = useNavigate();
   const { startTour } = useTour();
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban' | 'plan'
+  const [viewMode, setViewMode] = useState('deadline');
   const [pinnedSet, setPinnedSet] = useState(new Set());
-
-  const pinToggle = (id) => { togglePin(id); setPinnedSet(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }); };
-
-  useEffect(() => {
-    const ids = JSON.parse(localStorage.getItem('tubep_pinned_projects') || '[]');
-    setPinnedSet(new Set(ids));
-  }, []);
   const [filterTime, setFilterTime] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -85,13 +71,20 @@ export default function Projects() {
   const [taskAssigneeMap, setTaskAssigneeMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [showAdvFilter, setShowAdvFilter] = useState(false);
+  const [calMonth, setCalMonth] = useState(new Date());
+
+  const pinToggle = (id) => { togglePin(id); setPinnedSet(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }); };
+
+  useEffect(() => {
+    const ids = JSON.parse(localStorage.getItem('tubep_pinned_projects') || '[]');
+    setPinnedSet(new Set(ids));
+  }, []);
 
   const load = () => {
     setLoading(true);
     api.get('/projects', { params: { search: search || undefined, limit: 500 } })
       .then(r => {
         setProjects(r.data.projects || []);
-        // Load task assignee mapping: project_id → [user_id, ...]
         const projectIds = (r.data.projects || []).map(p => p.id);
         if (projectIds.length > 0) {
           api.get('/tasks', { params: { project_ids: projectIds.join(','), limit: 5000, fields: 'id,project_id,assignee_id' } })
@@ -103,11 +96,9 @@ export default function Projects() {
                   map[t.project_id].add(t.assignee_id);
                 }
               });
-              // Convert sets to arrays
               Object.keys(map).forEach(k => { map[k] = [...map[k]]; });
               setTaskAssigneeMap(map);
-            })
-            .catch(() => {});
+            }).catch(() => {});
         }
       })
       .catch(() => setProjects([]))
@@ -116,112 +107,67 @@ export default function Projects() {
 
   useEffect(load, []);
 
-    useEffect(() => {
-    // Load divisions + companies
+  useEffect(() => {
     api.get('/divisions').then(r => setDivisions(r.data.divisions || [])).catch(() => {});
     api.get('/companies').then(r => {
       const cos = r.data.companies || [];
-      setAllCompanies(cos);
-      setCompanies(cos);
+      setAllCompanies(cos); setCompanies(cos);
     }).catch(() => api.get('/companies/my/list').then(r => {
       const cos = r.data.companies || [];
-      setAllCompanies(cos);
-      setCompanies(cos);
+      setAllCompanies(cos); setCompanies(cos);
     }).catch(() => {}));
   }, []);
 
-  // Cascade: division → filter companies
   useEffect(() => {
     if (filterDivision && filterDivision !== 'all') {
       const filtered = allCompanies.filter(c => c.division_unit_id === filterDivision);
       setCompanies(filtered);
-      // If current company not in filtered list, reset
-      if (filterCompany !== 'all' && !filtered.find(c => c.id === filterCompany)) {
-        setFilterCompany('all');
-      }
+      if (filterCompany !== 'all' && !filtered.find(c => c.id === filterCompany)) setFilterCompany('all');
     } else {
       setCompanies(allCompanies);
     }
   }, [filterDivision, allCompanies]);
 
-  // Load employees when company/division filter changes
   useEffect(() => {
     if (filterCompany && filterCompany !== 'all') {
-      // Load employees who created projects in this company OR are assigned tasks
       loadRelevantEmployees([filterCompany]);
     } else if (filterDivision && filterDivision !== 'all') {
       const divCompanyIds = allCompanies.filter(c => c.division_unit_id === filterDivision).map(c => c.id);
-      if (divCompanyIds.length > 0) {
-        loadRelevantEmployees(divCompanyIds);
-      } else {
-        setCompanyEmployees([]);
-      }
+      if (divCompanyIds.length > 0) loadRelevantEmployees(divCompanyIds);
+      else setCompanyEmployees([]);
     } else {
       setCompanyEmployees([]);
     }
     setFilterPerson('all');
   }, [filterCompany, filterDivision, projects, taskAssigneeMap]);
 
-  // Build list of relevant employees: project creators + task assignees
   const loadRelevantEmployees = (companyIds) => {
-    // Get project creators for these companies
     const relevantProjects = projects.filter(p => companyIds.includes(p.company_id) || companyIds.includes(p.company?.id));
     const creatorIds = new Set(relevantProjects.map(p => p.created_by).filter(Boolean));
-    
-    // Get task assignees for these projects
-    relevantProjects.forEach(p => {
-      const assignees = taskAssigneeMap[p.id] || [];
-      assignees.forEach(uid => creatorIds.add(uid));
-    });
-
-    if (creatorIds.size === 0) {
-      setCompanyEmployees([]);
-      return;
-    }
-
-    // Try to resolve names from project data first
-    const employees = [];
-    const seen = new Set();
-    
-    // From project person fields
+    relevantProjects.forEach(p => { (taskAssigneeMap[p.id] || []).forEach(uid => creatorIds.add(uid)); });
+    if (creatorIds.size === 0) { setCompanyEmployees([]); return; }
+    const employees = []; const seen = new Set();
     relevantProjects.forEach(p => {
       [p.sales_person, p.designer, p.project_manager, p.created_by_user].forEach(per => {
-        if (per?.id && creatorIds.has(per.id) && !seen.has(per.id)) {
-          seen.add(per.id);
-          employees.push({ id: per.id, full_name: per.full_name });
-        }
+        if (per?.id && creatorIds.has(per.id) && !seen.has(per.id)) { seen.add(per.id); employees.push({ id: per.id, full_name: per.full_name }); }
       });
     });
-
-    // For remaining IDs, fetch from API
     const remaining = [...creatorIds].filter(id => !seen.has(id));
-    if (remaining.length > 0) {
-      // Fetch from any company endpoint
-      const firstCompany = companyIds[0];
-      api.get(`/companies/${firstCompany}/employees`)
-        .then(r => {
-          (r.data.employees || []).forEach(emp => {
-            if (creatorIds.has(emp.id) && !seen.has(emp.id)) {
-              seen.add(emp.id);
-              employees.push(emp);
-            }
-          });
-          setCompanyEmployees([...employees]);
-        })
-        .catch(() => setCompanyEmployees([...employees]));
-    } else {
-      setCompanyEmployees(employees);
-    }
+    if (remaining.length > 0 && companyIds[0]) {
+      api.get(`/companies/${companyIds[0]}/employees`).then(r => {
+        (r.data.employees || []).forEach(emp => { if (creatorIds.has(emp.id) && !seen.has(emp.id)) { seen.add(emp.id); employees.push(emp); } });
+        setCompanyEmployees([...employees]);
+      }).catch(() => setCompanyEmployees([...employees]));
+    } else { setCompanyEmployees(employees); }
   };
 
   const deleteProject = async (e, id, code) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!confirm(`Xóa dự án ${code}? Tất cả tasks sẽ bị xóa theo.`)) return;
-    try { await api.delete(`/projects/${id}`); load(); } catch { }
+    e.preventDefault(); e.stopPropagation();
+    if (!confirm(`Xóa dự án ${code}?`)) return;
+    try { await api.delete(`/projects/${id}`); load(); } catch {}
   };
 
-  // Apply client-side filters
+  // Filters
   let filtered = filterByTime(projects, filterTime, dateFrom, dateTo);
   if (filterDivision !== 'all') {
     const divCompanyIds = allCompanies.filter(c => c.division_unit_id === filterDivision).map(c => c.id);
@@ -230,119 +176,192 @@ export default function Projects() {
   if (filterCompany !== 'all') filtered = filtered.filter(p => p.company_id === filterCompany || p.company?.id === filterCompany);
   if (filterCustomer !== 'all') filtered = filtered.filter(p => p.customer_id === filterCustomer);
   if (filterPerson !== 'all') filtered = filtered.filter(p => {
-    // Check project-level person fields
-    const projectPersons = [
-      p.sales_person_id, p.designer_id, p.project_manager_id,
-      p.consulting_person_id, p.design_person_id, p.quotation_person_id,
-      p.contract_person_id, p.production_person_id, p.shipping_person_id,
-      p.installation_person_id, p.care_person_id, p.supervisor_id, p.created_by
-    ];
-    if (projectPersons.includes(filterPerson)) return true;
-    // Check task assignees
-    const assignees = taskAssigneeMap[p.id] || [];
-    return assignees.includes(filterPerson);
+    const pp = [p.sales_person_id, p.designer_id, p.project_manager_id, p.consulting_person_id, p.design_person_id, p.quotation_person_id, p.contract_person_id, p.production_person_id, p.shipping_person_id, p.installation_person_id, p.care_person_id, p.supervisor_id, p.created_by];
+    if (pp.includes(filterPerson)) return true;
+    return (taskAssigneeMap[p.id] || []).includes(filterPerson);
   });
 
-  // Extract unique customers and persons from projects for filter dropdowns
-  const uniqueCustomers = [];
-  const seenCust = new Set();
-  projects.forEach(p => {
-    if (p.customers?.id && !seenCust.has(p.customers.id)) {
-      seenCust.add(p.customers.id);
-      uniqueCustomers.push({ id: p.customers.id, name: p.customers.full_name });
-    }
-  });
+  const uniqueCustomers = []; const seenCust = new Set();
+  projects.forEach(p => { if (p.customers?.id && !seenCust.has(p.customers.id)) { seenCust.add(p.customers.id); uniqueCustomers.push({ id: p.customers.id, name: p.customers.full_name }); } });
 
-  const uniquePersons = [];
-  const seenPerson = new Set();
+  const uniquePersons = []; const seenPerson = new Set();
   if (companyEmployees.length > 0) {
-    // When company is selected: show employees from that company
-    companyEmployees.forEach(emp => {
-      if (emp?.id && !seenPerson.has(emp.id)) {
-        seenPerson.add(emp.id);
-        uniquePersons.push({ id: emp.id, name: emp.full_name });
-      }
-    });
+    companyEmployees.forEach(emp => { if (emp?.id && !seenPerson.has(emp.id)) { seenPerson.add(emp.id); uniquePersons.push({ id: emp.id, name: emp.full_name }); } });
   } else {
-    // No company selected: build from project person fields + task assignees
-    projects.forEach(p => {
-      [p.sales_person, p.designer, p.project_manager].forEach(per => {
-        if (per?.id && !seenPerson.has(per.id)) {
-          seenPerson.add(per.id);
-          uniquePersons.push({ id: per.id, name: per.full_name });
-        }
-      });
-    });
-    // Also add unique assignees from tasks
-    Object.values(taskAssigneeMap).forEach(assignees => {
-      assignees.forEach(uid => {
-        if (!seenPerson.has(uid)) {
-          seenPerson.add(uid);
-          // Try to find the name from projects data
-          let name = null;
-          for (const p of projects) {
-            for (const per of [p.sales_person, p.designer, p.project_manager]) {
-              if (per?.id === uid) { name = per.full_name; break; }
-            }
-            if (name) break;
-          }
-          uniquePersons.push({ id: uid, name: name || uid.slice(0, 8) + '...' });
-        }
-      });
-    });
+    projects.forEach(p => { [p.sales_person, p.designer, p.project_manager].forEach(per => { if (per?.id && !seenPerson.has(per.id)) { seenPerson.add(per.id); uniquePersons.push({ id: per.id, name: per.full_name }); } }); });
   }
 
   const hasActiveFilters = filterDivision !== 'all' || filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all' || dateFrom || dateTo;
 
-  return (
-    <div className="space-y-5 max-w-7xl">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Dự Án</h1>
-          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{filtered.length} dự án{hasActiveFilters ? ' (đã lọc)' : ''}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => startTour(createProjectTour)} className="h-8 px-3 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg flex items-center gap-1.5 cursor-pointer transition" title="Hướng dẫn tạo dự án">
-            🎓 Hướng dẫn
+  const overdueCount = filtered.filter(p => { const d = p.deadline || p.design_deadline; return d && new Date(d) < new Date() && p.status !== 'completed'; }).length;
+
+  const TABS = [
+    { id: 'list', label: 'List' },
+    { id: 'deadline', label: 'Deadline' },
+    { id: 'planner', label: 'Planner' },
+    { id: 'calendar', label: 'Calendar' },
+    { id: 'gantt', label: 'Gantt' },
+    { id: 'tasks', label: 'Task chats', badge: filtered.length, badgeColor: 'bg-red-500 text-white' },
+    { id: 'overdue', label: 'Overdue', badge: overdueCount, badgeColor: 'bg-red-500 text-white' },
+    { id: 'comments', label: 'Comments', badge: 0, badgeColor: 'bg-green-500 text-white' },
+  ];
+
+  // Drag-and-drop
+  const onDragEnd = async (result) => {
+    const { draggableId, source, destination } = result;
+    if (!destination || (source.droppableId === destination.droppableId && source.index === destination.index)) return;
+    const newColId = destination.droppableId;
+    const col = STATUS_COLUMNS.find(c => c.id === newColId);
+    const newStatus = col?.statuses?.[0] || newColId;
+    setProjects(prev => prev.map(p => p.id === draggableId ? { ...p, status: newStatus } : p));
+    try { await api.put(`/projects/${draggableId}`, { status: newStatus }); } catch { load(); }
+  };
+
+  // Kanban data
+  const projectsByStatus = useMemo(() => {
+    const data = {}; STATUS_COLUMNS.forEach(col => { data[col.id] = []; });
+    filtered.forEach(proj => {
+      const status = proj.status || 'consulting';
+      let placed = false;
+      STATUS_COLUMNS.forEach(col => { if (col.statuses.includes(status)) { data[col.id].push(proj); placed = true; } });
+      if (!placed) data['pending'].push(proj);
+    });
+    return data;
+  }, [filtered]);
+
+  // Planner data
+  const plannerData = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + (7 - endOfWeek.getDay()));
+    const endOfNextWeek = new Date(endOfWeek); endOfNextWeek.setDate(endOfNextWeek.getDate() + 7);
+    const getD = (p) => p.deadline || p.design_deadline || p.install_date || null;
+    const cols = [
+      { id: 'overdue', label: '🔴 Quá hạn', color: '#EF4444', filter: (p) => { const d = getD(p); return d && new Date(d) < today && p.status !== 'completed'; } },
+      { id: 'today', label: '🟠 Hôm nay', color: '#F97316', filter: (p) => { const d = getD(p); return d && new Date(d) >= today && new Date(d) < tomorrow; } },
+      { id: 'this_week', label: '🟡 Tuần này', color: '#EAB308', filter: (p) => { const d = getD(p); return d && new Date(d) >= tomorrow && new Date(d) < endOfWeek; } },
+      { id: 'next_week', label: '🔵 Tuần sau', color: '#3B82F6', filter: (p) => { const d = getD(p); return d && new Date(d) >= endOfWeek && new Date(d) < endOfNextWeek; } },
+      { id: 'later', label: '⚪ Sau đó', color: '#6B7280', filter: (p) => { const d = getD(p); return !d || new Date(d) >= endOfNextWeek; } },
+    ];
+    const data = {}; cols.forEach(c => { data[c.id] = []; });
+    filtered.forEach(proj => { let placed = false; for (const c of cols) { if (c.filter(proj)) { data[c.id].push(proj); placed = true; break; } } if (!placed) data['later'].push(proj); });
+    return { cols, data };
+  }, [filtered]);
+
+  // Calendar data
+  const calendarData = useMemo(() => {
+    const y = calMonth.getFullYear(), m = calMonth.getMonth();
+    const firstDay = new Date(y, m, 1).getDay();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const weeks = [];
+    let week = new Array(firstDay).fill(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const dayProjects = filtered.filter(p => {
+        const dl = p.deadline || p.design_deadline;
+        return dl && dl.startsWith(dateStr);
+      });
+      week.push({ day: d, date: dateStr, projects: dayProjects });
+      if (week.length === 7) { weeks.push(week); week = []; }
+    }
+    if (week.length > 0) { while (week.length < 7) week.push(null); weeks.push(week); }
+    return weeks;
+  }, [filtered, calMonth]);
+
+  // Gantt data
+  const ganttData = useMemo(() => {
+    const withDates = filtered.filter(p => p.created_at && (p.deadline || p.design_deadline));
+    if (withDates.length === 0) return { projects: [], minDate: new Date(), maxDate: new Date(), totalDays: 1 };
+    let minDate = new Date(), maxDate = new Date();
+    withDates.forEach(p => {
+      const start = new Date(p.created_at);
+      const end = new Date(p.deadline || p.design_deadline);
+      if (start < minDate) minDate = start;
+      if (end > maxDate) maxDate = end;
+    });
+    minDate = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate());
+    maxDate = new Date(maxDate.getFullYear(), maxDate.getMonth(), maxDate.getDate() + 1);
+    const totalDays = Math.max(1, Math.ceil((maxDate - minDate) / 86400000));
+    return { projects: withDates, minDate, maxDate, totalDays };
+  }, [filtered]);
+
+  // Project card component
+  const ProjectCard = ({ proj, isDraggable = false, dragProps = {} }) => (
+    <Link to={`/projects/${proj.id}`} className="block bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg hover:border-blue-400 transition-all group" {...(isDraggable ? {} : {})}>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <span className="text-sm font-bold text-blue-600">{proj.code}</span>
+        <div className="flex items-center gap-1">
+          {proj.current_stage && <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: (proj.current_stage.color || '#666') + '20', color: proj.current_stage.color || '#666' }}>{proj.current_stage.name}</span>}
+          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); pinToggle(proj.id); }}
+            className={`p-0.5 rounded cursor-pointer ${pinnedSet.has(proj.id) ? 'text-amber-500' : 'text-gray-300 opacity-0 group-hover:opacity-100'}`}>
+            <Pin className="h-3 w-3" />
           </button>
-          <TourButton steps={projectsTour} />
-          {/* View toggle */}
-          <div data-tour="view-toggle" className="flex bg-gray-100 rounded-lg p-0.5">
-            <button onClick={() => setViewMode('kanban')} className={`h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-medium cursor-pointer ${viewMode === 'kanban' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
-              <LayoutGrid className="h-3.5 w-3.5" /> Kanban
+        </div>
+      </div>
+      <h4 className="text-sm font-bold text-gray-900 mb-2 leading-snug group-hover:text-blue-600">{proj.name}</h4>
+      {proj.customers?.full_name && <p className="text-xs text-gray-500 mb-1 truncate">👤 {proj.customers.full_name}</p>}
+      {proj.company && <p className="text-xs text-indigo-600 font-medium mb-1 truncate">🏢 {proj.company.short_name || proj.company.name}</p>}
+      <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+        {proj.deadline ? (
+          <p className={`text-xs flex items-center gap-1 ${new Date(proj.deadline) < new Date() && proj.status !== 'completed' ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
+            <Calendar className="h-3 w-3" />{formatDate(proj.deadline)}
+            {new Date(proj.deadline) < new Date() && proj.status !== 'completed' && <span className="px-1 py-0.5 bg-red-100 rounded text-[9px] font-bold">TRỄ</span>}
+          </p>
+        ) : <span />}
+        {proj.estimated_value > 0 && <p className="text-xs font-bold text-green-600">{formatVND(proj.estimated_value)}</p>}
+      </div>
+    </Link>
+  );
+
+  return (
+    <div className="space-y-4 max-w-full">
+      {/* Dark gradient header */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-blue-900 rounded-2xl p-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+              <CalendarClock className="h-6 w-6" /> Dự Án
+              <Settings className="h-4 w-4 text-gray-400 cursor-pointer hover:text-white" />
+            </h1>
+            <span className="text-sm text-gray-400">{filtered.length} dự án{hasActiveFilters ? ' (đã lọc)' : ''}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => startTour(createProjectTour)} className="h-8 px-3 text-xs font-medium text-blue-300 bg-white/10 hover:bg-white/20 rounded-lg flex items-center gap-1.5 cursor-pointer">🎓</button>
+            <TourButton steps={projectsTour} />
+            <button onClick={() => navigate('/projects/create')} className="h-9 px-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer shadow-lg">
+              <Plus className="h-4 w-4" /> Tạo dự án
             </button>
-            <button onClick={() => setViewMode('list')} className={`h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-medium cursor-pointer ${viewMode === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
-              <List className="h-3.5 w-3.5" /> Danh sách
-            </button>
-            <button onClick={() => setViewMode('plan')} className={`h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-medium cursor-pointer ${viewMode === 'plan' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
-              <CalendarClock className="h-3.5 w-3.5" /> Kế hoạch
+            <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)} className="h-9 px-3 pr-8 bg-slate-700 text-white border-none rounded-lg text-sm cursor-pointer">
+              <option value="all">Tất cả NV ({filtered.length})</option>
+              {uniquePersons.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="Tìm kiếm..." className="h-9 pl-10 pr-8 bg-slate-700/50 text-white placeholder-gray-400 border border-slate-600 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 w-48" />
+              {search && <button onClick={() => { setSearch(''); setTimeout(load, 100); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"><X className="h-4 w-4" /></button>}
+            </div>
+            <button onClick={() => setShowAdvFilter(!showAdvFilter)}
+              className={`h-9 px-3 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer ${hasActiveFilters ? 'bg-blue-500/30 text-blue-300 border border-blue-400/50' : 'bg-white/10 text-gray-400 hover:text-white'}`}>
+              <Filter className="h-3.5 w-3.5" /> {hasActiveFilters && <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />}
             </button>
           </div>
-          <button data-tour="create-project" onClick={() => navigate('/projects/create')}
-            className="h-9 px-3 sm:px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
-            <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Tạo dự án</span>
-          </button>
+        </div>
+        {/* Tab bar */}
+        <div className="flex items-center gap-1 mt-4 overflow-x-auto">
+          {TABS.map(tab => (
+            <button key={tab.id} onClick={() => { if (['tasks','overdue','comments'].includes(tab.id)) return; setViewMode(tab.id); }}
+              className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5 ${viewMode === tab.id ? 'bg-white/20 text-white' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}>
+              {tab.label}
+              {tab.badge > 0 && <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${tab.badgeColor}`}>{tab.badge > 99 ? '99+' : tab.badge}</span>}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <button className="text-xs text-gray-400 hover:text-white cursor-pointer whitespace-nowrap">Mark all as read</button>
         </div>
       </div>
 
-      {/* Search + Status */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && load()}
-            placeholder="Tìm theo mã, tên dự án..."
-            className="w-full h-9 pl-10 pr-3 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white" />
-        </div>
-        <button onClick={() => setShowAdvFilter(!showAdvFilter)}
-          className={`h-9 px-3 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer border ${hasActiveFilters ? 'bg-blue-50 border-blue-300 text-blue-600' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
-          <Filter className="h-3.5 w-3.5" /> Bộ lọc
-          {hasActiveFilters && <span className="w-2 h-2 rounded-full bg-blue-500" />}
-        </button>
-      </div>
-
-      {/* Advanced filters panel */}
+      {/* Advanced filters */}
       {showAdvFilter && (
         <div data-tour="project-filters" className="bg-white rounded-xl border p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -353,9 +372,8 @@ export default function Projects() {
             )}
           </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {/* Time */}
             <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1"><Calendar className="h-3 w-3 inline mr-1" />Thời gian</label>
+              <label className="block text-[11px] font-medium text-gray-500 mb-1">Thời gian</label>
               <select value={filterTime} onChange={e => { setFilterTime(e.target.value); if (e.target.value !== 'custom') { setDateFrom(''); setDateTo(''); } }} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
                 {TIME_FILTERS.map(tf => <option key={tf.id} value={tf.id}>{tf.label}</option>)}
               </select>
@@ -367,33 +385,29 @@ export default function Projects() {
                 </div>
               )}
             </div>
-            {/* Division (Khối) */}
             <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1"><Building2 className="h-3 w-3 inline mr-1" />Khối</label>
+              <label className="block text-[11px] font-medium text-gray-500 mb-1">Khối</label>
               <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
                 <option value="all">Tất cả khối</option>
                 {divisions.map(d => <option key={d.id} value={d.id}>{d.icon || ''} {d.name}</option>)}
               </select>
             </div>
-            {/* Company */}
             <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1"><Building2 className="h-3 w-3 inline mr-1" />Công ty</label>
+              <label className="block text-[11px] font-medium text-gray-500 mb-1">Công ty</label>
               <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                <option value="all">Tất cả công ty{filterDivision !== 'all' ? ` (${companies.length})` : ''}</option>
+                <option value="all">Tất cả công ty</option>
                 {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
               </select>
             </div>
-            {/* Person (NV) */}
             <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1"><User className="h-3 w-3 inline mr-1" />Nhân viên</label>
+              <label className="block text-[11px] font-medium text-gray-500 mb-1">Nhân viên</label>
               <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                <option value="all">Tất cả NV{(filterCompany !== 'all' || filterDivision !== 'all') && companyEmployees.length > 0 ? ` (${companyEmployees.length})` : ''}</option>
+                <option value="all">Tất cả NV</option>
                 {uniquePersons.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
-            {/* Customer */}
             <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1"><User className="h-3 w-3 inline mr-1" />Khách hàng</label>
+              <label className="block text-[11px] font-medium text-gray-500 mb-1">Khách hàng</label>
               <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
                 <option value="all">Tất cả KH</option>
                 {uniqueCustomers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -403,207 +417,156 @@ export default function Projects() {
         </div>
       )}
 
-      {/* Project views */}
+      {/* Content */}
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
-          </svg>
-        </div>
+        <div className="flex items-center justify-center py-16"><div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16">
           <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
           <p className="text-sm text-gray-400">{hasActiveFilters ? 'Không có dự án phù hợp' : 'Chưa có dự án nào'}</p>
           <button onClick={() => navigate('/projects/create')} className="mt-3 text-sm text-blue-600 font-medium cursor-pointer">+ Tạo dự án</button>
         </div>
-      ) : viewMode === 'kanban' ? (
-        /* PROJECT STATUS KANBAN */
-        (() => {
-          const STATUS_COLUMNS = [
-            { id: 'pending', label: 'Đang chờ', color: '#6b7280', statuses: ['consulting', 'designing', 'quoting'] },
-            { id: 'processing', label: 'Chờ xử lý', color: '#f59e0b', statuses: ['contract_signed'] },
-            { id: 'working', label: 'Đang làm', color: '#3b82f6', statuses: ['producing', 'shipping', 'installing'] },
-            { id: 'review', label: 'Chờ kiểm tra', color: '#8b5cf6', statuses: [] },
-            { id: 'done', label: 'Hoàn thành', color: '#10b981', statuses: ['completed'] },
-            { id: 'blocked', label: 'Bị chặn', color: '#ef4444', statuses: [] },
-            { id: 'paused', label: 'Tạm hoãn', color: '#64748b', statuses: ['on_hold'] },
-          ];
-          const projectsByStatus = {};
-          STATUS_COLUMNS.forEach(col => { projectsByStatus[col.id] = []; });
-          filtered.forEach(proj => {
-            const status = proj.status || 'consulting';
-            let placed = false;
-            STATUS_COLUMNS.forEach(col => {
-              if (col.statuses.includes(status)) { projectsByStatus[col.id].push(proj); placed = true; }
-            });
-            if (!placed) projectsByStatus['pending'].push(proj);
-          });
-          return (
-            <div className="flex gap-4 overflow-x-auto pb-4">
-              {STATUS_COLUMNS.map(col => (
-                <div key={col.id} className="flex flex-col flex-shrink-0" style={{ width: '360px' }}>
-                  <div className="rounded-t-xl p-4 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
-                    <h3 className="text-base font-bold text-gray-900">{col.label}</h3>
-                    <span className="text-sm text-gray-400">{projectsByStatus[col.id].length} dự án</span>
-                  </div>
-                  <div className="flex-1 rounded-b-xl border p-3 space-y-3 bg-gray-50/50 overflow-y-auto" style={{ height: '75vh' }}>
-                    {projectsByStatus[col.id].map(proj => (
-                      <Link to={`/projects/${proj.id}`} key={proj.id} className="block bg-white rounded-xl border border-gray-200 p-5 hover:shadow-lg hover:border-blue-400 transition-all group">
-                        {/* Header: Code + Stage */}
-                        <div className="flex items-start justify-between gap-2 mb-4">
-                          <span className="text-base font-bold text-blue-600 flex-shrink-0">{proj.code}</span>
-                          {proj.current_stage && (
-                            <span className="text-xs px-2.5 py-1 rounded-full font-semibold" style={{ backgroundColor: proj.current_stage.color + '20', color: proj.current_stage.color }}>
-                              {proj.current_stage.name}
-                            </span>
-                          )}
-                        </div>
-                        
-                        {/* Project Name */}
-                        <h3 className="text-lg font-bold text-gray-900 mb-4 leading-snug">{proj.name}</h3>
-                        
-                        {/* Customer */}
-                        {proj.customers?.full_name && (
-                          <div className="flex items-center gap-3 mb-3 p-2 rounded-lg bg-gray-50">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                              {proj.customers.full_name.charAt(0).toUpperCase()}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-bold text-gray-900 truncate">{proj.customers.full_name}</p>
-                              {proj.customers.phone && <p className="text-xs text-gray-500 mt-0.5">{proj.customers.phone}</p>}
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* Company */}
-                        {proj.company && (
-                          <div className="flex items-center gap-2 mb-3 p-2.5 rounded-lg bg-indigo-50 border border-indigo-100">
-                            <Building2 className="h-5 w-5 text-indigo-600 flex-shrink-0" />
-                            <span className="text-sm font-bold text-indigo-900 truncate">{proj.company.short_name || proj.company.name}</span>
-                          </div>
-                        )}
-                        
-                        {/* Deadline */}
-                        {proj.deadline && (
-                          <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-orange-50 border border-orange-100">
-                            <Calendar className="h-4 w-4 text-orange-600" />
-                            <span className={`text-sm font-semibold ${new Date(proj.deadline) < new Date() ? 'text-red-600' : 'text-orange-900'}`}>
-                              {formatDate(proj.deadline)}
-                            </span>
-                          </div>
-                        )}
-                        
-                        {/* Responsible Person */}
-                        {proj.responsible_person && (
-                          <div className="flex items-center gap-2 mb-3">
-                            <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: avatarColor(proj.responsible_person.full_name) }}>
-                              {getInitials(proj.responsible_person.full_name)}
-                            </div>
-                            <span className="text-sm font-medium text-gray-700 truncate">{proj.responsible_person.full_name}</span>
-                          </div>
-                        )}
-                        
-                        {/* Value */}
-                        {proj.estimated_value && (
-                          <div className="mt-4 pt-4 border-t border-gray-100">
-                            <p className="text-base font-bold text-green-600">{formatVND(proj.estimated_value)}</p>
-                          </div>
-                        )}
-                      </Link>
-                    ))}
-                    {projectsByStatus[col.id].length === 0 && <div className="text-center py-16 text-xs text-gray-300">Trống</div>}
+      ) : viewMode === 'deadline' ? (
+        /* KANBAN with drag-and-drop */
+        <DragDropContext onDragEnd={onDragEnd}>
+          <div className="flex gap-3 overflow-x-auto pb-4">
+            {STATUS_COLUMNS.map(col => (
+              <div key={col.id} className="flex flex-col flex-shrink-0" style={{ width: '320px' }}>
+                <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-gray-900">{col.label}</h3>
+                    <span className="text-xs text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">{projectsByStatus[col.id].length}</span>
                   </div>
                 </div>
-              ))}
-            </div>
-          );
-        })()
-      ) : viewMode === 'plan' ? (
-        /* PLAN VIEW - Kanban theo deadline */
-        (() => {
-          const now = new Date();
-          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-          const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-          const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + (7 - endOfWeek.getDay()));
-          const endOfNextWeek = new Date(endOfWeek); endOfNextWeek.setDate(endOfNextWeek.getDate() + 7);
-
-          const getDeadline = (p) => {
-            return p.design_deadline || p.install_date || p.deadline || null;
-          };
-
-          const PLAN_COLUMNS = [
-            { id: 'overdue', label: '🔴 Quá hạn', color: '#EF4444', filter: (p) => { const d = getDeadline(p); return d && new Date(d) < today && p.status !== 'completed' && p.status !== 'warranty'; } },
-            { id: 'today', label: '🟠 Hạn hôm nay', color: '#F97316', filter: (p) => { const d = getDeadline(p); return d && new Date(d) >= today && new Date(d) < tomorrow; } },
-            { id: 'this_week', label: '🟡 Hạn tuần này', color: '#EAB308', filter: (p) => { const d = getDeadline(p); return d && new Date(d) >= tomorrow && new Date(d) < endOfWeek; } },
-            { id: 'next_week', label: '🔵 Hạn tuần sau', color: '#3B82F6', filter: (p) => { const d = getDeadline(p); return d && new Date(d) >= endOfWeek && new Date(d) < endOfNextWeek; } },
-            { id: 'later', label: '⚪ Hạn sau đó', color: '#6B7280', filter: (p) => { const d = getDeadline(p); return (d && new Date(d) >= endOfNextWeek) || !d; } },
-          ];
-
-          const planData = {};
-          PLAN_COLUMNS.forEach(col => { planData[col.id] = []; });
-          filtered.forEach(proj => {
-            let placed = false;
-            for (const col of PLAN_COLUMNS) {
-              if (col.filter(proj)) { planData[col.id].push(proj); placed = true; break; }
-            }
-            if (!placed) planData['later'].push(proj);
-          });
-
-          return (
-            <div className="flex gap-4 overflow-x-auto pb-4">
-              {PLAN_COLUMNS.map(col => (
-                <div key={col.id} className="flex flex-col flex-shrink-0" style={{ width: '320px' }}>
-                  <div className="rounded-t-xl p-4 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
-                    <h3 className="text-base font-bold text-gray-900">{col.label}</h3>
-                    <span className="text-sm text-gray-400">{planData[col.id].length} dự án</span>
-                  </div>
-                  <div className="flex-1 rounded-b-xl border p-3 space-y-3 bg-gray-50/50 overflow-y-auto" style={{ height: '70vh' }}>
-                    {planData[col.id].map(proj => {
-                      const deadline = getDeadline(proj);
-                      const isOverdue = deadline && new Date(deadline) < today && proj.status !== 'completed' && proj.status !== 'warranty';
-                      return (
-                        <Link to={`/projects/${proj.id}`} key={proj.id} className="block bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg hover:border-blue-400 transition-all group">
-                          <div className="flex items-start justify-between gap-2 mb-3">
-                            <span className="text-sm font-bold text-blue-600">{proj.code}</span>
-                            {proj.current_stage && (
-                              <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: proj.current_stage.color + '20', color: proj.current_stage.color }}>
-                                {proj.current_stage.name}
-                              </span>
-                            )}
-                          </div>
-                          <h4 className="text-sm font-bold text-gray-900 mb-2 group-hover:text-blue-600 leading-snug">{proj.name}</h4>
-                          {proj.customers?.full_name && (
-                            <p className="text-xs text-gray-500 mb-2 flex items-center gap-1"><User className="h-3 w-3" />{proj.customers.full_name}</p>
-                          )}
-                          {proj.company && (
-                            <p className="text-xs text-indigo-600 font-medium mb-2 flex items-center gap-1"><Building2 className="h-3 w-3" />{proj.company.short_name || proj.company.name}</p>
-                          )}
-                          {deadline && (
-                            <div className={`flex items-center gap-1.5 text-xs font-medium mt-2 pt-2 border-t border-gray-100 ${isOverdue ? 'text-red-600' : 'text-gray-500'}`}>
-                              <Calendar className="h-3.5 w-3.5" />
-                              <span>{formatDate(deadline)}</span>
-                              {isOverdue && <span className="ml-1 px-1.5 py-0.5 bg-red-100 rounded text-[10px] font-bold">QUÁ HẠN</span>}
+                <Droppable droppableId={col.id}>
+                  {(provided, snapshot) => (
+                    <div ref={provided.innerRef} {...provided.droppableProps}
+                      className={`flex-1 rounded-b-xl border p-2 space-y-2 overflow-y-auto transition-colors ${snapshot.isDraggingOver ? 'bg-blue-50 border-blue-300' : 'bg-gray-50/50'}`}
+                      style={{ minHeight: '200px', maxHeight: '75vh' }}>
+                      {projectsByStatus[col.id].map((proj, index) => (
+                        <Draggable key={proj.id} draggableId={proj.id} index={index}>
+                          {(provided, snapshot) => (
+                            <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}
+                              className={`${snapshot.isDragging ? 'shadow-2xl rotate-2 z-50' : ''}`}>
+                              <ProjectCard proj={proj} />
                             </div>
                           )}
-                          {proj.estimated_value > 0 && (
-                            <p className="text-sm font-bold text-green-600 mt-2">{formatVND(proj.estimated_value)}</p>
-                          )}
+                        </Draggable>
+                      ))}
+                      {provided.placeholder}
+                      {projectsByStatus[col.id].length === 0 && !snapshot.isDraggingOver && (
+                        <div className="text-center py-8 text-xs text-gray-300">Kéo thả dự án vào đây</div>
+                      )}
+                    </div>
+                  )}
+                </Droppable>
+              </div>
+            ))}
+          </div>
+        </DragDropContext>
+
+      ) : viewMode === 'planner' ? (
+        /* PLANNER - kanban by deadline */
+        <div className="flex gap-3 overflow-x-auto pb-4">
+          {plannerData.cols.map(col => (
+            <div key={col.id} className="flex flex-col flex-shrink-0" style={{ width: '300px' }}>
+              <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
+                <h3 className="text-sm font-bold text-gray-900">{col.label}</h3>
+                <span className="text-xs text-gray-400">{plannerData.data[col.id].length} dự án</span>
+              </div>
+              <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '200px', maxHeight: '75vh' }}>
+                {plannerData.data[col.id].map(proj => <ProjectCard key={proj.id} proj={proj} />)}
+                {plannerData.data[col.id].length === 0 && <div className="text-center py-8 text-xs text-gray-300">Trống</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+
+      ) : viewMode === 'calendar' ? (
+        /* CALENDAR */
+        <div className="bg-white rounded-xl border p-4">
+          <div className="flex items-center justify-between mb-4">
+            <button onClick={() => setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() - 1))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronLeft className="h-4 w-4" /></button>
+            <h3 className="text-lg font-bold text-gray-900">
+              {calMonth.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
+            </h3>
+            <button onClick={() => setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() + 1))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronRight className="h-4 w-4" /></button>
+          </div>
+          <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden">
+            {['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'].map(d => (
+              <div key={d} className="bg-gray-50 p-2 text-center text-xs font-bold text-gray-500">{d}</div>
+            ))}
+            {calendarData.flat().map((cell, i) => (
+              <div key={i} className={`bg-white p-1.5 min-h-[80px] ${!cell ? 'bg-gray-50' : ''}`}>
+                {cell && (
+                  <>
+                    <div className={`text-xs font-medium mb-1 ${cell.date === fmtD(new Date()) ? 'text-blue-600 font-bold' : 'text-gray-500'}`}>{cell.day}</div>
+                    <div className="space-y-0.5">
+                      {cell.projects.slice(0, 3).map(p => (
+                        <Link key={p.id} to={`/projects/${p.id}`} className="block text-[9px] px-1 py-0.5 rounded truncate hover:bg-blue-50 cursor-pointer"
+                          style={{ backgroundColor: (p.current_stage?.color || '#3b82f6') + '15', color: p.current_stage?.color || '#3b82f6' }}>
+                          {p.code}
                         </Link>
-                      );
-                    })}
-                    {planData[col.id].length === 0 && <div className="text-center py-16 text-xs text-gray-300">Trống</div>}
-                  </div>
+                      ))}
+                      {cell.projects.length > 3 && <div className="text-[9px] text-gray-400 text-center">+{cell.projects.length - 3}</div>}
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+      ) : viewMode === 'gantt' ? (
+        /* GANTT */
+        <div className="bg-white rounded-xl border overflow-hidden">
+          <div className="overflow-x-auto">
+            <div style={{ minWidth: '800px' }}>
+              {/* Gantt header */}
+              <div className="flex border-b bg-gray-50 sticky top-0 z-10">
+                <div className="w-60 flex-shrink-0 p-3 text-xs font-bold text-gray-500 border-r">Dự án</div>
+                <div className="flex-1 p-3 text-xs font-bold text-gray-500 text-center">
+                  {ganttData.minDate.toLocaleDateString('vi-VN')} → {ganttData.maxDate.toLocaleDateString('vi-VN')}
                 </div>
-              ))}
+              </div>
+              {/* Gantt rows */}
+              {ganttData.projects.slice(0, 50).map(proj => {
+                const start = new Date(proj.created_at);
+                const end = new Date(proj.deadline || proj.design_deadline);
+                const startDay = Math.max(0, Math.floor((start - ganttData.minDate) / 86400000));
+                const duration = Math.max(1, Math.ceil((end - start) / 86400000));
+                const leftPct = (startDay / ganttData.totalDays) * 100;
+                const widthPct = Math.min((duration / ganttData.totalDays) * 100, 100 - leftPct);
+                const isOverdue = end < new Date() && proj.status !== 'completed';
+                const color = isOverdue ? '#ef4444' : (proj.current_stage?.color || '#3b82f6');
+                return (
+                  <Link key={proj.id} to={`/projects/${proj.id}`} className="flex border-b hover:bg-blue-50/30 transition-colors">
+                    <div className="w-60 flex-shrink-0 p-2.5 border-r">
+                      <p className="text-xs font-bold text-blue-600 truncate">{proj.code}</p>
+                      <p className="text-[10px] text-gray-500 truncate">{proj.name}</p>
+                    </div>
+                    <div className="flex-1 p-2 relative">
+                      <div className="h-6 rounded-full relative" style={{ marginLeft: `${leftPct}%`, width: `${widthPct}%`, backgroundColor: color + '20' }}>
+                        <div className="h-full rounded-full flex items-center px-2" style={{ backgroundColor: color, width: proj.status === 'completed' ? '100%' : '60%', minWidth: '8px' }}>
+                          <span className="text-[9px] text-white font-bold truncate whitespace-nowrap">{proj.current_stage?.name || ''}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
+              {ganttData.projects.length === 0 && (
+                <div className="text-center py-12 text-sm text-gray-400">Không có dự án với ngày bắt đầu + deadline</div>
+              )}
             </div>
-          );
-        })()
+          </div>
+        </div>
+
       ) : (
-        /* List view */
-        <div className="grid gap-3">
+        /* LIST VIEW */
+        <div className="space-y-2">
           {filtered.map(p => (
-            <Link to={`/projects/${p.id}`} key={p.id} className="bg-white rounded-xl border p-4 hover:shadow-md transition-all group">
+            <Link to={`/projects/${p.id}`} key={p.id} className="block bg-white rounded-xl border p-4 hover:shadow-md transition-all group">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -616,13 +579,13 @@ export default function Projects() {
                     {p.company && <span className="text-indigo-600 font-medium">🏢 {p.company.short_name || p.company.name}</span>}
                     {p.customers?.full_name && <span>👤 {p.customers.full_name}</span>}
                     {p.customers?.phone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{p.customers.phone}</span>}
-                    {p.created_at && <span><Calendar className="h-3 w-3 inline" /> {formatDate(p.created_at)}</span>}
+                    {p.deadline && <span className={new Date(p.deadline) < new Date() && p.status !== 'completed' ? 'text-red-600 font-bold' : ''}><Calendar className="h-3 w-3 inline" /> {formatDate(p.deadline)}</span>}
+                    {p.created_at && <span className="text-gray-400"><Calendar className="h-3 w-3 inline" /> {formatDate(p.created_at)}</span>}
                   </div>
                 </div>
                 <div className="text-right shrink-0 flex items-start gap-2">
                   <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); pinToggle(p.id); }}
-                    className={`p-1 rounded-lg cursor-pointer transition-all ${pinnedSet.has(p.id) ? 'bg-amber-100 text-amber-600' : 'text-gray-300 hover:bg-gray-100 hover:text-gray-500'}`}
-                    title={pinnedSet.has(p.id) ? 'Bỏ ghim' : 'Ghim'}>
+                    className={`p-1 rounded-lg cursor-pointer ${pinnedSet.has(p.id) ? 'bg-amber-100 text-amber-600' : 'text-gray-300 hover:bg-gray-100 hover:text-gray-500'}`}>
                     <Pin className="h-4 w-4" />
                   </button>
                   <p className="text-base font-bold text-gray-900">{formatVND(p.estimated_value)}</p>
