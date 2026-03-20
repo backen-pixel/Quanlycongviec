@@ -59,6 +59,12 @@ export default function ThemeSettingsPage() {
           <Palette className="h-6 w-6" /> Giao diện & Hình nền
         </h1>
         <p className="text-sm text-gray-500 mt-1">Tùy chỉnh giao diện, màu sắc, hình nền cho toàn bộ ứng dụng</p>
+        {theme.id !== 'default' && (
+          <button onClick={() => { changeTheme('default'); setCustomColors({ sidebar: '#1b2a4a', pageBg: '#f0f2f5', accent: '#2563eb' }); setTextColorState({ textHeading: '#111827', textBody: '#374151', textMuted: '#6b7280', textCard: '#1f2937' }); }}
+            className="mt-2 h-9 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer border border-gray-300">
+            🔄 Khôi phục mặc định
+          </button>
+        )}
       </div>
 
       {/* Theme presets */}

@@ -59,6 +59,8 @@ export default function ProjectDetail() {
   const [editingLines, setEditingLines] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [addLineStage, setAddLineStage] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [editData, setEditData] = useState({});
 
   const load = () => {
     setLoading(true);
@@ -78,6 +80,29 @@ export default function ProjectDetail() {
   const deleteProject = async () => {
     if (!confirm('Xóa dự án này?')) return;
     await api.delete(`/projects/${id}`); navigate('/projects');
+  };
+
+  const startEditing = () => {
+    setEditData({
+      name: project.name || '',
+      description: project.description || '',
+      estimated_value: project.estimated_value || 0,
+      deadline: project.deadline ? project.deadline.substring(0, 10) : '',
+      priority: project.priority || 'medium',
+      status: project.status || 'consulting',
+      customer_phone: project.customers?.phone || '',
+      customer_address: project.customers?.address || '',
+      notes: project.notes || '',
+    });
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    try {
+      await api.put(`/projects/${id}`, editData);
+      setEditing(false);
+      load();
+    } catch (e) { alert('Lỗi: ' + (e.response?.data?.error || e.message)); }
   };
 
   const addComment = async () => {
@@ -165,7 +190,20 @@ export default function ProjectDetail() {
               </button>
               {project.priority && <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[project.priority] || ''}`}>{PRIORITY_LABELS[project.priority]}</span>}
             </div>
-            <h1 className="text-xl font-bold text-gray-900">{project.name}</h1>
+            <h1 className="text-xl font-bold text-gray-900">
+              {editing ? (
+                <input value={editData.name} onChange={e => setEditData(p => ({...p, name: e.target.value}))}
+                  className="w-full px-2 py-1 border-2 border-blue-400 rounded-lg text-xl font-bold outline-none" autoFocus />
+              ) : project.name}
+            </h1>
+            {editing && (
+              <textarea value={editData.description} onChange={e => setEditData(p => ({...p, description: e.target.value}))}
+                className="w-full mt-1 px-2 py-1 border-2 border-blue-400 rounded-lg text-sm outline-none h-16 resize-none"
+                placeholder="Mô tả dự án..." />
+            )}
+            {!editing && project.description && (
+              <p className="text-sm text-gray-500 mt-1">{project.description}</p>
+            )}
             {project.company && (
               <p className="text-xs text-indigo-600 font-medium flex items-center gap-1 mt-0.5">🏢 {project.company.name}{project.company.short_name ? ` (${project.company.short_name})` : ''}</p>
             )}
@@ -183,6 +221,14 @@ export default function ProjectDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {editing ? (
+            <>
+              <button onClick={saveEdit} className="h-8 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 cursor-pointer">💾 Lưu</button>
+              <button onClick={() => setEditing(false)} className="h-8 px-3 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer">Hủy</button>
+            </>
+          ) : (
+            <button onClick={startEditing} className="h-8 px-3 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 cursor-pointer flex items-center gap-1">✏️ Sửa</button>
+          )}
           <TourButton steps={projectDetailTour} />
           <button onClick={() => startTour(projectDetailGuidedTour)} className="h-8 px-3 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg flex items-center gap-1.5 cursor-pointer transition" title="Hướng dẫn chi tiết">
             🎓
@@ -256,8 +302,49 @@ export default function ProjectDetail() {
         </div>
         <div className="bg-white rounded-xl border p-4">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Giá trị</h3>
-          <p className="text-2xl font-bold text-gray-900">{formatVND(project.estimated_value)}</p>
-          {project.kitchen_type && <p className="text-xs text-gray-500 mt-2">Loại: {project.kitchen_type} · {project.material}</p>}
+          {editing ? (
+            <input type="number" value={editData.estimated_value} onChange={e => setEditData(p => ({...p, estimated_value: parseFloat(e.target.value) || 0}))}
+              className="w-full h-10 px-3 border-2 border-blue-400 rounded-lg text-lg font-bold outline-none" />
+          ) : (
+            <p className="text-2xl font-bold text-gray-900">{formatVND(project.estimated_value)}</p>
+          )}
+          {editing ? (
+            <div className="mt-3 space-y-2">
+              <div>
+                <label className="text-[10px] text-gray-500">Deadline</label>
+                <input type="date" value={editData.deadline} onChange={e => setEditData(p => ({...p, deadline: e.target.value}))}
+                  className="w-full h-8 px-2 border rounded-lg text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">Ưu tiên</label>
+                <select value={editData.priority} onChange={e => setEditData(p => ({...p, priority: e.target.value}))}
+                  className="w-full h-8 px-2 border rounded-lg text-xs">
+                  <option value="low">Thấp</option>
+                  <option value="medium">Trung bình</option>
+                  <option value="high">Cao</option>
+                  <option value="urgent">Khẩn cấp</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">Trạng thái</label>
+                <select value={editData.status} onChange={e => setEditData(p => ({...p, status: e.target.value}))}
+                  className="w-full h-8 px-2 border rounded-lg text-xs">
+                  {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">Ghi chú</label>
+                <textarea value={editData.notes} onChange={e => setEditData(p => ({...p, notes: e.target.value}))}
+                  className="w-full px-2 py-1 border rounded-lg text-xs h-16 resize-none" placeholder="Ghi chú dự án..." />
+              </div>
+            </div>
+          ) : (
+            <>
+              {project.kitchen_type && <p className="text-xs text-gray-500 mt-2">Loại: {project.kitchen_type} · {project.material}</p>}
+              {project.deadline && <p className="text-xs text-gray-500 mt-1">📅 Deadline: <span className={`font-medium ${new Date(project.deadline) < new Date() && project.status !== 'completed' ? 'text-red-600' : ''}`}>{formatDate(project.deadline)}</span></p>}
+              {project.notes && <p className="text-xs text-gray-400 mt-1 italic">{project.notes}</p>}
+            </>
+          )}
         </div>
         <div className="bg-white rounded-xl border p-4">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Tiến độ</h3>
