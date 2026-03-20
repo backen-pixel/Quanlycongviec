@@ -724,7 +724,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       }
     }
 
-    // ── Process flow steps: assignments + template tasks ──
+    // ── Process flow steps: assignments + process tasks + template tasks ──
     // b.flow_assignments = [{ division_unit_id, company_unit_id, template_set_id, order_index }]
     if (b.flow_assignments?.length) {
       let stepStartDate = new Date(projectStart);
@@ -742,7 +742,73 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           started_at: assignment.order_index === 0 ? new Date().toISOString() : null,
         }, { onConflict: 'project_id,division_unit_id' });
 
-        // If flow_step_id → generate tasks from flow (not template)
+        // ── STEP 1: Create tasks from PROCESS TASKS (quy trình cố định) ──
+        // Find the flow step by flow_id + division_unit_id
+        const { data: flowStep } = await supabase.from('workflow_flow_steps')
+          .select('id').eq('flow_id', b.flow_id).eq('division_unit_id', assignment.division_unit_id).single();
+
+        if (flowStep) {
+          // Load processes linked to this step
+          const { data: stepProcs } = await supabase.from('flow_step_processes')
+            .select('*, process:company_processes(id, name)')
+            .eq('flow_step_id', flowStep.id)
+            .order('order_index');
+
+          for (const sp of (stepProcs || [])) {
+            // Load process tasks
+            const { data: procTasks } = await supabase.from('company_process_tasks')
+              .select('*, checklists:company_process_checklists(*), stage:workflow_stages(id, name, slug)')
+              .eq('process_id', sp.process_id)
+              .order('order_index');
+
+            for (const pt of (procTasks || [])) {
+              // Determine assignee from task_assignments override or null
+              const taskKey = `process_task_${pt.id}`;
+              const finalAssignee = b.task_assignments?.[taskKey] || pt.assigned_user_id || null;
+
+              const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                project_id: projectId,
+                stage_id: pt.stage_id || null,
+                title: pt.title,
+                description: pt.description || null,
+                assignee_id: finalAssignee,
+                priority: pt.priority || 'medium',
+                status: 'pending',
+                order_index: pt.order_index || 0,
+                created_by_id: req.user.userId,
+                task_type: 'project',
+                estimated_hours: pt.estimated_days ? pt.estimated_days * 8 : null,
+                metadata: { process_id: sp.process_id, process_task_id: pt.id, process_name: sp.process?.name },
+              }).select().single();
+
+              if (taskErr) { console.error('Process task create error:', taskErr); continue; }
+
+              // Create checklists from process task
+              if (pt.checklists?.length) {
+                for (const c of pt.checklists) {
+                  try {
+                    await supabase.from('task_checklists').insert({
+                      task_id: task.id,
+                      title: c.label || c.title || 'Checklist',
+                      order_index: c.order_index || 0,
+                      is_completed: false,
+                    });
+                  } catch (ce) { console.warn('Process checklist error:', ce.message); }
+                }
+              }
+
+              allCreatedTasks.push(task);
+
+              if (finalAssignee) {
+                await createNotification(req, finalAssignee, 'task_assigned',
+                  '📌 Nhiệm vụ mới', `${pt.title} — DA ${code}`, 'project', projectId);
+              }
+            }
+          }
+        }
+
+        // ── STEP 2: Create tasks from TEMPLATE (bộ nhiệm vụ mẫu) ──
+        // If flow_step_id → generate tasks from flow_step_tasks (legacy path)
         if (assignment.flow_step_id) {
           const { data: flowTasks } = await supabase
             .from('flow_step_tasks')
@@ -954,41 +1020,6 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           }
         }
       }
-    }
-
-    // ── AUTO-FILL MISSING STAGES from task_templates ──
-    // Flow templates (company_template_tasks) may not cover all 8 stages
-    // Fill gaps from task_templates (old system) to ensure complete task set
-    const allStageSlugs = ['consulting','design','quotation','contract','production','shipping','installation','customer-care'];
-    for (const slug of allStageSlugs) {
-      try {
-        const { data: stg } = await supabase.from('workflow_stages').select('id,name,slug').eq('slug', slug).single();
-        if (!stg) continue;
-        // Skip if tasks already created for this stage
-        const { data: existing } = await supabase.from('tasks').select('id').eq('project_id', projectId).eq('stage_id', stg.id).limit(1);
-        if (existing?.length) continue;
-        // Load from task_templates
-        const { data: templates } = await supabase.from('task_templates').select('*').eq('stage_id', stg.id).eq('is_active', true).order('order_index');
-        if (!templates?.length) continue;
-        const { data: ins } = await supabase.from('tasks').insert(templates.map((t, i) => ({
-          project_id: projectId, stage_id: stg.id, title: t.title,
-          description: t.description || null, priority: t.priority || 'medium', status: 'pending',
-          created_by_id: req.user.userId, order_index: i, task_type: 'project',
-          estimated_hours: t.estimated_hours || null,
-        }))).select();
-        // Create checklists
-        for (const tmpl of templates) {
-          if (tmpl.checklist_items?.length) {
-            const newTask = (ins || []).find(t2 => t2.title === tmpl.title);
-            if (newTask) {
-              await supabase.from('task_checklists').insert(
-                tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
-              );
-            }
-          }
-        }
-        allCreatedTasks.push(...(ins || []));
-      } catch (e) { console.warn(`create-with-flow: auto-fill ${slug} failed:`, e.message); }
     }
 
     // Activity log
