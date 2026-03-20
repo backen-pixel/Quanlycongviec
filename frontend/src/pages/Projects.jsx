@@ -65,6 +65,8 @@ export default function Projects() {
   const [filterCustomer, setFilterCustomer] = useState('all');
   const [filterPerson, setFilterPerson] = useState('all');
   const [divisions, setDivisions] = useState([]);
+  const [plannerColumns, setPlannerColumns] = useState([]);
+  const [plannerLoading, setPlannerLoading] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [allCompanies, setAllCompanies] = useState([]);
   const [companyEmployees, setCompanyEmployees] = useState([]);
@@ -106,6 +108,18 @@ export default function Projects() {
   };
 
   useEffect(load, []);
+
+  // Load planner board when switching to planner view
+  const loadPlanner = () => {
+    setPlannerLoading(true);
+    const params = {};
+    if (filterCompany !== 'all') params.company_id = filterCompany;
+    api.get('/tasks/planner/board', { params })
+      .then(r => setPlannerColumns(r.data.columns || []))
+      .catch(() => setPlannerColumns([]))
+      .finally(() => setPlannerLoading(false));
+  };
+  useEffect(() => { if (viewMode === 'planner') loadPlanner(); }, [viewMode, filterCompany]);
 
   useEffect(() => {
     api.get('/divisions').then(r => setDivisions(r.data.divisions || [])).catch(() => {});
@@ -230,24 +244,7 @@ export default function Projects() {
   }, [filtered]);
 
   // Planner data
-  const plannerData = useMemo(() => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-    const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + (7 - endOfWeek.getDay()));
-    const endOfNextWeek = new Date(endOfWeek); endOfNextWeek.setDate(endOfNextWeek.getDate() + 7);
-    const getD = (p) => p.deadline || p.design_deadline || p.install_date || null;
-    const cols = [
-      { id: 'overdue', label: '🔴 Quá hạn', color: '#EF4444', filter: (p) => { const d = getD(p); return d && new Date(d) < today && p.status !== 'completed'; } },
-      { id: 'today', label: '🟠 Hôm nay', color: '#F97316', filter: (p) => { const d = getD(p); return d && new Date(d) >= today && new Date(d) < tomorrow; } },
-      { id: 'this_week', label: '🟡 Tuần này', color: '#EAB308', filter: (p) => { const d = getD(p); return d && new Date(d) >= tomorrow && new Date(d) < endOfWeek; } },
-      { id: 'next_week', label: '🔵 Tuần sau', color: '#3B82F6', filter: (p) => { const d = getD(p); return d && new Date(d) >= endOfWeek && new Date(d) < endOfNextWeek; } },
-      { id: 'later', label: '⚪ Sau đó', color: '#6B7280', filter: (p) => { const d = getD(p); return !d || new Date(d) >= endOfNextWeek; } },
-    ];
-    const data = {}; cols.forEach(c => { data[c.id] = []; });
-    filtered.forEach(proj => { let placed = false; for (const c of cols) { if (c.filter(proj)) { data[c.id].push(proj); placed = true; break; } } if (!placed) data['later'].push(proj); });
-    return { cols, data };
-  }, [filtered]);
+  // (Planner data loaded from API via loadPlanner)
 
   // Calendar data
   const calendarData = useMemo(() => {
@@ -466,21 +463,121 @@ export default function Projects() {
         </DragDropContext>
 
       ) : viewMode === 'planner' ? (
-        /* PLANNER - kanban by deadline */
-        <div className="flex gap-3 overflow-x-auto pb-4">
-          {plannerData.cols.map(col => (
-            <div key={col.id} className="flex flex-col flex-shrink-0" style={{ width: '300px' }}>
-              <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
-                <h3 className="text-sm font-bold text-gray-900">{col.label}</h3>
-                <span className="text-xs text-gray-400">{plannerData.data[col.id].length} dự án</span>
-              </div>
-              <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '200px', maxHeight: '75vh' }}>
-                {plannerData.data[col.id].map(proj => <ProjectCard key={proj.id} proj={proj} />)}
-                {plannerData.data[col.id].length === 0 && <div className="text-center py-8 text-xs text-gray-300">Trống</div>}
-              </div>
+        /* PLANNER - Bitrix-style: mỗi nhân viên 1 cột, kéo thả sắp xếp */
+        plannerLoading ? (
+          <div className="flex items-center justify-center py-16"><div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
+        ) : plannerColumns.length === 0 ? (
+          <div className="text-center py-16">
+            <User className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-400">Chưa có nhiệm vụ nào được phân công</p>
+          </div>
+        ) : (
+          <DragDropContext onDragEnd={async (result) => {
+            const { draggableId, source, destination } = result;
+            if (!destination) return;
+            const srcCol = source.droppableId;
+            const dstCol = destination.droppableId;
+            // Clone columns
+            const newCols = plannerColumns.map(c => ({ ...c, tasks: [...c.tasks] }));
+            const srcColData = newCols.find(c => c.user.id === srcCol);
+            const dstColData = newCols.find(c => c.user.id === dstCol);
+            if (!srcColData || !dstColData) return;
+            // Remove from source
+            const [moved] = srcColData.tasks.splice(source.index, 1);
+            // Add to destination
+            dstColData.tasks.splice(destination.index, 0, moved);
+            setPlannerColumns(newCols);
+            // Save order to backend
+            try {
+              if (srcCol === dstCol) {
+                await api.put('/tasks/planner/reorder', { assignee_id: dstCol, new_order: dstColData.tasks.map(t => t.id) });
+              } else {
+                // Moved to different person
+                await api.put('/tasks/planner/reorder', { task_id: draggableId, assignee_id: dstCol, new_order: dstColData.tasks.map(t => t.id) });
+                if (srcColData.tasks.length > 0) {
+                  await api.put('/tasks/planner/reorder', { assignee_id: srcCol, new_order: srcColData.tasks.map(t => t.id) });
+                }
+              }
+            } catch { loadPlanner(); }
+          }}>
+            <div className="flex gap-3 overflow-x-auto pb-4">
+              {plannerColumns.map(col => {
+                const completedCount = col.tasks.filter(t => t.status === 'done' || t.status === 'completed').length;
+                return (
+                  <div key={col.user.id} className="flex flex-col flex-shrink-0" style={{ width: '300px' }}>
+                    {/* Employee header */}
+                    <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: '#3b82f6', borderTopWidth: '4px' }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{ backgroundColor: avatarColor(col.user.full_name) }}>
+                          {getInitials(col.user.full_name)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="text-sm font-bold text-gray-900 truncate">{col.user.full_name}</h3>
+                          <p className="text-[10px] text-gray-400">{col.tasks.length} nhiệm vụ · {completedCount} xong</p>
+                        </div>
+                      </div>
+                      {/* Progress bar */}
+                      <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: col.tasks.length > 0 ? `${(completedCount / col.tasks.length) * 100}%` : '0%' }} />
+                      </div>
+                    </div>
+                    <Droppable droppableId={col.user.id}>
+                      {(provided, snapshot) => (
+                        <div ref={provided.innerRef} {...provided.droppableProps}
+                          className={`flex-1 rounded-b-xl border p-2 space-y-2 overflow-y-auto transition-colors ${snapshot.isDraggingOver ? 'bg-blue-50 border-blue-300' : 'bg-gray-50/50'}`}
+                          style={{ minHeight: '200px', maxHeight: '75vh' }}>
+                          {col.tasks.map((task, index) => {
+                            const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'done' && task.status !== 'completed';
+                            return (
+                              <Draggable key={task.id} draggableId={task.id} index={index}>
+                                {(provided, snapshot) => (
+                                  <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}
+                                    className={`${snapshot.isDragging ? 'shadow-2xl rotate-1 z-50' : ''}`}>
+                                    <Link to={task.project ? `/projects/${task.project.id}` : '#'}
+                                      className={`block bg-white rounded-lg border p-3 hover:shadow-md transition-all group cursor-grab active:cursor-grabbing ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-gray-200'}`}>
+                                      {/* Task title */}
+                                      <h5 className="text-xs font-bold text-gray-900 mb-1 leading-snug">{task.title}</h5>
+                                      {/* Project info */}
+                                      {task.project && (
+                                        <p className="text-[10px] text-blue-600 font-medium mb-1 truncate">📋 {task.project.code} — {task.project.name}</p>
+                                      )}
+                                      {/* Status + Priority */}
+                                      <div className="flex items-center gap-1 flex-wrap mb-1">
+                                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${task.status === 'done' || task.status === 'completed' ? 'bg-green-100 text-green-700' : task.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                                          {task.status === 'done' || task.status === 'completed' ? '✅ Xong' : task.status === 'in_progress' ? '🔄 Đang làm' : '⏳ Chờ'}
+                                        </span>
+                                        {task.priority && (
+                                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${task.priority === 'high' || task.priority === 'urgent' ? 'bg-red-100 text-red-700' : task.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-500'}`}>
+                                            {task.priority === 'urgent' ? '🔥' : task.priority === 'high' ? '⬆️' : task.priority === 'medium' ? '➡️' : '⬇️'}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {/* Due date */}
+                                      {task.due_date && (
+                                        <p className={`text-[10px] flex items-center gap-1 ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
+                                          <Calendar className="h-2.5 w-2.5" />{formatDate(task.due_date)}
+                                          {isOverdue && <span className="px-1 py-0.5 bg-red-100 rounded text-[8px] font-bold">TRỄ</span>}
+                                        </p>
+                                      )}
+                                    </Link>
+                                  </div>
+                                )}
+                              </Draggable>
+                            );
+                          })}
+                          {provided.placeholder}
+                          {col.tasks.length === 0 && !snapshot.isDraggingOver && (
+                            <div className="text-center py-8 text-xs text-gray-300">Kéo nhiệm vụ vào đây</div>
+                          )}
+                        </div>
+                      )}
+                    </Droppable>
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
+          </DragDropContext>
+        )
 
       ) : viewMode === 'calendar' ? (
         /* CALENDAR */

@@ -566,4 +566,77 @@ r.delete('/:taskId/participants/:userId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
+// Planner: get tasks grouped by assignee (for current user or all if admin)
+r.get('/planner/board', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const isAdmin = req.user.role === 'admin';
+    const { company_id, division_id } = req.query;
+
+    // Get tasks with assignees
+    let query = supabase.from('tasks')
+      .select('id, title, status, priority, due_date, planner_order, assignee_id, project_id, project:projects(id, code, name, company_id, deadline, current_stage_id)')
+      .not('assignee_id', 'is', null)
+      .order('planner_order', { ascending: true })
+      .order('due_date', { ascending: true, nullsFirst: false });
+
+    const { data: tasks, error } = await query;
+    if (error) throw error;
+
+    // Get all assignee user info
+    const assigneeIds = [...new Set((tasks || []).map(t => t.assignee_id))];
+    let users = [];
+    if (assigneeIds.length > 0) {
+      const { data: userData } = await supabase.from('users').select('id, full_name, avatar_url, role').in('id', assigneeIds);
+      users = userData || [];
+    }
+
+    // Filter by company if needed
+    let filteredTasks = tasks || [];
+    if (company_id) {
+      filteredTasks = filteredTasks.filter(t => t.project?.company_id === company_id);
+    }
+
+    // Group by assignee
+    const board = {};
+    filteredTasks.forEach(t => {
+      if (!board[t.assignee_id]) {
+        const u = users.find(u => u.id === t.assignee_id);
+        board[t.assignee_id] = {
+          user: u || { id: t.assignee_id, full_name: 'Unknown' },
+          tasks: []
+        };
+      }
+      board[t.assignee_id].tasks.push(t);
+    });
+
+    // Sort columns: current user first, then alphabetical
+    const columns = Object.values(board).sort((a, b) => {
+      if (a.user.id === userId) return -1;
+      if (b.user.id === userId) return 1;
+      return (a.user.full_name || '').localeCompare(b.user.full_name || '');
+    });
+
+    res.json({ columns });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Planner: reorder tasks for an assignee
+r.put('/planner/reorder', async (req, res) => {
+  try {
+    const { task_id, assignee_id, new_order } = req.body;
+    // new_order is an array of task IDs in the desired order
+    if (Array.isArray(new_order)) {
+      const updates = new_order.map((id, idx) =>
+        supabase.from('tasks').update({ planner_order: idx, assignee_id: assignee_id || undefined }).eq('id', id)
+      );
+      await Promise.all(updates);
+    } else if (task_id) {
+      // Single task move to new assignee
+      await supabase.from('tasks').update({ assignee_id, planner_order: 0 }).eq('id', task_id);
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = r;
