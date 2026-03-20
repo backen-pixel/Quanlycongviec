@@ -439,6 +439,35 @@ r.get('/divisions', async (req, res) => {
 
     const divisions = Object.values(byName).sort((a, b) => a.name.localeCompare(b.name));
 
+    // Check which divisions have projects (via companies)
+    const divIdsWithCompanies = divisions.filter(d => (companyCounts[d.id] || 0) > 0).map(d => d.id);
+    let divsWithProjects = new Set();
+    if (divIdsWithCompanies.length > 0) {
+      const { data: companyList } = await supabase
+        .from('companies')
+        .select('id, division_unit_id')
+        .in('division_unit_id', divIdsWithCompanies);
+      const compIds = (companyList || []).map(c => c.id);
+      if (compIds.length > 0) {
+        const { data: projData } = await supabase
+          .from('projects')
+          .select('company_id')
+          .in('company_id', compIds);
+        const projCompIds = new Set((projData || []).map(p => p.company_id));
+        (companyList || []).forEach(c => {
+          if (projCompIds.has(c.id)) divsWithProjects.add(c.division_unit_id);
+        });
+      }
+    }
+
+    // Also check via flow_steps (divisions in project flows)
+    if (divsWithProjects.size === 0) {
+      // Fallback: return all divisions with companies
+      divisions.forEach(d => { if ((companyCounts[d.id] || 0) > 0) divsWithProjects.add(d.id); });
+    }
+
+    const filteredDivisions = divisions.filter(d => divsWithProjects.has(d.id));
+
     // Default icons for known divisions
     const defaultIcons = {
       'Khối Kinh Doanh': '💼',
@@ -448,7 +477,7 @@ r.get('/divisions', async (req, res) => {
     };
 
     res.json({
-      divisions: divisions.map(d => ({
+      divisions: filteredDivisions.map(d => ({
         id: d.id,
         name: d.name,
         icon: d.icon || defaultIcons[d.name] || '🏢',

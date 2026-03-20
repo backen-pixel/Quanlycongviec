@@ -36,6 +36,8 @@ export default function QuotationForm() {
   }]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [productGroup, setProductGroup] = useState('');
+  const [productSearch, setProductSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -233,10 +235,24 @@ export default function QuotationForm() {
       <div className="bg-white rounded-xl border p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-bold text-gray-900">Chi tiết hàng hóa / dịch vụ</h2>
-          <div className="flex items-center gap-2">
-            <select onChange={e => { if (e.target.value) { addProduct(e.target.value); e.target.value = ''; } }} className="h-9 px-3 border rounded-lg text-xs">
-              <option value="">+ Thêm từ sản phẩm</option>
-              {products.map(p => <option key={p.id} value={p.id}>{p.code ? `${p.code} - ` : ''}{p.name}</option>)}
+          <div className="flex items-center gap-2 flex-wrap">
+            <select value={productGroup} onChange={e => setProductGroup(e.target.value)} className="h-9 px-2 border rounded-lg text-xs">
+              <option value="">Tất cả nhóm</option>
+              {[...new Set(products.map(p => p.code_group).filter(Boolean))].sort().map(g => (
+                <option key={g} value={g}>{g} ({products.filter(p => p.code_group === g).length})</option>
+              ))}
+            </select>
+            <input value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="🔍 Tìm SP..." className="h-9 px-3 border rounded-lg text-xs w-32" />
+            <select onChange={e => { if (e.target.value) { addProduct(e.target.value); e.target.value = ''; } }} className="h-9 px-3 border rounded-lg text-xs max-w-[220px]">
+              <option value="">+ Thêm sản phẩm</option>
+              {products.filter(p => {
+                if (productGroup && p.code_group !== productGroup) return false;
+                if (productSearch) {
+                  const s = productSearch.toLowerCase();
+                  return (p.name?.toLowerCase().includes(s) || p.code?.toLowerCase().includes(s));
+                }
+                return true;
+              }).map(p => <option key={p.id} value={p.id}>{p.code ? `${p.code} - ` : ''}{p.name}</option>)}
             </select>
             <button onClick={addRow} className="h-9 px-3 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer">
               <Plus className="h-3.5 w-3.5" /> Thêm dòng

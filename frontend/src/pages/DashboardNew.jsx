@@ -89,13 +89,19 @@ export default function DashboardNew() {
           <h1 className="text-3xl font-bold text-gray-900">📊 Dashboard</h1>
           <TourButton steps={dashboardTour} />
         </div>
-        <div data-tour="division-tabs" className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
-          <button onClick={() => handleTabChange(null)} className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all ${!selectedDiv ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'}`}>🏠 Tổng quan</button>
-          {divisions.map(d => (
-            <button key={d.id} onClick={() => handleTabChange(d.id)} className={`px-5 py-2.5 rounded-xl font-medium text-sm whitespace-nowrap transition-all flex items-center gap-2 ${selectedDiv === d.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'}`}>
-              <span>{d.icon}</span><span>{d.name}</span>
-            </button>
-          ))}
+        <div data-tour="division-tabs" className="flex items-center gap-3">
+          <select
+            value={selectedDiv || ''}
+            onChange={e => handleTabChange(e.target.value || null)}
+            className="h-10 px-4 pr-8 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer appearance-none"
+            style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\'%3E%3Cpath d=\'M3 5l3 3 3-3\' stroke=\'%236b7280\' fill=\'none\' stroke-width=\'1.5\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
+          >
+            <option value="">🏠 Tổng quan</option>
+            {divisions.map(d => (
+              <option key={d.id} value={d.id}>{d.icon} {d.name}</option>
+            ))}
+          </select>
+          {selectedDiv && <span className="text-xs text-gray-400">|</span>}
         </div>
       </div>
       {isLoading ? <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div></div>
