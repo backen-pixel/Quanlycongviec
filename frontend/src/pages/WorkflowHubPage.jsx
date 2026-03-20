@@ -3,6 +3,8 @@ import { useLocation } from 'react-router-dom';
 import { GitBranch, Layers, ClipboardList, ArrowRight, Lightbulb, CheckCircle2 } from 'lucide-react';
 import { TourButton } from '../components/WebTour';
 import { workflowHubTour } from '../lib/tourSteps';
+import { useTour } from '../components/TourProvider';
+import { workflowGuidedTour } from '../lib/guidedTours';
 import CompanyProcessesPage from './CompanyProcessesPage';
 import TemplateSetsPage from './TemplateSetsPage';
 import WorkflowFlowsPage from './WorkflowFlowsPage';
@@ -22,6 +24,7 @@ const ROUTE_TAB_MAP = {
 
 export default function WorkflowHubPage() {
   const location = useLocation();
+  const { startTour } = useTour();
   const initialTab = ROUTE_TAB_MAP[location.pathname] || 'processes';
   const [activeTab, setActiveTab] = useState(initialTab);
   const [showGuide, setShowGuide] = useState(true);
@@ -40,7 +43,12 @@ export default function WorkflowHubPage() {
             Thiết lập quy trình nội bộ → tạo bộ mẫu → xây dựng luồng công việc
           </p>
         </div>
-        <TourButton steps={workflowHubTour} />
+        <div className="flex items-center gap-2">
+          <button onClick={() => startTour(workflowGuidedTour)} className="h-8 px-3 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg flex items-center gap-1.5 cursor-pointer transition" title="Hướng dẫn quy trình">
+            🎓 Hướng dẫn
+          </button>
+          <TourButton steps={workflowHubTour} />
+        </div>
       </div>
 
       {/* Guide Banner */}

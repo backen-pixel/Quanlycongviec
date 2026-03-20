@@ -6,6 +6,8 @@ import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { TourButton } from '../components/WebTour';
 import { projectsTour } from '../lib/tourSteps';
+import { useTour } from '../components/TourProvider';
+import { createProjectTour } from '../lib/guidedTours';
 
 const TIME_FILTERS = [
   { id: 'all', label: 'Tất cả' },
@@ -57,6 +59,7 @@ function projStageSlug(p) {
 
 export default function Projects() {
   const navigate = useNavigate();
+  const { startTour } = useTour();
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban' | 'plan'
@@ -300,6 +303,9 @@ export default function Projects() {
           <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{filtered.length} dự án{hasActiveFilters ? ' (đã lọc)' : ''}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => startTour(createProjectTour)} className="h-8 px-3 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg flex items-center gap-1.5 cursor-pointer transition" title="Hướng dẫn tạo dự án">
+            🎓 Hướng dẫn
+          </button>
           <TourButton steps={projectsTour} />
           {/* View toggle */}
           <div data-tour="view-toggle" className="flex bg-gray-100 rounded-lg p-0.5">
