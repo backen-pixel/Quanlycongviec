@@ -53,7 +53,7 @@ export default function OrderDetail() {
   const totalVat = (order.items || []).reduce((s, i) => s + (i.vat_amount || (i.amount || 0) * (i.vat_rate || 0) / 100), 0);
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-4 w-full">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/crm/orders')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
@@ -69,7 +69,7 @@ export default function OrderDetail() {
       </div>
 
       {/* Progress Steps - Clickable */}
-      <div className="bg-white rounded-xl border p-5">
+      <div className="bg-white rounded-xl border p-4">
         <div className="flex items-center justify-between">
           {STATUS_STEPS.map((step, i) => (
             <div key={step} className="flex items-center flex-1">
@@ -88,17 +88,17 @@ export default function OrderDetail() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Customer + Payment */}
-        <div className="space-y-4">
-          <div className="bg-white rounded-xl border p-5 space-y-3">
+      <div className="grid grid-cols-1 gap-4">
+        {/* Customer + Payment - horizontal */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl border p-4 space-y-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Khách hàng</h3>
             {order.customer_name && <p className="text-sm font-medium text-gray-900 flex items-center gap-2"><User className="h-4 w-4 text-gray-400" />{order.customer_name}</p>}
             {order.customer_phone && <p className="text-xs text-gray-500 flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-gray-400" />{order.customer_phone}</p>}
             {order.customer_address && <p className="text-xs text-gray-500 flex items-center gap-2"><MapPin className="h-3.5 w-3.5 text-gray-400" />{order.customer_address}</p>}
             {order.delivery_date && <p className="text-xs text-gray-500 flex items-center gap-2"><Truck className="h-3.5 w-3.5 text-gray-400" />Giao: {formatDate(order.delivery_date)}</p>}
           </div>
-          <div className="bg-white rounded-xl border p-5 space-y-3">
+          <div className="bg-white rounded-xl border p-4 space-y-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Thanh toán</h3>
             <div className="space-y-2">
               <div className="flex justify-between"><span className="text-xs text-gray-500">Tổng tiền</span><span className="text-sm font-bold">{formatVND(order.total)}</span></div>
@@ -112,17 +112,17 @@ export default function OrderDetail() {
         </div>
 
         {/* Right: Items */}
-        <div className="lg:col-span-2 bg-white rounded-xl border p-5">
+        <div className="bg-white rounded-xl border p-3">
           <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-4">Chi tiết hàng hóa</h3>
-          <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b text-[10px] text-gray-500 uppercase">
-              <th className="py-2 px-1 text-left">STT</th><th className="py-2 px-1 text-left">Mã HH</th><th className="py-2 px-1 text-left">Tên</th><th className="py-2 px-1 text-left">Diễn giải</th><th className="py-2 px-1 text-center">ĐVT</th>
-              <th className="py-2 px-1 text-right">Cao</th><th className="py-2 px-1 text-right">Rộng</th><th className="py-2 px-1 text-right">Dài</th><th className="py-2 px-1 text-right">TL</th>
-              <th className="py-2 px-1 text-right">SL</th><th className="py-2 px-1 text-right">Đơn giá</th><th className="py-2 px-1 text-right">Thành tiền</th>
-              <th className="py-2 px-1 text-right">CK%</th><th className="py-2 px-1 text-right">Tiền CK</th>
-              <th className="py-2 px-1 text-right">%VAT</th><th className="py-2 px-1 text-right">Tiền thuế</th>
-              <th className="py-2 px-1 text-right">Tổng</th><th className="py-2 px-1 text-left">CTKM</th><th className="py-2 px-1 text-center">KM</th>
+          <div className="overflow-x-auto border rounded-lg">
+          <table className="w-full text-xs">
+            <thead><tr className="border-b text-[9px] text-gray-500 uppercase tracking-wider">
+              <th className="py-1.5 px-0.5 text-left">STT</th><th className="py-1.5 px-0.5 text-left">Mã HH</th><th className="py-1.5 px-0.5 text-left">Tên</th><th className="py-1.5 px-0.5 text-left">Diễn giải</th><th className="py-1.5 px-0.5 text-center">ĐVT</th>
+              <th className="py-1.5 px-0.5 text-right">Cao</th><th className="py-1.5 px-0.5 text-right">Rộng</th><th className="py-1.5 px-0.5 text-right">Dài</th><th className="py-1.5 px-0.5 text-right">TL</th>
+              <th className="py-1.5 px-0.5 text-right">SL</th><th className="py-1.5 px-0.5 text-right">Đơn giá</th><th className="py-1.5 px-0.5 text-right">Thành tiền</th>
+              <th className="py-1.5 px-0.5 text-right">CK%</th><th className="py-1.5 px-0.5 text-right">Tiền CK</th>
+              <th className="py-1.5 px-0.5 text-right">%VAT</th><th className="py-1.5 px-0.5 text-right">Tiền thuế</th>
+              <th className="py-1.5 px-0.5 text-right">Tổng</th><th className="py-1.5 px-0.5 text-left">CTKM</th><th className="py-1.5 px-0.5 text-center">KM</th>
             </tr></thead>
             <tbody>
               {(order.items || []).map((item, i) => {
@@ -131,25 +131,25 @@ export default function OrderDetail() {
                 const total = item.total || ((item.amount || 0) + vatAmount);
                 return (
                   <tr key={item.id} className="border-b text-xs">
-                    <td className="py-1.5 px-1 text-gray-400">{i + 1}</td>
-                    <td className="py-1.5 px-1 text-gray-500">{item.product_code || '-'}</td>
-                    <td className="py-1.5 px-1 font-medium text-gray-900">{item.name}</td>
-                    <td className="py-1.5 px-1 text-gray-500">{item.description || ''}</td>
-                    <td className="py-1.5 px-1 text-center text-gray-500">{item.unit}</td>
-                    <td className="py-1.5 px-1 text-right text-gray-400">{item.height || '-'}</td>
-                    <td className="py-1.5 px-1 text-right text-gray-400">{item.width || '-'}</td>
-                    <td className="py-1.5 px-1 text-right text-gray-400">{item.length || '-'}</td>
-                    <td className="py-1.5 px-1 text-right text-gray-400">{item.weight || '-'}</td>
-                    <td className="py-1.5 px-1 text-right">{item.quantity}</td>
-                    <td className="py-1.5 px-1 text-right">{formatVND(item.unit_price)}</td>
-                    <td className="py-1.5 px-1 text-right font-medium">{formatVND(item.amount)}</td>
-                    <td className="py-1.5 px-1 text-right text-gray-500">{item.discount_percent || 0}%</td>
-                    <td className="py-1.5 px-1 text-right text-orange-600">{formatVND(discAmt)}</td>
-                    <td className="py-1.5 px-1 text-right text-gray-500">{item.vat_rate || 0}%</td>
-                    <td className="py-1.5 px-1 text-right text-gray-600">{formatVND(vatAmount)}</td>
-                    <td className="py-1.5 px-1 text-right font-bold text-blue-700">{formatVND(total)}</td>
-                    <td className="py-1.5 px-1 text-gray-500">{item.promo_code || ''}</td>
-                    <td className="py-1.5 px-1 text-center">{item.is_promo ? '🎁' : ''}</td>
+                    <td className="py-1 px-0.5 text-gray-400">{i + 1}</td>
+                    <td className="py-1 px-0.5 text-gray-500">{item.product_code || '-'}</td>
+                    <td className="py-1 px-0.5 font-medium text-gray-900">{item.name}</td>
+                    <td className="py-1 px-0.5 text-gray-500">{item.description || ''}</td>
+                    <td className="py-1 px-0.5 text-center text-gray-500">{item.unit}</td>
+                    <td className="py-1 px-0.5 text-right text-gray-400">{item.height || '-'}</td>
+                    <td className="py-1 px-0.5 text-right text-gray-400">{item.width || '-'}</td>
+                    <td className="py-1 px-0.5 text-right text-gray-400">{item.length || '-'}</td>
+                    <td className="py-1 px-0.5 text-right text-gray-400">{item.weight || '-'}</td>
+                    <td className="py-1 px-0.5 text-right">{item.quantity}</td>
+                    <td className="py-1 px-0.5 text-right">{formatVND(item.unit_price)}</td>
+                    <td className="py-1 px-0.5 text-right font-medium">{formatVND(item.amount)}</td>
+                    <td className="py-1 px-0.5 text-right text-gray-500">{item.discount_percent || 0}%</td>
+                    <td className="py-1 px-0.5 text-right text-orange-600">{formatVND(discAmt)}</td>
+                    <td className="py-1 px-0.5 text-right text-gray-500">{item.vat_rate || 0}%</td>
+                    <td className="py-1 px-0.5 text-right text-gray-600">{formatVND(vatAmount)}</td>
+                    <td className="py-1 px-0.5 text-right font-bold text-blue-700">{formatVND(total)}</td>
+                    <td className="py-1 px-0.5 text-gray-500">{item.promo_code || ''}</td>
+                    <td className="py-1 px-0.5 text-center">{item.is_promo ? '🎁' : ''}</td>
                   </tr>
                 );
               })}
