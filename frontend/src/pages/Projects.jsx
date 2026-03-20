@@ -55,7 +55,7 @@ export default function Projects() {
   const { startTour } = useTour();
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState('deadline');
+  const [viewMode, setViewMode] = useState('kanban');
   const [pinnedSet, setPinnedSet] = useState(new Set());
   const [filterTime, setFilterTime] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
@@ -211,10 +211,10 @@ export default function Projects() {
 
   const TABS = [
     { id: 'list', label: 'List' },
+    { id: 'kanban', label: 'Kanban' },
     { id: 'deadline', label: 'Deadline' },
     { id: 'planner', label: 'Planner' },
     { id: 'calendar', label: 'Calendar' },
-    { id: 'gantt', label: 'Gantt' },
     { id: 'tasks', label: 'Task chats', badge: filtered.length, badgeColor: 'bg-red-500 text-white' },
     { id: 'overdue', label: 'Overdue', badge: overdueCount, badgeColor: 'bg-red-500 text-white' },
     { id: 'comments', label: 'Comments', badge: 0, badgeColor: 'bg-green-500 text-white' },
@@ -267,21 +267,7 @@ export default function Projects() {
   }, [filtered, calMonth]);
 
   // Gantt data
-  const ganttData = useMemo(() => {
-    const withDates = filtered.filter(p => p.created_at && (p.deadline || p.design_deadline));
-    if (withDates.length === 0) return { projects: [], minDate: new Date(), maxDate: new Date(), totalDays: 1 };
-    let minDate = new Date(), maxDate = new Date();
-    withDates.forEach(p => {
-      const start = new Date(p.created_at);
-      const end = new Date(p.deadline || p.design_deadline);
-      if (start < minDate) minDate = start;
-      if (end > maxDate) maxDate = end;
-    });
-    minDate = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate());
-    maxDate = new Date(maxDate.getFullYear(), maxDate.getMonth(), maxDate.getDate() + 1);
-    const totalDays = Math.max(1, Math.ceil((maxDate - minDate) / 86400000));
-    return { projects: withDates, minDate, maxDate, totalDays };
-  }, [filtered]);
+  // (Gantt removed — Calendar now shows project bars)
 
   // Project card component
   const ProjectCard = ({ proj, isDraggable = false, dragProps = {} }) => (
@@ -347,7 +333,7 @@ export default function Projects() {
         {/* Tab bar */}
         <div className="flex items-center gap-1 mt-4 overflow-x-auto">
           {TABS.map(tab => (
-            <button key={tab.id} onClick={() => { if (['tasks','overdue','comments'].includes(tab.id)) return; setViewMode(tab.id); }}
+            <button key={tab.id} onClick={() => setViewMode(tab.id)}
               className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5 ${viewMode === tab.id ? 'bg-white/20 text-white' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}>
               {tab.label}
               {tab.badge > 0 && <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${tab.badgeColor}`}>{tab.badge > 99 ? '99+' : tab.badge}</span>}
@@ -423,8 +409,8 @@ export default function Projects() {
           <p className="text-sm text-gray-400">{hasActiveFilters ? 'Không có dự án phù hợp' : 'Chưa có dự án nào'}</p>
           <button onClick={() => navigate('/projects/create')} className="mt-3 text-sm text-blue-600 font-medium cursor-pointer">+ Tạo dự án</button>
         </div>
-      ) : viewMode === 'deadline' ? (
-        /* KANBAN with drag-and-drop */
+      ) : viewMode === 'kanban' ? (
+        /* KANBAN with drag-and-drop by status */
         <DragDropContext onDragEnd={onDragEnd}>
           <div className="flex gap-3 overflow-x-auto pb-4">
             {STATUS_COLUMNS.map(col => (
@@ -461,6 +447,54 @@ export default function Projects() {
             ))}
           </div>
         </DragDropContext>
+
+      ) : viewMode === 'deadline' ? (
+        /* DEADLINE - Kanban theo hạn: Quá hạn / Hôm nay / Ngày mai / Tuần sau / Tháng sau */
+        (() => {
+          const now = new Date();
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+          const dayAfterTomorrow = new Date(tomorrow); dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
+          const endOfNextWeek = new Date(today); endOfNextWeek.setDate(endOfNextWeek.getDate() + (7 - endOfNextWeek.getDay()) + 7);
+          const endOfNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+          const getD = (p) => p.deadline || p.design_deadline || p.install_date || null;
+
+          const DEADLINE_COLS = [
+            { id: 'overdue', label: '🔴 Quá hạn', color: '#EF4444', filter: (p) => { const d = getD(p); return d && new Date(d) < today && p.status !== 'completed'; } },
+            { id: 'today', label: '🟠 Hết hạn hôm nay', color: '#F97316', filter: (p) => { const d = getD(p); return d && new Date(d) >= today && new Date(d) < tomorrow; } },
+            { id: 'tomorrow', label: '🟡 Ngày mai', color: '#EAB308', filter: (p) => { const d = getD(p); return d && new Date(d) >= tomorrow && new Date(d) < dayAfterTomorrow; } },
+            { id: 'next_week', label: '🔵 Tuần sau', color: '#3B82F6', filter: (p) => { const d = getD(p); return d && new Date(d) >= dayAfterTomorrow && new Date(d) < endOfNextWeek; } },
+            { id: 'next_month', label: '🟢 Tháng sau', color: '#10B981', filter: (p) => { const d = getD(p); return d && new Date(d) >= endOfNextWeek && new Date(d) < endOfNextMonth; } },
+            { id: 'later', label: '⚪ Sau đó / Chưa có hạn', color: '#6B7280', filter: (p) => { const d = getD(p); return !d || new Date(d) >= endOfNextMonth; } },
+          ];
+
+          const deadlineData = {};
+          DEADLINE_COLS.forEach(c => { deadlineData[c.id] = []; });
+          filtered.forEach(proj => {
+            let placed = false;
+            for (const c of DEADLINE_COLS) { if (c.filter(proj)) { deadlineData[c.id].push(proj); placed = true; break; } }
+            if (!placed) deadlineData['later'].push(proj);
+          });
+
+          return (
+            <div className="flex gap-3 overflow-x-auto pb-4">
+              {DEADLINE_COLS.map(col => (
+                <div key={col.id} className="flex flex-col flex-shrink-0" style={{ width: '280px' }}>
+                  <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-gray-900">{col.label}</h3>
+                      <span className="text-xs text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">{deadlineData[col.id].length}</span>
+                    </div>
+                  </div>
+                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '200px', maxHeight: '75vh' }}>
+                    {deadlineData[col.id].map(proj => <ProjectCard key={proj.id} proj={proj} />)}
+                    {deadlineData[col.id].length === 0 && <div className="text-center py-8 text-xs text-gray-300">Trống</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()
 
       ) : viewMode === 'planner' ? (
         /* PLANNER - Bitrix-style: mỗi nhân viên 1 cột, kéo thả sắp xếp */
@@ -537,10 +571,12 @@ export default function Projects() {
                                       className={`block bg-white rounded-lg border p-3 hover:shadow-md transition-all group cursor-grab active:cursor-grabbing ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-gray-200'}`}>
                                       {/* Task title */}
                                       <h5 className="text-xs font-bold text-gray-900 mb-1 leading-snug">{task.title}</h5>
-                                      {/* Project info */}
-                                      {task.project && (
+                                      {/* Project info or Personal badge */}
+                                      {task.project ? (
                                         <p className="text-[10px] text-blue-600 font-medium mb-1 truncate">📋 {task.project.code} — {task.project.name}</p>
-                                      )}
+                                      ) : task.task_type === 'personal' ? (
+                                        <p className="text-[10px] text-purple-600 font-medium mb-1">👤 Nhiệm vụ cá nhân</p>
+                                      ) : null}
                                       {/* Status + Priority */}
                                       <div className="flex items-center gap-1 flex-wrap mb-1">
                                         <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${task.status === 'done' || task.status === 'completed' ? 'bg-green-100 text-green-700' : task.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
@@ -580,7 +616,7 @@ export default function Projects() {
         )
 
       ) : viewMode === 'calendar' ? (
-        /* CALENDAR */
+        /* CALENDAR — hiện dự án dạng bar từ ngày tạo → deadline */
         <div className="bg-white rounded-xl border p-4">
           <div className="flex items-center justify-between mb-4">
             <button onClick={() => setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() - 1))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronLeft className="h-4 w-4" /></button>
@@ -589,73 +625,78 @@ export default function Projects() {
             </h3>
             <button onClick={() => setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() + 1))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronRight className="h-4 w-4" /></button>
           </div>
-          <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden">
+          {/* Day headers */}
+          <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-t-lg overflow-hidden">
             {['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'].map(d => (
               <div key={d} className="bg-gray-50 p-2 text-center text-xs font-bold text-gray-500">{d}</div>
             ))}
-            {calendarData.flat().map((cell, i) => (
-              <div key={i} className={`bg-white p-1.5 min-h-[80px] ${!cell ? 'bg-gray-50' : ''}`}>
-                {cell && (
-                  <>
-                    <div className={`text-xs font-medium mb-1 ${cell.date === fmtD(new Date()) ? 'text-blue-600 font-bold' : 'text-gray-500'}`}>{cell.day}</div>
-                    <div className="space-y-0.5">
-                      {cell.projects.slice(0, 3).map(p => (
-                        <Link key={p.id} to={`/projects/${p.id}`} className="block text-[9px] px-1 py-0.5 rounded truncate hover:bg-blue-50 cursor-pointer"
-                          style={{ backgroundColor: (p.current_stage?.color || '#3b82f6') + '15', color: p.current_stage?.color || '#3b82f6' }}>
-                          {p.code}
-                        </Link>
-                      ))}
-                      {cell.projects.length > 3 && <div className="text-[9px] text-gray-400 text-center">+{cell.projects.length - 3}</div>}
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
           </div>
-        </div>
-
-      ) : viewMode === 'gantt' ? (
-        /* GANTT */
-        <div className="bg-white rounded-xl border overflow-hidden">
-          <div className="overflow-x-auto">
-            <div style={{ minWidth: '800px' }}>
-              {/* Gantt header */}
-              <div className="flex border-b bg-gray-50 sticky top-0 z-10">
-                <div className="w-60 flex-shrink-0 p-3 text-xs font-bold text-gray-500 border-r">Dự án</div>
-                <div className="flex-1 p-3 text-xs font-bold text-gray-500 text-center">
-                  {ganttData.minDate.toLocaleDateString('vi-VN')} → {ganttData.maxDate.toLocaleDateString('vi-VN')}
+          {/* Calendar grid with project bars */}
+          <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-b-lg overflow-hidden">
+            {calendarData.flat().map((cell, i) => {
+              if (!cell) return <div key={i} className="bg-gray-50 min-h-[90px]" />;
+              const isToday = cell.date === fmtD(new Date());
+              // Find projects that START on this day
+              const starting = filtered.filter(p => p.created_at && p.created_at.startsWith(cell.date));
+              // Find projects that are ACTIVE on this day (created before, deadline after)
+              const active = filtered.filter(p => {
+                const s = p.created_at?.substring(0, 10);
+                const e = (p.deadline || p.design_deadline || '')?.substring(0, 10);
+                return s && e && s < cell.date && e >= cell.date;
+              });
+              // Find projects that END on this day
+              const ending = filtered.filter(p => {
+                const e = (p.deadline || p.design_deadline || '')?.substring(0, 10);
+                return e === cell.date;
+              });
+              return (
+                <div key={i} className={`bg-white p-1 min-h-[90px] ${isToday ? 'ring-2 ring-inset ring-blue-400' : ''}`}>
+                  <div className={`text-[10px] font-medium mb-0.5 ${isToday ? 'text-blue-600 font-bold bg-blue-100 rounded-full w-5 h-5 flex items-center justify-center' : 'text-gray-400'}`}>{cell.day}</div>
+                  <div className="space-y-0.5">
+                    {/* Starting projects: left-rounded bar */}
+                    {starting.slice(0, 2).map(p => (
+                      <Link key={`s-${p.id}`} to={`/projects/${p.id}`}
+                        className="block text-[8px] px-1 py-0.5 rounded-l-full truncate font-medium hover:opacity-80"
+                        style={{ backgroundColor: (p.current_stage?.color || '#3b82f6'), color: '#fff' }}
+                        title={`${p.code} — Bắt đầu`}>
+                        ▶ {p.code}
+                      </Link>
+                    ))}
+                    {/* Active projects: full bar (no rounding) */}
+                    {active.slice(0, 2).map(p => (
+                      <Link key={`a-${p.id}`} to={`/projects/${p.id}`}
+                        className="block text-[8px] px-1 py-0.5 truncate hover:opacity-80"
+                        style={{ backgroundColor: (p.current_stage?.color || '#3b82f6') + '40', color: p.current_stage?.color || '#3b82f6' }}
+                        title={p.code}>
+                        {p.code}
+                      </Link>
+                    ))}
+                    {/* Ending projects: right-rounded bar */}
+                    {ending.slice(0, 2).map(p => {
+                      const isOverdue = new Date(cell.date) < new Date() && p.status !== 'completed';
+                      return (
+                        <Link key={`e-${p.id}`} to={`/projects/${p.id}`}
+                          className="block text-[8px] px-1 py-0.5 rounded-r-full truncate font-medium hover:opacity-80"
+                          style={{ backgroundColor: isOverdue ? '#ef4444' : (p.current_stage?.color || '#3b82f6'), color: '#fff' }}
+                          title={`${p.code} — Hết hạn`}>
+                          {p.code} ■
+                        </Link>
+                      );
+                    })}
+                    {(starting.length + active.length + ending.length) > 6 && (
+                      <div className="text-[8px] text-gray-400 text-center">+{starting.length + active.length + ending.length - 6}</div>
+                    )}
+                  </div>
                 </div>
-              </div>
-              {/* Gantt rows */}
-              {ganttData.projects.slice(0, 50).map(proj => {
-                const start = new Date(proj.created_at);
-                const end = new Date(proj.deadline || proj.design_deadline);
-                const startDay = Math.max(0, Math.floor((start - ganttData.minDate) / 86400000));
-                const duration = Math.max(1, Math.ceil((end - start) / 86400000));
-                const leftPct = (startDay / ganttData.totalDays) * 100;
-                const widthPct = Math.min((duration / ganttData.totalDays) * 100, 100 - leftPct);
-                const isOverdue = end < new Date() && proj.status !== 'completed';
-                const color = isOverdue ? '#ef4444' : (proj.current_stage?.color || '#3b82f6');
-                return (
-                  <Link key={proj.id} to={`/projects/${proj.id}`} className="flex border-b hover:bg-blue-50/30 transition-colors">
-                    <div className="w-60 flex-shrink-0 p-2.5 border-r">
-                      <p className="text-xs font-bold text-blue-600 truncate">{proj.code}</p>
-                      <p className="text-[10px] text-gray-500 truncate">{proj.name}</p>
-                    </div>
-                    <div className="flex-1 p-2 relative">
-                      <div className="h-6 rounded-full relative" style={{ marginLeft: `${leftPct}%`, width: `${widthPct}%`, backgroundColor: color + '20' }}>
-                        <div className="h-full rounded-full flex items-center px-2" style={{ backgroundColor: color, width: proj.status === 'completed' ? '100%' : '60%', minWidth: '8px' }}>
-                          <span className="text-[9px] text-white font-bold truncate whitespace-nowrap">{proj.current_stage?.name || ''}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </Link>
-                );
-              })}
-              {ganttData.projects.length === 0 && (
-                <div className="text-center py-12 text-sm text-gray-400">Không có dự án với ngày bắt đầu + deadline</div>
-              )}
-            </div>
+              );
+            })}
+          </div>
+          {/* Legend */}
+          <div className="flex items-center gap-4 mt-3 text-[10px] text-gray-500">
+            <span className="flex items-center gap-1"><span className="w-4 h-2 rounded-l-full bg-blue-500 inline-block" /> Bắt đầu</span>
+            <span className="flex items-center gap-1"><span className="w-4 h-2 bg-blue-200 inline-block" /> Đang chạy</span>
+            <span className="flex items-center gap-1"><span className="w-4 h-2 rounded-r-full bg-blue-500 inline-block" /> Kết thúc</span>
+            <span className="flex items-center gap-1"><span className="w-4 h-2 rounded-r-full bg-red-500 inline-block" /> Quá hạn</span>
           </div>
         </div>
 
