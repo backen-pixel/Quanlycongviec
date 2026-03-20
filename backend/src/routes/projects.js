@@ -560,6 +560,93 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       }
     }
 
+    // ── AUTO-CREATE TASKS FOR ALL REMAINING STAGES ──
+    // After consulting tasks, generate tasks for all other stages too
+    const allStageSlugs = ['design', 'quotation', 'contract', 'production', 'shipping', 'installation', 'customer-care'];
+    const stagePersonMap = {
+      design: b.design_person_id || b.designer_id,
+      quotation: b.quotation_person_id,
+      contract: b.contract_person_id,
+      production: b.production_person_id,
+      shipping: b.shipping_person_id,
+      installation: b.installation_person_id,
+      'customer-care': b.care_person_id,
+    };
+
+    for (const slug of allStageSlugs) {
+      try {
+        // Find stage by slug (prefer exact match, fallback to pattern)
+        let { data: stg } = await supabase.from('workflow_stages')
+          .select('id, name, slug').eq('slug', slug).single();
+        if (!stg) {
+          // Try with company suffix
+          const { data: stgs } = await supabase.from('workflow_stages')
+            .select('id, name, slug').ilike('slug', slug + '%').limit(1);
+          stg = stgs?.[0];
+        }
+        if (!stg) continue;
+
+        // Check if tasks already exist for this stage in this project
+        const { data: existingTasks } = await supabase.from('tasks')
+          .select('id').eq('project_id', data.id).eq('stage_id', stg.id).limit(1);
+        if (existingTasks?.length) continue; // Already have tasks
+
+        const assigneeId = stagePersonMap[slug] || null;
+
+        // Load templates
+        const { data: stgTemplates } = await supabase.from('task_templates')
+          .select('*').eq('stage_id', stg.id).eq('is_active', true).order('order_index');
+
+        if (!stgTemplates?.length) continue; // No templates for this stage
+
+        // Find workflow lines for this stage
+        const stgLines = insertedLines.filter(l => l.stage_slug === slug);
+
+        if (stgLines.length > 0) {
+          for (const line of stgLines) {
+            const lineAssignee = line.assignee_id || assigneeId;
+            const { data: ins } = await supabase.from('tasks').insert(stgTemplates.map((t, i) => ({
+              project_id: data.id, stage_id: stg.id, title: `${t.title} — ${line.label}`,
+              description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+              created_by_id: req.user.userId, order_index: i, assignee_id: lineAssignee,
+              estimated_hours: t.estimated_hours || null, task_type: 'project',
+              workflow_line_id: line.id,
+            }))).select();
+            // Create checklists
+            for (const tmpl of stgTemplates) {
+              if (tmpl.checklist_items?.length) {
+                const newTask = (ins || []).find(t2 => t2.title === `${tmpl.title} — ${line.label}`);
+                if (newTask) {
+                  await supabase.from('task_checklists').insert(
+                    tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
+                  );
+                }
+              }
+            }
+          }
+        } else {
+          // No workflow lines — create tasks directly
+          const { data: ins } = await supabase.from('tasks').insert(stgTemplates.map((t, i) => ({
+            project_id: data.id, stage_id: stg.id, title: t.title,
+            description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+            created_by_id: req.user.userId, order_index: i, assignee_id: assigneeId,
+            estimated_hours: t.estimated_hours || null, task_type: 'project',
+          }))).select();
+          // Create checklists
+          for (const tmpl of stgTemplates) {
+            if (tmpl.checklist_items?.length) {
+              const newTask = (ins || []).find(t2 => t2.title === tmpl.title);
+              if (newTask) {
+                await supabase.from('task_checklists').insert(
+                  tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
+                );
+              }
+            }
+          }
+        }
+      } catch (e) { console.warn(`Auto-create tasks for ${slug} failed:`, e.message); }
+    }
+
     res.status(201).json({ project: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -885,7 +972,7 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
 
     const { data: old } = await supabase.from('projects').select('status,name').eq('id', req.params.id).single();
