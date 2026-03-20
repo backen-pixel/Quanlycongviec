@@ -22,7 +22,17 @@ html, body, #root {
   margin: 0;
   font-family: var(--font-sans);
   background: var(--color-page-bg);
+  color: var(--color-text-body, #374151);
 }
+
+/* Theme text color utilities */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--color-text-heading, #111827);
+}
+.text-gray-900 { color: var(--color-text-heading, #111827) !important; }
+.text-gray-700 { color: var(--color-text-body, #374151) !important; }
+.text-gray-500 { color: var(--color-text-muted, #6b7280) !important; }
+.text-gray-400 { color: var(--color-text-muted, #9ca3af) !important; }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

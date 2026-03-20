@@ -1,16 +1,24 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useTheme } from '../components/ThemeProvider';
-import { Upload, Check, Palette, Image, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { Upload, Check, Palette, Image, SlidersHorizontal, Trash2, Type } from 'lucide-react';
 import { TourButton } from '../components/WebTour';
+import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 
 export default function ThemeSettingsPage() {
-  const { theme, changeTheme, setBackgroundImage, setOverlayOpacity, presets } = useTheme();
+  const { theme, changeTheme, setBackgroundImage, setOverlayOpacity, setTextColors, presets } = useTheme();
   const fileRef = useRef();
   const [uploading, setUploading] = useState(false);
   const [customColors, setCustomColors] = useState({
     sidebar: theme.sidebar,
     pageBg: theme.pageBg,
     accent: theme.accent,
+  });
+  const [textColorState, setTextColorState] = useState({
+    textHeading: theme.textHeading || '#111827',
+    textBody: theme.textBody || '#374151',
+    textMuted: theme.textMuted || '#6b7280',
+    textCard: theme.textCard || '#1f2937',
   });
 
   const handleUpload = (e) => {
@@ -161,6 +169,52 @@ export default function ThemeSettingsPage() {
         <button onClick={applyCustomColors}
           className="mt-4 h-10 px-5 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-2">
           <Check className="h-4 w-4" /> Áp dụng
+        </button>
+      </div>
+
+      {/* Text colors */}
+      <div className="bg-white rounded-xl border p-5">
+        <h2 className="text-base font-bold text-gray-900 mb-2 flex items-center gap-2">
+          <Type className="h-4 w-4" /> Màu chữ
+        </h2>
+        <p className="text-xs text-gray-500 mb-4">Điều chỉnh màu chữ để dễ đọc khi dùng hình nền tối/sáng</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Tiêu đề (H1, H2...)</label>
+            <div className="flex items-center gap-2">
+              <input type="color" value={textColorState.textHeading} onChange={e => setTextColorState(p => ({...p, textHeading: e.target.value}))} className="w-10 h-10 rounded-lg cursor-pointer border-0" />
+              <input type="text" value={textColorState.textHeading} onChange={e => setTextColorState(p => ({...p, textHeading: e.target.value}))} className="flex-1 h-10 px-3 border rounded-lg text-sm font-mono" />
+            </div>
+            <p className="mt-1 text-sm font-bold" style={{ color: textColorState.textHeading }}>Mẫu tiêu đề</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Nội dung chính</label>
+            <div className="flex items-center gap-2">
+              <input type="color" value={textColorState.textBody} onChange={e => setTextColorState(p => ({...p, textBody: e.target.value}))} className="w-10 h-10 rounded-lg cursor-pointer border-0" />
+              <input type="text" value={textColorState.textBody} onChange={e => setTextColorState(p => ({...p, textBody: e.target.value}))} className="flex-1 h-10 px-3 border rounded-lg text-sm font-mono" />
+            </div>
+            <p className="mt-1 text-sm" style={{ color: textColorState.textBody }}>Mẫu nội dung</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Chữ phụ / mờ</label>
+            <div className="flex items-center gap-2">
+              <input type="color" value={textColorState.textMuted} onChange={e => setTextColorState(p => ({...p, textMuted: e.target.value}))} className="w-10 h-10 rounded-lg cursor-pointer border-0" />
+              <input type="text" value={textColorState.textMuted} onChange={e => setTextColorState(p => ({...p, textMuted: e.target.value}))} className="flex-1 h-10 px-3 border rounded-lg text-sm font-mono" />
+            </div>
+            <p className="mt-1 text-xs" style={{ color: textColorState.textMuted }}>Mẫu chữ phụ</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Chữ trong card</label>
+            <div className="flex items-center gap-2">
+              <input type="color" value={textColorState.textCard} onChange={e => setTextColorState(p => ({...p, textCard: e.target.value}))} className="w-10 h-10 rounded-lg cursor-pointer border-0" />
+              <input type="text" value={textColorState.textCard} onChange={e => setTextColorState(p => ({...p, textCard: e.target.value}))} className="flex-1 h-10 px-3 border rounded-lg text-sm font-mono" />
+            </div>
+            <p className="mt-1 text-sm" style={{ color: textColorState.textCard }}>Mẫu card</p>
+          </div>
+        </div>
+        <button onClick={() => setTextColors(textColorState)}
+          className="mt-4 h-10 px-5 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-2">
+          <Check className="h-4 w-4" /> Áp dụng màu chữ
         </button>
       </div>
 
