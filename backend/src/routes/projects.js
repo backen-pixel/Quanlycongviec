@@ -1589,4 +1589,17 @@ r.put('/:id/workflow-lines-order', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
+// GET latest comments across all projects
+r.get('/latest-comments', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const { data: comments, error } = await supabase.from('project_comments')
+      .select('id, content, created_at, project_id, user:users(id, full_name, avatar_url), project:projects(id, code, name)')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    res.json({ comments: comments || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = r;

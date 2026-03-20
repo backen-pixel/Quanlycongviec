@@ -67,6 +67,8 @@ export default function Projects() {
   const [divisions, setDivisions] = useState([]);
   const [plannerColumns, setPlannerColumns] = useState([]);
   const [plannerLoading, setPlannerLoading] = useState(false);
+  const [latestComments, setLatestComments] = useState([]);
+  const [calendarEmployee, setCalendarEmployee] = useState('all');
   const [companies, setCompanies] = useState([]);
   const [allCompanies, setAllCompanies] = useState([]);
   const [companyEmployees, setCompanyEmployees] = useState([]);
@@ -120,6 +122,14 @@ export default function Projects() {
       .finally(() => setPlannerLoading(false));
   };
   useEffect(() => { if (viewMode === 'planner') loadPlanner(); }, [viewMode, filterCompany]);
+
+  // Load latest comments
+  const loadComments = () => {
+    api.get('/projects/latest-comments', { params: { limit: 20 } })
+      .then(r => setLatestComments(r.data.comments || []))
+      .catch(() => setLatestComments([]));
+  };
+  useEffect(() => { if (viewMode === 'comments') loadComments(); }, [viewMode]);
 
   useEffect(() => {
     api.get('/divisions').then(r => setDivisions(r.data.divisions || [])).catch(() => {});
@@ -216,8 +226,7 @@ export default function Projects() {
     { id: 'planner', label: 'Planner' },
     { id: 'calendar', label: 'Calendar' },
     { id: 'tasks', label: 'Task chats', badge: filtered.length, badgeColor: 'bg-red-500 text-white' },
-    { id: 'overdue', label: 'Overdue', badge: overdueCount, badgeColor: 'bg-red-500 text-white' },
-    { id: 'comments', label: 'Comments', badge: 0, badgeColor: 'bg-green-500 text-white' },
+    { id: 'comments', label: 'Comments', badge: latestComments.length, badgeColor: 'bg-green-500 text-white' },
   ];
 
   // Drag-and-drop
@@ -616,13 +625,34 @@ export default function Projects() {
         )
 
       ) : viewMode === 'calendar' ? (
-        /* CALENDAR — hiện dự án dạng bar từ ngày tạo → deadline */
+        /* CALENDAR — theo NV: dự án NV tham gia + NV cá nhân */
+        (() => {
+          // Filter by employee
+          let calProjects = filtered;
+          if (calendarEmployee !== 'all') {
+            calProjects = filtered.filter(p => {
+              const pp = [p.sales_person_id, p.designer_id, p.project_manager_id, p.created_by,
+                p.consulting_person_id, p.design_person_id, p.quotation_person_id,
+                p.contract_person_id, p.production_person_id, p.shipping_person_id,
+                p.installation_person_id, p.care_person_id, p.supervisor_id];
+              if (pp.includes(calendarEmployee)) return true;
+              return (taskAssigneeMap[p.id] || []).includes(calendarEmployee);
+            });
+          }
+          return (
         <div className="bg-white rounded-xl border p-4">
           <div className="flex items-center justify-between mb-4">
             <button onClick={() => setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() - 1))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronLeft className="h-4 w-4" /></button>
-            <h3 className="text-lg font-bold text-gray-900">
-              {calMonth.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
-            </h3>
+            <div className="text-center">
+              <h3 className="text-lg font-bold text-gray-900">
+                {calMonth.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
+              </h3>
+              <select value={calendarEmployee} onChange={e => setCalendarEmployee(e.target.value)}
+                className="mt-1 h-7 px-2 border rounded-lg text-xs bg-white cursor-pointer">
+                <option value="all">👥 Tất cả nhân viên</option>
+                {uniquePersons.map(u => <option key={u.id} value={u.id}>👤 {u.name}</option>)}
+              </select>
+            </div>
             <button onClick={() => setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() + 1))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronRight className="h-4 w-4" /></button>
           </div>
           {/* Day headers */}
@@ -637,15 +667,15 @@ export default function Projects() {
               if (!cell) return <div key={i} className="bg-gray-50 min-h-[90px]" />;
               const isToday = cell.date === fmtD(new Date());
               // Find projects that START on this day
-              const starting = filtered.filter(p => p.created_at && p.created_at.startsWith(cell.date));
+              const starting = calProjects.filter(p => p.created_at && p.created_at.startsWith(cell.date));
               // Find projects that are ACTIVE on this day (created before, deadline after)
-              const active = filtered.filter(p => {
+              const active = calProjects.filter(p => {
                 const s = p.created_at?.substring(0, 10);
                 const e = (p.deadline || p.design_deadline || '')?.substring(0, 10);
                 return s && e && s < cell.date && e >= cell.date;
               });
               // Find projects that END on this day
-              const ending = filtered.filter(p => {
+              const ending = calProjects.filter(p => {
                 const e = (p.deadline || p.design_deadline || '')?.substring(0, 10);
                 return e === cell.date;
               });
@@ -698,6 +728,40 @@ export default function Projects() {
             <span className="flex items-center gap-1"><span className="w-4 h-2 rounded-r-full bg-blue-500 inline-block" /> Kết thúc</span>
             <span className="flex items-center gap-1"><span className="w-4 h-2 rounded-r-full bg-red-500 inline-block" /> Quá hạn</span>
           </div>
+        </div>
+          );
+        })()
+
+      ) : viewMode === 'comments' ? (
+        /* COMMENTS — tin nhắn trao đổi mới nhất */
+        <div className="space-y-3">
+          <h3 className="text-sm font-bold text-gray-700">💬 Trao đổi mới nhất</h3>
+          {latestComments.length === 0 ? (
+            <div className="text-center py-12 text-sm text-gray-400">Chưa có trao đổi nào</div>
+          ) : (
+            latestComments.map(c => (
+              <Link key={c.id} to={`/projects/${c.project_id}?tab=chat`}
+                className="block bg-white rounded-xl border p-4 hover:shadow-md hover:border-blue-400 transition-all group">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                    style={{ backgroundColor: avatarColor(c.user?.full_name || 'U') }}>
+                    {getInitials(c.user?.full_name || 'U')}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-xs font-bold text-gray-900">{c.user?.full_name || 'Unknown'}</span>
+                      <span className="text-[10px] text-gray-400">{formatDate(c.created_at)}</span>
+                    </div>
+                    <p className="text-sm text-gray-700 line-clamp-2">{c.content}</p>
+                    <p className="text-[10px] text-blue-600 font-medium mt-1 flex items-center gap-1">
+                      📋 {c.project?.code} — {c.project?.name}
+                    </p>
+                  </div>
+                  <span className="text-xs text-gray-400 group-hover:text-blue-600">→</span>
+                </div>
+              </Link>
+            ))
+          )}
         </div>
 
       ) : (
