@@ -1042,10 +1042,22 @@ r.post('/quotations', async (req, res) => {
     
     // Calc totals with per-item VAT
     const processedItems = (items || []).map(item => {
-      const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
+      const grossAmount = (item.quantity || 1) * (item.unit_price || 0);
+      const discountAmount = grossAmount * (item.discount_percent || 0) / 100;
+      const amount = grossAmount - discountAmount;
       const vatRate = item.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
-      return { ...item, amount, vat_rate: vatRate, vat_amount: vatAmount };
+      const total = amount + vatAmount;
+      return {
+        product_id: item.product_id || null, product_code: item.product_code || null,
+        name: item.name, description: item.description || null,
+        unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
+        height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
+        discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
+        amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
+        dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
+        promo_code: item.promo_code || null, is_promo: item.is_promo || false,
+      };
     });
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
@@ -1083,10 +1095,22 @@ r.put('/quotations/:id', async (req, res) => {
     
     // Calc totals with per-item VAT
     const processedItems = (items || []).map(item => {
-      const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
+      const grossAmount = (item.quantity || 1) * (item.unit_price || 0);
+      const discountAmount = grossAmount * (item.discount_percent || 0) / 100;
+      const amount = grossAmount - discountAmount;
       const vatRate = item.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
-      return { ...item, amount, vat_rate: vatRate, vat_amount: vatAmount };
+      const total = amount + vatAmount;
+      return {
+        product_id: item.product_id || null, product_code: item.product_code || null,
+        name: item.name, description: item.description || null,
+        unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
+        height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
+        discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
+        amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
+        dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
+        promo_code: item.promo_code || null, is_promo: item.is_promo || false,
+      };
     });
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
@@ -1143,15 +1167,18 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
     }).select('*').single();
     if (error) throw error;
 
-    // Copy items (carry vat_rate + vat_amount)
+    // Copy items (carry all fields)
     if (qItems?.length) {
       const oItems = qItems.map(qi => ({
-        order_id: order.id, product_id: qi.product_id, quotation_item_id: qi.id,
+        order_id: order.id, product_id: qi.product_id, product_code: qi.product_code,
+        quotation_item_id: qi.id,
         item_order: qi.item_order, name: qi.name, description: qi.description,
         unit: qi.unit, quantity: qi.quantity, unit_price: qi.unit_price,
-        discount_percent: qi.discount_percent, amount: qi.amount,
-        vat_rate: qi.vat_rate || 0, vat_amount: qi.vat_amount || 0,
+        height: qi.height, width: qi.width, length: qi.length, weight: qi.weight,
+        discount_percent: qi.discount_percent, discount_amount: qi.discount_amount, amount: qi.amount,
+        vat_rate: qi.vat_rate || 0, vat_amount: qi.vat_amount || 0, tax_amount: qi.tax_amount || 0, total: qi.total || 0,
         dimensions: qi.dimensions, material: qi.material, color: qi.color, notes: qi.notes,
+        promo_code: qi.promo_code, is_promo: qi.is_promo || false,
       }));
       await supabase.from('order_items').insert(oItems);
     }

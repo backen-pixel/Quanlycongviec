@@ -114,30 +114,48 @@ export default function OrderDetail() {
         {/* Right: Items */}
         <div className="lg:col-span-2 bg-white rounded-xl border p-5">
           <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-4">Chi tiết hàng hóa</h3>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-xs text-gray-500 uppercase">
-              <th className="py-2 text-left">#</th><th className="py-2 text-left">Tên</th><th className="py-2 text-left">ĐVT</th>
-              <th className="py-2 text-right">SL</th><th className="py-2 text-right">Đơn giá</th><th className="py-2 text-right">Thành tiền</th>
-              <th className="py-2 text-right">%VAT</th><th className="py-2 text-right">Tiền thuế</th>
+            <thead><tr className="border-b text-[10px] text-gray-500 uppercase">
+              <th className="py-2 px-1 text-left">STT</th><th className="py-2 px-1 text-left">Mã HH</th><th className="py-2 px-1 text-left">Tên</th><th className="py-2 px-1 text-left">Diễn giải</th><th className="py-2 px-1 text-center">ĐVT</th>
+              <th className="py-2 px-1 text-right">Cao</th><th className="py-2 px-1 text-right">Rộng</th><th className="py-2 px-1 text-right">Dài</th><th className="py-2 px-1 text-right">TL</th>
+              <th className="py-2 px-1 text-right">SL</th><th className="py-2 px-1 text-right">Đơn giá</th><th className="py-2 px-1 text-right">Thành tiền</th>
+              <th className="py-2 px-1 text-right">CK%</th><th className="py-2 px-1 text-right">Tiền CK</th>
+              <th className="py-2 px-1 text-right">%VAT</th><th className="py-2 px-1 text-right">Tiền thuế</th>
+              <th className="py-2 px-1 text-right">Tổng</th><th className="py-2 px-1 text-left">CTKM</th><th className="py-2 px-1 text-center">KM</th>
             </tr></thead>
             <tbody>
               {(order.items || []).map((item, i) => {
                 const vatAmount = item.vat_amount || (item.amount || 0) * (item.vat_rate || 0) / 100;
+                const discAmt = item.discount_amount || (item.quantity || 0) * (item.unit_price || 0) * (item.discount_percent || 0) / 100;
+                const total = item.total || ((item.amount || 0) + vatAmount);
                 return (
-                  <tr key={item.id} className="border-b">
-                    <td className="py-2 text-gray-400">{i + 1}</td>
-                    <td className="py-2"><p className="font-medium text-gray-900">{item.name}</p>{item.description && <p className="text-[10px] text-gray-400">{item.description}</p>}</td>
-                    <td className="py-2 text-gray-500">{item.unit}</td>
-                    <td className="py-2 text-right">{item.quantity}</td>
-                    <td className="py-2 text-right">{formatVND(item.unit_price)}</td>
-                    <td className="py-2 text-right font-medium">{formatVND(item.amount)}</td>
-                    <td className="py-2 text-right text-gray-500">{item.vat_rate || 0}%</td>
-                    <td className="py-2 text-right text-gray-600">{formatVND(vatAmount)}</td>
+                  <tr key={item.id} className="border-b text-xs">
+                    <td className="py-1.5 px-1 text-gray-400">{i + 1}</td>
+                    <td className="py-1.5 px-1 text-gray-500">{item.product_code || '-'}</td>
+                    <td className="py-1.5 px-1 font-medium text-gray-900">{item.name}</td>
+                    <td className="py-1.5 px-1 text-gray-500">{item.description || ''}</td>
+                    <td className="py-1.5 px-1 text-center text-gray-500">{item.unit}</td>
+                    <td className="py-1.5 px-1 text-right text-gray-400">{item.height || '-'}</td>
+                    <td className="py-1.5 px-1 text-right text-gray-400">{item.width || '-'}</td>
+                    <td className="py-1.5 px-1 text-right text-gray-400">{item.length || '-'}</td>
+                    <td className="py-1.5 px-1 text-right text-gray-400">{item.weight || '-'}</td>
+                    <td className="py-1.5 px-1 text-right">{item.quantity}</td>
+                    <td className="py-1.5 px-1 text-right">{formatVND(item.unit_price)}</td>
+                    <td className="py-1.5 px-1 text-right font-medium">{formatVND(item.amount)}</td>
+                    <td className="py-1.5 px-1 text-right text-gray-500">{item.discount_percent || 0}%</td>
+                    <td className="py-1.5 px-1 text-right text-orange-600">{formatVND(discAmt)}</td>
+                    <td className="py-1.5 px-1 text-right text-gray-500">{item.vat_rate || 0}%</td>
+                    <td className="py-1.5 px-1 text-right text-gray-600">{formatVND(vatAmount)}</td>
+                    <td className="py-1.5 px-1 text-right font-bold text-blue-700">{formatVND(total)}</td>
+                    <td className="py-1.5 px-1 text-gray-500">{item.promo_code || ''}</td>
+                    <td className="py-1.5 px-1 text-center">{item.is_promo ? '🎁' : ''}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          </div>
           <div className="flex justify-end mt-4">
             <div className="w-72 space-y-1.5 text-sm">
               <div className="flex justify-between"><span className="text-gray-500">Tổng tiền hàng</span><span>{formatVND(order.subtotal)}</span></div>
