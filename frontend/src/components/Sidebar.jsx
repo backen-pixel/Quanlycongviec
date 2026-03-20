@@ -6,7 +6,7 @@ import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
-  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone
+  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -287,11 +287,22 @@ export default function Sidebar() {
               <LogOut className="h-[18px] w-[18px]" />
               <span>Đăng xuất</span>
             </button>
+            <NavLink to="/settings/theme"
+              className="w-full flex items-center gap-3 px-3 py-2 text-[13px] font-medium text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white rounded-lg transition-all"
+            >
+              <Palette className="h-[18px] w-[18px]" />
+              <span>Giao diện</span>
+            </NavLink>
           </>
         ) : (
+          <>
           <button onClick={doLogout} className="w-full p-2 text-[var(--color-sidebar-text)] hover:text-white cursor-pointer" title="Đăng xuất">
             <LogOut className="h-5 w-5 mx-auto" />
           </button>
+          <NavLink to="/settings/theme" className="w-full p-2 text-[var(--color-sidebar-text)] hover:text-white cursor-pointer block text-center" title="Giao diện">
+            <Palette className="h-5 w-5 mx-auto" />
+          </NavLink>
+          </>
         )}
       </div>
 

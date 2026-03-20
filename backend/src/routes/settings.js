@@ -8,6 +8,10 @@ r.use(auth);
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const COMPANY_FILE = path.join(DATA_DIR, 'company-info.json');
+const THEME_DIR = path.join(DATA_DIR, 'themes');
+
+// Ensure theme dir exists
+if (!fs.existsSync(THEME_DIR)) fs.mkdirSync(THEME_DIR, { recursive: true });
 const defaultCompanyInfo = require('../config/companyInfo');
 
 function getCompanyInfo() {
@@ -46,6 +50,35 @@ r.put('/company', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/settings/theme — per-user theme
+r.get('/theme', (req, res) => {
+  const userId = req.user.userId;
+  const file = path.join(THEME_DIR, `${userId}.json`);
+  try {
+    if (fs.existsSync(file)) {
+      const theme = JSON.parse(fs.readFileSync(file, 'utf8'));
+      return res.json({ theme });
+    }
+    res.json({ theme: null });
+  } catch { res.json({ theme: null }); }
+});
+
+// PUT /api/settings/theme — save per-user theme
+r.put('/theme', (req, res) => {
+  const userId = req.user.userId;
+  const file = path.join(THEME_DIR, `${userId}.json`);
+  try {
+    // Don't save huge bgImage to file (base64 can be huge)
+    const theme = { ...req.body.theme };
+    if (theme.bgImage && theme.bgImage.length > 500000) {
+      // Save bgImage separately or skip it
+      theme.bgImage = null; // Too large for file — user will re-upload
+    }
+    fs.writeFileSync(file, JSON.stringify(theme, null, 2));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = r;
