@@ -51,6 +51,7 @@ import { Settings } from 'lucide-react';
 
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
 import AIAssistantChat from './components/AIAssistantChat';
+import { TourProvider } from './components/TourProvider';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
@@ -100,6 +101,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <TourProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedLayout />}>
@@ -157,6 +159,7 @@ export default function App() {
             } />
           </Route>
         </Routes>
+        </TourProvider>
       </BrowserRouter>
     </AuthProvider>
   );

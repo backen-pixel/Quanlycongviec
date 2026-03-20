@@ -6,6 +6,8 @@ import EcosystemSetupWizard from '../components/EcosystemSetupWizard';
 import EcosystemListView from '../components/EcosystemListView';
 import { TourButton } from '../components/WebTour';
 import { ecosystemTour } from '../lib/tourSteps';
+import { useTour } from '../components/TourProvider';
+import { ecosystemGuidedTour } from '../lib/guidedTours';
 import {
   Plus, ChevronRight, ChevronDown, Users, Trash2, Layers,
   Edit, Shield, FolderKanban, Network, Save, X, UserPlus, Crown, User,
@@ -19,6 +21,7 @@ const RI = { director: Crown, manager: Shield, team_lead: Users, member: User };
 
 export default function EcosystemPage() {
   const { user } = useAuth();
+  const { startTour } = useTour();
   const [tree, setTree] = useState([]);
   const [units, setUnits] = useState([]);
   const [levels, setLevels] = useState([]);
@@ -76,6 +79,9 @@ export default function EcosystemPage() {
         <div className="flex items-center gap-2">
           {/* Help button */}
           <TourButton steps={ecosystemTour} />
+          <button onClick={() => startTour(ecosystemGuidedTour)} className="h-8 px-3 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg flex items-center gap-1.5 cursor-pointer transition" title="Hướng dẫn hệ sinh thái">
+            🎓 Hướng dẫn
+          </button>
 
           {/* View mode toggle */}
           <div className="flex bg-gray-100 rounded-lg p-1">

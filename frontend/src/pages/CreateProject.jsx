@@ -262,7 +262,7 @@ export default function CreateProject() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div data-tour="create-header" className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Tạo Dự Án Mới</h1>
           <p className="text-sm text-gray-600 mt-1">Nhập thông tin, chọn luồng và phân công nhiệm vụ</p>
@@ -276,13 +276,14 @@ export default function CreateProject() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-0 border-b border-gray-200">
+      <div data-tour="create-tabs" className="flex gap-0 border-b border-gray-200">
         {[
           { id: 'info', label: '📋 Thông Tin', desc: 'Dự án & khách hàng' },
           { id: 'flow', label: '🔄 Quy Trình', desc: 'Luồng, nhiệm vụ & phân công' },
           { id: 'files', label: '📎 Tệp', desc: 'Báo giá & tài liệu' }
         ].map(tab => (
           <button
+            data-tour={`tab-${tab.id}`}
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`px-6 py-3 font-medium text-sm border-b-2 transition ${
@@ -303,7 +304,7 @@ export default function CreateProject() {
         {activeTab === 'info' && (
           <div className="space-y-6">
             {/* Project Name */}
-            <div>
+            <div data-tour="project-name">
               <label className="block text-sm font-semibold text-gray-900 mb-2">
                 Tên Dự Án <span className="text-red-500">*</span>
               </label>
@@ -325,7 +326,7 @@ export default function CreateProject() {
             </div>
 
             {/* Customer */}
-            <div>
+            <div data-tour="customer-select">
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm font-semibold text-gray-900">
                   Khách Hàng <span className="text-red-500">*</span>
@@ -495,7 +496,7 @@ export default function CreateProject() {
         {activeTab === 'flow' && (
           <div className="space-y-6">
             {/* Flow Selection */}
-            <div>
+            <div data-tour="flow-select">
               <label className="block text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
                 <GitBranch className="h-4 w-4 text-gray-600" /> Chọn Luồng Quy Trình <span className="text-red-500">*</span>
               </label>
@@ -928,6 +929,7 @@ export default function CreateProject() {
           )}
           {activeTab === 'files' && (
             <button
+              data-tour="submit-project"
               onClick={submit}
               disabled={loading}
               className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-semibold flex items-center gap-2"
