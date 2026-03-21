@@ -715,13 +715,77 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           } catch (e) { console.error('Assignment upsert:', e.message); }
 
-          // ═══ TASK GENERATION: Bộ Mẫu ưu tiên, Processes là fallback ═══
-          // Nếu có bộ mẫu (user chọn hoặc default) VÀ bộ mẫu có tasks → dùng bộ mẫu
-          // Nếu không có bộ mẫu hoặc bộ mẫu rỗng → dùng processes
+          // ═══ TASK GENERATION: Processes TRƯỚC, Template SAU ═══
+          // Tạo tasks từ CẢ HAI nguồn: quy trình cố định + bộ nhiệm vụ mẫu
 
-          let usedTemplateSet = false;
+          // ── STEP 1: Generate tasks from PROCESSES (quy trình cố định) ──
+          try {
+            const { data: stepProcs } = await supabase.from('flow_step_processes')
+              .select('*, process:company_processes(id,name,icon,order_index)')
+              .eq('flow_step_id', step.id)
+              .order('order_index');
 
-          // ── TRY: Generate tasks from TEMPLATE SET first ──
+            if (stepProcs?.length) {
+              for (let procIdx = 0; procIdx < stepProcs.length; procIdx++) {
+                const sp = stepProcs[procIdx];
+                const proc = sp.process;
+                if (!proc) continue;
+
+                const processStageId = stepStageIds[procIdx] || defaultStageId;
+
+                const { data: procTasks } = await supabase.from('company_process_tasks')
+                  .select('*, checklists:company_process_checklists(*)')
+                  .eq('process_id', proc.id)
+                  .order('order_index');
+
+                console.log(`    Process ${proc.name}: ${procTasks?.length || 0} tasks`);
+
+                for (const t of (procTasks || [])) {
+                  let deadline = null;
+                  if (t.deadline_days > 0 || t.deadline_hours > 0) {
+                    const d = new Date();
+                    if (t.deadline_days > 0) d.setDate(d.getDate() + t.deadline_days);
+                    if (t.deadline_hours > 0) d.setHours(d.getHours() + t.deadline_hours);
+                    deadline = d.toISOString();
+                  }
+
+                  const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                    project_id: project.id,
+                    stage_id: t.stage_id || processStageId,
+                    title: t.title,
+                    description: t.description || null,
+                    assignee_id: t.assigned_user_id || null,
+                    priority: t.priority || 'medium',
+                    status: 'pending',
+                    order_index: t.order_index,
+                    created_by_id: req.user.userId,
+                    deadline,
+                    task_type: 'project',
+                    metadata: { process_id: proc.id, process_task_id: t.id, process_name: proc.name, flow_step_id: step.id },
+                  }).select().single();
+
+                  if (taskErr) { console.error('Process task error:', taskErr); continue; }
+
+                  if (t.checklists?.length && task) {
+                    for (const c of t.checklists) {
+                      try {
+                        await supabase.from('task_checklists').insert({
+                          task_id: task.id,
+                          title: c.label || c.title || 'Checklist',
+                          order_index: c.order_index || 0,
+                          is_completed: false,
+                        });
+                      } catch (ce) { console.warn('Process checklist:', ce.message); }
+                    }
+                  }
+
+                  if (task) allCreatedTasks.push(task);
+                }
+              }
+            }
+          } catch (e) { console.error('Process tasks error:', e.message); }
+
+          // ── STEP 2: Generate tasks from TEMPLATE SET (bộ nhiệm vụ mẫu) ──
           if (resolvedTemplateSetId) {
             const { data: tplTasks } = await supabase.from('company_template_tasks')
               .select('*, checklists:company_template_checklists(*)')
@@ -731,7 +795,6 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             console.log(`    Template set ${resolvedTemplateSetId.substring(0,8)}: ${tplTasks?.length || 0} tasks`);
 
             if (tplTasks?.length) {
-              usedTemplateSet = true;
               for (const t of tplTasks) {
                 let deadline = null;
                 if (t.deadline_days > 0) {
@@ -780,84 +843,6 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             }
           }
 
-          // ── FALLBACK: Generate tasks from PROCESSES (only if no template tasks) ──
-          if (!usedTemplateSet) {
-            console.log(`    No template tasks → using processes`);
-            try {
-            const { data: stepProcs } = await supabase.from('flow_step_processes')
-              .select('*, process:company_processes(id,name,icon,order_index)')
-              .eq('flow_step_id', step.id)
-              .order('order_index');
-
-            if (stepProcs?.length) {
-              for (let procIdx = 0; procIdx < stepProcs.length; procIdx++) {
-                const sp = stepProcs[procIdx];
-                const proc = sp.process;
-                if (!proc) continue;
-
-                // Map process to correct stage:
-                // Each process in a Khối corresponds to a stage in order
-                // e.g. KD: process 0→consulting, 1→design, 2→quotation
-                const processStageId = stepStageIds[procIdx] || defaultStageId;
-
-                const { data: procTasks } = await supabase.from('company_process_tasks')
-                  .select('*, checklists:company_process_checklists(*)')
-                  .eq('process_id', proc.id)
-                  .order('order_index');
-
-                console.log(`    Process ${proc.name}: ${procTasks?.length || 0} tasks`);
-
-                for (const t of (procTasks || [])) {
-                  let deadline = null;
-                  if (t.deadline_days > 0 || t.deadline_hours > 0) {
-                    const d = new Date();
-                    if (t.deadline_days > 0) d.setDate(d.getDate() + t.deadline_days);
-                    if (t.deadline_hours > 0) d.setHours(d.getHours() + t.deadline_hours);
-                    deadline = d.toISOString();
-                  }
-
-                  const { data: task, error: taskErr } = await supabase.from('tasks').insert({
-                    project_id: project.id,
-                    stage_id: t.stage_id || processStageId,
-                    title: t.title,
-                    description: t.description || null,
-                    assignee_id: t.assigned_user_id || t.default_assignee_id || null,
-                    priority: t.priority || 'medium',
-                    status: 'pending',
-                    order_index: t.order_index,
-                    created_by_id: req.user.userId,
-                    deadline,
-                    task_type: 'project',
-                    metadata: { process_id: proc.id, process_task_id: t.id, flow_step_id: step.id },
-                  }).select().single();
-
-                  if (taskErr) { console.error('Process task error:', taskErr); continue; }
-
-                  if (t.checklists?.length && task) {
-                    console.log(`      → ${t.checklists.length} checklists to insert for task ${task.id.substring(0,8)}`);
-                    for (const c of t.checklists) {
-                      try {
-                        const clInsert = {
-                          task_id: task.id,
-                          title: c.title || c.label,
-                          order_index: c.order_index || 0,
-                          is_completed: false,
-                        };
-                        const { data: clResult, error: clError } = await supabase.from('task_checklists').insert(clInsert).select().single();
-                        if (clError) console.error('      ❌ Checklist insert error:', clError.message, JSON.stringify(clInsert));
-                        else console.log('      ✅ CL:', c.title);
-                      } catch (ce) { console.warn('      ❌ Process checklist exception:', ce.message); }
-                    }
-                  } else if (task) {
-                    console.log(`      → 0 checklists for task ${task.id.substring(0,8)}`);
-                  }
-
-                  if (task) allCreatedTasks.push(task);
-                }
-              }
-            }
-          } catch (procErr) { console.error('Process tasks error:', procErr.message); }
-          } // end if (!usedTemplateSet)
         }
       }
 
