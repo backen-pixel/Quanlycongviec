@@ -828,7 +828,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           title: '📋 Dự án đã tạo',
           description: `Dự án ${code} đã được tạo từ Deal với ${allCreatedTasks.length} nhiệm vụ`,
           created_by: req.user.userId,
-        }).catch(() => {});
+        });
       } catch (dealErr) {
         console.error('[deal] Integration error:', dealErr.message);
       }
