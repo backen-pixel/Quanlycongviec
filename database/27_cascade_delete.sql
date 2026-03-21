@@ -1,7 +1,7 @@
--- 27: Cascade delete cho các bảng phụ thuộc
+-- 27: Cascade delete + deadline/notes
 -- Chạy 1 lần trên Supabase SQL Editor
 
--- crm_leads.project_id → SET NULL (để backend xóa thủ công, tránh loop)
+-- crm_leads.project_id → SET NULL (backend xóa thủ công 2 chiều)
 ALTER TABLE crm_leads DROP CONSTRAINT IF EXISTS crm_leads_project_id_fkey;
 ALTER TABLE crm_leads ADD CONSTRAINT crm_leads_project_id_fkey 
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL;
@@ -37,27 +37,31 @@ ALTER TABLE project_workflow_lines DROP CONSTRAINT IF EXISTS project_workflow_li
 ALTER TABLE project_workflow_lines ADD CONSTRAINT project_workflow_lines_project_id_fkey 
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
 
--- CRM sub-tables → CASCADE khi xóa lead
+-- CRM activities → CASCADE khi xóa lead
 ALTER TABLE crm_activities DROP CONSTRAINT IF EXISTS crm_activities_lead_id_fkey;
 ALTER TABLE crm_activities ADD CONSTRAINT crm_activities_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
 
+-- Lead documents → CASCADE
 ALTER TABLE lead_documents DROP CONSTRAINT IF EXISTS lead_documents_lead_id_fkey;
 ALTER TABLE lead_documents ADD CONSTRAINT lead_documents_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
 
-ALTER TABLE crm_quotations DROP CONSTRAINT IF EXISTS crm_quotations_lead_id_fkey;
-ALTER TABLE crm_quotations ADD CONSTRAINT crm_quotations_lead_id_fkey 
+-- Quotations → CASCADE khi xóa lead
+ALTER TABLE quotations DROP CONSTRAINT IF EXISTS quotations_lead_id_fkey;
+ALTER TABLE quotations ADD CONSTRAINT quotations_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
 
-ALTER TABLE crm_orders DROP CONSTRAINT IF EXISTS crm_orders_lead_id_fkey;
-ALTER TABLE crm_orders ADD CONSTRAINT crm_orders_lead_id_fkey 
+-- Orders → CASCADE khi xóa lead
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_lead_id_fkey;
+ALTER TABLE orders ADD CONSTRAINT orders_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
 
-ALTER TABLE crm_invoices DROP CONSTRAINT IF EXISTS crm_invoices_lead_id_fkey;
-ALTER TABLE crm_invoices ADD CONSTRAINT crm_invoices_lead_id_fkey 
+-- Invoices → CASCADE khi xóa lead
+ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_lead_id_fkey;
+ALTER TABLE invoices ADD CONSTRAINT invoices_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
 
--- Thêm cột deadline + notes cho projects (migration 26)
+-- Thêm cột deadline + notes cho projects
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS deadline DATE;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS notes TEXT;
