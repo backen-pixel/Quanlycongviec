@@ -589,24 +589,32 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const { data, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
-    // AUTO-FLOW: Deal chốt → tự động log activity
+    // Deal → Thắng: return flag for frontend to open project creation
     let autoProject = null;
+    let requiresProjectCreation = false;
+    let dealInfo = null;
     if (lead?.type === 'deal' && stage?.is_won) {
-      try { 
-        autoProject = await onLeadWon(req.params.id, req.user.userId);
-        // For deals reaching "Thắng", just log activity
-        await supabase.from('crm_activities')
-          .insert({
-            lead_id: req.params.id,
-            type: 'note',
-            title: '🎉 Deal Thắng!',
-            description: `Deal đã chốt thành công`,
-            created_by: req.user.userId,
-          });
-      } catch (e) { console.error('Auto-flow error:', e.message); }
+      requiresProjectCreation = true;
+      // Load deal full info for project creation
+      const { data: dealData } = await supabase.from('crm_leads')
+        .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code)')
+        .eq('id', req.params.id).single();
+      // Load documents from lead
+      const { data: docs } = await supabase.from('lead_documents')
+        .select('*').eq('lead_id', req.params.id).order('created_at');
+      dealInfo = { ...dealData, documents: docs || [] };
+      
+      try {
+        await supabase.from('crm_activities').insert({
+          lead_id: req.params.id, type: 'note',
+          title: '🎉 Deal Thắng!',
+          description: 'Deal đã chốt thành công — Đang chờ tạo dự án',
+          created_by: req.user.userId,
+        });
+      } catch (e) { console.error('Activity log error:', e.message); }
     }
 
-    res.json({ ...data, auto_project: autoProject });
+    res.json({ ...data, auto_project: autoProject, requires_project_creation: requiresProjectCreation, deal_info: dealInfo });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
