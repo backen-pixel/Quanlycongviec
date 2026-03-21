@@ -639,89 +639,14 @@ function AddDocumentModal({ onClose, onSave }) {
 }
 
 function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuccess }) {
-  const [selectedFlow, setSelectedFlow] = useState('');
   const [converting, setConverting] = useState(false);
-  const [flowPreview, setFlowPreview] = useState(null);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-  // { stepId: { selectedSetId, tasks: [], loading } }
-  const [stepTemplateSets, setStepTemplateSets] = useState({});
 
-  const canConvert = customer?.full_name && customer?.phone && documents?.length > 0;
-
-  // Auto-select default flow on mount
-  useEffect(() => {
-    if (!selectedFlow && flows?.length) {
-      const defaultFlow = flows.find(f => f.is_default) || flows[0];
-      if (defaultFlow) setSelectedFlow(defaultFlow.id);
-    }
-  }, [flows]);
-
-  // Load flow preview when flow selected + auto-select default template sets
-  useEffect(() => {
-    if (!selectedFlow) { setFlowPreview(null); setStepTemplateSets({}); return; }
-    setLoadingPreview(true);
-    api.get(`/flows/${selectedFlow}`)
-      .then(async (r) => {
-        const flow = r.data?.flow || r.data;
-        setFlowPreview(flow);
-        const initial = {};
-        for (const step of (flow.steps || [])) {
-          // Auto-select default template set (is_default) for each step
-          const defaultSet = (step.template_sets || []).find(s => s.is_default);
-          const autoSetId = defaultSet?.id || '';
-          initial[step.id] = { selectedSetId: autoSetId, tasks: [], loading: !!autoSetId };
-        }
-        setStepTemplateSets(initial);
-        // Auto-load tasks for default template sets
-        for (const step of (flow.steps || [])) {
-          const autoSetId = initial[step.id]?.selectedSetId;
-          if (autoSetId) {
-            try {
-              const { data } = await api.get(`/company-templates/template-sets/${autoSetId}/tasks`);
-              const tasks = data?.tasks || data || [];
-              setStepTemplateSets(prev => ({ ...prev, [step.id]: { ...prev[step.id], tasks, loading: false } }));
-            } catch {
-              setStepTemplateSets(prev => ({ ...prev, [step.id]: { ...prev[step.id], tasks: [], loading: false } }));
-            }
-          }
-        }
-      })
-      .catch(() => setFlowPreview(null))
-      .finally(() => setLoadingPreview(false));
-  }, [selectedFlow]);
-
-  const loadTemplateTasks = async (stepId, templateSetId, currentState) => {
-    if (!templateSetId) {
-      setStepTemplateSets(prev => ({ ...prev, [stepId]: { ...prev[stepId], selectedSetId: '', tasks: [] } }));
-      return;
-    }
-    setStepTemplateSets(prev => ({ ...prev, [stepId]: { ...prev[stepId], selectedSetId: templateSetId, loading: true } }));
-    try {
-      const { data } = await api.get(`/company-templates/template-sets/${templateSetId}/tasks`);
-      const tasks = data?.tasks || data || [];
-      setStepTemplateSets(prev => ({ ...prev, [stepId]: { ...prev[stepId], tasks, loading: false } }));
-    } catch {
-      setStepTemplateSets(prev => ({ ...prev, [stepId]: { ...prev[stepId], tasks: [], loading: false } }));
-    }
-  };
-
-  const handleTemplateSetChange = (stepId, setId) => {
-    loadTemplateTasks(stepId, setId);
-  };
+  const canConvert = customer?.full_name && customer?.phone;
 
   const handleConvert = async () => {
-    if (!selectedFlow) return alert('Chọn luồng quy trình');
     setConverting(true);
     try {
-      // Build step_template_sets map: { step_id: template_set_id }
-      const stsMap = {};
-      for (const [stepId, info] of Object.entries(stepTemplateSets)) {
-        if (info.selectedSetId) stsMap[stepId] = info.selectedSetId;
-      }
-      const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`, {
-        flow_id: selectedFlow,
-        step_template_sets: stsMap,
-      });
+      const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`);
       alert(`✅ ${data.message}`);
       onSuccess();
     } catch (e) {
@@ -730,229 +655,41 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
     setConverting(false);
   };
 
-  // Count totals
-  const getTotals = () => {
-    if (!flowPreview?.steps) return { steps: 0, tasks: 0, checklists: 0 };
-    let tasks = 0, checklists = 0;
-    for (const step of flowPreview.steps) {
-      for (const proc of (step.processes || [])) {
-        tasks += proc.tasks?.length || 0;
-        checklists += (proc.tasks || []).reduce((s, t) => s + (t.checklists?.length || 0), 0);
-      }
-      const flowStepTasks = step.tasks || [];
-      const stInfo = stepTemplateSets[step.id];
-      const userChose = !!stInfo?.selectedSetId;
-      if (userChose && stInfo?.tasks?.length) {
-        tasks += stInfo.tasks.length;
-        checklists += stInfo.tasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
-      } else {
-        tasks += flowStepTasks.length;
-        checklists += flowStepTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
-        if (stInfo?.tasks?.length) {
-          tasks += stInfo.tasks.length;
-          checklists += stInfo.tasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
-        }
-      }
-    }
-    return { steps: flowPreview.steps.length, tasks, checklists };
-  };
-
-  const totals = getTotals();
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">🚀 Chuyển Lead sang Deal</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
         </div>
 
-        <div className="space-y-4 mb-6">
-          {/* Validation Checklist */}
+        <div className="space-y-3 mb-6">
           <div className="bg-gray-50 rounded-xl p-4 space-y-2">
             <p className="text-xs font-bold text-gray-700 uppercase">Yêu cầu:</p>
             <div className={`text-sm flex items-center gap-2 ${customer?.full_name && customer?.phone ? 'text-emerald-600' : 'text-red-600'}`}>
               {customer?.full_name && customer?.phone ? '✅' : '❌'} Khách hàng: {customer?.full_name || '—'}, {customer?.phone || 'Chưa có SĐT'}
             </div>
-            <div className={`text-sm flex items-center gap-2 ${documents?.length > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              {documents?.length > 0 ? '✅' : '❌'} Tài liệu: {documents?.length || 0} tài liệu
-            </div>
           </div>
 
-          {/* Flow Selection */}
-          <div>
-            <label className="text-sm font-bold text-gray-900">Chọn luồng quy trình *</label>
-            <select value={selectedFlow} onChange={(e) => setSelectedFlow(e.target.value)} className="w-full h-10 px-3 border border-gray-300 rounded-lg mt-2 text-sm focus:ring-2 focus:ring-blue-500">
-              <option value="">-- Chọn luồng --</option>
-              {flows.map(f => <option key={f.id} value={f.id}>{f.name} {f.is_default ? '⭐' : ''}</option>)}
-            </select>
+          <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
+            <p className="text-sm text-blue-800">
+              💡 Lead sẽ được chuyển sang pipeline <strong>Deal</strong>. Bạn có thể tạo dự án sau từ trang Deal.
+            </p>
           </div>
-
-          {/* Flow Preview */}
-          {loadingPreview && (
-            <div className="text-center py-4"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full mx-auto" /></div>
-          )}
-          {flowPreview && flowPreview.steps?.length > 0 && (
-            <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-              <p className="text-xs font-bold text-blue-800 uppercase mb-3">📋 Tổng quan luồng: {flowPreview.name}</p>
-              <div className="space-y-3">
-                {flowPreview.steps.map((step, i) => {
-                  const levelInfo = step.division?.level;
-                  const processes = step.processes || [];
-                  const flowStepTasks = step.tasks || [];
-                  const templateSets = step.template_sets || [];
-                  const stInfo = stepTemplateSets[step.id] || {};
-                  const selectedTplTasks = stInfo.tasks || [];
-
-                  const procTaskCount = processes.reduce((s, p) => s + (p.tasks?.length || 0), 0);
-                  const flowTaskCount = flowStepTasks.length;
-                  const tplTaskCount = selectedTplTasks.length;
-                  const hasFlowTasks = procTaskCount > 0 || flowTaskCount > 0;
-                  const userChoseTemplate = !!stInfo.selectedSetId;
-                  const totalTasks = procTaskCount + (userChoseTemplate ? tplTaskCount : flowTaskCount + tplTaskCount);
-                  const flowCL = flowStepTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
-                  const tplCL = selectedTplTasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
-                  const totalCL = processes.reduce((s, p) => s + (p.tasks || []).reduce((cs, t) => cs + (t.checklists?.length || 0), 0), 0)
-                    + (userChoseTemplate ? tplCL : flowCL + tplCL);
-
-                  return (
-                    <div key={step.id || i} className="bg-white rounded-lg p-3 border border-blue-100">
-                      {/* Step header */}
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-white bg-blue-500 rounded-full w-5 h-5 flex items-center justify-center">{i + 1}</span>
-                          <span className="text-sm font-bold text-gray-900">{step.division?.name || 'Khối ' + (i + 1)}</span>
-                          {levelInfo && <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: (levelInfo.color || '#6366F1') + '20', color: levelInfo.color || '#6366F1' }}>{levelInfo.icon} {levelInfo.name}</span>}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                          {totalTasks > 0 && <span>📌 {totalTasks} NV</span>}
-                          {totalCL > 0 && <span>☑️ {totalCL} CL</span>}
-                        </div>
-                      </div>
-
-                      {step.company?.name && (
-                        <p className="text-xs text-gray-600 ml-7">🏢 {step.company.name}</p>
-                      )}
-
-                      {/* Processes (fixed, always shown) */}
-                      {processes.length > 0 && (
-                        <div className="ml-7 mt-2 space-y-2">
-                          <p className="text-xs font-bold text-gray-700">🔄 Quy trình cố định:</p>
-                          {processes.map((proc, pi) => (
-                            <div key={proc.id || pi} className="bg-gray-50 rounded-lg p-2 border">
-                              <p className="text-xs font-bold text-gray-800 mb-1">{proc.icon || '⚙️'} {proc.name} <span className="font-normal text-gray-500">({proc.tasks?.length || 0} NV)</span></p>
-                              {proc.tasks?.length > 0 && (
-                                <div className="space-y-0.5 ml-2">
-                                  {proc.tasks.slice(0, 4).map((t, j) => (
-                                    <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-600">
-                                      <span className="text-gray-300">•</span>
-                                      <span>{t.title}</span>
-                                      {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} CL)</span>}
-                                    </div>
-                                  ))}
-                                  {proc.tasks.length > 4 && <p className="text-xs text-blue-500 ml-3">+{proc.tasks.length - 4} NV khác</p>}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Flow step tasks (primary tasks from the selected flow) */}
-                      {flowStepTasks.length > 0 && (
-                        <div className={`ml-7 mt-2 ${userChoseTemplate ? 'opacity-40' : ''}`}>
-                          <p className="text-xs font-bold text-gray-700 mb-1">
-                            📋 Nhiệm vụ từ luồng ({flowStepTasks.length} NV)
-                            {userChoseTemplate && <span className="text-orange-500 font-normal ml-1">— sẽ bị thay bởi bộ mẫu đã chọn</span>}
-                          </p>
-                          <div className="bg-blue-50 rounded-lg p-2 border border-blue-200 space-y-0.5">
-                            {flowStepTasks.slice(0, 6).map((t, j) => (
-                              <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-700">
-                                <span className="text-blue-400">•</span>
-                                <span>{t.title}</span>
-                                {t.stage?.name && <span className="text-gray-400 text-[10px]">[{t.stage.name}]</span>}
-                                {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} CL)</span>}
-                              </div>
-                            ))}
-                            {flowStepTasks.length > 6 && <p className="text-xs text-blue-600 ml-3">+{flowStepTasks.length - 6} NV khác</p>}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Template Set Selection — user can override flow tasks by choosing a template set */}
-                      {templateSets.length > 0 && (
-                        <div className="ml-7 mt-2">
-                          <p className="text-xs font-bold text-gray-700 mb-1">
-                            {hasFlowTasks
-                              ? (stInfo.selectedSetId
-                                ? '📦 Bộ nhiệm vụ mẫu (sẽ thay thế NV từ luồng):'
-                                : '📦 Bộ nhiệm vụ mẫu (chọn để thay thế NV từ luồng):')
-                              : '📦 Bộ nhiệm vụ mẫu:'}
-                          </p>
-                          <select
-                            value={stInfo.selectedSetId || ''}
-                            onChange={(e) => handleTemplateSetChange(step.id, e.target.value)}
-                            className="w-full h-8 px-2 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
-                          >
-                            <option value="">-- Không chọn bộ mẫu --</option>
-                            {templateSets.map(s => (
-                              <option key={s.id} value={s.id}>
-                                {s.name} {s.is_default ? '⭐' : ''} {s.unit?.name ? `(${s.unit.name})` : ''}
-                              </option>
-                            ))}
-                          </select>
-
-                          {stInfo.loading && <div className="text-xs text-blue-500 mt-1">Đang tải nhiệm vụ...</div>}
-
-                          {!stInfo.loading && selectedTplTasks.length > 0 && (
-                            <div className="mt-2 bg-emerald-50 rounded-lg p-2 border border-emerald-200 space-y-0.5">
-                              {selectedTplTasks.slice(0, 6).map((t, j) => (
-                                <div key={t.id || j} className="flex items-center gap-1.5 text-xs text-gray-700">
-                                  <span className="text-emerald-400">•</span>
-                                  <span>{t.title}</span>
-                                  {t.stage?.name && <span className="text-gray-400 text-[10px]">[{t.stage.name}]</span>}
-                                  {t.checklists?.length > 0 && <span className="text-gray-400">({t.checklists.length} CL)</span>}
-                                </div>
-                              ))}
-                              {selectedTplTasks.length > 6 && <p className="text-xs text-emerald-600 ml-3">+{selectedTplTasks.length - 6} NV khác</p>}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Empty state */}
-                      {totalTasks === 0 && processes.length === 0 && templateSets.length === 0 && (
-                        <p className="text-xs text-gray-400 ml-7 mt-1 italic">Chưa có nhiệm vụ (sẽ dùng mặc định)</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-3 pt-2 border-t border-blue-200 flex items-center gap-4 text-xs text-blue-700">
-                <span>🔄 {totals.steps} bước</span>
-                <span>📌 {totals.tasks} nhiệm vụ</span>
-                <span>☑️ {totals.checklists} checklist</span>
-              </div>
-            </div>
-          )}
-          {flowPreview && (!flowPreview.steps || flowPreview.steps.length === 0) && (
-            <div className="bg-amber-50 rounded-xl p-4 border border-amber-200">
-              <p className="text-xs text-amber-700">⚠️ Luồng này chưa có bước quy trình. Hệ thống sẽ tạo nhiệm vụ mặc định cho tất cả giai đoạn.</p>
-            </div>
-          )}
         </div>
 
         <div className="flex gap-2">
           <button onClick={onClose} className="flex-1 h-10 border rounded-lg font-medium cursor-pointer">Hủy</button>
           <button
             onClick={handleConvert}
-            disabled={!canConvert || !selectedFlow || converting}
+            disabled={!canConvert || converting}
             className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium disabled:opacity-50 cursor-pointer transition-colors"
           >
-            {converting ? 'Đang xử lý...' : '🚀 Chuyển Deal & Tạo Dự Án'}
+            {converting ? 'Đang xử lý...' : '🚀 Chuyển sang Deal'}
           </button>
         </div>
       </div>
     </div>
   );
 }
+
