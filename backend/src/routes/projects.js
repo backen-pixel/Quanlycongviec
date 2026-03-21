@@ -670,7 +670,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       .select('id').eq('slug', 'consulting').single();
 
     // Create project
-    const { data: project, error: projErr } = await supabase.from('projects').insert({
+    let { data: project, error: projErr } = await supabase.from('projects').insert({
       code,
       name: b.name.trim(),
       description: b.description || null,
@@ -688,6 +688,12 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       deadline: b.deadline || null,
       consult_date: new Date().toISOString(),
     }).select('*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)').single();
+    // If deadline column doesn't exist yet, retry without it
+    if (projErr && projErr.message?.includes('column')) {
+      const retryInsert = { code, name: b.name.trim(), description: b.description || null, customer_id: b.customer_id, company_id: b.company_id || null, flow_id: b.flow_id || null, status: 'consulting', current_stage_id: firstStage?.id || null, install_address: b.install_address || null, estimated_value: b.estimated_value || null, priority: b.priority || 'medium', supervisor_id: b.supervisor_id || null, sales_person_id: b.sales_person_id || null, project_manager_id: b.project_manager_id || null, consult_date: new Date().toISOString() };
+      const r2 = await supabase.from('projects').insert(retryInsert).select('*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)').single();
+      project = r2.data; projErr = r2.error;
+    }
     if (projErr) throw projErr;
 
     const projectId = project.id;
@@ -849,7 +855,15 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
 
     const { data: old } = await supabase.from('projects').select('status,name').eq('id', req.params.id).single();
 
-    const { data, error } = await supabase.from('projects').update(update).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single();
+    // Try update — if column doesn't exist, retry without problematic fields
+    let data, error;
+    ({ data, error } = await supabase.from('projects').update(update).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
+    if (error && error.message?.includes('column')) {
+      // Remove fields that may not exist yet (need migration)
+      const safeCopy = { ...update };
+      ['deadline', 'notes'].forEach(f => delete safeCopy[f]);
+      ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
+    }
     if (error) throw error;
 
     // Log & Notify
