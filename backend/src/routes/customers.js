@@ -103,12 +103,72 @@ r.put('/:id', async (req, res) => {
 // ─── DELETE CUSTOMER ──
 r.delete('/:id', async (req, res) => {
   try {
-    const { count } = await supabase.from('projects').select('id', { count: 'exact', head: true }).eq('customer_id', req.params.id);
-    if (count > 0) return res.status(400).json({ error: `Không thể xóa — khách hàng có ${count} dự án` });
-    await supabase.from('customer_interactions').delete().eq('customer_id', req.params.id);
-    await supabase.from('customers').delete().eq('id', req.params.id);
-    res.json({ message: 'Đã xóa' });
-  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+    const force = req.query.force === 'true';
+    const custId = req.params.id;
+
+    // Check linked data
+    const { count: projectCount } = await supabase.from('projects').select('id', { count: 'exact', head: true }).eq('customer_id', custId);
+    const { count: leadCount } = await supabase.from('crm_leads').select('id', { count: 'exact', head: true }).eq('customer_id', custId);
+    const { count: quoteCount } = await supabase.from('quotations').select('id', { count: 'exact', head: true }).eq('customer_id', custId);
+
+    const hasLinked = (projectCount || 0) + (leadCount || 0) + (quoteCount || 0) > 0;
+    if (hasLinked && !force) {
+      return res.status(400).json({
+        error: `Khách hàng có ${projectCount || 0} dự án, ${leadCount || 0} lead/deal, ${quoteCount || 0} báo giá. Thêm ?force=true để xóa tất cả.`,
+        linked: { projects: projectCount || 0, leads: leadCount || 0, quotations: quoteCount || 0 },
+      });
+    }
+
+    // Force delete: cascade all linked data
+    if (force && hasLinked) {
+      // Delete projects (which cascades to tasks, lead links, etc.)
+      const { data: projects } = await supabase.from('projects').select('id').eq('customer_id', custId);
+      if (projects?.length) {
+        for (const p of projects) {
+          // Delete lead/deal links
+          const { data: leads } = await supabase.from('crm_leads').select('id').eq('project_id', p.id);
+          if (leads?.length) {
+            const leadIds = leads.map(l => l.id);
+            try { await supabase.from('crm_activities').delete().in('lead_id', leadIds); } catch (_) {}
+            try { await supabase.from('lead_documents').delete().in('lead_id', leadIds); } catch (_) {}
+            try { await supabase.from('crm_leads').delete().in('id', leadIds); } catch (_) {}
+          }
+          // Delete task sub-tables
+          const { data: taskIds } = await supabase.from('tasks').select('id').eq('project_id', p.id);
+          if (taskIds?.length) {
+            const ids = taskIds.map(t => t.id);
+            try { await supabase.from('task_checklists').delete().in('task_id', ids); } catch (_) {}
+          }
+          try { await supabase.from('tasks').delete().eq('project_id', p.id); } catch (_) {}
+          try { await supabase.from('project_comments').delete().eq('project_id', p.id); } catch (_) {}
+          try { await supabase.from('project_company_assignments').delete().eq('project_id', p.id); } catch (_) {}
+          try { await supabase.from('project_workflow_lines').delete().eq('project_id', p.id); } catch (_) {}
+          try { await supabase.from('project_approvals').delete().eq('project_id', p.id); } catch (_) {}
+        }
+        await supabase.from('projects').delete().eq('customer_id', custId);
+      }
+
+      // Delete remaining leads/deals not linked to projects
+      const { data: remainLeads } = await supabase.from('crm_leads').select('id').eq('customer_id', custId);
+      if (remainLeads?.length) {
+        const ids = remainLeads.map(l => l.id);
+        try { await supabase.from('crm_activities').delete().in('lead_id', ids); } catch (_) {}
+        try { await supabase.from('lead_documents').delete().in('lead_id', ids); } catch (_) {}
+        await supabase.from('crm_leads').delete().in('id', ids);
+      }
+
+      // Delete quotations, orders, invoices
+      try { await supabase.from('quotations').delete().eq('customer_id', custId); } catch (_) {}
+      try { await supabase.from('orders').delete().eq('customer_id', custId); } catch (_) {}
+      try { await supabase.from('invoices').delete().eq('customer_id', custId); } catch (_) {}
+    }
+
+    // Delete customer interactions + customer
+    try { await supabase.from('customer_interactions').delete().eq('customer_id', custId); } catch (_) {}
+    const { error } = await supabase.from('customers').delete().eq('id', custId);
+    if (error) throw error;
+    res.json({ message: 'Đã xóa khách hàng và dữ liệu liên quan' });
+  } catch (e) { console.error('Delete customer:', e); res.status(500).json({ error: e.message || 'Lỗi' }); }
 });
 
 // ─── INTERACTIONS (Lịch sử tương tác) ──
