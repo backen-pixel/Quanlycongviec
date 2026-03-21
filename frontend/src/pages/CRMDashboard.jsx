@@ -155,7 +155,9 @@ export default function CRMDashboard() {
           <div className="flex items-center gap-2 mb-2">
             <span className="text-xs text-gray-500 font-semibold">CRM / Quản lý khách hàng</span>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">CRM</h1>
+          <h1 className="text-3xl font-bold text-gray-900">
+            {pipelineType === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}
+          </h1>
         </div>
         <div className="flex items-center gap-3">
           <TourButton steps={crmTour} />

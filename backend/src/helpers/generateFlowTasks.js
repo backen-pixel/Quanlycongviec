@@ -40,6 +40,33 @@ const PROCESS_STAGE_MAP = {
 async function generateStepTasks({ projectId, flowStepId, templateSetId, userId, taskAssignments = {} }) {
   const createdTasks = [];
 
+  // Auto-resolve template set if not provided
+  if (!templateSetId) {
+    // Get step's division/company info to find default template set
+    const { data: step } = await supabase.from('workflow_flow_steps')
+      .select('division_unit_id, company_unit_id, template_set_id')
+      .eq('id', flowStepId).single();
+    
+    if (step?.template_set_id) {
+      templateSetId = step.template_set_id;
+    } else if (step?.company_unit_id) {
+      const { data: sets } = await supabase.from('company_template_sets')
+        .select('id').eq('unit_id', step.company_unit_id).eq('is_default', true).eq('is_active', true).limit(1);
+      if (sets?.length) templateSetId = sets[0].id;
+    }
+    if (!templateSetId && step?.division_unit_id) {
+      const { data: units } = await supabase.from('ecosystem_units')
+        .select('id').eq('parent_id', step.division_unit_id).eq('is_active', true);
+      const unitIds = (units || []).map(u => u.id);
+      if (unitIds.length) {
+        const { data: sets } = await supabase.from('company_template_sets')
+          .select('id').in('unit_id', unitIds).eq('is_default', true).eq('is_active', true).limit(1);
+        if (sets?.length) templateSetId = sets[0].id;
+      }
+    }
+    if (templateSetId) console.log(`  [generateStepTasks] Auto-resolved template: ${templateSetId.substring(0,8)}`);
+  }
+
   // ── 1. Load template tasks & collect covered stage slugs ──
   const templateStageSlugs = new Set();
   let templateTasks = [];

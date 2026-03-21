@@ -793,22 +793,26 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           console.log(`[deal] Auto-completed ${kdTaskIds.length} KD process tasks`);
         }
 
-        // 3. Copy documents from deal/lead to project
+        // 3. Copy documents from deal/lead to project (store as quotation_files JSON)
         const { data: dealDocs } = await supabase.from('lead_documents')
           .select('*').eq('lead_id', b.deal_id);
         if (dealDocs?.length) {
-          for (const doc of dealDocs) {
-            await supabase.from('project_documents').insert({
-              project_id: projectId,
-              name: doc.name || doc.file_name,
-              file_url: doc.file_url || doc.url,
-              file_type: doc.file_type || doc.type,
-              file_size: doc.file_size || doc.size,
-              uploaded_by: req.user.userId,
-              description: `Từ ${doc.doc_type || 'Lead/Deal'}: ${doc.name || doc.file_name}`,
-            }).then(() => {}).catch(e => console.warn('Doc copy:', e.message));
+          const docFiles = dealDocs
+            .filter(doc => doc.file_url)
+            .map(doc => ({
+              file_url: doc.file_url,
+              file_name: doc.file_name || doc.name,
+              file_size: doc.file_size,
+              mime_type: doc.mime_type,
+              description: `Từ ${doc.doc_type || 'Deal'}: ${doc.name || doc.file_name}`,
+            }));
+          if (docFiles.length) {
+            // Append to existing quotation_files
+            const { data: proj } = await supabase.from('projects').select('quotation_files').eq('id', projectId).single();
+            const existing = proj?.quotation_files || [];
+            await supabase.from('projects').update({ quotation_files: [...existing, ...docFiles] }).eq('id', projectId);
+            console.log(`[deal] Copied ${docFiles.length} documents to project quotation_files`);
           }
-          console.log(`[deal] Copied ${dealDocs.length} documents to project ${projectId}`);
         }
 
         // 4. Log activity
