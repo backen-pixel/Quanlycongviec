@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import { TourButton } from '../components/WebTour';
 import { leadDetailTour } from '../lib/tourSteps';
+import ProjectCreateModalFullScreen from '../components/ProjectCreateModalFullScreen';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -36,6 +37,7 @@ export default function LeadDetail() {
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [activeTab, setActiveTab] = useState('documents');
+  const [dealForProject, setDealForProject] = useState(null);
 
   useEffect(() => { load(); }, [id]);
 
@@ -66,6 +68,9 @@ export default function LeadDetail() {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId });
       if (data.requires_conversion) {
         setShowConvertModal(true);
+      } else if (data.requires_project_creation && data.deal_info) {
+        setDealForProject(data.deal_info);
+        load();
       } else {
         load();
       }
@@ -163,7 +168,12 @@ export default function LeadDetail() {
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/crm')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
-            <p className="text-xs text-blue-600 font-bold">{lead.code} • {lead.type === 'deal' ? '🎯 Deal' : '💼 Lead'}</p>
+            <div className="flex items-center gap-2">
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${lead.type === 'deal' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                {lead.type === 'deal' ? '🎯 DEAL' : '💼 LEAD'}
+              </span>
+              <span className="text-xs text-gray-500 font-mono">{lead.code}</span>
+            </div>
             <h1 className="text-2xl font-bold text-gray-900">{lead.title}</h1>
           </div>
         </div>
@@ -174,12 +184,18 @@ export default function LeadDetail() {
               <Zap className="h-4 w-4" /> Chuyển Deal
             </button>
           )}
+          {/* Deal Thắng + chưa có project → nút Tạo dự án */}
+          {lead.type === 'deal' && isPipelineComplete && !lead.project_id && (
+            <button onClick={() => setDealForProject({ ...lead, customer, documents })} className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
+              <FolderKanban className="h-4 w-4" /> Tạo dự án
+            </button>
+          )}
           <button onClick={() => navigate(`/crm/quotations/new?lead_id=${id}`)} className="h-9 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
             <FileText className="h-4 w-4" /> Báo giá
           </button>
           {lead.project_id && (
             <Link to={`/projects/${lead.project_id}`} className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
-              <FolderKanban className="h-4 w-4" /> Dự án
+              <FolderKanban className="h-4 w-4" /> Xem dự án
             </Link>
           )}
           <button onClick={deleteLead} className="h-9 px-3 text-red-500 border border-red-200 rounded-lg text-sm flex items-center gap-1.5 cursor-pointer hover:bg-red-50">
@@ -493,6 +509,14 @@ export default function LeadDetail() {
           onSuccess={() => { setShowConvertModal(false); load(); }}
         />
       )}
+
+      {/* Project Creation Modal — from Deal Thắng */}
+      <ProjectCreateModalFullScreen
+        open={!!dealForProject}
+        onClose={() => setDealForProject(null)}
+        onCreated={() => { setDealForProject(null); load(); }}
+        dealData={dealForProject}
+      />
     </div>
   );
 }
