@@ -4,7 +4,6 @@ import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import { TourButton } from '../components/WebTour';
 import { leadDetailTour } from '../lib/tourSteps';
-import ProjectCreateModalFullScreen from '../components/ProjectCreateModalFullScreen';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -37,7 +36,6 @@ export default function LeadDetail() {
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [activeTab, setActiveTab] = useState('documents');
-  const [dealForProject, setDealForProject] = useState(null);
 
   useEffect(() => { load(); }, [id]);
 
@@ -69,8 +67,7 @@ export default function LeadDetail() {
       if (data.requires_conversion) {
         setShowConvertModal(true);
       } else if (data.requires_project_creation && data.deal_info) {
-        setDealForProject(data.deal_info);
-        load();
+        navigate(`/projects/create?deal_id=${data.deal_info.id}`);
       } else {
         load();
       }
@@ -186,7 +183,7 @@ export default function LeadDetail() {
           )}
           {/* Deal Thắng + chưa có project → nút Tạo dự án */}
           {lead.type === 'deal' && isPipelineComplete && !lead.project_id && (
-            <button onClick={() => setDealForProject({ ...lead, customer, documents })} className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
+            <button onClick={() => navigate(`/projects/create?deal_id=${id}`)} className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
               <FolderKanban className="h-4 w-4" /> Tạo dự án
             </button>
           )}
@@ -509,14 +506,6 @@ export default function LeadDetail() {
           onSuccess={() => { setShowConvertModal(false); load(); }}
         />
       )}
-
-      {/* Project Creation Modal — from Deal Thắng */}
-      <ProjectCreateModalFullScreen
-        open={!!dealForProject}
-        onClose={() => setDealForProject(null)}
-        onCreated={() => { setDealForProject(null); load(); }}
-        dealData={dealForProject}
-      />
     </div>
   );
 }

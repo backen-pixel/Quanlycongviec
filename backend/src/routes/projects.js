@@ -685,6 +685,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       supervisor_id: b.supervisor_id || null,
       sales_person_id: b.sales_person_id || null,
       project_manager_id: b.project_manager_id || null,
+      deadline: b.deadline || null,
       consult_date: new Date().toISOString(),
     }).select('*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)').single();
     if (projErr) throw projErr;
