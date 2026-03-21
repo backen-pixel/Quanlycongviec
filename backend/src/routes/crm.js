@@ -387,23 +387,23 @@ r.delete('/leads/:id', async (req, res) => {
       const { data: taskIds } = await supabase.from('tasks').select('id').eq('project_id', lead.project_id);
       if (taskIds?.length) {
         const ids = taskIds.map(t => t.id);
-        await supabase.from('task_checklists').delete().in('task_id', ids).catch(() => {});
-        await supabase.from('task_comments').delete().in('task_id', ids).catch(() => {});
-        await supabase.from('task_participants').delete().in('task_id', ids).catch(() => {});
-        await supabase.from('task_time_logs').delete().in('task_id', ids).catch(() => {});
-        await supabase.from('file_attachments').delete().eq('entity_type', 'task').in('entity_id', ids).catch(() => {});
+        try { await supabase.from('task_checklists').delete().in('task_id', ids); } catch (_) {}
+        try { await supabase.from('task_comments').delete().in('task_id', ids); } catch (_) {}
+        try { await supabase.from('task_participants').delete().in('task_id', ids); } catch (_) {}
+        try { await supabase.from('task_time_logs').delete().in('task_id', ids); } catch (_) {}
+        try { await supabase.from('file_attachments').delete().eq('entity_type', 'task').in('entity_id', ids); } catch (_) {}
       }
 
       // Delete project related tables
-      await supabase.from('tasks').delete().eq('project_id', lead.project_id).catch(() => {});
-      await supabase.from('project_comments').delete().eq('project_id', lead.project_id).catch(() => {});
-      await supabase.from('stage_transitions').delete().eq('project_id', lead.project_id).catch(() => {});
-      await supabase.from('project_workflow_lines').delete().eq('project_id', lead.project_id).catch(() => {});
-      await supabase.from('project_products').delete().eq('project_id', lead.project_id).catch(() => {});
-      await supabase.from('project_company_assignments').delete().eq('project_id', lead.project_id).catch(() => {});
-      await supabase.from('project_approvals').delete().eq('project_id', lead.project_id).catch(() => {});
-      await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id).catch(() => {});
-      await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id).catch(() => {});
+      try { await supabase.from('tasks').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_comments').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('stage_transitions').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_workflow_lines').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_products').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_company_assignments').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_approvals').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id); } catch (_) {}
 
       // Delete the project
       await supabase.from('projects').delete().eq('id', lead.project_id);
@@ -411,10 +411,10 @@ r.delete('/leads/:id', async (req, res) => {
     }
 
     // Delete lead documents
-    await supabase.from('lead_documents').delete().eq('lead_id', lead.id).catch(() => {});
+    try { await supabase.from('lead_documents').delete().eq('lead_id', lead.id); } catch (_) {}
 
     // Delete lead activities
-    await supabase.from('lead_activities').delete().eq('lead_id', lead.id).catch(() => {});
+    try { await supabase.from('crm_activities').delete().eq('lead_id', lead.id); } catch (_) {}
 
     // Delete lead
     const { error } = await supabase.from('crm_leads').delete().eq('id', lead.id);
