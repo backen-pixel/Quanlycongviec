@@ -1388,6 +1388,21 @@ r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
     await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', req.params.id);
     await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', req.params.id);
 
+    // Xóa lead/deal liên kết (cascade: activities, documents, quotations, orders, invoices)
+    const { data: linkedLeads } = await supabase.from('crm_leads').select('id').eq('project_id', req.params.id);
+    if (linkedLeads?.length) {
+      const leadIds = linkedLeads.map(l => l.id);
+      // Delete CRM sub-tables
+      await supabase.from('crm_quotations').delete().in('lead_id', leadIds).catch(() => {});
+      await supabase.from('crm_orders').delete().in('lead_id', leadIds).catch(() => {});
+      await supabase.from('crm_invoices').delete().in('lead_id', leadIds).catch(() => {});
+      await supabase.from('crm_activities').delete().in('lead_id', leadIds).catch(() => {});
+      await supabase.from('lead_documents').delete().in('lead_id', leadIds).catch(() => {});
+      // Delete leads/deals
+      await supabase.from('crm_leads').delete().in('id', leadIds);
+      console.log(`Project ${req.params.id} → deleted ${leadIds.length} linked lead(s)/deal(s)`);
+    }
+
     // Xóa project
     const { error } = await supabase.from('projects').delete().eq('id', req.params.id);
     if (error) throw error;
