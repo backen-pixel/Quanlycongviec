@@ -772,18 +772,22 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
         // 1. Link deal → project
         await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', b.deal_id);
 
-        // 2. Auto-complete consulting tasks (Khối KD đã hoàn thành)
-        const kdSlugs = ['consulting', 'design', 'quotation', 'contract'];
-        const { data: kdStages } = await supabase.from('workflow_stages')
-          .select('id, slug').in('slug', kdSlugs).eq('is_active', true);
-        const kdStageIds = (kdStages || []).map(s => s.id);
+        // 2. Auto-complete TẤT CẢ tasks Khối KD (đã hoàn thành trước khi tạo dự án)
+        const kdBaseSlugs = ['consulting', 'design', 'quotation', 'contract'];
+        const { data: allStages } = await supabase.from('workflow_stages')
+          .select('id, slug').eq('is_active', true);
+        // Match cả slug gốc và slug có suffix company (e.g. consulting-29677f68)
+        const kdStageIds = (allStages || [])
+          .filter(s => kdBaseSlugs.some(base => s.slug === base || s.slug.startsWith(base + '-')))
+          .map(s => s.id);
         
         if (kdStageIds.length) {
-          await supabase.from('tasks')
+          const { data: completedTasks } = await supabase.from('tasks')
             .update({ status: 'completed', completed_at: new Date().toISOString() })
             .eq('project_id', projectId)
-            .in('stage_id', kdStageIds);
-          console.log(`[deal] Auto-completed ${kdSlugs.join(',')} tasks for project ${projectId}`);
+            .in('stage_id', kdStageIds)
+            .select('id');
+          console.log(`[deal] Auto-completed ${completedTasks?.length || 0} KD tasks (stages: ${kdStageIds.length})`);
         }
 
         // Also complete tasks with metadata matching KD process names
@@ -797,8 +801,17 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           await supabase.from('tasks')
             .update({ status: 'completed', completed_at: new Date().toISOString() })
             .in('id', kdTaskIds);
-          console.log(`[deal] Auto-completed ${kdTaskIds.length} KD process tasks`);
+          console.log(`[deal] Auto-completed ${kdTaskIds.length} more KD tasks by process name`);
         }
+
+        // 2b. Update project status → production (KD đã xong, bắt đầu SX)
+        const { data: prodStage } = await supabase.from('workflow_stages')
+          .select('id').eq('slug', 'production').limit(1).single();
+        await supabase.from('projects').update({
+          status: 'producing',
+          current_stage_id: prodStage?.id || null,
+        }).eq('id', projectId);
+        console.log(`[deal] Project status → producing`);
 
         // 3. Copy documents from deal/lead to project (store as quotation_files JSON)
         const { data: dealDocs } = await supabase.from('lead_documents')
