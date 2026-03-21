@@ -78,8 +78,14 @@ export default function ProjectDetail() {
   useEffect(() => { load(); api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}); }, [id]);
 
   const deleteProject = async () => {
-    if (!confirm('Xóa dự án này?')) return;
-    await api.delete(`/projects/${id}`); navigate('/projects');
+    const msg = `⚠️ Xóa dự án "${project?.name}"?\n\nSẽ xóa luôn:\n• Tất cả nhiệm vụ và checklist\n• Lead/Deal liên kết (nếu có)\n• Tài liệu, báo giá, đơn hàng, hóa đơn\n• Comments, approvals, workflow lines\n\nHành động này KHÔNG THỂ hoàn tác!`;
+    if (!confirm(msg)) return;
+    try {
+      await api.delete(`/projects/${id}`);
+      navigate('/projects');
+    } catch (e) {
+      alert('Lỗi xóa: ' + (e.response?.data?.error || e.message));
+    }
   };
 
   const startEditing = () => {
