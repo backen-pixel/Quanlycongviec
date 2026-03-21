@@ -47,17 +47,19 @@ ALTER TABLE lead_documents DROP CONSTRAINT IF EXISTS lead_documents_lead_id_fkey
 ALTER TABLE lead_documents ADD CONSTRAINT lead_documents_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
 
--- Quotations → CASCADE khi xóa lead
+-- Quotations → CASCADE khi xóa lead (quotations CÓ lead_id)
 ALTER TABLE quotations DROP CONSTRAINT IF EXISTS quotations_lead_id_fkey;
 ALTER TABLE quotations ADD CONSTRAINT quotations_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
 
--- Orders → CASCADE khi xóa lead
+-- Orders: thêm lead_id nếu chưa có, rồi CASCADE
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS lead_id UUID;
 ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_lead_id_fkey;
 ALTER TABLE orders ADD CONSTRAINT orders_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
 
--- Invoices → CASCADE khi xóa lead
+-- Invoices: thêm lead_id nếu chưa có, rồi CASCADE
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS lead_id UUID;
 ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_lead_id_fkey;
 ALTER TABLE invoices ADD CONSTRAINT invoices_lead_id_fkey 
   FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE;
