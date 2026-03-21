@@ -155,7 +155,7 @@ export default function App() {
             <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
-            <Route path="/crm/customers" element={<CRMCustomersPage />} />
+            <Route path="/crm/customers" element={<CustomersPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/settings" element={

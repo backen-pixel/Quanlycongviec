@@ -37,7 +37,27 @@ export default function CustomersPage() {
   const deleteCustomer = async (e, id, name) => {
     e.stopPropagation();
     if (!confirm(`Xóa khách hàng "${name}"?`)) return;
-    try { await api.delete(`/customers/${id}`); load(); } catch (err) { alert(err.response?.data?.error || 'Lỗi'); }
+    try {
+      await api.delete(`/customers/${id}`);
+      load();
+    } catch (err) {
+      const data = err.response?.data;
+      // Backend returns linked counts → ask to force delete
+      if (data?.linked) {
+        const { projects, leads, quotations } = data.linked;
+        const msg = `⚠️ Khách hàng "${name}" có:\n• ${projects} dự án\n• ${leads} lead/deal\n• ${quotations} báo giá\n\nXóa TẤT CẢ dữ liệu liên quan?\nHành động này KHÔNG THỂ hoàn tác!`;
+        if (confirm(msg)) {
+          try {
+            await api.delete(`/customers/${id}?force=true`);
+            load();
+          } catch (e2) {
+            alert('Lỗi xóa: ' + (e2.response?.data?.error || e2.message));
+          }
+        }
+      } else {
+        alert('Lỗi: ' + (data?.error || err.message));
+      }
+    }
   };
 
   // Helper: get status display for a customer
