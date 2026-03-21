@@ -1392,10 +1392,10 @@ r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
     const { data: linkedLeads } = await supabase.from('crm_leads').select('id').eq('project_id', req.params.id);
     if (linkedLeads?.length) {
       const leadIds = linkedLeads.map(l => l.id);
-      // Delete CRM sub-tables
-      await supabase.from('crm_quotations').delete().in('lead_id', leadIds).catch(() => {});
-      await supabase.from('crm_orders').delete().in('lead_id', leadIds).catch(() => {});
-      await supabase.from('crm_invoices').delete().in('lead_id', leadIds).catch(() => {});
+      // Delete CRM sub-tables (correct table names)
+      await supabase.from('quotations').delete().in('lead_id', leadIds).catch(() => {});
+      await supabase.from('orders').delete().in('lead_id', leadIds).catch(() => {});
+      await supabase.from('invoices').delete().in('lead_id', leadIds).catch(() => {});
       await supabase.from('crm_activities').delete().in('lead_id', leadIds).catch(() => {});
       await supabase.from('lead_documents').delete().in('lead_id', leadIds).catch(() => {});
       // Delete leads/deals
