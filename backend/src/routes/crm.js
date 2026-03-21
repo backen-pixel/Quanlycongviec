@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const PDFDocument = require('pdfkit');
+const { generateFlowTasks } = require('../helpers/generateFlowTasks');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
 const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [], createProjectFromLead = async () => null } = autoFlowFns;
@@ -607,227 +608,17 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     if (projectError) throw projectError;
 
     // ═══════════════════════════════════════════════════════════════
-    // Generate tasks from flow: processes + template set (user-chosen or default)
-    // NO hardcoded 24-task fallback — only flow-defined tasks
+    // Generate tasks from flow — uses shared helper (same as create-with-flow)
     // ═══════════════════════════════════════════════════════════════
     let allCreatedTasks = [];
     try {
-      // Get flow steps
-      const { data: flowSteps } = await supabase
-        .from('workflow_flow_steps')
-        .select(`
-          id, order_index, division_unit_id, company_unit_id, template_set_id,
-          division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name),
-          company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name)
-        `)
-        .eq('flow_id', flow_id)
-        .order('order_index');
-
-      console.log(`Convert-to-deal: flow ${flow_id} has ${flowSteps?.length || 0} steps`);
-
-      // Pre-load: map division_unit_id → stage_group → workflow_stage.id
-      // So we can assign correct stage_id to tasks
-      const divStageMap = {}; // { division_unit_id: [stage_id, ...] }
-      try {
-        const { data: stageGroups } = await supabase.from('workflow_stage_groups')
-          .select('id, slug, division_unit_id')
-          .eq('is_active', true);
-        const { data: globalStages } = await supabase.from('workflow_stages')
-          .select('id, slug, order_index')
-          .is('company_id', null)
-          .eq('is_active', true)
-          .order('order_index');
-
-        // Map stage_group slug → workflow stages
-        const slugToStageMap = {
-          'business': ['consulting', 'design', 'quotation', 'contract'],
-          'production': ['production'],
-          'shipping': ['shipping'],
-          'installation': ['installation', 'customer-care'],
-          'customer-care': ['customer-care'],
-        };
-
-        for (const sg of (stageGroups || [])) {
-          if (!sg.division_unit_id) continue;
-          const stageSlugs = slugToStageMap[sg.slug] || [];
-          const stageIds = stageSlugs
-            .map(slug => (globalStages || []).find(s => s.slug === slug)?.id)
-            .filter(Boolean);
-          if (stageIds.length) {
-            divStageMap[sg.division_unit_id] = stageIds;
-          }
-        }
-        console.log('  divStageMap:', Object.fromEntries(
-          Object.entries(divStageMap).map(([k,v]) => [k.substring(0,8), v.map(id=>id.substring(0,8))])
-        ));
-      } catch (e) { console.error('Stage map error:', e.message); }
-
-      if (flowSteps?.length) {
-        for (const step of flowSteps) {
-          // ── Resolve template set: user-chosen > step default > auto-find default for company ──
-          let resolvedTemplateSetId = (step_template_sets && step_template_sets[step.id]) || step.template_set_id || null;
-          console.log(`  Step ${step.id} (order=${step.order_index}): user_chose=${step_template_sets ? step_template_sets[step.id] || 'none' : 'no map'}, step_default=${step.template_set_id || 'none'}, resolved=${resolvedTemplateSetId || 'none'}`);
-
-          // Auto-find default template set if none specified
-          if (!resolvedTemplateSetId && step.company_unit_id) {
-            const { data: defaultSets } = await supabase.from('company_template_sets')
-              .select('id')
-              .eq('unit_id', step.company_unit_id)
-              .eq('is_default', true)
-              .eq('is_active', true)
-              .limit(1);
-            if (defaultSets?.length) resolvedTemplateSetId = defaultSets[0].id;
-          }
-          // If still none, try any template set under division's companies
-          if (!resolvedTemplateSetId && step.division_unit_id) {
-            const { data: companyUnits } = await supabase.from('ecosystem_units')
-              .select('id').eq('parent_id', step.division_unit_id).eq('is_active', true);
-            const unitIds = (companyUnits || []).map(u => u.id);
-            if (unitIds.length) {
-              const { data: defaultSets } = await supabase.from('company_template_sets')
-                .select('id')
-                .in('unit_id', unitIds)
-                .eq('is_default', true)
-                .eq('is_active', true)
-                .limit(1);
-              if (defaultSets?.length) resolvedTemplateSetId = defaultSets[0].id;
-            }
-          }
-
-          // Resolve stage_ids for this step's division
-          const stepStageIds = divStageMap[step.division_unit_id] || [];
-          const defaultStageId = stepStageIds[0] || null;
-
-          console.log(`  Step ${step.order_index} (defaultStage=${defaultStageId?.substring(0,8)||'none'}): template_set=${resolvedTemplateSetId || 'none'}`);
-
-          // Save project_company_assignment
-          try {
-            if (step.division_unit_id) {
-              await supabase.from('project_company_assignments').upsert({
-                project_id: project.id,
-                division_unit_id: step.division_unit_id,
-                company_unit_id: step.company_unit_id,
-                template_set_id: resolvedTemplateSetId,
-                order_index: step.order_index || 0,
-                status: step.order_index === 0 ? 'in_progress' : 'pending',
-                started_at: step.order_index === 0 ? new Date().toISOString() : null,
-              }, { onConflict: 'project_id,division_unit_id' });
-            }
-          } catch (e) { console.error('Assignment upsert:', e.message); }
-
-          // ═══ TASK GENERATION: Template REPLACES process for matching stages ═══
-          // company_process_tasks has NO stage_id → stage determined by process name
-          // company_template_tasks HAS stage_id → use to collect covered stage slugs
-
-          // Process name → stage slug mapping
-          const PROCESS_STAGE_MAP = {
-            'Tiếp nhận & Tư vấn': 'consulting',
-            'Thiết kế': 'design',
-            'Báo giá & Hợp đồng': 'quotation',
-            'Sản xuất': 'production',
-            'Giao hàng': 'shipping',
-            'Giao hàng ': 'shipping',
-            'Lắp đặt': 'installation',
-            'Chăm sóc KH': 'customer-care',
-            'Chăm sóc khách hàng': 'customer-care',
-          };
-
-          // Collect template stage slugs
-          const templateStageSlugs = new Set();
-          let templateTasks = [];
-          if (resolvedTemplateSetId) {
-            const { data: tplTasks } = await supabase.from('company_template_tasks')
-              .select('*, checklists:company_template_checklists(*), stage:workflow_stages(id,name,slug)')
-              .eq('template_set_id', resolvedTemplateSetId)
-              .order('order_index');
-            templateTasks = tplTasks || [];
-            templateTasks.forEach(t => { if (t.stage?.slug) templateStageSlugs.add(t.stage.slug.replace(/-[a-f0-9]{8}$/, '')); });
-            console.log(`    Template ${resolvedTemplateSetId.substring(0,8)}: ${templateTasks.length} tasks, covers: [${[...templateStageSlugs]}]`);
-          }
-
-          // Create template tasks first
-          for (const t of templateTasks) {
-            let deadline = null;
-            if (t.deadline_days > 0) {
-              const d = new Date(); d.setDate(d.getDate() + t.deadline_days);
-              deadline = d.toISOString();
-            }
-            const { data: task, error: taskErr } = await supabase.from('tasks').insert({
-              project_id: project.id, stage_id: t.stage_id || defaultStageId,
-              title: t.title, description: t.description || null,
-              assignee_id: t.assigned_user_id || t.default_assignee_id || null,
-              priority: t.priority || 'medium', status: 'pending',
-              order_index: t.order_index, created_by_id: req.user.userId,
-              deadline, task_type: 'project',
-              metadata: { template_task_id: t.id, template_set_id: resolvedTemplateSetId, flow_step_id: step.id },
-            }).select().single();
-            if (taskErr) { console.error('Template task error:', taskErr); continue; }
-            if (t.checklists?.length && task) {
-              for (const c of t.checklists) {
-                try { await supabase.from('task_checklists').insert({ task_id: task.id, title: c.title || c.label, order_index: c.order_index || 0, is_completed: false }); }
-                catch (ce) { console.warn('Template CL:', ce.message); }
-              }
-            }
-            if (task) allCreatedTasks.push(task);
-          }
-
-          // Create process tasks — SKIP entire process if its stage is covered by template
-          try {
-            const { data: stepProcs } = await supabase.from('flow_step_processes')
-              .select('*, process:company_processes(id,name)')
-              .eq('flow_step_id', step.id)
-              .order('order_index');
-
-            for (const sp of (stepProcs || [])) {
-              const processName = sp.process?.name?.trim() || '';
-              const processSlug = PROCESS_STAGE_MAP[processName];
-
-              // SKIP entire process if template covers this stage
-              if (processSlug && templateStageSlugs.has(processSlug)) {
-                console.log(`    SKIP process "${processName}" (stage ${processSlug} covered by template)`);
-                continue;
-              }
-
-              const { data: procTasks } = await supabase.from('company_process_tasks')
-                .select('*, checklists:company_process_checklists(*)')
-                .eq('process_id', sp.process_id)
-                .order('order_index');
-
-              console.log(`    Process "${processName}": ${procTasks?.length || 0} tasks`);
-
-              for (const t of (procTasks || [])) {
-                let deadline = null;
-                if (t.deadline_days > 0 || t.deadline_hours > 0) {
-                  const d = new Date();
-                  if (t.deadline_days > 0) d.setDate(d.getDate() + t.deadline_days);
-                  if (t.deadline_hours > 0) d.setHours(d.getHours() + t.deadline_hours);
-                  deadline = d.toISOString();
-                }
-                const { data: task, error: taskErr } = await supabase.from('tasks').insert({
-                  project_id: project.id, stage_id: null,
-                  title: t.title, description: t.description || null,
-                  assignee_id: t.default_assignee_id || null,
-                  priority: t.priority || 'medium', status: 'pending',
-                  order_index: t.order_index, created_by_id: req.user.userId,
-                  deadline, task_type: 'project',
-                  metadata: { process_id: sp.process_id, process_task_id: t.id, process_name: processName, flow_step_id: step.id },
-                }).select().single();
-                if (taskErr) { console.error('Process task error:', taskErr); continue; }
-                if (t.checklists?.length && task) {
-                  for (const c of t.checklists) {
-                    try { await supabase.from('task_checklists').insert({ task_id: task.id, title: c.label || c.title || 'Checklist', order_index: c.order_index || 0, is_completed: false }); }
-                    catch (ce) { console.warn('Process CL:', ce.message); }
-                  }
-                }
-                if (task) allCreatedTasks.push(task);
-              }
-            }
-          } catch (e) { console.error('Process tasks error:', e.message); }
-
-        }
-      }
-
-      console.log(`Convert-to-deal: Total ${allCreatedTasks.length} tasks created from flow`);
+      allCreatedTasks = await generateFlowTasks({
+        projectId: project.id,
+        flowId: flow_id,
+        stepTemplateSets: step_template_sets || {},
+        userId: req.user.userId,
+      });
+      console.log(`Convert-to-deal: ${allCreatedTasks.length} tasks created`);
     } catch (flowErr) {
       console.error('Flow task generation error:', flowErr);
     }
