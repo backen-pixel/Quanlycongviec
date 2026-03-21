@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { FileUploadButton } from '../components/FileUpload';
 import EmployeePicker from '../components/EmployeePicker';
@@ -16,9 +16,11 @@ const formatVND = (value) => {
 
 export default function CreateProject() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const dealId = searchParams.get('deal_id');
   const [form, setForm] = useState({
     name: '', description: '', customer_id: '', install_address: '', 
-    estimated_value: '', priority: 'medium'
+    estimated_value: '', priority: 'medium', deadline: ''
   });
   const [customers, setCustomers] = useState([]);
   const [flows, setFlows] = useState([]);
@@ -51,6 +53,22 @@ export default function CreateProject() {
         if (def) selectFlow(def);
       }).catch(() => setFlows([])),
     ]);
+    // Auto-fill from deal
+    if (dealId) {
+      api.get(`/crm/leads/${dealId}/detail`).then(r => {
+        const deal = r.data;
+        if (deal) {
+          setForm(f => ({
+            ...f,
+            name: deal.title || f.name,
+            description: deal.description || f.description,
+            customer_id: deal.customer_id || f.customer_id,
+            install_address: deal.customer?.address || f.install_address,
+            estimated_value: deal.estimated_value ? String(deal.estimated_value) : f.estimated_value,
+          }));
+        }
+      }).catch(() => {});
+    }
   }, []);
 
   const set = (k, v) => {
@@ -203,7 +221,9 @@ export default function CreateProject() {
           })),
         quotation_files: quotationFiles,
         task_assignments: taskAssignees,
-        added_tasks: addedTasksArray, // New tasks to add to template set
+        added_tasks: addedTasksArray,
+        deal_id: dealId || null,
+        deadline: form.deadline || null,
       };
       const { data } = await api.post('/projects/create-with-flow', payload);
       navigate(`/projects/${data.project.id}`);
@@ -264,7 +284,9 @@ export default function CreateProject() {
       {/* Header */}
       <div data-tour="create-header" className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Tạo Dự Án Mới</h1>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {dealId ? '🎉 Tạo Dự Án Từ Deal' : 'Tạo Dự Án Mới'}
+          </h1>
           <p className="text-sm text-gray-600 mt-1">Nhập thông tin, chọn luồng và phân công nhiệm vụ</p>
         </div>
         <button
@@ -486,6 +508,18 @@ export default function CreateProject() {
                     <option value="medium">🟡 Trung Bình</option>
                     <option value="high">🔴 Cao</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                    📅 Hạn Chót Dự Án
+                  </label>
+                  <input
+                    type="date"
+                    value={form.deadline || ''}
+                    onChange={e => set('deadline', e.target.value)}
+                    className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500"
+                  />
                 </div>
               </div>
             </div>
