@@ -36,6 +36,7 @@ export default function CustomersPage() {
 
   const deleteCustomer = async (e, id, name) => {
     e.stopPropagation();
+    e.preventDefault();
     if (!confirm(`Xóa khách hàng "${name}"?`)) return;
     try {
       await api.delete(`/customers/${id}`);
