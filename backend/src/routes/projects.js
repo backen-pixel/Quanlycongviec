@@ -759,9 +759,73 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       }
     }
 
+    // ── DEAL INTEGRATION: Auto-complete KD tasks + copy documents + link deal ──
+    if (b.deal_id) {
+      try {
+        // 1. Link deal → project
+        await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', b.deal_id);
+
+        // 2. Auto-complete consulting tasks (Khối KD đã hoàn thành)
+        const kdSlugs = ['consulting', 'design', 'quotation', 'contract'];
+        const { data: kdStages } = await supabase.from('workflow_stages')
+          .select('id, slug').in('slug', kdSlugs).eq('is_active', true);
+        const kdStageIds = (kdStages || []).map(s => s.id);
+        
+        if (kdStageIds.length) {
+          await supabase.from('tasks')
+            .update({ status: 'completed', completed_at: new Date().toISOString() })
+            .eq('project_id', projectId)
+            .in('stage_id', kdStageIds);
+          console.log(`[deal] Auto-completed ${kdSlugs.join(',')} tasks for project ${projectId}`);
+        }
+
+        // Also complete tasks with metadata matching KD process names
+        const { data: allTasks } = await supabase.from('tasks')
+          .select('id, metadata').eq('project_id', projectId).eq('status', 'pending');
+        const kdProcessNames = ['Tiếp nhận & Tư vấn', 'Thiết kế', 'Báo giá & Hợp đồng'];
+        const kdTaskIds = (allTasks || [])
+          .filter(t => t.metadata?.process_name && kdProcessNames.includes(t.metadata.process_name))
+          .map(t => t.id);
+        if (kdTaskIds.length) {
+          await supabase.from('tasks')
+            .update({ status: 'completed', completed_at: new Date().toISOString() })
+            .in('id', kdTaskIds);
+          console.log(`[deal] Auto-completed ${kdTaskIds.length} KD process tasks`);
+        }
+
+        // 3. Copy documents from deal/lead to project
+        const { data: dealDocs } = await supabase.from('lead_documents')
+          .select('*').eq('lead_id', b.deal_id);
+        if (dealDocs?.length) {
+          for (const doc of dealDocs) {
+            await supabase.from('project_documents').insert({
+              project_id: projectId,
+              name: doc.name || doc.file_name,
+              file_url: doc.file_url || doc.url,
+              file_type: doc.file_type || doc.type,
+              file_size: doc.file_size || doc.size,
+              uploaded_by: req.user.userId,
+              description: `Từ ${doc.doc_type || 'Lead/Deal'}: ${doc.name || doc.file_name}`,
+            }).then(() => {}).catch(e => console.warn('Doc copy:', e.message));
+          }
+          console.log(`[deal] Copied ${dealDocs.length} documents to project ${projectId}`);
+        }
+
+        // 4. Log activity
+        await supabase.from('crm_activities').insert({
+          lead_id: b.deal_id, type: 'note',
+          title: '📋 Dự án đã tạo',
+          description: `Dự án ${code} đã được tạo từ Deal với ${allCreatedTasks.length} nhiệm vụ`,
+          created_by: req.user.userId,
+        }).catch(() => {});
+      } catch (dealErr) {
+        console.error('[deal] Integration error:', dealErr.message);
+      }
+    }
+
     // Activity log
     await logActivity(req.user.userId, 'created', 'project', projectId,
-      `Tạo dự án ${code}: ${b.name}${b.flow_id ? ' (theo luồng)' : ''}`);
+      `Tạo dự án ${code}: ${b.name}${b.flow_id ? ' (theo luồng)' : ''}${b.deal_id ? ' (từ Deal)' : ''}`);
 
     res.status(201).json({
       project,

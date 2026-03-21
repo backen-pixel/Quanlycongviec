@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import { TourButton } from '../components/WebTour';
 import { crmTour } from '../lib/tourSteps';
+import ProjectCreateModalFullScreen from '../components/ProjectCreateModalFullScreen';
 import {
   TrendingUp, Users, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
@@ -27,6 +28,7 @@ export default function CRMDashboard() {
   const [pipelineType, setPipelineType] = useState('lead'); // lead | deal
   const [showNewLead, setShowNewLead] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [dealForProject, setDealForProject] = useState(null); // Deal data to create project from
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
@@ -106,6 +108,11 @@ export default function CRMDashboard() {
 
       if (data.auto_project) {
         alert(`🎉 Deal Thắng! Dự án ${data.auto_project.code || ''} đã liên kết.`);
+      }
+
+      // Deal → Thắng: open project creation modal
+      if (data.requires_project_creation && data.deal_info) {
+        setDealForProject(data.deal_info);
       }
     } catch (e) {
       console.error(e);
@@ -288,6 +295,17 @@ export default function CRMDashboard() {
           defaultCompanyId={filterCompany}
         />
       )}
+
+      {/* Project Creation Modal — opens when Deal → Thắng */}
+      <ProjectCreateModalFullScreen
+        open={!!dealForProject}
+        onClose={() => setDealForProject(null)}
+        onCreated={() => {
+          setDealForProject(null);
+          loadData();
+        }}
+        dealData={dealForProject}
+      />
     </div>
   );
 }

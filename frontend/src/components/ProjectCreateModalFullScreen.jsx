@@ -7,7 +7,7 @@ import {
   FileText, StickyNote, GitBranch, Star, ArrowRight, Clock, Building2, Save
 } from 'lucide-react';
 
-export default function ProjectCreateModalFullScreen({ open, onClose, onCreated }) {
+export default function ProjectCreateModalFullScreen({ open, onClose, onCreated, dealData }) {
   const [form, setForm] = useState({});
   const [customers, setCustomers] = useState([]);
   const [flows, setFlows] = useState([]);
@@ -25,7 +25,16 @@ export default function ProjectCreateModalFullScreen({ open, onClose, onCreated 
 
   useEffect(() => {
     if (!open) return;
-    setForm({ name: '', description: '', customer_id: '', install_address: '', estimated_value: '', priority: 'medium' });
+    // Auto-fill from deal if provided
+    const initForm = {
+      name: dealData?.title || '',
+      description: dealData?.description || '',
+      customer_id: dealData?.customer_id || '',
+      install_address: dealData?.customer?.address || '',
+      estimated_value: dealData?.estimated_value || '',
+      priority: 'medium',
+    };
+    setForm(initForm);
     setSelectedFlow(null);
     setFlowDetail(null);
     setQuotationFiles([]);
@@ -119,6 +128,7 @@ export default function ProjectCreateModalFullScreen({ open, onClose, onCreated 
           order_index: s.order_index,
         })),
         quotation_files: quotationFiles,
+        deal_id: dealData?.id || null,
       };
       await api.post('/projects/create-with-flow', payload);
       onCreated?.();
@@ -133,7 +143,9 @@ export default function ProjectCreateModalFullScreen({ open, onClose, onCreated 
     <div className="fixed inset-0 bg-black/50 z-50 flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between bg-white border-b p-4 shrink-0">
-        <h1 className="text-2xl font-bold text-gray-900">Tạo dự án mới</h1>
+        <h1 className="text-2xl font-bold text-gray-900">
+          {dealData ? `🎉 Tạo dự án từ Deal: ${dealData.title || ''}` : 'Tạo dự án mới'}
+        </h1>
         <button onClick={onClose} className="w-10 h-10 flex items-center justify-center hover:bg-gray-100 rounded-lg cursor-pointer">
           <X className="h-6 w-6 text-gray-600" />
         </button>
