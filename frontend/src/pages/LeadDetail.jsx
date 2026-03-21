@@ -75,9 +75,18 @@ export default function LeadDetail() {
   };
 
   const deleteLead = async () => {
-    if (!confirm('Xóa lead này?')) return;
-    await api.delete(`/crm/leads/${id}`);
-    navigate('/crm');
+    const type = lead?.type === 'deal' ? 'Deal' : 'Lead';
+    const hasProject = lead?.project_id;
+    const msg = hasProject
+      ? `⚠️ Xóa ${type} "${lead.title}"?\n\nSẽ xóa luôn:\n• Dự án liên kết và tất cả nhiệm vụ\n• Tài liệu, báo giá, đơn hàng, hóa đơn\n\nHành động này KHÔNG THỂ hoàn tác!`
+      : `Xóa ${type} "${lead.title}"?\n\nSẽ xóa luôn tài liệu, hoạt động liên quan.\nHành động này không thể hoàn tác.`;
+    if (!confirm(msg)) return;
+    try {
+      await api.delete(`/crm/leads/${id}`);
+      navigate('/crm');
+    } catch (e) {
+      alert('Lỗi xóa: ' + (e.response?.data?.error || e.message));
+    }
   };
 
   const startEditField = (field, value) => {

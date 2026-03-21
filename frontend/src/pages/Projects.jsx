@@ -187,8 +187,11 @@ export default function Projects() {
 
   const deleteProject = async (e, id, code) => {
     e.preventDefault(); e.stopPropagation();
-    if (!confirm(`Xóa dự án ${code}?`)) return;
-    try { await api.delete(`/projects/${id}`); load(); } catch {}
+    const msg = `⚠️ Xóa dự án "${code}"?\n\nSẽ xóa luôn tất cả nhiệm vụ, lead/deal liên kết, tài liệu.\nHành động này KHÔNG THỂ hoàn tác!`;
+    if (!confirm(msg)) return;
+    try { await api.delete(`/projects/${id}`); load(); } catch (err) {
+      alert('Lỗi xóa: ' + (err.response?.data?.error || err.message));
+    }
   };
 
   // Filters
