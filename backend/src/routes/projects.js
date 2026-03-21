@@ -743,9 +743,22 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
         }, { onConflict: 'project_id,division_unit_id' });
 
         // ── GENERATE TASKS: Template REPLACES process for matching stages ──
-        // 1. Load template tasks → collect which stage_ids are covered by template
-        // 2. Load process tasks → skip processes whose stage is already covered by template
-        // 3. Create: template tasks first, then remaining process tasks
+        // company_process_tasks has NO stage_id → stage determined by process name
+        // company_template_tasks HAS stage_id → use to collect covered stage_ids
+        // Logic: template tasks replace ALL tasks from processes whose name maps to same stage
+
+        // Process name → stage slug mapping
+        const PROCESS_STAGE_MAP = {
+          'Tiếp nhận & Tư vấn': 'consulting',
+          'Thiết kế': 'design',
+          'Báo giá & Hợp đồng': 'quotation',
+          'Sản xuất': 'production',
+          'Giao hàng': 'shipping',
+          'Giao hàng ': 'shipping',
+          'Lắp đặt': 'installation',
+          'Chăm sóc KH': 'customer-care',
+          'Chăm sóc khách hàng': 'customer-care',
+        };
 
         // Find flow step
         const { data: flowStep } = await supabase.from('workflow_flow_steps')
@@ -760,7 +773,8 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
             .eq('template_set_id', assignment.template_set_id)
             .order('order_index');
           templateTasks = tplTasks || [];
-          templateTasks.forEach(t => { if (t.stage?.slug) templateStageSlugs.add(t.stage.slug); });
+          templateTasks.forEach(t => { if (t.stage?.slug) templateStageSlugs.add(t.stage.slug.replace(/-[a-f0-9]{8}$/, '')); });
+          console.log(`[create-with-flow] Template ${assignment.template_set_id.substring(0,8)}: ${templateTasks.length} tasks, covers stages: [${[...templateStageSlugs]}]`);
         }
 
         // Create template tasks (these REPLACE process tasks for matching stages)
@@ -779,7 +793,6 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           }).select().single();
           if (taskErr) { console.error('Template task error:', taskErr); continue; }
 
-          // Create checklists
           if (t.checklists?.length && task) {
             for (const c of t.checklists) {
               try {
@@ -792,7 +805,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           if (task) allCreatedTasks.push(task);
         }
 
-        // Create process tasks — ONLY for stages NOT covered by template
+        // Create process tasks — SKIP entire process if its stage is covered by template
         if (flowStep) {
           const { data: stepProcs } = await supabase.from('flow_step_processes')
             .select('*, process:company_processes(id, name)')
@@ -800,25 +813,33 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
             .order('order_index');
 
           for (const sp of (stepProcs || [])) {
+            const processName = sp.process?.name?.trim() || '';
+            const processSlug = PROCESS_STAGE_MAP[processName];
+
+            // SKIP entire process if template covers this stage
+            if (processSlug && templateStageSlugs.has(processSlug)) {
+              console.log(`[create-with-flow] SKIP process "${processName}" (stage ${processSlug} covered by template)`);
+              continue;
+            }
+
             const { data: procTasks } = await supabase.from('company_process_tasks')
-              .select('*, checklists:company_process_checklists(*), stage:workflow_stages(id, name, slug)')
+              .select('*, checklists:company_process_checklists(*)')
               .eq('process_id', sp.process_id)
               .order('order_index');
 
-            for (const pt of (procTasks || [])) {
-              // SKIP if this stage is already covered by template
-              if (pt.stage?.slug && templateStageSlugs.has(pt.stage.slug)) continue;
+            console.log(`[create-with-flow] Process "${processName}": ${procTasks?.length || 0} tasks (stage ${processSlug || 'unknown'})`);
 
+            for (const pt of (procTasks || [])) {
               const taskKey = `process_task_${pt.id}`;
-              const finalAssignee = b.task_assignments?.[taskKey] || pt.assigned_user_id || null;
+              const finalAssignee = b.task_assignments?.[taskKey] || pt.default_assignee_id || null;
 
               const { data: task, error: taskErr } = await supabase.from('tasks').insert({
-                project_id: projectId, stage_id: pt.stage_id || null, title: pt.title,
+                project_id: projectId, stage_id: null, title: pt.title,
                 description: pt.description || null, assignee_id: finalAssignee,
                 priority: pt.priority || 'medium', status: 'pending',
                 order_index: pt.order_index || 0, created_by_id: req.user.userId,
                 task_type: 'project',
-                metadata: { process_id: sp.process_id, process_task_id: pt.id, process_name: sp.process?.name },
+                metadata: { process_id: sp.process_id, process_task_id: pt.id, process_name: processName },
               }).select().single();
               if (taskErr) { console.error('Process task error:', taskErr); continue; }
 

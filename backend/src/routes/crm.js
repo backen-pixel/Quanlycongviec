@@ -716,9 +716,21 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
           } catch (e) { console.error('Assignment upsert:', e.message); }
 
           // ═══ TASK GENERATION: Template REPLACES process for matching stages ═══
-          // 1. Load template tasks → collect which stage_ids are covered
-          // 2. Create template tasks first (they replace process tasks for same stage)
-          // 3. Create process tasks ONLY for stages NOT covered by template
+          // company_process_tasks has NO stage_id → stage determined by process name
+          // company_template_tasks HAS stage_id → use to collect covered stage slugs
+
+          // Process name → stage slug mapping
+          const PROCESS_STAGE_MAP = {
+            'Tiếp nhận & Tư vấn': 'consulting',
+            'Thiết kế': 'design',
+            'Báo giá & Hợp đồng': 'quotation',
+            'Sản xuất': 'production',
+            'Giao hàng': 'shipping',
+            'Giao hàng ': 'shipping',
+            'Lắp đặt': 'installation',
+            'Chăm sóc KH': 'customer-care',
+            'Chăm sóc khách hàng': 'customer-care',
+          };
 
           // Collect template stage slugs
           const templateStageSlugs = new Set();
@@ -729,11 +741,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
               .eq('template_set_id', resolvedTemplateSetId)
               .order('order_index');
             templateTasks = tplTasks || [];
-            templateTasks.forEach(t => { if (t.stage?.slug) templateStageSlugs.add(t.stage.slug); });
-            console.log(`    Template ${resolvedTemplateSetId.substring(0,8)}: ${templateTasks.length} tasks, stages: [${[...templateStageSlugs].join(',')}]`);
+            templateTasks.forEach(t => { if (t.stage?.slug) templateStageSlugs.add(t.stage.slug.replace(/-[a-f0-9]{8}$/, '')); });
+            console.log(`    Template ${resolvedTemplateSetId.substring(0,8)}: ${templateTasks.length} tasks, covers: [${[...templateStageSlugs]}]`);
           }
 
-          // Create template tasks
+          // Create template tasks first
           for (const t of templateTasks) {
             let deadline = null;
             if (t.deadline_days > 0) {
@@ -759,30 +771,31 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             if (task) allCreatedTasks.push(task);
           }
 
-          // Create process tasks — ONLY for stages NOT covered by template
+          // Create process tasks — SKIP entire process if its stage is covered by template
           try {
             const { data: stepProcs } = await supabase.from('flow_step_processes')
-              .select('*, process:company_processes(id,name,icon,order_index)')
+              .select('*, process:company_processes(id,name)')
               .eq('flow_step_id', step.id)
               .order('order_index');
 
-            for (let procIdx = 0; procIdx < (stepProcs || []).length; procIdx++) {
-              const sp = stepProcs[procIdx];
-              const proc = sp.process;
-              if (!proc) continue;
-              const processStageId = stepStageIds[procIdx] || defaultStageId;
+            for (const sp of (stepProcs || [])) {
+              const processName = sp.process?.name?.trim() || '';
+              const processSlug = PROCESS_STAGE_MAP[processName];
+
+              // SKIP entire process if template covers this stage
+              if (processSlug && templateStageSlugs.has(processSlug)) {
+                console.log(`    SKIP process "${processName}" (stage ${processSlug} covered by template)`);
+                continue;
+              }
 
               const { data: procTasks } = await supabase.from('company_process_tasks')
-                .select('*, checklists:company_process_checklists(*), stage:workflow_stages(id,name,slug)')
-                .eq('process_id', proc.id)
+                .select('*, checklists:company_process_checklists(*)')
+                .eq('process_id', sp.process_id)
                 .order('order_index');
 
-              let created = 0;
-              for (const t of (procTasks || [])) {
-                // SKIP if stage is covered by template
-                const taskSlug = t.stage?.slug;
-                if (taskSlug && templateStageSlugs.has(taskSlug)) continue;
+              console.log(`    Process "${processName}": ${procTasks?.length || 0} tasks`);
 
+              for (const t of (procTasks || [])) {
                 let deadline = null;
                 if (t.deadline_days > 0 || t.deadline_hours > 0) {
                   const d = new Date();
@@ -791,13 +804,13 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                   deadline = d.toISOString();
                 }
                 const { data: task, error: taskErr } = await supabase.from('tasks').insert({
-                  project_id: project.id, stage_id: t.stage_id || processStageId,
+                  project_id: project.id, stage_id: null,
                   title: t.title, description: t.description || null,
-                  assignee_id: t.assigned_user_id || null,
+                  assignee_id: t.default_assignee_id || null,
                   priority: t.priority || 'medium', status: 'pending',
                   order_index: t.order_index, created_by_id: req.user.userId,
                   deadline, task_type: 'project',
-                  metadata: { process_id: proc.id, process_task_id: t.id, process_name: proc.name, flow_step_id: step.id },
+                  metadata: { process_id: sp.process_id, process_task_id: t.id, process_name: processName, flow_step_id: step.id },
                 }).select().single();
                 if (taskErr) { console.error('Process task error:', taskErr); continue; }
                 if (t.checklists?.length && task) {
@@ -806,9 +819,8 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
                     catch (ce) { console.warn('Process CL:', ce.message); }
                   }
                 }
-                if (task) { allCreatedTasks.push(task); created++; }
+                if (task) allCreatedTasks.push(task);
               }
-              console.log(`    Process ${proc.name}: ${procTasks?.length || 0} total, ${created} created (skipped ${(procTasks?.length||0)-created} replaced by template)`);
             }
           } catch (e) { console.error('Process tasks error:', e.message); }
 
