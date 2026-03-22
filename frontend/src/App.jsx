@@ -32,6 +32,7 @@ import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
+import CRMTasksPage from './pages/CRMTasksPage';
 // CRMProductsPage removed — merged into ProductsPage
 import StageGroupsPage from './pages/StageGroupsPage';
 import TemplateSetDetailPage from './pages/TemplateSetDetailPage';
@@ -156,6 +157,7 @@ export default function App() {
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/crm/customers" element={<CustomersPage />} />
+            <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/settings" element={
