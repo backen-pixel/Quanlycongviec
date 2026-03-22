@@ -589,6 +589,48 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const { data, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
+    // ── AUTO-GENERATE CRM TASKS when stage changes ──
+    // Map pipeline stage name → crm task stage_slug
+    const STAGE_SLUG_MAP = {
+      'tư vấn': 'consulting', 'tiếp nhận': 'consulting', 'mới': 'consulting',
+      'thiết kế': 'design', 'khảo sát': 'design',
+      'báo giá': 'quotation', 'đề xuất': 'quotation',
+      'hợp đồng': 'contract', 'đàm phán': 'contract', 'chốt': 'contract',
+    };
+    try {
+      const { data: pStage } = await supabase.from('crm_pipeline_stages')
+        .select('name').eq('id', stage_id).single();
+      if (pStage?.name) {
+        const slugKey = Object.keys(STAGE_SLUG_MAP).find(k => pStage.name.toLowerCase().includes(k));
+        const stageSlug = slugKey ? STAGE_SLUG_MAP[slugKey] : null;
+        if (stageSlug) {
+          // Check if tasks already exist for this stage
+          const { data: existing } = await supabase.from('crm_tasks')
+            .select('id').eq('lead_id', req.params.id).eq('stage_slug', stageSlug).limit(1);
+          if (!existing?.length) {
+            // Find default template for this stage
+            const { data: tpl } = await supabase.from('crm_task_templates')
+              .select('id').eq('stage_slug', stageSlug).eq('is_default', true).eq('is_active', true).limit(1).single();
+            if (tpl) {
+              const { data: items } = await supabase.from('crm_task_template_items')
+                .select('*').eq('template_id', tpl.id).order('order_index');
+              if (items?.length) {
+                const now = new Date();
+                const inserts = items.map(item => ({
+                  lead_id: req.params.id, title: item.title, description: item.description || null,
+                  priority: item.priority || 'medium', stage_slug: stageSlug, order_index: item.order_index,
+                  deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+                  checklist: item.checklist || [], created_by: req.user.userId,
+                }));
+                await supabase.from('crm_tasks').insert(inserts);
+                console.log(`Auto-created ${inserts.length} CRM tasks for ${stageSlug} on lead ${req.params.id}`);
+              }
+            }
+          }
+        }
+      }
+    } catch (autoErr) { console.error('Auto-generate CRM tasks error:', autoErr.message); }
+
     // Deal → Thắng: return flag for frontend to open project creation
     let autoProject = null;
     let requiresProjectCreation = false;
@@ -1825,6 +1867,65 @@ r.get('/task-templates', async (req, res) => {
       .order('order_index');
     if (error) throw error;
     res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// CRM Task Templates CRUD
+r.post('/task-templates', async (req, res) => {
+  try {
+    const b = req.body;
+    const { data, error } = await supabase.from('crm_task_templates').insert({
+      name: b.name, stage_slug: b.stage_slug, description: b.description || null,
+      is_default: b.is_default || false, order_index: b.order_index || 0,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/task-templates/:id', async (req, res) => {
+  try {
+    const update = {};
+    ['name', 'stage_slug', 'description', 'is_default', 'is_active', 'order_index'].forEach(f => {
+      if (req.body[f] !== undefined) update[f] = req.body[f];
+    });
+    const { data, error } = await supabase.from('crm_task_templates').update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.delete('/task-templates/:id', async (req, res) => {
+  try {
+    await supabase.from('crm_task_template_items').delete().eq('template_id', req.params.id);
+    const { error } = await supabase.from('crm_task_templates').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Template items CRUD
+r.post('/task-templates/:tplId/items', async (req, res) => {
+  try {
+    const b = req.body;
+    const { data: existing } = await supabase.from('crm_task_template_items').select('order_index').eq('template_id', req.params.tplId).order('order_index', { ascending: false }).limit(1);
+    const nextOrder = (existing?.[0]?.order_index || 0) + 1;
+    const { data, error } = await supabase.from('crm_task_template_items').insert({
+      template_id: req.params.tplId,
+      title: b.title, description: b.description || null,
+      priority: b.priority || 'medium', deadline_days: b.deadline_days || 0,
+      order_index: nextOrder, checklist: b.checklist || [],
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.delete('/task-templates/:tplId/items/:itemId', async (req, res) => {
+  try {
+    const { error } = await supabase.from('crm_task_template_items').delete().eq('id', req.params.itemId);
+    if (error) throw error;
+    res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
