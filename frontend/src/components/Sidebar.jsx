@@ -83,6 +83,7 @@ const CRM_MENU_GROUPS = [
     emoji: '💰',
     items: [
       { to: '/crm', icon: Target, label: 'Pipeline & Leads', end: true },
+      { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM' },
       { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
       { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
       { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },
