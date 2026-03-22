@@ -7,7 +7,7 @@ import {
   User, Eye, ChevronDown, ChevronRight, Target, X
 } from 'lucide-react';
 
-const STAGES = [
+const ALL_STAGES = [
   { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
   { slug: 'design', label: 'Thiết kế', icon: '🎨', color: '#8B5CF6' },
   { slug: 'quotation', label: 'Báo giá', icon: '💰', color: '#F59E0B' },
@@ -103,7 +103,7 @@ export default function CRMTasksPage() {
   const TaskCard = ({ task }) => {
     const StatusIcon = STATUS_ICONS[task.status] || Circle;
     const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
-    const stage = STAGES.find(s => s.slug === task.stage_slug);
+    const stage = ALL_STAGES.find(s => s.slug === task.stage_slug);
     return (
       <div className={`flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-gray-50 border-b last:border-0 ${task.status === 'completed' ? 'opacity-40' : ''}`}>
         <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
@@ -176,7 +176,7 @@ export default function CRMTasksPage() {
         </select>
         <select value={filterStage} onChange={e => setFilterStage(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
           <option value="">Giai đoạn</option>
-          {STAGES.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
+          {ALL_STAGES.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
         </select>
         <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
           <option value="">Người thực hiện</option>

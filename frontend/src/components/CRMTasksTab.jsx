@@ -6,17 +6,22 @@ import {
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks
 } from 'lucide-react';
 
-const STAGES = [
+const LEAD_STAGES = [
+  { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
+];
+const DEAL_STAGES = [
   { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
   { slug: 'design', label: 'Thiết kế', icon: '🎨', color: '#8B5CF6' },
   { slug: 'quotation', label: 'Báo giá', icon: '💰', color: '#F59E0B' },
   { slug: 'contract', label: 'Hợp đồng', icon: '📝', color: '#10B981' },
 ];
+const ALL_STAGES = DEAL_STAGES;
 const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
-export default function CRMTasksTab({ leadId, users = [] }) {
+export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
+  const STAGES = leadType === 'deal' ? DEAL_STAGES : LEAD_STAGES;
   const [tasks, setTasks] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
