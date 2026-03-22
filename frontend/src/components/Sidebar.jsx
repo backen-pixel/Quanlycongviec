@@ -6,7 +6,7 @@ import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
-  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette
+  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -98,6 +98,7 @@ const CRM_MENU_GROUPS = [
       { to: '/crm/products', icon: Package, label: 'Sản phẩm' },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo' },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline' },
+      { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM' },
     ]
   },
 ];
