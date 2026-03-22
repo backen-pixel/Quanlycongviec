@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import { TourButton } from '../components/WebTour';
+import CRMTasksTab from '../components/CRMTasksTab';
 import { leadDetailTour } from '../lib/tourSteps';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
@@ -29,26 +30,28 @@ export default function LeadDetail() {
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   const [flows, setFlows] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
-  const [activeTab, setActiveTab] = useState('documents');
+  const [activeTab, setActiveTab] = useState('tasks');
 
   useEffect(() => { load(); }, [id]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [leadRes, actRes, docRes, stagesLeadRes, stagesDealRes, flowsRes] = await Promise.all([
+      const [leadRes, actRes, docRes, stagesLeadRes, stagesDealRes, flowsRes, usersRes] = await Promise.all([
         api.get(`/crm/leads/${id}/detail`).then(r => r.data),
         api.get(`/crm/leads/${id}/activities`).catch(() => ({ data: [] })),
         api.get(`/crm/leads/${id}/documents`).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/flows').then(r => r.data?.flows || r.data || []).catch(() => []),
+        api.get('/users').then(r => r.data?.users || []).catch(() => []),
       ]);
       setLead(leadRes);
       setCustomer(leadRes?.customer);
@@ -57,6 +60,7 @@ export default function LeadDetail() {
       setStagesLead(stagesLeadRes.data || []);
       setStagesDeal(stagesDealRes.data || []);
       setFlows(flowsRes || []);
+      setAllUsers(usersRes || []);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -397,6 +401,16 @@ export default function LeadDetail() {
           <div className="bg-white rounded-xl border">
             <div className="flex border-b">
               <button
+                onClick={() => setActiveTab('tasks')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'tasks'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                ✅ Công việc
+              </button>
+              <button
                 onClick={() => setActiveTab('documents')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'documents'
@@ -420,7 +434,9 @@ export default function LeadDetail() {
 
             {/* Tab Content */}
             <div className="p-5">
-              {activeTab === 'documents' ? (
+              {activeTab === 'tasks' ? (
+                <CRMTasksTab leadId={id} users={allUsers} />
+              ) : activeTab === 'documents' ? (
                 <>
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">

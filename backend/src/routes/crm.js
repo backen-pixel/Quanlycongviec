@@ -1677,4 +1677,155 @@ r.get('/invoices/:id/pdf', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CRM TASKS — Công việc cho Lead/Deal
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET tasks for a lead/deal
+r.get('/leads/:id/tasks', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('crm_tasks')
+      .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
+      .eq('lead_id', req.params.id)
+      .order('stage_slug').order('order_index');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// CREATE task
+r.post('/leads/:id/tasks', async (req, res) => {
+  try {
+    const b = req.body;
+    const { data, error } = await supabase.from('crm_tasks').insert({
+      lead_id: req.params.id,
+      title: b.title,
+      description: b.description || null,
+      status: b.status || 'pending',
+      priority: b.priority || 'medium',
+      stage_slug: b.stage_slug || null,
+      order_index: b.order_index || 0,
+      assignee_id: b.assignee_id || null,
+      supervisor_id: b.supervisor_id || null,
+      deadline: b.deadline || null,
+      checklist: b.checklist || [],
+      created_by: req.user.userId,
+    }).select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// BULK CREATE from template
+r.post('/leads/:id/tasks/from-template', async (req, res) => {
+  try {
+    const { template_id } = req.body;
+    const { data: items } = await supabase.from('crm_task_template_items')
+      .select('*').eq('template_id', template_id).order('order_index');
+    if (!items?.length) return res.status(400).json({ error: 'Bộ mẫu trống' });
+
+    // Get template for stage_slug
+    const { data: tpl } = await supabase.from('crm_task_templates')
+      .select('stage_slug').eq('id', template_id).single();
+
+    const now = new Date();
+    const inserts = items.map(item => ({
+      lead_id: req.params.id,
+      title: item.title,
+      description: item.description || null,
+      priority: item.priority || 'medium',
+      stage_slug: tpl?.stage_slug || null,
+      order_index: item.order_index,
+      deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+      checklist: item.checklist || [],
+      created_by: req.user.userId,
+    }));
+
+    const { data, error } = await supabase.from('crm_tasks').insert(inserts)
+      .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)');
+    if (error) throw error;
+    res.status(201).json({ tasks: data, count: data.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// UPDATE task
+r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
+  try {
+    const b = req.body;
+    const update = { updated_at: new Date().toISOString() };
+    const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline','checklist'];
+    fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+    if (b.status === 'completed' && !b.completed_at) update.completed_at = new Date().toISOString();
+    if (b.status && b.status !== 'completed') update.completed_at = null;
+
+    const { data, error } = await supabase.from('crm_tasks').update(update)
+      .eq('id', req.params.taskId)
+      .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE task
+r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
+  try {
+    const { error } = await supabase.from('crm_tasks').delete().eq('id', req.params.taskId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET all CRM tasks (overview page) with filters
+r.get('/tasks/overview', async (req, res) => {
+  try {
+    const { status, assignee_id, stage_slug, type } = req.query;
+    let q = supabase.from('crm_tasks')
+      .select('*, lead:crm_leads(id,title,code,type,customer:customers(id,full_name)), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
+      .order('deadline', { ascending: true, nullsFirst: false });
+    if (status) q = q.eq('status', status);
+    if (assignee_id) q = q.eq('assignee_id', assignee_id);
+    if (stage_slug) q = q.eq('stage_slug', stage_slug);
+    if (type) q = q.eq('lead.type', type);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET CRM tasks planner (grouped by assignee)
+r.get('/tasks/planner', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('crm_tasks')
+      .select('*, lead:crm_leads(id,title,code,type), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar)')
+      .in('status', ['pending', 'in_progress'])
+      .order('deadline', { ascending: true, nullsFirst: false });
+    if (error) throw error;
+
+    // Group by assignee
+    const byAssignee = {};
+    const unassigned = [];
+    (data || []).forEach(t => {
+      if (t.assignee_id) {
+        if (!byAssignee[t.assignee_id]) byAssignee[t.assignee_id] = { user: t.assignee, tasks: [] };
+        byAssignee[t.assignee_id].tasks.push(t);
+      } else {
+        unassigned.push(t);
+      }
+    });
+    res.json({ assignees: Object.values(byAssignee), unassigned });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET task templates
+r.get('/task-templates', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('crm_task_templates')
+      .select('*, items:crm_task_template_items(*)')
+      .eq('is_active', true)
+      .order('order_index');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = r;
