@@ -590,19 +590,24 @@ r.patch('/leads/:id/stage', async (req, res) => {
     if (error) throw error;
 
     // ── AUTO-GENERATE CRM TASKS when stage changes ──
-    // Map pipeline stage name → crm task stage_slug
-    const STAGE_SLUG_MAP = {
+    // Lead chỉ có stage "consulting" (Tư vấn)
+    // Deal có: consulting, design, quotation, contract
+    const LEAD_STAGE_MAP = {
+      'tư vấn': 'consulting', 'tiếp nhận': 'consulting', 'mới': 'consulting',
+    };
+    const DEAL_STAGE_MAP = {
       'tư vấn': 'consulting', 'tiếp nhận': 'consulting', 'mới': 'consulting',
       'thiết kế': 'design', 'khảo sát': 'design',
       'báo giá': 'quotation', 'đề xuất': 'quotation',
       'hợp đồng': 'contract', 'đàm phán': 'contract', 'chốt': 'contract',
     };
+    const stageMap = lead?.type === 'deal' ? DEAL_STAGE_MAP : LEAD_STAGE_MAP;
     try {
       const { data: pStage } = await supabase.from('crm_pipeline_stages')
         .select('name').eq('id', stage_id).single();
       if (pStage?.name) {
-        const slugKey = Object.keys(STAGE_SLUG_MAP).find(k => pStage.name.toLowerCase().includes(k));
-        const stageSlug = slugKey ? STAGE_SLUG_MAP[slugKey] : null;
+        const slugKey = Object.keys(stageMap).find(k => pStage.name.toLowerCase().includes(k));
+        const stageSlug = slugKey ? stageMap[slugKey] : null;
         if (stageSlug) {
           // Check if tasks already exist for this stage
           const { data: existing } = await supabase.from('crm_tasks')

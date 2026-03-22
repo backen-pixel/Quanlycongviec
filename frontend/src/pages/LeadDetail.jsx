@@ -435,7 +435,7 @@ export default function LeadDetail() {
             {/* Tab Content */}
             <div className="p-5">
               {activeTab === 'tasks' ? (
-                <CRMTasksTab leadId={id} users={allUsers} />
+                <CRMTasksTab leadId={id} leadType={lead?.type || 'lead'} users={allUsers} />
               ) : activeTab === 'documents' ? (
                 <>
                   <div className="flex items-center justify-between mb-4">
