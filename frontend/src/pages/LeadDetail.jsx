@@ -548,30 +548,47 @@ function DocumentRow({ doc, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const typeInfo = DOC_TYPES.find(t => t.value === doc.doc_type) || DOC_TYPES[5];
   const isFile = !!doc.file_url;
+  const isImage = isFile && (doc.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_name || doc.file_url || ''));
+  const hasExtra = doc.notes || isImage;
 
   return (
     <div className="bg-gray-50 rounded-lg border overflow-hidden">
       <div className="flex items-center justify-between p-3">
-        <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer" onClick={() => doc.notes && setExpanded(!expanded)}>
+        <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer" onClick={() => hasExtra && setExpanded(!expanded)}>
           <span className="text-lg shrink-0">{typeInfo.icon}</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
-            <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}</p>
+            <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}{isImage ? ' • 🖼️' : ''}</p>
           </div>
-          {isFile && (
+          {isFile && !isImage && (
             <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>
               Mở
             </a>
           )}
-          {doc.notes && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
+          {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
         </div>
         <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer">
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
-      {expanded && doc.notes && (
-        <div className="px-3 pb-3 pt-0">
-          <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>
+      {/* Image preview — show thumbnail even when collapsed */}
+      {isImage && !expanded && (
+        <div className="px-3 pb-2">
+          <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="block">
+            <img src={doc.file_url} alt={doc.name} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
+          </a>
+        </div>
+      )}
+      {expanded && (
+        <div className="px-3 pb-3 pt-0 space-y-2">
+          {isImage && (
+            <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="block">
+              <img src={doc.file_url} alt={doc.name} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
+            </a>
+          )}
+          {doc.notes && (
+            <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>
+          )}
         </div>
       )}
     </div>

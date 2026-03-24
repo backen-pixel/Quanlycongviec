@@ -340,21 +340,29 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                   {atts.map(att => {
                     const AttIcon = ATT_ICONS[att.doc_type] || FileText;
                     return (
-                      <div key={att.id} className="flex items-start gap-2 py-1.5 px-2 rounded bg-white border group/att">
-                        <AttIcon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-gray-800 truncate">{att.name}</p>
-                          {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
-                          {att.file_url && (
-                            <a href={att.file_url} target="_blank" rel="noopener noreferrer"
-                              className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
-                          )}
-                          <span className="text-[9px] text-gray-400 ml-1">{att.creator?.full_name}</span>
+                      <div key={att.id} className="py-1.5 px-2 rounded bg-white border group/att">
+                        <div className="flex items-start gap-2">
+                          <AttIcon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-800 truncate">{att.name}</p>
+                            {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
+                            {att.file_url && !att.mime_type?.startsWith('image/') && (
+                              <a href={att.file_url} target="_blank" rel="noopener noreferrer"
+                                className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
+                            )}
+                            <span className="text-[9px] text-gray-400 ml-1">{att.creator?.full_name}</span>
+                          </div>
+                          <button onClick={() => deleteAttachment(task.id, att.id)}
+                            className="opacity-0 group-hover/att:opacity-100 p-0.5 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
+                            <Trash2 className="h-2.5 w-2.5" />
+                          </button>
                         </div>
-                        <button onClick={() => deleteAttachment(task.id, att.id)}
-                          className="opacity-0 group-hover/att:opacity-100 p-0.5 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
-                          <Trash2 className="h-2.5 w-2.5" />
-                        </button>
+                        {/* Image preview */}
+                        {att.file_url && att.mime_type?.startsWith('image/') && (
+                          <a href={att.file_url} target="_blank" rel="noopener noreferrer" className="block mt-1.5 ml-5">
+                            <img src={att.file_url} alt={att.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
+                          </a>
+                        )}
                       </div>
                     );
                   })}
