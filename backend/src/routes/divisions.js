@@ -332,13 +332,28 @@ r.get('/:divisionId/dashboard', async (req, res) => {
     const { divisionId } = req.params;
     const { company_id } = req.query;
 
-    // Get companies belonging to this division (from companies table)
+    // Get companies from both: companies table (linked via division_unit_id) 
+    // AND ecosystem_units children (công ty trong khối)
     const { data: divCompanies } = await supabase
       .from('companies')
       .select('id, name, short_name, logo_url')
       .eq('division_unit_id', divisionId)
       .order('name');
-    const companies = divCompanies || [];
+
+    // Also get ecosystem child units as companies (if companies table doesn't have them)
+    const { data: ecoChildren } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, short_name, code')
+      .eq('parent_id', divisionId)
+      .eq('is_active', true)
+      .order('order_index');
+
+    // Merge: companies table first, then eco children that aren't already in companies
+    const companyNames = new Set((divCompanies || []).map(c => c.name?.toLowerCase()));
+    const ecoCompanies = (ecoChildren || [])
+      .filter(e => !companyNames.has(e.name?.toLowerCase()))
+      .map(e => ({ id: e.id, name: e.name, short_name: e.short_name || e.code, logo_url: null, _eco: true }));
+    const companies = [...(divCompanies || []), ...ecoCompanies];
 
     // Get flows containing this division
     const { data: flowSteps } = await supabase
@@ -346,19 +361,40 @@ r.get('/:divisionId/dashboard', async (req, res) => {
       .select('flow_id, company_unit_id')
       .eq('division_unit_id', divisionId);
 
-    if (!flowSteps || flowSteps.length === 0) {
+    const flowIds = [...new Set((flowSteps || []).map(s => s.flow_id))];
+
+    // Also get projects directly assigned to this division
+    const { data: directAssignments } = await supabase
+      .from('project_company_assignments')
+      .select('project_id')
+      .eq('division_unit_id', divisionId);
+    const directProjectIds = [...new Set((directAssignments || []).map(a => a.project_id))];
+
+    // Build project query — combine flow-based + direct assignments
+    let allProjectIds = new Set(directProjectIds);
+
+    if (flowIds.length > 0) {
+      let flowProjectQuery = supabase
+        .from('projects')
+        .select('id')
+        .in('flow_id', flowIds);
+      if (company_id) flowProjectQuery = flowProjectQuery.eq('company_id', company_id);
+      const { data: flowProjects } = await flowProjectQuery;
+      (flowProjects || []).forEach(p => allProjectIds.add(p.id));
+    }
+
+    if (allProjectIds.size === 0) {
       return res.json({
         stats: { projects: 0, active: 0, tasks: 0, members: 0, overdue: 0, completed: 0 },
         projects: [],
         tasks: [],
         activities: [],
-        companies
+        companies,
+        employees: []
       });
     }
 
-    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
-
-    // Build project query — filter by company_id on projects table directly
+    // Load full project data
     let projectQuery = supabase
       .from('projects')
       .select(`
@@ -366,7 +402,7 @@ r.get('/:divisionId/dashboard', async (req, res) => {
         estimated_value, customer_name, created_at, flow_id, company_id,
         company:companies(id, name, short_name)
       `)
-      .in('flow_id', flowIds)
+      .in('id', [...allProjectIds])
       .order('created_at', { ascending: false })
       .limit(50);
 

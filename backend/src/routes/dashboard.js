@@ -398,92 +398,46 @@ r.get('/activity', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/divisions', async (req, res) => {
   try {
-    // Get division level
-    const { data: divLevel } = await supabase
-      .from('ecosystem_levels')
-      .select('id')
-      .eq('slug', 'division')
-      .single();
-
-    if (!divLevel) return res.json({ divisions: [] });
-
-    // Get all division units
+    // Get top-level ecosystem units (Khối) — units with no parent
     const { data: allUnits } = await supabase
       .from('ecosystem_units')
-      .select('id, name, icon, color, parent_id')
-      .eq('level_id', divLevel.id)
-      .order('name');
+      .select('id, name, short_name, code, icon, color, parent_id, level_id')
+      .is('parent_id', null)
+      .eq('is_active', true)
+      .order('order_index');
 
-    // Check which units have companies linked
-    const unitIds = (allUnits || []).map(u => u.id);
-    let companyCounts = {};
-    if (unitIds.length > 0) {
-      const { data: companyData } = await supabase
-        .from('companies')
-        .select('division_unit_id')
-        .in('division_unit_id', unitIds);
-      (companyData || []).forEach(c => {
-        companyCounts[c.division_unit_id] = (companyCounts[c.division_unit_id] || 0) + 1;
-      });
-    }
+    if (!allUnits?.length) return res.json({ divisions: [] });
 
-    // Deduplicate by name — prefer units that have companies linked
-    const byName = {};
-    (allUnits || []).forEach(u => {
-      const hasCompanies = (companyCounts[u.id] || 0) > 0;
-      const existingHasCompanies = byName[u.name] ? (companyCounts[byName[u.name].id] || 0) > 0 : false;
-      if (!byName[u.name] || (hasCompanies && !existingHasCompanies)) {
-        byName[u.name] = u;
-      }
-    });
-
-    const divisions = Object.values(byName).sort((a, b) => a.name.localeCompare(b.name));
-
-    // Check which divisions have projects (via companies)
-    const divIdsWithCompanies = divisions.filter(d => (companyCounts[d.id] || 0) > 0).map(d => d.id);
-    let divsWithProjects = new Set();
-    if (divIdsWithCompanies.length > 0) {
-      const { data: companyList } = await supabase
-        .from('companies')
-        .select('id, division_unit_id')
-        .in('division_unit_id', divIdsWithCompanies);
-      const compIds = (companyList || []).map(c => c.id);
-      if (compIds.length > 0) {
-        const { data: projData } = await supabase
-          .from('projects')
-          .select('company_id')
-          .in('company_id', compIds);
-        const projCompIds = new Set((projData || []).map(p => p.company_id));
-        (companyList || []).forEach(c => {
-          if (projCompIds.has(c.id)) divsWithProjects.add(c.division_unit_id);
-        });
-      }
-    }
-
-    // Also check via flow_steps (divisions in project flows)
-    if (divsWithProjects.size === 0) {
-      // Fallback: return all divisions with companies
-      divisions.forEach(d => { if ((companyCounts[d.id] || 0) > 0) divsWithProjects.add(d.id); });
-    }
-
-    const filteredDivisions = divisions.filter(d => divsWithProjects.has(d.id));
-
-    // Default icons for known divisions
+    // Default icons
     const defaultIcons = {
       'Khối Kinh Doanh': '💼',
       'Khối Sản Xuất': '🏭',
+      'Khối Vận Chuyển & Lắp Đặt': '🚚',
       'Khối Vận Chuyển': '🚚',
-      'Khối Lắp Đặt': '🔧',
+      'Khối VCLD': '🚚',
+      'Khối Chăm Sóc KH': '❤️',
     };
 
-    res.json({
-      divisions: filteredDivisions.map(d => ({
-        id: d.id,
-        name: d.name,
-        icon: d.icon || defaultIcons[d.name] || '🏢',
-        color: d.color || '#3b82f6',
-      }))
-    });
+    // For each division, count child companies (ecosystem_units children)
+    const divisions = [];
+    for (const unit of allUnits) {
+      const { count } = await supabase.from('ecosystem_units')
+        .select('id', { count: 'exact', head: true })
+        .eq('parent_id', unit.id).eq('is_active', true);
+
+      const iconMatch = Object.keys(defaultIcons).find(k => unit.name.includes(k.replace('Khối ', '')));
+
+      divisions.push({
+        id: unit.id,
+        name: unit.name,
+        short_name: unit.short_name || unit.code,
+        icon: unit.icon || (iconMatch ? defaultIcons[iconMatch] : '🏢'),
+        color: unit.color || '#3b82f6',
+        company_count: count || 0,
+      });
+    }
+
+    res.json({ divisions });
   } catch (e) {
     console.error('Dashboard divisions list error:', e);
     res.status(500).json({ error: e.message });
