@@ -421,15 +421,54 @@ r.get('/activity', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/divisions', async (req, res) => {
   try {
-    // Get top-level ecosystem units (Khối) — units with no parent
-    const { data: allUnits } = await supabase
-      .from('ecosystem_units')
-      .select('id, name, short_name, code, icon, color, parent_id, level_id')
-      .is('parent_id', null)
-      .eq('is_active', true)
-      .order('order_index');
+    // Strategy: Khối = depth 1 in ecosystem (NOT top-level).
+    // Structure: Root/CEO (depth 0) → Khối (depth 1) → Công ty (depth 2)
+    // Try depth=1 first, fallback to parent_id IS NULL
 
-    if (!allUnits?.length) return res.json({ divisions: [] });
+    let divisionUnits = [];
+
+    // Get all levels to find depth=1
+    const { data: levels } = await supabase.from('ecosystem_levels')
+      .select('id, name, depth').eq('is_active', true).order('depth');
+    
+    const depth1Level = (levels || []).find(l => l.depth === 1);
+    
+    if (depth1Level) {
+      // Get units at depth 1 (Khối)
+      const { data: units } = await supabase.from('ecosystem_units')
+        .select('id, name, short_name, code, icon, color, parent_id, level_id')
+        .eq('level_id', depth1Level.id)
+        .eq('is_active', true)
+        .order('order_index');
+      divisionUnits = units || [];
+    }
+
+    // Fallback: if no depth=1 units, try units with parent_id whose parent has parent_id=NULL
+    if (!divisionUnits.length) {
+      const { data: topUnits } = await supabase.from('ecosystem_units')
+        .select('id').is('parent_id', null).eq('is_active', true);
+      const topIds = (topUnits || []).map(u => u.id);
+      if (topIds.length) {
+        const { data: childUnits } = await supabase.from('ecosystem_units')
+          .select('id, name, short_name, code, icon, color, parent_id, level_id')
+          .in('parent_id', topIds)
+          .eq('is_active', true)
+          .order('order_index');
+        divisionUnits = childUnits || [];
+      }
+    }
+
+    // Final fallback: if still nothing, use top-level
+    if (!divisionUnits.length) {
+      const { data: topUnits } = await supabase.from('ecosystem_units')
+        .select('id, name, short_name, code, icon, color, parent_id, level_id')
+        .is('parent_id', null)
+        .eq('is_active', true)
+        .order('order_index');
+      divisionUnits = topUnits || [];
+    }
+
+    if (!divisionUnits.length) return res.json({ divisions: [] });
 
     // Default icons
     const defaultIcons = {
@@ -443,7 +482,7 @@ r.get('/divisions', async (req, res) => {
 
     // For each division, count child companies (ecosystem_units children)
     const divisions = [];
-    for (const unit of allUnits) {
+    for (const unit of divisionUnits) {
       const { count } = await supabase.from('ecosystem_units')
         .select('id', { count: 'exact', head: true })
         .eq('parent_id', unit.id).eq('is_active', true);
