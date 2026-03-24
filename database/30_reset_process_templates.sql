@@ -4,15 +4,26 @@
 -- ═══════════════════════════════════════════════════════════════════════
 
 -- ─── 1. XÓA DỮ LIỆU CŨ (đúng thứ tự dependency) ───
+-- Luồng & bước
 DELETE FROM flow_step_processes;
 DELETE FROM workflow_flow_steps;
 DELETE FROM workflow_flows;
+-- Bộ mẫu công ty
 DELETE FROM company_template_checklists;
 DELETE FROM company_template_tasks;
 DELETE FROM company_template_sets;
+-- Quy trình nội bộ
 DELETE FROM company_process_checklists;
 DELETE FROM company_process_tasks;
 DELETE FROM company_processes;
+-- Task templates (tham chiếu workflow_stages)
+DELETE FROM task_templates;
+-- Tasks của dự án (tham chiếu workflow_stages)
+DELETE FROM tasks;
+-- Projects (tham chiếu workflow_stages qua current_stage_id)
+UPDATE projects SET current_stage_id = NULL;
+-- Giờ mới xóa được workflow_stages
+DELETE FROM workflow_stages;
 
 -- ─── 2. RESET WORKFLOW STAGES (7 giai đoạn mới) ───
 DELETE FROM workflow_stages;
