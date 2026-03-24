@@ -1091,6 +1091,68 @@ r.get('/invoices/:id', async (req, res) => {
   }
 });
 
+// Create invoice directly (not from order)
+r.post('/invoices', async (req, res) => {
+  try {
+    const { items, ...invoiceData } = req.body;
+    const code = await nextCode('HD');
+    
+    const { data: inv, error } = await supabase.from('invoices').insert({
+      code,
+      customer_id: invoiceData.customer_id || null,
+      customer_name: invoiceData.customer_name || null,
+      customer_phone: invoiceData.customer_phone || null,
+      customer_address: invoiceData.customer_address || null,
+      customer_tax_code: invoiceData.customer_tax_code || null,
+      title: invoiceData.title || null,
+      subtotal: invoiceData.subtotal || 0,
+      discount_type: invoiceData.discount_type || null,
+      discount_value: invoiceData.discount_value || 0,
+      discount_amount: invoiceData.discount_amount || 0,
+      tax_amount: invoiceData.tax_amount || 0,
+      total: invoiceData.total || 0,
+      notes: invoiceData.notes || null,
+      due_date: invoiceData.due_date || null,
+      payment_terms: invoiceData.payment_terms || null,
+      created_by: req.user.userId,
+    }).select('*').single();
+    if (error) throw error;
+    res.status(201).json(inv);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Add items to invoice (batch)
+r.post('/invoices/:id/items', async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!items?.length) return res.status(400).json({ error: 'Không có hàng hóa' });
+    const itemRows = items.map((item, i) => ({
+      invoice_id: req.params.id,
+      product_id: item.product_id || null,
+      product_code: item.product_code || null,
+      item_order: i,
+      name: item.name,
+      description: item.description || null,
+      unit: item.unit || 'bộ',
+      quantity: item.quantity || 1,
+      unit_price: item.unit_price || 0,
+      discount_percent: item.discount_percent || 0,
+      discount_amount: item.discount_amount || 0,
+      amount: item.amount || 0,
+      vat_rate: item.vat_rate || 0,
+      vat_amount: item.vat_amount || 0,
+      notes: item.notes || null,
+    }));
+    const { data, error } = await supabase.from('invoice_items').insert(itemRows).select();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Record payment
 r.post('/invoices/:id/payments', async (req, res) => {
   try {

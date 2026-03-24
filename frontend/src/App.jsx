@@ -28,6 +28,8 @@ import OrdersPage from './pages/OrdersPage';
 import OrderDetail from './pages/OrderDetail';
 import InvoicesPage from './pages/InvoicesPage';
 import InvoiceDetail from './pages/InvoiceDetail';
+import OrderForm from './pages/OrderForm';
+import InvoiceForm from './pages/InvoiceForm';
 import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
@@ -152,8 +154,11 @@ export default function App() {
             <Route path="/crm/quotations/new" element={<QuotationForm />} />
             <Route path="/crm/quotations/:id" element={<QuotationForm />} />
             <Route path="/crm/orders" element={<OrdersPage />} />
+            <Route path="/crm/orders/new" element={<OrderForm />} />
+            <Route path="/crm/orders/:id/edit" element={<OrderForm />} />
             <Route path="/crm/orders/:id" element={<OrderDetail />} />
             <Route path="/crm/invoices" element={<InvoicesPage />} />
+            <Route path="/crm/invoices/new" element={<InvoiceForm />} />
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<CRMReports />} />
             <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />

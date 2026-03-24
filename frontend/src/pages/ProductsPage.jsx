@@ -16,6 +16,8 @@ export default function ProductsPage() {
   const [codeParts, setCodeParts] = useState({});
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -26,9 +28,10 @@ export default function ProductsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [prodRes, codeRes] = await Promise.allSettled([
-        api.get('/products', { params: { search, limit: 200 } }),
+      const [prodRes, codeRes, catRes] = await Promise.allSettled([
+        api.get('/products', { params: { search, category_id: categoryFilter || undefined, limit: 200 } }),
         api.get('/products/code-parts'),
+        api.get('/products/categories'),
       ]);
       if (prodRes.status === 'fulfilled') {
         setProducts(prodRes.value.data.products || []);
@@ -37,9 +40,12 @@ export default function ProductsPage() {
       if (codeRes.status === 'fulfilled') {
         setCodeParts(codeRes.value.data.codeParts || {});
       }
+      if (catRes.status === 'fulfilled') {
+        setCategories(catRes.value.data.categories || catRes.value.data || []);
+      }
     } catch {}
     setLoading(false);
-  }, [search]);
+  }, [search, categoryFilter]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -234,6 +240,24 @@ export default function ProductsPage() {
           className="w-full h-10 pl-10 pr-4 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
       </div>
 
+      {/* Nhóm ngành (Categories) filter */}
+      {categories.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          <button onClick={() => setCategoryFilter('')}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap cursor-pointer transition-all ${!categoryFilter ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-50'}`}>
+            Tất cả nhóm ngành
+          </button>
+          {categories.filter(c => c.is_active !== false).map(cat => (
+            <button key={cat.id} onClick={() => setCategoryFilter(categoryFilter === cat.id ? '' : cat.id)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap cursor-pointer transition-all ${
+                categoryFilter === cat.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-50'
+              }`}>
+              {cat.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Code Parts Manager */}
       {showCodeParts && <CodePartsManager codeParts={codeParts} onReload={load} />}
 
@@ -245,6 +269,7 @@ export default function ProductsPage() {
               <th className="p-3 w-10">STT</th>
               <th className="p-3">Mã thành phẩm</th>
               <th className="p-3">Tên thành phẩm</th>
+              <th className="p-3">Nhóm ngành</th>
               <th className="p-3 text-right">Giá bán (VAT)</th>
               <th className="p-3 text-right">Giá chưa VAT</th>
               <th className="p-3">ĐVT</th>
@@ -253,9 +278,9 @@ export default function ProductsPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="p-8 text-center text-gray-400">Đang tải...</td></tr>
+              <tr><td colSpan={8} className="p-8 text-center text-gray-400">Đang tải...</td></tr>
             ) : products.length === 0 ? (
-              <tr><td colSpan={7} className="p-8 text-center text-gray-400">Chưa có sản phẩm</td></tr>
+              <tr><td colSpan={8} className="p-8 text-center text-gray-400">Chưa có sản phẩm</td></tr>
             ) : products.map((p, i) => (
               <tr key={p.id} className="border-b hover:bg-gray-50">
                 <td className="p-3 text-gray-400">{i + 1}</td>
@@ -263,6 +288,13 @@ export default function ProductsPage() {
                   <span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">{p.code}</span>
                 </td>
                 <td className="p-3 font-medium text-gray-900">{p.name}</td>
+                <td className="p-3">
+                  {p.category?.name ? (
+                    <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">{p.category.name}</span>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </td>
                 <td className="p-3 text-right font-semibold text-emerald-600">{formatVND(p.selling_price || 0)}</td>
                 <td className="p-3 text-right text-gray-600">{formatVND(p.base_price || 0)}</td>
                 <td className="p-3 text-gray-500">{p.unit}</td>
@@ -279,7 +311,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Add/Edit Modal */}
-      {showAdd && <ProductFormModal codeParts={codeParts} editId={editId} onClose={() => { setShowAdd(false); setEditId(null); }} onSaved={load} />}
+      {showAdd && <ProductFormModal codeParts={codeParts} categories={categories} editId={editId} onClose={() => { setShowAdd(false); setEditId(null); }} onSaved={load} />}
 
       {/* Import Preview Modal — full table immediately */}
       {showImport && importData && (
@@ -376,9 +408,9 @@ export default function ProductsPage() {
 }
 
 // ═══ Product Form Modal ═══
-function ProductFormModal({ codeParts, editId, onClose, onSaved }) {
+function ProductFormModal({ codeParts, categories, editId, onClose, onSaved }) {
   const [form, setForm] = useState({
-    name: '', unit: 'bộ', selling_price: '', base_price: '', description: '',
+    name: '', unit: 'bộ', selling_price: '', base_price: '', description: '', category_id: '',
     code_group: '', code_spec: '', code_standard: '', code_category: '',
     code_style: '', code_glass: '', code_type_std: '', code_side: '', code_size: '',
   });
@@ -391,7 +423,7 @@ function ProductFormModal({ codeParts, editId, onClose, onSaved }) {
         setForm({
           name: p.name || '', unit: p.unit || 'bộ',
           selling_price: p.selling_price || '', base_price: p.base_price || '',
-          description: p.description || '',
+          description: p.description || '', category_id: p.category_id || '',
           code_group: p.code_group || '', code_spec: p.code_spec || '',
           code_standard: p.code_standard || '', code_category: p.code_category || '',
           code_style: p.code_style || '', code_glass: p.code_glass || '',
@@ -416,8 +448,9 @@ function ProductFormModal({ codeParts, editId, onClose, onSaved }) {
     if (!form.name) return alert('Nhập tên sản phẩm');
     setLoading(true);
     try {
-      if (editId) await api.put(`/products/${editId}`, { ...form, selling_price: +form.selling_price || 0, base_price: +form.base_price || 0 });
-      else await api.post('/products', { ...form, selling_price: +form.selling_price || 0, base_price: +form.base_price || 0 });
+      const payload = { ...form, selling_price: +form.selling_price || 0, base_price: +form.base_price || 0, category_id: form.category_id || null };
+      if (editId) await api.put(`/products/${editId}`, payload);
+      else await api.post('/products', payload);
       onSaved(); onClose();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
     setLoading(false);
@@ -462,6 +495,18 @@ function ProductFormModal({ codeParts, editId, onClose, onSaved }) {
             <input value={form.name} onChange={e => set('name', e.target.value)}
               className="w-full h-9 px-3 border rounded-lg text-sm" placeholder="VD: Tủ bếp gỗ sồi chữ L tiêu chuẩn" />
           </div>
+          {(categories || []).length > 0 && (
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-gray-700 block mb-1">Nhóm ngành</label>
+              <select value={form.category_id || ''} onChange={e => set('category_id', e.target.value)}
+                className="w-full h-9 px-3 border rounded-lg text-sm bg-white">
+                <option value="">— Chọn nhóm ngành —</option>
+                {(categories || []).filter(c => c.is_active !== false).map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="text-xs font-medium text-gray-700 block mb-1">Giá bán gồm VAT 10%</label>
             <input type="number" value={form.selling_price} onChange={e => set('selling_price', e.target.value)}
