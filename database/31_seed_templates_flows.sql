@@ -94,13 +94,16 @@ END $$;
 DO $$
 DECLARE
   flow_id UUID;
+  step_id UUID;
   khoi RECORD;
   cty RECORD;
   tpl_set RECORD;
+  proc RECORD;
   step_order INT;
+  proc_order INT;
 BEGIN
   -- ════════════════════════════════════════
-  -- LUỒNG 1: Luồng Tủ Bếp Tiêu Chuẩn
+  -- LUỒNG: Tủ Bếp Tiêu Chuẩn
   -- ════════════════════════════════════════
   INSERT INTO workflow_flows (id, name, description, color, icon, is_default, is_active)
   VALUES (gen_random_uuid(), 'Luồng Tủ Bếp Tiêu Chuẩn', 'Luồng đầy đủ: KD → SX → VC&LĐ', '#6366F1', '🔄', true, true)
@@ -108,63 +111,106 @@ BEGIN
 
   step_order := 0;
 
-  -- Bước 1: Khối Kinh Doanh
+  -- ──── Bước 1: Khối Kinh Doanh ────
   FOR khoi IN
     SELECT id, name FROM ecosystem_units
     WHERE parent_id IS NULL AND name ILIKE '%Kinh Doanh%' AND is_active = true
   LOOP
-    -- Lấy công ty đầu tiên trong khối
-    SELECT eu.id INTO cty FROM ecosystem_units eu
-    WHERE eu.parent_id = khoi.id AND eu.is_active = true
-    ORDER BY eu.order_index LIMIT 1;
+    -- Lấy công ty đầu tiên
+    FOR cty IN
+      SELECT eu.id FROM ecosystem_units eu
+      WHERE eu.parent_id = khoi.id AND eu.is_active = true
+      ORDER BY eu.order_index LIMIT 1
+    LOOP
+      -- Lấy bộ mẫu
+      SELECT id INTO tpl_set FROM company_template_sets
+      WHERE unit_id = cty.id AND is_active = true
+      ORDER BY is_default DESC LIMIT 1;
 
-    -- Lấy bộ mẫu của công ty đó
-    SELECT id INTO tpl_set FROM company_template_sets
-    WHERE unit_id = cty.id AND is_active = true
-    ORDER BY is_default DESC LIMIT 1;
+      step_order := step_order + 1;
+      INSERT INTO workflow_flow_steps (id, flow_id, division_unit_id, company_unit_id, template_set_id, order_index, description)
+      VALUES (gen_random_uuid(), flow_id, khoi.id, cty.id, tpl_set.id, step_order, 'Tư vấn → Thiết kế → Báo giá → Hợp đồng')
+      RETURNING id INTO step_id;
 
-    step_order := step_order + 1;
-    INSERT INTO workflow_flow_steps (flow_id, division_unit_id, company_unit_id, template_set_id, order_index, description)
-    VALUES (flow_id, khoi.id, cty.id, tpl_set.id, step_order, 'Tư vấn → Thiết kế → Báo giá → Hợp đồng');
+      -- Link tất cả processes của công ty vào step
+      proc_order := 0;
+      FOR proc IN
+        SELECT id FROM company_processes WHERE company_unit_id = cty.id AND is_active = true ORDER BY order_index
+      LOOP
+        proc_order := proc_order + 1;
+        INSERT INTO flow_step_processes (flow_step_id, process_id, order_index, is_required)
+        VALUES (step_id, proc.id, proc_order, true);
+      END LOOP;
+
+      RAISE NOTICE 'Bước %: Khối KD - % processes', step_order, proc_order;
+    END LOOP;
   END LOOP;
 
-  -- Bước 2: Khối Sản Xuất
+  -- ──── Bước 2: Khối Sản Xuất ────
   FOR khoi IN
     SELECT id, name FROM ecosystem_units
     WHERE parent_id IS NULL AND name ILIKE '%Sản Xuất%' AND is_active = true
   LOOP
-    SELECT eu.id INTO cty FROM ecosystem_units eu
-    WHERE eu.parent_id = khoi.id AND eu.is_active = true
-    ORDER BY eu.order_index LIMIT 1;
+    FOR cty IN
+      SELECT eu.id FROM ecosystem_units eu
+      WHERE eu.parent_id = khoi.id AND eu.is_active = true
+      ORDER BY eu.order_index LIMIT 1
+    LOOP
+      SELECT id INTO tpl_set FROM company_template_sets
+      WHERE unit_id = cty.id AND is_active = true
+      ORDER BY is_default DESC LIMIT 1;
 
-    SELECT id INTO tpl_set FROM company_template_sets
-    WHERE unit_id = cty.id AND is_active = true
-    ORDER BY is_default DESC LIMIT 1;
+      step_order := step_order + 1;
+      INSERT INTO workflow_flow_steps (id, flow_id, division_unit_id, company_unit_id, template_set_id, order_index, description)
+      VALUES (gen_random_uuid(), flow_id, khoi.id, cty.id, tpl_set.id, step_order, 'Sản xuất tủ bếp')
+      RETURNING id INTO step_id;
 
-    step_order := step_order + 1;
-    INSERT INTO workflow_flow_steps (flow_id, division_unit_id, company_unit_id, template_set_id, order_index, description)
-    VALUES (flow_id, khoi.id, cty.id, tpl_set.id, step_order, 'Sản xuất tủ bếp');
+      proc_order := 0;
+      FOR proc IN
+        SELECT id FROM company_processes WHERE company_unit_id = cty.id AND is_active = true ORDER BY order_index
+      LOOP
+        proc_order := proc_order + 1;
+        INSERT INTO flow_step_processes (flow_step_id, process_id, order_index, is_required)
+        VALUES (step_id, proc.id, proc_order, true);
+      END LOOP;
+
+      RAISE NOTICE 'Bước %: Khối SX - % processes', step_order, proc_order;
+    END LOOP;
   END LOOP;
 
-  -- Bước 3: Khối Vận Chuyển & Lắp Đặt
+  -- ──── Bước 3: Khối VC & LĐ ────
   FOR khoi IN
     SELECT id, name FROM ecosystem_units
     WHERE parent_id IS NULL
     AND (name ILIKE '%Vận Chuyển%' OR name ILIKE '%Lắp Đặt%' OR name ILIKE '%VCLD%')
     AND is_active = true
   LOOP
-    SELECT eu.id INTO cty FROM ecosystem_units eu
-    WHERE eu.parent_id = khoi.id AND eu.is_active = true
-    ORDER BY eu.order_index LIMIT 1;
+    FOR cty IN
+      SELECT eu.id FROM ecosystem_units eu
+      WHERE eu.parent_id = khoi.id AND eu.is_active = true
+      ORDER BY eu.order_index LIMIT 1
+    LOOP
+      SELECT id INTO tpl_set FROM company_template_sets
+      WHERE unit_id = cty.id AND is_active = true
+      ORDER BY is_default DESC LIMIT 1;
 
-    SELECT id INTO tpl_set FROM company_template_sets
-    WHERE unit_id = cty.id AND is_active = true
-    ORDER BY is_default DESC LIMIT 1;
+      step_order := step_order + 1;
+      INSERT INTO workflow_flow_steps (id, flow_id, division_unit_id, company_unit_id, template_set_id, order_index, description)
+      VALUES (gen_random_uuid(), flow_id, khoi.id, cty.id, tpl_set.id, step_order, 'Vận chuyển & Lắp đặt + CSKH')
+      RETURNING id INTO step_id;
 
-    step_order := step_order + 1;
-    INSERT INTO workflow_flow_steps (flow_id, division_unit_id, company_unit_id, template_set_id, order_index, description)
-    VALUES (flow_id, khoi.id, cty.id, tpl_set.id, step_order, 'Vận chuyển & Lắp đặt + CSKH');
+      proc_order := 0;
+      FOR proc IN
+        SELECT id FROM company_processes WHERE company_unit_id = cty.id AND is_active = true ORDER BY order_index
+      LOOP
+        proc_order := proc_order + 1;
+        INSERT INTO flow_step_processes (flow_step_id, process_id, order_index, is_required)
+        VALUES (step_id, proc.id, proc_order, true);
+      END LOOP;
+
+      RAISE NOTICE 'Bước %: Khối VCLD - % processes', step_order, proc_order;
+    END LOOP;
   END LOOP;
 
-  RAISE NOTICE 'Tạo luồng: Tủ Bếp Tiêu Chuẩn (% bước)', step_order;
+  RAISE NOTICE 'Tạo luồng Tủ Bếp Tiêu Chuẩn: % bước', step_order;
 END $$;
