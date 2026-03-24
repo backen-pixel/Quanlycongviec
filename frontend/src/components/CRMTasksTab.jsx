@@ -155,8 +155,6 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     return days.slice(0, 35);
   }, [calMonth]);
 
-  if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
-
   const [expandedTask, setExpandedTask] = useState(null);
   const [taskAttachments, setTaskAttachments] = useState({});
   const [taskNoteText, setTaskNoteText] = useState({});
@@ -164,6 +162,8 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const [addingAttNote, setAddingAttNote] = useState(null);
   const [attNoteText, setAttNoteText] = useState('');
   const [attNoteName, setAttNoteName] = useState('');
+
+  if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
   const loadAttachments = async (taskId) => {
     try {
