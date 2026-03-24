@@ -6,7 +6,7 @@ const DEPARTMENT_TEMPLATES = [
   { id: 'sales', icon: '📞', label: 'Tư vấn (Sales)', defaultCount: 3 },
   { id: 'design', icon: '🎨', label: 'Thiết kế (Design)', defaultCount: 2 },
   { id: 'production', icon: '🏭', label: 'Sản xuất (Production)', defaultCount: 5 },
-  { id: 'installation', icon: '🔧', label: 'Lắp đặt (Installation)', defaultCount: 4 },
+  { id: 'delivery', icon: '🚚', label: 'Vận chuyển & Lắp đặt (Delivery)', defaultCount: 4 },
   { id: 'customer-care', icon: '💬', label: 'Chăm sóc KH', defaultCount: 2 },
   { id: 'accounting', icon: '💰', label: 'Kế toán', defaultCount: 1 },
 ];
@@ -26,7 +26,7 @@ export default function EcosystemSetupWizard({ onComplete, onSkip }) {
     sales: true,
     design: true,
     production: true,
-    installation: true,
+    delivery: true,
     'customer-care': false,
     accounting: false,
   });

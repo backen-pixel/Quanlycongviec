@@ -63,8 +63,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
     { slug: 'quotation', status: 'quoting', label: 'Báo giá' },
     { slug: 'contract', status: 'contract_signed', label: 'Hợp đồng' },
     { slug: 'production', status: 'producing', label: 'Sản xuất' },
-    { slug: 'shipping', status: 'shipping', label: 'Vận chuyển' },
-    { slug: 'installation', status: 'installing', label: 'Lắp đặt' },
+    { slug: 'delivery', status: 'delivering', label: 'Vận chuyển & Lắp đặt' },
     { slug: 'customer-care', status: 'warranty', label: 'CSKH' },
   ];
 

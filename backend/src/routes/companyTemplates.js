@@ -177,8 +177,8 @@ r.post('/template-sets/:id/copy-from-process', async (req, res) => {
         'báo giá': 'quotation', 'giá': 'quotation',
         'hợp đồng': 'contract', 'ký kết': 'contract',
         'sản xuất': 'production', 'gia công': 'production', 'chế tạo': 'production',
-        'vận chuyển': 'shipping', 'giao hàng': 'shipping',
-        'lắp đặt': 'installation', 'thi công': 'installation',
+        'vận chuyển': 'delivery', 'giao hàng': 'delivery',
+        'lắp đặt': 'delivery', 'thi công': 'delivery',
         'bảo hành': 'customer-care', 'cskh': 'customer-care', 'chăm sóc': 'customer-care',
       };
       for (const [keyword, slug] of Object.entries(keywordMap)) {

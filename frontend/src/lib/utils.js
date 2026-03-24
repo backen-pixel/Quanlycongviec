@@ -6,8 +6,9 @@ export const STATUS_LABELS = {
   quoting: 'Báo giá',
   contract_signed: 'Đã ký HĐ',
   producing: 'Sản xuất',
-  shipping: 'Vận chuyển',
-  installing: 'Lắp đặt',
+  delivering: 'Vận chuyển & Lắp đặt',
+  shipping: 'Vận chuyển & Lắp đặt',    // backward compat
+  installing: 'Vận chuyển & Lắp đặt',  // backward compat
   warranty: 'Bảo hành',
   completed: 'Hoàn thành',
   cancelled: 'Đã hủy',
@@ -20,8 +21,9 @@ export const STATUS_COLORS = {
   quoting: 'bg-amber-100 text-amber-700',
   contract_signed: 'bg-green-100 text-green-700',
   producing: 'bg-orange-100 text-orange-700',
-  shipping: 'bg-cyan-100 text-cyan-700',
-  installing: 'bg-blue-100 text-blue-700',
+  delivering: 'bg-cyan-100 text-cyan-700',
+  shipping: 'bg-cyan-100 text-cyan-700',    // backward compat
+  installing: 'bg-cyan-100 text-cyan-700',  // backward compat
   warranty: 'bg-red-100 text-red-700',
   completed: 'bg-emerald-100 text-emerald-700',
   cancelled: 'bg-gray-200 text-gray-500',
@@ -89,18 +91,17 @@ export const avatarColor = (name) => {
 // ── ROLE → STAGE MAPPING (frontend fallback) ──
 export const ROLE_LABELS = {
   admin: 'Quản trị viên', manager: 'Quản lý', sales: 'Kinh doanh',
-  designer: 'Thiết kế', production: 'Sản xuất', driver: 'Vận chuyển',
-  installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên',
+  designer: 'Thiết kế', production: 'Sản xuất', driver: 'Vận chuyển & Lắp đặt',
+  customer_care: 'CSKH', staff: 'Nhân viên',
 };
 
 export const ROLE_STAGE_MAP = {
-  admin: ['consulting','design','quotation','contract','production','shipping','installation','customer-care'],
-  manager: ['consulting','design','quotation','contract','production','shipping','installation','customer-care'],
+  admin: ['consulting','design','quotation','contract','production','delivery','customer-care'],
+  manager: ['consulting','design','quotation','contract','production','delivery','customer-care'],
   sales: ['consulting','quotation','contract'],
   designer: ['design'],
   production: ['production'],
-  driver: ['shipping'],
-  installer: ['installation'],
+  driver: ['delivery'],
   customer_care: ['customer-care'],
   staff: ['consulting'],
 };
