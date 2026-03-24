@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { formatVND } from '../lib/utils';
 import { Plus, Trash2, Save, ArrowLeft, Search, ShoppingCart } from 'lucide-react';
 import ProductSearchPicker from '../components/ProductSearchPicker';
+import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
 
 export default function OrderForm() {
   const { id } = useParams();
@@ -21,11 +22,13 @@ export default function OrderForm() {
     dimensions: '', material: '', color: '', promo_code: '', is_promo: false,
   }]);
   const [customers, setCustomers] = useState([]);
+  const [products, setProducts] = useState([]);
   const [saving, setSaving] = useState(false);
   const [showProductPicker, setShowProductPicker] = useState(false);
 
   useEffect(() => {
     api.get('/customers', { params: { limit: 500 } }).then(r => setCustomers(r.data.customers || r.data || []));
+    api.get('/products', { params: { limit: 500 } }).then(r => setProducts(r.data.products || r.data || []));
     if (isEdit) {
       api.get(`/crm/orders/${id}`).then(r => {
         const d = r.data;
@@ -194,7 +197,26 @@ export default function OrderForm() {
                   <tr key={idx} className="border-b hover:bg-blue-50/30">
                     <td className="py-1 px-1 text-gray-400">{idx + 1}</td>
                     <td className="py-1 px-1"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
-                    <td className="py-1 px-1"><input value={item.name} onChange={e => updateItem(idx, 'name', e.target.value)} placeholder="Tên sản phẩm" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
+                    <td className="py-1 px-1">
+                      <ProductAutocompleteCell
+                        value={item.name}
+                        products={products}
+                        onChange={(val) => updateItem(idx, 'name', val)}
+                        onSelectProduct={(p) => {
+                          setItems(prev => prev.map((it, i) => i === idx ? {
+                            ...it,
+                            product_id: p.id, name: p.name, description: p.description || it.description,
+                            product_code: p.code || it.product_code, unit: p.unit || it.unit,
+                            unit_price: p.base_price || it.unit_price,
+                            vat_rate: p.vat_rate || it.vat_rate,
+                            dimensions: p.dimensions || it.dimensions,
+                            material: p.material || it.material,
+                            color: p.color || it.color,
+                          } : it));
+                        }}
+                        placeholder="Gõ tên SP..."
+                      />
+                    </td>
                     <td className="py-1 px-1"><input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
                     <td className="py-1 px-1"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-center" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
