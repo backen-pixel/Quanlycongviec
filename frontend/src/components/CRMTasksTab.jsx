@@ -3,7 +3,8 @@ import api from '../lib/api';
 import { formatDate } from '../lib/utils';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
-  Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList
+  Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
+  Paperclip, FileUp, MessageSquare, FileText, Image
 } from 'lucide-react';
 
 const LEAD_STAGES = [
@@ -156,26 +157,215 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
 
   if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
+  const [expandedTask, setExpandedTask] = useState(null);
+  const [taskAttachments, setTaskAttachments] = useState({});
+  const [taskNoteText, setTaskNoteText] = useState({});
+  const [savingNote, setSavingNote] = useState(null);
+  const [addingAttNote, setAddingAttNote] = useState(null);
+  const [attNoteText, setAttNoteText] = useState('');
+  const [attNoteName, setAttNoteName] = useState('');
+
+  const loadAttachments = async (taskId) => {
+    try {
+      const { data } = await api.get(`/crm/leads/${leadId}/tasks/${taskId}/attachments`);
+      setTaskAttachments(p => ({ ...p, [taskId]: data || [] }));
+    } catch (e) { console.error(e); }
+  };
+
+  const toggleExpand = (taskId, taskNotes) => {
+    if (expandedTask === taskId) {
+      setExpandedTask(null);
+    } else {
+      setExpandedTask(taskId);
+      setTaskNoteText(p => ({ ...p, [taskId]: taskNotes || '' }));
+      loadAttachments(taskId);
+    }
+  };
+
+  const saveTaskNotes = async (taskId) => {
+    setSavingNote(taskId);
+    try {
+      await api.put(`/crm/leads/${leadId}/tasks/${taskId}/notes`, { notes: taskNoteText[taskId] || '' });
+      // Update local tasks state
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, notes: taskNoteText[taskId] } : t));
+    } catch (e) { alert('Lỗi lưu ghi chú'); }
+    setSavingNote(null);
+  };
+
+  const uploadTaskFile = (taskId) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf';
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const formData = new FormData();
+        formData.append('files', file);
+        const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        const uploaded = uploadRes.files?.[0];
+        if (!uploaded) throw new Error('Upload thất bại');
+        await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
+          name: file.name.replace(/\.[^.]+$/, ''),
+          doc_type: file.type.startsWith('image/') ? 'image' : file.name.match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+          file_url: uploaded.file_url,
+          file_name: uploaded.file_name,
+          file_size: uploaded.file_size,
+          mime_type: uploaded.mime_type,
+        });
+        loadAttachments(taskId);
+      } catch (err) { alert(err.response?.data?.error || err.message || 'Upload lỗi'); }
+    };
+    input.click();
+  };
+
+  const addAttachmentNote = async (taskId) => {
+    if (!attNoteText.trim()) return;
+    try {
+      await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
+        name: attNoteName.trim() || 'Ghi chú',
+        doc_type: 'task_note',
+        notes: attNoteText,
+      });
+      setAddingAttNote(null);
+      setAttNoteText('');
+      setAttNoteName('');
+      loadAttachments(taskId);
+    } catch (e) { alert('Lỗi'); }
+  };
+
+  const deleteAttachment = async (taskId, attId) => {
+    if (!confirm('Xóa đính kèm này?')) return;
+    try {
+      await api.delete(`/crm/leads/${leadId}/tasks/${taskId}/attachments/${attId}`);
+      loadAttachments(taskId);
+    } catch (e) { alert('Lỗi'); }
+  };
+
+  const ATT_ICONS = { image: Image, drawing: FileText, task_note: MessageSquare, other: FileText };
+
   const TaskRow = ({ task }) => {
     const StatusIcon = STATUS_ICONS[task.status] || Circle;
     const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
+    const isExpanded = expandedTask === task.id;
+    const atts = taskAttachments[task.id] || [];
+    const hasContent = task.notes || atts.length > 0;
     return (
-      <div className={`flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-gray-50 group ${task.status === 'completed' ? 'opacity-50' : ''}`}>
-        <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
-          <StatusIcon className={`h-4 w-4 ${task.status === 'completed' ? 'text-emerald-500' : task.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`} />
-        </button>
-        <div className="flex-1 min-w-0">
-          <p className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            {task.deadline && <span className={`text-[10px] flex items-center gap-0.5 ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}><Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}</span>}
-            {task.assignee && <span className="text-[10px] text-blue-600 flex items-center gap-0.5"><User className="h-2.5 w-2.5" />{task.assignee.full_name}</span>}
-            {task.supervisor && <span className="text-[10px] text-purple-600 flex items-center gap-0.5"><Eye className="h-2.5 w-2.5" />{task.supervisor.full_name}</span>}
+      <div className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'} ${task.status === 'completed' ? 'opacity-50' : ''}`}>
+        {/* Main row */}
+        <div className="flex items-center gap-2 py-2 px-3 group">
+          <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
+            <StatusIcon className={`h-4 w-4 ${task.status === 'completed' ? 'text-emerald-500' : task.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`} />
+          </button>
+          <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpand(task.id, task.notes)}>
+            <p className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              {task.deadline && <span className={`text-[10px] flex items-center gap-0.5 ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}><Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}</span>}
+              {task.assignee && <span className="text-[10px] text-blue-600 flex items-center gap-0.5"><User className="h-2.5 w-2.5" />{task.assignee.full_name}</span>}
+              {task.supervisor && <span className="text-[10px] text-purple-600 flex items-center gap-0.5"><Eye className="h-2.5 w-2.5" />{task.supervisor.full_name}</span>}
+              {hasContent && !isExpanded && (
+                <span className="text-[10px] text-amber-500 flex items-center gap-0.5">
+                  <Paperclip className="h-2.5 w-2.5" />{task.notes ? 'Ghi chú' : ''}{atts.length > 0 ? ` ${atts.length} file` : ''}
+                </span>
+              )}
+            </div>
+          </div>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
+          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1">
+            <button onClick={() => toggleExpand(task.id, task.notes)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Ghi chú & file">
+              <Paperclip className="h-3 w-3" />
+            </button>
+            <button onClick={() => deleteTask(task.id)} className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
           </div>
         </div>
-        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
-        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1">
-          <button onClick={() => deleteTask(task.id)} className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
-        </div>
+
+        {/* Expanded: Notes + Attachments */}
+        {isExpanded && (
+          <div className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-3 pt-3">
+            {/* Task Notes */}
+            <div>
+              <label className="text-[10px] font-semibold text-gray-500 uppercase mb-1 block">📝 Ghi chú</label>
+              <textarea
+                value={taskNoteText[task.id] || ''}
+                onChange={e => setTaskNoteText(p => ({ ...p, [task.id]: e.target.value }))}
+                placeholder="Nhập ghi chú cho nhiệm vụ này..."
+                rows={2}
+                className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-blue-400 resize-none"
+              />
+              <div className="flex justify-end mt-1">
+                <button onClick={() => saveTaskNotes(task.id)} disabled={savingNote === task.id}
+                  className="px-2.5 py-1 bg-blue-600 text-white rounded text-[10px] font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1">
+                  <Save className="h-2.5 w-2.5" /> {savingNote === task.id ? 'Đang lưu...' : 'Lưu ghi chú'}
+                </button>
+              </div>
+            </div>
+
+            {/* Attachments */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-[10px] font-semibold text-gray-500 uppercase">📎 Đính kèm ({atts.length})</label>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => { setAddingAttNote(addingAttNote === task.id ? null : task.id); setAttNoteText(''); setAttNoteName(''); }}
+                    className="text-[10px] text-amber-600 hover:text-amber-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-amber-50">
+                    <MessageSquare className="h-3 w-3" /> Ghi chú
+                  </button>
+                  <button onClick={() => uploadTaskFile(task.id)}
+                    className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50">
+                    <FileUp className="h-3 w-3" /> Upload file
+                  </button>
+                </div>
+              </div>
+
+              {/* Add text attachment form */}
+              {addingAttNote === task.id && (
+                <div className="bg-amber-50 rounded-lg p-2.5 mb-2 space-y-1.5 border border-amber-200">
+                  <input value={attNoteName} onChange={e => setAttNoteName(e.target.value)}
+                    placeholder="Tên ghi chú (VD: Yêu cầu KH, Ghi chú kích thước...)"
+                    className="w-full h-7 px-2 border rounded text-xs outline-none" />
+                  <textarea value={attNoteText} onChange={e => setAttNoteText(e.target.value)}
+                    placeholder="Nội dung..." rows={2}
+                    className="w-full px-2 py-1.5 border rounded text-xs outline-none resize-none" />
+                  <div className="flex gap-1.5">
+                    <button onClick={() => addAttachmentNote(task.id)}
+                      className="px-2.5 py-1 bg-amber-500 text-white rounded text-[10px] font-medium cursor-pointer hover:bg-amber-600">Thêm</button>
+                    <button onClick={() => setAddingAttNote(null)}
+                      className="px-2.5 py-1 bg-gray-100 rounded text-[10px] cursor-pointer">Hủy</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Attachment list */}
+              {atts.length > 0 && (
+                <div className="space-y-1">
+                  {atts.map(att => {
+                    const AttIcon = ATT_ICONS[att.doc_type] || FileText;
+                    return (
+                      <div key={att.id} className="flex items-start gap-2 py-1.5 px-2 rounded bg-white border group/att">
+                        <AttIcon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-800 truncate">{att.name}</p>
+                          {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
+                          {att.file_url && (
+                            <a href={att.file_url} target="_blank" rel="noopener noreferrer"
+                              className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
+                          )}
+                          <span className="text-[9px] text-gray-400 ml-1">{att.creator?.full_name}</span>
+                        </div>
+                        <button onClick={() => deleteAttachment(task.id, att.id)}
+                          className="opacity-0 group-hover/att:opacity-100 p-0.5 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
+                          <Trash2 className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {atts.length === 0 && addingAttNote !== task.id && (
+                <p className="text-[10px] text-gray-400 italic">Chưa có đính kèm</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
