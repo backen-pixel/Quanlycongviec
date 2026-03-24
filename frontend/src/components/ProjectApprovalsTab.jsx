@@ -126,8 +126,7 @@ function RequestApprovalForm({ projectId, project, onCreated, onCancel }) {
         { slug: 'quotation', status: 'quoting' },
         { slug: 'contract', status: 'contract_signed' },
         { slug: 'production', status: 'producing' },
-        { slug: 'shipping', status: 'shipping' },
-        { slug: 'installation', status: 'installing' },
+        { slug: 'delivery', status: 'delivering' },
         { slug: 'customer-care', status: 'warranty' },
       ];
       const curIdx = STAGE_FLOW.findIndex(s => s.status === project?.status);

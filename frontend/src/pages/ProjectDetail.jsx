@@ -33,8 +33,7 @@ const STAGE_FLOW = [
   { slug: 'quotation', status: 'quoting', label: 'Báo giá', personKey: 'quotation_person' },
   { slug: 'contract', status: 'contract_signed', label: 'Hợp đồng', personKey: 'contract_person' },
   { slug: 'production', status: 'producing', label: 'Sản xuất', personKey: 'production_person' },
-  { slug: 'shipping', status: 'shipping', label: 'Vận chuyển', personKey: 'shipping_person' },
-  { slug: 'installation', status: 'installing', label: 'Lắp đặt', personKey: 'installation_person' },
+  { slug: 'delivery', status: 'delivering', label: 'Vận chuyển & Lắp đặt', personKey: 'shipping_person' },
   { slug: 'customer-care', status: 'warranty', label: 'CSKH', personKey: 'care_person' },
 ];
 

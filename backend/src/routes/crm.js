@@ -1152,7 +1152,7 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
     await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
 
     // ── AUTO-GENERATE TASKS FOR ALL STAGES ──
-    const allStageSlugs = ['consulting', 'design', 'quotation', 'contract', 'production', 'shipping', 'installation', 'customer-care'];
+    const allStageSlugs = ['consulting', 'design', 'quotation', 'contract', 'production', 'delivery', 'customer-care'];
     let totalCreated = 0;
 
     for (const slug of allStageSlugs) {

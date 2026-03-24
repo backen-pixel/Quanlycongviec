@@ -74,8 +74,9 @@ async function advanceProjectStage(req, projectId, nextStageSlug, nextStatus, no
     const stagePersonMap = {
       consulting: fullProj?.consulting_person_id, design: fullProj?.design_person_id,
       quotation: fullProj?.quotation_person_id, contract: fullProj?.contract_person_id,
-      production: fullProj?.production_person_id, shipping: fullProj?.shipping_person_id,
-      installation: fullProj?.installation_person_id, 'customer-care': fullProj?.care_person_id,
+      production: fullProj?.production_person_id, delivery: fullProj?.shipping_person_id,
+      shipping: fullProj?.shipping_person_id, installation: fullProj?.shipping_person_id,
+      'customer-care': fullProj?.care_person_id,
     };
     const stageAssigneeId = stagePersonMap[nextStageSlug] || null;
 
@@ -98,6 +99,7 @@ async function advanceProjectStage(req, projectId, nextStageSlug, nextStatus, no
       production: [{ title: 'Đặt mua vật tư', priority: 'high' },{ title: 'Gia công CNC', priority: 'high' },{ title: 'Lắp ráp', priority: 'medium' },{ title: 'Sơn / dán bề mặt', priority: 'medium' },{ title: 'Kiểm tra chất lượng', priority: 'high' }],
       shipping: [{ title: 'Đóng gói sản phẩm', priority: 'medium' },{ title: 'Sắp xếp xe vận chuyển', priority: 'medium' },{ title: 'Giao hàng đến công trình', priority: 'high' }],
       installation: [{ title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },{ title: 'Lắp đặt tại công trình', priority: 'high' },{ title: 'Nghiệm thu với khách hàng', priority: 'urgent' }],
+      delivery: [{ title: 'Đóng gói sản phẩm', priority: 'medium' },{ title: 'Sắp xếp xe vận chuyển', priority: 'medium' },{ title: 'Giao hàng đến công trình', priority: 'high' },{ title: 'Chuẩn bị vật tư lắp đặt', priority: 'medium' },{ title: 'Lắp đặt tại công trình', priority: 'high' },{ title: 'Nghiệm thu với khách hàng', priority: 'urgent' }],
       'customer-care': [{ title: 'Gọi điện hỏi thăm sau lắp đặt', priority: 'medium' },{ title: 'Xử lý bảo hành (nếu có)', priority: 'high' }],
     };
 

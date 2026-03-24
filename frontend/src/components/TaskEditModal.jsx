@@ -195,7 +195,7 @@ export default function TaskEditModal({ task, employees, onSave, onCancel }) {
                   <option value="sales_person">Sales / Tư vấn</option>
                   <option value="designer">Designer / Thiết kế</option>
                   <option value="production_manager">Quản lý sản xuất</option>
-                  <option value="installer">Thợ lắp đặt</option>
+                  <option value="installer">Vận chuyển & Lắp đặt</option>
                   <option value="project_manager">Quản lý dự án</option>
                 </select>
                 <p className="text-xs text-gray-500 mt-2">
