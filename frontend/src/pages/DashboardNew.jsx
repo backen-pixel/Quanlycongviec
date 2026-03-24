@@ -4,7 +4,7 @@ import api from '../lib/api';
 import {
   FolderKanban, CheckSquare, Users, DollarSign, TrendingUp, TrendingDown,
   AlertTriangle, Clock, ArrowRight, Activity, Bell, Building2,
-  ChevronDown, ChevronRight, Filter, Calendar, Search, X, User
+  ChevronDown, ChevronRight, Filter, Calendar, Search, X, User, Target, ArrowRightLeft
 } from 'lucide-react';
 import { formatVND, getInitials, avatarColor, STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS, formatDate } from '../lib/utils';
 import { TourButton } from '../components/WebTour';
@@ -119,6 +119,39 @@ function MainDashboardContent({ overview, workload, alerts, activities }) {
       <KPICard title="Khách Hàng" value={overview.customers.total} subtitle={`${overview.customers.vip} VIP`} trend={overview.customers.new_7d} trendLabel="mới (7 ngày)" icon={Users} color="bg-purple-600" bgColor="bg-purple-50" />
       <KPICard title="Doanh Thu" value={formatVND(overview.revenue.total)} subtitle={`TB: ${formatVND(overview.revenue.avg_project_value)}`} trend={overview.revenue.growth_pct} trendLabel="% tăng trưởng" icon={DollarSign} color="bg-amber-600" bgColor="bg-amber-50" />
     </div>
+    {/* CRM Stats */}
+    {overview.crm && (
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3 mb-8">
+        <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+          <Target className="h-4 w-4 text-purple-600" /> CRM — Lead & Deal
+        </h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="bg-purple-50 rounded-lg p-3 text-center">
+            <p className="text-2xl font-bold text-purple-700">{overview.crm.leads}</p>
+            <p className="text-[10px] text-purple-500 mt-0.5">Tổng Lead</p>
+            <p className="text-[9px] text-gray-400">+{overview.crm.new_leads_30d} (30 ngày)</p>
+          </div>
+          <div className="bg-blue-50 rounded-lg p-3 text-center">
+            <p className="text-2xl font-bold text-blue-700">{overview.crm.deals}</p>
+            <p className="text-[10px] text-blue-500 mt-0.5">Tổng Deal</p>
+            <p className="text-[9px] text-gray-400">+{overview.crm.new_deals_30d} (30 ngày)</p>
+          </div>
+          <div className="bg-emerald-50 rounded-lg p-3 text-center">
+            <p className="text-2xl font-bold text-emerald-700">{overview.crm.lead_to_deal_rate}%</p>
+            <p className="text-[10px] text-emerald-500 mt-0.5">Lead → Deal</p>
+            <p className="text-[9px] text-gray-400">Tỉ lệ chuyển đổi</p>
+          </div>
+          <div className="bg-amber-50 rounded-lg p-3 text-center">
+            <p className="text-2xl font-bold text-amber-700">{overview.crm.deal_to_project_rate}%</p>
+            <p className="text-[10px] text-amber-500 mt-0.5">Deal → Dự án</p>
+            <p className="text-[9px] text-gray-400">{overview.crm.won_deals} dự án đã tạo</p>
+          </div>
+        </div>
+        {overview.crm.pipeline_value > 0 && (
+          <p className="text-xs text-gray-500 text-right">💰 Pipeline: <span className="font-bold text-gray-800">{new Intl.NumberFormat('vi-VN').format(overview.crm.pipeline_value)}đ</span></p>
+        )}
+      </div>
+    )}
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
       <div className="lg:col-span-2"><WorkloadWidget workload={workload} /></div>
       <div><AlertsWidget alerts={alerts} /></div>
