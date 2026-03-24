@@ -77,6 +77,19 @@ r.get('/overview', async (req, res) => {
 
     const avgProjectValue = totalProjects > 0 ? Math.round(totalRevenue / totalProjects) : 0;
 
+    // ── CRM: Leads & Deals ──
+    const { count: totalLeads } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead');
+    const { count: totalDeals } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal');
+    const { count: newLeads30d } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead').gte('created_at', thirtyDaysAgo.toISOString());
+    const { count: newDeals30d } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').gte('created_at', thirtyDaysAgo.toISOString());
+    const { count: wonDeals } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').not('project_id', 'is', null);
+    const leadToDealRate = totalLeads > 0 ? ((totalDeals / totalLeads) * 100).toFixed(1) : 0;
+    const dealToProjectRate = totalDeals > 0 ? (((wonDeals || 0) / totalDeals) * 100).toFixed(1) : 0;
+
+    // Deal pipeline value
+    const { data: dealValues } = await supabase.from('crm_leads').select('budget').eq('type', 'deal').is('project_id', null);
+    const dealPipelineValue = (dealValues || []).reduce((sum, d) => sum + (d.budget || 0), 0);
+
     res.json({
       projects: {
         total: totalProjects || 0,
@@ -104,6 +117,16 @@ r.get('/overview', async (req, res) => {
         avg_project_value: avgProjectValue,
         this_month: thisMonthRevenue,
         last_month: lastMonthRevenue,
+      },
+      crm: {
+        leads: totalLeads || 0,
+        deals: totalDeals || 0,
+        new_leads_30d: newLeads30d || 0,
+        new_deals_30d: newDeals30d || 0,
+        won_deals: wonDeals || 0,
+        lead_to_deal_rate: parseFloat(leadToDealRate),
+        deal_to_project_rate: parseFloat(dealToProjectRate),
+        pipeline_value: dealPipelineValue,
       },
     });
   } catch (e) {

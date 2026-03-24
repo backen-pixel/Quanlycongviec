@@ -48,6 +48,7 @@ import PermissionsPage from './pages/PermissionsPage';
 import EcosystemPermissionsPage from './pages/EcosystemPermissionsPage';
 import WorkflowHubPage from './pages/WorkflowHubPage';
 import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
+import DivisionDashboardPage from './pages/DivisionDashboardPage';
 
 import { Settings } from 'lucide-react';
 
@@ -116,6 +117,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedLayout />}>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/dashboard/divisions" element={<DivisionDashboardPage />} />
             <Route path="/my-tasks" element={<MyTasks />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/create" element={<CreateProject />} />
