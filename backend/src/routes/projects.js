@@ -803,6 +803,25 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           console.log(`[deal] Auto-completed ${kdTaskIds.length} more KD tasks by process name`);
         }
 
+        // 2a. Auto-complete ALL checklists of KD tasks
+        // Collect all completed KD task IDs
+        const allKdTaskIds = [];
+        if (kdStageIds.length) {
+          const { data: kdStageTasks } = await supabase.from('tasks')
+            .select('id').eq('project_id', projectId).in('stage_id', kdStageIds);
+          (kdStageTasks || []).forEach(t => allKdTaskIds.push(t.id));
+        }
+        kdTaskIds.forEach(id => { if (!allKdTaskIds.includes(id)) allKdTaskIds.push(id); });
+
+        if (allKdTaskIds.length) {
+          const { data: updatedChecklists } = await supabase.from('task_checklists')
+            .update({ is_completed: true, completed_at: new Date().toISOString() })
+            .in('task_id', allKdTaskIds)
+            .eq('is_completed', false)
+            .select('id');
+          console.log(`[deal] Auto-completed ${updatedChecklists?.length || 0} checklists for ${allKdTaskIds.length} KD tasks`);
+        }
+
         // 2b. Update project status → production (KD đã xong, bắt đầu SX)
         const { data: prodStage } = await supabase.from('workflow_stages')
           .select('id').eq('slug', 'production').limit(1).single();

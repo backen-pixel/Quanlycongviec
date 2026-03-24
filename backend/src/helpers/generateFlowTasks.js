@@ -20,9 +20,11 @@ const PROCESS_STAGE_MAP = {
   'Thiết kế': 'design',
   'Báo giá & Hợp đồng': 'quotation',
   'Sản xuất': 'production',
-  'Giao hàng': 'shipping',
-  'Giao hàng ': 'shipping',  // trailing space in DB
-  'Lắp đặt': 'installation',
+  'Vận chuyển & Lắp đặt': 'delivery',
+  'Giao hàng': 'delivery',
+  'Giao hàng ': 'delivery',
+  'Lắp đặt': 'delivery',
+  'Bảo hành & CSKH': 'customer-care',
   'Chăm sóc KH': 'customer-care',
   'Chăm sóc khách hàng': 'customer-care',
 };
