@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { formatDate } from '../lib/utils';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
-  Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks
+  Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList
 } from 'lucide-react';
 
 const LEAD_STAGES = [
@@ -30,6 +30,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const [showAdd, setShowAdd] = useState(null); // stage_slug
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
   const [editingId, setEditingId] = useState(null);
+  const [showTemplatePanel, setShowTemplatePanel] = useState(false);
 
   const loadTasks = async () => {
     setLoading(true);
@@ -222,6 +223,13 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {templates.length > 0 && (
+            <button onClick={() => setShowTemplatePanel(p => !p)}
+              className={`h-7 px-2.5 rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer transition-colors ${showTemplatePanel ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100'}`}>
+              <ClipboardList className="h-3 w-3" /> Gắn mẫu
+            </button>
+          )}
+          <div className="w-px h-5 bg-gray-200 mx-1" />
           {[{ id: 'list', icon: List, label: 'List' }, { id: 'deadline', icon: AlertTriangle, label: 'Deadline' }, { id: 'planner', icon: Users, label: 'Planner' }, { id: 'calendar', icon: Calendar, label: 'Lịch' }].map(v => (
             <button key={v.id} onClick={() => setViewMode(v.id)}
               className={`h-7 px-2 rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer ${viewMode === v.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
@@ -231,17 +239,58 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
         </div>
       </div>
 
-      {/* Template quick-apply */}
-      {templates.length > 0 && tasks.length === 0 && (
+      {/* Template panel — always available via button */}
+      {showTemplatePanel && templates.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-amber-900 flex items-center gap-1.5">📋 Gắn bộ nhiệm vụ mẫu</p>
+            <button onClick={() => setShowTemplatePanel(false)} className="p-1 hover:bg-amber-100 rounded cursor-pointer"><X className="h-3.5 w-3.5 text-amber-600" /></button>
+          </div>
+          <p className="text-[11px] text-amber-700">Chọn bộ mẫu để tạo nhiệm vụ tự động cho {leadType === 'deal' ? 'Deal' : 'Lead'} này. Có thể gắn nhiều bộ mẫu.</p>
+          {ALL_STAGES.map(stage => {
+            const stageTpls = templates.filter(t => t.stage_slug === stage.slug);
+            if (!stageTpls.length) return null;
+            const existingCount = tasks.filter(t => t.stage_slug === stage.slug).length;
+            return (
+              <div key={stage.slug}>
+                <p className="text-[10px] font-bold mb-1.5 flex items-center gap-1" style={{ color: stage.color }}>
+                  {stage.icon} {stage.label}
+                  {existingCount > 0 && <span className="text-gray-400 font-normal">({existingCount} việc hiện có)</span>}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {stageTpls.map(tpl => (
+                    <button key={tpl.id} onClick={() => { applyTemplate(tpl.id); }}
+                      className="px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-100 hover:border-amber-400 cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm">
+                      <ListChecks className="h-3.5 w-3.5" />
+                      {tpl.name}
+                      <span className="text-[10px] text-amber-500">({tpl.items?.length || 0} việc)</span>
+                      {tpl.is_default && <span className="text-[9px] bg-amber-200 text-amber-700 px-1.5 py-0.5 rounded-full">⭐</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Template quick-apply — only when no tasks exist */}
+      {templates.length > 0 && tasks.length === 0 && !showTemplatePanel && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-          <p className="text-xs font-medium text-amber-800 mb-2">📋 Áp dụng bộ nhiệm vụ mẫu:</p>
+          <p className="text-xs font-medium text-amber-800 mb-2">📋 Chưa có công việc — Áp dụng bộ mẫu nhanh:</p>
           <div className="flex flex-wrap gap-2">
-            {templates.map(tpl => (
+            {templates.filter(t => t.is_default).concat(templates.filter(t => !t.is_default)).slice(0, 5).map(tpl => (
               <button key={tpl.id} onClick={() => applyTemplate(tpl.id)}
                 className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-100 cursor-pointer">
-                {STAGES.find(s => s.slug === tpl.stage_slug)?.icon || '📋'} {tpl.name} ({tpl.items?.length || 0} việc)
+                {ALL_STAGES.find(s => s.slug === tpl.stage_slug)?.icon || '📋'} {tpl.name} ({tpl.items?.length || 0} việc)
+                {tpl.is_default && ' ⭐'}
               </button>
             ))}
+            {templates.length > 5 && (
+              <button onClick={() => setShowTemplatePanel(true)} className="px-3 py-1.5 text-xs text-amber-600 hover:text-amber-800 cursor-pointer">
+                +{templates.length - 5} bộ mẫu khác...
+              </button>
+            )}
           </div>
         </div>
       )}
