@@ -814,6 +814,61 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
         console.log(`[deal] Project status → producing`);
 
         // 3. Copy documents from deal/lead to project (store as quotation_files JSON)
+        // First, copy any remaining task attachments/notes from Deal phase → lead_documents
+        try {
+          const { data: dealTaskAtts } = await supabase.from('crm_task_attachments')
+            .select('*, task:crm_tasks(title, stage_slug)')
+            .eq('lead_id', b.deal_id);
+          if (dealTaskAtts?.length) {
+            // Check which are already in lead_documents to avoid duplicates
+            const { data: existingDocs } = await supabase.from('lead_documents')
+              .select('name, file_url').eq('lead_id', b.deal_id);
+            const existingSet = new Set((existingDocs || []).map(d => `${d.name}|${d.file_url || ''}`));
+
+            const newDocInserts = dealTaskAtts
+              .filter(att => !existingSet.has(`[${att.task?.title || 'Task'}] ${att.name}|${att.file_url || ''}`))
+              .map(att => ({
+                lead_id: b.deal_id,
+                name: `[${att.task?.title || 'Task'}] ${att.name}`,
+                doc_type: att.file_url ? (att.doc_type || 'other') : 'requirement',
+                file_url: att.file_url || null,
+                file_name: att.file_name || null,
+                file_size: att.file_size || null,
+                mime_type: att.mime_type || null,
+                notes: att.notes || null,
+                created_by: att.created_by,
+              }));
+            if (newDocInserts.length) {
+              await supabase.from('lead_documents').insert(newDocInserts);
+              console.log(`[deal→project] Copied ${newDocInserts.length} task attachments → lead_documents`);
+            }
+          }
+
+          // Also copy Deal task notes
+          const { data: dealTasksWithNotes } = await supabase.from('crm_tasks')
+            .select('id, title, stage_slug, notes, created_by')
+            .eq('lead_id', b.deal_id)
+            .not('notes', 'is', null);
+          if (dealTasksWithNotes?.length) {
+            const existingDocs2 = (await supabase.from('lead_documents').select('name').eq('lead_id', b.deal_id)).data || [];
+            const existingNames = new Set(existingDocs2.map(d => d.name));
+            const noteInserts = dealTasksWithNotes
+              .filter(t => t.notes?.trim() && !existingNames.has(`📝 Ghi chú: ${t.title}`))
+              .map(t => ({
+                lead_id: b.deal_id,
+                name: `📝 Ghi chú: ${t.title}`,
+                doc_type: 'requirement',
+                notes: t.notes,
+                created_by: t.created_by,
+              }));
+            if (noteInserts.length) {
+              await supabase.from('lead_documents').insert(noteInserts);
+              console.log(`[deal→project] Copied ${noteInserts.length} task notes → lead_documents`);
+            }
+          }
+        } catch (copyErr) { console.error('[deal→project] Copy task data error:', copyErr.message); }
+
+        // Now copy all lead_documents (including newly added) → project quotation_files
         const { data: dealDocs } = await supabase.from('lead_documents')
           .select('*').eq('lead_id', b.deal_id);
         if (dealDocs?.length) {
@@ -826,12 +881,24 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
               mime_type: doc.mime_type,
               description: `Từ ${doc.doc_type || 'Deal'}: ${doc.name || doc.file_name}`,
             }));
-          if (docFiles.length) {
+          // Also include text-only notes as description entries
+          const textNotes = dealDocs
+            .filter(doc => !doc.file_url && doc.notes)
+            .map(doc => ({
+              file_url: null,
+              file_name: doc.name,
+              file_size: 0,
+              mime_type: 'text/plain',
+              description: `${doc.name}: ${doc.notes}`,
+              is_note: true,
+            }));
+          const allDocEntries = [...docFiles, ...textNotes];
+          if (allDocEntries.length) {
             // Append to existing quotation_files
             const { data: proj } = await supabase.from('projects').select('quotation_files').eq('id', projectId).single();
             const existing = proj?.quotation_files || [];
-            await supabase.from('projects').update({ quotation_files: [...existing, ...docFiles] }).eq('id', projectId);
-            console.log(`[deal] Copied ${docFiles.length} documents to project quotation_files`);
+            await supabase.from('projects').update({ quotation_files: [...existing, ...allDocEntries] }).eq('id', projectId);
+            console.log(`[deal] Copied ${allDocEntries.length} documents (${docFiles.length} files + ${textNotes.length} notes) to project quotation_files`);
           }
         }
 

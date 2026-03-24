@@ -535,6 +535,54 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     if (leadError) throw leadError;
 
+    // Copy task attachments & notes → lead_documents (để lưu lại khi chuyển Deal)
+    try {
+      // 1. Copy task attachments (file + text)
+      const { data: taskAtts } = await supabase.from('crm_task_attachments')
+        .select('*, task:crm_tasks(title, stage_slug)')
+        .eq('lead_id', req.params.id);
+      if (taskAtts?.length) {
+        const docInserts = taskAtts.map(att => ({
+          lead_id: req.params.id,
+          name: att.file_url
+            ? `[${att.task?.title || 'Task'}] ${att.name}`
+            : `[${att.task?.title || 'Task'}] ${att.name}`,
+          doc_type: att.file_url ? (att.doc_type || 'other') : 'requirement',
+          file_url: att.file_url || null,
+          file_name: att.file_name || null,
+          file_size: att.file_size || null,
+          mime_type: att.mime_type || null,
+          notes: att.notes || null,
+          created_by: att.created_by,
+        }));
+        await supabase.from('lead_documents').insert(docInserts);
+        console.log(`[convert] Copied ${docInserts.length} task attachments → lead_documents`);
+      }
+
+      // 2. Copy task notes (text notes on tasks themselves)
+      const { data: tasksWithNotes } = await supabase.from('crm_tasks')
+        .select('id, title, stage_slug, notes, created_by')
+        .eq('lead_id', req.params.id)
+        .not('notes', 'is', null);
+      if (tasksWithNotes?.length) {
+        const noteInserts = tasksWithNotes
+          .filter(t => t.notes?.trim())
+          .map(t => ({
+            lead_id: req.params.id,
+            name: `📝 Ghi chú: ${t.title}`,
+            doc_type: 'requirement',
+            notes: t.notes,
+            created_by: t.created_by,
+          }));
+        if (noteInserts.length) {
+          await supabase.from('lead_documents').insert(noteInserts);
+          console.log(`[convert] Copied ${noteInserts.length} task notes → lead_documents`);
+        }
+      }
+    } catch (copyErr) {
+      console.error('Copy task data to documents error:', copyErr.message);
+    }
+
     // Log activity
     try {
       await supabase.from('crm_activities').insert({
@@ -1819,6 +1867,77 @@ r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
     const { error } = await supabase.from('crm_tasks').delete().eq('id', req.params.taskId);
     if (error) throw error;
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TASK NOTES & ATTACHMENTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// UPDATE task notes (quick text note on task itself)
+r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
+  try {
+    const { notes } = req.body;
+    const { data, error } = await supabase.from('crm_tasks')
+      .update({ notes, updated_at: new Date().toISOString() })
+      .eq('id', req.params.taskId)
+      .select('id, notes').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET attachments for a task
+r.get('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('crm_task_attachments')
+      .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
+      .eq('task_id', req.params.taskId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ADD attachment (file or text note) to a task
+r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
+  try {
+    const { name, doc_type, file_url, file_name, file_size, mime_type, notes } = req.body;
+    const { data, error } = await supabase.from('crm_task_attachments')
+      .insert({
+        task_id: req.params.taskId,
+        lead_id: req.params.leadId,
+        name: name || file_name || 'Ghi chú',
+        doc_type: doc_type || (file_url ? 'other' : 'task_note'),
+        file_url, file_name, file_size, mime_type, notes,
+        created_by: req.user.userId,
+      })
+      .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE attachment
+r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => {
+  try {
+    const { error } = await supabase.from('crm_task_attachments')
+      .delete().eq('id', req.params.attId).eq('task_id', req.params.taskId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET all attachments for a lead/deal (across all tasks)
+r.get('/leads/:id/task-attachments', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('crm_task_attachments')
+      .select('*, task:crm_tasks(id, title, stage_slug), creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
+      .eq('lead_id', req.params.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
