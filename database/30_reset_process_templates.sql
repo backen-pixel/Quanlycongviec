@@ -37,6 +37,9 @@ INSERT INTO workflow_stages (slug, name, color, icon, order_index, is_active) VA
   ('customer-care', 'Chăm sóc KH',          '#EF4444', '❤️', 7, true);
 
 -- ─── 3. RESET HỆ SINH THÁI (Khối + Công ty mẫu) ───
+-- Clear FK references trước khi xóa
+UPDATE companies SET division_unit_id = NULL WHERE division_unit_id IS NOT NULL;
+DELETE FROM project_company_assignments;
 DELETE FROM ecosystem_units;
 DELETE FROM ecosystem_levels;
 
