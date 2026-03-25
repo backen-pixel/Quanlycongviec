@@ -780,56 +780,80 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           .filter(s => kdBaseSlugs.some(base => s.slug === base || s.slug.startsWith(base + '-')))
           .map(s => s.id);
         
+        // Collect ALL KD task IDs first (for checklists later)
+        const allKdTaskIds = [];
+
         if (kdStageIds.length) {
-          const { data: completedTasks } = await supabase.from('tasks')
-            .update({ status: 'completed', completed_at: new Date().toISOString() })
+          // Complete tasks by stage
+          const { data: completedTasks, error: ctErr } = await supabase.from('tasks')
+            .update({ status: 'done', completed_at: new Date().toISOString() })
             .eq('project_id', projectId)
             .in('stage_id', kdStageIds)
+            .neq('status', 'done')
             .select('id');
-          console.log(`[deal] Auto-completed ${completedTasks?.length || 0} KD tasks (stages: ${kdStageIds.length})`);
+          if (ctErr) console.error('[deal] Auto-complete by stage error:', ctErr.message);
+          else {
+            (completedTasks || []).forEach(t => allKdTaskIds.push(t.id));
+            console.log(`[deal] Auto-completed ${completedTasks?.length || 0} KD tasks by stage`);
+          }
         }
 
         // Also complete tasks with metadata matching KD process names
-        const { data: allTasks } = await supabase.from('tasks')
-          .select('id, metadata').eq('project_id', projectId).eq('status', 'pending');
-        const kdProcessNames = ['Tiếp nhận & Tư vấn', 'Thiết kế', 'Báo giá & Hợp đồng'];
-        const kdTaskIds = (allTasks || [])
+        const { data: pendingTasks } = await supabase.from('tasks')
+          .select('id, metadata').eq('project_id', projectId).in('status', ['pending', 'todo', 'in_progress']);
+        const kdProcessNames = ['Tiếp nhận & Tư vấn', 'Thiết kế', 'Báo giá & Hợp đồng', 'Tư vấn', 'Báo giá', 'Hợp đồng'];
+        const kdTaskIds = (pendingTasks || [])
           .filter(t => t.metadata?.process_name && kdProcessNames.includes(t.metadata.process_name))
           .map(t => t.id);
         if (kdTaskIds.length) {
-          await supabase.from('tasks')
-            .update({ status: 'completed', completed_at: new Date().toISOString() })
+          const { error: kErr } = await supabase.from('tasks')
+            .update({ status: 'done', completed_at: new Date().toISOString() })
             .in('id', kdTaskIds);
-          console.log(`[deal] Auto-completed ${kdTaskIds.length} more KD tasks by process name`);
+          if (kErr) console.error('[deal] Auto-complete by process name error:', kErr.message);
+          else console.log(`[deal] Auto-completed ${kdTaskIds.length} more KD tasks by process name`);
+          kdTaskIds.forEach(id => { if (!allKdTaskIds.includes(id)) allKdTaskIds.push(id); });
         }
 
         // 2a. Auto-complete ALL checklists of KD tasks
-        // Collect all completed KD task IDs
-        const allKdTaskIds = [];
-        if (kdStageIds.length) {
-          const { data: kdStageTasks } = await supabase.from('tasks')
-            .select('id').eq('project_id', projectId).in('stage_id', kdStageIds);
-          (kdStageTasks || []).forEach(t => allKdTaskIds.push(t.id));
-        }
-        kdTaskIds.forEach(id => { if (!allKdTaskIds.includes(id)) allKdTaskIds.push(id); });
-
         if (allKdTaskIds.length) {
-          const { data: updatedChecklists } = await supabase.from('task_checklists')
+          const { data: updatedChecklists, error: clErr } = await supabase.from('task_checklists')
             .update({ is_completed: true, completed_at: new Date().toISOString() })
             .in('task_id', allKdTaskIds)
             .eq('is_completed', false)
             .select('id');
-          console.log(`[deal] Auto-completed ${updatedChecklists?.length || 0} checklists for ${allKdTaskIds.length} KD tasks`);
+          if (clErr) console.error('[deal] Auto-complete checklists error:', clErr.message);
+          else console.log(`[deal] Auto-completed ${updatedChecklists?.length || 0} checklists for ${allKdTaskIds.length} KD tasks`);
         }
 
-        // 2b. Update project status → production (KD đã xong, bắt đầu SX)
+        // 2b. Mark KD assignment (step 0) as completed
+        const kdAssignment = b.flow_assignments?.find(a => a.order_index === 0);
+        if (kdAssignment?.division_unit_id) {
+          await supabase.from('project_company_assignments')
+            .update({ status: 'done', completed_at: new Date().toISOString() })
+            .eq('project_id', projectId)
+            .eq('division_unit_id', kdAssignment.division_unit_id);
+          console.log(`[deal] KD assignment → completed`);
+        }
+
+        // 2c. Mark SX assignment (step 1) as in_progress
+        const sxAssignment = b.flow_assignments?.find(a => a.order_index === 1);
+        if (sxAssignment?.division_unit_id) {
+          await supabase.from('project_company_assignments')
+            .update({ status: 'in_progress', started_at: new Date().toISOString() })
+            .eq('project_id', projectId)
+            .eq('division_unit_id', sxAssignment.division_unit_id)
+            .eq('status', 'pending');
+          console.log(`[deal] SX assignment → in_progress`);
+        }
+
+        // 2d. Update project status → production (KD đã xong, bắt đầu SX)
         const { data: prodStage } = await supabase.from('workflow_stages')
           .select('id').eq('slug', 'production').limit(1).single();
         await supabase.from('projects').update({
           status: 'producing',
           current_stage_id: prodStage?.id || null,
         }).eq('id', projectId);
-        console.log(`[deal] Project status → producing`);
+        console.log(`[deal] Project status → producing, completed ${allKdTaskIds.length} KD tasks total`);
 
         // 3. Copy documents from deal/lead to project (store as quotation_files JSON)
         // First, copy any remaining task attachments/notes from Deal phase → lead_documents
