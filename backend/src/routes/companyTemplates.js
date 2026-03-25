@@ -386,6 +386,25 @@ r.delete('/template-tasks/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PUT reorder tasks within a stage (batch update order_index)
+r.put('/template-sets/:setId/reorder-tasks', async (req, res) => {
+  try {
+    const { task_orders } = req.body; // [{ id, order_index }]
+    if (!Array.isArray(task_orders) || task_orders.length === 0) {
+      return res.status(400).json({ error: 'task_orders là bắt buộc' });
+    }
+    // Update each task's order_index
+    const updates = task_orders.map(({ id, order_index }) =>
+      supabase.from('company_template_tasks')
+        .update({ order_index })
+        .eq('id', id)
+        .eq('template_set_id', req.params.setId)
+    );
+    await Promise.all(updates);
+    res.json({ ok: true, updated: task_orders.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════════
 // CHECKLIST MẪU
 // ═══════════════════════════════════════════════
