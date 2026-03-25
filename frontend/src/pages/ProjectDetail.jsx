@@ -17,10 +17,6 @@ import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
 import ProjectFlowTab from '../components/ProjectFlowTab';
 import ProjectCRMTab from '../components/ProjectCRMTab';
-import { TourButton } from '../components/WebTour';
-import { projectDetailTour } from '../lib/tourSteps';
-import { useTour } from '../components/TourProvider';
-import { projectDetailGuidedTour } from '../lib/guidedTours';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
   TASK_STATUS, TASK_COLORS, formatVND, formatDate, formatDateTime,
@@ -40,7 +36,6 @@ const STAGE_FLOW = [
 export default function ProjectDetail() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
-  const { startTour } = useTour();
   const navigate = useNavigate();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -234,10 +229,6 @@ export default function ProjectDetail() {
           ) : (
             <button onClick={startEditing} className="h-8 px-3 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 cursor-pointer flex items-center gap-1">✏️ Sửa</button>
           )}
-          <TourButton steps={projectDetailTour} />
-          <button onClick={() => startTour(projectDetailGuidedTour)} className="h-8 px-3 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg flex items-center gap-1.5 cursor-pointer transition" title="Hướng dẫn chi tiết">
-            🎓
-          </button>
           {canAdvance && nextStage && approvalRule?.mode === 'auto' && (
             <button onClick={() => setShowAdvance(true)}
               className="h-9 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 cursor-pointer flex items-center gap-1 animate-pulse">

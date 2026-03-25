@@ -5,10 +5,6 @@ import api from '../lib/api';
 import { Plus, Search, Settings, Phone, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, List, CalendarClock, Pin, ChevronLeft, ChevronRight } from 'lucide-react';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
-import { TourButton } from '../components/WebTour';
-import { projectsTour } from '../lib/tourSteps';
-import { useTour } from '../components/TourProvider';
-import { createProjectTour } from '../lib/guidedTours';
 
 const TIME_FILTERS = [
   { id: 'all', label: 'Tất cả' },
@@ -52,7 +48,6 @@ function filterByTime(items, tf, dFrom, dTo) {
 
 export default function Projects() {
   const navigate = useNavigate();
-  const { startTour } = useTour();
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState('kanban');
@@ -322,8 +317,6 @@ export default function Projects() {
             <span className="text-sm text-gray-400">{filtered.length} dự án{hasActiveFilters ? ' (đã lọc)' : ''}</span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => startTour(createProjectTour)} className="h-8 px-3 text-xs font-medium text-blue-300 bg-white/10 hover:bg-white/20 rounded-lg flex items-center gap-1.5 cursor-pointer">🎓</button>
-            <TourButton steps={projectsTour} />
             <button onClick={() => navigate('/projects/create')} className="h-9 px-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer shadow-lg">
               <Plus className="h-4 w-4" /> Tạo dự án
             </button>

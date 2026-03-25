@@ -1,7 +1,6 @@
 import { useState, useRef } from 'react';
 import { useTheme } from '../components/ThemeProvider';
 import { Upload, Check, Palette, Image, SlidersHorizontal, Trash2, Type, Eye } from 'lucide-react';
-import { TourButton } from '../components/WebTour';
 
 const TEXT_PRESETS = [
   { id: 'light', name: '☀️ Sáng (mặc định)', textHeading: '#111827', textBody: '#374151', textMuted: '#6b7280', textCard: '#1f2937' },
