@@ -51,6 +51,7 @@ import EcosystemPermissionsPage from './pages/EcosystemPermissionsPage';
 import WorkflowHubPage from './pages/WorkflowHubPage';
 import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import DivisionDashboardPage from './pages/DivisionDashboardPage';
+import GuidePage from './pages/GuidePage';
 
 import { Settings } from 'lucide-react';
 
@@ -169,6 +170,7 @@ export default function App() {
             <Route path="/crm/task-templates" element={<CRMTemplatesPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
+            <Route path="/guide" element={<GuidePage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
                 <div className="text-center">

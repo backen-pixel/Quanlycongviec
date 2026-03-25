@@ -6,7 +6,8 @@ import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
-  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks
+  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks,
+  BookOpen
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -61,6 +62,7 @@ const MENU_GROUPS = [
       { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
       { to: '/settings/pdf', icon: Settings, label: 'Thông tin PDF' },
       { to: '/settings/theme', icon: Settings, label: 'Giao diện & Hình nền' },
+      { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
       // Hidden from sidebar but routes still work:
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
       // { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
@@ -100,6 +102,7 @@ const CRM_MENU_GROUPS = [
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo' },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline' },
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM' },
+      { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
     ]
   },
 ];
