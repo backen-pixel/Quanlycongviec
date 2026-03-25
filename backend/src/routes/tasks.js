@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 
 const r = Router();
 r.use(auth);
@@ -9,19 +10,13 @@ r.use(auth);
 // ─── HELPER ──────────────────────────────────────────────
 function notify(io, event, data) { if (io) io.emit(event, data); }
 
-async function createNotification(req, userId, type, title, message, entityType, entityId) {
-  if (!userId || userId === req.user.userId) return;
-  const { data, error } = await supabase.from('notifications').insert({
-    user_id: userId, type, title, message, entity_type: entityType, entity_id: entityId,
-  }).select().single();
-  const pushFn = req.app.get('pushNotification');
-  if (pushFn && data) pushFn(userId, data);
-  return data;
+// Wrapper for backward compatibility
+async function createNotification(req, userId, type, title, message, entityType, entityId, metadata) {
+  return await createNotif(req, userId, type, title, message, entityType, entityId, metadata || null);
 }
 
-async function notifyMultiple(req, userIds, type, title, message, entityType, entityId) {
-  const unique = [...new Set(userIds.filter(id => id && id !== req.user.userId))];
-  for (const uid of unique) await createNotification(req, uid, type, title, message, entityType, entityId);
+async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata) {
+  return await notifyMultipleShared(req, userIds, type, title, message, entityType, entityId, metadata || null);
 }
 
 async function logActivity(userId, action, entityType, entityId, description, oldValues, newValues) {
@@ -392,6 +387,24 @@ r.patch('/:taskId/checklists/:clId', async (req, res) => {
       ({ data, error } = await supabase.from('task_checklists').update(safeUpdate).eq('id', req.params.clId).select().single());
     }
     if (error) throw error;
+
+    // ── CHECK IF ALL CHECKLISTS DONE ──
+    if (update.is_completed) {
+      const { data: allChecklists } = await supabase.from('task_checklists')
+        .select('id, is_completed').eq('task_id', req.params.taskId);
+      const allDone = allChecklists?.length > 0 && allChecklists.every(cl => cl.is_completed);
+      if (allDone) {
+        const { data: task } = await supabase.from('tasks')
+          .select('title, assignee_id, projects(code)').eq('id', req.params.taskId).single();
+        if (task?.assignee_id) {
+          await createNotification(req, task.assignee_id, 'checklist_completed',
+            '📋 Tất cả checklist hoàn tất',
+            `Tất cả mục checklist của task "${task.title}" đã hoàn tất${task.projects?.code ? ` — DA ${task.projects.code}` : ''}`,
+            'task', req.params.taskId);
+        }
+      }
+    }
+
     res.json({ checklist: data });
   } catch (e) { console.error('checklist patch', e); res.status(500).json({ error: e.message || 'Lỗi' }); }
 });

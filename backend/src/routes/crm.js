@@ -2,12 +2,22 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const PDFDocument = require('pdfkit');
+const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
 const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [], createProjectFromLead = async () => null } = autoFlowFns;
 
 const r = Router();
 r.use(auth);
+
+// ─── HELPER: Create notification (backward compatible wrapper) ──
+async function createNotification(req, userId, type, title, message, entityType, entityId, metadata) {
+  return await createNotif(req, userId, type, title, message, entityType, entityId, metadata || null);
+}
+
+async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata) {
+  return await notifyMultipleShared(req, userIds, type, title, message, entityType, entityId, metadata || null);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER: Auto-generate code (LEAD-2026-001, BG-2026-001...)
@@ -332,6 +342,15 @@ r.post('/leads', async (req, res) => {
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
       .single();
     if (error) throw error;
+
+    // ✅ NOTIFICATION: Notify assigned sales person if set
+    if (body.assigned_to && body.assigned_to !== req.user.userId) {
+      const { data: assignee } = await supabase.from('users').select('full_name').eq('id', body.assigned_to).single();
+      await createNotification(req, body.assigned_to, 'lead_assigned',
+        '👤 Lead mới được giao',
+        `Lead "${body.title}" được giao cho bạn${assignee ? ` từ ${assignee.full_name}` : ''}`,
+        'crm_lead', data.id);
+    }
 
     // 🔴 REMOVED: Auto project creation on lead create
     // Lead is just a lead — user must explicitly convert to deal later
@@ -692,12 +711,23 @@ r.patch('/leads/:id/stage', async (req, res) => {
       requiresProjectCreation = true;
       // Load deal full info for project creation
       const { data: dealData } = await supabase.from('crm_leads')
-        .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code)')
+        .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), assignee:users!crm_leads_assigned_to_fkey(id, full_name)')
         .eq('id', req.params.id).single();
       // Load documents from lead
       const { data: docs } = await supabase.from('lead_documents')
         .select('*').eq('lead_id', req.params.id).order('created_at');
       dealInfo = { ...dealData, documents: docs || [] };
+      
+      // ✅ NOTIFICATION: Notify admin users about deal won
+      const { data: adminUsers } = await supabase.from('users')
+        .select('id').eq('role', 'admin');
+      const adminIds = (adminUsers || []).map(u => u.id);
+      if (adminIds.length > 0) {
+        await notifyMultiple(req, adminIds, 'deal_won',
+          '🏆 Deal Thắng',
+          `Deal "${dealData?.title}" - Giá trị: ${(dealData?.estimated_value || 0).toLocaleString('vi-VN')} VND - đã chốt thành công`,
+          'crm_deal', req.params.id);
+      }
       
       try {
         await supabase.from('crm_activities').insert({
@@ -1013,6 +1043,18 @@ r.post('/orders', async (req, res) => {
         ...item, order_id: data.id, item_order: i,
       })));
     }
+
+    // ✅ NOTIFICATION: Notify admin users about order confirmed
+    const { data: adminUsers } = await supabase.from('users')
+      .select('id').eq('role', 'admin');
+    const adminIds = (adminUsers || []).map(u => u.id);
+    if (adminIds.length > 0) {
+      await notifyMultiple(req, adminIds, 'order_confirmed',
+        '📋 Đơn hàng được xác nhận',
+        `Đơn hàng ${code} - Tổng tiền: ${(data.total || 0).toLocaleString('vi-VN')} VND - đã được xác nhận`,
+        'order', data.id);
+    }
+
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

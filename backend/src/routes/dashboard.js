@@ -24,6 +24,69 @@ r.get('/', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GET /dashboard/notifications — List notifications for current user
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/notifications', async (req, res) => {
+  try {
+    const { unread, limit = 50 } = req.query;
+    let q = supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', req.user.userId)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit));
+    
+    if (unread === 'true') q = q.eq('is_read', false);
+    
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    
+    res.json({ notifications: data || [] });
+  } catch (e) {
+    console.error('Dashboard notifications error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /dashboard/notifications/read-all — Mark all as read
+// ═══════════════════════════════════════════════════════════════════════════
+r.put('/notifications/read-all', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', req.user.userId)
+      .eq('is_read', false);
+    
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Dashboard mark all read error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /dashboard/notifications/:id/read — Mark one as read
+// ═══════════════════════════════════════════════════════════════════════════
+r.put('/notifications/:id/read', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.userId);
+    
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Dashboard mark read error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // DASHBOARD OVERVIEW - KPIs Tổng Quan
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/overview', async (req, res) => {

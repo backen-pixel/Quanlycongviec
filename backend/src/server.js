@@ -64,6 +64,7 @@ app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/crm', require('./routes/crm'));
 app.use('/api/settings', require('./routes/settings'));
+try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
 try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
 
 // ─── Socket.IO with Auth ──
@@ -125,6 +126,12 @@ server.listen(config.port, () => {
         .lt('due_date', now.toISOString())
         .limit(50);
 
+      // Invoices overdue (due_date < today, paid_amount < total)
+      const { data: overdueInvoices } = await supabase.from('invoices')
+        .select('id,code,total,paid_amount,due_date,created_by')
+        .lt('due_date', todayStart)
+        .limit(50);
+
       // Batch: collect all notifications to insert
       const notifs = [];
       for (const t of (dueSoon || [])) {
@@ -136,13 +143,42 @@ server.listen(config.port, () => {
         if (uid) notifs.push({ user_id: uid, type: 'deadline_overdue', title: '🚨 Quá hạn!', message: `"${t.title}" đã quá hạn từ ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
       }
 
+      // Invoice overdue notifications — notify accounting + sales
+      for (const inv of (overdueInvoices || [])) {
+        const daysOverdue = Math.floor((now - new Date(inv.due_date)) / (1000 * 60 * 60 * 24));
+        if (inv.paid_amount < inv.total) {
+          // Get accounting & sales users
+          const { data: accountingUsers } = await supabase.from('users')
+            .select('id').eq('department_id', (await supabase.from('departments').select('id').eq('name', 'Kế toán').single()).data?.id);
+          const { data: salesUsers } = await supabase.from('users')
+            .select('id').eq('department_id', (await supabase.from('departments').select('id').eq('name', 'Bán hàng').single()).data?.id);
+          
+          const targetUserIds = [...new Set([
+            ...((accountingUsers || []).map(u => u.id) || []),
+            ...((salesUsers || []).map(u => u.id) || []),
+            inv.created_by
+          ].filter(Boolean))];
+
+          for (const uid of targetUserIds) {
+            notifs.push({
+              user_id: uid,
+              type: 'invoice_overdue',
+              title: '💰 Hóa đơn quá hạn thanh toán',
+              message: `Hóa đơn ${inv.code} quá hạn ${daysOverdue} ngày — Còn nợ: ${((inv.total - inv.paid_amount) || 0).toLocaleString('vi-VN')} VND`,
+              entity_type: 'invoice',
+              entity_id: inv.id
+            });
+          }
+        }
+      }
+
       // Batch insert (ignore dupes via unique constraint or just let it be)
       if (notifs.length) {
         const { data: inserted } = await supabase.from('notifications').insert(notifs).select('id,user_id');
         (inserted || []).forEach(n => io.to(`user:${n.user_id}`).emit('notification', n));
       }
 
-      console.log(`⏰ Deadline check: ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn`);
+      console.log(`⏰ Deadline check: ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn, ${overdueInvoices?.length || 0} hóa đơn quá hạn`);
     } catch (e) { console.error('Deadline check error:', e.message); }
   };
 
