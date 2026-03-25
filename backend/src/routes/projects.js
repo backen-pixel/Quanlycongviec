@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { generateStepTasks } = require('../helpers/generateFlowTasks');
+const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 let autoFlow;
 try { autoFlow = require('../helpers/autoFlow'); } catch (e) { autoFlow = null; }
 let stageFlow;
@@ -51,20 +52,13 @@ async function getAllChildUnits(unitId) {
   }
 }
 
-// ─── HELPER: Create notification ──
-async function createNotification(req, userId, type, title, message, entityType, entityId) {
-  if (!userId || userId === req.user.userId) return;
-  const { data } = await supabase.from('notifications').insert({
-    user_id: userId, type, title, message, entity_type: entityType, entity_id: entityId,
-  }).select().single();
-  const pushFn = req.app.get('pushNotification');
-  if (pushFn && data) pushFn(userId, data);
-  return data;
+// ─── HELPER: Create notification (backward compatible wrapper) ──
+async function createNotification(req, userId, type, title, message, entityType, entityId, metadata) {
+  return await createNotif(req, userId, type, title, message, entityType, entityId, metadata || null);
 }
 
-async function notifyMultiple(req, userIds, type, title, message, entityType, entityId) {
-  const unique = [...new Set(userIds.filter(id => id && id !== req.user.userId))];
-  for (const uid of unique) await createNotification(req, uid, type, title, message, entityType, entityId);
+async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata) {
+  return await notifyMultipleShared(req, userIds, type, title, message, entityType, entityId, metadata || null);
 }
 
 async function logActivity(userId, action, entityType, entityId, description, oldValues, newValues) {
@@ -1590,14 +1584,21 @@ r.post('/:id/comments', async (req, res) => {
     }).select('*, user:users(id,full_name,avatar)').single();
     if (error) throw error;
 
-    // Notify project team
-    const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,code').eq('id', req.params.id).single();
-    if (proj) {
-      const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
-      await notifyMultiple(req, teamIds, 'comment_added',
-        '💬 Bình luận dự án', `${req.user.fullName} bình luận trong dự án ${proj.code}`,
-        'project', req.params.id);
-    }
+    // Notify project team: managers + all task assignees
+    try {
+      const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,supervisor_id,code').eq('id', req.params.id).single();
+      const { data: taskAssignees } = await supabase.from('tasks').select('assignee_id').eq('project_id', req.params.id).not('assignee_id', 'is', null);
+      const teamIds = new Set([
+        proj?.sales_person_id, proj?.designer_id, proj?.project_manager_id, proj?.supervisor_id,
+        ...(taskAssignees || []).map(t => t.assignee_id),
+      ].filter(Boolean));
+      const shortContent = (req.body.content || '').substring(0, 80);
+      await notifyMultiple(req, [...teamIds], 'comment_added',
+        '💬 Bình luận dự án',
+        `${req.user.fullName} trong ${proj?.code || 'dự án'}: "${shortContent}${shortContent.length >= 80 ? '...' : ''}"`,
+        'project', req.params.id,
+        { project_id: req.params.id, nav_tab: 'chat' });
+    } catch (notifErr) { console.error('Comment notify error:', notifErr.message); }
 
     res.status(201).json({ comment: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }

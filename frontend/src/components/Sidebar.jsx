@@ -168,7 +168,7 @@ export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const appSwitcherRef = useRef(null);
-  const { user, logout } = useAuth();
+  const { user, logout, socket } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -261,7 +261,7 @@ export default function Sidebar() {
 
       {/* Notification bell */}
       <div className="px-2 pt-3 pb-1">
-        <NotificationCenter />
+        <NotificationCenter socket={socket} />
       </div>
 
       {/* Menu Groups */}

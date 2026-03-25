@@ -1,21 +1,32 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
+import NotificationToast from './NotificationToast';
+import NotificationSettings from './NotificationSettings';
 
 const ICON_MAP = {
   task_assigned: CheckSquare,
   task_updated: CheckSquare,
   task_overdue: AlertTriangle,
+  task_completed: CheckSquare,
   comment_added: MessageSquare,
   project_stage_changed: FolderKanban,
+  project_assigned: FolderKanban,
   stage_changed: FolderKanban,
   approval_request: Shield,
   approval_approved: ShieldCheck,
   approval_rejected: XCircle,
   approval_auto: ShieldCheck,
   deadline_reminder: Clock,
+  deadline_warning: Clock,
+  deadline_overdue: AlertTriangle,
+  checklist_completed: CheckSquare,
+  lead_assigned: CheckSquare,
+  deal_won: FolderKanban,
+  order_confirmed: FileText,
+  invoice_overdue: AlertTriangle,
   system: Bell,
 };
 
@@ -23,14 +34,23 @@ const COLOR_MAP = {
   task_assigned: 'bg-blue-100 text-blue-600',
   task_updated: 'bg-emerald-100 text-emerald-600',
   task_overdue: 'bg-red-100 text-red-600',
+  task_completed: 'bg-emerald-100 text-emerald-600',
   comment_added: 'bg-purple-100 text-purple-600',
   project_stage_changed: 'bg-amber-100 text-amber-600',
+  project_assigned: 'bg-blue-100 text-blue-600',
   stage_changed: 'bg-amber-100 text-amber-600',
   approval_request: 'bg-orange-100 text-orange-600',
   approval_approved: 'bg-emerald-100 text-emerald-600',
   approval_rejected: 'bg-red-100 text-red-600',
   approval_auto: 'bg-emerald-100 text-emerald-600',
   deadline_reminder: 'bg-orange-100 text-orange-600',
+  deadline_warning: 'bg-amber-100 text-amber-600',
+  deadline_overdue: 'bg-red-100 text-red-600',
+  checklist_completed: 'bg-lime-100 text-lime-700',
+  lead_assigned: 'bg-cyan-100 text-cyan-600',
+  deal_won: 'bg-emerald-100 text-emerald-600',
+  order_confirmed: 'bg-orange-100 text-orange-600',
+  invoice_overdue: 'bg-red-100 text-red-600',
   system: 'bg-gray-100 text-gray-600',
 };
 
@@ -41,6 +61,8 @@ export default function NotificationCenter({ socket }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('all');
+  const [toastNotification, setToastNotification] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const panelRef = useRef(null);
 
   const load = async () => {
@@ -71,6 +93,16 @@ export default function NotificationCenter({ socket }) {
     const handler = (notif) => {
       setUnreadCount(c => c + 1);
       setNotifications(prev => [notif, ...prev]);
+      
+      // Show toast notification
+      setToastNotification(notif);
+      
+      // Play sound if enabled (optional)
+      try {
+        const audio = new Audio('/notification.wav');
+        audio.volume = 0.3;
+        audio.play().catch(() => {});
+      } catch {}
     };
     socket.on('notification', handler);
     return () => socket.off('notification', handler);
@@ -130,6 +162,31 @@ export default function NotificationCenter({ socket }) {
 
   return (
     <div className="relative" ref={panelRef}>
+      {/* Toast Notification */}
+      {toastNotification && (
+        <NotificationToast
+          notification={toastNotification}
+          onDismiss={() => setToastNotification(null)}
+          onNavigate={(notif) => {
+            const pid = notif.metadata?.project_id || (notif.entity_type === 'project' ? notif.entity_id : null);
+            const navTab = notif.metadata?.nav_tab;
+            if (pid) {
+              navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
+            } else if (notif.entity_type === 'crm_lead' || notif.entity_type === 'crm_deal') {
+              navigate(`/crm/leads/${notif.entity_id}`);
+            } else if (notif.entity_type === 'order') {
+              navigate(`/crm/orders/${notif.entity_id}`);
+            } else if (notif.entity_type === 'invoice') {
+              navigate(`/crm/invoices/${notif.entity_id}`);
+            }
+            setOpen(false);
+          }}
+        />
+      )}
+
+      {/* Settings Modal */}
+      <NotificationSettings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
       <button
         onClick={() => setOpen(!open)}
         className="relative w-9 h-9 rounded-lg hover:bg-[var(--color-sidebar-hover)] flex items-center justify-center text-[var(--color-sidebar-text)] hover:text-white transition-colors cursor-pointer"
@@ -152,6 +209,13 @@ export default function NotificationCenter({ socket }) {
                   <CheckCheck className="h-3.5 w-3.5" /> Đọc tất cả
                 </button>
               )}
+              <button 
+                onClick={() => setSettingsOpen(true)}
+                className="w-6 h-6 rounded hover:bg-gray-100 flex items-center justify-center text-gray-400 cursor-pointer hover:text-gray-600 transition-colors"
+                title="Cài đặt thông báo"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
               <button onClick={() => setOpen(false)} className="w-6 h-6 rounded hover:bg-gray-100 flex items-center justify-center text-gray-400 cursor-pointer">
                 <X className="h-4 w-4" />
               </button>
@@ -194,13 +258,21 @@ export default function NotificationCenter({ socket }) {
                     key={n.id}
                     onClick={() => {
                       if (!n.is_read && !isApproval) markRead(n.id);
-                      // Navigate to project if metadata has project_id
-                      const pid = n.metadata?.project_id;
+                      // Smart navigation based on entity type
+                      const pid = n.metadata?.project_id || (n.entity_type === 'project' ? n.entity_id : null);
+                      const navTab = n.metadata?.nav_tab;
                       if (pid) {
-                        const navTab = n.metadata?.nav_tab;
                         navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
-                        setOpen(false);
+                      } else if (n.entity_type === 'task' && n.entity_id) {
+                        navigate(`/tasks?task=${n.entity_id}`);
+                      } else if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal') {
+                        navigate(`/crm/leads/${n.entity_id}`);
+                      } else if (n.entity_type === 'order') {
+                        navigate(`/crm/orders/${n.entity_id}`);
+                      } else if (n.entity_type === 'invoice') {
+                        navigate(`/crm/invoices/${n.entity_id}`);
                       }
+                      setOpen(false);
                     }}
                     className={`px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 transition-colors ${!n.is_read ? 'bg-blue-50/40' : ''}`}
                   >
