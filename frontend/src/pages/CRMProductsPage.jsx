@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
 import { Package, Search, Plus, Edit3, X, Save, Boxes, Tag, FolderTree } from 'lucide-react';
@@ -283,6 +284,7 @@ function CategoryManager({ categories, onReload }) {
     <div className="bg-white rounded-xl border p-4">
       <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3">
         <FolderTree className="h-4 w-4 text-purple-600" /> Quản lý nhóm ngành
+        <Link to="/crm/categories" className="ml-auto text-xs text-blue-600 hover:underline">Quản lý đầy đủ →</Link>
       </h3>
       <p className="text-xs text-gray-500 mb-3">Phân loại sản phẩm theo nhóm ngành để dễ tìm kiếm và quản lý</p>
       

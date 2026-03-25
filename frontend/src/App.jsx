@@ -52,6 +52,7 @@ import WorkflowHubPage from './pages/WorkflowHubPage';
 import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import DivisionDashboardPage from './pages/DivisionDashboardPage';
 import GuidePage from './pages/GuidePage';
+import CategoriesPage from './pages/CategoriesPage';
 
 import { Settings } from 'lucide-react';
 
@@ -162,6 +163,7 @@ export default function App() {
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<CRMReports />} />
             <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />
+            <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/crm/customers" element={<CustomersPage />} />
