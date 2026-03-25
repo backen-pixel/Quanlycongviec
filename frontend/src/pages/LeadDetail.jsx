@@ -2,9 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { TourButton } from '../components/WebTour';
 import CRMTasksTab from '../components/CRMTasksTab';
-import { leadDetailTour } from '../lib/tourSteps';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -188,7 +186,6 @@ export default function LeadDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <TourButton steps={leadDetailTour} />
           {canConvert && (
             <button onClick={() => setShowConvertModal(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
               <Zap className="h-4 w-4" /> Chuyển Deal

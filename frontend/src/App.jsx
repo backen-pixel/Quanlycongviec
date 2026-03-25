@@ -57,7 +57,6 @@ import { Settings } from 'lucide-react';
 
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
 import AIAssistantChat from './components/AIAssistantChat';
-import { TourProvider } from './components/TourProvider';
 import { ThemeProvider } from './components/ThemeProvider';
 import ThemeSettingsPage from './pages/ThemeSettingsPage';
 
@@ -115,7 +114,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <ThemeProvider>
-        <TourProvider>
+        
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedLayout />}>
@@ -181,7 +180,7 @@ export default function App() {
             } />
           </Route>
         </Routes>
-        </TourProvider>
+        
         </ThemeProvider>
       </BrowserRouter>
     </AuthProvider>

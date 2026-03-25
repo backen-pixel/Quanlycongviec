@@ -2,8 +2,6 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { TourButton } from '../components/WebTour';
-import { crmTour } from '../lib/tourSteps';
 import {
   TrendingUp, Users, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
@@ -158,7 +156,6 @@ export default function CRMDashboard() {
           </h1>
         </div>
         <div className="flex items-center gap-3">
-          <TourButton steps={crmTour} />
           <button data-tour="add-lead" onClick={() => setShowNewLead(true)} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer transition-all duration-200">
             <Plus className="h-4 w-4" /> + Thêm {pipelineType === 'lead' ? 'Lead' : 'Deal'}
           </button>

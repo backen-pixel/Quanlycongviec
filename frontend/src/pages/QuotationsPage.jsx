@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { TourButton } from '../components/WebTour';
-import { quotationsTour } from '../lib/tourSteps';
 import { Plus, Search, FileText, Filter, ShoppingCart, Calendar, Download } from 'lucide-react';
 
 const STATUS_MAP = { draft: 'Nháp', sent: 'Đã gửi', accepted: 'Chấp nhận', rejected: 'Từ chối', expired: 'Hết hạn', converted: 'Đã chuyển ĐH' };
@@ -43,7 +41,6 @@ export default function QuotationsPage() {
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" /> Báo giá</h1><p className="text-sm text-gray-500 mt-1">{summary.total} báo giá · {formatVND(summary.value)}</p></div>
         <div className="flex items-center gap-2">
-          <TourButton steps={quotationsTour} />
           <button data-tour="create-quotation" onClick={() => navigate('/crm/quotations/new')} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Plus className="h-4 w-4" /> Tạo báo giá</button>
         </div>
       </div>
