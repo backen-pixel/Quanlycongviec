@@ -4,7 +4,8 @@ import api from '../lib/api';
 import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Plus, Save, Trash2, Edit, GripVertical, ChevronDown, ChevronRight,
-  FileText, CheckSquare, Users, User, Building, ClipboardList, Copy, Star, Clock
+  FileText, CheckSquare, Users, User, Building, ClipboardList, Copy, Star, Clock,
+  ArrowUp, ArrowDown
 } from 'lucide-react';
 
 const PRIORITIES = [
@@ -115,6 +116,45 @@ export default function TemplateSetDetailPage() {
       await api.delete(`/company-templates/template-checklists/${checkId}`);
       await reload();
     } catch {}
+  };
+
+  // Reorder tasks within a stage
+  const reorderTasks = async (stageId, taskId, direction) => {
+    const stageTasks = tasks
+      .filter(t => t.stage_id === stageId)
+      .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    
+    const idx = stageTasks.findIndex(t => t.id === taskId);
+    if (idx < 0) return;
+    if (direction === 'up' && idx === 0) return;
+    if (direction === 'down' && idx === stageTasks.length - 1) return;
+
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    // Swap order_index
+    const newTasks = [...stageTasks];
+    [newTasks[idx], newTasks[swapIdx]] = [newTasks[swapIdx], newTasks[idx]];
+
+    // Build new order_index values (keep stage prefix like 101,102,103)
+    const baseIndex = Math.min(...newTasks.map(t => t.order_index || 0));
+    const base = baseIndex > 0 ? Math.floor(baseIndex / 100) * 100 : 0;
+    const taskOrders = newTasks.map((t, i) => ({ id: t.id, order_index: base + i + 1 }));
+
+    // Optimistic update
+    setTasks(prev => {
+      const updated = [...prev];
+      taskOrders.forEach(to => {
+        const t = updated.find(u => u.id === to.id);
+        if (t) t.order_index = to.order_index;
+      });
+      return updated.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    });
+
+    try {
+      await api.put(`/company-templates/template-sets/${setId}/reorder-tasks`, { task_orders: taskOrders });
+    } catch (e) {
+      console.error('Reorder failed:', e);
+      await reload(); // Rollback on error
+    }
   };
 
   const handleCopyFromProcess = async () => {
@@ -321,6 +361,7 @@ export default function TemplateSetDetailPage() {
               users={allUsers}
               companyUnitId={set?.unit_id}
               onUpdateTask={updateTask} onDeleteTask={deleteTask}
+              onReorderTask={reorderTasks}
               onAddChecklist={addChecklist} onUpdateChecklist={updateChecklist} onDeleteChecklist={deleteChecklist} />
           );
         });
@@ -407,9 +448,10 @@ function AddTaskForm({ stages, users, companyUnitId, onAdd, onCancel }) {
 }
 
 /* ═══ STAGE SECTION ═══ */
-function StageSection({ stage, stageNumber, tasks, users, companyUnitId, onUpdateTask, onDeleteTask, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
+function StageSection({ stage, stageNumber, tasks, users, companyUnitId, onUpdateTask, onDeleteTask, onReorderTask, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
   const [open, setOpen] = useState(true);
   const icon = stage.icon && stage.icon.charCodeAt(0) > 127 ? stage.icon : '📋';
+  const sortedTasks = [...tasks].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
 
   return (
     <div className="bg-white rounded-xl border overflow-hidden">
@@ -427,9 +469,12 @@ function StageSection({ stage, stageNumber, tasks, users, companyUnitId, onUpdat
 
       {open && (
         <div className="border-t divide-y">
-          {tasks.map(task => (
-            <TaskCard key={task.id} task={task} users={users} companyUnitId={companyUnitId}
+          {sortedTasks.map((task, idx) => (
+            <TaskCard key={task.id} task={task} taskIndex={idx} taskCount={sortedTasks.length}
+              users={users} companyUnitId={companyUnitId}
               onUpdate={onUpdateTask} onDelete={onDeleteTask}
+              onMoveUp={() => onReorderTask(stage.id, task.id, 'up')}
+              onMoveDown={() => onReorderTask(stage.id, task.id, 'down')}
               onAddChecklist={onAddChecklist} onUpdateChecklist={onUpdateChecklist} onDeleteChecklist={onDeleteChecklist} />
           ))}
         </div>
@@ -439,7 +484,7 @@ function StageSection({ stage, stageNumber, tasks, users, companyUnitId, onUpdat
 }
 
 /* ═══ TASK CARD ═══ */
-function TaskCard({ task, users, companyUnitId, onUpdate, onDelete, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
+function TaskCard({ task, taskIndex, taskCount, users, companyUnitId, onUpdate, onDelete, onMoveUp, onMoveDown, onAddChecklist, onUpdateChecklist, onDeleteChecklist }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
@@ -478,7 +523,26 @@ function TaskCard({ task, users, companyUnitId, onUpdate, onDelete, onAddCheckli
   return (
     <div className="px-4 py-3">
       <div className="flex items-center gap-2">
-        <GripVertical className="h-3.5 w-3.5 text-gray-300 shrink-0" />
+        {/* Order controls: number badge + up/down arrows */}
+        <div className="flex flex-col items-center gap-0.5 shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+            disabled={taskIndex === 0}
+            className="h-4 w-4 rounded flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-gray-400 cursor-pointer disabled:cursor-default transition-colors"
+            title="Di chuyển lên"
+          >
+            <ArrowUp className="h-3 w-3" />
+          </button>
+          <span className="text-[10px] font-bold text-gray-400 w-5 text-center leading-none">{taskIndex + 1}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+            disabled={taskIndex === taskCount - 1}
+            className="h-4 w-4 rounded flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-gray-400 cursor-pointer disabled:cursor-default transition-colors"
+            title="Di chuyển xuống"
+          >
+            <ArrowDown className="h-3 w-3" />
+          </button>
+        </div>
         <button onClick={() => setExpanded(!expanded)} className="cursor-pointer shrink-0">
           {expanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400" />}
         </button>
