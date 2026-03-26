@@ -331,50 +331,8 @@ export default function LeadDetail() {
             )}
           </div>
 
-          {/* Lead Info */}
-          <div className="bg-white rounded-xl border p-5 space-y-3">
-            <h3 className="text-sm font-bold text-gray-900 uppercase">Thông tin</h3>
-            <div className="space-y-3">
-              {lead.estimated_value > 0 && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">💰 Giá trị</p>
-                  <p className="text-sm font-bold text-emerald-600">{formatVND(lead.estimated_value)}</p>
-                </div>
-              )}
-              {lead.probability && (
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs text-gray-500">📊 Xác suất</p>
-                    <p className="text-sm font-bold text-blue-600">{lead.probability}%</p>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                    <div 
-                      className="bg-blue-600 h-full rounded-full transition-all duration-300"
-                      style={{ width: `${lead.probability}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              {lead.source && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">🔗 Nguồn</p>
-                  <p className="text-sm font-medium">{lead.source.icon} {lead.source.name}</p>
-                </div>
-              )}
-              {lead.assignee && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">👤 Phụ trách</p>
-                  <p className="text-sm font-medium">{lead.assignee.full_name}</p>
-                </div>
-              )}
-              {lead.expected_close_date && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">📅 Dự kiến chốt</p>
-                  <p className="text-sm font-medium">{formatDate(lead.expected_close_date)}</p>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Lead Info — Editable inline */}
+          <LeadInfoPanel lead={lead} allUsers={allUsers} onUpdate={load} />
 
           {/* Quick Stats Card */}
           <div className="grid grid-cols-3 gap-2">
@@ -688,6 +646,172 @@ function AddDocumentModal({ onClose, onSave }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LeadInfoPanel — Inline editable fields (always visible)
+// ═══════════════════════════════════════════════════════════════════════════
+function LeadInfoPanel({ lead, allUsers, onUpdate }) {
+  const [sources, setSources] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [editVal, setEditVal] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get('/crm/sources').then(r => setSources(r.data || [])).catch(() => {});
+  }, []);
+
+  const saveField = async (field, value) => {
+    setSaving(true);
+    try {
+      const payload = {};
+      if (field === 'estimated_value') payload.estimated_value = parseFloat(value) || 0;
+      else if (field === 'probability') payload.probability = Math.min(100, Math.max(0, parseInt(value) || 0));
+      else if (field === 'source_id') payload.source_id = value || null;
+      else if (field === 'assigned_to') payload.assigned_to = value || null;
+      else if (field === 'expected_close_date') payload.expected_close_date = value || null;
+      else if (field === 'description') payload.description = value || null;
+      else if (field === 'next_follow_up') payload.next_follow_up = value || null;
+      else payload[field] = value;
+
+      await api.put(`/crm/leads/${lead.id}`, payload);
+      setEditing(null);
+      onUpdate();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi cập nhật');
+    }
+    setSaving(false);
+  };
+
+  const EditableRow = ({ icon, label, field, value, displayValue, type = 'text', options }) => {
+    const isEditing = editing === field;
+    return (
+      <div className="group">
+        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+          <span className="text-sm mt-0.5 shrink-0">{icon}</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{label}</p>
+            {isEditing ? (
+              <div className="flex items-center gap-1.5">
+                {type === 'select' ? (
+                  <select
+                    value={editVal}
+                    onChange={e => setEditVal(e.target.value)}
+                    className="flex-1 h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                    autoFocus
+                  >
+                    <option value="">-- Chọn --</option>
+                    {(options || []).map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                ) : type === 'textarea' ? (
+                  <textarea
+                    value={editVal}
+                    onChange={e => setEditVal(e.target.value)}
+                    rows={2}
+                    className="flex-1 px-2 py-1.5 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                    autoFocus
+                  />
+                ) : (
+                  <input
+                    type={type}
+                    value={editVal}
+                    onChange={e => setEditVal(e.target.value)}
+                    className="flex-1 h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                    autoFocus
+                    onKeyDown={e => e.key === 'Enter' && saveField(field, editVal)}
+                  />
+                )}
+                <button onClick={() => saveField(field, editVal)} disabled={saving}
+                  className="h-8 w-8 flex items-center justify-center bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 disabled:opacity-50 shrink-0">
+                  <Save className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={() => setEditing(null)}
+                  className="h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg cursor-pointer hover:bg-gray-200 shrink-0">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div
+                onClick={() => { setEditing(field); setEditVal(value ?? ''); }}
+                className="cursor-pointer group/val"
+              >
+                {displayValue ? (
+                  <p className="text-sm font-medium text-gray-900">{displayValue}</p>
+                ) : (
+                  <p className="text-sm text-gray-300 italic group-hover/val:text-blue-400 transition-colors">
+                    Nhấn để nhập...
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          {!isEditing && (
+            <button onClick={() => { setEditing(field); setEditVal(value ?? ''); }}
+              className="p-1 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-blue-500 cursor-pointer transition-opacity shrink-0">
+              <Edit2 className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const prob = lead?.probability ?? 0;
+
+  return (
+    <div className="bg-white rounded-xl border p-5 space-y-1">
+      <h3 className="text-sm font-bold text-gray-900 uppercase mb-2">Thông tin</h3>
+
+      <EditableRow icon="💰" label="Giá trị" field="estimated_value"
+        value={lead?.estimated_value || ''}
+        displayValue={lead?.estimated_value > 0 ? formatVND(lead.estimated_value) : null}
+        type="number" />
+
+      <div>
+        <EditableRow icon="📊" label="Xác suất" field="probability"
+          value={lead?.probability ?? ''}
+          displayValue={lead?.probability != null ? `${lead.probability}%` : null}
+          type="number" />
+        {prob > 0 && editing !== 'probability' && (
+          <div className="ml-7 -mt-1 mb-1">
+            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+              <div className="bg-blue-600 h-full rounded-full transition-all duration-300"
+                style={{ width: `${prob}%` }} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <EditableRow icon="🔗" label="Nguồn" field="source_id"
+        value={lead?.source_id || ''}
+        displayValue={lead?.source ? `${lead.source.icon} ${lead.source.name}` : null}
+        type="select"
+        options={sources.map(s => ({ value: s.id, label: `${s.icon} ${s.name}` }))} />
+
+      <EditableRow icon="👤" label="Phụ trách" field="assigned_to"
+        value={lead?.assigned_to || ''}
+        displayValue={lead?.assignee?.full_name || null}
+        type="select"
+        options={allUsers.map(u => ({ value: u.id, label: u.full_name }))} />
+
+      <EditableRow icon="📅" label="Dự kiến chốt" field="expected_close_date"
+        value={lead?.expected_close_date || ''}
+        displayValue={lead?.expected_close_date ? formatDate(lead.expected_close_date) : null}
+        type="date" />
+
+      <EditableRow icon="🔔" label="Theo dõi tiếp" field="next_follow_up"
+        value={lead?.next_follow_up || ''}
+        displayValue={lead?.next_follow_up ? formatDate(lead.next_follow_up) : null}
+        type="date" />
+
+      <EditableRow icon="📝" label="Mô tả" field="description"
+        value={lead?.description || ''}
+        displayValue={lead?.description || null}
+        type="textarea" />
     </div>
   );
 }
