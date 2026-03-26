@@ -658,10 +658,27 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
   const [editing, setEditing] = useState(null);
   const [editVal, setEditVal] = useState('');
   const [saving, setSaving] = useState(false);
+  const [companyUnitId, setCompanyUnitId] = useState(null);
+  const [companies, setCompanies] = useState([]);
 
+  // Load sources + companies
   useEffect(() => {
     api.get('/crm/sources').then(r => setSources(r.data || [])).catch(() => {});
+    api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
   }, []);
+
+  // Map lead.company_id → ecosystem_unit_id (for EmployeePicker)
+  useEffect(() => {
+    if (!lead?.company_id) { setCompanyUnitId(null); return; }
+    (async () => {
+      try {
+        const { data } = await api.get('/ecosystem/units');
+        const units = data || [];
+        const unit = units.find(u => u.company_id === lead.company_id || u.company?.id === lead.company_id);
+        setCompanyUnitId(unit?.id || null);
+      } catch { setCompanyUnitId(null); }
+    })();
+  }, [lead?.company_id]);
 
   const saveField = async (field, value) => {
     setSaving(true);
@@ -792,11 +809,33 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
         type="select"
         options={sources.map(s => ({ value: s.id, label: `${s.icon} ${s.name}` }))} />
 
-      <EditableRow icon="👤" label="Phụ trách" field="assigned_to"
-        value={lead?.assigned_to || ''}
-        displayValue={lead?.assignee?.full_name || null}
+      {/* Công ty */}
+      <EditableRow icon="🏢" label="Công ty" field="company_id"
+        value={lead?.company_id || ''}
+        displayValue={lead?.company_id ? companies.find(c => c.id === lead.company_id)?.name || null : null}
         type="select"
-        options={allUsers.map(u => ({ value: u.id, label: u.full_name }))} />
+        options={companies.map(c => ({ value: c.id, label: c.name }))} />
+
+      {/* Phụ trách — EmployeePicker */}
+      <div className="group">
+        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+          <span className="text-sm mt-0.5 shrink-0">👤</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1">Phụ trách</p>
+            {!lead?.company_id ? (
+              <p className="text-xs text-amber-500 italic">⚠️ Chọn công ty trước để lọc nhân viên</p>
+            ) : (
+              <EmployeePicker
+                companyUnitId={companyUnitId}
+                value={lead?.assigned_to || ''}
+                onChange={(userId) => saveField('assigned_to', userId || '')}
+                placeholder="👤 Chọn nhân viên phụ trách..."
+                size="sm"
+              />
+            )}
+          </div>
+        </div>
+      </div>
 
       <EditableRow icon="📅" label="Dự kiến chốt" field="expected_close_date"
         value={lead?.expected_close_date || ''}

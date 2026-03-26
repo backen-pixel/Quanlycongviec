@@ -547,6 +547,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
         type: 'deal',
         stage_id: firstDealStage.id,
         assigned_to: req.body.assigned_to || lead.assigned_to || null,
+        company_id: req.body.company_id || lead.company_id || null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', req.params.id)
