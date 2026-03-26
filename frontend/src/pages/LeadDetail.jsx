@@ -159,12 +159,13 @@ export default function LeadDetail() {
     input.click();
   };
 
-  const addTextDocument = async (name, docType, notes) => {
+  const addTextDocument = async (name, docType, notes, allowedDepartments) => {
     try {
       const { data: doc } = await api.post(`/crm/leads/${id}/documents`, {
         name,
         doc_type: docType || 'other',
         notes,
+        allowed_departments: allowedDepartments || null,
       });
       setDocuments(prev => [doc, ...prev]);
     } catch (err) {
@@ -473,8 +474,8 @@ export default function LeadDetail() {
       {showAddDoc && (
         <AddDocumentModal
           onClose={() => setShowAddDoc(false)}
-          onSave={(name, docType, notes) => {
-            addTextDocument(name, docType, notes);
+          onSave={(name, docType, notes, allowedDepts) => {
+            addTextDocument(name, docType, notes, allowedDepts);
             setShowAddDoc(false);
           }}
         />
@@ -517,7 +518,12 @@ function DocumentRow({ doc, onDelete }) {
           <span className="text-lg shrink-0">{typeInfo.icon}</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
-            <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}{isImage ? ' • 🖼️' : ''}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}{isImage ? ' • 🖼️' : ''}</p>
+              {doc.allowed_departments && doc.allowed_departments.length > 0 && (
+                <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded-full font-medium">🔒 Giới hạn</span>
+              )}
+            </div>
           </div>
           {isFile && !isImage && (
             <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>
@@ -608,10 +614,20 @@ function AddDocumentModal({ onClose, onSave }) {
   const [name, setName] = useState('');
   const [docType, setDocType] = useState('requirement');
   const [notes, setNotes] = useState('');
+  const [departments, setDepartments] = useState([]);
+  const [allowedDepts, setAllowedDepts] = useState([]); // empty = all can see
+
+  useEffect(() => {
+    api.get('/departments').then(r => setDepartments(r.data?.departments || r.data || [])).catch(() => {});
+  }, []);
+
+  const toggleDept = (deptId) => {
+    setAllowedDepts(prev => prev.includes(deptId) ? prev.filter(id => id !== deptId) : [...prev, deptId]);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg p-6">
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">📝 Thêm tài liệu văn bản</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
@@ -637,11 +653,30 @@ function AddDocumentModal({ onClose, onSave }) {
               placeholder="Nhập nội dung tài liệu, yêu cầu khách hàng, ghi chú kích thước, chất liệu mong muốn..."
             />
           </div>
+          {/* Phân quyền xem */}
+          <div>
+            <label className="text-xs font-medium text-gray-700">🔒 Ai được xem? <span className="text-gray-400 font-normal">(không chọn = tất cả)</span></label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {departments.map(d => (
+                <button key={d.id} type="button" onClick={() => toggleDept(d.id)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all ${
+                    allowedDepts.includes(d.id)
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}>
+                  {d.name}
+                </button>
+              ))}
+            </div>
+            {allowedDepts.length > 0 && (
+              <p className="text-[10px] text-blue-600 mt-1">✓ Chỉ {allowedDepts.length} phòng ban + Admin được xem</p>
+            )}
+          </div>
         </div>
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className="flex-1 h-9 border rounded-lg text-sm cursor-pointer">Hủy</button>
           <button
-            onClick={() => { if (!name.trim()) return alert('Nhập tên tài liệu'); if (!notes.trim()) return alert('Nhập nội dung'); onSave(name, docType, notes); }}
+            onClick={() => { if (!name.trim()) return alert('Nhập tên tài liệu'); if (!notes.trim()) return alert('Nhập nội dung'); onSave(name, docType, notes, allowedDepts.length > 0 ? allowedDepts : null); }}
             className="flex-1 h-9 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium cursor-pointer"
           >
             Lưu tài liệu
