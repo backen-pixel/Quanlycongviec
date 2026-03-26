@@ -442,10 +442,20 @@ r.post('/', async (req, res) => {
 r.put('/:id', async (req, res) => {
   try {
     const b = req.body;
+    const targetId = req.params.id;
     const update = { updated_at: new Date().toISOString() };
     const fields = ['full_name','phone','role','position','department_id','team_id','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills','is_active','avatar'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
-    if (b.password) update.password = await bcrypt.hash(b.password, 12);
+    
+    // Password: hash and log who changed whose password
+    if (b.password) {
+      update.password = await bcrypt.hash(b.password, 12);
+      console.log(`[PASSWORD] User ${req.user.userId} (${req.user.email}) changed password for user ${targetId}`);
+    }
+
+    // Safety: NEVER allow email or id to be changed via this endpoint
+    delete update.email;
+    delete update.id;
 
     // Try update, fallback to basic fields if columns don't exist
     let { data, error } = await supabase.from('users').update(update).eq('id', req.params.id)

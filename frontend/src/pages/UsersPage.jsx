@@ -377,12 +377,15 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
 
   return (
     <Modal open={open} onClose={onClose} title={editUser ? 'Sửa nhân viên' : 'Thêm nhân viên mới'} size="md">
-      <form onSubmit={submit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+      <form onSubmit={submit} autoComplete="off" className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+        {/* Hidden fields to trick browser autofill */}
+        <input type="text" name="prevent_autofill" id="prevent_autofill" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
+        <input type="password" name="prevent_autofill_pass" id="prevent_autofill_pass" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
         <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-sm font-medium mb-1">Họ tên *</label><input value={form.full_name || ''} onChange={e => set('full_name', e.target.value)} required className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Email *</label><input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required className="input" disabled={!!editUser} /></div>
-          <div><label className="block text-sm font-medium mb-1">SĐT</label><input value={form.phone || ''} onChange={e => set('phone', e.target.value)} className="input" /></div>
-          <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUser ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUser} placeholder={editUser ? '••••••' : 'admin123'} /></div>
+          <div><label className="block text-sm font-medium mb-1">Họ tên *</label><input value={form.full_name || ''} onChange={e => set('full_name', e.target.value)} required className="input" autoComplete="off" /></div>
+          <div><label className="block text-sm font-medium mb-1">Email *</label><input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required className="input" disabled={!!editUser} autoComplete="off" readOnly={!!editUser} /></div>
+          <div><label className="block text-sm font-medium mb-1">SĐT</label><input value={form.phone || ''} onChange={e => set('phone', e.target.value)} className="input" autoComplete="off" /></div>
+          <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUser ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUser} placeholder={editUser ? '••••••' : 'admin123'} autoComplete="new-password" /></div>
           <div><label className="block text-sm font-medium mb-1">Vai trò</label>
             <select value={form.role || 'staff'} onChange={e => set('role', e.target.value)} className="input">
               {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
