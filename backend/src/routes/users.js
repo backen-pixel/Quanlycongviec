@@ -130,6 +130,31 @@ r.get('/', async (req, res) => {
   try {
     const { role, department_id, company_id, ecosystem_unit_id, company_unit_id, search, include_inactive } = req.query;
 
+    // ── Lọc theo company_id trực tiếp (companies.id → departments → users) ──
+    // Dùng cho EmployeePicker khi truyền companyId prop
+    if (company_id && !company_unit_id && !ecosystem_unit_id) {
+      try {
+        const { data: depts } = await supabase.from('departments')
+          .select('id').eq('company_id', company_id).eq('is_active', true);
+        const deptIds = (depts || []).map(d => d.id);
+        if (!deptIds.length) return res.json({ users: [], company_id });
+
+        let q = supabase.from('users')
+          .select('id, full_name, email, phone, avatar, role, department_id, position')
+          .in('department_id', deptIds);
+        if (!include_inactive) q = q.eq('is_active', true);
+        if (role) q = q.eq('role', role);
+        if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+        const { data: users, error } = await q.order('full_name');
+        if (error) throw error;
+
+        return res.json({ users: users || [], company_id });
+      } catch (e) {
+        console.error('company_id filter error:', e.message);
+        return res.json({ users: [], company_id });
+      }
+    }
+
     // ── Lọc theo company_unit_id (ecosystem_units.id → company_id → departments → users) ──
     if (company_unit_id) {
       try {
