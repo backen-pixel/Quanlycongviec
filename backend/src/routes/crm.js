@@ -1113,6 +1113,16 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
   }
 });
 
+// ═══ DELETE QUOTATION ═══
+r.delete('/quotations/:id', async (req, res) => {
+  try {
+    await supabase.from('quotation_items').delete().eq('quotation_id', req.params.id);
+    const { error } = await supabase.from('quotations').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ message: 'Đã xóa báo giá' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ORDERS (Đơn hàng)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1259,6 +1269,16 @@ r.post('/orders/:id/create-invoice', async (req, res) => {
   }
 });
 
+// ═══ DELETE ORDER ═══
+r.delete('/orders/:id', async (req, res) => {
+  try {
+    await supabase.from('order_items').delete().eq('order_id', req.params.id);
+    const { error } = await supabase.from('orders').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ message: 'Đã xóa đơn hàng' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // INVOICES (Hóa đơn)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1389,6 +1409,17 @@ r.post('/invoices/:id/payments', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ═══ DELETE INVOICE ═══
+r.delete('/invoices/:id', async (req, res) => {
+  try {
+    await supabase.from('payment_records').delete().eq('invoice_id', req.params.id);
+    await supabase.from('invoice_items').delete().eq('invoice_id', req.params.id);
+    const { error } = await supabase.from('invoices').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ message: 'Đã xóa hóa đơn' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Convert Lead → Project

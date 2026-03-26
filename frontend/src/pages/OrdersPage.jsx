@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Search, ShoppingCart, Receipt, Calendar, Download, Plus } from 'lucide-react';
+import { Search, ShoppingCart, Receipt, Calendar, Download, Plus, Trash2 } from 'lucide-react';
 
 const ORDER_STATUS = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
 const ORDER_COLORS = { draft: 'bg-gray-100 text-gray-600', confirmed: 'bg-blue-100 text-blue-700', processing: 'bg-amber-100 text-amber-700', shipped: 'bg-indigo-100 text-indigo-700', delivered: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-red-100 text-red-700' };
@@ -79,7 +79,7 @@ export default function OrdersPage() {
         </div>
         <table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
           <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Thanh toán</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th>
+          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Thanh toán</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th><th className="py-3 px-3"></th>
         </tr></thead><tbody>
           {filtered.map(o => (
             <tr key={o.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/crm/orders/${o.id}`)}>
@@ -92,6 +92,7 @@ export default function OrdersPage() {
               <td className="py-3 px-3 text-gray-500">{formatDate(o.created_at)}</td>
               <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('orders', o.id, o.code); }} className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
               <td className="py-3 px-3"><button onClick={e => { e.stopPropagation(); createInvoice(o.id); }} className="text-xs text-purple-600 hover:underline flex items-center gap-1 cursor-pointer"><Receipt className="h-3.5 w-3.5" />→HĐ</button></td>
+              <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa đơn hàng ' + o.code + '?')) api.delete('/crm/orders/' + o.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
             </tr>
           ))}
         </tbody></table>
