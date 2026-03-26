@@ -1006,6 +1006,10 @@ r.get('/orders/:id', async (req, res) => {
 r.put('/orders/:id', async (req, res) => {
   try {
     const updates = { ...req.body, updated_at: new Date().toISOString() };
+    // Sanitize: empty strings → null for UUID fields
+    ['customer_id', 'lead_id', 'quotation_id', 'project_id'].forEach(f => {
+      if (updates[f] === '') updates[f] = null;
+    });
     if (updates.status === 'confirmed' && !updates.confirmed_at) updates.confirmed_at = new Date().toISOString();
     if (updates.status === 'shipped' && !updates.shipped_at) updates.shipped_at = new Date().toISOString();
     if (updates.status === 'delivered' && !updates.delivered_at) updates.delivered_at = new Date().toISOString();
@@ -1152,10 +1156,15 @@ r.post('/invoices', async (req, res) => {
   try {
     const { items, ...invoiceData } = req.body;
     const code = await nextCode('HD');
+
+    // Sanitize: empty strings → null for UUID fields
+    ['customer_id', 'order_id', 'quotation_id', 'project_id'].forEach(f => {
+      if (invoiceData[f] === '' || invoiceData[f] === undefined) invoiceData[f] = null;
+    });
     
     const { data: inv, error } = await supabase.from('invoices').insert({
       code,
-      customer_id: invoiceData.customer_id || null,
+      customer_id: invoiceData.customer_id,
       customer_name: invoiceData.customer_name || null,
       customer_phone: invoiceData.customer_phone || null,
       customer_address: invoiceData.customer_address || null,
@@ -1212,8 +1221,10 @@ r.post('/invoices/:id/items', async (req, res) => {
 // Record payment
 r.post('/invoices/:id/payments', async (req, res) => {
   try {
+    const body = { ...req.body };
+    ['order_id', 'invoice_id'].forEach(f => { if (body[f] === '') body[f] = null; });
     const { data: payment, error } = await supabase.from('payment_records')
-      .insert({ ...req.body, invoice_id: req.params.id, created_by: req.user.userId })
+      .insert({ ...body, invoice_id: req.params.id, created_by: req.user.userId })
       .select('*').single();
     if (error) throw error;
 
