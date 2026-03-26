@@ -809,6 +809,10 @@ r.post('/quotations', async (req, res) => {
   try {
     const { items, ...quoteData } = req.body;
     const code = await nextCode('BG');
+
+    // Sanitize: empty strings → null for UUID fields
+    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
+    uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     
     // Calc totals with per-item VAT
     const processedItems = (items || []).map(item => {
@@ -862,6 +866,10 @@ r.post('/quotations', async (req, res) => {
 r.put('/quotations/:id', async (req, res) => {
   try {
     const { items, ...quoteData } = req.body;
+
+    // Sanitize: empty strings → null for UUID fields
+    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
+    uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     
     // Calc totals with per-item VAT
     const processedItems = (items || []).map(item => {
@@ -1021,6 +1029,12 @@ r.post('/orders', async (req, res) => {
   try {
     const { items, ...orderData } = req.body;
     const code = await nextCode('DH');
+
+    // Sanitize: empty strings → null for UUID fields
+    ['customer_id', 'lead_id', 'quotation_id', 'project_id'].forEach(f => {
+      if (orderData[f] === '' || orderData[f] === undefined) orderData[f] = null;
+    });
+
     const processedItems = (items || []).map(item => {
       const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
       const vatRate = item.vat_rate || 0;
