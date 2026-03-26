@@ -985,6 +985,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
             } catch (e) { console.warn(`auto-project: stage ${slug} failed:`, e.message); }
           }
           console.log(`[AUTO-PROJECT] ✅ Created project ${code} with ${totalCreated} tasks for deal ${req.params.id}`);
+          autoProject = { ...project, tasks_created: totalCreated, flow_id: flowId };
           
           // Activity log
           await supabase.from('crm_activities').insert({

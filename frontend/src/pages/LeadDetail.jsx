@@ -33,6 +33,8 @@ export default function LeadDetail() {
   const [loading, setLoading] = useState(true);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [showConvertModal, setShowConvertModal] = useState(false);
+  const [autoProjectResult, setAutoProjectResult] = useState(null); // {code, name, tasks_created}
+  const [creatingProject, setCreatingProject] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
@@ -65,18 +67,30 @@ export default function LeadDetail() {
   };
 
   const moveStage = async (stageId) => {
+    // Check if this is a "won" stage
+    const stages = lead?.type === 'deal' ? stagesDeal : stagesLead;
+    const targetStage = stages.find(s => s.id === stageId);
+    const isWinning = targetStage?.is_won;
+
+    if (isWinning) setCreatingProject(true);
+
     try {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId });
       if (data.requires_conversion) {
+        setCreatingProject(false);
         setShowConvertModal(true);
       } else if (data.auto_project) {
-        // Dự án đã tạo tự động
-        alert(`🎉 Deal Thắng! Dự án "${data.auto_project.code}" đã được tạo tự động.`);
+        setCreatingProject(false);
+        setAutoProjectResult(data.auto_project);
         load();
       } else {
+        setCreatingProject(false);
         load();
       }
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    } catch (e) {
+      setCreatingProject(false);
+      alert(e.response?.data?.error || 'Lỗi');
+    }
   };
 
   const deleteLead = async () => {
@@ -490,6 +504,72 @@ export default function LeadDetail() {
           onClose={() => setShowConvertModal(false)}
           onSuccess={() => { setShowConvertModal(false); load(); }}
         />
+      )}
+
+      {/* Loading overlay khi đang tạo dự án */}
+      {creatingProject && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl p-8 text-center max-w-sm mx-4 shadow-2xl">
+            <div className="animate-spin h-12 w-12 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto mb-4"></div>
+            <h3 className="text-lg font-bold text-gray-900 mb-1">🏗️ Đang tạo dự án...</h3>
+            <p className="text-sm text-gray-500">Tạo dự án + luồng mặc định + bộ nhiệm vụ</p>
+          </div>
+        </div>
+      )}
+
+      {/* Modal kết quả tạo dự án tự động */}
+      {autoProjectResult && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <div className="text-center mb-5">
+              <div className="text-5xl mb-3">🎉</div>
+              <h2 className="text-xl font-bold text-gray-900">Deal Thắng!</h2>
+              <p className="text-sm text-gray-500 mt-1">Dự án đã được tạo tự động</p>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-4 space-y-3 mb-5">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">📁</span>
+                <div>
+                  <p className="text-xs text-gray-500">Mã dự án</p>
+                  <p className="text-sm font-bold text-gray-900">{autoProjectResult.code}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">📋</span>
+                <div>
+                  <p className="text-xs text-gray-500">Tên dự án</p>
+                  <p className="text-sm font-bold text-gray-900">{autoProjectResult.name}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">🔄</span>
+                <div>
+                  <p className="text-xs text-gray-500">Luồng quy trình</p>
+                  <p className="text-sm font-bold text-gray-900">Luồng mặc định</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">✅</span>
+                <div>
+                  <p className="text-xs text-gray-500">Nhiệm vụ đã tạo</p>
+                  <p className="text-sm font-bold text-emerald-600">{autoProjectResult.tasks_created || 0} nhiệm vụ từ bộ mẫu mặc định</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={() => setAutoProjectResult(null)}
+                className="flex-1 h-10 border rounded-xl text-sm font-medium cursor-pointer hover:bg-gray-50">
+                Đóng
+              </button>
+              <button onClick={() => { setAutoProjectResult(null); window.location.href = `/projects/${autoProjectResult.id}`; }}
+                className="flex-1 h-10 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium cursor-pointer">
+                Xem dự án →
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
