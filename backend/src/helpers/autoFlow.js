@@ -297,17 +297,20 @@ async function onProjectCompleted(projectId, userId) {
 async function getOverdueFollowUps() {
   const now = new Date().toISOString();
   const { data } = await supabase.from('crm_leads')
-    .select('id, code, title, next_follow_up, customer:customers(full_name), assignee:users!crm_leads_assigned_to_fkey(full_name), stage:crm_pipeline_stages(name, icon, is_won, is_lost)')
+    .select('id, code, title, type, next_follow_up, customer:customers(full_name), assignee:users!crm_leads_assigned_to_fkey(full_name), stage:crm_pipeline_stages(name, icon, is_won, is_lost)')
+    .eq('type', 'lead')               // chỉ lead, không deal
     .lt('next_follow_up', now)
-    .is('actual_close_date', null); // chưa chốt
+    .is('actual_close_date', null);    // chưa chốt
 
+  // Loại lead đã thắng (chuyển deal) hoặc đã thua (mất)
   return (data || []).filter(l => !l.stage?.is_won && !l.stage?.is_lost);
 }
 
 async function getStaleLeads(daysSinceActivity = 7) {
   const cutoff = new Date(Date.now() - daysSinceActivity * 86400000).toISOString();
   const { data } = await supabase.from('crm_leads')
-    .select('id, code, title, last_activity_at, customer:customers(full_name), assignee:users!crm_leads_assigned_to_fkey(full_name), stage:crm_pipeline_stages(name, icon, is_won, is_lost)')
+    .select('id, code, title, type, last_activity_at, customer:customers(full_name), assignee:users!crm_leads_assigned_to_fkey(full_name), stage:crm_pipeline_stages(name, icon, is_won, is_lost)')
+    .eq('type', 'lead')               // chỉ lead, không deal
     .or(`last_activity_at.lt.${cutoff},last_activity_at.is.null`)
     .is('actual_close_date', null);
 
