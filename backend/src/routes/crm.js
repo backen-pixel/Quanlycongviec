@@ -352,8 +352,42 @@ r.post('/leads', async (req, res) => {
         'crm_lead', data.id);
     }
 
-    // 🔴 REMOVED: Auto project creation on lead create
-    // Lead is just a lead — user must explicitly convert to deal later
+    // ✅ AUTO-CREATE default CRM tasks for initial stage
+    try {
+      if (data.stage_id) {
+        const STAGE_MAP = {
+          'tư vấn': 'consulting', 'tiếp nhận': 'consulting', 'mới': 'consulting',
+          'thiết kế': 'design', 'khảo sát': 'design',
+          'báo giá': 'quotation', 'đề xuất': 'quotation',
+          'hợp đồng': 'contract', 'đàm phán': 'contract', 'chốt': 'contract',
+        };
+        const { data: pStage } = await supabase.from('crm_pipeline_stages')
+          .select('name').eq('id', data.stage_id).single();
+        if (pStage?.name) {
+          const slugKey = Object.keys(STAGE_MAP).find(k => pStage.name.toLowerCase().includes(k));
+          const stageSlug = slugKey ? STAGE_MAP[slugKey] : null;
+          if (stageSlug) {
+            const { data: tpl } = await supabase.from('crm_task_templates')
+              .select('id').eq('stage_slug', stageSlug).eq('is_default', true).eq('is_active', true).limit(1).single();
+            if (tpl) {
+              const { data: items } = await supabase.from('crm_task_template_items')
+                .select('*').eq('template_id', tpl.id).order('order_index');
+              if (items?.length) {
+                const now = new Date();
+                const inserts = items.map(item => ({
+                  lead_id: data.id, title: item.title, description: item.description || null,
+                  priority: item.priority || 'medium', stage_slug: stageSlug, order_index: item.order_index,
+                  deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+                  checklist: item.checklist || [], created_by: req.user.userId,
+                }));
+                await supabase.from('crm_tasks').insert(inserts);
+                console.log(`Auto-created ${inserts.length} CRM tasks for new lead ${data.id} (${stageSlug})`);
+              }
+            }
+          }
+        }
+      }
+    } catch (autoErr) { console.error('Auto-create tasks on lead create error:', autoErr.message); }
 
     res.status(201).json(data);
   } catch (e) {
@@ -614,6 +648,46 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
         created_by: req.user.userId,
       });
     } catch (_) {}
+
+    // ✅ AUTO-CREATE default CRM tasks for first deal stage
+    try {
+      const { data: pStage } = await supabase.from('crm_pipeline_stages')
+        .select('name').eq('id', firstDealStage.id).single();
+      if (pStage?.name) {
+        const DEAL_STAGE_MAP = {
+          'tư vấn': 'consulting', 'tiếp nhận': 'consulting', 'mới': 'consulting',
+          'thiết kế': 'design', 'khảo sát': 'design',
+          'báo giá': 'quotation', 'đề xuất': 'quotation',
+          'hợp đồng': 'contract', 'đàm phán': 'contract', 'chốt': 'contract',
+        };
+        const slugKey = Object.keys(DEAL_STAGE_MAP).find(k => pStage.name.toLowerCase().includes(k));
+        const stageSlug = slugKey ? DEAL_STAGE_MAP[slugKey] : null;
+        if (stageSlug) {
+          // Check no existing tasks for this stage on this deal
+          const { data: existing } = await supabase.from('crm_tasks')
+            .select('id').eq('lead_id', req.params.id).eq('stage_slug', stageSlug).limit(1);
+          if (!existing?.length) {
+            const { data: tpl } = await supabase.from('crm_task_templates')
+              .select('id').eq('stage_slug', stageSlug).eq('is_default', true).eq('is_active', true).limit(1).single();
+            if (tpl) {
+              const { data: items } = await supabase.from('crm_task_template_items')
+                .select('*').eq('template_id', tpl.id).order('order_index');
+              if (items?.length) {
+                const now = new Date();
+                const inserts = items.map(item => ({
+                  lead_id: req.params.id, title: item.title, description: item.description || null,
+                  priority: item.priority || 'medium', stage_slug: stageSlug, order_index: item.order_index,
+                  deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+                  checklist: item.checklist || [], created_by: req.user.userId,
+                }));
+                await supabase.from('crm_tasks').insert(inserts);
+                console.log(`Auto-created ${inserts.length} CRM tasks for converted deal ${req.params.id} (${stageSlug})`);
+              }
+            }
+          }
+        }
+      }
+    } catch (autoErr) { console.error('Auto-create tasks on convert-to-deal error:', autoErr.message); }
 
     res.status(200).json({
       lead: updatedLead,
