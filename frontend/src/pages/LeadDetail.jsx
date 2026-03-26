@@ -658,7 +658,6 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
   const [editing, setEditing] = useState(null);
   const [editVal, setEditVal] = useState('');
   const [saving, setSaving] = useState(false);
-  const [companyUnitId, setCompanyUnitId] = useState(null);
   const [companies, setCompanies] = useState([]);
 
   // Load sources + companies
@@ -666,19 +665,6 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
     api.get('/crm/sources').then(r => setSources(r.data || [])).catch(() => {});
     api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
   }, []);
-
-  // Map lead.company_id → ecosystem_unit_id (for EmployeePicker)
-  useEffect(() => {
-    if (!lead?.company_id) { setCompanyUnitId(null); return; }
-    (async () => {
-      try {
-        const { data } = await api.get('/ecosystem/units');
-        const units = data || [];
-        const unit = units.find(u => u.company_id === lead.company_id || u.company?.id === lead.company_id);
-        setCompanyUnitId(unit?.id || null);
-      } catch { setCompanyUnitId(null); }
-    })();
-  }, [lead?.company_id]);
 
   const saveField = async (field, value) => {
     setSaving(true);
@@ -826,7 +812,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
               <p className="text-xs text-amber-500 italic">⚠️ Chọn công ty trước để lọc nhân viên</p>
             ) : (
               <EmployeePicker
-                companyUnitId={companyUnitId}
+                companyId={lead?.company_id}
                 value={lead?.assigned_to || ''}
                 onChange={(userId) => saveField('assigned_to', userId || '')}
                 placeholder="👤 Chọn nhân viên phụ trách..."
@@ -859,7 +845,6 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
   const [converting, setConverting] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState('');
-  const [companyUnitId, setCompanyUnitId] = useState(null);
   const [selectedSales, setSelectedSales] = useState(lead?.assigned_to || '');
 
   const canConvert = customer?.full_name && customer?.phone;
@@ -878,21 +863,6 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
       } catch {}
     })();
   }, [lead?.company_id]);
-
-  // Map company_id → ecosystem_unit_id (for EmployeePicker)
-  useEffect(() => {
-    if (!selectedCompany) { setCompanyUnitId(null); return; }
-    (async () => {
-      try {
-        const { data } = await api.get('/ecosystem/units');
-        const units = data || [];
-        const unit = units.find(u => u.company_id === selectedCompany || u.company?.id === selectedCompany);
-        setCompanyUnitId(unit?.id || null);
-      } catch {
-        setCompanyUnitId(null);
-      }
-    })();
-  }, [selectedCompany]);
 
   const handleConvert = async () => {
     setConverting(true);
@@ -945,7 +915,7 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
           <div>
             <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Nhân viên phụ trách Deal</label>
             <EmployeePicker
-              companyUnitId={companyUnitId}
+              companyId={selectedCompany}
               value={selectedSales}
               onChange={(userId) => setSelectedSales(userId || '')}
               placeholder="Chọn nhân viên phụ trách..."

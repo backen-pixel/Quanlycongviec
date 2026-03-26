@@ -9,8 +9,15 @@ const _cache = { users: {}, departments: {} };
 /**
  * EmployeePicker - Component chọn nhân viên với filter Công ty + Phòng ban
  * Uses React Portal to render dropdown outside parent overflow:hidden containers
+ * 
+ * Props:
+ *  - companyId: ID từ bảng companies (ưu tiên dùng cái này)
+ *  - companyUnitId: ID từ bảng ecosystem_units (backward compat)
+ *  - Nếu truyền companyId → load bằng /users?company_id=...
+ *  - Nếu chỉ truyền companyUnitId → load bằng /users?company_unit_id=... (cũ)
  */
 export default function EmployeePicker({
+  companyId,
   companyUnitId,
   value,
   onChange,
@@ -31,18 +38,20 @@ export default function EmployeePicker({
   const buttonRef = useRef(null);
   const dropdownRef = useRef(null);
 
-  const isDisabled = disabled || !companyUnitId;
+  // companyId takes priority over companyUnitId
+  const effectiveKey = companyId || companyUnitId;
+  const isDisabled = disabled || !effectiveKey;
 
-  // Load users + departments when companyUnitId changes
+  // Load users + departments when companyId or companyUnitId changes
   useEffect(() => {
-    if (companyUnitId) {
-      loadData(companyUnitId);
+    if (effectiveKey) {
+      loadData(effectiveKey, !!companyId);
     } else {
       setAllUsers([]);
       setDepartments([]);
       setSelectedUser(null);
     }
-  }, [companyUnitId]);
+  }, [effectiveKey]);
 
   // Resolve selected user
   useEffect(() => {
@@ -96,34 +105,38 @@ export default function EmployeePicker({
     };
   }, [open]);
 
-  const loadData = async (unitId) => {
+  const loadData = async (keyId, useCompanyId = false) => {
     // Use global cache to prevent redundant API calls on remount
-    if (_cache.users[unitId]) {
-      setAllUsers(_cache.users[unitId]);
-      setDepartments(_cache.departments[unitId] || []);
+    const cacheKey = (useCompanyId ? 'c_' : 'u_') + keyId;
+    if (_cache.users[cacheKey]) {
+      setAllUsers(_cache.users[cacheKey]);
+      setDepartments(_cache.departments[cacheKey] || []);
       return;
     }
     
     setLoading(true);
     try {
-      const { data } = await api.get(`/users?company_unit_id=${unitId}`);
+      // If companyId → query directly by company_id, else use old company_unit_id
+      const param = useCompanyId ? `company_id=${keyId}` : `company_unit_id=${keyId}`;
+      const { data } = await api.get(`/users?${param}`);
       const users = data.users || [];
       setAllUsers(users);
-      _cache.users[unitId] = users;
+      _cache.users[cacheKey] = users;
 
-      const companyId = data.company_id;
-      if (companyId) {
+      // For departments: if we have companyId use it directly, else use data.company_id from response
+      const resolvedCompanyId = useCompanyId ? keyId : data.company_id;
+      if (resolvedCompanyId) {
         try {
-          const { data: deptData } = await api.get(`/departments?company_id=${companyId}`);
+          const { data: deptData } = await api.get(`/departments?company_id=${resolvedCompanyId}`);
           const depts = deptData.departments || [];
           setDepartments(depts);
-          _cache.departments[unitId] = depts;
+          _cache.departments[cacheKey] = depts;
         } catch {
           const deptMap = {};
           users.forEach(u => { if (u.department_id) deptMap[u.department_id] = u.department_id; });
           const depts = Object.keys(deptMap).map(id => ({ id, name: id }));
           setDepartments(depts);
-          _cache.departments[unitId] = depts;
+          _cache.departments[cacheKey] = depts;
         }
       }
     } catch (e) {
@@ -326,10 +339,10 @@ export default function EmployeePicker({
           <>
             <User className="w-4 h-4 text-gray-400 shrink-0" />
             <span className="flex-1 text-left text-gray-400">
-              {isDisabled && !companyUnitId ? 'Chọn công ty trước' : placeholder}
+              {isDisabled && !effectiveKey ? 'Chọn công ty trước' : placeholder}
             </span>
             {!isDisabled && <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
-            {isDisabled && !companyUnitId && <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+            {isDisabled && !effectiveKey && <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
           </>
         )}
       </button>
