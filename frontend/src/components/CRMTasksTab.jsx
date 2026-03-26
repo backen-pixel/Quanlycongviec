@@ -11,12 +11,14 @@ const LEAD_STAGES = [
   { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
 ];
 const DEAL_STAGES = [
-  { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
-  { slug: 'design', label: 'Thiết kế', icon: '🎨', color: '#8B5CF6' },
-  { slug: 'quotation', label: 'Báo giá', icon: '💰', color: '#F59E0B' },
-  { slug: 'contract', label: 'Hợp đồng', icon: '📝', color: '#10B981' },
+  { slug: 'deal_new', label: 'Nhiệm vụ Deal mới', icon: '📋', color: '#3B82F6' },
+  { slug: 'deal_quote_contract', label: 'Báo giá & Hợp đồng', icon: '📄', color: '#8B5CF6' },
+  { slug: 'deal_ordering', label: 'Tiến hành đặt hàng', icon: '🛒', color: '#F59E0B' },
+  { slug: 'deal_schedule', label: 'Hẹn ngày lắp đặt', icon: '📅', color: '#10B981' },
+  { slug: 'deal_shipping', label: 'Đặt Vận chuyển', icon: '🚛', color: '#EF4444' },
+  { slug: 'deal_notes', label: 'Ghi chú khác', icon: '📝', color: '#6B7280' },
 ];
-const ALL_STAGES = DEAL_STAGES;
+const ALL_STAGES = [...LEAD_STAGES, ...DEAL_STAGES];
 const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
