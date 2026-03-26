@@ -338,7 +338,7 @@ r.post('/leads', async (req, res) => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
     const { data, error } = await supabase.from('crm_leads')
-      .insert({ ...body, code, type: 'lead', created_by: req.user.userId })
+      .insert({ ...body, code, type: 'lead', lead_owner_id: body.assigned_to || req.user.userId, created_by: req.user.userId })
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
       .single();
     if (error) throw error;
@@ -397,7 +397,7 @@ r.post('/leads', async (req, res) => {
 r.get('/leads/:id/detail', async (req, res) => {
   try {
     const { data, error } = await supabase.from('crm_leads')
-      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name)')
+      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar), creator:users!crm_leads_created_by_fkey(id, full_name)')
       .eq('id', req.params.id)
       .single();
     if (error) throw error;
@@ -410,12 +410,34 @@ r.get('/leads/:id/detail', async (req, res) => {
 r.put('/leads/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    // Get current lead to check if assigned_to changed
+    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type').eq('id', id).single();
+    
     const { data, error } = await supabase.from('crm_leads')
       .update({ ...req.body, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
       .single();
     if (error) throw error;
+
+    // ✅ NOTIFICATION: Notify new assignee when assigned_to changes
+    try {
+      if (req.body.assigned_to && req.body.assigned_to !== oldLead?.assigned_to && req.body.assigned_to !== req.user.userId) {
+        const label = oldLead?.type === 'deal' ? 'Deal' : 'Lead';
+        await createNotification(req, req.body.assigned_to, 'lead_assigned',
+          `👤 ${label} được giao cho bạn`,
+          `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
+          oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id);
+      }
+      // Notify new lead_owner if changed
+      if (req.body.lead_owner_id && req.body.lead_owner_id !== oldLead?.lead_owner_id && req.body.lead_owner_id !== req.user.userId) {
+        await createNotification(req, req.body.lead_owner_id, 'lead_assigned',
+          '👤 Bạn được giao phụ trách Lead',
+          `Lead "${oldLead?.title || data.title}" được giao cho bạn`,
+          'crm_lead', id);
+      }
+    } catch (_) {}
+
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -573,12 +595,15 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     }
 
     // Update lead → deal
+    const dealAssignedTo = req.body.assigned_to || lead.assigned_to || null;
+    const leadOwnerId = lead.assigned_to || lead.created_by || null;
     const { data: updatedLead, error: leadError } = await supabase
       .from('crm_leads')
       .update({
         type: 'deal',
         stage_id: firstDealStage.id,
-        assigned_to: req.body.assigned_to || lead.assigned_to || null,
+        assigned_to: dealAssignedTo,
+        lead_owner_id: leadOwnerId,
         company_id: req.body.company_id || lead.company_id || null,
         updated_at: new Date().toISOString(),
       })
@@ -587,6 +612,23 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       .single();
 
     if (leadError) throw leadError;
+
+    // ✅ NOTIFICATION: Notify deal assignee about conversion
+    try {
+      if (dealAssignedTo && dealAssignedTo !== req.user.userId) {
+        await createNotification(req, dealAssignedTo, 'deal_assigned',
+          '🚀 Deal mới được giao',
+          `Lead "${lead.title}" đã chuyển thành Deal và giao cho bạn phụ trách`,
+          'crm_deal', req.params.id);
+      }
+      // Notify lead owner if different from deal assignee and current user
+      if (leadOwnerId && leadOwnerId !== dealAssignedTo && leadOwnerId !== req.user.userId) {
+        await createNotification(req, leadOwnerId, 'lead_converted',
+          '🔄 Lead đã chuyển sang Deal',
+          `Lead "${lead.title}" mà bạn phụ trách đã được chuyển thành Deal`,
+          'crm_deal', req.params.id);
+      }
+    } catch (notifErr) { console.error('Convert notification error:', notifErr.message); }
 
     // Copy task attachments & notes → lead_documents (để lưu lại khi chuyển Deal)
     try {
