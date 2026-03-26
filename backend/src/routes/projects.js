@@ -731,15 +731,127 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       for (const assignment of b.flow_assignments) {
         // Save project_company_assignment
         const opt = v => (v && typeof v === 'string' && v.trim()) ? v.trim() : null;
+
+        // When deal_id present: Step 0 (KD) → import CRM tasks instead of generating from flow
+        const isKdStep = assignment.order_index === 0;
+        const skipFlowTasks = isKdStep && b.deal_id;
+
         await supabase.from('project_company_assignments').upsert({
           project_id: projectId,
           division_unit_id: assignment.division_unit_id,
           company_unit_id: assignment.company_unit_id,
           template_set_id: opt(assignment.template_set_id),
           order_index: assignment.order_index || 0,
-          status: assignment.order_index === 0 ? 'in_progress' : 'pending',
+          status: skipFlowTasks ? 'done' : (assignment.order_index === 0 ? 'in_progress' : 'pending'),
           started_at: assignment.order_index === 0 ? new Date().toISOString() : null,
+          completed_at: skipFlowTasks ? new Date().toISOString() : null,
         }, { onConflict: 'project_id,division_unit_id' });
+
+        if (skipFlowTasks) {
+          // ── KD STEP: Import CRM Deal tasks → project tasks (already done) ──
+          console.log(`[deal→project] Step 0 (KD): Importing CRM tasks instead of flow template`);
+          try {
+            // Load ALL CRM tasks from deal (lead + deal phases)
+            const dealId = b.deal_id;
+            const { data: crmTasks } = await supabase.from('crm_tasks')
+              .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), attachments:crm_task_attachments(*)')
+              .eq('lead_id', dealId)
+              .order('order_index');
+
+            // Also check if lead has a parent (lead→deal conversion keeps same ID or has parent)
+            // Load from original lead if deal has lead_source_id
+            const { data: deal } = await supabase.from('crm_leads')
+              .select('id, lead_source_id').eq('id', dealId).single();
+            let parentLeadTasks = [];
+            if (deal?.lead_source_id) {
+              const { data: lt } = await supabase.from('crm_tasks')
+                .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), attachments:crm_task_attachments(*)')
+                .eq('lead_id', deal.lead_source_id).order('order_index');
+              parentLeadTasks = lt || [];
+            }
+
+            const allCrmTasks = [...parentLeadTasks, ...(crmTasks || [])];
+            console.log(`[deal→project] Found ${allCrmTasks.length} CRM tasks (${parentLeadTasks.length} from lead + ${crmTasks?.length || 0} from deal)`);
+
+            // Map CRM stage_slug → workflow_stages.id for KD stages
+            const kdSlugMap = {
+              'consulting': 'consulting', 'design': 'design', 'quotation': 'quotation', 'contract': 'contract',
+              'deal_new': 'consulting', 'deal_quote_contract': 'quotation', 'deal_ordering': 'contract',
+              'deal_schedule': 'contract', 'deal_shipping': 'delivery', 'deal_notes': 'consulting',
+            };
+
+            // Pre-load KD workflow stages
+            const kdBaseSlugs = ['consulting', 'design', 'quotation', 'contract'];
+            const { data: wfStages } = await supabase.from('workflow_stages')
+              .select('id, slug').eq('is_active', true);
+            const stageBySlug = {};
+            (wfStages || []).forEach(s => {
+              const baseSlug = s.slug.replace(/-[a-f0-9]{8}$/, '');
+              if (!stageBySlug[baseSlug]) stageBySlug[baseSlug] = s;
+            });
+
+            // Group CRM tasks by stage_slug for organized display
+            for (let i = 0; i < allCrmTasks.length; i++) {
+              const ct = allCrmTasks[i];
+              const targetBaseSlug = kdSlugMap[ct.stage_slug] || 'consulting';
+              const targetStage = stageBySlug[targetBaseSlug];
+
+              // Build description from CRM task (notes + checklist + attachments)
+              let desc = ct.description || '';
+              if (ct.notes) desc += (desc ? '\n\n' : '') + '📝 ' + ct.notes;
+              if (ct.checklist?.length) {
+                desc += (desc ? '\n\n' : '') + '☑ Checklist:\n' + ct.checklist.map((c, j) => `  ${j + 1}. ${typeof c === 'string' ? c : c.title || c.label || c}`).join('\n');
+              }
+
+              const { data: task, error: taskErr } = await supabase.from('tasks').insert({
+                project_id: projectId,
+                stage_id: targetStage?.id || null,
+                title: ct.title,
+                description: desc || null,
+                assignee_id: ct.assignee_id || null,
+                priority: ct.priority || 'medium',
+                status: 'done', // KD tasks are done (deal already completed KD phase)
+                completed_at: new Date().toISOString(),
+                order_index: i,
+                created_by_id: userId,
+                deadline: ct.deadline || null,
+                task_type: 'project',
+                metadata: {
+                  crm_task_id: ct.id,
+                  crm_stage_slug: ct.stage_slug,
+                  imported_from: 'crm_deal',
+                  deal_id: dealId,
+                },
+              }).select().single();
+
+              if (taskErr) { console.error('[deal→project] Import task error:', taskErr.message); continue; }
+
+              // Create checklists from CRM task checklist
+              if (ct.checklist?.length && task) {
+                for (let j = 0; j < ct.checklist.length; j++) {
+                  const ckItem = ct.checklist[j];
+                  const ckTitle = typeof ckItem === 'string' ? ckItem : (ckItem.title || ckItem.label || ckItem);
+                  try {
+                    await supabase.from('task_checklists').insert({
+                      task_id: task.id,
+                      title: ckTitle,
+                      order_index: j,
+                      is_completed: true, // KD phase done
+                      completed_at: new Date().toISOString(),
+                    });
+                  } catch (ce) { console.warn('[deal→project] Checklist:', ce.message); }
+                }
+              }
+
+              if (task) allCreatedTasks.push(task);
+            }
+
+            console.log(`[deal→project] Imported ${allCrmTasks.length} CRM tasks → project KD tasks (all done)`);
+          } catch (importErr) {
+            console.error('[deal→project] Import CRM tasks error:', importErr.message);
+          }
+          continue; // Skip generateStepTasks for KD step
+        }
 
         // Find flow step ID from flow_id + division_unit_id
         const { data: flowStep } = await supabase.from('workflow_flow_steps')
@@ -759,77 +871,13 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       }
     }
 
-    // ── DEAL INTEGRATION: Auto-complete KD tasks + copy documents + link deal ──
+    // ── DEAL INTEGRATION: Link deal + copy documents (KD tasks already imported above) ──
     if (b.deal_id) {
       try {
         // 1. Link deal → project
         await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', b.deal_id);
 
-        // 2. Auto-complete TẤT CẢ tasks Khối KD (đã hoàn thành trước khi tạo dự án)
-        const kdBaseSlugs = ['consulting', 'design', 'quotation', 'contract'];
-        const { data: allStages } = await supabase.from('workflow_stages')
-          .select('id, slug').eq('is_active', true);
-        // Match cả slug gốc và slug có suffix company (e.g. consulting-29677f68)
-        const kdStageIds = (allStages || [])
-          .filter(s => kdBaseSlugs.some(base => s.slug === base || s.slug.startsWith(base + '-')))
-          .map(s => s.id);
-        
-        // Collect ALL KD task IDs first (for checklists later)
-        const allKdTaskIds = [];
-
-        if (kdStageIds.length) {
-          // Complete tasks by stage
-          const { data: completedTasks, error: ctErr } = await supabase.from('tasks')
-            .update({ status: 'done', completed_at: new Date().toISOString() })
-            .eq('project_id', projectId)
-            .in('stage_id', kdStageIds)
-            .neq('status', 'done')
-            .select('id');
-          if (ctErr) console.error('[deal] Auto-complete by stage error:', ctErr.message);
-          else {
-            (completedTasks || []).forEach(t => allKdTaskIds.push(t.id));
-            console.log(`[deal] Auto-completed ${completedTasks?.length || 0} KD tasks by stage`);
-          }
-        }
-
-        // Also complete tasks with metadata matching KD process names
-        const { data: pendingTasks } = await supabase.from('tasks')
-          .select('id, metadata').eq('project_id', projectId).in('status', ['pending', 'todo', 'in_progress']);
-        const kdProcessNames = ['Tiếp nhận & Tư vấn', 'Thiết kế', 'Báo giá & Hợp đồng', 'Tư vấn', 'Báo giá', 'Hợp đồng'];
-        const kdTaskIds = (pendingTasks || [])
-          .filter(t => t.metadata?.process_name && kdProcessNames.includes(t.metadata.process_name))
-          .map(t => t.id);
-        if (kdTaskIds.length) {
-          const { error: kErr } = await supabase.from('tasks')
-            .update({ status: 'done', completed_at: new Date().toISOString() })
-            .in('id', kdTaskIds);
-          if (kErr) console.error('[deal] Auto-complete by process name error:', kErr.message);
-          else console.log(`[deal] Auto-completed ${kdTaskIds.length} more KD tasks by process name`);
-          kdTaskIds.forEach(id => { if (!allKdTaskIds.includes(id)) allKdTaskIds.push(id); });
-        }
-
-        // 2a. Auto-complete ALL checklists of KD tasks
-        if (allKdTaskIds.length) {
-          const { data: updatedChecklists, error: clErr } = await supabase.from('task_checklists')
-            .update({ is_completed: true, completed_at: new Date().toISOString() })
-            .in('task_id', allKdTaskIds)
-            .eq('is_completed', false)
-            .select('id');
-          if (clErr) console.error('[deal] Auto-complete checklists error:', clErr.message);
-          else console.log(`[deal] Auto-completed ${updatedChecklists?.length || 0} checklists for ${allKdTaskIds.length} KD tasks`);
-        }
-
-        // 2b. Mark KD assignment (step 0) as completed
-        const kdAssignment = b.flow_assignments?.find(a => a.order_index === 0);
-        if (kdAssignment?.division_unit_id) {
-          await supabase.from('project_company_assignments')
-            .update({ status: 'done', completed_at: new Date().toISOString() })
-            .eq('project_id', projectId)
-            .eq('division_unit_id', kdAssignment.division_unit_id);
-          console.log(`[deal] KD assignment → completed`);
-        }
-
-        // 2c. Mark SX assignment (step 1) as in_progress
+        // 2. Mark SX assignment (step 1) as in_progress (KD already done above)
         const sxAssignment = b.flow_assignments?.find(a => a.order_index === 1);
         if (sxAssignment?.division_unit_id) {
           await supabase.from('project_company_assignments')
@@ -840,39 +888,34 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           console.log(`[deal] SX assignment → in_progress`);
         }
 
-        // 2d. Update project status → production (KD đã xong, bắt đầu SX)
+        // 3. Update project status → production (KD đã xong, bắt đầu SX)
         const { data: prodStage } = await supabase.from('workflow_stages')
           .select('id').eq('slug', 'production').limit(1).single();
         await supabase.from('projects').update({
           status: 'producing',
           current_stage_id: prodStage?.id || null,
         }).eq('id', projectId);
-        console.log(`[deal] Project status → producing, completed ${allKdTaskIds.length} KD tasks total`);
+        console.log(`[deal] Project status → producing`);
 
-        // 3. Copy documents from deal/lead to project (store as quotation_files JSON)
-        // First, copy any remaining task attachments/notes from Deal phase → lead_documents
+        // 4. Copy documents from deal/lead to project
         try {
+          // Copy task attachments → lead_documents  
           const { data: dealTaskAtts } = await supabase.from('crm_task_attachments')
             .select('*, task:crm_tasks(title, stage_slug)')
             .eq('lead_id', b.deal_id);
           if (dealTaskAtts?.length) {
-            // Check which are already in lead_documents to avoid duplicates
             const { data: existingDocs } = await supabase.from('lead_documents')
               .select('name, file_url').eq('lead_id', b.deal_id);
             const existingSet = new Set((existingDocs || []).map(d => `${d.name}|${d.file_url || ''}`));
-
             const newDocInserts = dealTaskAtts
               .filter(att => !existingSet.has(`[${att.task?.title || 'Task'}] ${att.name}|${att.file_url || ''}`))
               .map(att => ({
                 lead_id: b.deal_id,
                 name: `[${att.task?.title || 'Task'}] ${att.name}`,
                 doc_type: att.file_url ? (att.doc_type || 'other') : 'requirement',
-                file_url: att.file_url || null,
-                file_name: att.file_name || null,
-                file_size: att.file_size || null,
-                mime_type: att.mime_type || null,
-                notes: att.notes || null,
-                created_by: att.created_by,
+                file_url: att.file_url || null, file_name: att.file_name || null,
+                file_size: att.file_size || null, mime_type: att.mime_type || null,
+                notes: att.notes || null, created_by: att.created_by,
               }));
             if (newDocInserts.length) {
               await supabase.from('lead_documents').insert(newDocInserts);
@@ -880,22 +923,18 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
             }
           }
 
-          // Also copy Deal task notes
+          // Copy task notes → lead_documents
           const { data: dealTasksWithNotes } = await supabase.from('crm_tasks')
             .select('id, title, stage_slug, notes, created_by')
-            .eq('lead_id', b.deal_id)
-            .not('notes', 'is', null);
+            .eq('lead_id', b.deal_id).not('notes', 'is', null);
           if (dealTasksWithNotes?.length) {
             const existingDocs2 = (await supabase.from('lead_documents').select('name').eq('lead_id', b.deal_id)).data || [];
             const existingNames = new Set(existingDocs2.map(d => d.name));
             const noteInserts = dealTasksWithNotes
               .filter(t => t.notes?.trim() && !existingNames.has(`📝 Ghi chú: ${t.title}`))
               .map(t => ({
-                lead_id: b.deal_id,
-                name: `📝 Ghi chú: ${t.title}`,
-                doc_type: 'requirement',
-                notes: t.notes,
-                created_by: t.created_by,
+                lead_id: b.deal_id, name: `📝 Ghi chú: ${t.title}`,
+                doc_type: 'requirement', notes: t.notes, created_by: t.created_by,
               }));
             if (noteInserts.length) {
               await supabase.from('lead_documents').insert(noteInserts);
@@ -904,45 +943,33 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
           }
         } catch (copyErr) { console.error('[deal→project] Copy task data error:', copyErr.message); }
 
-        // Now copy all lead_documents (including newly added) → project quotation_files
+        // Copy all lead_documents → project quotation_files
         const { data: dealDocs } = await supabase.from('lead_documents')
           .select('*').eq('lead_id', b.deal_id);
         if (dealDocs?.length) {
-          const docFiles = dealDocs
-            .filter(doc => doc.file_url)
-            .map(doc => ({
-              file_url: doc.file_url,
-              file_name: doc.file_name || doc.name,
-              file_size: doc.file_size,
-              mime_type: doc.mime_type,
-              description: `Từ ${doc.doc_type || 'Deal'}: ${doc.name || doc.file_name}`,
-            }));
-          // Also include text-only notes as description entries
-          const textNotes = dealDocs
-            .filter(doc => !doc.file_url && doc.notes)
-            .map(doc => ({
-              file_url: null,
-              file_name: doc.name,
-              file_size: 0,
-              mime_type: 'text/plain',
-              description: `${doc.name}: ${doc.notes}`,
-              is_note: true,
-            }));
+          const docFiles = dealDocs.filter(doc => doc.file_url).map(doc => ({
+            file_url: doc.file_url, file_name: doc.file_name || doc.name,
+            file_size: doc.file_size, mime_type: doc.mime_type,
+            description: `Từ ${doc.doc_type || 'Deal'}: ${doc.name || doc.file_name}`,
+          }));
+          const textNotes = dealDocs.filter(doc => !doc.file_url && doc.notes).map(doc => ({
+            file_url: null, file_name: doc.name, file_size: 0, mime_type: 'text/plain',
+            description: `${doc.name}: ${doc.notes}`, is_note: true,
+          }));
           const allDocEntries = [...docFiles, ...textNotes];
           if (allDocEntries.length) {
-            // Append to existing quotation_files
             const { data: proj } = await supabase.from('projects').select('quotation_files').eq('id', projectId).single();
             const existing = proj?.quotation_files || [];
             await supabase.from('projects').update({ quotation_files: [...existing, ...allDocEntries] }).eq('id', projectId);
-            console.log(`[deal] Copied ${allDocEntries.length} documents (${docFiles.length} files + ${textNotes.length} notes) to project quotation_files`);
+            console.log(`[deal] Copied ${allDocEntries.length} documents to project quotation_files`);
           }
         }
 
-        // 4. Log activity
+        // 5. Log activity
         await supabase.from('crm_activities').insert({
           lead_id: b.deal_id, type: 'note',
           title: '📋 Dự án đã tạo',
-          description: `Dự án ${code} đã được tạo từ Deal với ${allCreatedTasks.length} nhiệm vụ`,
+          description: `Dự án ${code} đã được tạo từ Deal với ${allCreatedTasks.length} nhiệm vụ (KD tasks imported from CRM)`,
           created_by: req.user.userId,
         });
       } catch (dealErr) {
