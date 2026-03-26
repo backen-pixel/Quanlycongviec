@@ -188,8 +188,12 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
       await api.put(`/crm/leads/${leadId}/tasks/${taskId}/notes`, { notes: taskNoteText[taskId] || '' });
       // Update local tasks state
       setTasks(prev => prev.map(t => t.id === taskId ? { ...t, notes: taskNoteText[taskId] } : t));
-    } catch (e) { alert('Lỗi lưu ghi chú'); }
-    setSavingNote(null);
+      setSavingNote('saved-' + taskId);
+      setTimeout(() => setSavingNote(null), 1500);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu ghi chú');
+      setSavingNote(null);
+    }
   };
 
   const uploadTaskFile = (taskId) => {
@@ -220,7 +224,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   };
 
   const addAttachmentNote = async (taskId) => {
-    if (!attNoteText.trim()) return;
+    if (!attNoteText.trim()) return alert('Nhập nội dung ghi chú');
     try {
       await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
         name: attNoteName.trim() || 'Ghi chú',
@@ -231,7 +235,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
       setAttNoteText('');
       setAttNoteName('');
       loadAttachments(taskId);
-    } catch (e) { alert('Lỗi'); }
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi thêm ghi chú'); }
   };
 
   const deleteAttachment = async (taskId, attId) => {
@@ -294,8 +298,12 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
               />
               <div className="flex justify-end mt-1">
                 <button onClick={() => saveTaskNotes(task.id)} disabled={savingNote === task.id}
-                  className="px-2.5 py-1 bg-blue-600 text-white rounded text-[10px] font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1">
-                  <Save className="h-2.5 w-2.5" /> {savingNote === task.id ? 'Đang lưu...' : 'Lưu ghi chú'}
+                  className={`px-2.5 py-1 rounded text-[10px] font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
+                    savingNote === 'saved-' + task.id
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}>
+                  <Save className="h-2.5 w-2.5" /> {savingNote === task.id ? 'Đang lưu...' : savingNote === 'saved-' + task.id ? '✓ Đã lưu' : 'Lưu ghi chú'}
                 </button>
               </div>
             </div>
