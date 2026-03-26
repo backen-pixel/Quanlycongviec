@@ -522,13 +522,25 @@ r.delete('/leads/:id', async (req, res) => {
 // Get lead documents
 r.get('/leads/:id/documents', async (req, res) => {
   try {
+    const userId = req.user.userId;
+    const { data: user } = await supabase.from('users').select('department_id, role').eq('id', userId).single();
+    
     const { data, error } = await supabase
       .from('lead_documents')
       .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
       .eq('lead_id', req.params.id)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json(data || []);
+    
+    // Filter by visibility
+    const filtered = (data || []).filter(doc => {
+      if (!doc.allowed_departments || doc.allowed_departments.length === 0) return true;
+      if (user?.role === 'admin') return true;
+      if (!user?.department_id) return false;
+      return doc.allowed_departments.includes(user.department_id);
+    });
+    
+    res.json(filtered);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -537,11 +549,16 @@ r.get('/leads/:id/documents', async (req, res) => {
 // Add document to lead
 r.post('/leads/:id/documents', async (req, res) => {
   try {
-    const { name, doc_type, file_url, file_name, file_size, mime_type, notes } = req.body;
+    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_departments } = req.body;
+    
+    // Get project_id from lead/deal (for sync)
+    const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', req.params.id).single();
+    
     const { data, error } = await supabase
       .from('lead_documents')
       .insert({
         lead_id: req.params.id,
+        project_id: lead?.project_id || null,
         name: name || file_name || 'Tài liệu',
         doc_type: doc_type || 'other',
         file_url,
@@ -549,6 +566,7 @@ r.post('/leads/:id/documents', async (req, res) => {
         file_size,
         mime_type,
         notes,
+        allowed_departments: allowed_departments || null,
         created_by: req.user.userId,
       })
       .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
@@ -573,6 +591,43 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ═══ PROJECT DOCUMENTS (via lead_documents with project_id) ═══
+r.get('/projects/:projectId/documents', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { data: user } = await supabase.from('users').select('department_id, role').eq('id', userId).single();
+    
+    const { data, error } = await supabase.from('lead_documents')
+      .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
+      .eq('project_id', req.params.projectId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    
+    // Filter by visibility: admin sees all, others check allowed_departments
+    const filtered = (data || []).filter(doc => {
+      if (!doc.allowed_departments || doc.allowed_departments.length === 0) return true;
+      if (user?.role === 'admin') return true;
+      if (!user?.department_id) return false;
+      return doc.allowed_departments.includes(user.department_id);
+    });
+    
+    res.json(filtered);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Update document visibility
+r.put('/documents/:docId/visibility', async (req, res) => {
+  try {
+    const { allowed_departments } = req.body;
+    const { data, error } = await supabase.from('lead_documents')
+      .update({ allowed_departments: allowed_departments || null })
+      .eq('id', req.params.docId)
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -890,6 +945,9 @@ r.patch('/leads/:id/stage', async (req, res) => {
           // Link deal to project
           await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
           autoProject = project;
+
+          // Sync: set project_id on all existing lead_documents for this deal
+          await supabase.from('lead_documents').update({ project_id: project.id }).eq('lead_id', req.params.id).is('project_id', null);
 
           // Auto-generate tasks for all stages
           const allStageSlugs = ['consulting', 'design', 'quotation', 'contract', 'production', 'delivery', 'customer-care'];
@@ -1586,6 +1644,9 @@ r.get('/project/:projectId/summary', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/project/:projectId/lead-documents', async (req, res) => {
   try {
+    const userId = req.user.userId;
+    const { data: user } = await supabase.from('users').select('department_id, role').eq('id', userId).single();
+
     // Find lead linked to this project
     const { data: lead } = await supabase
       .from('crm_leads')
@@ -1602,7 +1663,15 @@ r.get('/project/:projectId/lead-documents', async (req, res) => {
       .eq('lead_id', lead.id)
       .order('created_at', { ascending: false });
 
-    res.json(docs || []);
+    // Filter by visibility
+    const filtered = (docs || []).filter(doc => {
+      if (!doc.allowed_departments || doc.allowed_departments.length === 0) return true;
+      if (user?.role === 'admin') return true;
+      if (!user?.department_id) return false;
+      return doc.allowed_departments.includes(user.department_id);
+    });
+
+    res.json(filtered);
   } catch (e) {
     // No lead found → empty
     res.json([]);

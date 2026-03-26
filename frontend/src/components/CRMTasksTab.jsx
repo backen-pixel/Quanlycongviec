@@ -250,14 +250,15 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
 
   const ATT_ICONS = { image: Image, drawing: FileText, task_note: MessageSquare, other: FileText };
 
-  const TaskRow = ({ task }) => {
+  // TaskRow renders inline — see renderTaskRow below
+  const renderTaskRow = (task) => {
     const StatusIcon = STATUS_ICONS[task.status] || Circle;
     const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
     const isExpanded = expandedTask === task.id;
     const atts = taskAttachments[task.id] || [];
     const hasContent = task.notes || atts.length > 0;
     return (
-      <div className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'} ${task.status === 'completed' ? 'opacity-50' : ''}`}>
+      <div key={task.id} className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'} ${task.status === 'completed' ? 'opacity-50' : ''}`}>
         {/* Main row */}
         <div className="flex items-center gap-2 py-2 px-3 group">
           <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
@@ -292,8 +293,11 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
             <div>
               <label className="text-[10px] font-semibold text-gray-500 uppercase mb-1 block">📝 Ghi chú</label>
               <textarea
-                value={taskNoteText[task.id] || ''}
-                onChange={e => setTaskNoteText(p => ({ ...p, [task.id]: e.target.value }))}
+                value={taskNoteText[task.id] ?? ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setTaskNoteText(p => ({ ...p, [task.id]: val }));
+                }}
                 placeholder="Nhập ghi chú cho nhiệm vụ này..."
                 rows={2}
                 className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-blue-400 resize-none"
@@ -527,7 +531,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                 </button>
                 {expanded && (
                   <div className="px-2 py-1">
-                    {stageTasks.map(t => <TaskRow key={t.id} task={t} />)}
+                    {stageTasks.map(t => renderTaskRow(t))}
                     {showAdd === stage.slug ? (
                       <AddTaskForm stageSlug={stage.slug} />
                     ) : (
@@ -567,7 +571,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                 {group.label} <span className="text-gray-400 font-normal">({group.tasks.length})</span>
               </div>
               <div className="bg-white rounded-b-lg">
-                {group.tasks.map(t => <TaskRow key={t.id} task={t} />)}
+                {group.tasks.map(t => renderTaskRow(t))}
               </div>
             </div>
           ))}
@@ -589,13 +593,13 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                 <span className="text-sm font-semibold">{group.user.full_name}</span>
                 <span className="text-[10px] text-gray-400">({group.tasks.length} việc)</span>
               </div>
-              <div>{group.tasks.map(t => <TaskRow key={t.id} task={t} />)}</div>
+              <div>{group.tasks.map(t => renderTaskRow(t))}</div>
             </div>
           ))}
           {plannerGroups.unassigned.length > 0 && (
             <div className="border rounded-lg border-dashed">
               <div className="px-3 py-2 bg-gray-50 text-sm font-semibold text-gray-500">Chưa giao ({plannerGroups.unassigned.length})</div>
-              <div>{plannerGroups.unassigned.map(t => <TaskRow key={t.id} task={t} />)}</div>
+              <div>{plannerGroups.unassigned.map(t => renderTaskRow(t))}</div>
             </div>
           )}
           {tasks.filter(t => t.status !== 'completed').length === 0 && (
@@ -647,7 +651,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
             ✅ Đã hoàn thành ({tasks.filter(t => t.status === 'completed').length})
           </summary>
           <div className="mt-2 opacity-50">
-            {tasks.filter(t => t.status === 'completed').map(t => <TaskRow key={t.id} task={t} />)}
+            {tasks.filter(t => t.status === 'completed').map(t => renderTaskRow(t))}
           </div>
         </details>
       )}
