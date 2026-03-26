@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -695,43 +696,47 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
   const [converting, setConverting] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState('');
-  const [companyUsers, setCompanyUsers] = useState([]);
+  const [companyUnitId, setCompanyUnitId] = useState(null);
   const [selectedSales, setSelectedSales] = useState(lead?.assigned_to || '');
-  const [loadingUsers, setLoadingUsers] = useState(false);
 
   const canConvert = customer?.full_name && customer?.phone;
 
-  // Load companies
+  // Load companies + auto-select from lead
   useEffect(() => {
-    api.get('/companies').then(r => {
-      const list = r.data.companies || r.data || [];
-      setCompanies(list);
-    }).catch(() => {});
-  }, []);
+    (async () => {
+      try {
+        const r = await api.get('/companies');
+        const list = r.data.companies || r.data || [];
+        setCompanies(list);
+        // Auto-select company from lead
+        if (lead?.company_id) {
+          setSelectedCompany(lead.company_id);
+        }
+      } catch {}
+    })();
+  }, [lead?.company_id]);
 
-  // Load users when company changes
+  // Map company_id → ecosystem_unit_id (for EmployeePicker)
   useEffect(() => {
-    if (!selectedCompany) { setCompanyUsers([]); return; }
-    setLoadingUsers(true);
-    api.get('/users', { params: { company_id: selectedCompany } })
-      .then(r => setCompanyUsers(r.data.users || []))
-      .catch(() => setCompanyUsers([]))
-      .finally(() => setLoadingUsers(false));
+    if (!selectedCompany) { setCompanyUnitId(null); return; }
+    (async () => {
+      try {
+        const { data } = await api.get('/ecosystem/units');
+        const units = data || [];
+        const unit = units.find(u => u.company_id === selectedCompany || u.company?.id === selectedCompany);
+        setCompanyUnitId(unit?.id || null);
+      } catch {
+        setCompanyUnitId(null);
+      }
+    })();
   }, [selectedCompany]);
-
-  // Group users by department
-  const usersByDept = {};
-  companyUsers.forEach(u => {
-    const deptName = u.department?.name || 'Chưa phân phòng';
-    if (!usersByDept[deptName]) usersByDept[deptName] = [];
-    usersByDept[deptName].push(u);
-  });
 
   const handleConvert = async () => {
     setConverting(true);
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`, {
         assigned_to: selectedSales || undefined,
+        company_id: selectedCompany || undefined,
       });
       alert(`✅ ${data.message}`);
       onSuccess();
@@ -768,31 +773,23 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
+            {lead?.company_id && selectedCompany === lead.company_id && (
+              <p className="text-[10px] text-emerald-600 mt-0.5">✓ Tự động lấy từ Lead</p>
+            )}
           </div>
 
-          {/* Chọn Sales phụ trách */}
+          {/* Chọn Sales phụ trách — dùng EmployeePicker */}
           <div>
             <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Nhân viên phụ trách Deal</label>
-            {loadingUsers ? (
-              <div className="h-10 flex items-center text-xs text-gray-400">Đang tải...</div>
-            ) : !selectedCompany ? (
-              <div className="h-10 flex items-center text-xs text-gray-400">Chọn công ty trước</div>
-            ) : companyUsers.length === 0 ? (
-              <div className="h-10 flex items-center text-xs text-gray-400">Không có nhân viên nào</div>
-            ) : (
-              <select value={selectedSales} onChange={e => setSelectedSales(e.target.value)}
-                className="w-full h-10 px-3 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">-- Chọn nhân viên --</option>
-                {Object.entries(usersByDept).map(([dept, users]) => (
-                  <optgroup key={dept} label={`📁 ${dept}`}>
-                    {users.map(u => (
-                      <option key={u.id} value={u.id}>
-                        {u.full_name}{u.position ? ` — ${u.position}` : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+            <EmployeePicker
+              companyUnitId={companyUnitId}
+              value={selectedSales}
+              onChange={(userId) => setSelectedSales(userId || '')}
+              placeholder="Chọn nhân viên phụ trách..."
+              size="md"
+            />
+            {!selectedCompany && (
+              <p className="text-[10px] text-amber-500 mt-0.5">⚠️ Chọn công ty trước để lọc nhân viên</p>
             )}
           </div>
 
