@@ -91,7 +91,7 @@ export default function InvoicesPage() {
                 <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${PAY_COLORS[i.payment_status] || ''}`}>{PAY_MAP[i.payment_status] || i.payment_status}</span></td>
                 <td className="py-3 px-3 text-gray-500">{formatDate(i.created_at)}</td>
                 <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('invoices', i.id, i.code); }} className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
-                <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa hóa đơn ' + i.code + '?')) api.delete('/crm/invoices/' + i.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
+                <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa hóa đơn ' + i.code + '?')) api.delete('/crm/invoices/' + i.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
               </tr>
             );
           })}

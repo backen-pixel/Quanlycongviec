@@ -92,7 +92,7 @@ export default function OrdersPage() {
               <td className="py-3 px-3 text-gray-500">{formatDate(o.created_at)}</td>
               <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('orders', o.id, o.code); }} className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
               <td className="py-3 px-3"><button onClick={e => { e.stopPropagation(); createInvoice(o.id); }} className="text-xs text-purple-600 hover:underline flex items-center gap-1 cursor-pointer"><Receipt className="h-3.5 w-3.5" />→HĐ</button></td>
-              <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa đơn hàng ' + o.code + '?')) api.delete('/crm/orders/' + o.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
+              <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa đơn hàng ' + o.code + '?')) api.delete('/crm/orders/' + o.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
             </tr>
           ))}
         </tbody></table>

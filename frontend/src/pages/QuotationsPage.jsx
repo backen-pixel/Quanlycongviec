@@ -84,7 +84,7 @@ export default function QuotationsPage() {
                   <td className="py-3 px-3 text-gray-500">{formatDate(q.created_at)}</td>
                   <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('quotations', q.id, q.code); }} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
                   <td className="py-3 px-3">{q.status !== 'converted' && <button onClick={e => { e.stopPropagation(); convertToOrder(q.id); }} className="text-xs text-emerald-600 hover:underline flex items-center gap-1 cursor-pointer"><ShoppingCart className="h-3.5 w-3.5" />→ĐH</button>}</td>
-                  <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa báo giá ' + q.code + '?')) api.delete('/crm/quotations/' + q.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
+                  <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa báo giá ' + q.code + '?')) api.delete('/crm/quotations/' + q.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
                 </tr>
               ))}
             </tbody>
