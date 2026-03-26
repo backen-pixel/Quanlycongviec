@@ -69,8 +69,10 @@ export default function LeadDetail() {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId });
       if (data.requires_conversion) {
         setShowConvertModal(true);
-      } else if (data.requires_project_creation && data.deal_info) {
-        navigate(`/projects/create?deal_id=${data.deal_info.id}`);
+      } else if (data.auto_project) {
+        // Dự án đã tạo tự động
+        alert(`🎉 Deal Thắng! Dự án "${data.auto_project.code}" đã được tạo tự động.`);
+        load();
       } else {
         load();
       }

@@ -846,24 +846,16 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     } catch (autoErr) { console.error('Auto-generate CRM tasks error:', autoErr.message); }
 
-    // Deal → Thắng: return flag for frontend to open project creation
+    // Deal → Thắng: AUTO-CREATE PROJECT (chạy ngầm, không cần frontend)
     let autoProject = null;
-    let requiresProjectCreation = false;
-    let dealInfo = null;
     if (lead?.type === 'deal' && stage?.is_won) {
-      requiresProjectCreation = true;
-      // Load deal full info for project creation
+      // Load deal full info
       const { data: dealData } = await supabase.from('crm_leads')
         .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), assignee:users!crm_leads_assigned_to_fkey(id, full_name)')
         .eq('id', req.params.id).single();
-      // Load documents from lead
-      const { data: docs } = await supabase.from('lead_documents')
-        .select('*').eq('lead_id', req.params.id).order('created_at');
-      dealInfo = { ...dealData, documents: docs || [] };
       
       // ✅ NOTIFICATION: Notify admin users about deal won
-      const { data: adminUsers } = await supabase.from('users')
-        .select('id').eq('role', 'admin');
+      const { data: adminUsers } = await supabase.from('users').select('id').eq('role', 'admin');
       const adminIds = (adminUsers || []).map(u => u.id);
       if (adminIds.length > 0) {
         await notifyMultiple(req, adminIds, 'deal_won',
@@ -871,18 +863,93 @@ r.patch('/leads/:id/stage', async (req, res) => {
           `Deal "${dealData?.title}" - Giá trị: ${(dealData?.estimated_value || 0).toLocaleString('vi-VN')} VND - đã chốt thành công`,
           'crm_deal', req.params.id);
       }
-      
+
+      // ✅ AUTO-CREATE PROJECT
       try {
-        await supabase.from('crm_activities').insert({
-          lead_id: req.params.id, type: 'note',
-          title: '🎉 Deal Thắng!',
-          description: 'Deal đã chốt thành công — Đang chờ tạo dự án',
-          created_by: req.user.userId,
-        });
-      } catch (e) { console.error('Activity log error:', e.message); }
+        // Get default flow
+        const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
+        const flowId = flows?.[0]?.id || null;
+
+        // Get first stage
+        const { data: firstStage } = await supabase.from('workflow_stages')
+          .select('id').is('company_id', null).eq('is_active', true).order('order_index').limit(1).single();
+
+        // Create project code
+        const year = new Date().getFullYear();
+        const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true });
+        const code = `TB-${year}-${String((count || 0) + 1).padStart(3, '0')}`;
+
+        const { data: project, error: projErr } = await supabase.from('projects').insert({
+          code, name: dealData?.title || lead.title, status: 'consulting',
+          customer_id: dealData?.customer_id || lead.customer_id,
+          estimated_value: dealData?.estimated_value || lead.estimated_value,
+          flow_id: flowId, current_stage_id: firstStage?.id, created_by: req.user.userId,
+        }).select('*').single();
+
+        if (!projErr && project) {
+          // Link deal to project
+          await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+          autoProject = project;
+
+          // Auto-generate tasks for all stages
+          const allStageSlugs = ['consulting', 'design', 'quotation', 'contract', 'production', 'delivery', 'customer-care'];
+          let totalCreated = 0;
+          for (const slug of allStageSlugs) {
+            try {
+              let stg = null;
+              const { data: exact } = await supabase.from('workflow_stages').select('id, name, slug').eq('slug', slug).single();
+              if (exact) stg = exact;
+              else {
+                const { data: pattern } = await supabase.from('workflow_stages').select('id, name, slug').ilike('slug', slug + '%').limit(1);
+                stg = pattern?.[0];
+              }
+              if (!stg) continue;
+              const { data: templates } = await supabase.from('task_templates')
+                .select('*').eq('stage_id', stg.id).eq('is_active', true).order('order_index');
+              if (!templates?.length) continue;
+              const { data: ins } = await supabase.from('tasks').insert(templates.map((t, i) => ({
+                project_id: project.id, stage_id: stg.id, title: t.title,
+                description: t.description || null, priority: t.priority || 'medium', status: 'pending',
+                created_by_id: req.user.userId, order_index: i, task_type: 'project',
+                estimated_hours: t.estimated_hours || null,
+              }))).select();
+              for (const tmpl of templates) {
+                if (tmpl.checklist_items?.length) {
+                  const newTask = (ins || []).find(t2 => t2.title === tmpl.title);
+                  if (newTask) {
+                    await supabase.from('task_checklists').insert(
+                      tmpl.checklist_items.map((c, j) => ({ task_id: newTask.id, title: typeof c === 'string' ? c : c.title, order_index: j }))
+                    );
+                  }
+                }
+              }
+              totalCreated += (ins?.length || 0);
+            } catch (e) { console.warn(`auto-project: stage ${slug} failed:`, e.message); }
+          }
+          console.log(`[AUTO-PROJECT] ✅ Created project ${code} with ${totalCreated} tasks for deal ${req.params.id}`);
+          
+          // Activity log
+          await supabase.from('crm_activities').insert({
+            lead_id: req.params.id, type: 'note',
+            title: '🎉 Deal Thắng — Dự án đã tạo tự động!',
+            description: `Dự án "${code} - ${project.name}" đã được tạo tự động với ${totalCreated} nhiệm vụ`,
+            created_by: req.user.userId,
+          }).catch(() => {});
+        } else {
+          console.error('[AUTO-PROJECT] Failed:', projErr?.message);
+          await supabase.from('crm_activities').insert({
+            lead_id: req.params.id, type: 'note',
+            title: '🎉 Deal Thắng!',
+            description: 'Deal đã chốt thành công — Lỗi tạo dự án tự động, vui lòng tạo thủ công',
+            created_by: req.user.userId,
+          }).catch(() => {});
+        }
+      } catch (autoErr) {
+        console.error('[AUTO-PROJECT] Error:', autoErr.message);
+      }
     }
 
-    res.json({ ...data, auto_project: autoProject, requires_project_creation: requiresProjectCreation, deal_info: dealInfo });
+    res.json({ ...data, auto_project: autoProject });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
