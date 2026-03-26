@@ -103,12 +103,7 @@ export default function CRMDashboard() {
       }
 
       if (data.auto_project) {
-        alert(`🎉 Deal Thắng! Dự án ${data.auto_project.code || ''} đã liên kết.`);
-      }
-
-      // Deal → Thắng: redirect to create project page
-      if (data.requires_project_creation && data.deal_info) {
-        navigate(`/projects/create?deal_id=${data.deal_info.id}`);
+        alert(`🎉 Deal Thắng! Dự án "${data.auto_project.code}" đã được tạo tự động.`);
       }
     } catch (e) {
       console.error(e);
