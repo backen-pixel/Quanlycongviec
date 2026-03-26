@@ -522,6 +522,7 @@ export default function LeadDetail() {
         <ConvertToDeadModal
           leadId={id}
           customer={customer}
+          lead={lead}
           documents={documents}
           flows={flows}
           onClose={() => setShowConvertModal(false)}
@@ -690,15 +691,48 @@ function AddDocumentModal({ onClose, onSave }) {
   );
 }
 
-function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuccess }) {
+function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose, onSuccess }) {
   const [converting, setConverting] = useState(false);
+  const [companies, setCompanies] = useState([]);
+  const [selectedCompany, setSelectedCompany] = useState('');
+  const [companyUsers, setCompanyUsers] = useState([]);
+  const [selectedSales, setSelectedSales] = useState(lead?.assigned_to || '');
+  const [loadingUsers, setLoadingUsers] = useState(false);
 
   const canConvert = customer?.full_name && customer?.phone;
+
+  // Load companies
+  useEffect(() => {
+    api.get('/companies').then(r => {
+      const list = r.data.companies || r.data || [];
+      setCompanies(list);
+    }).catch(() => {});
+  }, []);
+
+  // Load users when company changes
+  useEffect(() => {
+    if (!selectedCompany) { setCompanyUsers([]); return; }
+    setLoadingUsers(true);
+    api.get('/users', { params: { company_id: selectedCompany } })
+      .then(r => setCompanyUsers(r.data.users || []))
+      .catch(() => setCompanyUsers([]))
+      .finally(() => setLoadingUsers(false));
+  }, [selectedCompany]);
+
+  // Group users by department
+  const usersByDept = {};
+  companyUsers.forEach(u => {
+    const deptName = u.department?.name || 'Chưa phân phòng';
+    if (!usersByDept[deptName]) usersByDept[deptName] = [];
+    usersByDept[deptName].push(u);
+  });
 
   const handleConvert = async () => {
     setConverting(true);
     try {
-      const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`);
+      const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`, {
+        assigned_to: selectedSales || undefined,
+      });
       alert(`✅ ${data.message}`);
       onSuccess();
     } catch (e) {
@@ -709,18 +743,57 @@ function ConvertToDeadModal({ leadId, customer, documents, flows, onClose, onSuc
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md p-6">
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">🚀 Chuyển Lead sang Deal</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
         </div>
 
-        <div className="space-y-3 mb-6">
+        <div className="space-y-4 mb-6">
+          {/* Yêu cầu */}
           <div className="bg-gray-50 rounded-xl p-4 space-y-2">
             <p className="text-xs font-bold text-gray-700 uppercase">Yêu cầu:</p>
             <div className={`text-sm flex items-center gap-2 ${customer?.full_name && customer?.phone ? 'text-emerald-600' : 'text-red-600'}`}>
               {customer?.full_name && customer?.phone ? '✅' : '❌'} Khách hàng: {customer?.full_name || '—'}, {customer?.phone || 'Chưa có SĐT'}
             </div>
+          </div>
+
+          {/* Chọn Công ty */}
+          <div>
+            <label className="text-xs font-bold text-gray-700 mb-1 block">🏢 Công ty thực hiện</label>
+            <select value={selectedCompany} onChange={e => { setSelectedCompany(e.target.value); setSelectedSales(''); }}
+              className="w-full h-10 px-3 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">-- Chọn công ty --</option>
+              {companies.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Chọn Sales phụ trách */}
+          <div>
+            <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Nhân viên phụ trách Deal</label>
+            {loadingUsers ? (
+              <div className="h-10 flex items-center text-xs text-gray-400">Đang tải...</div>
+            ) : !selectedCompany ? (
+              <div className="h-10 flex items-center text-xs text-gray-400">Chọn công ty trước</div>
+            ) : companyUsers.length === 0 ? (
+              <div className="h-10 flex items-center text-xs text-gray-400">Không có nhân viên nào</div>
+            ) : (
+              <select value={selectedSales} onChange={e => setSelectedSales(e.target.value)}
+                className="w-full h-10 px-3 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">-- Chọn nhân viên --</option>
+                {Object.entries(usersByDept).map(([dept, users]) => (
+                  <optgroup key={dept} label={`📁 ${dept}`}>
+                    {users.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name}{u.position ? ` — ${u.position}` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">

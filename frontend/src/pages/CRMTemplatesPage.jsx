@@ -13,7 +13,7 @@ export default function CRMTemplatesPage() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
-  const [editingTpl, setEditingTpl] = useState(null);
+  const [editingTpl, setEditingTpl] = useState(null); // { id, name, stage_slug }
   const [newItem, setNewItem] = useState({});
   const [showAddTpl, setShowAddTpl] = useState(false);
   const [newTpl, setNewTpl] = useState({ name: '', stage_slug: 'consulting' });
@@ -62,6 +62,18 @@ export default function CRMTemplatesPage() {
     try { await api.put(`/crm/task-templates/${tpl.id}`, { is_default: !tpl.is_default }); load(); } catch {}
   };
 
+  const updateTemplate = async () => {
+    if (!editingTpl || !editingTpl.name.trim()) return;
+    try {
+      await api.put(`/crm/task-templates/${editingTpl.id}`, {
+        name: editingTpl.name.trim(),
+        stage_slug: editingTpl.stage_slug,
+      });
+      setEditingTpl(null);
+      load();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>;
 
   return (
@@ -104,12 +116,32 @@ export default function CRMTemplatesPage() {
             <div className="space-y-2">
               {stageTpls.map(tpl => (
                 <div key={tpl.id} className="border rounded-xl overflow-hidden">
+                  {/* Header — edit mode or view mode */}
+                  {editingTpl?.id === tpl.id ? (
+                    <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border-b border-blue-200">
+                      <input value={editingTpl.name} onChange={e => setEditingTpl(p => ({...p, name: e.target.value}))}
+                        className="flex-1 h-8 px-2 rounded border text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500"
+                        autoFocus onKeyDown={e => e.key === 'Enter' && updateTemplate()} />
+                      <select value={editingTpl.stage_slug} onChange={e => setEditingTpl(p => ({...p, stage_slug: e.target.value}))}
+                        className="h-8 px-2 rounded border text-xs">
+                        {STAGES.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
+                      </select>
+                      <button onClick={updateTemplate} className="h-8 px-3 bg-blue-600 text-white rounded text-xs cursor-pointer hover:bg-blue-700 flex items-center gap-1">
+                        <Save className="h-3 w-3" /> Lưu
+                      </button>
+                      <button onClick={() => setEditingTpl(null)} className="h-8 px-2 bg-gray-100 rounded text-xs cursor-pointer">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
                   <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 cursor-pointer"
                     onClick={() => setExpanded(p => ({...p, [tpl.id]: !p[tpl.id]}))}>
                     {expanded[tpl.id] ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
                     <span className="text-sm font-semibold flex-1">{tpl.name}</span>
                     {tpl.is_default && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">⭐ Mặc định</span>}
                     <span className="text-xs text-gray-400">{tpl.items?.length || 0} việc</span>
+                    <button onClick={(e) => { e.stopPropagation(); setEditingTpl({ id: tpl.id, name: tpl.name, stage_slug: tpl.stage_slug }); }}
+                      className="p-1 text-gray-400 hover:text-blue-600 cursor-pointer" title="Sửa tên"><Edit2 className="h-3.5 w-3.5" /></button>
                     <button onClick={(e) => { e.stopPropagation(); toggleDefault(tpl); }}
                       className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600 cursor-pointer">
                       {tpl.is_default ? 'Bỏ mặc định' : 'Đặt mặc định'}
@@ -117,6 +149,7 @@ export default function CRMTemplatesPage() {
                     <button onClick={(e) => { e.stopPropagation(); deleteTemplate(tpl.id); }}
                       className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
+                  )}
                   {expanded[tpl.id] && (
                     <div className="px-4 py-2 space-y-1">
                       {(tpl.items || []).sort((a,b) => a.order_index - b.order_index).map((item, i) => (
