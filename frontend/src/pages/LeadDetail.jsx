@@ -553,7 +553,7 @@ export default function LeadDetail() {
                 <span className="text-2xl">✅</span>
                 <div>
                   <p className="text-xs text-gray-500">Nhiệm vụ đã tạo</p>
-                  <p className="text-sm font-bold text-emerald-600">{autoProjectResult.tasks_created || 0} nhiệm vụ từ bộ mẫu mặc định</p>
+                  <p className="text-sm font-bold text-emerald-600">{autoProjectResult.tasks_created || 0} nhiệm vụ từ bộ mẫu CRM mặc định</p>
                 </div>
               </div>
             </div>
