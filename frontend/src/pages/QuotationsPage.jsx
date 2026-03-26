@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Plus, Search, FileText, Filter, ShoppingCart, Calendar, Download } from 'lucide-react';
+import { Plus, Search, FileText, Filter, ShoppingCart, Calendar, Download, Trash2 } from 'lucide-react';
 
 const STATUS_MAP = { draft: 'Nháp', sent: 'Đã gửi', accepted: 'Chấp nhận', rejected: 'Từ chối', expired: 'Hết hạn', converted: 'Đã chuyển ĐH' };
 const STATUS_COLORS = { draft: 'bg-gray-100 text-gray-600', sent: 'bg-blue-100 text-blue-700', accepted: 'bg-emerald-100 text-emerald-700', rejected: 'bg-red-100 text-red-700', expired: 'bg-amber-100 text-amber-700', converted: 'bg-purple-100 text-purple-700' };
@@ -71,7 +71,7 @@ export default function QuotationsPage() {
           <table className="w-full text-sm">
             <thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
               <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-              <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Ngày tạo</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th>
+              <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Ngày tạo</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th><th className="py-3 px-3"></th>
             </tr></thead>
             <tbody>
               {filtered.map(q => (
@@ -84,6 +84,7 @@ export default function QuotationsPage() {
                   <td className="py-3 px-3 text-gray-500">{formatDate(q.created_at)}</td>
                   <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('quotations', q.id, q.code); }} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
                   <td className="py-3 px-3">{q.status !== 'converted' && <button onClick={e => { e.stopPropagation(); convertToOrder(q.id); }} className="text-xs text-emerald-600 hover:underline flex items-center gap-1 cursor-pointer"><ShoppingCart className="h-3.5 w-3.5" />→ĐH</button>}</td>
+                  <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa báo giá ' + q.code + '?')) api.delete('/crm/quotations/' + q.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
                 </tr>
               ))}
             </tbody>
