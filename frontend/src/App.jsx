@@ -119,7 +119,8 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedLayout />}>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Navigate to="/crm" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/dashboard/divisions" element={<DivisionDashboardPage />} />
             <Route path="/my-tasks" element={<MyTasks />} />
             <Route path="/projects" element={<Projects />} />

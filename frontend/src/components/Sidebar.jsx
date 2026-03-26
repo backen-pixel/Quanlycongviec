@@ -18,7 +18,7 @@ const MENU_GROUPS = [
     title: '1. Tổng quan',
     emoji: '📊',
     items: [
-      { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+      { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
@@ -204,7 +204,7 @@ export default function Sidebar() {
             </div>
             <div className="flex-1 p-5 space-y-3">
               {/* Công việc */}
-              <button onClick={() => { setShowAppSwitcher(false); navigate('/'); }}
+              <button onClick={() => { setShowAppSwitcher(false); navigate('/dashboard'); }}
                 className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${!isCRM ? 'bg-blue-50 border-blue-200 hover:border-blue-400' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
                 <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
                   <CheckSquare className="h-6 w-6 text-white" />
@@ -245,18 +245,24 @@ export default function Sidebar() {
       {/* App Switcher Button + Logo */}
       <div className="flex items-center gap-2 px-3 h-14 border-b border-white/10 shrink-0">
         <button onClick={() => setShowAppSwitcher(!showAppSwitcher)}
-          className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-white/10 transition-colors cursor-pointer" title="Chuyển ứng dụng">
-          <Grid3X3 className="h-5 w-5 text-white/80 hover:text-white" />
+          className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors cursor-pointer ${showAppSwitcher ? 'bg-white/20 ring-1 ring-white/30' : 'hover:bg-white/10'}`} title="Chuyển ứng dụng">
+          <Grid3X3 className="h-5 w-5 text-white" />
         </button>
-        <div className={`flex items-center justify-center w-8 h-8 rounded-lg text-white text-lg ${isCRM ? 'bg-emerald-500/30' : 'bg-white/10'}`}>
-          {isCRM ? '💼' : '🏠'}
-        </div>
-        {!collapsed && (
-          <div className="flex-1">
-            <h1 className="text-sm font-bold text-white leading-tight">{isCRM ? 'CRM' : 'TuBep Pro'}</h1>
-            <p className="text-[10px] text-[var(--color-sidebar-text)] leading-tight">{isCRM ? 'Quản lý bán hàng' : 'Quản lý công việc'}</p>
+        {/* Active app indicator — clickable to switch */}
+        <button onClick={() => navigate(isCRM ? '/dashboard' : '/crm')}
+          className={`flex items-center gap-2 flex-1 rounded-lg px-2 py-1.5 transition-colors cursor-pointer ${
+            isCRM ? 'bg-emerald-500/20 hover:bg-emerald-500/30' : 'bg-white/5 hover:bg-white/10'
+          }`} title={isCRM ? 'Đang ở CRM — Click để chuyển Công việc' : 'Đang ở Công việc — Click để chuyển CRM'}>
+          <div className={`flex items-center justify-center w-7 h-7 rounded-md text-white text-sm ${isCRM ? 'bg-emerald-500/40' : 'bg-blue-500/30'}`}>
+            {isCRM ? '💼' : '📋'}
           </div>
-        )}
+          {!collapsed && (
+            <div className="flex-1 text-left">
+              <h1 className="text-sm font-bold text-white leading-tight">{isCRM ? 'CRM' : 'Công việc'}</h1>
+              <p className="text-[10px] text-white/50 leading-tight">Nhấn để chuyển → {isCRM ? 'Công việc' : 'CRM'}</p>
+            </div>
+          )}
+        </button>
       </div>
 
       {/* Notification bell */}
