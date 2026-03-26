@@ -354,35 +354,50 @@ r.post('/leads', async (req, res) => {
 
     // ✅ AUTO-CREATE default CRM tasks from ALL default templates (lead + both)
     try {
-      let tplQuery = supabase.from('crm_task_templates')
-        .select('id, stage_slug, pipeline_type, items:crm_task_template_items(*)')
+      // Step 1: Get all default templates
+      const { data: templates, error: tplErr } = await supabase
+        .from('crm_task_templates')
+        .select('id, name, stage_slug')
         .eq('is_default', true).eq('is_active', true)
         .order('order_index');
-      const { data: allTemplates } = await tplQuery;
-      // Filter: lead, both, or null (backward compat)
-      const defaultTemplates = (allTemplates || []).filter(t => 
-        !t.pipeline_type || t.pipeline_type === 'lead' || t.pipeline_type === 'both'
-      );
-      if (defaultTemplates?.length) {
-        const now = new Date();
-        const allInserts = [];
-        for (const tpl of defaultTemplates) {
-          const items = tpl.items || [];
-          if (!items.length) continue;
-          items.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
-          for (const item of items) {
-            allInserts.push({
-              lead_id: data.id, title: item.title, description: item.description || null,
-              priority: item.priority || 'medium', stage_slug: tpl.stage_slug || null,
-              order_index: item.order_index,
-              deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-              checklist: item.checklist || [], created_by: req.user.userId,
-            });
+      
+      console.log(`[AUTO-TASK] Lead ${data.id}: ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
+      
+      if (templates?.length) {
+        // Step 2: Get ALL items for these templates (separate query — more reliable)
+        const tplIds = templates.map(t => t.id);
+        const { data: allItems, error: itemErr } = await supabase
+          .from('crm_task_template_items')
+          .select('*')
+          .in('template_id', tplIds)
+          .order('order_index');
+        
+        console.log(`[AUTO-TASK] Found ${allItems?.length || 0} template items, err=${itemErr?.message || 'none'}`);
+        
+        if (allItems?.length) {
+          const now = new Date();
+          // Group items by template to get stage_slug
+          const tplMap = {};
+          templates.forEach(t => { tplMap[t.id] = t; });
+          
+          const inserts = allItems.map(item => ({
+            lead_id: data.id,
+            title: item.title,
+            description: item.description || null,
+            priority: item.priority || 'medium',
+            stage_slug: tplMap[item.template_id]?.stage_slug || null,
+            order_index: item.order_index,
+            deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+            checklist: item.checklist || [],
+            created_by: req.user.userId,
+          }));
+          
+          const { error: insertErr } = await supabase.from('crm_tasks').insert(inserts);
+          if (insertErr) {
+            console.error(`[AUTO-TASK] Insert error:`, insertErr.message);
+          } else {
+            console.log(`[AUTO-TASK] ✅ Created ${inserts.length} tasks for lead ${data.id}`);
           }
-        }
-        if (allInserts.length) {
-          await supabase.from('crm_tasks').insert(allInserts);
-          console.log(`Auto-created ${allInserts.length} CRM tasks for new lead ${data.id} from ${defaultTemplates.length} templates`);
         }
       }
     } catch (autoErr) { console.error('Auto-create tasks on lead create error:', autoErr.message); }
@@ -694,35 +709,49 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       // Delete old lead tasks (they were for lead stages)
       await supabase.from('crm_tasks').delete().eq('lead_id', req.params.id);
 
-      let tplQuery = supabase.from('crm_task_templates')
-        .select('id, stage_slug, pipeline_type, items:crm_task_template_items(*)')
+      // Step 1: Get all default templates
+      const { data: templates, error: tplErr } = await supabase
+        .from('crm_task_templates')
+        .select('id, name, stage_slug')
         .eq('is_default', true).eq('is_active', true)
         .order('order_index');
-      const { data: allTemplates } = await tplQuery;
-      // Filter: deal, both, or null (backward compat)
-      const defaultTemplates = (allTemplates || []).filter(t => 
-        !t.pipeline_type || t.pipeline_type === 'deal' || t.pipeline_type === 'both'
-      );
-      if (defaultTemplates?.length) {
-        const now = new Date();
-        const allInserts = [];
-        for (const tpl of defaultTemplates) {
-          const items = tpl.items || [];
-          if (!items.length) continue;
-          items.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
-          for (const item of items) {
-            allInserts.push({
-              lead_id: req.params.id, title: item.title, description: item.description || null,
-              priority: item.priority || 'medium', stage_slug: tpl.stage_slug || null,
-              order_index: item.order_index,
-              deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-              checklist: item.checklist || [], created_by: req.user.userId,
-            });
+      
+      console.log(`[AUTO-TASK] Deal ${req.params.id}: ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
+      
+      if (templates?.length) {
+        // Step 2: Get ALL items separately
+        const tplIds = templates.map(t => t.id);
+        const { data: allItems, error: itemErr } = await supabase
+          .from('crm_task_template_items')
+          .select('*')
+          .in('template_id', tplIds)
+          .order('order_index');
+        
+        console.log(`[AUTO-TASK] Found ${allItems?.length || 0} template items, err=${itemErr?.message || 'none'}`);
+        
+        if (allItems?.length) {
+          const now = new Date();
+          const tplMap = {};
+          templates.forEach(t => { tplMap[t.id] = t; });
+          
+          const inserts = allItems.map(item => ({
+            lead_id: req.params.id,
+            title: item.title,
+            description: item.description || null,
+            priority: item.priority || 'medium',
+            stage_slug: tplMap[item.template_id]?.stage_slug || null,
+            order_index: item.order_index,
+            deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+            checklist: item.checklist || [],
+            created_by: req.user.userId,
+          }));
+          
+          const { error: insertErr } = await supabase.from('crm_tasks').insert(inserts);
+          if (insertErr) {
+            console.error(`[AUTO-TASK] Insert error:`, insertErr.message);
+          } else {
+            console.log(`[AUTO-TASK] ✅ Created ${inserts.length} tasks for deal ${req.params.id}`);
           }
-        }
-        if (allInserts.length) {
-          await supabase.from('crm_tasks').insert(allInserts);
-          console.log(`Auto-created ${allInserts.length} CRM tasks for converted deal ${req.params.id}`);
         }
       }
     } catch (autoErr) { console.error('Auto-create tasks on convert-to-deal error:', autoErr.message); }
