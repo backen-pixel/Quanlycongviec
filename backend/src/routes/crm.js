@@ -2175,6 +2175,20 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Update template item (checklist, reorder, etc.)
+r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
+  try {
+    const update = {};
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist'].forEach(f => {
+      if (req.body[f] !== undefined) update[f] = req.body[f];
+    });
+    const { data, error } = await supabase.from('crm_task_template_items')
+      .update(update).eq('id', req.params.itemId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 r.delete('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const { error } = await supabase.from('crm_task_template_items').delete().eq('id', req.params.itemId);
