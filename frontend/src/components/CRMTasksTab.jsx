@@ -205,7 +205,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     input.multiple = true;
     input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf';
     input.onchange = async (e) => {
-      const files = Array.from(e.target.files || []);
+      const files = Array.from(e.target.files || []).slice(0, 10);
       if (!files.length) return;
       setUploadingTask(taskId);
       try {
@@ -213,17 +213,16 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
         files.forEach(f => formData.append('files', f));
         const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
         const uploaded = uploadRes.files || [];
-        // Tạo attachments song song
-        await Promise.all(uploaded.map(up =>
-          api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
-            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-            doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
-            file_url: up.file_url,
-            file_name: up.file_name,
-            file_size: up.file_size,
-            mime_type: up.mime_type,
-          })
-        ));
+        // 1 request duy nhất tạo tất cả attachments
+        const items = uploaded.map(up => ({
+          name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+          doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+          file_url: up.file_url,
+          file_name: up.file_name,
+          file_size: up.file_size,
+          mime_type: up.mime_type,
+        }));
+        await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments/bulk`, { items });
         loadAttachments(taskId);
       } catch (err) { alert(err.response?.data?.error || err.message || 'Upload lỗi'); }
       setUploadingTask(null);

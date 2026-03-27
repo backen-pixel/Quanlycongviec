@@ -8,7 +8,6 @@ const config = require('../config');
 const r = Router();
 r.use(auth);
 
-// Use memory storage → upload to Supabase Storage
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
@@ -25,63 +24,65 @@ const upload = multer({
 
 const BUCKET = 'attachments';
 
-// Upload files → Supabase Storage
-r.post('/', upload.array('files', 20), async (req, res) => {
+// Upload 1 file → Supabase Storage (helper)
+async function uploadOneFile(file, entityType) {
+  const ext = path.extname(file.originalname);
+  const storagePath = `${entityType || 'general'}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+
+  const { data: uploadData, error: uploadError } = await supabase.storage
+    .from(BUCKET)
+    .upload(storagePath, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false,
+    });
+
+  if (uploadError) {
+    console.error('Storage upload error:', uploadError);
+    // Fallback: base64 data URL
+    const base64 = file.buffer.toString('base64');
+    return {
+      file_name: file.originalname,
+      file_url: `data:${file.mimetype};base64,${base64}`,
+      file_size: file.size,
+      mime_type: file.mimetype,
+      storage_path: null,
+    };
+  }
+
+  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
+  return {
+    file_name: file.originalname,
+    file_url: urlData.publicUrl,
+    file_size: file.size,
+    mime_type: file.mimetype,
+    storage_path: storagePath,
+  };
+}
+
+// Upload files → Supabase Storage (SONG SONG)
+r.post('/', upload.array('files', 10), async (req, res) => {
   try {
     if (!req.files?.length) return res.status(400).json({ error: 'Không có file' });
 
     const { entity_type, entity_id } = req.body;
-    const results = [];
 
-    for (const file of req.files) {
-      const ext = path.extname(file.originalname);
-      const storagePath = `${entity_type || 'general'}/${Date.now()}-${Math.random().toString(36).slice(2,8)}${ext}`;
+    // Upload TẤT CẢ files song song
+    const results = await Promise.all(
+      req.files.map(file => uploadOneFile(file, entity_type))
+    );
 
-      // Upload to Supabase Storage
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from(BUCKET)
-        .upload(storagePath, file.buffer, {
-          contentType: file.mimetype,
-          upsert: false,
-        });
-
-      if (uploadError) {
-        console.error('Storage upload error:', uploadError);
-        // Fallback: if bucket doesn't exist, use base64 data URL
-        const base64 = file.buffer.toString('base64');
-        const dataUrl = `data:${file.mimetype};base64,${base64}`;
-        results.push({
-          file_name: file.originalname,
-          file_url: dataUrl,
-          file_size: file.size,
-          mime_type: file.mimetype,
-          storage_path: null,
-        });
-        continue;
-      }
-
-      // Get public URL
-      const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
-
-      const attachment = {
-        file_name: file.originalname,
-        file_url: urlData.publicUrl,
-        file_size: file.size,
-        mime_type: file.mimetype,
-        storage_path: storagePath,
-      };
-
-      // Save to DB if entity_id provided
-      if (entity_id) {
-        await supabase.from('file_attachments').insert({
-          entity_type: entity_type || 'task',
-          entity_id,
-          ...attachment,
-          uploaded_by: req.user.userId,
-        });
-      }
-
-      results.push(attachment);
+    // Save to DB song song nếu có entity_id
+    if (entity_id) {
+      await Promise.all(
+        results.filter(a => a.file_url).map(attachment =>
+          supabase.from('file_attachments').insert({
+            entity_type: entity_type || 'task',
+            entity_id,
+            ...attachment,
+            uploaded_by: req.user.userId,
+          })
+        )
+      );
     }
 
     res.status(201).json({ files: results });
