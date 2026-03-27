@@ -2213,11 +2213,28 @@ r.get('/invoices/:id/pdf', async (req, res) => {
 // GET tasks for a lead/deal
 r.get('/leads/:id/tasks', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('crm_tasks')
+    let { data, error } = await supabase.from('crm_tasks')
       .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
       .eq('lead_id', req.params.id)
       .order('stage_slug').order('order_index');
     if (error) throw error;
+
+    // Auto-gen nếu chưa có tasks (safeguard)
+    if (!data?.length) {
+      const { data: lead } = await supabase.from('crm_leads').select('type, created_by').eq('id', req.params.id).single();
+      if (lead) {
+        const type = lead.type || 'lead';
+        const created = await autoGenCrmTasks(req.params.id, type, lead.created_by || req.user.userId);
+        if (created > 0) {
+          const { data: newData } = await supabase.from('crm_tasks')
+            .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
+            .eq('lead_id', req.params.id)
+            .order('stage_slug').order('order_index');
+          data = newData || [];
+        }
+      }
+    }
+
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
