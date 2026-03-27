@@ -1399,7 +1399,11 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
 // ═══ DELETE QUOTATION ═══
 r.delete('/quotations/:id', async (req, res) => {
   try {
+    // Unlink orders referencing this quotation
+    await supabase.from('orders').update({ quotation_id: null }).eq('quotation_id', req.params.id);
+    // Delete items
     await supabase.from('quotation_items').delete().eq('quotation_id', req.params.id);
+    // Delete quotation
     const { error } = await supabase.from('quotations').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ message: 'Đã xóa báo giá' });
