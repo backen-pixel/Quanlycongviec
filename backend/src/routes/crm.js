@@ -75,16 +75,31 @@ async function autoGenCrmTasks(leadId, type, userId) {
     .or(pipelineFilter)
     .order('order_index');
 
+  // Filter by stage_slug pattern: deal templates start with 'deal_', lead templates don't
+  if (templates?.length) {
+    templates = templates.filter(t => {
+      const isDealSlug = t.stage_slug?.startsWith('deal_');
+      return type === 'deal' ? true : !isDealSlug; // Lead: chỉ lấy non-deal slugs. Deal: lấy tất cả
+    });
+  }
+
   console.log(`[AUTO-TASK] ${type} ${leadId}: found ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
 
   // Fallback: nếu không có default → lấy tất cả active templates
   if (!templates?.length) {
-    const { data: allTemplates } = await supabase
+    let { data: allTemplates } = await supabase
       .from('crm_task_templates')
       .select('id, name, stage_slug, pipeline_type')
       .eq('is_active', true)
       .or(pipelineFilter)
       .order('order_index');
+    // Same stage_slug filter
+    if (allTemplates?.length) {
+      allTemplates = allTemplates.filter(t => {
+        const isDealSlug = t.stage_slug?.startsWith('deal_');
+        return type === 'deal' ? true : !isDealSlug;
+      });
+    }
     templates = allTemplates || [];
     console.log(`[AUTO-TASK] ${type} ${leadId}: fallback all active = ${templates.length} templates`);
   }
@@ -2497,10 +2512,12 @@ r.get('/task-templates', async (req, res) => {
 r.post('/task-templates', async (req, res) => {
   try {
     const b = req.body;
+    // Auto-detect pipeline_type from stage_slug
+    const autoType = b.stage_slug?.startsWith('deal_') ? 'deal' : (b.pipeline_type || 'both');
     const { data, error } = await supabase.from('crm_task_templates').insert({
       name: b.name, stage_slug: b.stage_slug, description: b.description || null,
       is_default: b.is_default || false, order_index: b.order_index || 0,
-      pipeline_type: b.pipeline_type || 'both',
+      pipeline_type: autoType,
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
