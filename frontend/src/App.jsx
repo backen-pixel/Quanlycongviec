@@ -36,6 +36,7 @@ import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
 import CRMTasksPage from './pages/CRMTasksPage';
 import CRMTemplatesPage from './pages/CRMTemplatesPage';
+import AutoProjectConfigPage from './pages/AutoProjectConfigPage';
 // CRMProductsPage removed — merged into ProductsPage
 import StageGroupsPage from './pages/StageGroupsPage';
 import TemplateSetDetailPage from './pages/TemplateSetDetailPage';
@@ -170,6 +171,7 @@ export default function App() {
             <Route path="/crm/customers" element={<CustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/task-templates" element={<CRMTemplatesPage />} />
+            <Route path="/crm/auto-project-config" element={<AutoProjectConfigPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />

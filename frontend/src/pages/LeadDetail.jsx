@@ -552,10 +552,19 @@ export default function LeadDetail() {
               <div className="flex items-center gap-3">
                 <span className="text-2xl">✅</span>
                 <div>
-                  <p className="text-xs text-gray-500">Nhiệm vụ đã tạo</p>
-                  <p className="text-sm font-bold text-emerald-600">{autoProjectResult.tasks_created || 0} nhiệm vụ từ bộ mẫu CRM mặc định</p>
+                  <p className="text-xs text-gray-500">Nhiệm vụ dự án (từ luồng)</p>
+                  <p className="text-sm font-bold text-emerald-600">{autoProjectResult.tasks_created || 0} nhiệm vụ</p>
                 </div>
               </div>
+              {(autoProjectResult.crm_tasks_created > 0) && (
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">📋</span>
+                  <div>
+                    <p className="text-xs text-gray-500">Nhiệm vụ CRM (bộ mẫu)</p>
+                    <p className="text-sm font-bold text-blue-600">{autoProjectResult.crm_tasks_created} nhiệm vụ</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2">
