@@ -1,9 +1,11 @@
 -- 39_auto_gen_tasks_trigger.sql
 -- Trigger tự động tạo CRM tasks khi:
--- 1. INSERT vào crm_leads (tạo lead mới)
--- 2. UPDATE type từ 'lead' → 'deal' (chuyển đổi)
+-- 1. INSERT vào crm_leads (tạo lead mới) → gen tasks Lead
+-- 2. UPDATE type từ 'lead' → 'deal' (chuyển đổi) → xóa tasks Lead + gen tasks Deal
 
--- Function: tạo tasks từ templates
+-- ============================================================
+-- FUNCTION
+-- ============================================================
 CREATE OR REPLACE FUNCTION fn_auto_gen_crm_tasks()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -15,52 +17,51 @@ DECLARE
 BEGIN
   v_type := NEW.type;
 
-  -- Khi UPDATE: chỉ chạy nếu type thay đổi từ 'lead' → 'deal'
+  -- === UPDATE: chỉ xử lý khi type thay đổi ===
   IF TG_OP = 'UPDATE' THEN
     IF OLD.type = NEW.type THEN
-      RETURN NEW; -- type không đổi → bỏ qua
+      RETURN NEW;
     END IF;
-    -- Xóa tasks cũ của lead trước khi gen tasks deal mới
+    -- Chuyển lead → deal: xóa tasks cũ
     IF OLD.type = 'lead' AND NEW.type = 'deal' THEN
       DELETE FROM crm_tasks WHERE lead_id = NEW.id;
     END IF;
   END IF;
 
-  -- Kiểm tra đã có tasks chưa (tránh duplicate khi INSERT)
+  -- === INSERT: skip nếu đã có tasks (backend tạo trước) ===
   IF TG_OP = 'INSERT' THEN
     PERFORM 1 FROM crm_tasks WHERE lead_id = NEW.id LIMIT 1;
     IF FOUND THEN
-      RETURN NEW; -- đã có tasks → bỏ qua
+      RETURN NEW;
     END IF;
   END IF;
 
-  -- Loop qua templates phù hợp
+  -- === Lấy templates phù hợp → items → insert tasks ===
   FOR v_tpl IN
-    SELECT id, stage_slug
-    FROM crm_task_templates
-    WHERE is_active = true
-      AND (is_default = true OR NOT EXISTS (
-        SELECT 1 FROM crm_task_templates WHERE is_default = true AND is_active = true
-      ))
+    SELECT t.id, t.stage_slug
+    FROM crm_task_templates t
+    WHERE t.is_active = true
+      AND t.is_default = true
       AND (
-        (v_type = 'lead' AND (pipeline_type IN ('lead', 'both') OR pipeline_type IS NULL) AND stage_slug NOT LIKE 'deal_%')
-        OR
-        (v_type = 'deal' AND (pipeline_type IN ('deal', 'both') OR pipeline_type IS NULL))
+        CASE WHEN v_type = 'lead' THEN
+          (t.pipeline_type IN ('lead','both') OR t.pipeline_type IS NULL)
+          AND t.stage_slug NOT LIKE 'deal_%'
+        ELSE
+          (t.pipeline_type IN ('deal','both') OR t.pipeline_type IS NULL)
+        END
       )
-    ORDER BY order_index
+    ORDER BY t.order_index
   LOOP
-    -- Loop qua items trong template
     FOR v_item IN
-      SELECT title, description, priority, deadline_days, order_index, checklist,
-             default_allowed_companies, default_allowed_departments
-      FROM crm_task_template_items
-      WHERE template_id = v_tpl.id
-      ORDER BY order_index
+      SELECT i.title, i.description, i.priority, i.deadline_days,
+             i.order_index, i.checklist
+      FROM crm_task_template_items i
+      WHERE i.template_id = v_tpl.id
+      ORDER BY i.order_index
     LOOP
       INSERT INTO crm_tasks (
-        lead_id, title, description, priority, stage_slug, order_index,
-        deadline, checklist, default_allowed_companies, default_allowed_departments,
-        created_by
+        lead_id, title, description, priority, stage_slug,
+        order_index, deadline, checklist, created_by, status
       ) VALUES (
         NEW.id,
         v_item.title,
@@ -68,30 +69,32 @@ BEGIN
         COALESCE(v_item.priority, 'medium'),
         v_tpl.stage_slug,
         v_item.order_index,
-        CASE WHEN v_item.deadline_days > 0 THEN v_now + (v_item.deadline_days || ' days')::INTERVAL ELSE NULL END,
+        CASE WHEN v_item.deadline_days IS NOT NULL AND v_item.deadline_days > 0
+          THEN v_now + (v_item.deadline_days || ' days')::INTERVAL
+          ELSE NULL
+        END,
         COALESCE(v_item.checklist, '[]'::jsonb),
-        v_item.default_allowed_companies,
-        v_item.default_allowed_departments,
-        NEW.created_by
+        NEW.created_by,
+        'pending'
       );
       v_count := v_count + 1;
     END LOOP;
   END LOOP;
 
-  -- Fallback: nếu không có templates → tạo tasks mặc định
+  -- === Fallback nếu không tìm thấy template items nào ===
   IF v_count = 0 THEN
     IF v_type = 'lead' THEN
-      INSERT INTO crm_tasks (lead_id, title, priority, stage_slug, order_index, checklist, created_by) VALUES
-        (NEW.id, 'Tiếp nhận yêu cầu khách hàng', 'high', 'consulting', 1, '[]', NEW.created_by),
-        (NEW.id, 'Tư vấn sản phẩm & vật liệu', 'high', 'consulting', 2, '[]', NEW.created_by),
-        (NEW.id, 'Khảo sát thực tế (nếu cần)', 'medium', 'consulting', 3, '[]', NEW.created_by),
-        (NEW.id, 'Ghi nhận nhu cầu chi tiết', 'medium', 'consulting', 4, '[]', NEW.created_by);
+      INSERT INTO crm_tasks (lead_id, title, priority, stage_slug, order_index, checklist, created_by, status) VALUES
+        (NEW.id, 'Tiếp nhận yêu cầu khách hàng',     'high',   'consulting', 1, '[]', NEW.created_by, 'pending'),
+        (NEW.id, 'Tư vấn sản phẩm & vật liệu',       'high',   'consulting', 2, '[]', NEW.created_by, 'pending'),
+        (NEW.id, 'Khảo sát thực tế (nếu cần)',        'medium', 'consulting', 3, '[]', NEW.created_by, 'pending'),
+        (NEW.id, 'Ghi nhận nhu cầu chi tiết',         'medium', 'consulting', 4, '[]', NEW.created_by, 'pending');
     ELSE
-      INSERT INTO crm_tasks (lead_id, title, priority, stage_slug, order_index, checklist, created_by) VALUES
-        (NEW.id, 'Xác nhận yêu cầu từ Lead', 'high', 'consulting', 1, '[]', NEW.created_by),
-        (NEW.id, 'Thiết kế bản vẽ sơ bộ', 'high', 'design', 1, '[]', NEW.created_by),
-        (NEW.id, 'Lập báo giá chi tiết', 'high', 'quotation', 1, '[]', NEW.created_by),
-        (NEW.id, 'Soạn hợp đồng', 'high', 'contract', 1, '[]', NEW.created_by);
+      INSERT INTO crm_tasks (lead_id, title, priority, stage_slug, order_index, checklist, created_by, status) VALUES
+        (NEW.id, 'Xác nhận yêu cầu từ Lead',  'high', 'deal_new',            1, '[]', NEW.created_by, 'pending'),
+        (NEW.id, 'Lập báo giá chi tiết',       'high', 'deal_quote_contract', 1, '[]', NEW.created_by, 'pending'),
+        (NEW.id, 'Soạn hợp đồng',              'high', 'deal_quote_contract', 2, '[]', NEW.created_by, 'pending'),
+        (NEW.id, 'Chốt sản xuất & đặt hàng',  'high', 'deal_ordering',       1, '[]', NEW.created_by, 'pending');
     END IF;
   END IF;
 
@@ -99,17 +102,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Drop trigger cũ nếu có
+-- ============================================================
+-- TRIGGERS
+-- ============================================================
 DROP TRIGGER IF EXISTS trg_auto_gen_tasks_on_insert ON crm_leads;
 DROP TRIGGER IF EXISTS trg_auto_gen_tasks_on_update ON crm_leads;
 
--- Trigger khi INSERT (tạo lead mới)
+-- Khi tạo Lead mới
 CREATE TRIGGER trg_auto_gen_tasks_on_insert
   AFTER INSERT ON crm_leads
   FOR EACH ROW
   EXECUTE FUNCTION fn_auto_gen_crm_tasks();
 
--- Trigger khi UPDATE type (chuyển lead → deal)
+-- Khi chuyển Lead → Deal
 CREATE TRIGGER trg_auto_gen_tasks_on_update
   AFTER UPDATE OF type ON crm_leads
   FOR EACH ROW
