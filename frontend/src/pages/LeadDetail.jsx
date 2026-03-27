@@ -33,13 +33,6 @@ export default function LeadDetail() {
   const [loading, setLoading] = useState(true);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [showConvertModal, setShowConvertModal] = useState(false);
-  const [showCreateProjectModal, setShowCreateProjectModal] = useState(null); // {deal, flows, template_sets}
-  const [selectedFlow, setSelectedFlow] = useState(null);
-  const [selectedTplSet, setSelectedTplSet] = useState(null);
-  const [previewTasks, setPreviewTasks] = useState([]);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-  const [creatingProject, setCreatingProject] = useState(false);
-  const [autoProjectResult, setAutoProjectResult] = useState(null);
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
@@ -69,25 +62,13 @@ export default function LeadDetail() {
       setFlows(flowsRes || []);
       setAllUsers(usersRes || []);
 
-      // Auto mở modal tạo dự án nếu deal ở stage Thắng + chưa có project
+      // Auto redirect nếu deal ở stage Thắng + chưa có project → trang tạo dự án
       if (leadRes?.type === 'deal' && !leadRes?.project_id) {
         const dealStages = stagesDealRes.data || [];
         const currentStage = dealStages.find(s => s.id === leadRes.stage_id);
         if (currentStage?.is_won) {
-          try {
-            const { data: setup } = await api.get(`/crm/leads/${id}/project-setup`);
-            setShowCreateProjectModal(setup);
-            const defaultFlow = setup.flows?.find(f => f.is_default) || setup.flows?.[0];
-            setSelectedFlow(defaultFlow?.id || null);
-            const sorted = [...(setup.template_sets || [])].sort((a, b) => b.task_count - a.task_count);
-            const best = sorted.find(s => s.is_default) || sorted[0];
-            if (best) {
-              setSelectedTplSet(best.id);
-              // Inline preview fetch
-              const { data: preview } = await api.get(`/crm/leads/${id}/preview-project-tasks?template_set_id=${best.id}`);
-              setPreviewTasks(preview || []);
-            }
-          } catch (_) {}
+          navigate(`/projects/create?deal_id=${id}`);
+          return;
         }
       }
     } catch (e) { console.error(e); }
@@ -103,53 +84,14 @@ export default function LeadDetail() {
       if (data.requires_conversion) {
         setShowConvertModal(true);
       } else if (data.deal_won) {
-        // Deal thắng → hiện modal chọn luồng + bộ nhiệm vụ
-        const dw = data.deal_won;
-        setShowCreateProjectModal(dw);
-        // Auto-select defaults
-        const defaultFlow = dw.flows?.find(f => f.is_default) || dw.flows?.[0];
-        setSelectedFlow(defaultFlow?.id || null);
-        // Chọn bộ nhiệm vụ nhiều tasks nhất
-        const sorted = [...(dw.template_sets || [])].sort((a, b) => b.task_count - a.task_count);
-        const best = sorted.find(s => s.is_default) || sorted[0];
-        if (best) {
-          setSelectedTplSet(best.id);
-          loadPreviewTasks(best.id);
-        }
-        load();
+        // Deal thắng → chuyển sang trang tạo dự án đầy đủ (có Khối, Công ty, Bộ nhiệm vụ)
+        navigate(`/projects/create?deal_id=${id}`);
       } else {
         load();
       }
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
     }
-  };
-
-  const loadPreviewTasks = async (tplSetId) => {
-    if (!tplSetId) { setPreviewTasks([]); return; }
-    setLoadingPreview(true);
-    try {
-      const { data } = await api.get(`/crm/leads/${id}/preview-project-tasks?template_set_id=${tplSetId}`);
-      setPreviewTasks(data || []);
-    } catch (e) { console.error(e); }
-    setLoadingPreview(false);
-  };
-
-  const handleCreateProject = async () => {
-    setCreatingProject(true);
-    try {
-      const { data } = await api.post(`/crm/leads/${id}/create-project`, {
-        flow_id: selectedFlow,
-        template_set_id: selectedTplSet,
-        project_name: showCreateProjectModal?.deal?.title,
-      });
-      setShowCreateProjectModal(null);
-      setAutoProjectResult(data);
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi tạo dự án');
-    }
-    setCreatingProject(false);
   };
 
   const deleteLead = async () => {
@@ -292,19 +234,10 @@ export default function LeadDetail() {
               <Zap className="h-4 w-4" /> Chuyển Deal
             </button>
           )}
-          {/* Deal Thắng + chưa có project → nút Tạo dự án (mở modal) */}
+          {/* Deal Thắng + chưa có project → nút Tạo dự án */}
           {lead.type === 'deal' && isPipelineComplete && !lead.project_id && (
-            <button onClick={async () => {
-              try {
-                const { data } = await api.get(`/crm/leads/${id}/project-setup`);
-                setShowCreateProjectModal(data);
-                const defaultFlow = data.flows?.find(f => f.is_default) || data.flows?.[0];
-                setSelectedFlow(defaultFlow?.id || null);
-                const sorted = [...(data.template_sets || [])].sort((a, b) => b.task_count - a.task_count);
-                const best = sorted.find(s => s.is_default) || sorted[0];
-                if (best) { setSelectedTplSet(best.id); loadPreviewTasks(best.id); }
-              } catch (e) { alert('Lỗi tải dữ liệu'); }
-            }} className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
+            <button onClick={() => navigate(`/projects/create?deal_id=${id}`)}
+              className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
               <FolderKanban className="h-4 w-4" /> Tạo dự án
             </button>
           )}
@@ -605,201 +538,6 @@ export default function LeadDetail() {
         />
       )}
 
-      {/* ═══ MODAL TẠO DỰ ÁN TỪ DEAL ═══ */}
-      {showCreateProjectModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl">
-            {/* Header */}
-            <div className="p-5 border-b flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">🎉 Deal Thắng — Tạo Dự Án</h2>
-                <p className="text-sm text-gray-500 mt-0.5">Chọn luồng quy trình và bộ nhiệm vụ cho dự án mới</p>
-              </div>
-              <button onClick={() => setShowCreateProjectModal(null)} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><X size={18} /></button>
-            </div>
-
-            {/* Body scrollable */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Thông tin deal */}
-              <div className="bg-blue-50 rounded-xl p-4 grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs text-gray-500">Tên Deal</p>
-                  <p className="text-sm font-semibold">{showCreateProjectModal.deal?.title}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Khách hàng</p>
-                  <p className="text-sm font-semibold">{showCreateProjectModal.deal?.customer?.full_name || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Giá trị</p>
-                  <p className="text-sm font-semibold text-emerald-600">{formatVND(showCreateProjectModal.deal?.estimated_value)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Địa chỉ</p>
-                  <p className="text-sm font-semibold">{showCreateProjectModal.deal?.customer?.address || '—'}</p>
-                </div>
-              </div>
-
-              {/* Chọn luồng */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">🔄 Luồng quy trình</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {showCreateProjectModal.flows?.map(f => (
-                    <button key={f.id} onClick={() => setSelectedFlow(f.id)}
-                      className={`p-3 rounded-xl border-2 text-left cursor-pointer transition-all ${selectedFlow === f.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                      <p className="text-sm font-semibold">{f.name}</p>
-                      {f.description && <p className="text-xs text-gray-500 mt-0.5">{f.description}</p>}
-                      {f.is_default && <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Mặc định</span>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Chọn bộ nhiệm vụ */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">📋 Bộ nhiệm vụ mẫu</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {showCreateProjectModal.template_sets?.map(ts => (
-                    <button key={ts.id} onClick={() => { setSelectedTplSet(ts.id); loadPreviewTasks(ts.id); }}
-                      className={`p-3 rounded-xl border-2 text-left cursor-pointer transition-all ${selectedTplSet === ts.id ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                      <p className="text-sm font-semibold">{ts.name}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{ts.task_count} nhiệm vụ</p>
-                      {ts.is_default && <span className="inline-block mt-1 text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Mặc định</span>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Preview tasks theo giai đoạn */}
-              {loadingPreview && <div className="flex justify-center py-4"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>}
-              {!loadingPreview && previewTasks.length > 0 && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">📊 Xem trước nhiệm vụ</label>
-                  <div className="space-y-2">
-                    {previewTasks.map((group, gi) => {
-                      const total = group.tasks.length;
-                      const checkTotal = group.tasks.reduce((s, t) => s + (t.checklists?.length || 0), 0);
-                      return (
-                        <div key={gi} className={`rounded-xl border ${group.is_crm ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
-                          <div className="p-3 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className={`w-2.5 h-2.5 rounded-full ${group.is_crm ? 'bg-green-500' : 'bg-orange-400'}`} />
-                              <span className="text-sm font-semibold">{group.stage_name}</span>
-                              <span className="text-xs text-gray-500">({total} nhiệm vụ, {checkTotal} checklist)</span>
-                            </div>
-                            {group.is_crm && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">✅ Đã hoàn thành (CRM)</span>}
-                            {!group.is_crm && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">⏳ Cần thực hiện</span>}
-                          </div>
-                          <div className="px-3 pb-3 space-y-1">
-                            {group.tasks.map((t, ti) => (
-                              <div key={ti} className="flex items-start gap-2 text-xs">
-                                <span className={group.is_crm ? 'text-green-500' : 'text-gray-400'}>{group.is_crm ? '✅' : '○'}</span>
-                                <div className="flex-1">
-                                  <span className={`font-medium ${group.is_crm ? 'text-green-700 line-through' : 'text-gray-700'}`}>{t.title}</span>
-                                  {t.checklists?.length > 0 && (
-                                    <span className="ml-1.5 text-gray-400">({t.checklists.length} bước)</span>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {/* Summary */}
-                  {(() => {
-                    const crmGroups = previewTasks.filter(g => g.is_crm);
-                    const prodGroups = previewTasks.filter(g => !g.is_crm);
-                    const crmTasks = crmGroups.reduce((s, g) => s + g.tasks.length, 0);
-                    const prodTasks = prodGroups.reduce((s, g) => s + g.tasks.length, 0);
-                    const totalChecks = previewTasks.reduce((s, g) => s + g.tasks.reduce((s2, t) => s2 + (t.checklists?.length || 0), 0), 0);
-                    return (
-                      <div className="mt-3 bg-gray-50 rounded-xl p-3 flex items-center justify-between text-sm">
-                        <div className="flex gap-4">
-                          <span className="text-green-600 font-medium">✅ {crmTasks} CRM done</span>
-                          <span className="text-orange-600 font-medium">⏳ {prodTasks} cần làm</span>
-                        </div>
-                        <span className="text-gray-500">{crmTasks + prodTasks} tasks · {totalChecks} checklists</span>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-4 border-t flex items-center justify-between">
-              <button onClick={() => setShowCreateProjectModal(null)}
-                className="h-10 px-5 border rounded-xl text-sm font-medium cursor-pointer hover:bg-gray-50">
-                Hủy
-              </button>
-              <button onClick={handleCreateProject} disabled={creatingProject || !selectedTplSet}
-                className="h-10 px-6 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold cursor-pointer flex items-center gap-2">
-                {creatingProject ? (
-                  <><div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" /> Đang tạo...</>
-                ) : (
-                  <>🚀 Tạo dự án</>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal kết quả tạo dự án */}
-      {autoProjectResult && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
-            <div className="text-center mb-5">
-              <div className="text-5xl mb-3">🎉</div>
-              <h2 className="text-xl font-bold text-gray-900">Tạo dự án thành công!</h2>
-            </div>
-
-            <div className="bg-gray-50 rounded-xl p-4 space-y-3 mb-5">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">📁</span>
-                <div>
-                  <p className="text-xs text-gray-500">Mã dự án</p>
-                  <p className="text-sm font-bold text-gray-900">{autoProjectResult.code}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">✅</span>
-                <div>
-                  <p className="text-xs text-gray-500">CRM hoàn thành</p>
-                  <p className="text-sm font-bold text-green-600">{autoProjectResult.tasks_done || 0} nhiệm vụ</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">⏳</span>
-                <div>
-                  <p className="text-xs text-gray-500">Cần thực hiện</p>
-                  <p className="text-sm font-bold text-orange-600">{autoProjectResult.tasks_pending || 0} nhiệm vụ</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">📋</span>
-                <div>
-                  <p className="text-xs text-gray-500">Checklists</p>
-                  <p className="text-sm font-bold text-gray-700">{autoProjectResult.checklists_created || 0} bước</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <button onClick={() => setAutoProjectResult(null)}
-                className="flex-1 h-10 border rounded-xl text-sm font-medium cursor-pointer hover:bg-gray-50">
-                Đóng
-              </button>
-              <button onClick={() => { setAutoProjectResult(null); navigate(`/projects/${autoProjectResult.id}`); }}
-                className="flex-1 h-10 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium cursor-pointer">
-                Xem dự án →
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
