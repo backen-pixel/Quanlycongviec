@@ -11,6 +11,29 @@ const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuo
 const r = Router();
 r.use(auth);
 
+// ─── HELPER: Document visibility check ──
+// Returns true if user can see the document
+function canViewDocument(doc, user) {
+  const hasDeptRule = doc.allowed_departments && doc.allowed_departments.length > 0;
+  const hasCompRule = doc.allowed_companies && doc.allowed_companies.length > 0;
+  // No rules = everyone can see
+  if (!hasDeptRule && !hasCompRule) return true;
+  // Admin bypass
+  if (user?.role === 'admin') return true;
+  // Check company match
+  if (hasCompRule && user?.company_id && doc.allowed_companies.includes(user.company_id)) return true;
+  // Check department match
+  if (hasDeptRule && user?.department_id && doc.allowed_departments.includes(user.department_id)) return true;
+  // No match
+  return !hasDeptRule && !hasCompRule ? true : false;
+}
+
+// Load user with company_id + department_id for visibility
+async function loadUserForVisibility(userId) {
+  const { data } = await supabase.from('users').select('id, role, company_id, department_id').eq('id', userId).single();
+  return data;
+}
+
 // ─── HELPER: Create notification (backward compatible wrapper) ──
 async function createNotification(req, userId, type, title, message, entityType, entityId, metadata) {
   return await createNotif(req, userId, type, title, message, entityType, entityId, metadata || null);
@@ -523,8 +546,7 @@ r.delete('/leads/:id', async (req, res) => {
 // Get lead documents
 r.get('/leads/:id/documents', async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { data: user } = await supabase.from('users').select('department_id, role').eq('id', userId).single();
+    const user = await loadUserForVisibility(req.user.userId);
     
     const { data, error } = await supabase
       .from('lead_documents')
@@ -533,13 +555,7 @@ r.get('/leads/:id/documents', async (req, res) => {
       .order('created_at', { ascending: false });
     if (error) throw error;
     
-    // Filter by visibility
-    const filtered = (data || []).filter(doc => {
-      if (!doc.allowed_departments || doc.allowed_departments.length === 0) return true;
-      if (user?.role === 'admin') return true;
-      if (!user?.department_id) return false;
-      return doc.allowed_departments.includes(user.department_id);
-    });
+    const filtered = (data || []).filter(doc => canViewDocument(doc, user));
     
     res.json(filtered);
   } catch (e) {
@@ -550,7 +566,7 @@ r.get('/leads/:id/documents', async (req, res) => {
 // Add document to lead
 r.post('/leads/:id/documents', async (req, res) => {
   try {
-    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_departments } = req.body;
+    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_departments, allowed_companies } = req.body;
     
     // Get project_id from lead/deal (for sync)
     const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', req.params.id).single();
@@ -568,6 +584,7 @@ r.post('/leads/:id/documents', async (req, res) => {
         mime_type,
         notes,
         allowed_departments: allowed_departments || null,
+        allowed_companies: allowed_companies || null,
         created_by: req.user.userId,
       })
       .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
@@ -597,8 +614,7 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
 // ═══ PROJECT DOCUMENTS (via lead_documents with project_id) ═══
 r.get('/projects/:projectId/documents', async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { data: user } = await supabase.from('users').select('department_id, role').eq('id', userId).single();
+    const user = await loadUserForVisibility(req.user.userId);
     
     const { data, error } = await supabase.from('lead_documents')
       .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
@@ -606,13 +622,7 @@ r.get('/projects/:projectId/documents', async (req, res) => {
       .order('created_at', { ascending: false });
     if (error) throw error;
     
-    // Filter by visibility: admin sees all, others check allowed_departments
-    const filtered = (data || []).filter(doc => {
-      if (!doc.allowed_departments || doc.allowed_departments.length === 0) return true;
-      if (user?.role === 'admin') return true;
-      if (!user?.department_id) return false;
-      return doc.allowed_departments.includes(user.department_id);
-    });
+    const filtered = (data || []).filter(doc => canViewDocument(doc, user));
     
     res.json(filtered);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -621,9 +631,12 @@ r.get('/projects/:projectId/documents', async (req, res) => {
 // Update document visibility
 r.put('/documents/:docId/visibility', async (req, res) => {
   try {
-    const { allowed_departments } = req.body;
+    const { allowed_departments, allowed_companies } = req.body;
     const { data, error } = await supabase.from('lead_documents')
-      .update({ allowed_departments: allowed_departments || null })
+      .update({
+        allowed_departments: allowed_departments || null,
+        allowed_companies: allowed_companies || null,
+      })
       .eq('id', req.params.docId)
       .select('*').single();
     if (error) throw error;
@@ -1741,8 +1754,7 @@ r.get('/project/:projectId/summary', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/project/:projectId/lead-documents', async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { data: user } = await supabase.from('users').select('department_id, role').eq('id', userId).single();
+    const user = await loadUserForVisibility(req.user.userId);
 
     // Find lead linked to this project
     const { data: lead } = await supabase
@@ -1760,13 +1772,7 @@ r.get('/project/:projectId/lead-documents', async (req, res) => {
       .eq('lead_id', lead.id)
       .order('created_at', { ascending: false });
 
-    // Filter by visibility
-    const filtered = (docs || []).filter(doc => {
-      if (!doc.allowed_departments || doc.allowed_departments.length === 0) return true;
-      if (user?.role === 'admin') return true;
-      if (!user?.department_id) return false;
-      return doc.allowed_departments.includes(user.department_id);
-    });
+    const filtered = (docs || []).filter(doc => canViewDocument(doc, user));
 
     res.json(filtered);
   } catch (e) {
@@ -2426,19 +2432,21 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
 // GET attachments for a task
 r.get('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
   try {
+    const user = await loadUserForVisibility(req.user.userId);
     const { data, error } = await supabase.from('crm_task_attachments')
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
       .eq('task_id', req.params.taskId)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json(data || []);
+    const filtered = (data || []).filter(att => canViewDocument(att, user));
+    res.json(filtered);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ADD attachment (file or text note) to a task
 r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
   try {
-    const { name, doc_type, file_url, file_name, file_size, mime_type, notes } = req.body;
+    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_companies, allowed_departments } = req.body;
     const { data, error } = await supabase.from('crm_task_attachments')
       .insert({
         task_id: req.params.taskId,
@@ -2446,6 +2454,8 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
         name: name || file_name || 'Ghi chú',
         doc_type: doc_type || (file_url ? 'other' : 'task_note'),
         file_url, file_name, file_size, mime_type, notes,
+        allowed_companies: allowed_companies || null,
+        allowed_departments: allowed_departments || null,
         created_by: req.user.userId,
       })
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
