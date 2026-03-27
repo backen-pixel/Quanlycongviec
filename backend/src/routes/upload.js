@@ -10,7 +10,7 @@ r.use(auth);
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|zip|rar|mp4|mov/;
     const ext = path.extname(file.originalname).toLowerCase();
@@ -59,8 +59,8 @@ async function uploadOneFile(file, entityType) {
   };
 }
 
-// Upload files → Supabase Storage (SONG SONG)
-r.post('/', upload.array('files', 10), async (req, res) => {
+// Upload files → Supabase Storage (SONG SONG, batch 5)
+r.post('/', upload.array('files', 20), async (req, res) => {
   try {
     if (!req.files?.length) return res.status(400).json({ error: 'Không có file' });
 
