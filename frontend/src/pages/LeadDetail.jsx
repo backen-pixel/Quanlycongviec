@@ -178,16 +178,36 @@ export default function LeadDetail() {
     }
   };
 
+  const compressImage = (file, maxWidth = 1920, quality = 0.8) => {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith('image/') || file.size < 500 * 1024) { resolve(file); return; }
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          resolve(blob ? new File([blob], file.name, { type: 'image/jpeg' }) : file);
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = () => resolve(file);
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
   const uploadDocument = async () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
     input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf';
     input.onchange = async (e) => {
-      const files = Array.from(e.target.files || []).slice(0, 10);
-      if (!files.length) return;
+      const rawFiles = Array.from(e.target.files || []).slice(0, 20);
+      if (!rawFiles.length) return;
       setUploadingDoc(true);
       try {
+        const files = await Promise.all(rawFiles.map(f => compressImage(f)));
         const formData = new FormData();
         files.forEach(f => formData.append('files', f));
         const { data: uploadRes } = await api.post('/upload', formData, {
