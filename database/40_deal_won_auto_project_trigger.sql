@@ -71,7 +71,9 @@ BEGIN
   -- ============ TẠO TASKS TỪ TEMPLATE ============
   SELECT id INTO v_tpl_set_id FROM company_template_sets
     WHERE (company_id = NEW.company_id OR company_id IS NULL) AND is_default = true
-    ORDER BY CASE WHEN company_id = NEW.company_id THEN 0 ELSE 1 END
+    ORDER BY
+      CASE WHEN company_id = NEW.company_id THEN 0 ELSE 1 END,
+      (SELECT COUNT(*) FROM company_template_tasks ct WHERE ct.template_set_id = company_template_sets.id) DESC
     LIMIT 1;
 
   IF v_tpl_set_id IS NOT NULL THEN

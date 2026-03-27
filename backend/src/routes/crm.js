@@ -1058,12 +1058,29 @@ r.patch('/leads/:id/stage', async (req, res) => {
             await supabase.from('crm_leads').update({ project_id: project.id }).eq('id', req.params.id);
 
             // Gen project tasks from company template
-            const { data: tplSet } = await supabase.from('company_template_sets')
-              .select('id')
+            // Lấy template set: ưu tiên company match, rồi set có nhiều tasks nhất
+            const { data: tplSets } = await supabase.from('company_template_sets')
+              .select('id, company_id')
               .or(`company_id.eq.${dealData?.company_id || '00000000-0000-0000-0000-000000000000'},company_id.is.null`)
-              .eq('is_default', true)
-              .order('company_id', { ascending: false, nullsFirst: false })
-              .limit(1).single();
+              .eq('is_default', true);
+            
+            let tplSet = null;
+            if (tplSets?.length) {
+              // Ưu tiên company match
+              const companyMatch = tplSets.find(s => s.company_id === dealData?.company_id);
+              if (companyMatch) {
+                tplSet = companyMatch;
+              } else {
+                // Lấy set có nhiều tasks nhất
+                let bestSet = null, bestCount = 0;
+                for (const ts of tplSets) {
+                  const { count } = await supabase.from('company_template_tasks')
+                    .select('id', { count: 'exact', head: true }).eq('template_set_id', ts.id);
+                  if (count > bestCount) { bestCount = count; bestSet = ts; }
+                }
+                tplSet = bestSet;
+              }
+            }
 
             if (tplSet) {
               const { data: tplTasks } = await supabase.from('company_template_tasks')
