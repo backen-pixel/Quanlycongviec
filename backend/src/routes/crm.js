@@ -706,6 +706,32 @@ r.post('/leads/:id/documents', async (req, res) => {
   }
 });
 
+// BULK add documents (nhiều files 1 request)
+r.post('/leads/:id/documents/bulk', async (req, res) => {
+  try {
+    const items = req.body.items;
+    if (!items?.length) return res.status(400).json({ error: 'Không có file' });
+
+    const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', req.params.id).single();
+    const rows = items.map(item => ({
+      lead_id: req.params.id,
+      project_id: lead?.project_id || null,
+      name: item.name || item.file_name || 'Tài liệu',
+      doc_type: item.doc_type || 'other',
+      file_url: item.file_url,
+      file_name: item.file_name,
+      file_size: item.file_size,
+      mime_type: item.mime_type,
+      created_by: req.user.userId,
+    }));
+    const { data, error } = await supabase.from('lead_documents')
+      .insert(rows)
+      .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)');
+    if (error) throw error;
+    res.status(201).json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Delete document + sync xóa crm_task_attachment liên kết
 r.delete('/leads/:id/documents/:docId', async (req, res) => {
   try {
@@ -2389,6 +2415,55 @@ r.get('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     if (error) throw error;
     const filtered = (data || []).filter(att => canViewDocument(att, user));
     res.json(filtered);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// BULK ADD attachments (nhiều files 1 request)
+r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
+  try {
+    const items = req.body.items; // [{name, doc_type, file_url, file_name, file_size, mime_type}]
+    if (!items?.length) return res.status(400).json({ error: 'Không có file' });
+
+    // Query task visibility 1 lần duy nhất
+    const { data: task } = await supabase.from('crm_tasks')
+      .select('title, default_allowed_companies, default_allowed_departments')
+      .eq('id', req.params.taskId).single();
+    const finalCompanies = task?.default_allowed_companies || null;
+    const finalDepts = task?.default_allowed_departments || null;
+
+    // Insert tất cả attachments 1 lần
+    const rows = items.map(item => ({
+      task_id: req.params.taskId,
+      lead_id: req.params.leadId,
+      name: item.name || item.file_name || 'File',
+      doc_type: item.doc_type || (item.file_url ? 'other' : 'task_note'),
+      file_url: item.file_url, file_name: item.file_name,
+      file_size: item.file_size, mime_type: item.mime_type,
+      allowed_companies: finalCompanies, allowed_departments: finalDepts,
+      created_by: req.user.userId,
+    }));
+    const { data, error } = await supabase.from('crm_task_attachments')
+      .insert(rows)
+      .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)');
+    if (error) throw error;
+
+    // Sync → lead_documents 1 lần
+    try {
+      const { data: lead } = await supabase.from('crm_leads')
+        .select('project_id').eq('id', req.params.leadId).single();
+      const syncRows = (data || []).map(att => ({
+        lead_id: req.params.leadId,
+        project_id: lead?.project_id || null,
+        name: `[${task?.title || 'Task'}] ${att.name}`,
+        doc_type: att.doc_type, file_url: att.file_url, file_name: att.file_name,
+        file_size: att.file_size, mime_type: att.mime_type,
+        allowed_companies: finalCompanies, allowed_departments: finalDepts,
+        created_by: req.user.userId, source_attachment_id: att.id,
+      }));
+      if (syncRows.length) await supabase.from('lead_documents').insert(syncRows);
+    } catch (syncErr) { console.warn('Bulk sync error:', syncErr.message); }
+
+    res.status(201).json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
