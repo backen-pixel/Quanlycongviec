@@ -755,53 +755,35 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       }
     } catch (notifErr) { console.error('Convert notification error:', notifErr.message); }
 
-    // Copy task attachments & notes → lead_documents (để lưu lại khi chuyển Deal)
+    // Task attachments & notes đã được sync realtime → lead_documents
+    // (qua source_attachment_id khi thêm attachment vào task)
+    // Chỉ sync những attachment chưa có bản lead_document (dữ liệu cũ trước sync)
     try {
-      // 1. Copy task attachments (file + text)
       const { data: taskAtts } = await supabase.from('crm_task_attachments')
-        .select('*, task:crm_tasks(title, stage_slug)')
+        .select('id, name, file_url, file_name, file_size, mime_type, notes, doc_type, created_by, task:crm_tasks(title)')
         .eq('lead_id', req.params.id);
       if (taskAtts?.length) {
-        const docInserts = taskAtts.map(att => ({
-          lead_id: req.params.id,
-          name: att.file_url
-            ? `[${att.task?.title || 'Task'}] ${att.name}`
-            : `[${att.task?.title || 'Task'}] ${att.name}`,
-          doc_type: att.file_url ? (att.doc_type || 'other') : 'requirement',
-          file_url: att.file_url || null,
-          file_name: att.file_name || null,
-          file_size: att.file_size || null,
-          mime_type: att.mime_type || null,
-          notes: att.notes || null,
-          created_by: att.created_by,
-        }));
-        await supabase.from('lead_documents').insert(docInserts);
-        console.log(`[convert] Copied ${docInserts.length} task attachments → lead_documents`);
-      }
-
-      // 2. Copy task notes (text notes on tasks themselves)
-      const { data: tasksWithNotes } = await supabase.from('crm_tasks')
-        .select('id, title, stage_slug, notes, created_by')
-        .eq('lead_id', req.params.id)
-        .not('notes', 'is', null);
-      if (tasksWithNotes?.length) {
-        const noteInserts = tasksWithNotes
-          .filter(t => t.notes?.trim())
-          .map(t => ({
+        // Tìm những attachment chưa có lead_document link
+        const { data: existingLinks } = await supabase.from('lead_documents')
+          .select('source_attachment_id')
+          .eq('lead_id', req.params.id)
+          .not('source_attachment_id', 'is', null);
+        const linkedIds = new Set((existingLinks || []).map(d => d.source_attachment_id));
+        const unlinked = taskAtts.filter(att => !linkedIds.has(att.id));
+        if (unlinked.length) {
+          await supabase.from('lead_documents').insert(unlinked.map(att => ({
             lead_id: req.params.id,
-            name: `📝 Ghi chú: ${t.title}`,
-            doc_type: 'requirement',
-            notes: t.notes,
-            created_by: t.created_by,
-          }));
-        if (noteInserts.length) {
-          await supabase.from('lead_documents').insert(noteInserts);
-          console.log(`[convert] Copied ${noteInserts.length} task notes → lead_documents`);
+            name: `[${att.task?.title || 'Task'}] ${att.name}`,
+            doc_type: att.file_url ? (att.doc_type || 'other') : 'requirement',
+            file_url: att.file_url || null, file_name: att.file_name || null,
+            file_size: att.file_size || null, mime_type: att.mime_type || null,
+            notes: att.notes || null, created_by: att.created_by,
+            source_attachment_id: att.id,
+          })));
+          console.log(`[convert] Synced ${unlinked.length} unlinked task attachments → lead_documents`);
         }
       }
-    } catch (copyErr) {
-      console.error('Copy task data to documents error:', copyErr.message);
-    }
+    } catch (syncErr) { console.warn('Sync on convert:', syncErr.message); }
 
     // Log activity
     try {
