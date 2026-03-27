@@ -1083,22 +1083,31 @@ r.patch('/leads/:id/stage', async (req, res) => {
             }
 
             if (tplSet) {
+              // Lấy tasks + stage slug
               const { data: tplTasks } = await supabase.from('company_template_tasks')
-                .select('*').eq('template_set_id', tplSet.id).order('stage_id').order('order_index');
+                .select('*, stage:workflow_stages!inner(slug)')
+                .eq('template_set_id', tplSet.id).order('stage_id').order('order_index');
               if (tplTasks?.length) {
-                const taskInserts = tplTasks.map(t => ({
-                  project_id: project.id,
-                  stage_id: t.stage_id,
-                  title: t.title,
-                  description: t.description || null,
-                  status: 'pending',
-                  priority: t.priority || 'medium',
-                  order_index: t.order_index,
-                  estimated_hours: t.estimated_hours || null,
-                  created_by_id: req.user.userId,
-                }));
+                const CRM_SLUGS = ['consulting', 'design', 'quotation', 'contract'];
+                const taskInserts = tplTasks.map(t => {
+                  const slug = t.stage?.slug?.replace(/-[a-f0-9]+$/, '') || '';
+                  const isCRM = CRM_SLUGS.includes(slug);
+                  return {
+                    project_id: project.id,
+                    stage_id: t.stage_id,
+                    title: t.title,
+                    description: t.description || null,
+                    status: isCRM ? 'done' : 'pending',
+                    priority: t.priority || 'medium',
+                    order_index: t.order_index,
+                    estimated_hours: t.estimated_hours || null,
+                    completed_at: isCRM ? new Date().toISOString() : null,
+                    created_by_id: req.user.userId,
+                  };
+                });
                 await supabase.from('tasks').insert(taskInserts);
-                console.log(`[DEAL WON] Auto-created project ${code} + ${taskInserts.length} tasks`);
+                const doneCount = taskInserts.filter(t => t.status === 'done').length;
+                console.log(`[DEAL WON] Auto-created project ${code} + ${taskInserts.length} tasks (${doneCount} CRM done)`);
               }
             }
 
@@ -1106,13 +1115,16 @@ r.patch('/leads/:id/stage', async (req, res) => {
             const { data: existTasks } = await supabase.from('tasks').select('id').eq('project_id', project.id).limit(1);
             if (!existTasks?.length) {
               const { data: stages } = await supabase.from('workflow_stages')
-                .select('id, name')
+                .select('id, name, slug')
                 .in('slug', ['consulting', 'design', 'quotation', 'contract', 'production', 'shipping', 'installation', 'customer-care'])
                 .order('order_index');
               if (stages?.length) {
+                const CRM_SLUGS = ['consulting', 'design', 'quotation', 'contract'];
                 const fallbackTasks = stages.map((s, i) => ({
                   project_id: project.id, stage_id: s.id,
-                  title: `Công việc ${s.name}`, status: 'pending',
+                  title: `Công việc ${s.name}`,
+                  status: CRM_SLUGS.includes(s.slug) ? 'done' : 'pending',
+                  completed_at: CRM_SLUGS.includes(s.slug) ? new Date().toISOString() : null,
                   priority: 'medium', order_index: 1, created_by_id: req.user.userId,
                 }));
                 await supabase.from('tasks').insert(fallbackTasks);
