@@ -79,10 +79,10 @@ export default function LeadDetail() {
       if (data.requires_conversion) {
         setCreatingProject(false);
         setShowConvertModal(true);
-      } else if (data.auto_project) {
+      } else if (data.redirect_to_create) {
+        // Deal thắng → chuyển sang trang tạo dự án với thông tin deal
         setCreatingProject(false);
-        setAutoProjectResult(data.auto_project);
-        load();
+        navigate(data.redirect_to_create);
       } else {
         setCreatingProject(false);
         load();
