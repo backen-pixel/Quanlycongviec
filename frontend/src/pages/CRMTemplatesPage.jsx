@@ -385,6 +385,9 @@ export default function CRMTemplatesPage() {
                           handleChecklistDragEnd={handleChecklistDragEnd}
                           templates={templates} setTemplates={setTemplates}
                           updateItemChecklist={updateItemChecklist}
+                          editingVisibility={editingVisibility} setEditingVisibility={setEditingVisibility}
+                          companies={companies} departments={departments}
+                          toggleItemCompany={toggleItemCompany} toggleItemDept={toggleItemDept}
                         />
                       )}
                     </SortableItem>
@@ -417,6 +420,8 @@ function TemplateCard({
   editingChecklist, setEditingChecklist, newCheckItem, setNewCheckItem,
   addChecklistItem, removeChecklistItem,
   sensors, handleItemDragEnd, handleChecklistDragEnd,
+  editingVisibility, setEditingVisibility,
+  companies, departments, toggleItemCompany, toggleItemDept,
 }) {
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
 
