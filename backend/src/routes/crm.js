@@ -938,12 +938,14 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
 
       // Activity log
-      await supabase.from('crm_activities').insert({
-        lead_id: req.params.id, type: 'note',
-        title: '🎉 Deal Thắng!',
-        description: `Deal "${dealData?.title}" đã chốt thành công. Vui lòng tạo dự án thủ công.`,
-        created_by: req.user.userId,
-      }).catch(() => {});
+      try {
+        await supabase.from('crm_activities').insert({
+          lead_id: req.params.id, type: 'note',
+          title: '🎉 Deal Thắng!',
+          description: `Deal "${dealData?.title}" đã chốt thành công. Vui lòng tạo dự án thủ công.`,
+          created_by: req.user.userId,
+        });
+      } catch (_) {}
 
       // Tell frontend to redirect to project creation page
       redirectToCreate = `/projects/create?deal_id=${req.params.id}`;
