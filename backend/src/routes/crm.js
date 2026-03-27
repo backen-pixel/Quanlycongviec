@@ -508,9 +508,14 @@ r.post('/leads', async (req, res) => {
         'crm_lead', data.id);
     }
 
-    // ✅ AUTO-CREATE default CRM tasks
+    // ✅ CRM tasks: trigger fn_auto_gen_crm_tasks() đã tự động gen tasks
+    // Fallback nếu trigger chưa chạy:
     try {
-      await autoGenCrmTasks(data.id, 'lead', req.user.userId);
+      const { data: existingTasks } = await supabase.from('crm_tasks')
+        .select('id').eq('lead_id', data.id).limit(1);
+      if (!existingTasks?.length) {
+        await autoGenCrmTasks(data.id, 'lead', req.user.userId);
+      }
     } catch (autoErr) { console.error('Auto-create tasks on lead create error:', autoErr.message); }
 
     res.status(201).json(data);
@@ -906,11 +911,16 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       });
     } catch (_) {}
 
-    // ✅ AUTO-CREATE default CRM tasks for deal
+    // ✅ CRM tasks: trigger fn_auto_gen_crm_tasks() đã tự động:
+    //    - Xóa lead tasks cũ
+    //    - Gen deal tasks mới từ templates
+    // Nếu trigger chưa chạy (chưa deploy SQL), fallback bằng code:
     try {
-      // Delete old lead tasks (they were for lead stages)
-      await supabase.from('crm_tasks').delete().eq('lead_id', req.params.id);
-      await autoGenCrmTasks(req.params.id, 'deal', req.user.userId);
+      const { data: existingTasks } = await supabase.from('crm_tasks')
+        .select('id').eq('lead_id', req.params.id).limit(1);
+      if (!existingTasks?.length) {
+        await autoGenCrmTasks(req.params.id, 'deal', req.user.userId);
+      }
     } catch (autoErr) { console.error('Auto-create tasks on convert-to-deal error:', autoErr.message); }
 
     res.status(200).json({
