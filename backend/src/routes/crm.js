@@ -413,6 +413,8 @@ r.post('/leads', async (req, res) => {
             order_index: item.order_index,
             deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
             checklist: item.checklist || [],
+            default_allowed_companies: item.default_allowed_companies || null,
+            default_allowed_departments: item.default_allowed_departments || null,
             created_by: req.user.userId,
           }));
           
@@ -812,6 +814,8 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             order_index: item.order_index,
             deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
             checklist: item.checklist || [],
+            default_allowed_companies: item.default_allowed_companies || null,
+            default_allowed_departments: item.default_allowed_departments || null,
             created_by: req.user.userId,
           }));
           
@@ -2447,6 +2451,20 @@ r.get('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
 r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
   try {
     const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_companies, allowed_departments } = req.body;
+    
+    // Auto-apply default visibility from CRM task (inherited from template)
+    let finalCompanies = allowed_companies || null;
+    let finalDepts = allowed_departments || null;
+    if (!finalCompanies && !finalDepts) {
+      const { data: task } = await supabase.from('crm_tasks')
+        .select('default_allowed_companies, default_allowed_departments')
+        .eq('id', req.params.taskId).single();
+      if (task) {
+        finalCompanies = task.default_allowed_companies || null;
+        finalDepts = task.default_allowed_departments || null;
+      }
+    }
+    
     const { data, error } = await supabase.from('crm_task_attachments')
       .insert({
         task_id: req.params.taskId,
@@ -2454,8 +2472,8 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
         name: name || file_name || 'Ghi chú',
         doc_type: doc_type || (file_url ? 'other' : 'task_note'),
         file_url, file_name, file_size, mime_type, notes,
-        allowed_companies: allowed_companies || null,
-        allowed_departments: allowed_departments || null,
+        allowed_companies: finalCompanies,
+        allowed_departments: finalDepts,
         created_by: req.user.userId,
       })
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
@@ -2595,7 +2613,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase.from('crm_task_template_items')
