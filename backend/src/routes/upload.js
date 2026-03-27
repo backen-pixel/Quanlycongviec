@@ -26,7 +26,7 @@ const upload = multer({
 const BUCKET = 'attachments';
 
 // Upload files → Supabase Storage
-r.post('/', upload.array('files', 10), async (req, res) => {
+r.post('/', upload.array('files', 20), async (req, res) => {
   try {
     if (!req.files?.length) return res.status(400).json({ error: 'Không có file' });
 
