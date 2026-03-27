@@ -103,6 +103,7 @@ const CRM_MENU_GROUPS = [
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo' },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline' },
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM' },
+      { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
     ]
   },
