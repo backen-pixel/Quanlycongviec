@@ -3,6 +3,7 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const PDFDocument = require('pdfkit');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
+const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
@@ -1036,6 +1037,10 @@ r.patch('/leads/:id/stage', async (req, res) => {
           const { data: firstStage } = await supabase.from('workflow_stages')
             .select('id').eq('slug', 'consulting').limit(1).single();
 
+          // Lấy flow mặc định
+          const { data: defaultFlow } = await supabase.from('workflow_flows')
+            .select('id').eq('is_default', true).limit(1).single();
+
           // Create project
           const { data: project, error: projErr } = await supabase.from('projects').insert({
             code,
@@ -1045,6 +1050,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
             company_id: dealData?.company_id || null,
             status: 'consulting',
             current_stage_id: firstStage?.id || null,
+            flow_id: defaultFlow?.id || null,
             install_address: dealData?.customer?.address || null,
             estimated_value: dealData?.estimated_value || null,
             priority: 'medium',
@@ -1105,9 +1111,27 @@ r.patch('/leads/:id/stage', async (req, res) => {
                     created_by_id: req.user.userId,
                   };
                 });
-                await supabase.from('tasks').insert(taskInserts);
-                const doneCount = taskInserts.filter(t => t.status === 'done').length;
-                console.log(`[DEAL WON] Auto-created project ${code} + ${taskInserts.length} tasks (${doneCount} CRM done)`);
+                const { data: createdTasks } = await supabase.from('tasks').insert(taskInserts).select('id, title, status');
+                const doneCount = (createdTasks || []).filter(t => t.status === 'done').length;
+                console.log(`[DEAL WON] Auto-created project ${code} + ${(createdTasks||[]).length} tasks (${doneCount} CRM done)`);
+
+                // Gen checklists cho mỗi task
+                const checkInserts = [];
+                for (const t of createdTasks || []) {
+                  const items = DEFAULT_CHECKLISTS[t.title];
+                  if (items?.length) {
+                    const isCRM = t.status === 'done';
+                    items.forEach((c, i) => checkInserts.push({
+                      task_id: t.id, title: c, order_index: i,
+                      is_completed: isCRM,
+                      completed_at: isCRM ? new Date().toISOString() : null,
+                    }));
+                  }
+                }
+                if (checkInserts.length) {
+                  await supabase.from('task_checklists').insert(checkInserts);
+                  console.log(`[DEAL WON] Created ${checkInserts.length} checklists`);
+                }
               }
             }
 
