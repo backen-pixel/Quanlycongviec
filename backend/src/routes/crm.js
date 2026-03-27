@@ -39,6 +39,103 @@ async function createNotification(req, userId, type, title, message, entityType,
   return await createNotif(req, userId, type, title, message, entityType, entityId, metadata || null);
 }
 
+// ─── HELPER: Auto generate CRM tasks from templates ──
+// type = 'lead' | 'deal'
+const FALLBACK_LEAD_TASKS = [
+  { title: 'Tiếp nhận yêu cầu khách hàng', description: 'Ghi nhận thông tin KH, nhu cầu sử dụng', priority: 'high', stage_slug: 'consulting', order_index: 1, deadline_days: 0 },
+  { title: 'Tư vấn sản phẩm & vật liệu', description: 'Tư vấn chất liệu, phụ kiện phù hợp', priority: 'high', stage_slug: 'consulting', order_index: 2, deadline_days: 1 },
+  { title: 'Khảo sát thực tế (nếu cần)', description: 'Đo đạc kích thước, kiểm tra hiện trạng', priority: 'medium', stage_slug: 'consulting', order_index: 3, deadline_days: 2 },
+  { title: 'Ghi nhận nhu cầu chi tiết', description: 'Tổng hợp yêu cầu, xác nhận lại với KH', priority: 'medium', stage_slug: 'consulting', order_index: 4, deadline_days: 2 },
+];
+
+const FALLBACK_DEAL_TASKS = [
+  { title: 'Xác nhận yêu cầu từ Lead', description: 'Review thông tin từ giai đoạn Lead', priority: 'high', stage_slug: 'consulting', order_index: 1, deadline_days: 0 },
+  { title: 'Tư vấn chi tiết sản phẩm', description: 'Tư vấn chuyên sâu, báo giá sơ bộ', priority: 'high', stage_slug: 'consulting', order_index: 2, deadline_days: 1 },
+  { title: 'Thiết kế bản vẽ sơ bộ', description: 'Bản vẽ 2D/3D sơ bộ theo yêu cầu', priority: 'high', stage_slug: 'design', order_index: 1, deadline_days: 3 },
+  { title: 'Gửi bản vẽ cho KH duyệt', description: 'Gửi bản vẽ, hẹn feedback', priority: 'high', stage_slug: 'design', order_index: 2, deadline_days: 4 },
+  { title: 'Hoàn thiện bản vẽ kỹ thuật', description: 'Bản vẽ chi tiết cho sản xuất', priority: 'high', stage_slug: 'design', order_index: 3, deadline_days: 7 },
+  { title: 'Lập báo giá chi tiết', description: 'Báo giá theo hạng mục, breakdown chi tiết', priority: 'high', stage_slug: 'quotation', order_index: 1, deadline_days: 2 },
+  { title: 'Gửi báo giá cho KH', description: 'Gửi báo giá, giải thích', priority: 'high', stage_slug: 'quotation', order_index: 2, deadline_days: 2 },
+  { title: 'Thương lượng & chốt giá', description: 'Đàm phán chiết khấu, điều khoản', priority: 'medium', stage_slug: 'quotation', order_index: 3, deadline_days: 5 },
+  { title: 'Soạn hợp đồng', description: 'Soạn HĐ từ mẫu, điền thông tin', priority: 'high', stage_slug: 'contract', order_index: 1, deadline_days: 1 },
+  { title: 'Ký hợp đồng', description: 'Hẹn KH ký HĐ', priority: 'urgent', stage_slug: 'contract', order_index: 2, deadline_days: 5 },
+  { title: 'Thu tiền đặt cọc', description: 'Thu cọc theo tỷ lệ trong HĐ', priority: 'urgent', stage_slug: 'contract', order_index: 3, deadline_days: 5 },
+];
+
+async function autoGenCrmTasks(leadId, type, userId) {
+  const pipelineFilter = type === 'deal'
+    ? 'pipeline_type.eq.deal,pipeline_type.eq.both,pipeline_type.is.null'
+    : 'pipeline_type.eq.lead,pipeline_type.eq.both,pipeline_type.is.null';
+
+  // Step 1: Get default templates
+  const { data: templates } = await supabase
+    .from('crm_task_templates')
+    .select('id, name, stage_slug, pipeline_type')
+    .eq('is_default', true).eq('is_active', true)
+    .or(pipelineFilter)
+    .order('order_index');
+
+  let inserts = [];
+  const now = new Date();
+
+  if (templates?.length) {
+    // Step 2: Get ALL items
+    const tplIds = templates.map(t => t.id);
+    const { data: allItems } = await supabase
+      .from('crm_task_template_items')
+      .select('*')
+      .in('template_id', tplIds)
+      .order('order_index');
+
+    if (allItems?.length) {
+      const tplMap = {};
+      templates.forEach(t => { tplMap[t.id] = t; });
+
+      inserts = allItems.map(item => ({
+        lead_id: leadId,
+        title: item.title,
+        description: item.description || null,
+        priority: item.priority || 'medium',
+        stage_slug: tplMap[item.template_id]?.stage_slug || null,
+        order_index: item.order_index,
+        deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+        checklist: item.checklist || [],
+        default_allowed_companies: item.default_allowed_companies || null,
+        default_allowed_departments: item.default_allowed_departments || null,
+        created_by: userId,
+      }));
+    }
+  }
+
+  // Fallback: nếu không có templates trong DB → dùng hardcode
+  if (!inserts.length) {
+    const fallback = type === 'deal' ? FALLBACK_DEAL_TASKS : FALLBACK_LEAD_TASKS;
+    inserts = fallback.map(item => ({
+      lead_id: leadId,
+      title: item.title,
+      description: item.description || null,
+      priority: item.priority || 'medium',
+      stage_slug: item.stage_slug,
+      order_index: item.order_index,
+      deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+      checklist: [],
+      created_by: userId,
+    }));
+    console.log(`[AUTO-TASK] No templates in DB, using ${inserts.length} fallback ${type} tasks`);
+  }
+
+  if (inserts.length) {
+    const { error } = await supabase.from('crm_tasks').insert(inserts);
+    if (error) {
+      console.error(`[AUTO-TASK] Insert error:`, error.message);
+      return 0;
+    }
+    console.log(`[AUTO-TASK] ✅ Created ${inserts.length} tasks for ${type} ${leadId}`);
+    return inserts.length;
+  }
+  return 0;
+}
+
 async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata) {
   return await notifyMultipleShared(req, userIds, type, title, message, entityType, entityId, metadata || null);
 }
@@ -376,57 +473,9 @@ r.post('/leads', async (req, res) => {
         'crm_lead', data.id);
     }
 
-    // ✅ AUTO-CREATE default CRM tasks from default templates (lead + both)
+    // ✅ AUTO-CREATE default CRM tasks
     try {
-      // Step 1: Get default templates for lead pipeline
-      const { data: templates, error: tplErr } = await supabase
-        .from('crm_task_templates')
-        .select('id, name, stage_slug, pipeline_type')
-        .eq('is_default', true).eq('is_active', true)
-        .or('pipeline_type.eq.lead,pipeline_type.eq.both,pipeline_type.is.null')
-        .order('order_index');
-      
-      console.log(`[AUTO-TASK] Lead ${data.id}: ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
-      
-      if (templates?.length) {
-        // Step 2: Get ALL items for these templates (separate query — more reliable)
-        const tplIds = templates.map(t => t.id);
-        const { data: allItems, error: itemErr } = await supabase
-          .from('crm_task_template_items')
-          .select('*')
-          .in('template_id', tplIds)
-          .order('order_index');
-        
-        console.log(`[AUTO-TASK] Found ${allItems?.length || 0} template items, err=${itemErr?.message || 'none'}`);
-        
-        if (allItems?.length) {
-          const now = new Date();
-          // Group items by template to get stage_slug
-          const tplMap = {};
-          templates.forEach(t => { tplMap[t.id] = t; });
-          
-          const inserts = allItems.map(item => ({
-            lead_id: data.id,
-            title: item.title,
-            description: item.description || null,
-            priority: item.priority || 'medium',
-            stage_slug: tplMap[item.template_id]?.stage_slug || null,
-            order_index: item.order_index,
-            deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-            checklist: item.checklist || [],
-            default_allowed_companies: item.default_allowed_companies || null,
-            default_allowed_departments: item.default_allowed_departments || null,
-            created_by: req.user.userId,
-          }));
-          
-          const { error: insertErr } = await supabase.from('crm_tasks').insert(inserts);
-          if (insertErr) {
-            console.error(`[AUTO-TASK] Insert error:`, insertErr.message);
-          } else {
-            console.log(`[AUTO-TASK] ✅ Created ${inserts.length} tasks for lead ${data.id}`);
-          }
-        }
-      }
+      await autoGenCrmTasks(data.id, 'lead', req.user.userId);
     } catch (autoErr) { console.error('Auto-create tasks on lead create error:', autoErr.message); }
 
     res.status(201).json(data);
@@ -796,59 +845,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       });
     } catch (_) {}
 
-    // ✅ AUTO-CREATE default CRM tasks from ALL default templates for deal
+    // ✅ AUTO-CREATE default CRM tasks for deal
     try {
       // Delete old lead tasks (they were for lead stages)
       await supabase.from('crm_tasks').delete().eq('lead_id', req.params.id);
-
-      // Step 1: Get default templates for deal pipeline
-      const { data: templates, error: tplErr } = await supabase
-        .from('crm_task_templates')
-        .select('id, name, stage_slug, pipeline_type')
-        .eq('is_default', true).eq('is_active', true)
-        .or('pipeline_type.eq.deal,pipeline_type.eq.both,pipeline_type.is.null')
-        .order('order_index');
-      
-      console.log(`[AUTO-TASK] Deal ${req.params.id}: ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
-      
-      if (templates?.length) {
-        // Step 2: Get ALL items separately
-        const tplIds = templates.map(t => t.id);
-        const { data: allItems, error: itemErr } = await supabase
-          .from('crm_task_template_items')
-          .select('*')
-          .in('template_id', tplIds)
-          .order('order_index');
-        
-        console.log(`[AUTO-TASK] Found ${allItems?.length || 0} template items, err=${itemErr?.message || 'none'}`);
-        
-        if (allItems?.length) {
-          const now = new Date();
-          const tplMap = {};
-          templates.forEach(t => { tplMap[t.id] = t; });
-          
-          const inserts = allItems.map(item => ({
-            lead_id: req.params.id,
-            title: item.title,
-            description: item.description || null,
-            priority: item.priority || 'medium',
-            stage_slug: tplMap[item.template_id]?.stage_slug || null,
-            order_index: item.order_index,
-            deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-            checklist: item.checklist || [],
-            default_allowed_companies: item.default_allowed_companies || null,
-            default_allowed_departments: item.default_allowed_departments || null,
-            created_by: req.user.userId,
-          }));
-          
-          const { error: insertErr } = await supabase.from('crm_tasks').insert(inserts);
-          if (insertErr) {
-            console.error(`[AUTO-TASK] Insert error:`, insertErr.message);
-          } else {
-            console.log(`[AUTO-TASK] ✅ Created ${inserts.length} tasks for deal ${req.params.id}`);
-          }
-        }
-      }
+      await autoGenCrmTasks(req.params.id, 'deal', req.user.userId);
     } catch (autoErr) { console.error('Auto-create tasks on convert-to-deal error:', autoErr.message); }
 
     res.status(200).json({
