@@ -201,24 +201,27 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const uploadTaskFile = (taskId) => {
     const input = document.createElement('input');
     input.type = 'file';
+    input.multiple = true;
     input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf';
     input.onchange = async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
       try {
         const formData = new FormData();
-        formData.append('files', file);
+        files.forEach(f => formData.append('files', f));
         const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-        const uploaded = uploadRes.files?.[0];
-        if (!uploaded) throw new Error('Upload thất bại');
-        await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
-          name: file.name.replace(/\.[^.]+$/, ''),
-          doc_type: file.type.startsWith('image/') ? 'image' : file.name.match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
-          file_url: uploaded.file_url,
-          file_name: uploaded.file_name,
-          file_size: uploaded.file_size,
-          mime_type: uploaded.mime_type,
-        });
+        const uploaded = uploadRes.files || [];
+        for (const up of uploaded) {
+          const originalFile = files.find(f => f.name === up.original_name) || files[0];
+          await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
+            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+            doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+            file_url: up.file_url,
+            file_name: up.file_name,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+          });
+        }
         loadAttachments(taskId);
       } catch (err) { alert(err.response?.data?.error || err.message || 'Upload lỗi'); }
     };

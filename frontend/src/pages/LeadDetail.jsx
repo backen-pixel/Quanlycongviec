@@ -144,28 +144,31 @@ export default function LeadDetail() {
   const uploadDocument = async () => {
     const input = document.createElement('input');
     input.type = 'file';
+    input.multiple = true;
     input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf';
     input.onchange = async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
       try {
         const formData = new FormData();
-        formData.append('files', file); // backend expects 'files' field
+        files.forEach(f => formData.append('files', f));
         const { data: uploadRes } = await api.post('/upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
-        const uploaded = uploadRes.files?.[0];
-        if (!uploaded) throw new Error('Upload thất bại');
-        // Create document record
-        const { data: doc } = await api.post(`/crm/leads/${id}/documents`, {
-          name: file.name.replace(/\.[^.]+$/, ''),
-          doc_type: file.type.startsWith('image/') ? 'image' : file.name.match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
-          file_url: uploaded.file_url,
-          file_name: uploaded.file_name,
-          file_size: uploaded.file_size,
-          mime_type: uploaded.mime_type,
-        });
-        setDocuments(prev => [doc, ...prev]);
+        const uploaded = uploadRes.files || [];
+        const newDocs = [];
+        for (const up of uploaded) {
+          const { data: doc } = await api.post(`/crm/leads/${id}/documents`, {
+            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+            doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+            file_url: up.file_url,
+            file_name: up.file_name,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+          });
+          newDocs.push(doc);
+        }
+        setDocuments(prev => [...newDocs, ...prev]);
       } catch (err) {
         alert(err.response?.data?.error || err.message || 'Upload lỗi');
       }
