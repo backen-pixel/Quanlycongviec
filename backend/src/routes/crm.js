@@ -1175,7 +1175,7 @@ r.post('/leads/:id/create-project', async (req, res) => {
       description: deal.description || `Dự án từ Deal ${deal.code}`,
       customer_id: deal.customer_id || null,
       company_id: deal.company_id || null,
-      status: 'production',
+      status: 'consulting',
       current_stage_id: firstStage?.id || null,
       flow_id: flow_id || null,
       install_address: deal.customer?.address || null,
