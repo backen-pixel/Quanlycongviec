@@ -98,37 +98,43 @@ export default function CreateProject() {
   useEffect(() => {
     if (!dealId || autoReady || autoSubmitRef.current) return;
     if (form.name && selectedFlow && flowDetail) {
-      setAutoStatus('Đã tải xong! Tự động tạo dự án...');
       setAutoReady(true);
     }
   }, [form.name, selectedFlow, flowDetail, dealId]);
 
-  // Start countdown when autoReady
+  // Auto-step through tabs: info(1s) → flow(2s) → files(1s) → submit
   useEffect(() => {
     if (!autoReady || !dealId) return;
+    const steps = [
+      { delay: 0, action: () => { setActiveTab('info'); setAutoStatus('📋 Kiểm tra thông tin...'); } },
+      { delay: 1500, action: () => { setActiveTab('flow'); setAutoStatus('🔄 Chọn quy trình & nhiệm vụ...'); } },
+      { delay: 3500, action: () => { setActiveTab('files'); setAutoStatus('📎 Kiểm tra tệp đính kèm...'); } },
+      { delay: 5000, action: () => {
+        setAutoStatus('🚀 Đang tạo dự án...');
+        if (!autoSubmitRef.current) { autoSubmitRef.current = true; autoSubmit(); }
+      }},
+    ];
+    const timers = steps.map(s => setTimeout(s.action, s.delay));
     setAutoCountdown(5);
-    autoTimerRef.current = setInterval(() => {
+    const countdownTimer = setInterval(() => {
       setAutoCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(autoTimerRef.current);
-          // Auto submit
-          if (!autoSubmitRef.current) {
-            autoSubmitRef.current = true;
-            autoSubmit();
-          }
-          return 0;
-        }
+        if (prev <= 1) { clearInterval(countdownTimer); return 0; }
         return prev - 1;
       });
     }, 1000);
-    return () => { if (autoTimerRef.current) clearInterval(autoTimerRef.current); };
+    autoTimerRef.current = { timers, countdownTimer };
+    return () => { timers.forEach(clearTimeout); clearInterval(countdownTimer); };
   }, [autoReady]);
 
   const cancelAutoCreate = () => {
-    if (autoTimerRef.current) clearInterval(autoTimerRef.current);
+    if (autoTimerRef.current) {
+      (autoTimerRef.current.timers || []).forEach(clearTimeout);
+      clearInterval(autoTimerRef.current.countdownTimer);
+    }
     setAutoCountdown(null);
     setAutoStatus('');
     setAutoReady(false);
+    autoSubmitRef.current = false;
   };
 
   const autoSubmit = async () => {
@@ -377,48 +383,42 @@ export default function CreateProject() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Auto-create overlay for deal flow */}
-      {dealId && autoCountdown !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl w-full max-w-md p-8 shadow-2xl text-center">
-            {autoCountdown > 0 ? (
-              <>
-                <div className="relative w-24 h-24 mx-auto mb-5">
-                  <svg className="w-24 h-24 -rotate-90" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="44" fill="none" stroke="#e5e7eb" strokeWidth="8" />
-                    <circle cx="50" cy="50" r="44" fill="none" stroke="#3b82f6" strokeWidth="8"
-                      strokeDasharray={`${44 * 2 * Math.PI}`}
-                      strokeDashoffset={`${44 * 2 * Math.PI * (1 - autoCountdown / 5)}`}
-                      strokeLinecap="round" className="transition-all duration-1000" />
-                  </svg>
-                  <span className="absolute inset-0 flex items-center justify-center text-3xl font-bold text-blue-600">{autoCountdown}</span>
-                </div>
-                <h2 className="text-xl font-bold text-gray-900 mb-2">🎉 Deal Thắng!</h2>
-                <p className="text-sm text-gray-500 mb-1">Hệ thống đang chuẩn bị tạo dự án tự động</p>
-                <p className="text-sm text-gray-600 font-medium">{autoStatus}</p>
-                <div className="mt-6 flex gap-3 justify-center">
-                  <button onClick={cancelAutoCreate}
-                    className="h-10 px-5 border border-gray-300 rounded-xl text-sm font-medium hover:bg-gray-50 cursor-pointer">
-                    ✋ Tôi muốn chỉnh sửa
-                  </button>
-                  <button onClick={() => { if (autoTimerRef.current) clearInterval(autoTimerRef.current); setAutoCountdown(0); if (!autoSubmitRef.current) { autoSubmitRef.current = true; autoSubmit(); } }}
-                    className="h-10 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold cursor-pointer">
-                    🚀 Tạo ngay
-                  </button>
-                </div>
-              </>
-            ) : loading ? (
-              <>
-                <div className="animate-spin h-16 w-16 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto mb-5" />
-                <h2 className="text-xl font-bold text-gray-900 mb-2">Đang tạo dự án...</h2>
-                <p className="text-sm text-gray-500">{autoStatus}</p>
-              </>
-            ) : (
-              <>
-                <div className="text-5xl mb-4">{autoStatus.startsWith('✅') ? '🎉' : '⚠️'}</div>
-                <h2 className="text-xl font-bold text-gray-900 mb-2">{autoStatus}</h2>
-              </>
-            )}
+      {/* Auto-create banner (không chặn UI) */}
+      {dealId && autoCountdown !== null && autoCountdown > 0 && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center justify-between animate-in">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-full font-bold text-lg">{autoCountdown}</div>
+            <div>
+              <p className="font-semibold">🎉 Deal Thắng — Tự động tạo dự án</p>
+              <p className="text-sm text-white/80">{autoStatus}</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={cancelAutoCreate}
+              className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition">
+              ✋ Chỉnh sửa thủ công
+            </button>
+            <button onClick={() => {
+              if (autoTimerRef.current) {
+                (autoTimerRef.current.timers || []).forEach(clearTimeout);
+                clearInterval(autoTimerRef.current.countdownTimer);
+              }
+              setAutoCountdown(0);
+              if (!autoSubmitRef.current) { autoSubmitRef.current = true; autoSubmit(); }
+            }}
+              className="h-9 px-4 bg-white text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-semibold cursor-pointer transition">
+              🚀 Tạo ngay
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Auto-create: đang tạo */}
+      {dealId && autoCountdown === 0 && loading && (
+        <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
+          <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full" />
+          <div>
+            <p className="font-semibold">🚀 Đang tạo dự án...</p>
+            <p className="text-sm text-white/80">{autoStatus}</p>
           </div>
         </div>
       )}
