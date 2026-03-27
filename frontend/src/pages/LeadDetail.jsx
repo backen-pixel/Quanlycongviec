@@ -173,13 +173,14 @@ export default function LeadDetail() {
     input.click();
   };
 
-  const addTextDocument = async (name, docType, notes, allowedDepartments) => {
+  const addTextDocument = async (name, docType, notes, allowedDepartments, allowedCompanies) => {
     try {
       const { data: doc } = await api.post(`/crm/leads/${id}/documents`, {
         name,
         doc_type: docType || 'other',
         notes,
         allowed_departments: allowedDepartments || null,
+        allowed_companies: allowedCompanies || null,
       });
       setDocuments(prev => [doc, ...prev]);
     } catch (err) {
@@ -488,8 +489,8 @@ export default function LeadDetail() {
       {showAddDoc && (
         <AddDocumentModal
           onClose={() => setShowAddDoc(false)}
-          onSave={(name, docType, notes, allowedDepts) => {
-            addTextDocument(name, docType, notes, allowedDepts);
+          onSave={(name, docType, notes, allowedDepts, allowedCompanies) => {
+            addTextDocument(name, docType, notes, allowedDepts, allowedCompanies);
             setShowAddDoc(false);
           }}
         />
@@ -609,7 +610,7 @@ function DocumentRow({ doc, onDelete }) {
             <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
             <div className="flex items-center gap-1.5">
               <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}{isImage ? ' • 🖼️' : ''}</p>
-              {doc.allowed_departments && doc.allowed_departments.length > 0 && (
+              {(doc.allowed_departments?.length > 0 || doc.allowed_companies?.length > 0) && (
                 <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded-full font-medium">🔒 Giới hạn</span>
               )}
             </div>
@@ -703,16 +704,31 @@ function AddDocumentModal({ onClose, onSave }) {
   const [name, setName] = useState('');
   const [docType, setDocType] = useState('requirement');
   const [notes, setNotes] = useState('');
+  const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
-  const [allowedDepts, setAllowedDepts] = useState([]); // empty = all can see
+  const [allowedCompanies, setAllowedCompanies] = useState([]);
+  const [allowedDepts, setAllowedDepts] = useState([]);
 
   useEffect(() => {
-    api.get('/departments').then(r => setDepartments(r.data?.departments || r.data || [])).catch(() => {});
+    Promise.all([
+      api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {}),
+      api.get('/departments').then(r => setDepartments(r.data?.departments || r.data || [])).catch(() => {}),
+    ]);
   }, []);
 
-  const toggleDept = (deptId) => {
-    setAllowedDepts(prev => prev.includes(deptId) ? prev.filter(id => id !== deptId) : [...prev, deptId]);
+  const toggleCompany = (id) => {
+    setAllowedCompanies(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
+  const toggleDept = (id) => {
+    setAllowedDepts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  // Phòng ban thuộc công ty đã chọn
+  const filteredDepts = allowedCompanies.length > 0
+    ? departments.filter(d => allowedCompanies.includes(d.company_id))
+    : departments;
+
+  const hasRestriction = allowedCompanies.length > 0 || allowedDepts.length > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -742,30 +758,61 @@ function AddDocumentModal({ onClose, onSave }) {
               placeholder="Nhập nội dung tài liệu, yêu cầu khách hàng, ghi chú kích thước, chất liệu mong muốn..."
             />
           </div>
+
           {/* Phân quyền xem */}
-          <div>
-            <label className="text-xs font-medium text-gray-700">🔒 Ai được xem? <span className="text-gray-400 font-normal">(không chọn = tất cả)</span></label>
-            <div className="flex flex-wrap gap-1.5 mt-1.5">
-              {departments.map(d => (
-                <button key={d.id} type="button" onClick={() => toggleDept(d.id)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all ${
-                    allowedDepts.includes(d.id)
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}>
-                  {d.name}
-                </button>
-              ))}
+          <div className="bg-gray-50 rounded-xl p-3 space-y-3">
+            <label className="text-xs font-bold text-gray-700 flex items-center gap-1">🔒 Phân quyền xem <span className="text-gray-400 font-normal">(không chọn = tất cả)</span></label>
+            
+            {/* Công ty */}
+            <div>
+              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">🏢 Công ty</p>
+              <div className="flex flex-wrap gap-1.5">
+                {companies.map(c => (
+                  <button key={c.id} type="button" onClick={() => toggleCompany(c.id)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all ${
+                      allowedCompanies.includes(c.id)
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}>
+                    {c.name}
+                  </button>
+                ))}
+              </div>
             </div>
-            {allowedDepts.length > 0 && (
-              <p className="text-[10px] text-blue-600 mt-1">✓ Chỉ {allowedDepts.length} phòng ban + Admin được xem</p>
+
+            {/* Phòng ban */}
+            <div>
+              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">🏬 Phòng ban {allowedCompanies.length > 0 && <span className="text-gray-400 font-normal">(lọc theo Cty đã chọn)</span>}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {filteredDepts.map(d => (
+                  <button key={d.id} type="button" onClick={() => toggleDept(d.id)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all ${
+                      allowedDepts.includes(d.id)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}>
+                    {d.name}
+                  </button>
+                ))}
+                {filteredDepts.length === 0 && <p className="text-[10px] text-gray-400 italic">Không có phòng ban</p>}
+              </div>
+            </div>
+
+            {hasRestriction && (
+              <p className="text-[10px] text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                ✓ Chỉ {allowedCompanies.length > 0 ? `${allowedCompanies.length} công ty` : ''}{allowedCompanies.length > 0 && allowedDepts.length > 0 ? ' + ' : ''}{allowedDepts.length > 0 ? `${allowedDepts.length} phòng ban` : ''} + Admin được xem
+              </p>
             )}
           </div>
         </div>
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className="flex-1 h-9 border rounded-lg text-sm cursor-pointer">Hủy</button>
           <button
-            onClick={() => { if (!name.trim()) return alert('Nhập tên tài liệu'); if (!notes.trim()) return alert('Nhập nội dung'); onSave(name, docType, notes, allowedDepts.length > 0 ? allowedDepts : null); }}
+            onClick={() => {
+              if (!name.trim()) return alert('Nhập tên tài liệu');
+              if (!notes.trim()) return alert('Nhập nội dung');
+              onSave(name, docType, notes, allowedDepts.length > 0 ? allowedDepts : null, allowedCompanies.length > 0 ? allowedCompanies : null);
+            }}
             className="flex-1 h-9 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium cursor-pointer"
           >
             Lưu tài liệu

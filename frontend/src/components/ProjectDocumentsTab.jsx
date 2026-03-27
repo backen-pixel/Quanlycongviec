@@ -332,7 +332,7 @@ function LeadDocumentCard({ doc }) {
             {doc.created_at && <span>• {formatDateTime(doc.created_at)}</span>}
             {isFile && <span>• {doc.file_name}</span>}
             {doc.file_size && <span>• {(doc.file_size / 1024).toFixed(0)} KB</span>}
-            {doc.allowed_departments && doc.allowed_departments.length > 0 && (
+            {(doc.allowed_departments?.length > 0 || doc.allowed_companies?.length > 0) && (
               <span className="bg-red-50 text-red-600 px-1 py-0.5 rounded-full font-medium">🔒 Giới hạn</span>
             )}
           </div>
