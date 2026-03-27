@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -52,6 +52,9 @@ export default function CRMTemplatesPage() {
   const [activeTab, setActiveTab] = useState('deal');
   const [editingChecklist, setEditingChecklist] = useState({});
   const [newCheckItem, setNewCheckItem] = useState({});
+  const [editingVisibility, setEditingVisibility] = useState({}); // {itemId: true/false}
+  const [companies, setCompanies] = useState([]);
+  const [departments, setDepartments] = useState([]);
 
   const currentStages = activeTab === 'lead' ? LEAD_STAGES : DEAL_STAGES;
 
@@ -63,10 +66,16 @@ export default function CRMTemplatesPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/crm/task-templates');
-      setTemplates(data || []);
+      const [tplRes, compRes, deptRes] = await Promise.all([
+        api.get('/crm/task-templates'),
+        api.get('/companies').catch(() => ({ data: [] })),
+        api.get('/departments').catch(() => ({ data: [] })),
+      ]);
+      setTemplates(tplRes.data || []);
+      setCompanies(compRes.data?.companies || compRes.data || []);
+      setDepartments(deptRes.data?.departments || deptRes.data || []);
       const exp = {};
-      (data || []).forEach(t => { exp[t.id] = true; });
+      (tplRes.data || []).forEach(t => { exp[t.id] = true; });
       setExpanded(exp);
     } catch {}
     setLoading(false);
@@ -127,6 +136,28 @@ export default function CRMTemplatesPage() {
       await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, { checklist });
       load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
+  const updateItemVisibility = async (tplId, itemId, allowedCompanies, allowedDepts) => {
+    try {
+      await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, {
+        default_allowed_companies: allowedCompanies?.length ? allowedCompanies : null,
+        default_allowed_departments: allowedDepts?.length ? allowedDepts : null,
+      });
+      load();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
+  const toggleItemCompany = (tplId, itemId, companyId, item) => {
+    const current = item.default_allowed_companies || [];
+    const next = current.includes(companyId) ? current.filter(x => x !== companyId) : [...current, companyId];
+    updateItemVisibility(tplId, itemId, next, item.default_allowed_departments);
+  };
+
+  const toggleItemDept = (tplId, itemId, deptId, item) => {
+    const current = item.default_allowed_departments || [];
+    const next = current.includes(deptId) ? current.filter(x => x !== deptId) : [...current, deptId];
+    updateItemVisibility(tplId, itemId, item.default_allowed_companies, next);
   };
 
   const addChecklistItem = async (tplId, itemId) => {
@@ -455,6 +486,12 @@ function TemplateCard({
                           item.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                         }`}>{item.priority === 'urgent' ? 'Gấp' : item.priority === 'high' ? 'Cao' : item.priority === 'medium' ? 'TB' : 'Thấp'}</span>
                         {item.deadline_days > 0 && <span className="text-[10px] text-gray-400">+{item.deadline_days}d</span>}
+                        {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
+                          <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
+                        )}
+                        <button onClick={() => setEditingVisibility(p => ({ ...p, [item.id]: !p[item.id] }))}
+                          className={`p-1 cursor-pointer ${(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) ? 'text-red-500 hover:text-red-700' : 'text-gray-400 hover:text-purple-600'}`} title="Phân quyền xem">
+                          <Shield className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setEditingChecklist(p => ({ ...p, [item.id]: !p[item.id] }))}
                           className="p-1 text-gray-400 hover:text-emerald-600 cursor-pointer" title="Checklist mẫu">
                           <CheckSquare className="h-3.5 w-3.5" /></button>
@@ -462,6 +499,36 @@ function TemplateCard({
                           className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 cursor-pointer">
                           <Trash2 className="h-3 w-3" /></button>
                       </div>
+                      {editingVisibility[item.id] && (
+                        <div className="mx-2 mb-2 p-3 bg-purple-50 rounded-lg border border-purple-200 space-y-2">
+                          <p className="text-[10px] text-purple-600 font-bold uppercase">🔒 Phân quyền mặc định — tài liệu upload ở nhiệm vụ này</p>
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🏢 Công ty</p>
+                            <div className="flex flex-wrap gap-1">
+                              {companies.map(c => (
+                                <button key={c.id} type="button" onClick={() => toggleItemCompany(tpl.id, item.id, c.id, item)}
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium cursor-pointer ${
+                                    (item.default_allowed_companies || []).includes(c.id) ? 'bg-purple-600 text-white' : 'bg-white text-gray-600 border'
+                                  }`}>{c.name}</button>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🏬 Phòng ban</p>
+                            <div className="flex flex-wrap gap-1">
+                              {departments.map(d => (
+                                <button key={d.id} type="button" onClick={() => toggleItemDept(tpl.id, item.id, d.id, item)}
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium cursor-pointer ${
+                                    (item.default_allowed_departments || []).includes(d.id) ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border'
+                                  }`}>{d.name}</button>
+                              ))}
+                            </div>
+                          </div>
+                          {!(item.default_allowed_companies?.length) && !(item.default_allowed_departments?.length) && (
+                            <p className="text-[10px] text-gray-400 italic">Chưa giới hạn — tất cả đều xem được</p>
+                          )}
+                        </div>
+                      )}
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}
