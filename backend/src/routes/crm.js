@@ -376,13 +376,14 @@ r.post('/leads', async (req, res) => {
         'crm_lead', data.id);
     }
 
-    // ✅ AUTO-CREATE default CRM tasks from ALL default templates (lead + both)
+    // ✅ AUTO-CREATE default CRM tasks from default templates (lead + both)
     try {
-      // Step 1: Get all default templates
+      // Step 1: Get default templates for lead pipeline
       const { data: templates, error: tplErr } = await supabase
         .from('crm_task_templates')
-        .select('id, name, stage_slug')
+        .select('id, name, stage_slug, pipeline_type')
         .eq('is_default', true).eq('is_active', true)
+        .or('pipeline_type.eq.lead,pipeline_type.eq.both,pipeline_type.is.null')
         .order('order_index');
       
       console.log(`[AUTO-TASK] Lead ${data.id}: ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
@@ -818,11 +819,12 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       // Delete old lead tasks (they were for lead stages)
       await supabase.from('crm_tasks').delete().eq('lead_id', req.params.id);
 
-      // Step 1: Get all default templates
+      // Step 1: Get default templates for deal pipeline
       const { data: templates, error: tplErr } = await supabase
         .from('crm_task_templates')
-        .select('id, name, stage_slug')
+        .select('id, name, stage_slug, pipeline_type')
         .eq('is_default', true).eq('is_active', true)
+        .or('pipeline_type.eq.deal,pipeline_type.eq.both,pipeline_type.is.null')
         .order('order_index');
       
       console.log(`[AUTO-TASK] Deal ${req.params.id}: ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
