@@ -39,6 +39,7 @@ export default function CreateProject() {
   const [expandedTasks, setExpandedTasks] = useState({});
   const [activeTab, setActiveTab] = useState('info');
   const [errors, setErrors] = useState({});
+  const [dealDocuments, setDealDocuments] = useState([]);
   const [addedTasks, setAddedTasks] = useState({}); // { templateSetId_stageId: [{ title, description, order_index, _temp_id }] }
   const [showAddTask, setShowAddTask] = useState(null); // { templateSetId, stageId, stageName }
   const [newTask, setNewTask] = useState({ title: '', description: '' });
@@ -67,6 +68,10 @@ export default function CreateProject() {
             estimated_value: deal.estimated_value ? String(deal.estimated_value) : f.estimated_value,
           }));
         }
+      }).catch(() => {});
+      // Load deal documents (lead_documents đã bao gồm task attachments synced)
+      api.get(`/crm/leads/${dealId}/documents`).then(r => {
+        setDealDocuments(r.data || []);
       }).catch(() => {});
     }
   }, []);
@@ -886,8 +891,56 @@ export default function CreateProject() {
         {/* TAB 3: TỆP */}
         {activeTab === 'files' && (
           <div className="space-y-6">
+            {/* Deal Documents (từ CRM tasks + tài liệu lead/deal) */}
+            {dealId && dealDocuments.length > 0 && (
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-3 text-sm flex items-center gap-2">
+                  📎 Tài Liệu Từ Deal ({dealDocuments.length})
+                </h4>
+                <div className="space-y-2">
+                  {dealDocuments.map(doc => (
+                    <div key={doc.id} className="flex items-center justify-between p-3 bg-purple-50 rounded-lg border border-purple-200">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        {doc.file_url ? (
+                          <FileText className="h-5 w-5 text-purple-600 shrink-0" />
+                        ) : (
+                          <span className="text-lg shrink-0">📝</span>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            {doc.is_from_task && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Từ nhiệm vụ</span>}
+                            {doc.doc_type && doc.doc_type !== 'other' && <span>{doc.doc_type}</span>}
+                            {doc.file_size && <span>{(doc.file_size / 1024).toFixed(0)} KB</span>}
+                          </div>
+                          {doc.notes && !doc.file_url && (
+                            <p className="text-xs text-gray-600 mt-1 line-clamp-2">{doc.notes}</p>
+                          )}
+                        </div>
+                      </div>
+                      {doc.file_url && (
+                        <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                          className="p-2 text-purple-600 hover:bg-purple-100 rounded-lg text-xs font-medium">
+                          Xem ↗
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {dealId && dealDocuments.length === 0 && (
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 text-center text-sm text-gray-500">
+                Deal chưa có tài liệu nào
+              </div>
+            )}
+
+            {/* Upload thêm tệp mới */}
             <div>
-              <label className="block text-sm font-semibold text-gray-900 mb-3">Báo Giá & Tài Liệu</label>
+              <label className="block text-sm font-semibold text-gray-900 mb-3">
+                {dealId ? 'Thêm Tệp Mới' : 'Báo Giá & Tài Liệu'}
+              </label>
               <div className="bg-gray-50 rounded-lg p-8 border-2 border-dashed border-gray-300 text-center">
                 <FileText className="h-12 w-12 mx-auto mb-3 text-gray-400" />
                 <FileUploadButton

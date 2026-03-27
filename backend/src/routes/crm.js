@@ -558,17 +558,23 @@ r.get('/leads/:id/documents', async (req, res) => {
     if (error) throw error;
     
     const filtered = (data || []).filter(doc => canViewDocument(doc, user));
+
+    // Mark documents that came from task attachments
+    const result = filtered.map(doc => ({
+      ...doc,
+      is_from_task: !!doc.source_attachment_id,
+    }));
     
-    res.json(filtered);
+    res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Add document to lead
+// Add document to lead + sync → crm_task_attachments (nếu có task_id)
 r.post('/leads/:id/documents', async (req, res) => {
   try {
-    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_departments, allowed_companies } = req.body;
+    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_departments, allowed_companies, task_id } = req.body;
     
     // Get project_id from lead/deal (for sync)
     const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', req.params.id).single();
@@ -592,15 +598,47 @@ r.post('/leads/:id/documents', async (req, res) => {
       .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
       .single();
     if (error) throw error;
+
+    // ── SYNC → crm_task_attachments (nếu có task_id) ──
+    if (task_id) {
+      try {
+        await supabase.from('crm_task_attachments').insert({
+          task_id, lead_id: req.params.id,
+          name: data.name, doc_type: data.doc_type, file_url: data.file_url,
+          file_name: data.file_name, file_size: data.file_size, mime_type: data.mime_type,
+          notes: data.notes,
+          allowed_companies: allowed_companies || null,
+          allowed_departments: allowed_departments || null,
+          created_by: req.user.userId,
+          source_document_id: data.id,
+        });
+      } catch (syncErr) { console.warn('Sync document→attachment:', syncErr.message); }
+    }
+
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Delete document
+// Delete document + sync xóa crm_task_attachment liên kết
 r.delete('/leads/:id/documents/:docId', async (req, res) => {
   try {
+    // Check if this doc was synced FROM a task attachment
+    const { data: doc } = await supabase.from('lead_documents')
+      .select('source_attachment_id').eq('id', req.params.docId).single();
+    
+    // Xóa task attachment liên kết (nếu có)
+    if (doc?.source_attachment_id) {
+      await supabase.from('crm_task_attachments')
+        .delete().eq('id', doc.source_attachment_id);
+    }
+    
+    // Xóa lead_documents liên kết ngược (nếu doc này là source cho attachment)
+    await supabase.from('crm_task_attachments')
+      .delete().eq('source_document_id', req.params.docId);
+
+    // Xóa document chính
     const { error } = await supabase
       .from('lead_documents')
       .delete()
@@ -2250,15 +2288,55 @@ r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
 // TASK NOTES & ATTACHMENTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-// UPDATE task notes (quick text note on task itself)
+// UPDATE task notes (quick text note on task itself) + sync ghi chú → lead_documents
 r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
   try {
     const { notes } = req.body;
     const { data, error } = await supabase.from('crm_tasks')
       .update({ notes, updated_at: new Date().toISOString() })
       .eq('id', req.params.taskId)
-      .select('id, notes').single();
+      .select('id, title, notes').single();
     if (error) throw error;
+
+    // Sync: upsert ghi chú vào lead_documents
+    // Tìm attachment type "task_note" cho task này
+    if (notes?.trim()) {
+      try {
+        const { data: existingAtt } = await supabase.from('crm_task_attachments')
+          .select('id')
+          .eq('task_id', req.params.taskId)
+          .eq('doc_type', 'task_inline_note')
+          .limit(1).single();
+        
+        if (existingAtt) {
+          // Update existing
+          await supabase.from('crm_task_attachments')
+            .update({ notes, name: `📝 ${data.title}` })
+            .eq('id', existingAtt.id);
+          // Sync lead_document
+          await supabase.from('lead_documents')
+            .update({ notes, name: `[${data.title}] 📝 Ghi chú` })
+            .eq('source_attachment_id', existingAtt.id);
+        } else {
+          // Create new attachment + document
+          const { data: att } = await supabase.from('crm_task_attachments').insert({
+            task_id: req.params.taskId, lead_id: req.params.leadId,
+            name: `📝 ${data.title}`, doc_type: 'task_inline_note', notes,
+            created_by: req.user.userId,
+          }).select().single();
+          if (att) {
+            const { data: lead } = await supabase.from('crm_leads')
+              .select('project_id').eq('id', req.params.leadId).single();
+            await supabase.from('lead_documents').insert({
+              lead_id: req.params.leadId, project_id: lead?.project_id || null,
+              name: `[${data.title}] 📝 Ghi chú`, doc_type: 'task_inline_note',
+              notes, created_by: req.user.userId, source_attachment_id: att.id,
+            });
+          }
+        }
+      } catch (syncErr) { console.warn('Sync task notes:', syncErr.message); }
+    }
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2309,13 +2387,35 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
       .single();
     if (error) throw error;
+
+    // ── SYNC → lead_documents ──
+    try {
+      const { data: task } = await supabase.from('crm_tasks')
+        .select('title').eq('id', req.params.taskId).single();
+      const { data: lead } = await supabase.from('crm_leads')
+        .select('project_id').eq('id', req.params.leadId).single();
+      await supabase.from('lead_documents').insert({
+        lead_id: req.params.leadId,
+        project_id: lead?.project_id || null,
+        name: `[${task?.title || 'Task'}] ${data.name}`,
+        doc_type: data.doc_type, file_url: data.file_url, file_name: data.file_name,
+        file_size: data.file_size, mime_type: data.mime_type, notes: data.notes,
+        allowed_companies: finalCompanies, allowed_departments: finalDepts,
+        created_by: req.user.userId, source_attachment_id: data.id,
+      });
+    } catch (syncErr) { console.warn('Sync attachment→document:', syncErr.message); }
+
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// DELETE attachment
+// DELETE attachment + sync xóa lead_document liên kết
 r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => {
   try {
+    // Xóa lead_document liên kết trước (vì có FK ON DELETE SET NULL)
+    await supabase.from('lead_documents').delete()
+      .eq('source_attachment_id', req.params.attId);
+    // Xóa attachment
     const { error } = await supabase.from('crm_task_attachments')
       .delete().eq('id', req.params.attId).eq('task_id', req.params.taskId);
     if (error) throw error;
