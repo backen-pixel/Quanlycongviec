@@ -67,13 +67,31 @@ async function autoGenCrmTasks(leadId, type, userId) {
     ? 'pipeline_type.eq.deal,pipeline_type.eq.both,pipeline_type.is.null'
     : 'pipeline_type.eq.lead,pipeline_type.eq.both,pipeline_type.is.null';
 
-  // Step 1: Get default templates
-  const { data: templates } = await supabase
+  // Step 1: Get default templates (is_default=true)
+  let { data: templates, error: tplErr } = await supabase
     .from('crm_task_templates')
     .select('id, name, stage_slug, pipeline_type')
     .eq('is_default', true).eq('is_active', true)
     .or(pipelineFilter)
     .order('order_index');
+
+  console.log(`[AUTO-TASK] ${type} ${leadId}: found ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
+
+  // Fallback: nếu không có default → lấy tất cả active templates
+  if (!templates?.length) {
+    const { data: allTemplates } = await supabase
+      .from('crm_task_templates')
+      .select('id, name, stage_slug, pipeline_type')
+      .eq('is_active', true)
+      .or(pipelineFilter)
+      .order('order_index');
+    templates = allTemplates || [];
+    console.log(`[AUTO-TASK] ${type} ${leadId}: fallback all active = ${templates.length} templates`);
+  }
+
+  if (templates?.length) {
+    templates.forEach(t => console.log(`  → template: "${t.name}" stage=${t.stage_slug} pipeline=${t.pipeline_type}`));
+  }
 
   let inserts = [];
   const now = new Date();
@@ -81,11 +99,13 @@ async function autoGenCrmTasks(leadId, type, userId) {
   if (templates?.length) {
     // Step 2: Get ALL items
     const tplIds = templates.map(t => t.id);
-    const { data: allItems } = await supabase
+    const { data: allItems, error: itemErr } = await supabase
       .from('crm_task_template_items')
       .select('*')
       .in('template_id', tplIds)
       .order('order_index');
+
+    console.log(`[AUTO-TASK] ${type} ${leadId}: found ${allItems?.length || 0} template items, err=${itemErr?.message || 'none'}`);
 
     if (allItems?.length) {
       const tplMap = {};
@@ -2480,6 +2500,7 @@ r.post('/task-templates', async (req, res) => {
     const { data, error } = await supabase.from('crm_task_templates').insert({
       name: b.name, stage_slug: b.stage_slug, description: b.description || null,
       is_default: b.is_default || false, order_index: b.order_index || 0,
+      pipeline_type: b.pipeline_type || 'both',
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -2489,7 +2510,7 @@ r.post('/task-templates', async (req, res) => {
 r.put('/task-templates/:id', async (req, res) => {
   try {
     const update = {};
-    ['name', 'stage_slug', 'description', 'is_default', 'is_active', 'order_index'].forEach(f => {
+    ['name', 'stage_slug', 'description', 'is_default', 'is_active', 'order_index', 'pipeline_type'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase.from('crm_task_templates').update(update).eq('id', req.params.id).select().single();
