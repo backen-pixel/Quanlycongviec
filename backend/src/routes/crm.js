@@ -134,9 +134,6 @@ async function autoGenCrmTasks(leadId, type, userId) {
         stage_slug: tplMap[item.template_id]?.stage_slug || null,
         order_index: item.order_index,
         deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-        checklist: item.checklist || [],
-        default_allowed_companies: item.default_allowed_companies || null,
-        default_allowed_departments: item.default_allowed_departments || null,
         created_by: userId,
       }));
     }
@@ -153,7 +150,6 @@ async function autoGenCrmTasks(leadId, type, userId) {
       stage_slug: item.stage_slug,
       order_index: item.order_index,
       deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-      checklist: [],
       created_by: userId,
     }));
     console.log(`[AUTO-TASK] No templates in DB, using ${inserts.length} fallback ${type} tasks`);
@@ -1002,7 +998,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
                   lead_id: req.params.id, title: item.title, description: item.description || null,
                   priority: item.priority || 'medium', stage_slug: stageSlug, order_index: item.order_index,
                   deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-                  checklist: item.checklist || [], created_by: req.user.userId,
+                  created_by: req.user.userId,
                 }));
                 await supabase.from('crm_tasks').insert(inserts);
                 console.log(`Auto-created ${inserts.length} CRM tasks for ${stageSlug} on lead ${req.params.id}`);
@@ -1081,7 +1077,6 @@ r.patch('/leads/:id/stage', async (req, res) => {
                   status: 'pending',
                   priority: t.priority || 'medium',
                   order_index: t.order_index,
-                  checklist: t.checklist || [],
                   estimated_hours: t.estimated_hours || null,
                   created_by_id: req.user.userId,
                 }));
@@ -2386,7 +2381,6 @@ r.post('/leads/:id/tasks', async (req, res) => {
       assignee_id: b.assignee_id || null,
       supervisor_id: b.supervisor_id || null,
       deadline: b.deadline || null,
-      checklist: b.checklist || [],
       created_by: req.user.userId,
     }).select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
     if (error) throw error;
@@ -2415,7 +2409,6 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       stage_slug: tpl?.stage_slug || null,
       order_index: item.order_index,
       deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-      checklist: item.checklist || [],
       created_by: req.user.userId,
     }));
 
@@ -2431,7 +2424,7 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline','checklist'];
+    const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     if (b.status === 'completed' && !b.completed_at) update.completed_at = new Date().toISOString();
     if (b.status && b.status !== 'completed') update.completed_at = null;
