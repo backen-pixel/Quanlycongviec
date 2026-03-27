@@ -121,7 +121,7 @@ BEGIN
   IF v_tpl_set_id IS NOT NULL THEN
     FOR v_task IN
       SELECT title, description, stage_id, order_index,
-             priority, estimated_hours, assignee_role
+             priority, estimated_hours
       FROM company_template_tasks
       WHERE template_set_id = v_tpl_set_id
       ORDER BY stage_id, order_index
