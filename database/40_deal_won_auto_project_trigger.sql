@@ -120,7 +120,7 @@ BEGIN
 
   IF v_tpl_set_id IS NOT NULL THEN
     FOR v_task IN
-      SELECT title, description, stage_id, order_index, checklist,
+      SELECT title, description, stage_id, order_index,
              priority, estimated_hours, assignee_role
       FROM company_template_tasks
       WHERE template_set_id = v_tpl_set_id
@@ -128,7 +128,7 @@ BEGIN
     LOOP
       INSERT INTO tasks (
         project_id, stage_id, title, description,
-        status, priority, order_index, checklist,
+        status, priority, order_index,
         estimated_hours, created_by_id
       ) VALUES (
         v_project_id,
@@ -138,7 +138,6 @@ BEGIN
         'pending',
         COALESCE(v_task.priority, 'medium'),
         v_task.order_index,
-        COALESCE(v_task.checklist, '[]'::jsonb),
         v_task.estimated_hours,
         NEW.created_by
       );
