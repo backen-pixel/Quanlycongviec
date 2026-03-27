@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks,
-  BookOpen, FolderTree
+  BookOpen, FolderTree, Factory
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -109,6 +109,26 @@ const CRM_MENU_GROUPS = [
   },
 ];
 
+// PRODUCTION (SẢN XUẤT) menu structure
+const SX_MENU_GROUPS = [
+  {
+    id: 'sx-overview',
+    title: '1. Tổng quan',
+    emoji: '🏭',
+    items: [
+      { to: '/sx', icon: LayoutDashboard, label: 'Dashboard SX', end: true },
+    ]
+  },
+  {
+    id: 'sx-projects',
+    title: '2. Dự án',
+    emoji: '📦',
+    items: [
+      { to: '/sx', icon: FolderKanban, label: 'Dự án SX', end: true },
+    ]
+  },
+];
+
 function SideLink({ to, icon: Icon, label, collapsed, end }) {
   return (
     <NavLink
@@ -175,7 +195,8 @@ export default function Sidebar() {
 
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
   const isCRM = location.pathname.startsWith('/crm');
-  const activeMenuGroups = isCRM ? CRM_MENU_GROUPS : MENU_GROUPS;
+  const isSX = location.pathname.startsWith('/sx');
+  const activeMenuGroups = isSX ? SX_MENU_GROUPS : isCRM ? CRM_MENU_GROUPS : MENU_GROUPS;
 
   // Close app switcher on outside click
   useEffect(() => {
@@ -206,7 +227,7 @@ export default function Sidebar() {
             <div className="flex-1 p-5 space-y-3">
               {/* Công việc */}
               <button onClick={() => { setShowAppSwitcher(false); navigate('/dashboard'); }}
-                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${!isCRM ? 'bg-blue-50 border-blue-200 hover:border-blue-400' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
+                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${!isCRM && !isSX ? 'bg-blue-50 border-blue-200 hover:border-blue-400' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
                 <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
                   <CheckSquare className="h-6 w-6 text-white" />
                 </div>
@@ -214,7 +235,7 @@ export default function Sidebar() {
                   <h3 className="text-sm font-bold text-gray-900">Công việc</h3>
                   <p className="text-xs text-gray-500 mt-0.5">Quản lý dự án & nhiệm vụ</p>
                 </div>
-                {!isCRM && <span className="ml-auto text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
+                {!isCRM && !isSX && <span className="ml-auto text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
               </button>
               {/* CRM */}
               <button onClick={() => { setShowAppSwitcher(false); navigate('/crm'); }}
@@ -227,6 +248,18 @@ export default function Sidebar() {
                   <p className="text-xs text-gray-500 mt-0.5">Quản lý khách hàng & bán hàng</p>
                 </div>
                 {isCRM && <span className="ml-auto text-[10px] px-2 py-0.5 bg-emerald-600 text-white rounded-full font-bold">Đang dùng</span>}
+              </button>
+              {/* Sản xuất */}
+              <button onClick={() => { setShowAppSwitcher(false); navigate('/sx'); }}
+                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${isSX ? 'bg-orange-50 border-orange-200 hover:border-orange-400' : 'bg-gray-50 border-gray-200 hover:border-orange-400 hover:bg-orange-50'}`}>
+                <div className="w-12 h-12 rounded-xl bg-orange-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                  <Factory className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-sm font-bold text-gray-900">Sản xuất</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Quản lý sản xuất & vận chuyển</p>
+                </div>
+                {isSX && <span className="ml-auto text-[10px] px-2 py-0.5 bg-orange-600 text-white rounded-full font-bold">Đang dùng</span>}
               </button>
             </div>
             <div className="px-5 py-3 border-t border-gray-100">
@@ -250,17 +283,21 @@ export default function Sidebar() {
           <Grid3X3 className="h-5 w-5 text-white" />
         </button>
         {/* Active app indicator — clickable to switch */}
-        <button onClick={() => navigate(isCRM ? '/dashboard' : '/crm')}
+        <button onClick={() => {
+          if (isCRM) navigate('/dashboard');
+          else if (isSX) navigate('/dashboard');
+          else navigate('/crm');
+        }}
           className={`flex items-center gap-2 flex-1 rounded-lg px-2 py-1.5 transition-colors cursor-pointer ${
-            isCRM ? 'bg-emerald-500/20 hover:bg-emerald-500/30' : 'bg-white/5 hover:bg-white/10'
-          }`} title={isCRM ? 'Đang ở CRM — Click để chuyển Công việc' : 'Đang ở Công việc — Click để chuyển CRM'}>
-          <div className={`flex items-center justify-center w-7 h-7 rounded-md text-white text-sm ${isCRM ? 'bg-emerald-500/40' : 'bg-blue-500/30'}`}>
-            {isCRM ? '💼' : '📋'}
+            isCRM ? 'bg-emerald-500/20 hover:bg-emerald-500/30' : isSX ? 'bg-orange-500/20 hover:bg-orange-500/30' : 'bg-white/5 hover:bg-white/10'
+          }`} title={isCRM ? 'Đang ở CRM — Click để chuyển Công việc' : isSX ? 'Đang ở Sản xuất — Click để chuyển Công việc' : 'Đang ở Công việc — Click để chuyển CRM'}>
+          <div className={`flex items-center justify-center w-7 h-7 rounded-md text-white text-sm ${isCRM ? 'bg-emerald-500/40' : isSX ? 'bg-orange-500/40' : 'bg-blue-500/30'}`}>
+            {isCRM ? '💼' : isSX ? '🏭' : '📋'}
           </div>
           {!collapsed && (
             <div className="flex-1 text-left">
-              <h1 className="text-sm font-bold text-white leading-tight">{isCRM ? 'CRM' : 'Công việc'}</h1>
-              <p className="text-[10px] text-white/50 leading-tight">Nhấn để chuyển → {isCRM ? 'Công việc' : 'CRM'}</p>
+              <h1 className="text-sm font-bold text-white leading-tight">{isCRM ? 'CRM' : isSX ? 'Sản xuất' : 'Công việc'}</h1>
+              <p className="text-[10px] text-white/50 leading-tight">Nhấn để chuyển → {isCRM ? 'Công việc' : isSX ? 'Công việc' : 'CRM'}</p>
             </div>
           )}
         </button>

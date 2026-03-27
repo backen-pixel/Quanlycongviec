@@ -22,6 +22,8 @@ import ApprovalRulesPage from './pages/ApprovalRulesPage';
 import EcosystemPage from './pages/EcosystemPage';
 import EcosystemLevelsPage from './pages/EcosystemLevelsPage';
 import CRMDashboard from './pages/CRMDashboard';
+import ProductionDashboard from './pages/ProductionDashboard';
+import ProductionDetail from './pages/ProductionDetail';
 import QuotationsPage from './pages/QuotationsPage';
 import QuotationForm from './pages/QuotationForm';
 import OrdersPage from './pages/OrdersPage';
@@ -173,6 +175,8 @@ export default function App() {
             <Route path="/crm/task-templates" element={<CRMTemplatesPage />} />
             <Route path="/crm/auto-project-config" element={<AutoProjectConfigPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
+            <Route path="/sx" element={<ProductionDashboard />} />
+            <Route path="/sx/projects/:id" element={<ProductionDetail />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />
             <Route path="/settings" element={
