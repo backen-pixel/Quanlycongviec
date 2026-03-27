@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { FileUploadButton } from '../components/FileUpload';
@@ -44,7 +44,17 @@ export default function CreateProject() {
   const [showAddTask, setShowAddTask] = useState(null); // { templateSetId, stageId, stageName }
   const [newTask, setNewTask] = useState({ title: '', description: '' });
 
+  // Auto-create state for deal_id flow
+  const [autoCountdown, setAutoCountdown] = useState(null); // seconds remaining
+  const [autoStatus, setAutoStatus] = useState(''); // loading message
+  const [autoReady, setAutoReady] = useState(false); // all data loaded?
+  const autoTimerRef = useRef(null);
+  const autoSubmitRef = useRef(false); // prevent double submit
+
   useEffect(() => {
+    let flowLoaded = false;
+    let dealLoaded = !dealId; // if no deal, already "loaded"
+
     Promise.all([
       api.get('/customers').then(r => setCustomers(r.data.customers || [])).catch(() => {}),
       api.get('/flows').then(r => {
@@ -52,10 +62,12 @@ export default function CreateProject() {
         setFlows(list);
         const def = list.find(f => f.is_default);
         if (def) selectFlow(def);
+        flowLoaded = true;
       }).catch(() => setFlows([])),
     ]);
     // Auto-fill from deal
     if (dealId) {
+      setAutoStatus('Đang tải thông tin deal...');
       api.get(`/crm/leads/${dealId}/detail`).then(r => {
         const deal = r.data;
         if (deal) {
@@ -68,13 +80,92 @@ export default function CreateProject() {
             estimated_value: deal.estimated_value ? String(deal.estimated_value) : f.estimated_value,
           }));
         }
-      }).catch(() => {});
-      // Load deal documents (lead_documents đã bao gồm task attachments synced)
+        dealLoaded = true;
+        checkAutoReady(flowLoaded, dealLoaded);
+      }).catch(() => { dealLoaded = true; checkAutoReady(flowLoaded, dealLoaded); });
+      // Load deal documents
       api.get(`/crm/leads/${dealId}/documents`).then(r => {
         setDealDocuments(r.data || []);
       }).catch(() => {});
     }
+
+    return () => { if (autoTimerRef.current) clearInterval(autoTimerRef.current); };
   }, []);
+
+  const checkAutoReady = () => {}; // placeholder, logic moved to useEffect below
+
+  // Auto-detect readiness: deal info loaded + flow selected + flow detail loaded
+  useEffect(() => {
+    if (!dealId || autoReady || autoSubmitRef.current) return;
+    if (form.name && selectedFlow && flowDetail) {
+      setAutoStatus('Đã tải xong! Tự động tạo dự án...');
+      setAutoReady(true);
+    }
+  }, [form.name, selectedFlow, flowDetail, dealId]);
+
+  // Start countdown when autoReady
+  useEffect(() => {
+    if (!autoReady || !dealId) return;
+    setAutoCountdown(5);
+    autoTimerRef.current = setInterval(() => {
+      setAutoCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(autoTimerRef.current);
+          // Auto submit
+          if (!autoSubmitRef.current) {
+            autoSubmitRef.current = true;
+            autoSubmit();
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => { if (autoTimerRef.current) clearInterval(autoTimerRef.current); };
+  }, [autoReady]);
+
+  const cancelAutoCreate = () => {
+    if (autoTimerRef.current) clearInterval(autoTimerRef.current);
+    setAutoCountdown(null);
+    setAutoStatus('');
+    setAutoReady(false);
+  };
+
+  const autoSubmit = async () => {
+    setAutoStatus('🚀 Đang tạo dự án...');
+    setLoading(true);
+    try {
+      const payload = {
+        name: form.name?.trim() || 'Dự án mới',
+        description: form.description || null,
+        customer_id: form.customer_id || null,
+        install_address: form.install_address || null,
+        estimated_value: form.estimated_value ? +form.estimated_value : null,
+        priority: form.priority || 'medium',
+        flow_id: selectedFlow?.id || null,
+        flow_assignments: (flowDetail?.steps || [])
+          .filter(s => s.company_unit_id)
+          .map(s => ({
+            division_unit_id: s.division_unit_id,
+            company_unit_id: s.company_unit_id,
+            template_set_id: selectedTemplateSets[s.company_unit_id] || null,
+            order_index: s.order_index,
+          })),
+        quotation_files: [],
+        task_assignments: taskAssignees,
+        added_tasks: [],
+        deal_id: dealId,
+        deadline: form.deadline || null,
+      };
+      const { data } = await api.post('/projects/create-with-flow', payload);
+      setAutoStatus('✅ Tạo dự án thành công!');
+      setTimeout(() => navigate(`/projects/${data.project.id}`), 800);
+    } catch (e) {
+      setAutoStatus('❌ Lỗi: ' + (e.response?.data?.error || e.message));
+      setLoading(false);
+      setAutoCountdown(null);
+    }
+  };
 
   const set = (k, v) => {
     if (k === 'estimated_value') {
@@ -286,6 +377,51 @@ export default function CreateProject() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      {/* Auto-create overlay for deal flow */}
+      {dealId && autoCountdown !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-md p-8 shadow-2xl text-center">
+            {autoCountdown > 0 ? (
+              <>
+                <div className="relative w-24 h-24 mx-auto mb-5">
+                  <svg className="w-24 h-24 -rotate-90" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="44" fill="none" stroke="#e5e7eb" strokeWidth="8" />
+                    <circle cx="50" cy="50" r="44" fill="none" stroke="#3b82f6" strokeWidth="8"
+                      strokeDasharray={`${44 * 2 * Math.PI}`}
+                      strokeDashoffset={`${44 * 2 * Math.PI * (1 - autoCountdown / 5)}`}
+                      strokeLinecap="round" className="transition-all duration-1000" />
+                  </svg>
+                  <span className="absolute inset-0 flex items-center justify-center text-3xl font-bold text-blue-600">{autoCountdown}</span>
+                </div>
+                <h2 className="text-xl font-bold text-gray-900 mb-2">🎉 Deal Thắng!</h2>
+                <p className="text-sm text-gray-500 mb-1">Hệ thống đang chuẩn bị tạo dự án tự động</p>
+                <p className="text-sm text-gray-600 font-medium">{autoStatus}</p>
+                <div className="mt-6 flex gap-3 justify-center">
+                  <button onClick={cancelAutoCreate}
+                    className="h-10 px-5 border border-gray-300 rounded-xl text-sm font-medium hover:bg-gray-50 cursor-pointer">
+                    ✋ Tôi muốn chỉnh sửa
+                  </button>
+                  <button onClick={() => { if (autoTimerRef.current) clearInterval(autoTimerRef.current); setAutoCountdown(0); if (!autoSubmitRef.current) { autoSubmitRef.current = true; autoSubmit(); } }}
+                    className="h-10 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold cursor-pointer">
+                    🚀 Tạo ngay
+                  </button>
+                </div>
+              </>
+            ) : loading ? (
+              <>
+                <div className="animate-spin h-16 w-16 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto mb-5" />
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Đang tạo dự án...</h2>
+                <p className="text-sm text-gray-500">{autoStatus}</p>
+              </>
+            ) : (
+              <>
+                <div className="text-5xl mb-4">{autoStatus.startsWith('✅') ? '🎉' : '⚠️'}</div>
+                <h2 className="text-xl font-bold text-gray-900 mb-2">{autoStatus}</h2>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div data-tour="create-header" className="flex items-center justify-between">
         <div>
