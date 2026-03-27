@@ -68,6 +68,28 @@ export default function LeadDetail() {
       setStagesDeal(stagesDealRes.data || []);
       setFlows(flowsRes || []);
       setAllUsers(usersRes || []);
+
+      // Auto mở modal tạo dự án nếu deal ở stage Thắng + chưa có project
+      if (leadRes?.type === 'deal' && !leadRes?.project_id) {
+        const dealStages = stagesDealRes.data || [];
+        const currentStage = dealStages.find(s => s.id === leadRes.stage_id);
+        if (currentStage?.is_won) {
+          try {
+            const { data: setup } = await api.get(`/crm/leads/${id}/project-setup`);
+            setShowCreateProjectModal(setup);
+            const defaultFlow = setup.flows?.find(f => f.is_default) || setup.flows?.[0];
+            setSelectedFlow(defaultFlow?.id || null);
+            const sorted = [...(setup.template_sets || [])].sort((a, b) => b.task_count - a.task_count);
+            const best = sorted.find(s => s.is_default) || sorted[0];
+            if (best) {
+              setSelectedTplSet(best.id);
+              // Inline preview fetch
+              const { data: preview } = await api.get(`/crm/leads/${id}/preview-project-tasks?template_set_id=${best.id}`);
+              setPreviewTasks(preview || []);
+            }
+          } catch (_) {}
+        }
+      }
     } catch (e) { console.error(e); }
     setLoading(false);
   };
