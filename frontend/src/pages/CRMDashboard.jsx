@@ -102,8 +102,9 @@ export default function CRMDashboard() {
         else setDeals(prevDeals);
       }
 
-      if (data.auto_project) {
-        alert(`🎉 Deal Thắng! Dự án "${data.auto_project.code}" đã được tạo tự động.`);
+      if (data.redirect_to_create) {
+        // Deal thắng → chuyển sang trang tạo dự án
+        navigate(data.redirect_to_create);
       }
     } catch (e) {
       console.error(e);

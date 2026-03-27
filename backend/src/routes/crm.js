@@ -919,10 +919,10 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     } catch (autoErr) { console.error('Auto-generate CRM tasks error:', autoErr.message); }
 
-    // Deal → Thắng: AUTO-CREATE PROJECT (chạy ngầm, không cần frontend)
-    let autoProject = null;
+    // Deal → Thắng: Notify + log activity, redirect user to manual project creation
+    let redirectToCreate = null;
     if (lead?.type === 'deal' && stage?.is_won) {
-      // Load deal full info
+      // Load deal full info for notification
       const { data: dealData } = await supabase.from('crm_leads')
         .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), assignee:users!crm_leads_assigned_to_fkey(id, full_name)')
         .eq('id', req.params.id).single();
@@ -937,191 +937,19 @@ r.patch('/leads/:id/stage', async (req, res) => {
           'crm_deal', req.params.id);
       }
 
-      // ✅ AUTO-CREATE PROJECT (dùng config từ auto_project_config)
-      try {
-        // Load config
-        const { data: autoConfig } = await supabase.from('auto_project_config').select('*').limit(1).single();
-        
-        // Get flow: from config hoặc flow đầu tiên
-        let flowId = autoConfig?.flow_id || null;
-        if (!flowId) {
-          const { data: flows } = await supabase.from('workflow_flows').select('id').limit(1);
-          flowId = flows?.[0]?.id || null;
-        }
+      // Activity log
+      await supabase.from('crm_activities').insert({
+        lead_id: req.params.id, type: 'note',
+        title: '🎉 Deal Thắng!',
+        description: `Deal "${dealData?.title}" đã chốt thành công. Vui lòng tạo dự án thủ công.`,
+        created_by: req.user.userId,
+      }).catch(() => {});
 
-        // Get first stage
-        const { data: firstStage } = await supabase.from('workflow_stages')
-          .select('id').is('company_id', null).eq('is_active', true).order('order_index').limit(1).single();
-
-        // Create project code
-        const year = new Date().getFullYear();
-        const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${year}-%`).order('code', { ascending: false }).limit(1);
-        const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) || 0 : 0;
-        const code = `TB-${year}-${String(lastNum + 1).padStart(3, '0')}`;
-
-        const { data: project, error: projErr } = await supabase.from('projects').insert({
-          code,
-          name: dealData?.title || lead.title,
-          status: autoConfig?.default_status || 'consulting',
-          customer_id: dealData?.customer_id || lead.customer_id,
-          estimated_value: dealData?.estimated_value || lead.estimated_value,
-          flow_id: flowId,
-          current_stage_id: firstStage?.id,
-          created_by: req.user.userId,
-          priority: autoConfig?.default_priority || 'medium',
-          company_id: dealData?.company_id || lead.company_id || null,
-        }).select('*').single();
-
-        if (!projErr && project) {
-          // Link deal to project
-          await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
-
-          // Sync documents
-          await supabase.from('lead_documents').update({ project_id: project.id }).eq('lead_id', req.params.id).is('project_id', null);
-
-          let totalProjectTasks = 0;
-          let totalCrmTasks = 0;
-
-          // ── 1. Tạo tasks dự án từ flow (giống thủ công) ──
-          if (flowId) {
-            const configAssignments = autoConfig?.flow_assignments || [];
-            
-            if (configAssignments.length > 0) {
-              // Có config phân công → dùng config
-              for (const assignment of configAssignments) {
-                const isKdStep = assignment.order_index === 0;
-                const skipFlowTasks = isKdStep && (autoConfig?.import_crm_tasks !== false);
-
-                await supabase.from('project_company_assignments').upsert({
-                  project_id: project.id,
-                  division_unit_id: assignment.division_unit_id,
-                  company_unit_id: assignment.company_unit_id || null,
-                  template_set_id: assignment.template_set_id || null,
-                  order_index: assignment.order_index || 0,
-                  status: skipFlowTasks ? 'done' : (assignment.order_index === 0 ? 'in_progress' : 'pending'),
-                  started_at: assignment.order_index === 0 ? new Date().toISOString() : null,
-                  completed_at: skipFlowTasks ? new Date().toISOString() : null,
-                }, { onConflict: 'project_id,division_unit_id' });
-
-                if (skipFlowTasks) {
-                  // Import CRM tasks → project tasks (KD step done)
-                  try {
-                    const { data: crmTasks } = await supabase.from('crm_tasks')
-                      .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), attachments:crm_task_attachments(*)')
-                      .eq('lead_id', req.params.id).order('order_index');
-                    
-                    const kdSlugMap = {
-                      'consulting': 'consulting', 'design': 'design', 'quotation': 'quotation', 'contract': 'contract',
-                      'deal_new': 'consulting', 'deal_quote_contract': 'quotation', 'deal_ordering': 'contract',
-                      'deal_schedule': 'contract', 'deal_shipping': 'delivery', 'deal_notes': 'consulting',
-                    };
-                    const { data: wfStages } = await supabase.from('workflow_stages').select('id, slug').eq('is_active', true);
-                    const stageBySlug = {};
-                    (wfStages || []).forEach(s => { const base = s.slug.replace(/-[a-f0-9]{8}$/, ''); if (!stageBySlug[base]) stageBySlug[base] = s; });
-
-                    for (let i = 0; i < (crmTasks || []).length; i++) {
-                      const ct = crmTasks[i];
-                      const targetSlug = kdSlugMap[ct.stage_slug] || 'consulting';
-                      const targetStage = stageBySlug[targetSlug];
-                      let desc = ct.description || '';
-                      if (ct.notes) desc += (desc ? '\n\n' : '') + '📝 ' + ct.notes;
-
-                      const { data: task } = await supabase.from('tasks').insert({
-                        project_id: project.id, stage_id: targetStage?.id || null,
-                        title: ct.title, description: desc || null,
-                        assignee_id: ct.assignee_id || null, priority: ct.priority || 'medium',
-                        status: 'done', completed_at: new Date().toISOString(),
-                        order_index: i, created_by_id: req.user.userId, task_type: 'project',
-                        metadata: { crm_task_id: ct.id, crm_stage_slug: ct.stage_slug, imported_from: 'crm_deal', deal_id: req.params.id },
-                      }).select().single();
-
-                      if (ct.checklist?.length && task) {
-                        for (let j = 0; j < ct.checklist.length; j++) {
-                          const ck = ct.checklist[j];
-                          await supabase.from('task_checklists').insert({
-                            task_id: task.id, title: typeof ck === 'string' ? ck : (ck.title || ck), order_index: j, is_completed: true,
-                          }).catch(() => {});
-                        }
-                      }
-                      if (task) totalProjectTasks++;
-                    }
-                    console.log(`[AUTO-PROJECT] Imported ${crmTasks?.length || 0} CRM tasks → project KD tasks (done)`);
-                  } catch (impErr) { console.warn('[AUTO-PROJECT] Import CRM tasks:', impErr.message); }
-                  continue;
-                }
-
-                // Generate tasks from flow step template
-                const { data: flowStep } = await supabase.from('workflow_flow_steps')
-                  .select('id').eq('flow_id', flowId).eq('division_unit_id', assignment.division_unit_id).single();
-                if (flowStep) {
-                  const stepTasks = await generateStepTasks({
-                    projectId: project.id, flowStepId: flowStep.id,
-                    templateSetId: assignment.template_set_id || null,
-                    userId: req.user.userId,
-                  });
-                  totalProjectTasks += stepTasks.length;
-                }
-              }
-            } else {
-              // Không có config phân công → dùng generateFlowTasks (auto tìm template mặc định)
-              const allTasks = await generateFlowTasks({
-                projectId: project.id, flowId, userId: req.user.userId,
-              });
-              totalProjectTasks = allTasks.length;
-            }
-          }
-
-          // ── 2. Tạo CRM tasks (nếu config bật) ──
-          if (autoConfig?.create_crm_tasks !== false) {
-            try {
-              const { data: templates } = await supabase.from('crm_task_templates')
-                .select('id, name, stage_slug').eq('is_default', true).eq('is_active', true).order('order_index');
-              if (templates?.length) {
-                const tplIds = templates.map(t => t.id);
-                const { data: allItems } = await supabase.from('crm_task_template_items')
-                  .select('*').in('template_id', tplIds).order('order_index');
-                if (allItems?.length) {
-                  const now = new Date();
-                  const tplMap = {}; templates.forEach(t => { tplMap[t.id] = t; });
-                  const inserts = allItems.map(item => ({
-                    lead_id: req.params.id, title: item.title, description: item.description || null,
-                    priority: item.priority || 'medium', stage_slug: tplMap[item.template_id]?.stage_slug || null,
-                    order_index: item.order_index,
-                    deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-                    checklist: item.checklist || [], created_by: req.user.userId,
-                  }));
-                  const { error: insertErr } = await supabase.from('crm_tasks').insert(inserts);
-                  if (!insertErr) totalCrmTasks = inserts.length;
-                }
-              }
-            } catch (crmErr) { console.warn('[AUTO-PROJECT] CRM tasks:', crmErr.message); }
-          }
-
-          console.log(`[AUTO-PROJECT] ✅ ${code}: ${totalProjectTasks} project tasks + ${totalCrmTasks} CRM tasks`);
-          autoProject = { ...project, tasks_created: totalProjectTasks, crm_tasks_created: totalCrmTasks, flow_id: flowId };
-          
-          // Activity log
-          await supabase.from('crm_activities').insert({
-            lead_id: req.params.id, type: 'note',
-            title: '🎉 Deal Thắng — Dự án đã tạo tự động!',
-            description: `Dự án "${code} - ${project.name}" — ${totalProjectTasks} nhiệm vụ dự án + ${totalCrmTasks} nhiệm vụ CRM`,
-            created_by: req.user.userId,
-          }).catch(() => {});
-        } else {
-          console.error('[AUTO-PROJECT] Failed:', projErr?.message);
-          await supabase.from('crm_activities').insert({
-            lead_id: req.params.id, type: 'note',
-            title: '🎉 Deal Thắng!',
-            description: 'Deal đã chốt thành công — Lỗi tạo dự án tự động, vui lòng tạo thủ công',
-            created_by: req.user.userId,
-          }).catch(() => {});
-        }
-      } catch (autoErr) {
-        console.error('[AUTO-PROJECT] Error:', autoErr.message);
-      }
+      // Tell frontend to redirect to project creation page
+      redirectToCreate = `/projects/create?deal_id=${req.params.id}`;
     }
 
-    res.json({ ...data, auto_project: autoProject });
+    res.json({ ...data, redirect_to_create: redirectToCreate });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
