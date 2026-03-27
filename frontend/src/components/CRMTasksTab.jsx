@@ -291,43 +291,14 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           </div>
         </div>
 
-        {/* Expanded: Notes + Attachments */}
+        {/* Expanded: Notes + Attachments (gộp 1 khu vực) */}
         {isExpanded && (
           <div className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-3 pt-3">
-            {/* Task Notes */}
-            <div>
-              <label className="text-[10px] font-semibold text-gray-500 uppercase mb-1 block">📝 Ghi chú</label>
-              <textarea
-                value={taskNoteText[task.id] ?? ''}
-                onChange={e => {
-                  const val = e.target.value;
-                  setTaskNoteText(p => ({ ...p, [task.id]: val }));
-                }}
-                placeholder="Nhập ghi chú cho nhiệm vụ này..."
-                rows={2}
-                className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-blue-400 resize-none"
-              />
-              <div className="flex justify-end mt-1">
-                <button onClick={() => saveTaskNotes(task.id)} disabled={savingNote === task.id}
-                  className={`px-2.5 py-1 rounded text-[10px] font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
-                    savingNote === 'saved-' + task.id
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-blue-600 text-white hover:bg-blue-700'
-                  }`}>
-                  <Save className="h-2.5 w-2.5" /> {savingNote === task.id ? 'Đang lưu...' : savingNote === 'saved-' + task.id ? '✓ Đã lưu' : 'Lưu ghi chú'}
-                </button>
-              </div>
-            </div>
-
-            {/* Attachments */}
+            {/* Ghi chú + Upload gộp chung */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-[10px] font-semibold text-gray-500 uppercase">📎 Đính kèm ({atts.length})</label>
+                <label className="text-[10px] font-semibold text-gray-500 uppercase">📝 Ghi chú & Đính kèm ({atts.length})</label>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => { setAddingAttNote(addingAttNote === task.id ? null : task.id); setAttNoteText(''); setAttNoteName(''); }}
-                    className="text-[10px] text-amber-600 hover:text-amber-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-amber-50">
-                    <MessageSquare className="h-3 w-3" /> Ghi chú
-                  </button>
                   {uploadingTask === task.id ? (
                     <span className="text-[10px] text-orange-600 flex items-center gap-1 px-1.5 py-0.5">
                       <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải...
@@ -341,23 +312,27 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                 </div>
               </div>
 
-              {/* Add text attachment form */}
-              {addingAttNote === task.id && (
-                <div className="bg-amber-50 rounded-lg p-2.5 mb-2 space-y-1.5 border border-amber-200">
-                  <input value={attNoteName} onChange={e => setAttNoteName(e.target.value)}
-                    placeholder="Tên ghi chú (VD: Yêu cầu KH, Ghi chú kích thước...)"
-                    className="w-full h-7 px-2 border rounded text-xs outline-none" />
-                  <textarea value={attNoteText} onChange={e => setAttNoteText(e.target.value)}
-                    placeholder="Nội dung..." rows={2}
-                    className="w-full px-2 py-1.5 border rounded text-xs outline-none resize-none" />
-                  <div className="flex gap-1.5">
-                    <button onClick={() => addAttachmentNote(task.id)}
-                      className="px-2.5 py-1 bg-amber-500 text-white rounded text-[10px] font-medium cursor-pointer hover:bg-amber-600">Thêm</button>
-                    <button onClick={() => setAddingAttNote(null)}
-                      className="px-2.5 py-1 bg-gray-100 rounded text-[10px] cursor-pointer">Hủy</button>
-                  </div>
-                </div>
-              )}
+              {/* Ghi chú (textarea) */}
+              <textarea
+                value={taskNoteText[task.id] ?? ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setTaskNoteText(p => ({ ...p, [task.id]: val }));
+                }}
+                placeholder="Nhập ghi chú cho nhiệm vụ này..."
+                rows={2}
+                className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-blue-400 resize-none mb-1.5"
+              />
+              <div className="flex justify-end mb-2">
+                <button onClick={() => saveTaskNotes(task.id)} disabled={savingNote === task.id}
+                  className={`px-2.5 py-1 rounded text-[10px] font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
+                    savingNote === 'saved-' + task.id
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}>
+                  <Save className="h-2.5 w-2.5" /> {savingNote === task.id ? 'Đang lưu...' : savingNote === 'saved-' + task.id ? '✓ Đã lưu' : 'Lưu ghi chú'}
+                </button>
+              </div>
 
               {/* Attachment list */}
               {atts.length > 0 && (
@@ -393,7 +368,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                   })}
                 </div>
               )}
-              {atts.length === 0 && addingAttNote !== task.id && (
+              {atts.length === 0 && (
                 <p className="text-[10px] text-gray-400 italic">Chưa có đính kèm</p>
               )}
             </div>
