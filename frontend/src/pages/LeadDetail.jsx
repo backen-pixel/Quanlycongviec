@@ -39,6 +39,7 @@ export default function LeadDetail() {
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [activeTab, setActiveTab] = useState('tasks');
+  const [uploadingDoc, setUploadingDoc] = useState(false);
 
   useEffect(() => { load(); }, [id]);
 
@@ -149,6 +150,7 @@ export default function LeadDetail() {
     input.onchange = async (e) => {
       const files = Array.from(e.target.files || []);
       if (!files.length) return;
+      setUploadingDoc(true);
       try {
         const formData = new FormData();
         files.forEach(f => formData.append('files', f));
@@ -156,22 +158,21 @@ export default function LeadDetail() {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
         const uploaded = uploadRes.files || [];
-        const newDocs = [];
-        for (const up of uploaded) {
-          const { data: doc } = await api.post(`/crm/leads/${id}/documents`, {
+        const newDocs = await Promise.all(uploaded.map(up =>
+          api.post(`/crm/leads/${id}/documents`, {
             name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
             doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
             file_url: up.file_url,
             file_name: up.file_name,
             file_size: up.file_size,
             mime_type: up.mime_type,
-          });
-          newDocs.push(doc);
-        }
+          }).then(r => r.data)
+        ));
         setDocuments(prev => [...newDocs, ...prev]);
       } catch (err) {
         alert(err.response?.data?.error || err.message || 'Upload lỗi');
       }
+      setUploadingDoc(false);
     };
     input.click();
   };
@@ -420,9 +421,15 @@ export default function LeadDetail() {
                       <button onClick={() => setShowAddDoc(true)} className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
                         <Plus className="h-3.5 w-3.5" /> Nhập văn bản
                       </button>
-                      <button onClick={uploadDocument} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
-                        <FileUp className="h-3.5 w-3.5" /> Upload file
-                      </button>
+                      {uploadingDoc ? (
+                        <span className="h-8 px-3 bg-orange-100 text-orange-700 rounded-lg text-xs font-medium flex items-center gap-1.5">
+                          <span className="animate-spin h-3.5 w-3.5 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải lên...
+                        </span>
+                      ) : (
+                        <button onClick={uploadDocument} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                          <FileUp className="h-3.5 w-3.5" /> Upload file
+                        </button>
+                      )}
                     </div>
                   </div>
 
