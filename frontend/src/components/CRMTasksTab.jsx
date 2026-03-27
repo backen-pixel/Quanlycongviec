@@ -161,6 +161,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const [taskAttachments, setTaskAttachments] = useState({});
   const [taskNoteText, setTaskNoteText] = useState({});
   const [savingNote, setSavingNote] = useState(null);
+  const [uploadingTask, setUploadingTask] = useState(null); // taskId đang upload
   const [addingAttNote, setAddingAttNote] = useState(null);
   const [attNoteText, setAttNoteText] = useState('');
   const [attNoteName, setAttNoteName] = useState('');
@@ -206,24 +207,26 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     input.onchange = async (e) => {
       const files = Array.from(e.target.files || []);
       if (!files.length) return;
+      setUploadingTask(taskId);
       try {
         const formData = new FormData();
         files.forEach(f => formData.append('files', f));
         const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
         const uploaded = uploadRes.files || [];
-        for (const up of uploaded) {
-          const originalFile = files.find(f => f.name === up.original_name) || files[0];
-          await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
+        // Tạo attachments song song
+        await Promise.all(uploaded.map(up =>
+          api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
             name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
             doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
             file_url: up.file_url,
             file_name: up.file_name,
             file_size: up.file_size,
             mime_type: up.mime_type,
-          });
-        }
+          })
+        ));
         loadAttachments(taskId);
       } catch (err) { alert(err.response?.data?.error || err.message || 'Upload lỗi'); }
+      setUploadingTask(null);
     };
     input.click();
   };
@@ -326,10 +329,16 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                     className="text-[10px] text-amber-600 hover:text-amber-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-amber-50">
                     <MessageSquare className="h-3 w-3" /> Ghi chú
                   </button>
-                  <button onClick={() => uploadTaskFile(task.id)}
-                    className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50">
-                    <FileUp className="h-3 w-3" /> Upload file
-                  </button>
+                  {uploadingTask === task.id ? (
+                    <span className="text-[10px] text-orange-600 flex items-center gap-1 px-1.5 py-0.5">
+                      <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải...
+                    </span>
+                  ) : (
+                    <button onClick={() => uploadTaskFile(task.id)}
+                      className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50">
+                      <FileUp className="h-3 w-3" /> Upload file
+                    </button>
+                  )}
                 </div>
               </div>
 
