@@ -610,6 +610,9 @@ function DocumentRow({ doc, onDelete }) {
             <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
             <div className="flex items-center gap-1.5">
               <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}{isImage ? ' • 🖼️' : ''}</p>
+              {doc.is_from_task && (
+                <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full font-medium">📌 Từ nhiệm vụ</span>
+              )}
               {(doc.allowed_departments?.length > 0 || doc.allowed_companies?.length > 0) && (
                 <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded-full font-medium">🔒 Giới hạn</span>
               )}
