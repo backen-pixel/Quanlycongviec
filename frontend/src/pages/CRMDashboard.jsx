@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatVND, formatDate } from '../lib/utils';
 import {
   TrendingUp, Users, DollarSign, Target, Phone, Mail, MapPin,
@@ -12,6 +13,7 @@ import {
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
 export default function CRMDashboard() {
+  const { user } = useAuth();
   const [dataLead, setDataLead] = useState(null);
   const [dataDeal, setDataDeal] = useState(null);
   const [leads, setLeads] = useState([]);
@@ -285,7 +287,7 @@ export default function CRMDashboard() {
           sources={sources}
           companies={companies}
           type={pipelineType}
-          defaultCompanyId={filterCompany}
+          defaultCompanyId={filterCompany || user?.company_id}
         />
       )}
     </div>
@@ -501,6 +503,7 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.title) return alert('Nhập tên lead');
+    if (!formData.company_id) return alert('Vui lòng chọn công ty');
     if (!formData.customer_name) return alert('Nhập tên khách hàng');
     
     if (!formData.customer_phone) {
@@ -559,21 +562,21 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId }) {
             />
           </div>
 
-          {(companies || []).length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty</label>
-              <select
-                value={formData.company_id}
-                onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              >
-                <option value="">-- Chọn công ty --</option>
-                {(companies || []).map(c => (
-                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty *</label>
+            <select
+              value={formData.company_id}
+              onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
+              required
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}
+            >
+              <option value="">-- Chọn công ty --</option>
+              {(companies || []).map(c => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+            {!formData.company_id && <p className="text-xs text-red-500 mt-1">Bắt buộc chọn công ty</p>}
+          </div>
 
           <div className="bg-blue-50 rounded-lg p-4 space-y-3">
             <p className="text-xs font-bold text-blue-800 uppercase">👤 Khách hàng mới</p>
