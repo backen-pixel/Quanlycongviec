@@ -1013,15 +1013,107 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     } catch (autoErr) { console.error('Auto-generate CRM tasks error:', autoErr.message); }
 
-    // Deal → Thắng: Notify + log activity, redirect user to manual project creation
+    // Deal → Thắng: Auto tạo dự án + gen tasks + notify
     let redirectToCreate = null;
+    let autoProjectId = null;
     if (lead?.type === 'deal' && stage?.is_won) {
-      // Load deal full info for notification
+      // Load deal full info
       const { data: dealData } = await supabase.from('crm_leads')
         .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), assignee:users!crm_leads_assigned_to_fkey(id, full_name)')
         .eq('id', req.params.id).single();
-      
-      // ✅ NOTIFICATION: Notify admin users about deal won
+
+      // ── AUTO CREATE PROJECT (nếu trigger chưa tạo) ──
+      try {
+        // Check if trigger already created project
+        const { data: refreshed } = await supabase.from('crm_leads')
+          .select('project_id').eq('id', req.params.id).single();
+        
+        if (!refreshed?.project_id) {
+          // Generate code
+          const yr = new Date().getFullYear();
+          const { data: lastP } = await supabase.from('projects').select('code')
+            .like('code', `TB-${yr}-%`).order('code', { ascending: false }).limit(1);
+          const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop()) || 0 : 0;
+          const code = `TB-${yr}-${String(lastNum + 1).padStart(3, '0')}`;
+
+          // Get first stage
+          const { data: firstStage } = await supabase.from('workflow_stages')
+            .select('id').eq('slug', 'consulting').limit(1).single();
+
+          // Create project
+          const { data: project, error: projErr } = await supabase.from('projects').insert({
+            code,
+            name: dealData?.title || 'Dự án mới',
+            description: dealData?.description || `Dự án tự động từ Deal ${dealData?.code}`,
+            customer_id: dealData?.customer_id || null,
+            company_id: dealData?.company_id || null,
+            status: 'consulting',
+            current_stage_id: firstStage?.id || null,
+            install_address: dealData?.customer?.address || null,
+            estimated_value: dealData?.estimated_value || null,
+            priority: 'medium',
+            sales_person_id: dealData?.assigned_to || null,
+            consult_date: new Date().toISOString(),
+          }).select().single();
+
+          if (!projErr && project) {
+            autoProjectId = project.id;
+            // Link project to deal
+            await supabase.from('crm_leads').update({ project_id: project.id }).eq('id', req.params.id);
+
+            // Gen project tasks from company template
+            const { data: tplSet } = await supabase.from('company_template_sets')
+              .select('id')
+              .or(`company_id.eq.${dealData?.company_id || '00000000-0000-0000-0000-000000000000'},company_id.is.null`)
+              .eq('is_default', true)
+              .order('company_id', { ascending: false, nullsFirst: false })
+              .limit(1).single();
+
+            if (tplSet) {
+              const { data: tplTasks } = await supabase.from('company_template_tasks')
+                .select('*').eq('template_set_id', tplSet.id).order('stage_id').order('order_index');
+              if (tplTasks?.length) {
+                const taskInserts = tplTasks.map(t => ({
+                  project_id: project.id,
+                  stage_id: t.stage_id,
+                  title: t.title,
+                  description: t.description || null,
+                  status: 'pending',
+                  priority: t.priority || 'medium',
+                  order_index: t.order_index,
+                  checklist: t.checklist || [],
+                  estimated_hours: t.estimated_hours || null,
+                  created_by_id: req.user.userId,
+                }));
+                await supabase.from('tasks').insert(taskInserts);
+                console.log(`[DEAL WON] Auto-created project ${code} + ${taskInserts.length} tasks`);
+              }
+            }
+
+            // Fallback: nếu không có template tasks → tạo 1 task/stage
+            const { data: existTasks } = await supabase.from('tasks').select('id').eq('project_id', project.id).limit(1);
+            if (!existTasks?.length) {
+              const { data: stages } = await supabase.from('workflow_stages')
+                .select('id, name')
+                .in('slug', ['consulting', 'design', 'quotation', 'contract', 'production', 'shipping', 'installation', 'customer-care'])
+                .order('order_index');
+              if (stages?.length) {
+                const fallbackTasks = stages.map((s, i) => ({
+                  project_id: project.id, stage_id: s.id,
+                  title: `Công việc ${s.name}`, status: 'pending',
+                  priority: 'medium', order_index: 1, created_by_id: req.user.userId,
+                }));
+                await supabase.from('tasks').insert(fallbackTasks);
+                console.log(`[DEAL WON] Fallback: created ${fallbackTasks.length} default tasks for ${code}`);
+              }
+            }
+          }
+        } else {
+          autoProjectId = refreshed.project_id;
+        }
+      } catch (projAutoErr) { console.error('[DEAL WON] Auto project error:', projAutoErr.message); }
+
+      // ✅ NOTIFICATION
       const { data: adminUsers } = await supabase.from('users').select('id').eq('role', 'admin');
       const adminIds = (adminUsers || []).map(u => u.id);
       if (adminIds.length > 0) {
@@ -1036,13 +1128,17 @@ r.patch('/leads/:id/stage', async (req, res) => {
         await supabase.from('crm_activities').insert({
           lead_id: req.params.id, type: 'note',
           title: '🎉 Deal Thắng!',
-          description: `Deal "${dealData?.title}" đã chốt thành công. Vui lòng tạo dự án thủ công.`,
+          description: autoProjectId
+            ? `Deal "${dealData?.title}" đã chốt thành công. Dự án đã được tạo tự động.`
+            : `Deal "${dealData?.title}" đã chốt thành công.`,
           created_by: req.user.userId,
         });
       } catch (_) {}
 
-      // Tell frontend to redirect to project creation page
-      redirectToCreate = `/projects/create?deal_id=${req.params.id}`;
+      // Redirect to project detail if auto-created, otherwise to create page
+      redirectToCreate = autoProjectId
+        ? `/projects/${autoProjectId}`
+        : `/projects/create?deal_id=${req.params.id}`;
     }
 
     res.json({ ...data, redirect_to_create: redirectToCreate });
