@@ -99,14 +99,13 @@ export default function CRMDashboard() {
       
       if (data.requires_conversion) {
         alert('Để chuyển Lead sang Deal, vui lòng dùng nút "Chuyển sang Deal" trên trang chi tiết.');
-        // Revert
         if (pipelineType === 'lead') setLeads(prevLeads);
         else setDeals(prevDeals);
       }
 
-      if (data.redirect_to_create) {
-        // Deal thắng → chuyển sang trang tạo dự án
-        navigate(data.redirect_to_create);
+      if (data.deal_won) {
+        // Deal thắng → mở trang chi tiết deal để tạo dự án
+        navigate(`/crm/leads/${itemId}`);
       }
     } catch (e) {
       console.error(e);
