@@ -523,6 +523,66 @@ r.post('/leads', async (req, res) => {
   }
 });
 
+// ── CREATE DEAL DIRECTLY (skip Lead) ──────────────────────────────────────
+r.post('/deals', async (req, res) => {
+  try {
+    const body = { ...req.body };
+    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id'].forEach(f => {
+      if (body[f] === '' || body[f] === undefined) body[f] = null;
+    });
+
+    // Validate required
+    if (!body.title) return res.status(400).json({ error: 'Nhập tên Deal' });
+    if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
+
+    // Auto-assign to creator
+    if (!body.assigned_to) body.assigned_to = req.user.userId;
+
+    // Get first deal stage
+    const { data: firstStage } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('pipeline_type', 'deal')
+      .eq('is_active', true)
+      .order('order_index')
+      .limit(1)
+      .single();
+    if (!firstStage) return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên' });
+
+    const code = await nextCode('DEAL');
+    const { data, error } = await supabase.from('crm_leads')
+      .insert({
+        ...body,
+        code,
+        type: 'deal',
+        stage_id: body.stage_id || firstStage.id,
+        lead_owner_id: req.user.userId,
+        created_by: req.user.userId,
+      })
+      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
+      .single();
+    if (error) throw error;
+
+    // Notify assigned person if different from creator
+    if (body.assigned_to && body.assigned_to !== req.user.userId) {
+      const { data: assignee } = await supabase.from('users').select('full_name').eq('id', body.assigned_to).single();
+      await createNotification(req, body.assigned_to, 'lead_assigned',
+        '🎯 Deal mới được giao',
+        `Deal "${body.title}" được giao cho bạn${assignee ? ` từ ${assignee.full_name}` : ''}`,
+        'crm_lead', data.id);
+    }
+
+    // Auto-create CRM tasks for deal
+    try {
+      await autoGenCrmTasks(data.id, 'deal', req.user.userId);
+    } catch (autoErr) { console.error('Auto-create tasks on deal create error:', autoErr.message); }
+
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET single lead/deal by ID (regardless of type)
 r.get('/leads/:id/detail', async (req, res) => {
   try {

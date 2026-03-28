@@ -26,6 +26,7 @@ export default function CRMDashboard() {
   const [alerts, setAlerts] = useState(null);
   const [pipelineType, setPipelineType] = useState('lead'); // lead | deal
   const [showNewLead, setShowNewLead] = useState(false);
+  const [showNewDeal, setShowNewDeal] = useState(false);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -228,7 +229,7 @@ export default function CRMDashboard() {
           </h1>
         </div>
         <div className="flex items-center gap-3">
-          <button data-tour="add-lead" onClick={() => setShowNewLead(true)} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer transition-all duration-200">
+          <button data-tour="add-lead" onClick={() => pipelineType === 'lead' ? setShowNewLead(true) : setShowNewDeal(true)} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer transition-all duration-200">
             <Plus className="h-4 w-4" /> + Thêm {pipelineType === 'lead' ? 'Lead' : 'Deal'}
           </button>
         </div>
@@ -361,6 +362,15 @@ export default function CRMDashboard() {
           sources={sources}
           companies={companies}
           type={pipelineType}
+          defaultCompanyId={filterCompany || user?.company_id}
+          currentUser={user}
+        />
+      )}
+      {showNewDeal && (
+        <NewDealModal
+          onClose={() => { setShowNewDeal(false); load(); }}
+          sources={sources}
+          companies={companies}
           defaultCompanyId={filterCompany || user?.company_id}
           currentUser={user}
         />
@@ -557,6 +567,185 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays }) {
             calculateDays={calculateDays}
           />
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ── NEW DEAL MODAL ─────────────────────────────────────────────────────────
+function NewDealModal({ onClose, sources, companies, defaultCompanyId, currentUser }) {
+  const [formData, setFormData] = useState({
+    title: '',
+    customer_name: '',
+    customer_phone: '',
+    customer_email: '',
+    source_id: '',
+    company_id: defaultCompanyId || '',
+    estimated_value: 0,
+    probability: 50,
+    install_address: '',
+    description: '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!formData.title) return alert('Nhập tên Deal');
+    if (!formData.company_id) return alert('Vui lòng chọn công ty');
+    if (!formData.customer_name) return alert('Nhập tên khách hàng');
+    if (!formData.customer_phone) return alert('Nhập số điện thoại khách hàng');
+
+    setSaving(true);
+    try {
+      // 1. Create customer
+      const { data: customer } = await api.post('/customers', {
+        full_name: formData.customer_name,
+        phone: formData.customer_phone,
+        email: formData.customer_email || null,
+        address: formData.install_address || null,
+      });
+      const customerId = customer?.id || customer?.customer?.id;
+
+      // 2. Create deal directly
+      await api.post('/crm/deals', {
+        title: formData.title,
+        customer_id: customerId || null,
+        source_id: formData.source_id || null,
+        company_id: formData.company_id || null,
+        estimated_value: parseFloat(formData.estimated_value) || 0,
+        probability: parseInt(formData.probability) || 50,
+        install_address: formData.install_address || null,
+        description: formData.description || null,
+      });
+      onClose();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi tạo Deal');
+    }
+    setSaving(false);
+  };
+
+  const set = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">🎯 Tạo Deal mới</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Tạo deal trực tiếp — không cần qua Lead</p>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-500" /></button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Tên Deal */}
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">Tên Deal *</label>
+            <input type="text" required value={formData.title} onChange={e => set('title', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              placeholder="VD: Tủ bếp gỗ sồi nhà anh Minh" />
+          </div>
+
+          {/* Công ty */}
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty *</label>
+            <select value={formData.company_id} onChange={e => set('company_id', e.target.value)} required
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}>
+              <option value="">-- Chọn công ty --</option>
+              {(companies || []).map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+            </select>
+          </div>
+
+          {/* Khách hàng */}
+          <div className="bg-blue-50 rounded-lg p-4 space-y-3">
+            <p className="text-xs font-bold text-blue-800 uppercase">👤 Thông tin khách hàng</p>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Tên khách hàng *</label>
+              <input type="text" required value={formData.customer_name} onChange={e => set('customer_name', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                placeholder="Nguyễn Văn A" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Số điện thoại *</label>
+                <input type="text" required value={formData.customer_phone} onChange={e => set('customer_phone', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  placeholder="0901234567" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
+                <input type="email" value={formData.customer_email} onChange={e => set('customer_email', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  placeholder="email@example.com" />
+              </div>
+            </div>
+          </div>
+
+          {/* Địa chỉ lắp đặt */}
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">📍 Địa chỉ lắp đặt</label>
+            <input type="text" value={formData.install_address} onChange={e => set('install_address', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              placeholder="Số nhà, đường, quận/huyện, TP..." />
+          </div>
+
+          {/* Nguồn */}
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">Nguồn</label>
+            <select value={formData.source_id} onChange={e => set('source_id', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+              <option value="">-- Chọn nguồn --</option>
+              {(sources || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+
+          {/* Giá trị + Xác suất */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1.5">Giá trị (VND)</label>
+              <input type="number" value={formData.estimated_value} onChange={e => set('estimated_value', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                placeholder="0" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1.5">Xác suất (%)</label>
+              <input type="number" min="0" max="100" value={formData.probability} onChange={e => set('probability', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+            </div>
+          </div>
+
+          {/* Ghi chú */}
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">Ghi chú</label>
+            <textarea value={formData.description} onChange={e => set('description', e.target.value)} rows={2}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm resize-none"
+              placeholder="Ghi chú thêm về deal..." />
+          </div>
+
+          {/* Phụ trách */}
+          {currentUser && (
+            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
+              <User className="h-4 w-4 text-green-600 flex-shrink-0" />
+              <div className="flex-1">
+                <span className="text-xs text-green-700 font-medium">Phụ trách:</span>
+                <span className="text-sm font-semibold text-green-900 ml-1.5">{currentUser.full_name || currentUser.email}</span>
+              </div>
+              <span className="text-[10px] text-green-600 bg-green-100 px-1.5 py-0.5 rounded">Tự động</span>
+            </div>
+          )}
+
+          {/* Buttons */}
+          <div className="flex items-center gap-3 pt-4 border-t">
+            <button type="submit" disabled={saving}
+              className="flex-1 px-4 py-2.5 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-all duration-200 disabled:opacity-50 text-sm cursor-pointer">
+              {saving ? 'Đang tạo...' : '🎯 Tạo Deal'}
+            </button>
+            <button type="button" onClick={onClose}
+              className="px-4 py-2.5 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition text-sm cursor-pointer">
+              Hủy
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
