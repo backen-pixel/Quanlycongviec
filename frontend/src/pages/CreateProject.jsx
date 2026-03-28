@@ -107,15 +107,15 @@ export default function CreateProject() {
     if (!autoReady || !dealId) return;
     const steps = [
       { delay: 0, action: () => { setActiveTab('info'); setAutoStatus('📋 Kiểm tra thông tin...'); } },
-      { delay: 1500, action: () => { setActiveTab('flow'); setAutoStatus('🔄 Chọn quy trình & nhiệm vụ...'); } },
-      { delay: 3500, action: () => { setActiveTab('files'); setAutoStatus('📎 Kiểm tra tệp đính kèm...'); } },
-      { delay: 5000, action: () => {
+      { delay: 800, action: () => { setActiveTab('flow'); setAutoStatus('🔄 Chọn quy trình & nhiệm vụ...'); } },
+      { delay: 2000, action: () => { setActiveTab('files'); setAutoStatus('📎 Kiểm tra tệp đính kèm...'); } },
+      { delay: 3000, action: () => {
         setAutoStatus('🚀 Đang tạo dự án...');
         if (!autoSubmitRef.current) { autoSubmitRef.current = true; autoSubmit(); }
       }},
     ];
     const timers = steps.map(s => setTimeout(s.action, s.delay));
-    setAutoCountdown(5);
+    setAutoCountdown(3);
     const countdownTimer = setInterval(() => {
       setAutoCountdown(prev => {
         if (prev <= 1) { clearInterval(countdownTimer); return 0; }

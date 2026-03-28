@@ -61,7 +61,7 @@ export default function CRMDashboard() {
 
   const startAutoCreateCountdown = (dealId) => {
     setAutoWonDealId(dealId);
-    setAutoCountdown(5);
+    setAutoCountdown(3);
     const countdown = setInterval(() => {
       setAutoCountdown(prev => {
         if (prev <= 1) { clearInterval(countdown); return 0; }
@@ -70,7 +70,7 @@ export default function CRMDashboard() {
     }, 1000);
     const redirect = setTimeout(() => {
       navigate(`/projects/create?deal_id=${dealId}`);
-    }, 5000);
+    }, 3000);
     autoTimerRef.current = { redirect, countdown };
   };
 
