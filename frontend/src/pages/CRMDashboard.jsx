@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatVND, formatDate } from '../lib/utils';
 import {
-  TrendingUp, Users, DollarSign, Target, Phone, Mail, MapPin,
+  TrendingUp, Users, User, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket
@@ -362,6 +362,7 @@ export default function CRMDashboard() {
           companies={companies}
           type={pipelineType}
           defaultCompanyId={filterCompany || user?.company_id}
+          currentUser={user}
         />
       )}
     </div>
@@ -562,7 +563,7 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays }) {
 }
 
 // New Lead Modal - Auto create customer
-function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId }) {
+function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId, currentUser }) {
   const [formData, setFormData] = useState({
     title: '',
     customer_name: '',
@@ -571,6 +572,7 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId }) {
     company_id: defaultCompanyId || '',
     estimated_value: 0,
     probability: 50,
+    assigned_to: currentUser?.id || '',
   });
   const [saving, setSaving] = useState(false);
 
@@ -603,6 +605,7 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId }) {
         customer_id: customerId || null,
         source_id: formData.source_id || null,
         company_id: formData.company_id || null,
+        assigned_to: formData.assigned_to || null,
         type: 'lead',
         stage_id: firstStage?.id,
         estimated_value: parseFloat(formData.estimated_value) || 0,
@@ -691,6 +694,18 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId }) {
               ))}
             </select>
           </div>
+
+          {/* Người phụ trách - auto filled */}
+          {currentUser && (
+            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
+              <User className="h-4 w-4 text-green-600 flex-shrink-0" />
+              <div className="flex-1">
+                <span className="text-xs text-green-700 font-medium">Phụ trách:</span>
+                <span className="text-sm font-semibold text-green-900 ml-1.5">{currentUser.full_name || currentUser.email}</span>
+              </div>
+              <span className="text-[10px] text-green-600 bg-green-100 px-1.5 py-0.5 rounded">Tự động</span>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>

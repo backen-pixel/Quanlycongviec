@@ -490,6 +490,8 @@ r.post('/leads', async (req, res) => {
     ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id'].forEach(f => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
+    // Auto-assign to creator if not specified
+    if (!body.assigned_to) body.assigned_to = req.user.userId;
     const { data, error } = await supabase.from('crm_leads')
       .insert({ ...body, code, type: 'lead', lead_owner_id: req.user.userId, created_by: req.user.userId })
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
