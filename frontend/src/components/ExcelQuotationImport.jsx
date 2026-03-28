@@ -239,15 +239,27 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
 
                 {/* Totals */}
                 <div className="bg-gray-50 border-t px-4 py-3 space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Tổng tiền hàng:</span>
-                    <span className="font-medium">{formatVND(preview.summary?.subtotal || 0)}</span>
-                  </div>
-                  {preview.summary?.discount_amount > 0 && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Chiết khấu:</span>
-                      <span className="font-medium text-red-600">-{formatVND(preview.summary.discount_amount)}</span>
+                  {(preview.summary?.summary_rows || []).map((sr, i) => (
+                    <div key={i} className="flex justify-between text-sm">
+                      <span className="text-gray-500">{sr.label}:</span>
+                      <span className={`font-medium ${sr.label.toUpperCase().includes('CHIẾT KHẤU') ? 'text-red-600' : ''}`}>
+                        {sr.label.toUpperCase().includes('CHIẾT KHẤU') ? '-' : ''}{formatVND(sr.amount)}
+                      </span>
                     </div>
+                  ))}
+                  {!(preview.summary?.summary_rows?.length) && (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Tổng tiền hàng:</span>
+                        <span className="font-medium">{formatVND(preview.summary?.subtotal || 0)}</span>
+                      </div>
+                      {preview.summary?.discount_amount > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Chiết khấu:</span>
+                          <span className="font-medium text-red-600">-{formatVND(preview.summary.discount_amount)}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                   <div className="flex justify-between text-base font-bold border-t pt-2 mt-1">
                     <span>TỔNG CỘNG:</span>
@@ -261,6 +273,14 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                 📄 {file?.name} • Phát hiện header dòng {preview.header_row + 1} / {preview.total_rows} dòng • 
                 Cột: {Object.keys(preview.columns_detected || {}).join(', ')}
               </p>
+
+              {/* Notes from Excel */}
+              {preview.notes && (
+                <details className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <summary className="text-xs font-bold text-amber-800 cursor-pointer">📝 Ghi chú từ Excel ({preview.notes.split('\n').length} dòng)</summary>
+                  <pre className="text-[10px] text-gray-700 mt-2 whitespace-pre-wrap max-h-40 overflow-y-auto">{preview.notes}</pre>
+                </details>
+              )}
             </>
           )}
         </div>
