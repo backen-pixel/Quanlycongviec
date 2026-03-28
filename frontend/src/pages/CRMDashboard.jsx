@@ -24,10 +24,25 @@ export default function CRMDashboard() {
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState('');
   const [alerts, setAlerts] = useState(null);
-  const [pipelineType, setPipelineType] = useState('lead'); // lead | deal
+  const [pipelineType, setPipelineType] = useState(() => localStorage.getItem('crm_pinned_tab') || 'lead'); // lead | deal
   const [showNewLead, setShowNewLead] = useState(false);
   const [showNewDeal, setShowNewDeal] = useState(false);
+  const [pinnedTab, setPinnedTab] = useState(() => localStorage.getItem('crm_pinned_tab') || '');
   const [loading, setLoading] = useState(true);
+
+  const switchTab = (tab) => {
+    setPipelineType(tab);
+  };
+
+  const togglePinTab = (tab) => {
+    if (pinnedTab === tab) {
+      localStorage.removeItem('crm_pinned_tab');
+      setPinnedTab('');
+    } else {
+      localStorage.setItem('crm_pinned_tab', tab);
+      setPinnedTab(tab);
+    }
+  };
   const navigate = useNavigate();
 
   // Auto-create project countdown
@@ -235,19 +250,28 @@ export default function CRMDashboard() {
         </div>
       </div>
 
-      {/* Pill-style Tab Switcher */}
-      <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-gray-200 rounded-full p-1">
+      {/* Pill-style Tab Switcher + Pin */}
+      <div className="flex items-center gap-3">
+        <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-gray-200 rounded-full p-1">
+          <button
+            onClick={() => switchTab('lead')}
+            className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          >
+            💼 Leads ({leads.length}) {pinnedTab === 'lead' ? '📌' : ''}
+          </button>
+          <button
+            onClick={() => switchTab('deal')}
+            className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          >
+            🎯 Deals ({deals.length}) {pinnedTab === 'deal' ? '📌' : ''}
+          </button>
+        </div>
         <button
-          onClick={() => setPipelineType('lead')}
-          className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          onClick={() => togglePinTab(pipelineType)}
+          title={pinnedTab === pipelineType ? 'Bỏ ghim tab này' : 'Ghim tab này — mở CRM sẽ vào thẳng'}
+          className={`p-2 rounded-lg text-sm transition-all cursor-pointer ${pinnedTab === pipelineType ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700'}`}
         >
-          💼 Leads ({leads.length})
-        </button>
-        <button
-          onClick={() => setPipelineType('deal')}
-          className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-        >
-          🎯 Deals ({deals.length})
+          📌
         </button>
       </div>
 
@@ -507,7 +531,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
     <div
       draggable
       onDragStart={handleDragStart}
-      onClick={() => window.location.href = `/crm/leads/${item.id}`}
+      onClick={() => { localStorage.setItem('crm_pinned_tab', pipelineType); window.location.href = `/crm/leads/${item.id}`; }}
       className={`bg-white rounded-lg border border-gray-200 p-3 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg`}
       style={{
         borderLeft: `3px solid ${stageColor}`,

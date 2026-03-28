@@ -113,6 +113,12 @@ function ProtectedLayout() {
   );
 }
 
+// Redirect to pinned module on login/root
+function DefaultRedirect() {
+  const pinned = localStorage.getItem('pinned_module') || '/crm';
+  return <Navigate to={pinned} replace />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -122,7 +128,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedLayout />}>
-            <Route path="/" element={<Navigate to="/crm" replace />} />
+            <Route path="/" element={<DefaultRedirect />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/dashboard/divisions" element={<DivisionDashboardPage />} />
             <Route path="/my-tasks" element={<MyTasks />} />
