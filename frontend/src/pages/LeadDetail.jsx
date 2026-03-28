@@ -125,10 +125,13 @@ export default function LeadDetail() {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId });
       if (data.requires_conversion) {
         setShowConvertModal(true);
-      } else if (data.deal_won) {
-        // Deal thắng → hiển thị thông báo 5s rồi chuyển sang trang tạo dự án
+      } else if (data.deal_won && !lead?.project_id) {
+        // Deal thắng + chưa có dự án → hiển thị thông báo rồi chuyển sang trang tạo dự án
         startAutoCreateCountdown(id);
         load(); // Reload để hiển thị stage mới
+      } else if (data.deal_won && lead?.project_id) {
+        // Deal đã có dự án → chỉ reload, không tạo lại
+        load();
       } else {
         load();
       }
