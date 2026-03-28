@@ -45,49 +45,32 @@ export default function CRMDashboard() {
   };
   const navigate = useNavigate();
 
-  // Auto-create project countdown
-  const [autoCountdown, setAutoCountdown] = useState(null);
-  const [autoWonDealId, setAutoWonDealId] = useState(null);
-  const autoTimerRef = useRef(null);
+  // Auto-create project (chạy ngầm)
+  const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
+  const [autoCreateResult, setAutoCreateResult] = useState(null);
+  const [autoCreateError, setAutoCreateError] = useState('');
+  const autoCreateCalledRef = useRef(false);
 
-  useEffect(() => {
-    return () => {
-      if (autoTimerRef.current) {
-        clearTimeout(autoTimerRef.current.redirect);
-        clearInterval(autoTimerRef.current.countdown);
+  const autoCreateProject = async (dealId) => {
+    if (autoCreateCalledRef.current) return;
+    autoCreateCalledRef.current = true;
+    setAutoCreateStatus('loading');
+    try {
+      const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`);
+      setAutoCreateResult(data);
+      setAutoCreateStatus('success');
+      load(); // Reload pipeline
+    } catch (e) {
+      const msg = e.response?.data?.error || 'Lỗi tạo dự án';
+      if (e.response?.data?.project_id) {
+        setAutoCreateResult({ project_id: e.response.data.project_id });
+        setAutoCreateStatus('success');
+      } else {
+        setAutoCreateError(msg);
+        setAutoCreateStatus('error');
       }
-    };
-  }, []);
-
-  const startAutoCreateCountdown = (dealId) => {
-    setAutoWonDealId(dealId);
-    setAutoCountdown(3);
-    const countdown = setInterval(() => {
-      setAutoCountdown(prev => {
-        if (prev <= 1) { clearInterval(countdown); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
-    const redirect = setTimeout(() => {
-      navigate(`/projects/create?deal_id=${dealId}`);
-    }, 3000);
-    autoTimerRef.current = { redirect, countdown };
-  };
-
-  const cancelAutoCreate = () => {
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current.redirect);
-      clearInterval(autoTimerRef.current.countdown);
+      autoCreateCalledRef.current = false;
     }
-    setAutoCountdown(null);
-    setAutoWonDealId(null);
-    autoTimerRef.current = null;
-  };
-
-  const skipToCreate = () => {
-    const dealId = autoWonDealId;
-    cancelAutoCreate();
-    navigate(`/projects/create?deal_id=${dealId}`);
   };
 
   useEffect(() => { load(); }, []);
@@ -165,8 +148,8 @@ export default function CRMDashboard() {
       }
 
       if (data.deal_won) {
-        // Deal thắng → hiển thị thông báo 5s rồi chuyển sang tạo dự án
-        startAutoCreateCountdown(leadId);
+        // Deal thắng → tạo dự án ngầm
+        autoCreateProject(leadId);
       }
     } catch (e) {
       console.error(e);
@@ -192,33 +175,51 @@ export default function CRMDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50 space-y-6">
-      {/* Auto-create project countdown banner */}
-      {autoCountdown !== null && autoCountdown > 0 && (
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center justify-between mx-0">
+      {/* Auto-create project banner */}
+      {autoCreateStatus === 'loading' && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
+          <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full flex-shrink-0" />
+          <div>
+            <p className="font-bold text-lg">🚀 Đang tự động tạo dự án...</p>
+            <p className="text-sm text-white/80">Deal thắng — hệ thống đang tạo dự án và phân công nhiệm vụ</p>
+          </div>
+        </div>
+      )}
+      {autoCreateStatus === 'success' && autoCreateResult && (
+        <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl p-4 text-white shadow-lg flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="flex items-center justify-center w-12 h-12 bg-white/20 rounded-full font-bold text-xl animate-bounce">{autoCountdown}</div>
+            <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-full text-xl">✅</div>
             <div>
-              <p className="font-bold text-lg">🎉 Deal Thắng!</p>
-              <p className="text-sm text-white/90">Hệ thống sẽ tự động tạo dự án trong <strong>{autoCountdown} giây</strong>...</p>
+              <p className="font-bold text-lg">Dự án {autoCreateResult.project_code || ''} đã tạo!</p>
+              <p className="text-sm text-white/90">{autoCreateResult.tasks_created || 0} nhiệm vụ được tạo tự động</p>
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={cancelAutoCreate}
+            <button onClick={() => setAutoCreateStatus(null)}
               className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition">
-              ✋ Hủy
+              Đóng
             </button>
-            <button onClick={skipToCreate}
-              className="h-9 px-4 bg-white text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-semibold cursor-pointer transition flex items-center gap-1">
-              <Rocket className="h-4 w-4" /> Tạo ngay
+            <button onClick={() => navigate(`/projects/${autoCreateResult.project_id}`)}
+              className="h-9 px-4 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer transition">
+              Xem dự án →
             </button>
           </div>
         </div>
       )}
-      {autoCountdown === 0 && (
-        <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4 mx-0">
-          <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full" />
-          <div>
-            <p className="font-bold">🚀 Đang chuyển sang tạo dự án...</p>
+      {autoCreateStatus === 'error' && (
+        <div className="bg-gradient-to-r from-red-600 to-red-700 rounded-xl p-4 text-white shadow-lg flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-full text-xl">❌</div>
+            <div>
+              <p className="font-bold">Lỗi tạo dự án</p>
+              <p className="text-sm text-white/80">{autoCreateError}</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { autoCreateCalledRef.current = false; setAutoCreateStatus(null); }}
+              className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition">
+              Đóng
+            </button>
           </div>
         </div>
       )}
