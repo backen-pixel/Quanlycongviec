@@ -998,7 +998,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 r.patch('/leads/:id/stage', async (req, res) => {
   try {
     const { stage_id } = req.body;
-    const { data: lead } = await supabase.from('crm_leads').select('type').eq('id', req.params.id).single();
+    const { data: lead } = await supabase.from('crm_leads').select('type, project_id').eq('id', req.params.id).single();
     
     const { data: stage } = await supabase
       .from('crm_pipeline_stages')
@@ -1073,8 +1073,9 @@ r.patch('/leads/:id/stage', async (req, res) => {
     } catch (autoErr) { console.error('Auto-generate CRM tasks error:', autoErr.message); }
 
     // Deal → Thắng: Trả thông tin để frontend hiện modal tạo dự án
+    // CHỈ khi deal chưa có project (tránh tạo trùng)
     let dealWonData = null;
-    if (lead?.type === 'deal' && stage?.is_won) {
+    if (lead?.type === 'deal' && stage?.is_won && !lead?.project_id) {
       const { data: dealData } = await supabase.from('crm_leads')
         .select('*, customer:customers(id, full_name, phone, email, address)')
         .eq('id', req.params.id).single();
