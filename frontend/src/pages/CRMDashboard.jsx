@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -7,7 +7,7 @@ import {
   TrendingUp, Users, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
-  Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2
+  Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket
 } from 'lucide-react';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
@@ -28,6 +28,51 @@ export default function CRMDashboard() {
   const [showNewLead, setShowNewLead] = useState(false);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+
+  // Auto-create project countdown
+  const [autoCountdown, setAutoCountdown] = useState(null);
+  const [autoWonDealId, setAutoWonDealId] = useState(null);
+  const autoTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (autoTimerRef.current) {
+        clearTimeout(autoTimerRef.current.redirect);
+        clearInterval(autoTimerRef.current.countdown);
+      }
+    };
+  }, []);
+
+  const startAutoCreateCountdown = (dealId) => {
+    setAutoWonDealId(dealId);
+    setAutoCountdown(5);
+    const countdown = setInterval(() => {
+      setAutoCountdown(prev => {
+        if (prev <= 1) { clearInterval(countdown); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    const redirect = setTimeout(() => {
+      navigate(`/projects/create?deal_id=${dealId}`);
+    }, 5000);
+    autoTimerRef.current = { redirect, countdown };
+  };
+
+  const cancelAutoCreate = () => {
+    if (autoTimerRef.current) {
+      clearTimeout(autoTimerRef.current.redirect);
+      clearInterval(autoTimerRef.current.countdown);
+    }
+    setAutoCountdown(null);
+    setAutoWonDealId(null);
+    autoTimerRef.current = null;
+  };
+
+  const skipToCreate = () => {
+    const dealId = autoWonDealId;
+    cancelAutoCreate();
+    navigate(`/projects/create?deal_id=${dealId}`);
+  };
 
   useEffect(() => { load(); }, []);
   useEffect(() => { load(); }, [filterCompany]);
@@ -104,8 +149,8 @@ export default function CRMDashboard() {
       }
 
       if (data.deal_won) {
-        // Deal thắng → mở trang chi tiết deal để tạo dự án
-        navigate(`/crm/leads/${itemId}`);
+        // Deal thắng → hiển thị thông báo 5s rồi chuyển sang tạo dự án
+        startAutoCreateCountdown(leadId);
       }
     } catch (e) {
       console.error(e);
@@ -131,6 +176,36 @@ export default function CRMDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50 space-y-6">
+      {/* Auto-create project countdown banner */}
+      {autoCountdown !== null && autoCountdown > 0 && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center justify-between mx-0">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center justify-center w-12 h-12 bg-white/20 rounded-full font-bold text-xl animate-bounce">{autoCountdown}</div>
+            <div>
+              <p className="font-bold text-lg">🎉 Deal Thắng!</p>
+              <p className="text-sm text-white/90">Hệ thống sẽ tự động tạo dự án trong <strong>{autoCountdown} giây</strong>...</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={cancelAutoCreate}
+              className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition">
+              ✋ Hủy
+            </button>
+            <button onClick={skipToCreate}
+              className="h-9 px-4 bg-white text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-semibold cursor-pointer transition flex items-center gap-1">
+              <Rocket className="h-4 w-4" /> Tạo ngay
+            </button>
+          </div>
+        </div>
+      )}
+      {autoCountdown === 0 && (
+        <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4 mx-0">
+          <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full" />
+          <div>
+            <p className="font-bold">🚀 Đang chuyển sang tạo dự án...</p>
+          </div>
+        </div>
+      )}
       {/* Follow-up Alert Banner */}
       {followUpAlert && (
         <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg flex items-center gap-3">
