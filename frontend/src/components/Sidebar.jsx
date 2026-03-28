@@ -188,6 +188,7 @@ function MenuGroup({ group, collapsed, isAdmin }) {
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
+  const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
   const appSwitcherRef = useRef(null);
   const { user, logout, socket } = useAuth();
   const navigate = useNavigate();
@@ -197,6 +198,11 @@ export default function Sidebar() {
   const isCRM = location.pathname.startsWith('/crm');
   const isSX = location.pathname.startsWith('/sx');
   const activeMenuGroups = isSX ? SX_MENU_GROUPS : isCRM ? CRM_MENU_GROUPS : MENU_GROUPS;
+
+  const pinModule = (path) => {
+    localStorage.setItem('pinned_module', path);
+    setPinnedModule(path);
+  };
 
   // Close app switcher on outside click
   useEffect(() => {
@@ -226,41 +232,68 @@ export default function Sidebar() {
             </div>
             <div className="flex-1 p-5 space-y-3">
               {/* Công việc */}
-              <button onClick={() => { setShowAppSwitcher(false); navigate('/dashboard'); }}
-                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${!isCRM && !isSX ? 'bg-blue-50 border-blue-200 hover:border-blue-400' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
-                <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                  <CheckSquare className="h-6 w-6 text-white" />
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${!isCRM && !isSX ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
+                <button onClick={() => { setShowAppSwitcher(false); navigate('/dashboard'); }}
+                  className="flex items-center gap-4 flex-1 cursor-pointer">
+                  <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                    <CheckSquare className="h-6 w-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-sm font-bold text-gray-900">Công việc</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Quản lý dự án & nhiệm vụ</p>
+                  </div>
+                </button>
+                <div className="flex flex-col items-center gap-1 ml-auto">
+                  {!isCRM && !isSX && <span className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  <button onClick={(e) => { e.stopPropagation(); pinModule('/dashboard'); }}
+                    title="Ghim — đăng nhập vào thẳng module này"
+                    className={`text-base cursor-pointer transition-all ${pinnedModule === '/dashboard' ? 'opacity-100 scale-110' : 'opacity-30 hover:opacity-70'}`}>
+                    📌
+                  </button>
                 </div>
-                <div className="text-left">
-                  <h3 className="text-sm font-bold text-gray-900">Công việc</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Quản lý dự án & nhiệm vụ</p>
-                </div>
-                {!isCRM && !isSX && <span className="ml-auto text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
-              </button>
+              </div>
               {/* CRM */}
-              <button onClick={() => { setShowAppSwitcher(false); navigate('/crm'); }}
-                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${isCRM ? 'bg-emerald-50 border-emerald-200 hover:border-emerald-400' : 'bg-gray-50 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50'}`}>
-                <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                  <UserCircle className="h-6 w-6 text-white" />
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isCRM ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50'}`}>
+                <button onClick={() => { setShowAppSwitcher(false); navigate('/crm'); }}
+                  className="flex items-center gap-4 flex-1 cursor-pointer">
+                  <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                    <UserCircle className="h-6 w-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-sm font-bold text-gray-900">CRM</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Quản lý khách hàng & bán hàng</p>
+                  </div>
+                </button>
+                <div className="flex flex-col items-center gap-1 ml-auto">
+                  {isCRM && <span className="text-[10px] px-2 py-0.5 bg-emerald-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  <button onClick={(e) => { e.stopPropagation(); pinModule('/crm'); }}
+                    title="Ghim — đăng nhập vào thẳng module này"
+                    className={`text-base cursor-pointer transition-all ${pinnedModule === '/crm' ? 'opacity-100 scale-110' : 'opacity-30 hover:opacity-70'}`}>
+                    📌
+                  </button>
                 </div>
-                <div className="text-left">
-                  <h3 className="text-sm font-bold text-gray-900">CRM</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Quản lý khách hàng & bán hàng</p>
-                </div>
-                {isCRM && <span className="ml-auto text-[10px] px-2 py-0.5 bg-emerald-600 text-white rounded-full font-bold">Đang dùng</span>}
-              </button>
+              </div>
               {/* Sản xuất */}
-              <button onClick={() => { setShowAppSwitcher(false); navigate('/sx'); }}
-                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer group ${isSX ? 'bg-orange-50 border-orange-200 hover:border-orange-400' : 'bg-gray-50 border-gray-200 hover:border-orange-400 hover:bg-orange-50'}`}>
-                <div className="w-12 h-12 rounded-xl bg-orange-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                  <Factory className="h-6 w-6 text-white" />
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isSX ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200 hover:border-orange-400 hover:bg-orange-50'}`}>
+                <button onClick={() => { setShowAppSwitcher(false); navigate('/sx'); }}
+                  className="flex items-center gap-4 flex-1 cursor-pointer">
+                  <div className="w-12 h-12 rounded-xl bg-orange-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                    <Factory className="h-6 w-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-sm font-bold text-gray-900">Sản xuất</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Quản lý sản xuất & vận chuyển</p>
+                  </div>
+                </button>
+                <div className="flex flex-col items-center gap-1 ml-auto">
+                  {isSX && <span className="text-[10px] px-2 py-0.5 bg-orange-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  <button onClick={(e) => { e.stopPropagation(); pinModule('/sx'); }}
+                    title="Ghim — đăng nhập vào thẳng module này"
+                    className={`text-base cursor-pointer transition-all ${pinnedModule === '/sx' ? 'opacity-100 scale-110' : 'opacity-30 hover:opacity-70'}`}>
+                    📌
+                  </button>
                 </div>
-                <div className="text-left">
-                  <h3 className="text-sm font-bold text-gray-900">Sản xuất</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Quản lý sản xuất & vận chuyển</p>
-                </div>
-                {isSX && <span className="ml-auto text-[10px] px-2 py-0.5 bg-orange-600 text-white rounded-full font-bold">Đang dùng</span>}
-              </button>
+              </div>
             </div>
             <div className="px-5 py-3 border-t border-gray-100">
               <p className="text-[10px] text-gray-400 text-center">TuBep Pro © 2026</p>
