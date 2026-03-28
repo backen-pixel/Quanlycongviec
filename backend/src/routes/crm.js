@@ -2,6 +2,8 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const PDFDocument = require('pdfkit');
+const multer = require('multer');
+const XLSX = require('xlsx');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -2483,8 +2485,194 @@ function generateDocPdf(res, doc, items, docType) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PDF EXPORT ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════
+// IMPORT EXCEL → PARSE (chỉ parse, trả về data preview — KHÔNG lưu DB)
+// ═══════════════════════════════════════════════════════════════════════════
+const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
+
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    if (!rows.length) return res.status(400).json({ error: 'File rỗng' });
+
+    // ── 1. Detect header row (tìm dòng có "STT" + "HẠNG MỤC" hoặc "ĐVT") ──
+    let headerIdx = -1;
+    let colMap = {};
+    for (let i = 0; i < Math.min(rows.length, 30); i++) {
+      const row = rows[i].map(c => String(c || '').trim().toUpperCase());
+      const sttIdx = row.findIndex(c => c === 'STT' || c === 'TT');
+      const nameIdx = row.findIndex(c => c.includes('HẠNG MỤC') || c.includes('TÊN HÀNG') || c.includes('DIỄN GIẢI') || c.includes('NỘI DUNG'));
+      if (sttIdx >= 0 && nameIdx >= 0) {
+        headerIdx = i;
+        // Map all columns
+        row.forEach((label, ci) => {
+          if (label === 'STT' || label === 'TT') colMap.stt = ci;
+          else if (label.includes('HẠNG MỤC') || label.includes('TÊN HÀNG') || label.includes('NỘI DUNG')) colMap.name = ci;
+          else if (label.includes('MÔ TẢ') || label.includes('DIỄN GIẢI') || label.includes('CHI TIẾT')) colMap.description = ci;
+          else if (label === 'ĐVT' || label.includes('ĐƠN VỊ')) colMap.unit = ci;
+          else if (label.includes('NGANG') || label.includes('DÀI')) colMap.length = ci;
+          else if (label.includes('SÂU') || label.includes('RỘNG')) colMap.width = ci;
+          else if (label.includes('CAO')) colMap.height = ci;
+          else if (label.includes('KHỐI LƯỢNG') || label.includes('SỐ LƯỢNG') || label === 'SL' || label === 'KL') colMap.quantity = ci;
+          else if (label.includes('ĐƠN GIÁ')) colMap.unit_price = ci;
+          else if (label.includes('THÀNH TIỀN') || label.includes('T.TIỀN')) colMap.amount = ci;
+          else if (label.includes('GHI CHÚ') || label.includes('NOTE')) colMap.notes = ci;
+          else if (label.includes('VAT') || label.includes('THUẾ')) colMap.vat_rate = ci;
+        });
+        break;
+      }
+    }
+
+    if (headerIdx < 0) {
+      return res.status(400).json({ error: 'Không tìm thấy dòng tiêu đề (cần có STT + HẠNG MỤC)' });
+    }
+
+    // ── 2. Extract customer info từ dòng trước header ──
+    let customer_name = '', customer_phone = '', customer_address = '', kts_info = '', title = '';
+    for (let i = 0; i < headerIdx; i++) {
+      const rowText = rows[i].map(c => String(c || '').trim()).join(' ').trim();
+      const upper = rowText.toUpperCase();
+      if (!rowText) continue;
+
+      // Detect "Khách hàng: ..." hoặc dòng có tên + SĐT
+      if (upper.includes('KHÁCH HÀNG') || upper.includes('KHACH HANG')) {
+        const match = rowText.match(/[:\-]\s*(.+)/);
+        if (match) {
+          const parts = match[1].trim();
+          const phoneMatch = parts.match(/(0\d{8,10})/);
+          if (phoneMatch) {
+            customer_phone = phoneMatch[1];
+            customer_name = parts.replace(phoneMatch[0], '').replace(/[-–\s]+$/, '').trim();
+          } else {
+            customer_name = parts;
+          }
+        }
+      }
+      // Detect phone standalone
+      if (!customer_phone) {
+        const phoneInRow = rowText.match(/(0\d{8,10})/);
+        if (phoneInRow && !upper.includes('HOTLINE') && !upper.includes('CÔNG TY')) {
+          customer_phone = phoneInRow[1];
+          if (!customer_name) {
+            customer_name = rowText.replace(phoneInRow[0], '').replace(/[-–:\s]+/g, ' ').trim();
+          }
+        }
+      }
+      // Detect address
+      if (upper.includes('ĐỊA CHỈ') || upper.includes('DIA CHI') || upper.includes('ĐC:')) {
+        const match = rowText.match(/[:\-]\s*(.+)/);
+        if (match) customer_address = match[1].trim();
+      }
+      // Detect address from known province names
+      if (!customer_address && (upper.includes('TỈNH') || upper.includes('TP.') || upper.includes('QUẬN') || upper.includes('HUYỆN'))) {
+        customer_address = rowText.replace(/^[:\-\s]+/, '').trim();
+      }
+      // Detect KT info
+      if (upper.includes('KT PHỤ TRÁCH') || upper.includes('KIẾN TRÚC') || upper.includes('KT:') || upper.includes('NVKD')) {
+        const match = rowText.match(/[:\-]\s*(.+)/);
+        if (match) kts_info = match[1].trim();
+      }
+      // Detect title (BÁO GIÁ...)
+      if (upper.includes('BÁO GIÁ') || upper.includes('BAO GIA')) {
+        title = rowText;
+      }
+    }
+
+    // ── 3. Parse items from data rows ──
+    const items = [];
+    let currentGroup = '';
+    let subtotal = 0, discountAmount = 0, total = 0;
+
+    for (let i = headerIdx + 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || row.every(c => !c && c !== 0)) continue;
+
+      const stt = colMap.stt !== undefined ? String(row[colMap.stt] || '').trim() : '';
+      const name = colMap.name !== undefined ? String(row[colMap.name] || '').trim() : '';
+      const nameUpper = name.toUpperCase();
+
+      // Detect summary rows (TỔNG, CHIẾT KHẤU, CỘNG)
+      if (nameUpper.includes('TỔNG') && nameUpper.includes('TỦ') || nameUpper.includes('CỘNG TIỀN') || nameUpper === 'TỔNG CỘNG') {
+        const amt = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
+        if (amt > 0) subtotal = amt;
+        continue;
+      }
+      if (nameUpper.includes('CHIẾT KHẤU') || nameUpper.includes('CK') && nameUpper.includes('%')) {
+        const amt = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
+        if (amt > 0) discountAmount = amt;
+        continue;
+      }
+      if (nameUpper.includes('TỔNG SAU') || nameUpper.includes('SAU CK') || nameUpper.includes('THANH TOÁN')) {
+        const amt = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
+        if (amt > 0) total = amt;
+        continue;
+      }
+      // Skip empty or header-like rows
+      if (!name) continue;
+
+      // Detect group title row (có tên nhưng không có STT số, thường là "I. PHÒNG BẾP...", "II. PHÒNG KHÁCH...")
+      const isGroup = !stt || (isNaN(parseInt(stt)) && /^[IVX]+[\.\)]/.test(stt));
+      const hasPrice = colMap.unit_price !== undefined && parseFloat(row[colMap.unit_price]) > 0;
+
+      if (isGroup && !hasPrice) {
+        currentGroup = name;
+        items.push({
+          is_group: true,
+          group_name: name,
+          name: name,
+          description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
+          height: null, width: null, length: null, notes: '',
+        });
+        continue;
+      }
+
+      // Normal item row
+      items.push({
+        is_group: false,
+        group_name: currentGroup,
+        name,
+        description: colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '',
+        unit: colMap.unit !== undefined ? String(row[colMap.unit] || '').trim() : 'bộ',
+        length: colMap.length !== undefined ? parseFloat(row[colMap.length]) || null : null,
+        width: colMap.width !== undefined ? parseFloat(row[colMap.width]) || null : null,
+        height: colMap.height !== undefined ? parseFloat(row[colMap.height]) || null : null,
+        quantity: colMap.quantity !== undefined ? parseFloat(row[colMap.quantity]) || 1 : 1,
+        unit_price: colMap.unit_price !== undefined ? parseFloat(row[colMap.unit_price]) || 0 : 0,
+        amount: colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0,
+        vat_rate: colMap.vat_rate !== undefined ? parseFloat(row[colMap.vat_rate]) || 0 : 0,
+        notes: colMap.notes !== undefined ? String(row[colMap.notes] || '').trim() : '',
+      });
+    }
+
+    // Calculate totals if not found in footer
+    if (!subtotal) subtotal = items.filter(i => !i.is_group).reduce((s, i) => s + (i.amount || i.quantity * i.unit_price), 0);
+    if (!total) total = subtotal - discountAmount;
+
+    res.json({
+      customer_name: customer_name || '',
+      customer_phone: customer_phone || '',
+      customer_address: customer_address || '',
+      kts_info: kts_info || '',
+      title: title || '',
+      items,
+      summary: { subtotal, discount_amount: discountAmount, total },
+      columns_detected: colMap,
+      header_row: headerIdx,
+      total_rows: rows.length,
+    });
+  } catch (e) {
+    console.error('[parse-excel]', e);
+    res.status(500).json({ error: 'Lỗi đọc file Excel: ' + e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PDF EXPORT ENDPOINTS
 r.get('/quotations/:id/pdf', async (req, res) => {
   try {
     const { data: quote } = await supabase.from('quotations')

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import { Plus, Search, FileText, Filter, ShoppingCart, Calendar, Download, Trash2 } from 'lucide-react';
+import ExcelQuotationImport from '../components/ExcelQuotationImport';
 
 const STATUS_MAP = { draft: 'Nháp', sent: 'Đã gửi', accepted: 'Chấp nhận', rejected: 'Từ chối', expired: 'Hết hạn', converted: 'Đã chuyển ĐH' };
 const STATUS_COLORS = { draft: 'bg-gray-100 text-gray-600', sent: 'bg-blue-100 text-blue-700', accepted: 'bg-emerald-100 text-emerald-700', rejected: 'bg-red-100 text-red-700', expired: 'bg-amber-100 text-amber-700', converted: 'bg-purple-100 text-purple-700' };
@@ -20,6 +21,7 @@ export default function QuotationsPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
+  const [showExcelImport, setShowExcelImport] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
@@ -41,6 +43,7 @@ export default function QuotationsPage() {
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" /> Báo giá</h1><p className="text-sm text-gray-500 mt-1">{summary.total} báo giá · {formatVND(summary.value)}</p></div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setShowExcelImport(true)} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">📥 Import Excel</button>
           <button data-tour="create-quotation" onClick={() => navigate('/crm/quotations/new')} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Plus className="h-4 w-4" /> Tạo báo giá</button>
         </div>
       </div>
@@ -92,6 +95,18 @@ export default function QuotationsPage() {
           {filtered.length === 0 && <p className="text-center text-sm text-gray-400 py-8">Không có báo giá phù hợp</p>}
         </div>
       </div>
+
+      {/* Excel Import Modal */}
+      {showExcelImport && (
+        <ExcelQuotationImport
+          onImportDone={(data) => {
+            setShowExcelImport(false);
+            load();
+            navigate(`/crm/quotations/${data.id}`);
+          }}
+          onClose={() => setShowExcelImport(false)}
+        />
+      )}
     </div>
   );
 

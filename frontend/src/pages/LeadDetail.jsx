@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
@@ -38,6 +39,7 @@ export default function LeadDetail() {
   const [editValue, setEditValue] = useState('');
   const [activeTab, setActiveTab] = useState('tasks');
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [showExcelImport, setShowExcelImport] = useState(false);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -321,6 +323,9 @@ export default function LeadDetail() {
           )}
           <button onClick={() => navigate(`/crm/quotations/new?lead_id=${id}`)} className="h-9 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
             <FileText className="h-4 w-4" /> Báo giá
+          </button>
+          <button onClick={() => setShowExcelImport(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
+            📥 Import Excel
           </button>
           {lead.project_id && (
             <Link to={`/projects/${lead.project_id}`} className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
@@ -613,6 +618,19 @@ export default function LeadDetail() {
           flows={flows}
           onClose={() => setShowConvertModal(false)}
           onSuccess={() => { setShowConvertModal(false); load(); }}
+        />
+      )}
+
+      {/* Excel Import Modal */}
+      {showExcelImport && (
+        <ExcelQuotationImport
+          dealId={id}
+          onImportDone={(data) => {
+            setShowExcelImport(false);
+            load();
+            navigate(`/crm/quotations/${data.id}`);
+          }}
+          onClose={() => setShowExcelImport(false)}
         />
       )}
 
