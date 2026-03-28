@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks,
-  BookOpen, FolderTree, Factory
+  BookOpen, FolderTree, Factory, Pin
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -246,9 +246,9 @@ export default function Sidebar() {
                 <div className="flex flex-col items-center gap-1 ml-auto">
                   {!isCRM && !isSX && <span className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
                   <button onClick={(e) => { e.stopPropagation(); pinModule('/dashboard'); }}
-                    title="Ghim — đăng nhập vào thẳng module này"
-                    className={`text-base cursor-pointer transition-all ${pinnedModule === '/dashboard' ? 'opacity-100 scale-110' : 'opacity-30 hover:opacity-70'}`}>
-                    📌
+                    title={pinnedModule === '/dashboard' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
+                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/dashboard' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
+                    <Pin className={`h-4 w-4 ${pinnedModule === '/dashboard' ? 'rotate-45' : ''}`} />
                   </button>
                 </div>
               </div>
@@ -267,9 +267,9 @@ export default function Sidebar() {
                 <div className="flex flex-col items-center gap-1 ml-auto">
                   {isCRM && <span className="text-[10px] px-2 py-0.5 bg-emerald-600 text-white rounded-full font-bold">Đang dùng</span>}
                   <button onClick={(e) => { e.stopPropagation(); pinModule('/crm'); }}
-                    title="Ghim — đăng nhập vào thẳng module này"
-                    className={`text-base cursor-pointer transition-all ${pinnedModule === '/crm' ? 'opacity-100 scale-110' : 'opacity-30 hover:opacity-70'}`}>
-                    📌
+                    title={pinnedModule === '/crm' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
+                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/crm' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
+                    <Pin className={`h-4 w-4 ${pinnedModule === '/crm' ? 'rotate-45' : ''}`} />
                   </button>
                 </div>
               </div>
@@ -288,9 +288,9 @@ export default function Sidebar() {
                 <div className="flex flex-col items-center gap-1 ml-auto">
                   {isSX && <span className="text-[10px] px-2 py-0.5 bg-orange-600 text-white rounded-full font-bold">Đang dùng</span>}
                   <button onClick={(e) => { e.stopPropagation(); pinModule('/sx'); }}
-                    title="Ghim — đăng nhập vào thẳng module này"
-                    className={`text-base cursor-pointer transition-all ${pinnedModule === '/sx' ? 'opacity-100 scale-110' : 'opacity-30 hover:opacity-70'}`}>
-                    📌
+                    title={pinnedModule === '/sx' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
+                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/sx' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
+                    <Pin className={`h-4 w-4 ${pinnedModule === '/sx' ? 'rotate-45' : ''}`} />
                   </button>
                 </div>
               </div>

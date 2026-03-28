@@ -7,7 +7,7 @@ import {
   TrendingUp, Users, User, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
-  Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket
+  Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin
 } from 'lucide-react';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
@@ -255,23 +255,24 @@ export default function CRMDashboard() {
         <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-gray-200 rounded-full p-1">
           <button
             onClick={() => switchTab('lead')}
-            className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 flex items-center gap-1.5 ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
-            💼 Leads ({leads.length}) {pinnedTab === 'lead' ? '📌' : ''}
+            💼 Leads ({leads.length}) {pinnedTab === 'lead' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
           <button
             onClick={() => switchTab('deal')}
-            className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 flex items-center gap-1.5 ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
-            🎯 Deals ({deals.length}) {pinnedTab === 'deal' ? '📌' : ''}
+            🎯 Deals ({deals.length}) {pinnedTab === 'deal' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
         </div>
         <button
           onClick={() => togglePinTab(pipelineType)}
-          title={pinnedTab === pipelineType ? 'Bỏ ghim tab này' : 'Ghim tab này — mở CRM sẽ vào thẳng'}
-          className={`p-2 rounded-lg text-sm transition-all cursor-pointer ${pinnedTab === pipelineType ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700'}`}
+          title={pinnedTab === pipelineType ? `Bỏ ghim tab ${pipelineType === 'lead' ? 'Lead' : 'Deal'}` : `Ghim tab ${pipelineType === 'lead' ? 'Lead' : 'Deal'} — mở CRM sẽ vào thẳng`}
+          className={`h-9 px-3 rounded-lg text-sm font-medium transition-all cursor-pointer flex items-center gap-1.5 ${pinnedTab === pipelineType ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700 border border-gray-200'}`}
         >
-          📌
+          <Pin className={`h-4 w-4 ${pinnedTab === pipelineType ? 'rotate-45' : ''}`} />
+          {pinnedTab === pipelineType ? 'Đã ghim' : 'Ghim'}
         </button>
       </div>
 
