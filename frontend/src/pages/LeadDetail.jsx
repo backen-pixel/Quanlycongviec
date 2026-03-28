@@ -7,7 +7,7 @@ import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Rocket
+  FileUp, FileText, Zap, ChevronDown
 } from 'lucide-react';
 
 const ACTIVITY_TYPES = [
@@ -39,47 +39,33 @@ export default function LeadDetail() {
   const [activeTab, setActiveTab] = useState('tasks');
   const [uploadingDoc, setUploadingDoc] = useState(false);
 
-  // Auto-create project countdown
-  const [autoCountdown, setAutoCountdown] = useState(null);
-  const autoTimerRef = useRef(null);
+  // Auto-create project (chạy ngầm)
+  const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
+  const [autoCreateResult, setAutoCreateResult] = useState(null); // { project_id, project_code, tasks_created }
+  const [autoCreateError, setAutoCreateError] = useState('');
+  const autoCreateCalledRef = useRef(false);
 
-  // Cleanup auto timer on unmount
-  useEffect(() => {
-    return () => {
-      if (autoTimerRef.current) {
-        clearTimeout(autoTimerRef.current.redirect);
-        clearInterval(autoTimerRef.current.countdown);
+  const autoCreateProject = async (dealId) => {
+    if (autoCreateCalledRef.current) return;
+    autoCreateCalledRef.current = true;
+    setAutoCreateStatus('loading');
+    try {
+      const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`);
+      setAutoCreateResult(data);
+      setAutoCreateStatus('success');
+      load(); // Reload deal để cập nhật project_id
+    } catch (e) {
+      const msg = e.response?.data?.error || 'Lỗi tạo dự án';
+      if (e.response?.data?.project_id) {
+        // Deal đã có dự án
+        setAutoCreateResult({ project_id: e.response.data.project_id });
+        setAutoCreateStatus('success');
+      } else {
+        setAutoCreateError(msg);
+        setAutoCreateStatus('error');
       }
-    };
-  }, []);
-
-  const startAutoCreateCountdown = (dealId) => {
-    setAutoCountdown(3);
-    const countdown = setInterval(() => {
-      setAutoCountdown(prev => {
-        if (prev <= 1) { clearInterval(countdown); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
-    const redirect = setTimeout(() => {
-      navigate(`/projects/create?deal_id=${dealId}`);
-    }, 3000);
-    autoTimerRef.current = { redirect, countdown, dealId };
-  };
-
-  const cancelAutoCreate = () => {
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current.redirect);
-      clearInterval(autoTimerRef.current.countdown);
+      autoCreateCalledRef.current = false;
     }
-    setAutoCountdown(null);
-    autoTimerRef.current = null;
-  };
-
-  const skipToCreate = () => {
-    const dealId = autoTimerRef.current?.dealId || id;
-    cancelAutoCreate();
-    navigate(`/projects/create?deal_id=${dealId}`);
   };
 
   useEffect(() => { load(); }, [id]);
@@ -105,12 +91,12 @@ export default function LeadDetail() {
       setFlows(flowsRes || []);
       setAllUsers(usersRes || []);
 
-      // Auto redirect nếu deal ở stage Thắng + chưa có project → hiển thị countdown 5s
+      // Deal thắng + chưa có project → tự động tạo dự án ngầm
       if (leadRes?.type === 'deal' && !leadRes?.project_id) {
         const dealStages = stagesDealRes.data || [];
         const currentStage = dealStages.find(s => s.id === leadRes.stage_id);
-        if (currentStage?.is_won && !autoTimerRef.current) {
-          startAutoCreateCountdown(id);
+        if (currentStage?.is_won && !autoCreateCalledRef.current) {
+          autoCreateProject(id);
         }
       }
     } catch (e) { console.error(e); }
@@ -126,11 +112,11 @@ export default function LeadDetail() {
       if (data.requires_conversion) {
         setShowConvertModal(true);
       } else if (data.deal_won && !lead?.project_id) {
-        // Deal thắng + chưa có dự án → hiển thị thông báo rồi chuyển sang trang tạo dự án
-        startAutoCreateCountdown(id);
-        load(); // Reload để hiển thị stage mới
+        // Deal thắng + chưa có dự án → tạo dự án ngầm
+        autoCreateProject(id);
+        load();
       } else if (data.deal_won && lead?.project_id) {
-        // Deal đã có dự án → chỉ reload, không tạo lại
+        // Deal đã có dự án → chỉ reload
         load();
       } else {
         load();
@@ -260,33 +246,49 @@ export default function LeadDetail() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      {/* Auto-create project countdown banner */}
-      {autoCountdown !== null && autoCountdown > 0 && (
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center justify-between animate-pulse">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center justify-center w-12 h-12 bg-white/20 rounded-full font-bold text-xl animate-bounce">{autoCountdown}</div>
-            <div>
-              <p className="font-bold text-lg">🎉 Deal Thắng!</p>
-              <p className="text-sm text-white/90">Hệ thống sẽ tự động tạo dự án trong <strong>{autoCountdown} giây</strong>...</p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={cancelAutoCreate}
-              className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition">
-              ✋ Ở lại trang này
-            </button>
-            <button onClick={skipToCreate}
-              className="h-9 px-4 bg-white text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-semibold cursor-pointer transition flex items-center gap-1">
-              <Rocket className="h-4 w-4" /> Tạo ngay
-            </button>
+      {/* Auto-create project banner */}
+      {autoCreateStatus === 'loading' && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
+          <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full flex-shrink-0" />
+          <div>
+            <p className="font-bold text-lg">🚀 Đang tự động tạo dự án...</p>
+            <p className="text-sm text-white/80">Hệ thống đang tạo dự án và phân công nhiệm vụ</p>
           </div>
         </div>
       )}
-      {autoCountdown === 0 && (
-        <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
-          <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full" />
-          <div>
-            <p className="font-bold">🚀 Đang chuyển sang tạo dự án...</p>
+      {autoCreateStatus === 'success' && autoCreateResult && (
+        <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl p-4 text-white shadow-lg flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-full text-xl">✅</div>
+            <div>
+              <p className="font-bold text-lg">Dự án {autoCreateResult.project_code || ''} đã tạo!</p>
+              <p className="text-sm text-white/90">{autoCreateResult.tasks_created || 0} nhiệm vụ được tạo tự động</p>
+            </div>
+          </div>
+          <button onClick={() => navigate(`/projects/${autoCreateResult.project_id}`)}
+            className="h-9 px-4 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer transition flex items-center gap-1">
+            Xem dự án →
+          </button>
+        </div>
+      )}
+      {autoCreateStatus === 'error' && (
+        <div className="bg-gradient-to-r from-red-600 to-red-700 rounded-xl p-4 text-white shadow-lg flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-full text-xl">❌</div>
+            <div>
+              <p className="font-bold">Lỗi tạo dự án</p>
+              <p className="text-sm text-white/80">{autoCreateError}</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { autoCreateCalledRef.current = false; autoCreateProject(id); }}
+              className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition">
+              🔄 Thử lại
+            </button>
+            <button onClick={() => navigate(`/projects/create?deal_id=${id}`)}
+              className="h-9 px-4 bg-white text-red-700 hover:bg-red-50 rounded-lg text-sm font-semibold cursor-pointer transition">
+              Tạo thủ công →
+            </button>
           </div>
         </div>
       )}
