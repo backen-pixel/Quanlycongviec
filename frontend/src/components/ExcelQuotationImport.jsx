@@ -234,7 +234,9 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                         <th className="py-2 px-2 text-left min-w-[200px]">Hạng mục</th>
                         <th className="py-2 px-2 text-left min-w-[150px]">Mô tả</th>
                         <th className="py-2 px-2 text-center w-14">ĐVT</th>
-                        <th className="py-2 px-2 text-center w-28">Quy cách</th>
+                        <th className="py-2 px-2 text-right w-16">Ngang</th>
+                        <th className="py-2 px-2 text-right w-16">Sâu</th>
+                        <th className="py-2 px-2 text-right w-16">Cao</th>
                         <th className="py-2 px-2 text-right w-16">SL</th>
                         <th className="py-2 px-2 text-right w-24">Đơn giá</th>
                         <th className="py-2 px-2 text-right w-28">Thành tiền</th>
@@ -247,7 +249,7 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                         if (item.is_group) {
                           return (
                             <tr key={idx} className="bg-indigo-50 cursor-pointer" onClick={() => toggleGroup(item.name)}>
-                              <td colSpan={10} className="py-2 px-3">
+                              <td colSpan={12} className="py-2 px-3">
                                 <div className="flex items-center gap-2">
                                   {expandGroups[item.name] ? <ChevronUp className="h-3.5 w-3.5 text-indigo-500" /> : <ChevronDown className="h-3.5 w-3.5 text-indigo-500" />}
                                   <span className="font-bold text-indigo-800 text-xs">{item.name}</span>
@@ -260,14 +262,15 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                           );
                         }
                         const stt = preview.items.slice(0, idx + 1).filter(i => !i.is_group).length;
-                        const dims = [item.length, item.width, item.height].filter(Boolean).join(' × ');
                         return (
                           <tr key={idx} className="border-b hover:bg-gray-50/50">
                             <td className="py-1.5 px-2 text-gray-400">{stt}</td>
                             <td className="py-1.5 px-2 font-medium text-gray-900">{item.name}</td>
                             <td className="py-1.5 px-2 text-gray-600">{item.description}</td>
                             <td className="py-1.5 px-2 text-center">{item.unit}</td>
-                            <td className="py-1.5 px-2 text-center text-gray-600">{dims || '—'}</td>
+                            <td className="py-1.5 px-2 text-right text-gray-600">{item.length || '—'}</td>
+                            <td className="py-1.5 px-2 text-right text-gray-600">{item.width || '—'}</td>
+                            <td className="py-1.5 px-2 text-right text-gray-600">{item.height || '—'}</td>
                             <td className="py-1.5 px-2 text-right">{item.quantity}</td>
                             <td className="py-1.5 px-2 text-right">{formatVND(item.unit_price)}</td>
                             <td className="py-1.5 px-2 text-right font-medium text-blue-700">{formatVND(item.amount || item.quantity * item.unit_price)}</td>
