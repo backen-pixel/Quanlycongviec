@@ -39,8 +39,9 @@ export default function CRMProductsPage() {
       if (pg !== groupFilter) return false;
     }
     if (!search) return true;
-    const s = search.toLowerCase();
-    return (p.name || '').toLowerCase().includes(s) || (p.code || '').toLowerCase().includes(s) || (p.sku || '').toLowerCase().includes(s);
+    const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+    const target = `${p.name || ''} ${p.code || ''} ${p.sku || ''}`.toLowerCase();
+    return words.every(w => target.includes(w));
   });
 
   // Nhóm SP (code_group) from actual products

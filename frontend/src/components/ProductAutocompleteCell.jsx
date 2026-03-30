@@ -47,15 +47,12 @@ export default function ProductAutocompleteCell({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Filter products matching search
+  // Filter products matching search — hỗ trợ tìm nhiều từ: "tủ trên" → match "tủ bếp trên"
   const filtered = search.length >= 1
     ? products.filter(p => {
-        const s = search.toLowerCase();
-        return (
-          (p.name || '').toLowerCase().includes(s) ||
-          (p.code || '').toLowerCase().includes(s) ||
-          (p.sku || '').toLowerCase().includes(s)
-        );
+        const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+        const target = `${p.name || ''} ${p.code || ''} ${p.sku || ''}`.toLowerCase();
+        return words.every(w => target.includes(w));
       }).slice(0, 12)
     : [];
 

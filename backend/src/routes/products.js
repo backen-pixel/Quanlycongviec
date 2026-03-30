@@ -267,7 +267,19 @@ r.get('/', async (req, res) => {
   try {
     const { search, category_id, status, page = 1, limit = 50 } = req.query;
     let q = supabase.from('products').select('*, category:product_categories(id,name,slug)', { count: 'exact' });
-    if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,sku.ilike.%${search}%`);
+    
+    // Multi-word search: "tủ trên" → match "tủ bếp trên" (mỗi từ phải xuất hiện trong name hoặc code)
+    if (search) {
+      const words = search.trim().split(/\s+/).filter(Boolean);
+      if (words.length > 1) {
+        // Mỗi từ phải có trong name hoặc code
+        words.forEach(w => {
+          q = q.or(`name.ilike.%${w}%,code.ilike.%${w}%,sku.ilike.%${w}%`);
+        });
+      } else {
+        q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,sku.ilike.%${search}%`);
+      }
+    }
     if (category_id) q = q.eq('category_id', category_id);
     if (status && status !== 'all') q = q.eq('status', status);
     const p = +page, l = +limit;
@@ -383,7 +395,16 @@ r.get('/components/list', async (req, res) => {
   try {
     const { search, category, page = 1, limit = 50 } = req.query;
     let q = supabase.from('product_components').select('*', { count: 'exact' });
-    if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
+    if (search) {
+      const words = search.trim().split(/\s+/).filter(Boolean);
+      if (words.length > 1) {
+        words.forEach(w => {
+          q = q.or(`name.ilike.%${w}%,code.ilike.%${w}%`);
+        });
+      } else {
+        q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
+      }
+    }
     if (category) q = q.eq('category', category);
     const p = +page, l = +limit;
     q = q.order('name').range((p - 1) * l, p * l - 1);

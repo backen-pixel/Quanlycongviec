@@ -66,15 +66,11 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
         const pg = p.code_group || p.group;
         if (pg !== groupFilter) return false;
       }
-      // Search
+      // Search — hỗ trợ nhiều từ: "tủ trên" → match "tủ bếp trên"
       if (search) {
-        const s = search.toLowerCase();
-        return (
-          (p.name || '').toLowerCase().includes(s) ||
-          (p.code || '').toLowerCase().includes(s) ||
-          (p.sku || '').toLowerCase().includes(s) ||
-          (p.description || '').toLowerCase().includes(s)
-        );
+        const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+        const target = `${p.name || ''} ${p.code || ''} ${p.sku || ''} ${p.description || ''}`.toLowerCase();
+        return words.every(w => target.includes(w));
       }
       return true;
     });
@@ -352,8 +348,9 @@ export function ProductSearchInline({ onSelect, className = '' }) {
   const filtered = products.filter(p => {
     if (groupFilter && (p.code_group || p.group) !== groupFilter) return false;
     if (!search) return true;
-    const s = search.toLowerCase();
-    return (p.name || '').toLowerCase().includes(s) || (p.code || '').toLowerCase().includes(s);
+    const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+    const target = `${p.name || ''} ${p.code || ''}`.toLowerCase();
+    return words.every(w => target.includes(w));
   }).slice(0, 20); // Limit dropdown to 20 items
 
   return (
