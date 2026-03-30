@@ -35,7 +35,7 @@ export default function QuotationForm() {
     name: '', description: '', product_code: '', unit: 'bộ', quantity: 1, unit_price: 0,
     discount_percent: 0, vat_rate: 0, height: '', width: '', length: '', weight: '',
     dimensions: '', material: '', color: '', promo_code: '', is_promo: false,
-    spec_factor: 0,
+    spec_factor: 0, group_name: '',
   }]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -68,7 +68,7 @@ export default function QuotationForm() {
           height: i.height || '', width: i.width || '', length: i.length || '', weight: i.weight || '',
           dimensions: i.dimensions || '', material: i.material || '', color: i.color || '',
           product_id: i.product_id, promo_code: i.promo_code || '', is_promo: i.is_promo || false,
-          spec_factor: i.spec_factor || 0,
+          spec_factor: i.spec_factor || 0, group_name: i.group_name || '',
         })));
       });
     } else {
@@ -132,7 +132,15 @@ export default function QuotationForm() {
     const discountAmt = form.discount_type === 'percent' ? subtotal * (form.discount_value || 0) / 100 : (form.discount_value || 0);
     const afterDiscount = subtotal - discountAmt;
     const totalVat = rows.reduce((s, r) => s + r.vat_amount, 0);
-    return { rows, subtotal, discountAmt, afterDiscount, totalVat, total: afterDiscount + totalVat };
+    // Group subtotals
+    const groupSubtotals = {};
+    rows.forEach(r => {
+      const g = r.group_name || '';
+      if (g) {
+        groupSubtotals[g] = (groupSubtotals[g] || 0) + (r.amount || 0);
+      }
+    });
+    return { rows, subtotal, discountAmt, afterDiscount, totalVat, total: afterDiscount + totalVat, groupSubtotals };
   }, [items, form.discount_type, form.discount_value]);
 
   const save = async () => {
@@ -176,7 +184,7 @@ export default function QuotationForm() {
 
   const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
-  const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '', spec_factor: 0 }]);
+  const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '', spec_factor: 0, group_name: '' }]);
 
   return (
     <div className="space-y-4 w-full">
@@ -300,7 +308,17 @@ export default function QuotationForm() {
             <tbody>
               {items.map((item, idx) => {
                 const row = calcs.rows[idx] || {};
+                const prevGroupName = idx > 0 ? (items[idx - 1].group_name || '') : '';
+                const currentGroupName = item.group_name || '';
+                const showGroupHeader = currentGroupName && currentGroupName !== prevGroupName;
                 return (
+                  <>{showGroupHeader && (
+                    <tr key={`group-${idx}`} className="bg-indigo-50">
+                      <td colSpan={20} className="py-1.5 px-3">
+                        <span className="font-bold text-indigo-800 text-xs">{currentGroupName}</span>
+                      </td>
+                    </tr>
+                  )}
                   <tr key={idx} className="border-b hover:bg-blue-50/30">
                     <td className="py-1 px-1 text-gray-400 text-xs">{idx + 1}</td>
                     <td className="py-1 px-1"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
@@ -341,16 +359,24 @@ export default function QuotationForm() {
                     <td className="py-1 px-1"><input value={item.promo_code || ''} onChange={e => updateItem(idx, 'promo_code', e.target.value)} placeholder="" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
                     <td className="py-1 px-1 text-center"><input type="checkbox" checked={item.is_promo || false} onChange={e => updateItem(idx, 'is_promo', e.target.checked)} className="h-3.5 w-3.5 rounded cursor-pointer" /></td>
                     <td className="py-1 px-1"><button onClick={() => removeItem(idx)} className="p-0.5 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button></td>
-                  </tr>
+                  </tr></>
                 );
               })}
             </tbody>
           </table>
         </div>
 
-        {/* Totals - per-item VAT style */}
+        {/* Totals - per-item VAT style with group subtotals */}
         <div className="flex justify-end mt-4">
-          <div className="w-80 space-y-2">
+          <div className="w-96 space-y-2">
+            {/* Group subtotals */}
+            {Object.keys(calcs.groupSubtotals).length > 0 && Object.entries(calcs.groupSubtotals).map(([group, amt]) => (
+              <div key={group} className="flex justify-between text-xs text-indigo-700">
+                <span className="truncate max-w-[220px]" title={group}>📂 {group.length > 35 ? group.slice(0, 35) + '...' : group}:</span>
+                <span className="font-medium">{formatVND(amt)}</span>
+              </div>
+            ))}
+            {Object.keys(calcs.groupSubtotals).length > 0 && <div className="border-t border-gray-200" />}
             <div className="flex justify-between text-sm"><span className="text-gray-500">Tổng tiền hàng:</span><span className="font-medium">{formatVND(calcs.subtotal)}</span></div>
             <div className="flex items-center justify-between text-sm gap-2">
               <span className="text-gray-500">Chiết khấu:</span>

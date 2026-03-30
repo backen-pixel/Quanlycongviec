@@ -56,7 +56,11 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
           const headerCK = i.group_discount_percent || 0;
           const summaryCK = i.group_summary_discount_percent || 0;
 
-          if (price > 0 && qty > 0 && excelAmount > 0) {
+          // Freebie: item có text "HỖ TRỢ"/"MIỄN PHÍ"/"TẶNG" → CK 100%
+          if (i.is_freebie) {
+            itemDiscount = 100;
+            specFactor = 0;
+          } else if (price > 0 && qty > 0 && excelAmount > 0) {
             const rawRatio = excelAmount / (qty * price);
 
             if (rawRatio > 1.005) {
