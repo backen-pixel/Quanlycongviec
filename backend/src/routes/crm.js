@@ -1421,6 +1421,7 @@ r.post('/quotations', async (req, res) => {
         amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
         dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
         promo_code: item.promo_code || null, is_promo: item.is_promo || false,
+        group_name: item.group_name || null,
       };
     });
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
@@ -1482,6 +1483,7 @@ r.put('/quotations/:id', async (req, res) => {
         amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
         dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
         promo_code: item.promo_code || null, is_promo: item.is_promo || false,
+        group_name: item.group_name || null,
       };
     });
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
@@ -2704,6 +2706,12 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       // Normal item row — must have unit_price or amount
       if (!hasPrice && !(colMap.amount !== undefined && parseFloat(row[colMap.amount]) > 0)) continue;
 
+      // Detect "HỖ TRỢ" / "MIỄN PHÍ" / "TẶNG" in amount column → freebie item (CK 100%)
+      const rawAmountCell = colMap.amount !== undefined ? String(row[colMap.amount] || '').trim() : '';
+      const parsedAmount = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
+      const isFreebieText = /HỖ\s*TRỢ|MIỄN\s*PHÍ|TẶNG|FREE|KM|KHUYẾN/i.test(rawAmountCell);
+      const isFreebie = isFreebieText && parsedAmount === 0;
+
       items.push({
         is_group: false,
         group_name: currentGroup,
@@ -2716,9 +2724,10 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
         height: colMap.height !== undefined ? parseFloat(row[colMap.height]) || null : null,
         quantity: colMap.quantity !== undefined ? parseFloat(row[colMap.quantity]) || 1 : 1,
         unit_price: colMap.unit_price !== undefined ? parseFloat(row[colMap.unit_price]) || 0 : 0,
-        amount: colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0,
+        amount: parsedAmount,
         vat_rate: colMap.vat_rate !== undefined ? parseFloat(row[colMap.vat_rate]) || 0 : 0,
         notes: colMap.notes !== undefined ? String(row[colMap.notes] || '').trim() : '',
+        is_freebie: isFreebie,
       });
     }
 
