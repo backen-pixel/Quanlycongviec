@@ -1448,11 +1448,116 @@ r.post('/quotations', async (req, res) => {
       await supabase.from('quotation_items').insert(itemRows);
     }
 
+    // ═══ AUTO-LINK: Tìm deal qua customer nếu chưa có lead_id ═══
+    let linkedLeadId = quote.lead_id;
+    if (!linkedLeadId && (quote.customer_id || quote.customer_name)) {
+      try {
+        let dealQuery = supabase.from('crm_leads')
+          .select('id, customer_id')
+          .eq('type', 'deal')
+          .in('status', ['new', 'contacted', 'qualified', 'negotiation', 'proposal', 'open', 'active'])
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (quote.customer_id) {
+          dealQuery = dealQuery.eq('customer_id', quote.customer_id);
+        } else if (quote.customer_name) {
+          // Tìm customer_id qua tên
+          const { data: cust } = await supabase.from('customers')
+            .select('id')
+            .ilike('full_name', `%${quote.customer_name}%`)
+            .limit(1).single();
+          if (cust) {
+            dealQuery = dealQuery.eq('customer_id', cust.id);
+          }
+        }
+
+        const { data: deal } = await dealQuery.single();
+        if (deal) {
+          linkedLeadId = deal.id;
+          // Cập nhật lead_id + customer_id cho báo giá
+          await supabase.from('quotations').update({
+            lead_id: deal.id,
+            customer_id: deal.customer_id || quote.customer_id,
+          }).eq('id', quote.id);
+          quote.lead_id = deal.id;
+          console.log(`[QUOTATION] Auto-linked BG ${quote.code} → Deal ${deal.id}`);
+        }
+      } catch (linkErr) {
+        console.warn('[QUOTATION] Auto-link deal error:', linkErr.message);
+      }
+    }
+
+    // ═══ AUTO-COMPLETE: Hoàn thành task "Lập báo giá" trong deal ═══
+    if (linkedLeadId) {
+      try {
+        // Tìm task chưa hoàn thành ở stage quotation, ưu tiên "Lập báo giá"
+        const { data: tasks } = await supabase.from('crm_tasks')
+          .select('id, title, stage_slug, status')
+          .eq('lead_id', linkedLeadId)
+          .eq('stage_slug', 'quotation')
+          .neq('status', 'completed')
+          .order('order_index')
+          .limit(5);
+
+        // Tìm task phù hợp nhất: "Lập báo giá" > bất kỳ task quotation nào
+        const quotationTask = (tasks || []).find(t =>
+          t.title.includes('Lập báo giá') || t.title.includes('lập báo giá')
+        ) || (tasks || [])[0];
+
+        if (quotationTask) {
+          // Mark completed
+          await supabase.from('crm_tasks').update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            notes: `✅ Đã tạo báo giá ${quote.code} (${formatMoney(quote.total)})\n📎 Xem: /crm/quotations/${quote.id}`,
+            updated_at: new Date().toISOString(),
+          }).eq('id', quotationTask.id);
+
+          // Thêm attachment vào task (link tới báo giá)
+          const { data: att } = await supabase.from('crm_task_attachments').insert({
+            task_id: quotationTask.id,
+            lead_id: linkedLeadId,
+            name: `📄 ${quote.code} - ${quote.title || 'Báo giá'}`,
+            doc_type: 'quotation',
+            notes: `Báo giá ${quote.code}: ${formatMoney(quote.total)}\nKH: ${quote.customer_name || ''}\nLink: /crm/quotations/${quote.id}`,
+            created_by: req.user.userId,
+          }).select().single();
+
+          // Sync → lead_documents
+          if (att) {
+            const { data: lead } = await supabase.from('crm_leads')
+              .select('project_id').eq('id', linkedLeadId).single();
+            await supabase.from('lead_documents').insert({
+              lead_id: linkedLeadId,
+              project_id: lead?.project_id || null,
+              name: `[${quotationTask.title}] 📄 ${quote.code}`,
+              doc_type: 'quotation',
+              notes: att.notes,
+              created_by: req.user.userId,
+              source_attachment_id: att.id,
+            });
+          }
+
+          quote.auto_task = { taskId: quotationTask.id, taskTitle: quotationTask.title, completed: true };
+          console.log(`[QUOTATION] Auto-completed task "${quotationTask.title}" for deal ${linkedLeadId}`);
+        }
+      } catch (taskErr) {
+        console.warn('[QUOTATION] Auto-complete task error:', taskErr.message);
+      }
+    }
+
     res.status(201).json(quote);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Helper format money cho notes
+function formatMoney(n) {
+  if (!n) return '0 đ';
+  return new Intl.NumberFormat('vi-VN').format(Math.round(n)) + ' đ';
+}
 
 r.put('/quotations/:id', async (req, res) => {
   try {

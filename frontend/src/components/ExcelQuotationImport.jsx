@@ -135,6 +135,12 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
         };
 
       const { data } = await api.post('/crm/quotations', payload);
+      // Hiển thị thông báo auto-link + auto-complete
+      if (data.auto_task) {
+        alert(`🚀 Tự động:\n• Liên kết báo giá ${data.code} với Deal\n• Hoàn thành nhiệm vụ "${data.auto_task.taskTitle}"\n• File báo giá đã ghi vào ghi chú nhiệm vụ`);
+      } else if (data.lead_id && !(dealId || leadId)) {
+        alert(`🔗 Tự động liên kết báo giá ${data.code} với Deal qua khách hàng`);
+      }
       if (onImportDone) onImportDone(data);
     } catch (e) {
       setError(e.response?.data?.error || 'Lỗi tạo báo giá');
