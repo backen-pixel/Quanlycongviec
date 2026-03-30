@@ -57,10 +57,11 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
           const headerCK = i.group_discount_percent || 0;
           const summaryCK = i.group_summary_discount_percent || 0;
 
-          // Freebie: item có text "HỖ TRỢ"/"MIỄN PHÍ"/"TẶNG" → CK 100%
+          // Freebie: item có text "HỖ TRỢ"/"MIỄN PHÍ"/"TẶNG" → giá = 0, KHÔNG tính CK
           if (i.is_freebie) {
-            itemDiscount = 100;
+            itemDiscount = 0;
             specFactor = 0;
+            price = 0; // Hỗ trợ = miễn phí, không phải chiết khấu
           } else if (price > 0 && qty > 0 && excelAmount > 0) {
             const rawRatio = excelAmount / (qty * price);
 
@@ -97,7 +98,8 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
             length: i.length || '',
             dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '',
             group_name: i.group_name || '',
-            notes: i.notes || '',
+            notes: i.is_freebie ? 'HỖ TRỢ' : (i.notes || ''),
+            is_freebie: !!i.is_freebie,
           };
         });
 
@@ -346,16 +348,17 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                         const isExpanded = !group.name || expandGroups[group.name] !== false; // default expanded
                         // Compute group item total (sum of amounts)
                         const groupItemTotal = group.items.reduce((s, item) => {
+                          // Freebie = 0, không tính CK
+                          if (item.is_freebie) return s;
                           const headerCK = item.group_discount_percent || 0;
                           const price = item.unit_price || 0;
                           const qty = item.quantity || 1;
                           const amt = item.amount || 0;
                           let effectiveCK = 0;
-                          if (item.is_freebie) effectiveCK = 100;
-                          else if (headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
+                          if (headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
                             if (amt / (qty * price) < 0.995) effectiveCK = headerCK;
                           }
-                          return s + (effectiveCK === 100 ? 0 : amt);
+                          return s + amt;
                         }, 0);
 
                         // Find summary rows for this group
@@ -386,11 +389,11 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                             const qty = item.quantity || 1;
                             const amt = item.amount || 0;
                             let effectiveCK = 0;
-                            if (item.is_freebie) effectiveCK = 100;
-                            else if (headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
+                            const isFreebie = item.is_freebie;
+                            if (!isFreebie && headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
                               if (amt / (qty * price) < 0.995) effectiveCK = headerCK;
                             }
-                            const amountAfterCK = effectiveCK === 100 ? 0 : amt;
+                            const amountAfterCK = isFreebie ? 0 : amt;
                             return (
                               <tr key={`gi-${gi}-${ii}`} className="border-b hover:bg-gray-50/50">
                                 <td className="py-1.5 px-2 text-gray-400">{globalStt}</td>
@@ -408,9 +411,9 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                                 <td className="py-1.5 px-2 text-right text-gray-600">{item.height || '—'}</td>
                                 <td className="py-1.5 px-2 text-right">{item.quantity}</td>
                                 <td className="py-1.5 px-2 text-right">{formatVND(item.unit_price)}</td>
-                                <td className="py-1.5 px-2 text-right font-medium text-blue-700">{formatVND(amountAfterCK)}</td>
+                                <td className="py-1.5 px-2 text-right font-medium text-blue-700">{isFreebie ? <span className="text-green-600 font-bold">HỖ TRỢ</span> : formatVND(amountAfterCK)}</td>
                                 <td className="py-1.5 px-2 text-right text-orange-600">{effectiveCK > 0 ? `${effectiveCK}%` : '—'}</td>
-                                <td className="py-1.5 px-2 text-gray-500">{item.is_freebie ? 'HỖ TRỢ' : (item.notes || '')}</td>
+                                <td className="py-1.5 px-2 text-gray-500">{isFreebie ? 'Miễn phí' : (item.notes || '')}</td>
                               </tr>
                             );
                           }) : (() => { globalStt += group.items.length; return []; })()),
