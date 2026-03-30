@@ -2524,13 +2524,36 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
           else if (label === 'ĐVT' || label.includes('ĐƠN VỊ')) colMap.unit = ci;
           else if (label.includes('NGANG') || label.includes('DÀI')) colMap.length = ci;
           else if (label.includes('SÂU') || label.includes('RỘNG')) colMap.width = ci;
-          else if (label.includes('CAO')) colMap.height = ci;
+          else if (label.includes('CAO') && !label.includes('CHIẾT')) colMap.height = ci;
           else if (label.includes('KHỐI LƯỢNG') || label.includes('SỐ LƯỢNG') || label === 'SL' || label === 'KL') colMap.quantity = ci;
           else if (label.includes('ĐƠN GIÁ')) colMap.unit_price = ci;
           else if (label.includes('THÀNH TIỀN') || label.includes('T.TIỀN')) colMap.amount = ci;
           else if (label.includes('GHI CHÚ') || label.includes('NOTE')) colMap.notes = ci;
           else if (label.includes('VAT') || label.includes('THUẾ')) colMap.vat_rate = ci;
         });
+
+        // ── 1b. Check next row for sub-headers (merge cell: QUY CÁCH → NGANG/SÂU/CAO) ──
+        if (i + 1 < rows.length) {
+          const subRow = rows[i + 1].map(c => String(c || '').trim().toUpperCase());
+          let hasSubHeader = false;
+          subRow.forEach((label, ci) => {
+            if (label.includes('NGANG') || (label.includes('DÀI') && !label.includes('BẢO'))) {
+              if (colMap.length === undefined) { colMap.length = ci; hasSubHeader = true; }
+            }
+            else if (label.includes('SÂU') || label.includes('RỘNG')) {
+              if (colMap.width === undefined) { colMap.width = ci; hasSubHeader = true; }
+            }
+            else if (label.includes('CAO') && !label.includes('CHIẾT')) {
+              if (colMap.height === undefined) { colMap.height = ci; hasSubHeader = true; }
+            }
+            else if ((label.includes('KHỐI LƯỢNG') || label === 'SL' || label === 'KL') && colMap.quantity === undefined) {
+              colMap.quantity = ci; hasSubHeader = true;
+            }
+          });
+          // If sub-header row found, skip it when parsing items
+          if (hasSubHeader) headerIdx = i + 1;
+        }
+
         break;
       }
     }
