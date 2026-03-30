@@ -91,8 +91,8 @@ export default function QuotationForm() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.get('/customers', { params: { limit: 500 } }).then(r => setCustomers(r.data.customers || r.data || []));
-    api.get('/products', { params: { limit: 500 } }).then(r => setProducts(r.data.products || r.data || []));
+    api.get('/customers', { params: { limit: 5000 } }).then(r => setCustomers(r.data.customers || r.data || []));
+    api.get('/products', { params: { limit: 5000 } }).then(r => setProducts(r.data.products || r.data || []));
     if (isEdit) {
       api.get(`/crm/quotations/${id}`).then(r => {
         const d = r.data;

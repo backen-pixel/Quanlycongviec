@@ -29,7 +29,7 @@ export default function ProductAutocompleteCell({
   // Fetch products if not provided
   useEffect(() => {
     if (!propProducts) {
-      api.get('/products', { params: { limit: 500 } })
+      api.get('/products', { params: { limit: 5000 } })
         .then(r => setLocalProducts(r.data.products || r.data || []))
         .catch(() => {});
     }

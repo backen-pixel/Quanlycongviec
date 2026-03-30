@@ -27,8 +27,8 @@ export default function InvoiceForm() {
   const [showProductPicker, setShowProductPicker] = useState(false);
 
   useEffect(() => {
-    api.get('/customers', { params: { limit: 500 } }).then(r => setCustomers(r.data.customers || r.data || []));
-    api.get('/products', { params: { limit: 500 } }).then(r => setProducts(r.data.products || r.data || []));
+    api.get('/customers', { params: { limit: 5000 } }).then(r => setCustomers(r.data.customers || r.data || []));
+    api.get('/products', { params: { limit: 5000 } }).then(r => setProducts(r.data.products || r.data || []));
   }, []);
 
   const selectCustomer = (cid) => {
