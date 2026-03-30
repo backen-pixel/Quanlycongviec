@@ -45,22 +45,40 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
       const itemsPayload = preview.items
         .filter(i => !i.is_group)
         .map((i, idx) => {
-          // Tính hệ số quy cách = amount / (quantity × unit_price)
-          // Nếu = 1 hoặc không có amount → spec_factor = 0 (tính bình thường)
+          // Tính hệ số quy cách + chiết khấu thực tế per-item từ Excel
           let specFactor = 0;
+          let itemDiscount = 0;
           const qty = i.quantity || 1;
           const price = i.unit_price || 0;
           const excelAmount = i.amount || 0;
+          // group_discount_percent = CK từ header nhóm (đã tính vào Thành tiền per-item)
+          // group_summary_discount_percent = CK từ summary rows (chưa tính vào Thành tiền, áp tổng nhóm)
+          const headerCK = i.group_discount_percent || 0;
+          const summaryCK = i.group_summary_discount_percent || 0;
+
           if (price > 0 && qty > 0 && excelAmount > 0) {
-            const rawFactor = excelAmount / (qty * price);
-            // Nếu hệ số ≈ 1 (sai lệch < 0.5%) → giữ 0 (tính bình thường SL × ĐG)
-            if (Math.abs(rawFactor - 1) > 0.005) {
-              specFactor = Math.round(rawFactor * 1000) / 1000; // round 3 decimal
+            const rawRatio = excelAmount / (qty * price);
+
+            if (rawRatio > 1.005) {
+              // ratio > 1 → có hệ số quy cách (VD: mét dài tủ)
+              specFactor = Math.round(rawRatio * 1000) / 1000;
+              // Nếu nhóm có CK summary → áp CK per-item
+              if (summaryCK > 0) itemDiscount = summaryCK;
+            } else if (rawRatio >= 0.995) {
+              // ratio ≈ 1 → SL×ĐG = Thành tiền, không CK per-item
+              specFactor = 0;
+              itemDiscount = summaryCK > 0 ? summaryCK : 0;
+            } else {
+              // ratio < 1 → có chiết khấu per-item (Thành tiền đã trừ CK)
+              const impliedCK = Math.round((1 - rawRatio) * 10000) / 100;
+              if (headerCK > 0 && Math.abs(impliedCK - headerCK) < 1) {
+                itemDiscount = headerCK;
+              } else {
+                itemDiscount = impliedCK;
+              }
+              specFactor = 0;
             }
           }
-
-          // Lấy discount_percent từ group info (nếu backend parse được)
-          const groupDiscount = i.group_discount_percent || 0;
 
           return {
             name: i.name,
@@ -69,7 +87,7 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
             quantity: qty,
             unit_price: price,
             spec_factor: specFactor,
-            discount_percent: groupDiscount,
+            discount_percent: itemDiscount,
             vat_rate: i.vat_rate || 0,
             height: i.height || '',
             width: i.width || '',
