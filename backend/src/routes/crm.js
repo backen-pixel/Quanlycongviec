@@ -484,6 +484,45 @@ r.get('/leads', async (req, res) => {
   }
 });
 
+// TEST: Tạo notification thử nghiệm
+r.post('/test-notification', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    console.log('[TEST-NOTIFY] userId:', userId);
+    
+    // Direct insert
+    const { data, error } = await supabase.from('notifications').insert({
+      user_id: userId,
+      type: 'system',
+      title: '🧪 Test thông báo',
+      message: 'Thông báo test lúc ' + new Date().toLocaleString('vi-VN'),
+      entity_type: 'system',
+      entity_id: userId,
+    }).select().single();
+    
+    if (error) {
+      console.error('[TEST-NOTIFY] Insert error:', error);
+      return res.status(500).json({ error: error.message, details: error });
+    }
+    
+    console.log('[TEST-NOTIFY] Created:', data);
+    
+    // Push via Socket.IO
+    const pushFn = req.app?.get('pushNotification');
+    if (pushFn && data) {
+      pushFn(userId, data);
+      console.log('[TEST-NOTIFY] Pushed via Socket.IO');
+    } else {
+      console.log('[TEST-NOTIFY] No pushFn available:', !!pushFn);
+    }
+    
+    res.json({ success: true, notification: data });
+  } catch (e) {
+    console.error('[TEST-NOTIFY] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/leads', async (req, res) => {
   try {
     const code = await nextCode('LEAD');
@@ -504,19 +543,24 @@ r.post('/leads', async (req, res) => {
     try {
       // Notify người được giao
       if (body.assigned_to) {
-        await createNotification(req, body.assigned_to, 'lead_assigned',
+        const n1 = await createNotification(req, body.assigned_to, 'lead_assigned',
           '👤 Lead mới được giao',
           `Lead "${body.title}" — KH: ${body.customer_name || data.customer?.full_name || 'N/A'}`,
           'crm_lead', data.id);
+        console.log('[NOTIFY] Lead assigned result:', n1 ? 'OK' : 'FAILED', 'userId:', body.assigned_to);
       }
       // Notify tất cả admin
       const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
       const adminIds = (admins || []).map(u => u.id).filter(id => id !== body.assigned_to);
-      if (adminIds.length) await notifyMultiple(req, adminIds, 'lead_created',
-        '🆕 Lead mới',
-        `Lead "${body.title}" — Mã: ${code}`,
-        'crm_lead', data.id);
-    } catch (ne) { console.warn('[NOTIFY] lead_created:', ne.message); }
+      console.log('[NOTIFY] Lead admins to notify:', adminIds.length, 'ids:', adminIds);
+      if (adminIds.length) {
+        const results = await notifyMultiple(req, adminIds, 'lead_created',
+          '🆕 Lead mới',
+          `Lead "${body.title}" — Mã: ${code}`,
+          'crm_lead', data.id);
+        console.log('[NOTIFY] Lead notifyMultiple results:', results?.length || 0);
+      }
+    } catch (ne) { console.warn('[NOTIFY] lead_created ERROR:', ne.message, ne.stack); }
 
     // ✅ CRM tasks: trigger fn_auto_gen_crm_tasks() đã tự động gen tasks
     // Fallback nếu trigger chưa chạy:
