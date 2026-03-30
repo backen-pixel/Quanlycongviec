@@ -48,7 +48,7 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
   const loadProducts = async (q) => {
     setLoading(true);
     try {
-      const params = { limit: 500 };
+      const params = { limit: 5000 };
       if (q) params.search = q;
       if (categoryFilter) params.category_id = categoryFilter;
       const { data } = await api.get('/products', { params });
@@ -335,7 +335,7 @@ export function ProductSearchInline({ onSelect, className = '' }) {
   const wrapRef = useRef(null);
 
   useEffect(() => {
-    api.get('/products', { params: { limit: 500 } }).then(r => setProducts(r.data.products || r.data || []));
+    api.get('/products', { params: { limit: 5000 } }).then(r => setProducts(r.data.products || r.data || []));
     api.get('/products/categories').then(r => setCategories(r.data.categories || r.data || [])).catch(() => {});
   }, []);
 
