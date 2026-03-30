@@ -2673,15 +2673,38 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
         continue;
       }
 
+      // ── IMPORTANT: Detect GROUP HEADERS before summary rows ──
+      // Group headers like "II. PHỤ KIỆN - CHIẾT KHẤU 35%" contain "CHIẾT KHẤU"
+      // which would wrongly match summary detection. Check Roman numeral first.
+      const sttUpper = stt.toUpperCase();
+      const sttIsNumber = /^\d/.test(stt);
+      const workingNameEarly = name || (!sttIsNumber && stt ? stt : '') || '';
+      const isRomanGroupEarly = /^[IVX]+[\.\)\s]/.test(workingNameEarly) || /^[IVX]+[\.\)\s]/.test(fullRowText.trim());
+      const hasUnitEarly = colMap.unit !== undefined && String(row[colMap.unit] || '').trim();
+      const hasPriceEarly = colMap.unit_price !== undefined && parseFloat(row[colMap.unit_price]) > 0;
+
+      if (isRomanGroupEarly && !hasPriceEarly) {
+        const groupName = workingNameEarly || fullRowText.trim();
+        currentGroup = groupName;
+        const ckMatch = groupName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
+        currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
+        items.push({
+          is_group: true, group_name: groupName, name: groupName,
+          description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
+          height: null, width: null, length: null, notes: '',
+          group_discount_percent: currentGroupDiscount,
+        });
+        console.log('[parse-excel] GROUP:', groupName.slice(0, 50), 'CK:', currentGroupDiscount);
+        continue;
+      }
+
       // Detect summary rows: TỔNG TỦ, TỔNG PHỤ KIỆN, TỔNG 2 HẠNG MỤC, CHIẾT KHẤU, TỔNG SAU CK
       // Check both name column and full row text (summary rows often span merged cells)
       const isSummary = nameUpper.includes('TỔNG') || nameUpper.includes('CỘNG') ||
         nameUpper.includes('CHIẾT KHẤU') || nameUpper.includes('PHẦN TỪ') ||
         fullRowUpper.includes('TỔNG') || fullRowUpper.includes('CHIẾT KHẤU');
       // Summary rows: no STT number, OR STT contains summary text itself (merged cells)
-      const sttUpper = stt.toUpperCase();
       const sttIsSummary = sttUpper.includes('TỔNG') || sttUpper.includes('CHIẾT KHẤU') || sttUpper.includes('PHẦN TỦ') || sttUpper.includes('PHẦN TỪ');
-      const sttIsNumber = /^\d/.test(stt);
       if (isSummary && (!stt || sttIsSummary || !sttIsNumber)) {
         // Find amount: try amount column, then scan row for largest number
         let amt = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
