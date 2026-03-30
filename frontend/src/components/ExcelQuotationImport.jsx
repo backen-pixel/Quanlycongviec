@@ -66,12 +66,10 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
             if (rawRatio > 1.005) {
               // ratio > 1 → có hệ số quy cách (VD: mét dài tủ)
               specFactor = Math.round(rawRatio * 1000) / 1000;
-              // Nếu nhóm có CK summary → áp CK per-item
-              if (summaryCK > 0) itemDiscount = summaryCK;
+              // CK nhóm tủ sẽ nằm ở chiết khấu tổng báo giá, KHÔNG áp per-item
             } else if (rawRatio >= 0.995) {
               // ratio ≈ 1 → SL×ĐG = Thành tiền, không CK per-item
               specFactor = 0;
-              itemDiscount = summaryCK > 0 ? summaryCK : 0;
             } else {
               // ratio < 1 → có chiết khấu per-item (Thành tiền đã trừ CK)
               const impliedCK = Math.round((1 - rawRatio) * 10000) / 100;
@@ -102,6 +100,19 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
           };
         });
 
+      // Tính discount_value: ưu tiên grandTotal từ Excel, tính ngược CK
+      const itemsGrossTotal = itemsPayload.reduce((s, i) => {
+        const f = parseFloat(i.spec_factor) || 0;
+        const gross = f > 0 ? f * (i.quantity || 1) * (i.unit_price || 0) : (i.quantity || 1) * (i.unit_price || 0);
+        const ck = gross * (i.discount_percent || 0) / 100;
+        return s + (gross - ck);
+      }, 0);
+      const excelGrandTotal = preview.summary?.total || 0;
+      // Nếu Excel có tổng cộng và nhỏ hơn tổng items → CK = chênh lệch
+      const computedDiscount = (excelGrandTotal > 0 && itemsGrossTotal > excelGrandTotal)
+        ? Math.round(itemsGrossTotal - excelGrandTotal)
+        : (preview.summary?.discount_amount || 0);
+
       const payload = {
         title: preview.title || `Báo giá ${preview.customer_name || ''}`.trim(),
         customer_name: preview.customer_name || '',
@@ -110,7 +121,7 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
         lead_id: dealId || leadId || '',
         items: itemsPayload,
         discount_type: 'amount',
-        discount_value: preview.summary?.discount_amount || 0,
+        discount_value: computedDiscount,
         notes: preview.kts_info ? `KT Phụ trách: ${preview.kts_info}` : '',
         payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
       };
