@@ -113,18 +113,23 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
         ? Math.round(itemsGrossTotal - excelGrandTotal)
         : (preview.summary?.discount_amount || 0);
 
-      const payload = {
-        title: preview.title || `Báo giá ${preview.customer_name || ''}`.trim(),
-        customer_name: preview.customer_name || '',
-        customer_phone: preview.customer_phone || '',
-        customer_address: preview.customer_address || '',
-        lead_id: dealId || leadId || '',
-        items: itemsPayload,
-        discount_type: 'amount',
-        discount_value: computedDiscount,
-        notes: preview.kts_info ? `KT Phụ trách: ${preview.kts_info}` : '',
-        payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
-      };
+        // Build notes: KT phụ trách + notes từ Excel
+        const notesParts = [];
+        if (preview.kts_info) notesParts.push(`KT Phụ trách: ${preview.kts_info}`);
+        if (preview.notes) notesParts.push(preview.notes);
+
+        const payload = {
+          title: preview.title || `Báo giá ${preview.customer_name || ''}`.trim(),
+          customer_name: preview.customer_name || '',
+          customer_phone: preview.customer_phone || '',
+          customer_address: preview.customer_address || '',
+          lead_id: dealId || leadId || '',
+          items: itemsPayload,
+          discount_type: 'amount',
+          discount_value: computedDiscount,
+          notes: notesParts.join('\n\n'),
+          payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
+        };
 
       const { data } = await api.post('/crm/quotations', payload);
       if (onImportDone) onImportDone(data);
@@ -457,10 +462,10 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
 
               {/* Notes from Excel */}
               {preview.notes && (
-                <details className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <summary className="text-xs font-bold text-amber-800 cursor-pointer">📝 Ghi chú từ Excel ({preview.notes.split('\n').length} dòng)</summary>
-                  <pre className="text-[10px] text-gray-700 mt-2 whitespace-pre-wrap max-h-40 overflow-y-auto">{preview.notes}</pre>
-                </details>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                  <h4 className="text-xs font-bold text-amber-800">📝 Ghi chú & Điều khoản từ Excel</h4>
+                  <pre className="text-[11px] text-gray-700 whitespace-pre-wrap leading-relaxed">{preview.notes}</pre>
+                </div>
               )}
             </>
             );

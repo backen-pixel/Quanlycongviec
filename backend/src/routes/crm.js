@@ -2663,9 +2663,16 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       }
       const fullRowUpper = fullRowText.toUpperCase();
 
-      // Detect "GHI CHÚ" section → stop parsing items
-      if (nameUpper === 'GHI CHÚ' || nameUpper.startsWith('GHI CHÚ:') || fullRowUpper === 'GHI CHÚ') {
+      // Detect "GHI CHÚ" / notes section → stop parsing items, collect notes
+      const isNotesSection = nameUpper === 'GHI CHÚ' || nameUpper.startsWith('GHI CHÚ:') || 
+        fullRowUpper === 'GHI CHÚ' || stt.toUpperCase().startsWith('GHI CHÚ') ||
+        fullRowUpper.startsWith('GHI CHÚ') || fullRowUpper.startsWith('LƯU Ý') ||
+        fullRowUpper.startsWith('ĐIỀU KHOẢN') || fullRowUpper.startsWith('QUY ĐỊNH');
+      if (isNotesSection) {
         reachedNotes = true;
+        // Include this row's text as first note line (if has content beyond "GHI CHÚ")
+        const noteContent = fullRowText.replace(/^GHI\s*CHÚ:?\s*/i, '').trim();
+        if (noteContent) notesText.push(noteContent);
         continue;
       }
       if (reachedNotes) {

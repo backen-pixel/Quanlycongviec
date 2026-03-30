@@ -493,8 +493,8 @@ export default function QuotationForm() {
             )}
           </div>
           <div className="md:col-span-2">
-            <label className="text-xs font-medium text-gray-600">Ghi chú</label>
-            <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} className="w-full px-3 py-2 border rounded-lg text-sm mt-1" />
+            <label className="text-xs font-medium text-gray-600">Ghi chú / Điều khoản</label>
+            <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={5} className="w-full px-3 py-2 border rounded-lg text-sm mt-1 whitespace-pre-wrap" placeholder="Ghi chú, điều khoản thanh toán, bảo hành..." />
           </div>
         </div>
       </div>
