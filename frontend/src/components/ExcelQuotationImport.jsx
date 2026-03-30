@@ -277,6 +277,19 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                           );
                         }
                         const stt = preview.items.slice(0, idx + 1).filter(i => !i.is_group).length;
+                        // Compute effective CK% for this item
+                        const headerCK = item.group_discount_percent || 0;
+                        const price = item.unit_price || 0;
+                        const qty = item.quantity || 1;
+                        const amt = item.amount || 0;
+                        let effectiveCK = 0;
+                        if (item.is_freebie) {
+                          effectiveCK = 100;
+                        } else if (headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
+                          const ratio = amt / (qty * price);
+                          if (ratio < 0.995) effectiveCK = headerCK;
+                        }
+                        const amountAfterCK = effectiveCK === 100 ? 0 : amt;
                         return (
                           <tr key={idx} className="border-b hover:bg-gray-50/50">
                             <td className="py-1.5 px-2 text-gray-400">{stt}</td>
@@ -288,9 +301,9 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                             <td className="py-1.5 px-2 text-right text-gray-600">{item.height || '—'}</td>
                             <td className="py-1.5 px-2 text-right">{item.quantity}</td>
                             <td className="py-1.5 px-2 text-right">{formatVND(item.unit_price)}</td>
-                            <td className="py-1.5 px-2 text-right font-medium text-blue-700">{formatVND(item.amount || item.quantity * item.unit_price)}</td>
-                            <td className="py-1.5 px-2 text-right text-orange-600">{item.group_discount_percent > 0 ? `${item.group_discount_percent}%` : '—'}</td>
-                            <td className="py-1.5 px-2 text-gray-500">{item.notes}</td>
+                            <td className="py-1.5 px-2 text-right font-medium text-blue-700">{formatVND(amountAfterCK)}</td>
+                            <td className="py-1.5 px-2 text-right text-orange-600">{effectiveCK > 0 ? `${effectiveCK}%` : '—'}</td>
+                            <td className="py-1.5 px-2 text-gray-500">{item.is_freebie ? 'HỖ TRỢ' : (item.notes || '')}</td>
                           </tr>
                         );
                       })}
@@ -301,10 +314,10 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                 {/* Totals */}
                 <div className="bg-gray-50 border-t px-4 py-3 space-y-1">
                   {(preview.summary?.summary_rows || []).map((sr, i) => (
-                    <div key={i} className="flex justify-between text-sm">
+                    <div key={i} className="flex justify-between text-xs">
                       <span className="text-gray-500">{sr.label}:</span>
-                      <span className={`font-medium ${sr.label.toUpperCase().includes('CHIẾT KHẤU') ? 'text-red-600' : ''}`}>
-                        {sr.label.toUpperCase().includes('CHIẾT KHẤU') ? '-' : ''}{formatVND(sr.amount)}
+                      <span className={`font-medium ${sr.label.toUpperCase().includes('CHIẾT KHẤU') && !sr.label.toUpperCase().includes('SAU') ? 'text-red-600' : ''}`}>
+                        {sr.label.toUpperCase().includes('CHIẾT KHẤU') && !sr.label.toUpperCase().includes('SAU') ? '-' : ''}{formatVND(sr.amount)}
                       </span>
                     </div>
                   ))}
