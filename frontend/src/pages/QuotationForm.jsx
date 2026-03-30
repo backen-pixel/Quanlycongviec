@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
@@ -132,15 +132,26 @@ export default function QuotationForm() {
     const discountAmt = form.discount_type === 'percent' ? subtotal * (form.discount_value || 0) / 100 : (form.discount_value || 0);
     const afterDiscount = subtotal - discountAmt;
     const totalVat = rows.reduce((s, r) => s + r.vat_amount, 0);
-    // Group subtotals
-    const groupSubtotals = {};
+    // Group details: subtotal, discount, after-discount per group
+    const groupDetails = {};
+    const groupOrder = [];
     rows.forEach(r => {
       const g = r.group_name || '';
       if (g) {
-        groupSubtotals[g] = (groupSubtotals[g] || 0) + (r.amount || 0);
+        if (!groupDetails[g]) {
+          groupDetails[g] = { subtotal: 0, discountTotal: 0, afterDiscount: 0, vatTotal: 0 };
+          groupOrder.push(g);
+        }
+        groupDetails[g].subtotal += (r.gross_amount || 0);
+        groupDetails[g].discountTotal += (r.discount_amount || 0);
+        groupDetails[g].afterDiscount += (r.amount || 0);
+        groupDetails[g].vatTotal += (r.vat_amount || 0);
       }
     });
-    return { rows, subtotal, discountAmt, afterDiscount, totalVat, total: afterDiscount + totalVat, groupSubtotals };
+    // Also keep simple groupSubtotals for backward compat
+    const groupSubtotals = {};
+    Object.entries(groupDetails).forEach(([g, d]) => { groupSubtotals[g] = d.afterDiscount; });
+    return { rows, subtotal, discountAmt, afterDiscount, totalVat, total: afterDiscount + totalVat, groupSubtotals, groupDetails, groupOrder };
   }, [items, form.discount_type, form.discount_value]);
 
   const save = async () => {
@@ -311,15 +322,20 @@ export default function QuotationForm() {
                 const prevGroupName = idx > 0 ? (items[idx - 1].group_name || '') : '';
                 const currentGroupName = item.group_name || '';
                 const showGroupHeader = currentGroupName && currentGroupName !== prevGroupName;
+                // Check if this is the last item in its group
+                const nextGroupName = idx < items.length - 1 ? (items[idx + 1].group_name || '') : '';
+                const isLastInGroup = currentGroupName && currentGroupName !== nextGroupName;
+                const gd = currentGroupName ? calcs.groupDetails[currentGroupName] : null;
                 return (
-                  <>{showGroupHeader && (
-                    <tr key={`group-${idx}`} className="bg-indigo-50">
+                  <React.Fragment key={idx}>
+                  {showGroupHeader && (
+                    <tr className="bg-indigo-50">
                       <td colSpan={20} className="py-1.5 px-3">
                         <span className="font-bold text-indigo-800 text-xs">{currentGroupName}</span>
                       </td>
                     </tr>
                   )}
-                  <tr key={idx} className="border-b hover:bg-blue-50/30">
+                  <tr className="border-b hover:bg-blue-50/30">
                     <td className="py-1 px-1 text-gray-400 text-xs">{idx + 1}</td>
                     <td className="py-1 px-1"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
                     <td className="py-1 px-1">
@@ -359,24 +375,58 @@ export default function QuotationForm() {
                     <td className="py-1 px-1"><input value={item.promo_code || ''} onChange={e => updateItem(idx, 'promo_code', e.target.value)} placeholder="" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
                     <td className="py-1 px-1 text-center"><input type="checkbox" checked={item.is_promo || false} onChange={e => updateItem(idx, 'is_promo', e.target.checked)} className="h-3.5 w-3.5 rounded cursor-pointer" /></td>
                     <td className="py-1 px-1"><button onClick={() => removeItem(idx)} className="p-0.5 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button></td>
-                  </tr></>
+                  </tr>
+                  {/* Group summary rows after last item in group */}
+                  {isLastInGroup && gd && (
+                    <>
+                      <tr className="bg-indigo-50/70">
+                        <td colSpan={11} className="py-1 px-3 text-right text-xs font-bold text-indigo-800">
+                          Tổng {currentGroupName.replace(/^[IVXLCDM]+\.\s*/, '').split(/\s*[-–]\s*/)[0]}:
+                        </td>
+                        <td className="py-1 px-1 text-right text-xs font-bold text-indigo-800">{formatVND(gd.subtotal)}</td>
+                        <td colSpan={8}></td>
+                      </tr>
+                      {gd.discountTotal > 0 && (
+                        <tr className="bg-indigo-50/70">
+                          <td colSpan={11} className="py-1 px-3 text-right text-xs font-bold text-red-600">
+                            Chiết khấu nhóm:
+                          </td>
+                          <td className="py-1 px-1 text-right text-xs font-bold text-red-600">-{formatVND(gd.discountTotal)}</td>
+                          <td colSpan={8}></td>
+                        </tr>
+                      )}
+                      {gd.discountTotal > 0 && (
+                        <tr className="bg-indigo-100/60">
+                          <td colSpan={11} className="py-1 px-3 text-right text-xs font-bold text-indigo-900">
+                            Tổng sau CK:
+                          </td>
+                          <td className="py-1 px-1 text-right text-xs font-bold text-indigo-900">{formatVND(gd.afterDiscount)}</td>
+                          <td colSpan={8}></td>
+                        </tr>
+                      )}
+                    </>
+                  )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
 
-        {/* Totals - per-item VAT style with group subtotals */}
+        {/* Totals - per-group breakdown + overall */}
         <div className="flex justify-end mt-4">
-          <div className="w-96 space-y-2">
-            {/* Group subtotals */}
-            {Object.keys(calcs.groupSubtotals).length > 0 && Object.entries(calcs.groupSubtotals).map(([group, amt]) => (
-              <div key={group} className="flex justify-between text-xs text-indigo-700">
-                <span className="truncate max-w-[220px]" title={group}>📂 {group.length > 35 ? group.slice(0, 35) + '...' : group}:</span>
-                <span className="font-medium">{formatVND(amt)}</span>
-              </div>
-            ))}
-            {Object.keys(calcs.groupSubtotals).length > 0 && <div className="border-t border-gray-200" />}
+          <div className="w-[420px] space-y-2">
+            {/* Per-group after-CK totals */}
+            {calcs.groupOrder.length > 0 && calcs.groupOrder.map(group => {
+              const gd = calcs.groupDetails[group];
+              return (
+                <div key={group} className="flex justify-between text-xs text-indigo-700">
+                  <span className="truncate max-w-[260px]" title={group}>📂 {group.length > 40 ? group.slice(0, 40) + '...' : group}:</span>
+                  <span className="font-medium">{formatVND(gd.afterDiscount)}</span>
+                </div>
+              );
+            })}
+            {calcs.groupOrder.length > 0 && <div className="border-t border-gray-200" />}
             <div className="flex justify-between text-sm"><span className="text-gray-500">Tổng tiền hàng:</span><span className="font-medium">{formatVND(calcs.subtotal)}</span></div>
             <div className="flex items-center justify-between text-sm gap-2">
               <span className="text-gray-500">Chiết khấu:</span>
@@ -384,11 +434,11 @@ export default function QuotationForm() {
                 <select value={form.discount_type} onChange={e => setForm(f => ({ ...f, discount_type: e.target.value }))} className="h-7 px-1 border rounded text-xs">
                   <option value="percent">%</option><option value="amount">VNĐ</option>
                 </select>
-                <input type="number" value={form.discount_value} onChange={e => setForm(f => ({ ...f, discount_value: parseFloat(e.target.value) || 0 }))} className="w-20 h-7 px-2 border rounded text-xs text-right" />
+                <input type="number" value={form.discount_value} onChange={e => setForm(f => ({ ...f, discount_value: parseFloat(e.target.value) || 0 }))} className="w-24 h-7 px-2 border rounded text-xs text-right" />
               </div>
               <span className="font-medium text-red-600">-{formatVND(calcs.discountAmt)}</span>
             </div>
-            <div className="flex justify-between text-sm"><span className="text-gray-500">Cộng tiền hàng sau CK:</span><span className="font-medium">{formatVND(calcs.afterDiscount)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-gray-500">Cộng sau CK:</span><span className="font-medium">{formatVND(calcs.afterDiscount)}</span></div>
             <div className="flex justify-between text-sm"><span className="text-gray-500">Thuế GTGT:</span><span className="font-medium">{formatVND(calcs.totalVat)}</span></div>
             <div className="flex justify-between text-base font-bold border-t pt-2 mt-2">
               <span>TỔNG CỘNG:</span>

@@ -197,7 +197,83 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
           )}
 
           {/* Preview */}
-          {preview && (
+          {preview && (() => {
+            // Build grouped structure: groups[] with items, and associate summary_rows per group
+            const groups = [];
+            let currentGroup = null;
+            const summaryRows = preview.summary?.summary_rows || [];
+
+            // Pass 1: collect groups and their items
+            const ungroupedItems = [];
+            preview.items.forEach((item) => {
+              if (item.is_group) {
+                currentGroup = { name: item.name, discount_percent: item.group_discount_percent || 0, items: [], summaryRows: [] };
+                groups.push(currentGroup);
+              } else if (currentGroup) {
+                currentGroup.items.push(item);
+              } else {
+                ungroupedItems.push(item);
+              }
+            });
+            // If no groups found, create a single virtual group with all items
+            if (groups.length === 0 && ungroupedItems.length > 0) {
+              groups.push({ name: '', discount_percent: 0, items: ungroupedItems, summaryRows: [] });
+            } else if (ungroupedItems.length > 0) {
+              // Prepend ungrouped items to first group
+              groups[0].items = [...ungroupedItems, ...groups[0].items];
+            }
+
+            // Pass 2: associate summary_rows to groups by keyword matching
+            const grandTotalRows = [];
+            summaryRows.forEach(sr => {
+              const label = (sr.label || '').toUpperCase();
+              // Grand total rows (not per-group)
+              if (label.includes('TỔNG CỘNG') || /TỔNG\s*\d+\s*HẠNG\s*MỤC/.test(label)) {
+                grandTotalRows.push(sr);
+                return;
+              }
+              // Try to match to a group
+              let matched = false;
+              for (const g of groups) {
+                const gNameUpper = g.name.toUpperCase();
+                // Extract short keywords from group name for matching
+                // e.g. "I. PHÒNG BẾP" → check if summary mentions "TỦ" (bếp = tủ) or "PHỤ KIỆN"
+                const isSubtotal = !label.includes('CHIẾT KHẤU') && !label.includes('SAU');
+                const isDiscount = label.includes('CHIẾT KHẤU') && !label.includes('SAU');
+                const isAfterDiscount = label.includes('SAU') && label.includes('CHIẾT KHẤU');
+
+                // Match by checking if any significant word from group name appears in the summary label
+                // or vice versa, or by order
+                const groupWords = gNameUpper.replace(/^[IVXLCDM]+\.\s*/, '').split(/[\s\-–,]+/).filter(w => w.length > 2);
+                const labelWords = label.split(/[\s\-–:,]+/).filter(w => w.length > 2);
+                const hasOverlap = groupWords.some(gw => labelWords.some(lw => lw.includes(gw) || gw.includes(lw)));
+
+                if (hasOverlap) {
+                  if (!g.summaryRows) g.summaryRows = [];
+                  g.summaryRows.push({ ...sr, _type: isAfterDiscount ? 'after_discount' : isDiscount ? 'discount' : 'subtotal' });
+                  matched = true;
+                  break;
+                }
+              }
+              // If not matched by keyword, assign to last group that doesn't have this type yet
+              if (!matched && groups.length > 0) {
+                const label2 = (sr.label || '').toUpperCase();
+                const isDiscount2 = label2.includes('CHIẾT KHẤU') && !label2.includes('SAU');
+                const isAfterDiscount2 = label2.includes('SAU') && label2.includes('CHIẾT KHẤU');
+                const type = isAfterDiscount2 ? 'after_discount' : isDiscount2 ? 'discount' : 'subtotal';
+                // Find last group that doesn't already have this type
+                for (let gi = groups.length - 1; gi >= 0; gi--) {
+                  if (!groups[gi].summaryRows.some(s => s._type === type)) {
+                    groups[gi].summaryRows.push({ ...sr, _type: type });
+                    break;
+                  }
+                }
+              }
+            });
+
+            let globalStt = 0;
+
+            return (
             <>
               {/* Customer info */}
               <div className="bg-blue-50 rounded-xl p-4 space-y-2">
@@ -239,7 +315,7 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                 <span className="bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-full font-medium">💰 {formatVND(preview.summary?.total || preview.summary?.subtotal || 0)}</span>
               </div>
 
-              {/* Items table */}
+              {/* Items table - grouped */}
               <div className="border rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -260,82 +336,113 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.items.map((item, idx) => {
-                        if (item.is_group) {
-                          return (
-                            <tr key={idx} className="bg-indigo-50 cursor-pointer" onClick={() => toggleGroup(item.name)}>
-                              <td colSpan={12} className="py-2 px-3">
-                                <div className="flex items-center gap-2">
-                                  {expandGroups[item.name] ? <ChevronUp className="h-3.5 w-3.5 text-indigo-500" /> : <ChevronDown className="h-3.5 w-3.5 text-indigo-500" />}
-                                  <span className="font-bold text-indigo-800 text-xs">{item.name}</span>
-                                  {item.group_discount_percent > 0 && (
-                                    <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-[10px] font-medium">CK {item.group_discount_percent}%</span>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        }
-                        const stt = preview.items.slice(0, idx + 1).filter(i => !i.is_group).length;
-                        // Compute effective CK% for this item
-                        const headerCK = item.group_discount_percent || 0;
-                        const price = item.unit_price || 0;
-                        const qty = item.quantity || 1;
-                        const amt = item.amount || 0;
-                        let effectiveCK = 0;
-                        if (item.is_freebie) {
-                          effectiveCK = 100;
-                        } else if (headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
-                          const ratio = amt / (qty * price);
-                          if (ratio < 0.995) effectiveCK = headerCK;
-                        }
-                        const amountAfterCK = effectiveCK === 100 ? 0 : amt;
-                        return (
-                          <tr key={idx} className="border-b hover:bg-gray-50/50">
-                            <td className="py-1.5 px-2 text-gray-400">{stt}</td>
-                            <td className="py-1.5 px-2 font-medium text-gray-900">{item.name}</td>
-                            <td className="py-1.5 px-2 text-gray-600">{item.description}</td>
-                            <td className="py-1.5 px-2 text-center">{item.unit}</td>
-                            <td className="py-1.5 px-2 text-right text-gray-600">{item.length || '—'}</td>
-                            <td className="py-1.5 px-2 text-right text-gray-600">{item.width || '—'}</td>
-                            <td className="py-1.5 px-2 text-right text-gray-600">{item.height || '—'}</td>
-                            <td className="py-1.5 px-2 text-right">{item.quantity}</td>
-                            <td className="py-1.5 px-2 text-right">{formatVND(item.unit_price)}</td>
-                            <td className="py-1.5 px-2 text-right font-medium text-blue-700">{formatVND(amountAfterCK)}</td>
-                            <td className="py-1.5 px-2 text-right text-orange-600">{effectiveCK > 0 ? `${effectiveCK}%` : '—'}</td>
-                            <td className="py-1.5 px-2 text-gray-500">{item.is_freebie ? 'HỖ TRỢ' : (item.notes || '')}</td>
+                      {groups.map((group, gi) => {
+                        const isExpanded = !group.name || expandGroups[group.name] !== false; // default expanded
+                        // Compute group item total (sum of amounts)
+                        const groupItemTotal = group.items.reduce((s, item) => {
+                          const headerCK = item.group_discount_percent || 0;
+                          const price = item.unit_price || 0;
+                          const qty = item.quantity || 1;
+                          const amt = item.amount || 0;
+                          let effectiveCK = 0;
+                          if (item.is_freebie) effectiveCK = 100;
+                          else if (headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
+                            if (amt / (qty * price) < 0.995) effectiveCK = headerCK;
+                          }
+                          return s + (effectiveCK === 100 ? 0 : amt);
+                        }, 0);
+
+                        // Find summary rows for this group
+                        const subtotalRow = group.summaryRows.find(s => s._type === 'subtotal');
+                        const discountRow = group.summaryRows.find(s => s._type === 'discount');
+                        const afterDiscountRow = group.summaryRows.find(s => s._type === 'after_discount');
+
+                        return [
+                          // Group header (skip for virtual ungrouped)
+                          ...(group.name ? [
+                          <tr key={`gh-${gi}`} className="bg-indigo-50 cursor-pointer" onClick={() => toggleGroup(group.name)}>
+                            <td colSpan={12} className="py-2 px-3">
+                              <div className="flex items-center gap-2">
+                                {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-indigo-500" /> : <ChevronDown className="h-3.5 w-3.5 text-indigo-500" />}
+                                <span className="font-bold text-indigo-800 text-xs">{group.name}</span>
+                                {group.discount_percent > 0 && (
+                                  <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-[10px] font-medium">CK {group.discount_percent}%</span>
+                                )}
+                              </div>
+                            </td>
                           </tr>
-                        );
+                          ] : []),
+                          // Group items (collapsible)
+                          ...(isExpanded ? group.items.map((item, ii) => {
+                            globalStt++;
+                            const headerCK = item.group_discount_percent || 0;
+                            const price = item.unit_price || 0;
+                            const qty = item.quantity || 1;
+                            const amt = item.amount || 0;
+                            let effectiveCK = 0;
+                            if (item.is_freebie) effectiveCK = 100;
+                            else if (headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
+                              if (amt / (qty * price) < 0.995) effectiveCK = headerCK;
+                            }
+                            const amountAfterCK = effectiveCK === 100 ? 0 : amt;
+                            return (
+                              <tr key={`gi-${gi}-${ii}`} className="border-b hover:bg-gray-50/50">
+                                <td className="py-1.5 px-2 text-gray-400">{globalStt}</td>
+                                <td className="py-1.5 px-2 font-medium text-gray-900">{item.name}</td>
+                                <td className="py-1.5 px-2 text-gray-600">{item.description}</td>
+                                <td className="py-1.5 px-2 text-center">{item.unit}</td>
+                                <td className="py-1.5 px-2 text-right text-gray-600">{item.length || '—'}</td>
+                                <td className="py-1.5 px-2 text-right text-gray-600">{item.width || '—'}</td>
+                                <td className="py-1.5 px-2 text-right text-gray-600">{item.height || '—'}</td>
+                                <td className="py-1.5 px-2 text-right">{item.quantity}</td>
+                                <td className="py-1.5 px-2 text-right">{formatVND(item.unit_price)}</td>
+                                <td className="py-1.5 px-2 text-right font-medium text-blue-700">{formatVND(amountAfterCK)}</td>
+                                <td className="py-1.5 px-2 text-right text-orange-600">{effectiveCK > 0 ? `${effectiveCK}%` : '—'}</td>
+                                <td className="py-1.5 px-2 text-gray-500">{item.is_freebie ? 'HỖ TRỢ' : (item.notes || '')}</td>
+                              </tr>
+                            );
+                          }) : (() => { globalStt += group.items.length; return []; })()),
+                          // Group summary rows (always visible)
+                          <tr key={`gs-${gi}-sub`} className="bg-indigo-50/70">
+                            <td colSpan={9} className="py-1.5 px-3 text-right text-xs font-bold text-indigo-800">
+                              {subtotalRow ? subtotalRow.label : `Tổng ${group.name.replace(/^[IVXLCDM]+\.\s*/, '').split(/\s*[-–]\s*/)[0]}`}:
+                            </td>
+                            <td className="py-1.5 px-2 text-right text-xs font-bold text-indigo-800">
+                              {formatVND(subtotalRow ? subtotalRow.amount : groupItemTotal)}
+                            </td>
+                            <td colSpan={2}></td>
+                          </tr>,
+                          ...(discountRow ? [
+                            <tr key={`gs-${gi}-ck`} className="bg-indigo-50/70">
+                              <td colSpan={9} className="py-1.5 px-3 text-right text-xs font-bold text-red-600">
+                                {discountRow.label}:
+                              </td>
+                              <td className="py-1.5 px-2 text-right text-xs font-bold text-red-600">
+                                -{formatVND(Math.abs(discountRow.amount))}
+                              </td>
+                              <td colSpan={2}></td>
+                            </tr>
+                          ] : []),
+                          ...(afterDiscountRow ? [
+                            <tr key={`gs-${gi}-after`} className="bg-indigo-100/60">
+                              <td colSpan={9} className="py-1.5 px-3 text-right text-xs font-bold text-indigo-900">
+                                {afterDiscountRow.label}:
+                              </td>
+                              <td className="py-1.5 px-2 text-right text-xs font-bold text-indigo-900">
+                                {formatVND(afterDiscountRow.amount)}
+                              </td>
+                              <td colSpan={2}></td>
+                            </tr>
+                          ] : []),
+                        ];
                       })}
                     </tbody>
                   </table>
                 </div>
 
-                {/* Totals */}
+                {/* Grand Total */}
                 <div className="bg-gray-50 border-t px-4 py-3 space-y-1">
-                  {(preview.summary?.summary_rows || []).map((sr, i) => (
-                    <div key={i} className="flex justify-between text-xs">
-                      <span className="text-gray-500">{sr.label}:</span>
-                      <span className={`font-medium ${sr.label.toUpperCase().includes('CHIẾT KHẤU') && !sr.label.toUpperCase().includes('SAU') ? 'text-red-600' : ''}`}>
-                        {sr.label.toUpperCase().includes('CHIẾT KHẤU') && !sr.label.toUpperCase().includes('SAU') ? '-' : ''}{formatVND(sr.amount)}
-                      </span>
-                    </div>
-                  ))}
-                  {!(preview.summary?.summary_rows?.length) && (
-                    <>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-500">Tổng tiền hàng:</span>
-                        <span className="font-medium">{formatVND(preview.summary?.subtotal || 0)}</span>
-                      </div>
-                      {preview.summary?.discount_amount > 0 && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-500">Chiết khấu:</span>
-                          <span className="font-medium text-red-600">-{formatVND(preview.summary.discount_amount)}</span>
-                        </div>
-                      )}
-                    </>
-                  )}
-                  <div className="flex justify-between text-base font-bold border-t pt-2 mt-1">
+                  <div className="flex justify-between text-base font-bold">
                     <span>TỔNG CỘNG:</span>
                     <span className="text-blue-600">{formatVND(preview.summary?.total || 0)}</span>
                   </div>
@@ -356,7 +463,8 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                 </details>
               )}
             </>
-          )}
+            );
+          })()}
         </div>
 
         {/* Footer */}
