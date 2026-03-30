@@ -180,6 +180,8 @@ export default function NotificationCenter({ socket }) {
               navigate(`/crm/invoices/${notif.entity_id}`);
             } else if (notif.entity_type === 'event') {
               navigate(`/crm/events`);
+            } else if (notif.entity_type === 'release_note') {
+              navigate(`/updates`);
             }
             setOpen(false);
           }}
@@ -275,6 +277,8 @@ export default function NotificationCenter({ socket }) {
                         navigate(`/crm/invoices/${n.entity_id}`);
                       } else if (n.entity_type === 'event') {
                         navigate(`/crm/events`);
+                      } else if (n.entity_type === 'release_note') {
+                        navigate(`/updates`);
                       }
                       setOpen(false);
                     }}

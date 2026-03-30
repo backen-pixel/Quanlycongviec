@@ -64,6 +64,7 @@ app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/crm', require('./routes/crm'));
 app.use('/api/events', require('./routes/events'));
+app.use('/api/release-notes', require('./routes/releaseNotes'));
 app.use('/api/production', require('./routes/production'));
 app.use('/api/settings', require('./routes/settings'));
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }

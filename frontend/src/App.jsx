@@ -33,6 +33,7 @@ import InvoiceDetail from './pages/InvoiceDetail';
 import OrderForm from './pages/OrderForm';
 import InvoiceForm from './pages/InvoiceForm';
 import EventsFeedPage from './pages/EventsFeedPage';
+import ReleaseNotesPage from './pages/ReleaseNotesPage';
 import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
@@ -189,6 +190,7 @@ export default function App() {
             <Route path="/sx/projects/:id" element={<ProductionDetail />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />
+            <Route path="/updates" element={<ReleaseNotesPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
                 <div className="text-center">

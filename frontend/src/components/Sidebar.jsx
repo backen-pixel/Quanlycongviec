@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks,
-  BookOpen, FolderTree, Factory, Pin, Calendar
+  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -63,7 +63,7 @@ const MENU_GROUPS = [
       { to: '/settings/pdf', icon: Settings, label: 'Thông tin PDF' },
       { to: '/settings/theme', icon: Settings, label: 'Giao diện & Hình nền' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
-      // Hidden from sidebar but routes still work:
+      { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
       // { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
     ]
@@ -106,6 +106,7 @@ const CRM_MENU_GROUPS = [
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM' },
       { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
+      { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
     ]
   },
 ];
