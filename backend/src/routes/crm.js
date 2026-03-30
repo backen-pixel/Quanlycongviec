@@ -2703,6 +2703,10 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
     // Priority: "TỔNG 2 HẠNG MỤC" or "TỔNG SAU CHIẾT KHẤU" > last TỔNG row
     let grandTotal = 0, subtotalBeforeDiscount = 0, discountAmount = 0;
 
+    // Track group subtotals + discount amounts for CK% calculation
+    const groupTotals = {}; // { groupName: subtotal }
+    const groupDiscounts = {}; // { groupName: discountAmount }
+
     for (const sr of summaryRows) {
       const label = sr.label.toUpperCase();
       if (label.includes('TỔNG') && label.includes('HẠNG MỤC')) {
@@ -2710,10 +2714,45 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       } else if (label.includes('SAU') && (label.includes('CHIẾT KHẤU') || label.includes('CK'))) {
         // "TỔNG TỦ SAU CHIẾT KHẤU" — subtotal after group discount
         if (!grandTotal) grandTotal = sr.amount;
-      } else if (label.includes('CHIẾT KHẤU') || label.includes('PHẦN TỪ')) {
+      } else if (label.includes('CHIẾT KHẤU') || label.includes('PHẦN TỪ') || label.includes('PHẦN TỦ')) {
         discountAmount += sr.amount;
+        // Try to match to a group: "PHẦN TỦ CHIẾT KHẤU" → group containing "TỦ"
+        const matchGroup = items.find(i => i.is_group && label.includes(i.name.split(' ').find(w => w.length > 2)?.toUpperCase() || '___'));
+        if (matchGroup) groupDiscounts[matchGroup.name] = (groupDiscounts[matchGroup.name] || 0) + sr.amount;
+        else {
+          // Fallback: assign to first group that doesn't have CK% from header
+          const firstGroupNoCK = items.find(i => i.is_group && !i.group_discount_percent);
+          if (firstGroupNoCK) groupDiscounts[firstGroupNoCK.name] = (groupDiscounts[firstGroupNoCK.name] || 0) + sr.amount;
+        }
       } else if (label.includes('TỔNG')) {
         subtotalBeforeDiscount += sr.amount; // group subtotals
+        // "TỔNG TỦ" → map to closest preceding group
+        const precedingGroup = [...items].reverse().find(i => i.is_group && label.includes(i.name.split(' ').find(w => w.length > 2)?.toUpperCase() || '___'));
+        if (precedingGroup) groupTotals[precedingGroup.name] = sr.amount;
+        else {
+          const firstGroup = items.find(i => i.is_group && !groupTotals[i.name]);
+          if (firstGroup) groupTotals[firstGroup.name] = sr.amount;
+        }
+      }
+    }
+
+    // ── 5. Calculate CK% for groups that don't have it from header ──
+    // E.g. "PHẦN TỦ CHIẾT KHẤU 1,998,101" + "TỔNG TỦ 66,603,375" → CK% = 1998101/66603375 ≈ 3%
+    // NOTE: CK from summary = applied to GROUP TOTAL (Thành tiền items are BEFORE discount)
+    //       CK from header = applied PER ITEM (Thành tiền already includes discount)
+    // → Mark differently: group_summary_discount_percent (not applied per-item in Thành tiền)
+    for (const groupItem of items.filter(i => i.is_group && !i.group_discount_percent)) {
+      const gTotal = groupTotals[groupItem.name];
+      const gDiscount = groupDiscounts[groupItem.name];
+      if (gTotal > 0 && gDiscount > 0) {
+        const ckPercent = Math.round((gDiscount / gTotal) * 10000) / 100; // round 2 decimal
+        groupItem.group_summary_discount_percent = ckPercent;
+        // Apply to child items as summary-level discount (NOT already in Thành tiền)
+        items.forEach(i => {
+          if (!i.is_group && i.group_name === groupItem.name) {
+            i.group_summary_discount_percent = ckPercent;
+          }
+        });
       }
     }
 
