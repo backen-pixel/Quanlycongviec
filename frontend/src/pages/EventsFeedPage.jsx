@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
@@ -679,6 +680,225 @@ function EventTypesManager({ types, onReload }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// USER SEARCH SELECT — Chọn 1 nhân viên (dropdown search giống EmployeePicker)
+// ═══════════════════════════════════════════════════════════════
+function UserSearchSelect({ users, value, onChange, placeholder = '👤 Chọn nhân viên...' }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [style, setStyle] = useState({});
+  const btnRef = useRef(null);
+  const ddRef = useRef(null);
+
+  const selected = users.find(u => u.id === value);
+
+  useLayoutEffect(() => {
+    if (open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const vh = window.innerHeight;
+      const s = { position: 'fixed', left: Math.max(8, Math.min(r.left, window.innerWidth - 320)), width: Math.max(r.width, 300), zIndex: 99999 };
+      if (vh - r.bottom < 320 && r.top > vh - r.bottom) s.bottom = vh - r.top + 4;
+      else s.top = r.bottom + 4;
+      setStyle(s);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ddRef.current && ddRef.current.contains(e.target)) return; setOpen(false); };
+    window.addEventListener('scroll', h, true);
+    window.addEventListener('resize', () => setOpen(false));
+    return () => { window.removeEventListener('scroll', h, true); window.removeEventListener('resize', () => setOpen(false)); };
+  }, [open]);
+
+  const filtered = users.filter(u => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return u.full_name?.toLowerCase().includes(s) || u.email?.toLowerCase().includes(s);
+  });
+
+  const dropdown = open ? createPortal(
+    <>
+      <div className="fixed inset-0" style={{ zIndex: 99998 }} onClick={() => setOpen(false)} />
+      <div ref={ddRef} style={style} className="bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden">
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+            <input autoFocus placeholder="Tìm tên, email..." value={search} onChange={e => setSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+        </div>
+        <div className="max-h-56 overflow-y-auto">
+          <button onClick={() => { onChange(''); setOpen(false); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:bg-gray-50 border-b">
+            <X className="w-3.5 h-3.5" /> Không chọn
+          </button>
+          {filtered.map(u => (
+            <button key={u.id} onClick={() => { onChange(u.id); setOpen(false); setSearch(''); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-blue-50 text-left ${value === u.id ? 'bg-blue-50' : ''}`}>
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${value === u.id ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
+                {u.avatar ? <img src={u.avatar} className="w-7 h-7 rounded-full object-cover" /> : (u.full_name || '?').charAt(0)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm font-medium truncate ${value === u.id ? 'text-blue-700' : 'text-gray-900'}`}>{u.full_name}</div>
+                {u.email && <div className="text-xs text-gray-400 truncate">{u.email}</div>}
+              </div>
+              {value === u.id && <div className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />}
+            </button>
+          ))}
+          {filtered.length === 0 && <div className="py-6 text-center text-sm text-gray-400">Không tìm thấy</div>}
+        </div>
+        <div className="px-3 py-1.5 border-t text-xs text-gray-400">{filtered.length}/{users.length} nhân viên</div>
+      </div>
+    </>, document.body) : null;
+
+  return (
+    <div className="relative">
+      <button ref={btnRef} type="button" onClick={() => setOpen(!open)}
+        className={`w-full flex items-center gap-2 border rounded-lg bg-white text-sm px-3 py-2 min-h-[40px] ${open ? 'border-blue-400 ring-2 ring-blue-200' : 'border-gray-300 hover:border-blue-400'}`}>
+        {selected ? (
+          <>
+            <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+              {selected.avatar ? <img src={selected.avatar} className="w-6 h-6 rounded-full object-cover" /> :
+                <span className="text-xs font-bold text-blue-600">{(selected.full_name || '?').charAt(0)}</span>}
+            </div>
+            <span className="flex-1 text-left font-medium text-gray-900 truncate">{selected.full_name}</span>
+            <button type="button" onClick={e => { e.stopPropagation(); onChange(''); }} className="shrink-0 p-0.5 hover:bg-gray-200 rounded text-gray-400"><X className="w-3 h-3" /></button>
+          </>
+        ) : (
+          <>
+            <Users className="w-4 h-4 text-gray-400 shrink-0" />
+            <span className="flex-1 text-left text-gray-400">{placeholder}</span>
+            <ChevronLeft className="w-3.5 h-3.5 text-gray-400 shrink-0 -rotate-90" />
+          </>
+        )}
+      </button>
+      {dropdown}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// USER MULTI SELECT — Chọn nhiều nhân viên (dropdown search + chips)
+// ═══════════════════════════════════════════════════════════════
+function UserMultiSelect({ users, value = [], onChange, placeholder = '👥 Chọn người tham gia...' }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [style, setStyle] = useState({});
+  const btnRef = useRef(null);
+  const ddRef = useRef(null);
+
+  const selectedUsers = users.filter(u => value.includes(u.id));
+
+  useLayoutEffect(() => {
+    if (open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const vh = window.innerHeight;
+      const s = { position: 'fixed', left: Math.max(8, Math.min(r.left, window.innerWidth - 320)), width: Math.max(r.width, 300), zIndex: 99999 };
+      if (vh - r.bottom < 360 && r.top > vh - r.bottom) s.bottom = vh - r.top + 4;
+      else s.top = r.bottom + 4;
+      setStyle(s);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ddRef.current && ddRef.current.contains(e.target)) return; setOpen(false); };
+    window.addEventListener('scroll', h, true);
+    window.addEventListener('resize', () => setOpen(false));
+    return () => { window.removeEventListener('scroll', h, true); window.removeEventListener('resize', () => setOpen(false)); };
+  }, [open]);
+
+  const toggle = (uid) => {
+    onChange(value.includes(uid) ? value.filter(id => id !== uid) : [...value, uid]);
+  };
+
+  const filtered = users.filter(u => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return u.full_name?.toLowerCase().includes(s) || u.email?.toLowerCase().includes(s);
+  });
+
+  const dropdown = open ? createPortal(
+    <>
+      <div className="fixed inset-0" style={{ zIndex: 99998 }} onClick={() => setOpen(false)} />
+      <div ref={ddRef} style={style} className="bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden">
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+            <input autoFocus placeholder="Tìm tên, email..." value={search} onChange={e => setSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+        </div>
+        {/* Selected chips */}
+        {selectedUsers.length > 0 && (
+          <div className="px-2 py-1.5 border-b flex flex-wrap gap-1">
+            {selectedUsers.map(u => (
+              <span key={u.id} className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 text-xs font-medium px-2 py-0.5 rounded-full">
+                {u.full_name}
+                <button onClick={(e) => { e.stopPropagation(); toggle(u.id); }} className="hover:text-red-500 cursor-pointer"><X className="w-3 h-3" /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="max-h-56 overflow-y-auto">
+          {filtered.map(u => {
+            const isSelected = value.includes(u.id);
+            return (
+              <button key={u.id} onClick={() => toggle(u.id)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-blue-50 text-left ${isSelected ? 'bg-blue-50/50' : ''}`}>
+                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}`}>
+                  {isSelected && <Check className="w-3 h-3 text-white" />}
+                </div>
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${isSelected ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
+                  {u.avatar ? <img src={u.avatar} className="w-7 h-7 rounded-full object-cover" /> : (u.full_name || '?').charAt(0)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>{u.full_name}</div>
+                  {u.email && <div className="text-xs text-gray-400 truncate">{u.email}</div>}
+                </div>
+              </button>
+            );
+          })}
+          {filtered.length === 0 && <div className="py-6 text-center text-sm text-gray-400">Không tìm thấy</div>}
+        </div>
+        <div className="px-3 py-1.5 border-t text-xs text-gray-400 flex justify-between">
+          <span>{value.length} đã chọn / {users.length} nhân viên</span>
+          {value.length > 0 && <button onClick={() => onChange([])} className="text-red-500 hover:underline cursor-pointer">Bỏ chọn tất cả</button>}
+        </div>
+      </div>
+    </>, document.body) : null;
+
+  return (
+    <div className="relative">
+      <button ref={btnRef} type="button" onClick={() => setOpen(!open)}
+        className={`w-full flex items-center gap-2 border rounded-lg bg-white text-sm px-3 py-2 min-h-[40px] ${open ? 'border-blue-400 ring-2 ring-blue-200' : 'border-gray-300 hover:border-blue-400'}`}>
+        {selectedUsers.length > 0 ? (
+          <>
+            <div className="flex -space-x-1.5 shrink-0">
+              {selectedUsers.slice(0, 5).map(u => (
+                <div key={u.id} className="w-6 h-6 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-blue-700" title={u.full_name}>
+                  {u.avatar ? <img src={u.avatar} className="w-6 h-6 rounded-full object-cover" /> : (u.full_name || '?').charAt(0)}
+                </div>
+              ))}
+              {selectedUsers.length > 5 && <div className="w-6 h-6 rounded-full bg-gray-300 border-2 border-white flex items-center justify-center text-[9px] font-bold text-gray-600">+{selectedUsers.length - 5}</div>}
+            </div>
+            <span className="flex-1 text-left text-sm text-gray-700 truncate">{selectedUsers.length} người tham gia</span>
+            <button type="button" onClick={e => { e.stopPropagation(); onChange([]); }} className="shrink-0 p-0.5 hover:bg-gray-200 rounded text-gray-400"><X className="w-3 h-3" /></button>
+          </>
+        ) : (
+          <>
+            <Users className="w-4 h-4 text-gray-400 shrink-0" />
+            <span className="flex-1 text-left text-gray-400">{placeholder}</span>
+            <ChevronLeft className="w-3.5 h-3.5 text-gray-400 shrink-0 -rotate-90" />
+          </>
+        )}
+      </button>
+      {dropdown}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // EVENT CREATE/EDIT MODAL
 // ═══════════════════════════════════════════════════════════════
 function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
@@ -819,29 +1039,13 @@ function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
           {/* Assignee */}
           <div>
             <label className="text-xs font-medium text-gray-600 block mb-1">Người phụ trách</label>
-            <select value={form.assignee_id} onChange={e => setForm(f => ({ ...f, assignee_id: e.target.value }))}
-              className="w-full h-10 px-3 border rounded-lg text-sm">
-              <option value="">— Chọn —</option>
-              {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-            </select>
+            <UserSearchSelect users={users} value={form.assignee_id} onChange={v => setForm(f => ({ ...f, assignee_id: v }))} placeholder="👤 Chọn người phụ trách..." />
           </div>
 
           {/* Participants */}
           <div>
             <label className="text-xs font-medium text-gray-600 block mb-2">Người tham gia ({participantIds.length})</label>
-            <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-              {users.map(u => (
-                <button key={u.id} onClick={() => toggleParticipant(u.id)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition ${
-                    participantIds.includes(u.id)
-                      ? 'bg-blue-100 text-blue-700 border-blue-300'
-                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-gray-300'
-                  }`}>
-                  {participantIds.includes(u.id) && <Check className="h-3 w-3 inline mr-1" />}
-                  {u.full_name}
-                </button>
-              ))}
-            </div>
+            <UserMultiSelect users={users} value={participantIds} onChange={setParticipantIds} placeholder="👥 Chọn người tham gia..." />
           </div>
 
           {/* Description */}
