@@ -766,6 +766,17 @@ r.post('/leads/:id/documents', async (req, res) => {
       } catch (syncErr) { console.warn('Sync document→attachment:', syncErr.message); }
     }
 
+    // 🔔 NOTIFICATION: Tài liệu mới
+    try {
+      const { data: leadInfo } = await supabase.from('crm_leads')
+        .select('assigned_to, lead_owner_id, title').eq('id', req.params.id).single();
+      const ownerIds = [leadInfo?.assigned_to, leadInfo?.lead_owner_id].filter(Boolean);
+      if (ownerIds.length) await notifyMultiple(req, ownerIds, 'document_uploaded',
+        '📎 Tài liệu mới',
+        `"${data.name}" được upload vào deal "${leadInfo?.title || 'N/A'}"`,
+        'crm_lead', req.params.id);
+    } catch (ne) { console.warn('[NOTIFY] document_uploaded:', ne.message); }
+
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1026,6 +1037,21 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     const { data, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
+
+    // 🔔 NOTIFICATION: Lead/Deal đổi giai đoạn
+    try {
+      const { data: pStageInfo } = await supabase.from('crm_pipeline_stages')
+        .select('name').eq('id', stage_id).single();
+      const { data: leadInfo } = await supabase.from('crm_leads')
+        .select('title, assigned_to, lead_owner_id').eq('id', req.params.id).single();
+      const ownerIds = [leadInfo?.assigned_to, leadInfo?.lead_owner_id].filter(Boolean);
+      if (ownerIds.length && !stage?.is_won) {
+        await notifyMultiple(req, ownerIds, 'lead_stage_changed',
+          `🔄 ${lead?.type === 'deal' ? 'Deal' : 'Lead'} chuyển giai đoạn`,
+          `"${leadInfo?.title}" → ${pStageInfo?.name || 'Giai đoạn mới'}`,
+          lead?.type === 'deal' ? 'crm_deal' : 'crm_lead', req.params.id);
+      }
+    } catch (ne) { console.warn('[NOTIFY] stage_changed:', ne.message); }
 
     // ── AUTO-GENERATE CRM TASKS when stage changes ──
     // Lead chỉ có stage "consulting" (Tư vấn)
@@ -1547,6 +1573,16 @@ r.post('/quotations', async (req, res) => {
       }
     }
 
+    // 🔔 NOTIFICATION: Báo giá mới
+    try {
+      const t = await getNotifyTargets(quote.lead_id);
+      const allIds = [...new Set([...t.ownerIds, ...t.adminIds])];
+      if (allIds.length) await notifyMultiple(req, allIds, 'quotation_created',
+        '📄 Báo giá mới',
+        `Báo giá ${quote.code} — KH: ${quote.customer_name || 'N/A'} — ${formatMoney(quote.total)}`,
+        'quotation', quote.id);
+    } catch (ne) { console.warn('[NOTIFY] quotation_created:', ne.message); }
+
     res.status(201).json(quote);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1558,6 +1594,23 @@ function formatMoney(n) {
   if (!n) return '0 đ';
   return new Intl.NumberFormat('vi-VN').format(Math.round(n)) + ' đ';
 }
+// ═══ HELPER: Lấy owner + admin IDs cho notification ═══
+async function getNotifyTargets(leadId) {
+  const targets = { ownerIds: [], adminIds: [] };
+  try {
+    if (leadId) {
+      const { data: lead } = await supabase.from('crm_leads')
+        .select('assigned_to, lead_owner_id, customer_id')
+        .eq('id', leadId).single();
+      if (lead?.assigned_to) targets.ownerIds.push(lead.assigned_to);
+      if (lead?.lead_owner_id && lead.lead_owner_id !== lead.assigned_to) targets.ownerIds.push(lead.lead_owner_id);
+    }
+    const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+    targets.adminIds = (admins || []).map(u => u.id);
+  } catch (e) { console.warn('[NOTIFY] getNotifyTargets error:', e.message); }
+  return targets;
+}
+
 
 r.put('/quotations/:id', async (req, res) => {
   try {
@@ -1622,6 +1675,15 @@ r.put('/quotations/:id', async (req, res) => {
       try { autoResult = await onQuotationAccepted(req.params.id, req.user.userId); } catch (e) { console.error('Auto-flow BG→ĐH error:', e.message); }
     }
 
+    // 🔔 NOTIFICATION: Cập nhật báo giá
+    try {
+      const t = await getNotifyTargets(data.lead_id);
+      if (t.ownerIds.length) await notifyMultiple(req, t.ownerIds, 'quotation_updated',
+        '📝 Cập nhật báo giá',
+        `Báo giá ${data.code} đã được cập nhật${quoteData.status === 'accepted' ? ' → Chấp nhận ✅' : ''}`,
+        'quotation', data.id);
+    } catch (ne) { console.warn('[NOTIFY] quotation_updated:', ne.message); }
+
     res.json({ ...data, auto: autoResult });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1665,6 +1727,16 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
     // Update quotation status
     await supabase.from('quotations').update({ status: 'converted', updated_at: new Date().toISOString() }).eq('id', req.params.id);
 
+    // 🔔 NOTIFICATION: BG → ĐH
+    try {
+      const t = await getNotifyTargets(order.lead_id);
+      const allIds = [...new Set([...t.ownerIds, ...t.adminIds])];
+      if (allIds.length) await notifyMultiple(req, allIds, 'order_created',
+        '🛒 Đơn hàng mới từ báo giá',
+        `Đơn hàng ${orderCode} được tạo từ BG ${quote.code} — ${formatMoney(order.total)}`,
+        'order', order.id);
+    } catch (ne) { console.warn('[NOTIFY] bg_to_dh:', ne.message); }
+
     res.status(201).json(order);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1679,8 +1751,20 @@ r.delete('/quotations/:id', async (req, res) => {
     // Delete items
     await supabase.from('quotation_items').delete().eq('quotation_id', req.params.id);
     // Delete quotation
+    // Get info before delete for notification
+    const { data: delQ } = await supabase.from('quotations').select('code, lead_id, customer_name').eq('id', req.params.id).single();
     const { error } = await supabase.from('quotations').delete().eq('id', req.params.id);
     if (error) throw error;
+
+    // 🔔 NOTIFICATION: Xóa báo giá
+    try {
+      const t = await getNotifyTargets(delQ?.lead_id);
+      if (t.adminIds.length) await notifyMultiple(req, t.adminIds, 'item_deleted',
+        '🗑️ Báo giá đã xóa',
+        `Báo giá ${delQ?.code || ''} — KH: ${delQ?.customer_name || 'N/A'} đã bị xóa`,
+        'quotation', req.params.id);
+    } catch (ne) {}
+
     res.json({ message: 'Đã xóa báo giá' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1738,6 +1822,18 @@ r.put('/orders/:id', async (req, res) => {
       try { autoProject = await onOrderConfirmed(req.params.id, req.user.userId); } catch (e) { console.error('Auto-flow error:', e.message); }
     }
 
+    // 🔔 NOTIFICATION: Cập nhật đơn hàng
+    try {
+      const statusLabels = { confirmed: 'Đã xác nhận', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
+      const statusLabel = statusLabels[updates.status] || '';
+      const t = await getNotifyTargets(data.lead_id);
+      const allIds = [...new Set([...t.ownerIds, ...t.adminIds])];
+      if (allIds.length && updates.status) await notifyMultiple(req, allIds, 'order_updated',
+        `📦 ĐH ${data.code} — ${statusLabel}`,
+        `Đơn hàng ${data.code} cập nhật trạng thái: ${statusLabel}`,
+        'order', data.id);
+    } catch (ne) { console.warn('[NOTIFY] order_updated:', ne.message); }
+
     res.json({ ...data, auto_project: autoProject });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1777,16 +1873,15 @@ r.post('/orders', async (req, res) => {
       })));
     }
 
-    // ✅ NOTIFICATION: Notify admin users about order confirmed
-    const { data: adminUsers } = await supabase.from('users')
-      .select('id').eq('role', 'admin');
-    const adminIds = (adminUsers || []).map(u => u.id);
-    if (adminIds.length > 0) {
-      await notifyMultiple(req, adminIds, 'order_confirmed',
-        '📋 Đơn hàng được xác nhận',
-        `Đơn hàng ${code} - Tổng tiền: ${(data.total || 0).toLocaleString('vi-VN')} VND - đã được xác nhận`,
+    // 🔔 NOTIFICATION: Đơn hàng mới
+    try {
+      const t = await getNotifyTargets(data.lead_id);
+      const allIds = [...new Set([...t.ownerIds, ...t.adminIds])];
+      if (allIds.length) await notifyMultiple(req, allIds, 'order_created',
+        '🛒 Đơn hàng mới',
+        `Đơn hàng ${code} — KH: ${data.customer_name || 'N/A'} — ${formatMoney(data.total)}`,
         'order', data.id);
-    }
+    } catch (ne) { console.warn('[NOTIFY] order_created:', ne.message); }
 
     res.status(201).json(data);
   } catch (e) {
@@ -1834,9 +1929,21 @@ r.post('/orders/:id/create-invoice', async (req, res) => {
 // ═══ DELETE ORDER ═══
 r.delete('/orders/:id', async (req, res) => {
   try {
+    // Get info before delete
+    const { data: delO } = await supabase.from('orders').select('code, lead_id, customer_name').eq('id', req.params.id).single();
     await supabase.from('order_items').delete().eq('order_id', req.params.id);
     const { error } = await supabase.from('orders').delete().eq('id', req.params.id);
     if (error) throw error;
+
+    // 🔔 NOTIFICATION: Xóa đơn hàng
+    try {
+      const t = await getNotifyTargets(delO?.lead_id);
+      if (t.adminIds.length) await notifyMultiple(req, t.adminIds, 'item_deleted',
+        '🗑️ Đơn hàng đã xóa',
+        `Đơn hàng ${delO?.code || ''} — KH: ${delO?.customer_name || 'N/A'} đã bị xóa`,
+        'order', req.params.id);
+    } catch (ne) {}
+
     res.json({ message: 'Đã xóa đơn hàng' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1907,6 +2014,17 @@ r.post('/invoices', async (req, res) => {
       created_by: req.user.userId,
     }).select('*').single();
     if (error) throw error;
+
+    // 🔔 NOTIFICATION: Hóa đơn mới
+    try {
+      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+      const adminIds = (admins || []).map(u => u.id);
+      if (adminIds.length) await notifyMultiple(req, adminIds, 'invoice_created',
+        '🧾 Hóa đơn mới',
+        `Hóa đơn ${code} — KH: ${inv.customer_name || 'N/A'} — ${formatMoney(inv.total)}`,
+        'invoice', inv.id);
+    } catch (ne) { console.warn('[NOTIFY] invoice_created:', ne.message); }
+
     res.status(201).json(inv);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1967,6 +2085,18 @@ r.post('/invoices/:id/payments', async (req, res) => {
       updated_at: new Date().toISOString(),
     }).eq('id', req.params.id);
 
+    // 🔔 NOTIFICATION: Thanh toán
+    try {
+      const { data: inv } = await supabase.from('invoices').select('code, lead_id, customer_name, total, order_id').eq('id', req.params.id).single();
+      const t = await getNotifyTargets(inv?.lead_id);
+      const allIds = [...new Set([...t.ownerIds, ...t.adminIds])];
+      const paidLabel = paymentStatus === 'paid' ? '✅ Đã thanh toán đủ' : '💰 Nhận thanh toán';
+      if (allIds.length) await notifyMultiple(req, allIds, 'payment_received',
+        paidLabel,
+        `${inv?.code || 'HĐ'} — Nhận ${formatMoney(payment.amount)} (${formatMoney(totalPaid)}/${formatMoney(inv?.total)})`,
+        'invoice', req.params.id);
+    } catch (ne) { console.warn('[NOTIFY] payment:', ne.message); }
+
     res.status(201).json(payment);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1976,16 +2106,30 @@ r.post('/invoices/:id/payments', async (req, res) => {
 // ═══ DELETE INVOICE ═══
 r.delete('/invoices/:id', async (req, res) => {
   try {
+    // Get info before delete
+    const { data: delI } = await supabase.from('invoices').select('code, customer_name').eq('id', req.params.id).single();
     await supabase.from('payment_records').delete().eq('invoice_id', req.params.id);
     await supabase.from('invoice_items').delete().eq('invoice_id', req.params.id);
     const { error } = await supabase.from('invoices').delete().eq('id', req.params.id);
     if (error) throw error;
+
+    // 🔔 NOTIFICATION: Xóa hóa đơn
+    try {
+      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+      const adminIds = (admins || []).map(u => u.id);
+      if (adminIds.length) await notifyMultiple(req, adminIds, 'item_deleted',
+        '🗑️ Hóa đơn đã xóa',
+        `Hóa đơn ${delI?.code || ''} — KH: ${delI?.customer_name || 'N/A'} đã bị xóa`,
+        'invoice', req.params.id);
+    } catch (ne) {}
+
     res.json({ message: 'Đã xóa hóa đơn' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Convert Lead → Project
 r.post('/leads/:id/convert-to-project', async (req, res) => {
+  // NOTE: notification added at the end of this handler
   try {
     const { data: lead } = await supabase.from('crm_leads').select('*, customer:customers(id, full_name)').eq('id', req.params.id).single();
     if (!lead) return res.status(404).json({ error: 'Lead không tồn tại' });
@@ -2059,6 +2203,16 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
         totalCreated += (ins?.length || 0);
       } catch (e) { console.warn(`convert-to-project: auto-tasks ${slug} failed:`, e.message); }
     }
+
+    // 🔔 NOTIFICATION: Lead/Deal → Dự án
+    try {
+      const t = await getNotifyTargets(req.params.id);
+      const allIds = [...new Set([...t.ownerIds, ...t.adminIds])];
+      if (allIds.length) await notifyMultiple(req, allIds, 'project_created',
+        '🏗️ Tạo dự án từ Deal',
+        `Dự án ${project.code} — "${project.name}" — ${totalCreated} tasks`,
+        'project', project.id);
+    } catch (ne) { console.warn('[NOTIFY] convert_project:', ne.message); }
 
     res.status(201).json({ ...project, tasks_created: totalCreated });
   } catch (e) {
@@ -2193,6 +2347,19 @@ r.get('/alerts/follow-ups', async (req, res) => {
 r.post('/project/:projectId/auto-invoice', async (req, res) => {
   try {
     const invoices = await onProjectCompleted(req.params.projectId, req.user.userId);
+
+    // 🔔 NOTIFICATION: Auto hóa đơn
+    if (invoices.length) {
+      try {
+        const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+        const adminIds = (admins || []).map(u => u.id);
+        if (adminIds.length) await notifyMultiple(req, adminIds, 'invoice_created',
+          '🧾 Tự động tạo hóa đơn',
+          `Dự án hoàn thành → tạo ${invoices.length} hóa đơn`,
+          'project', req.params.projectId);
+      } catch (ne) { console.warn('[NOTIFY] auto_invoice:', ne.message); }
+    }
+
     res.json({ created: invoices.length, invoices });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3075,6 +3242,17 @@ r.post('/leads/:id/tasks', async (req, res) => {
       created_by: req.user.userId,
     }).select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
     if (error) throw error;
+
+    // 🔔 NOTIFICATION: Task CRM mới
+    try {
+      if (data.assignee_id) {
+        await createNotification(req, data.assignee_id, 'crm_task_assigned',
+          '📌 Nhiệm vụ CRM mới',
+          `Bạn được giao: "${data.title}"`,
+          'crm_task', data.id);
+      }
+    } catch (ne) { console.warn('[NOTIFY] crm_task_created:', ne.message); }
+
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3124,6 +3302,27 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       .eq('id', req.params.taskId)
       .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
     if (error) throw error;
+
+    // 🔔 NOTIFICATION: Task CRM cập nhật
+    try {
+      if (b.status === 'completed') {
+        // Notify lead owner khi task hoàn thành
+        const { data: leadInfo } = await supabase.from('crm_leads')
+          .select('assigned_to, lead_owner_id, title').eq('id', req.params.leadId).single();
+        const ownerIds = [leadInfo?.assigned_to, leadInfo?.lead_owner_id].filter(Boolean);
+        if (ownerIds.length) await notifyMultiple(req, ownerIds, 'crm_task_completed',
+          '✅ NV CRM hoàn thành',
+          `"${data.title}" trong deal "${leadInfo?.title}" đã hoàn thành`,
+          'crm_task', data.id);
+      }
+      if (b.assignee_id && b.assignee_id !== data.assignee_id) {
+        await createNotification(req, b.assignee_id, 'crm_task_assigned',
+          '📌 Được giao nhiệm vụ CRM',
+          `Bạn được giao: "${data.title}"`,
+          'crm_task', data.id);
+      }
+    } catch (ne) { console.warn('[NOTIFY] crm_task_update:', ne.message); }
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

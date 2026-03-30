@@ -24,9 +24,23 @@ const ICON_MAP = {
   deadline_overdue: AlertTriangle,
   checklist_completed: CheckSquare,
   lead_assigned: CheckSquare,
+  lead_converted: FolderKanban,
+  lead_stage_changed: FolderKanban,
+  deal_assigned: CheckSquare,
   deal_won: FolderKanban,
+  quotation_created: FileText,
+  quotation_updated: FileText,
+  order_created: FileText,
   order_confirmed: FileText,
+  order_updated: FileText,
+  invoice_created: FileText,
   invoice_overdue: AlertTriangle,
+  payment_received: CheckSquare,
+  crm_task_assigned: CheckSquare,
+  crm_task_completed: CheckSquare,
+  document_uploaded: Paperclip,
+  project_created: FolderKanban,
+  item_deleted: AlertTriangle,
   system: Bell,
 };
 
@@ -174,10 +188,14 @@ export default function NotificationCenter({ socket }) {
               navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
             } else if (notif.entity_type === 'crm_lead' || notif.entity_type === 'crm_deal') {
               navigate(`/crm/leads/${notif.entity_id}`);
+            } else if (notif.entity_type === 'quotation') {
+              navigate(`/crm/quotations/${notif.entity_id}`);
             } else if (notif.entity_type === 'order') {
               navigate(`/crm/orders/${notif.entity_id}`);
             } else if (notif.entity_type === 'invoice') {
               navigate(`/crm/invoices/${notif.entity_id}`);
+            } else if (notif.entity_type === 'crm_task') {
+              navigate(`/crm/tasks`);
             } else if (notif.entity_type === 'event') {
               navigate(`/crm/events`);
             } else if (notif.entity_type === 'release_note') {
@@ -271,10 +289,14 @@ export default function NotificationCenter({ socket }) {
                         navigate(`/tasks?task=${n.entity_id}`);
                       } else if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal') {
                         navigate(`/crm/leads/${n.entity_id}`);
+                      } else if (n.entity_type === 'quotation') {
+                        navigate(`/crm/quotations/${n.entity_id}`);
                       } else if (n.entity_type === 'order') {
                         navigate(`/crm/orders/${n.entity_id}`);
                       } else if (n.entity_type === 'invoice') {
                         navigate(`/crm/invoices/${n.entity_id}`);
+                      } else if (n.entity_type === 'crm_task') {
+                        navigate(`/crm/tasks`);
                       } else if (n.entity_type === 'event') {
                         navigate(`/crm/events`);
                       } else if (n.entity_type === 'release_note') {
