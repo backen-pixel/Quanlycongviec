@@ -15,8 +15,6 @@ const { supabase } = require('../config/supabase');
 async function createNotification(req, userId, type, title, message, entityType, entityId, metadata = null) {
   if (!userId) return null;
 
-  console.log(`[NOTIFY] Creating: type=${type}, user=${userId}, entity=${entityType}/${entityId}, title="${title}"`);
-
   const insert = {
     user_id: userId,
     type,
