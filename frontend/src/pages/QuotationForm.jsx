@@ -334,8 +334,9 @@ export default function QuotationForm() {
               {products.filter(p => {
                 if (productGroup && p.code_group !== productGroup) return false;
                 if (productSearch) {
-                  const s = productSearch.toLowerCase();
-                  return (p.name?.toLowerCase().includes(s) || p.code?.toLowerCase().includes(s));
+                  const words = productSearch.toLowerCase().split(/\s+/).filter(Boolean);
+                  const target = `${p.name || ''} ${p.code || ''}`.toLowerCase();
+                  return words.every(w => target.includes(w));
                 }
                 return true;
               }).map(p => <option key={p.id} value={p.id}>{p.code ? `${p.code} - ` : ''}{p.name}</option>)}
