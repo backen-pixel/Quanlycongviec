@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks,
-  BookOpen, FolderTree, Factory, Pin
+  BookOpen, FolderTree, Factory, Pin, Calendar
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -90,6 +90,7 @@ const CRM_MENU_GROUPS = [
       { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
       { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
       { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },
+      { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
     ]
   },
   {
