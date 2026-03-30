@@ -6,6 +6,53 @@ import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search,
 import ProductSearchPicker from '../components/ProductSearchPicker';
 import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
 
+// Helper: cho phép nhập dấu "," thay "." cho số thập phân
+const parseNumber = (val) => {
+  if (val === '' || val === null || val === undefined) return 0;
+  // Thay dấu phẩy → dấu chấm
+  const cleaned = String(val).replace(/,/g, '.');
+  return parseFloat(cleaned) || 0;
+};
+
+// Component input số hỗ trợ dấu ","
+function NumericInput({ value, onChange, placeholder, title, className, step, allowEmpty }) {
+  const [localVal, setLocalVal] = useState(value ?? '');
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) {
+      setLocalVal(value ?? '');
+    }
+  }, [value, focused]);
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={focused ? localVal : (allowEmpty && (value === '' || value === null || value === undefined) ? '' : value)}
+      placeholder={placeholder}
+      title={title}
+      className={className}
+      onFocus={(e) => {
+        setFocused(true);
+        setLocalVal(e.target.value);
+      }}
+      onChange={(e) => {
+        // Cho phép nhập: số, dấu chấm, dấu phẩy, dấu trừ
+        const raw = e.target.value.replace(/[^0-9.,-]/g, '');
+        setLocalVal(raw);
+        const num = parseNumber(raw);
+        onChange(allowEmpty && raw === '' ? '' : num);
+      }}
+      onBlur={() => {
+        setFocused(false);
+        const num = parseNumber(localVal);
+        onChange(allowEmpty && localVal === '' ? '' : num);
+      }}
+    />
+  );
+}
+
 const PAYMENT_OPTIONS = [
   'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
   'Thanh toán 100% khi ký HĐ',
@@ -299,29 +346,29 @@ export default function QuotationForm() {
           </div>
         </div>
 
-        <div className="overflow-x-auto border rounded-lg">
-          <table className="min-w-[1200px] w-full text-xs">
-            <thead><tr className="bg-gray-50 text-[9px] text-gray-500 uppercase tracking-wider">
-              <th className="py-1.5 px-1 text-left w-9">STT</th>
-              <th className="py-1.5 px-1 text-left w-24">Mã HH</th>
-              <th className="py-1.5 px-1 text-left min-w-[180px]">Tên hàng hóa</th>
-              <th className="py-1.5 px-1 text-left min-w-[140px]">Diễn giải</th>
-              <th className="py-1.5 px-1 text-center w-14">ĐVT</th>
-              <th className="py-1.5 px-1 text-right w-16" title="Ngang (m)">Ngang</th>
-              <th className="py-1.5 px-1 text-right w-16" title="Sâu (m)">Sâu</th>
-              <th className="py-1.5 px-1 text-right w-16" title="Cao (m)">Cao</th>
-              <th className="py-1.5 px-1 text-right w-16" title="Hệ số quy cách: nhân vào đơn giá (VD: mét dài ngang tủ)">HS QC</th>
-              <th className="py-1.5 px-1 text-right w-14">SL</th>
-              <th className="py-1.5 px-1 text-right w-28">Đơn giá</th>
-              <th className="py-1.5 px-1 text-right w-28">Thành tiền</th>
-              <th className="py-1.5 px-1 text-right w-14">CK%</th>
-              <th className="py-1.5 px-1 text-right w-24">Tiền CK</th>
-              <th className="py-1.5 px-1 text-right w-14">%VAT</th>
-              <th className="py-1.5 px-1 text-right w-24">Tiền thuế</th>
-              <th className="py-1.5 px-1 text-right w-28">Tổng tiền</th>
-              <th className="py-1.5 px-1 text-left w-20">CTKM</th>
-              <th className="py-1.5 px-1 text-center w-10">KM</th>
-              <th className="py-1.5 px-1 w-8"></th>
+        <div className="overflow-x-auto border rounded-lg" style={{ maxHeight: '65vh' }}>
+          <table className="min-w-[1400px] w-full text-sm">
+            <thead className="sticky top-0 z-10"><tr className="bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wider">
+              <th className="py-2.5 px-2 text-left w-10">STT</th>
+              <th className="py-2.5 px-2 text-left w-28">Mã HH</th>
+              <th className="py-2.5 px-2 text-left min-w-[220px]">Tên hàng hóa</th>
+              <th className="py-2.5 px-2 text-left min-w-[180px]">Diễn giải</th>
+              <th className="py-2.5 px-2 text-center w-16">ĐVT</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Ngang (m)">Ngang</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Sâu (m)">Sâu</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Cao (m)">Cao</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Hệ số quy cách: nhân vào đơn giá (VD: mét dài ngang tủ)">HS QC</th>
+              <th className="py-2.5 px-2 text-right w-16">SL</th>
+              <th className="py-2.5 px-2 text-right w-32">Đơn giá</th>
+              <th className="py-2.5 px-2 text-right w-32">Thành tiền</th>
+              <th className="py-2.5 px-2 text-right w-16">CK%</th>
+              <th className="py-2.5 px-2 text-right w-28">Tiền CK</th>
+              <th className="py-2.5 px-2 text-right w-16">%VAT</th>
+              <th className="py-2.5 px-2 text-right w-28">Tiền thuế</th>
+              <th className="py-2.5 px-2 text-right w-32">Tổng tiền</th>
+              <th className="py-2.5 px-2 text-left w-24">CTKM</th>
+              <th className="py-2.5 px-2 text-center w-12">KM</th>
+              <th className="py-2.5 px-2 w-10"></th>
             </tr></thead>
             <tbody>
               {items.map((item, idx) => {
@@ -337,15 +384,15 @@ export default function QuotationForm() {
                   <React.Fragment key={idx}>
                   {showGroupHeader && (
                     <tr className="bg-indigo-50">
-                      <td colSpan={20} className="py-1.5 px-3">
-                        <span className="font-bold text-indigo-800 text-xs">{currentGroupName}</span>
+                      <td colSpan={20} className="py-2 px-3">
+                        <span className="font-bold text-indigo-800 text-sm">{currentGroupName}</span>
                       </td>
                     </tr>
                   )}
                   <tr className="border-b hover:bg-blue-50/30">
-                    <td className="py-1 px-1 text-gray-400 text-xs">{idx + 1}</td>
-                    <td className="py-1 px-1"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
-                    <td className="py-1 px-1">
+                    <td className="py-2 px-2 text-gray-400 text-sm">{idx + 1}</td>
+                    <td className="py-2 px-2"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent" /></td>
+                    <td className="py-2 px-2">
                       <ProductAutocompleteCell
                         value={item.name}
                         products={products}
@@ -365,56 +412,56 @@ export default function QuotationForm() {
                         placeholder="Gõ tên SP..."
                       />
                     </td>
-                    <td className="py-1 px-1">
-                      <div className="flex items-center gap-0.5">
-                        <input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent truncate" title={item.description || ''} />
+                    <td className="py-2 px-2">
+                      <div className="flex items-center gap-1">
+                        <input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent truncate" title={item.description || ''} />
                         {item.description && item.description.length > 20 && (
-                          <button onClick={() => setDescPopup({ idx, name: item.name, description: item.description })} className="flex-shrink-0 p-0.5 text-blue-400 hover:text-blue-600 cursor-pointer" title="Xem chi tiết"><Search className="h-3 w-3" /></button>
+                          <button onClick={() => setDescPopup({ idx, name: item.name, description: item.description })} className="flex-shrink-0 p-1 text-blue-400 hover:text-blue-600 cursor-pointer" title="Xem chi tiết"><Search className="h-3.5 w-3.5" /></button>
                         )}
                       </div>
                     </td>
-                    <td className="py-1 px-1"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-center" /></td>
-                    <td className="py-1 px-1"><input type="number" step="any" value={item.length || ''} onChange={e => updateItem(idx, 'length', e.target.value)} placeholder="0" title="Ngang (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1"><input type="number" step="any" value={item.width || ''} onChange={e => updateItem(idx, 'width', e.target.value)} placeholder="0" title="Sâu (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1"><input type="number" step="any" value={item.height || ''} onChange={e => updateItem(idx, 'height', e.target.value)} placeholder="0" title="Cao (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1"><input type="number" step="any" value={item.spec_factor || ''} onChange={e => updateItem(idx, 'spec_factor', e.target.value)} placeholder="0" title="Hệ số quy cách" className={`w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
-                    <td className="py-1 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1"><input type="text" value={formatVND(item.unit_price).replace('đ', '').trim()} onFocus={e => { e.target.type = 'number'; e.target.value = item.unit_price || 0; }} onBlur={e => { updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0); e.target.type = 'text'; e.target.value = formatVND(parseFloat(e.target.value) || 0).replace('đ', '').trim(); }} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-green-600 font-bold">HỖ TRỢ</span> : formatVND(row.gross_amount || 0)}</td>
-                    <td className="py-1 px-1"><input type="number" value={item.discount_percent || 0} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs text-orange-600">{formatVND(row.discount_amount || 0)}</td>
-                    <td className="py-1 px-1"><input type="number" value={item.vat_rate || 0} onChange={e => updateItem(idx, 'vat_rate', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs text-gray-600">{formatVND(row.tax_amount || 0)}</td>
-                    <td className="py-1 px-1 text-right text-xs font-bold text-blue-700">{formatVND(row.total || 0)}</td>
-                    <td className="py-1 px-1"><input value={item.promo_code || ''} onChange={e => updateItem(idx, 'promo_code', e.target.value)} placeholder="" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
-                    <td className="py-1 px-1 text-center"><input type="checkbox" checked={item.is_promo || false} onChange={e => updateItem(idx, 'is_promo', e.target.checked)} className="h-3.5 w-3.5 rounded cursor-pointer" /></td>
-                    <td className="py-1 px-1"><button onClick={() => removeItem(idx)} className="p-0.5 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button></td>
+                    <td className="py-2 px-2"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-center" /></td>
+                    <td className="py-2 px-2"><NumericInput value={item.length || ''} onChange={v => updateItem(idx, 'length', v)} placeholder="0" title="Ngang (m)" allowEmpty className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2"><NumericInput value={item.width || ''} onChange={v => updateItem(idx, 'width', v)} placeholder="0" title="Sâu (m)" allowEmpty className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2"><NumericInput value={item.height || ''} onChange={v => updateItem(idx, 'height', v)} placeholder="0" title="Cao (m)" allowEmpty className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2"><NumericInput value={item.spec_factor || ''} onChange={v => updateItem(idx, 'spec_factor', v)} placeholder="0" title="Hệ số quy cách" allowEmpty className={`w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
+                    <td className="py-2 px-2"><NumericInput value={item.quantity} onChange={v => updateItem(idx, 'quantity', v)} placeholder="1" className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2"><input type="text" value={formatVND(item.unit_price).replace('đ', '').trim()} onFocus={e => { e.target.value = item.unit_price || 0; }} onBlur={e => { const v = parseNumber(e.target.value); updateItem(idx, 'unit_price', v); e.target.value = formatVND(v).replace('đ', '').trim(); }} onChange={e => { const v = parseNumber(e.target.value); updateItem(idx, 'unit_price', v); }} className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2 text-right text-sm font-medium text-gray-900">{item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-green-600 font-bold">HỖ TRỢ</span> : formatVND(row.gross_amount || 0)}</td>
+                    <td className="py-2 px-2"><NumericInput value={item.discount_percent || 0} onChange={v => updateItem(idx, 'discount_percent', v)} className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2 text-right text-sm text-orange-600">{formatVND(row.discount_amount || 0)}</td>
+                    <td className="py-2 px-2"><NumericInput value={item.vat_rate || 0} onChange={v => updateItem(idx, 'vat_rate', v)} className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2 text-right text-sm text-gray-600">{formatVND(row.tax_amount || 0)}</td>
+                    <td className="py-2 px-2 text-right text-sm font-bold text-blue-700">{formatVND(row.total || 0)}</td>
+                    <td className="py-2 px-2"><input value={item.promo_code || ''} onChange={e => updateItem(idx, 'promo_code', e.target.value)} placeholder="" className="w-full px-2 py-1.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-sm outline-none bg-transparent" /></td>
+                    <td className="py-2 px-2 text-center"><input type="checkbox" checked={item.is_promo || false} onChange={e => updateItem(idx, 'is_promo', e.target.checked)} className="h-4 w-4 rounded cursor-pointer" /></td>
+                    <td className="py-2 px-2"><button onClick={() => removeItem(idx)} className="p-1 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-4 w-4" /></button></td>
                   </tr>
                   {/* Group summary rows after last item in group */}
                   {isLastInGroup && gd && (
                     <>
                       <tr className="bg-indigo-50/70">
-                        <td colSpan={11} className="py-1 px-3 text-right text-xs font-bold text-indigo-800">
+                        <td colSpan={11} className="py-2 px-3 text-right text-sm font-bold text-indigo-800">
                           Tổng {currentGroupName.replace(/^[IVXLCDM]+\.\s*/, '').split(/\s*[-–]\s*/)[0]}:
                         </td>
-                        <td className="py-1 px-1 text-right text-xs font-bold text-indigo-800">{formatVND(gd.subtotal)}</td>
+                        <td className="py-2 px-2 text-right text-sm font-bold text-indigo-800">{formatVND(gd.subtotal)}</td>
                         <td colSpan={8}></td>
                       </tr>
                       {gd.discountTotal > 0 && (
                         <tr className="bg-indigo-50/70">
-                          <td colSpan={11} className="py-1 px-3 text-right text-xs font-bold text-red-600">
+                          <td colSpan={11} className="py-2 px-3 text-right text-sm font-bold text-red-600">
                             Chiết khấu nhóm:
                           </td>
-                          <td className="py-1 px-1 text-right text-xs font-bold text-red-600">-{formatVND(gd.discountTotal)}</td>
+                          <td className="py-2 px-2 text-right text-sm font-bold text-red-600">-{formatVND(gd.discountTotal)}</td>
                           <td colSpan={8}></td>
                         </tr>
                       )}
                       {gd.discountTotal > 0 && (
                         <tr className="bg-indigo-100/60">
-                          <td colSpan={11} className="py-1 px-3 text-right text-xs font-bold text-indigo-900">
+                          <td colSpan={11} className="py-2 px-3 text-right text-sm font-bold text-indigo-900">
                             Tổng sau CK:
                           </td>
-                          <td className="py-1 px-1 text-right text-xs font-bold text-indigo-900">{formatVND(gd.afterDiscount)}</td>
+                          <td className="py-2 px-2 text-right text-sm font-bold text-indigo-900">{formatVND(gd.afterDiscount)}</td>
                           <td colSpan={8}></td>
                         </tr>
                       )}
@@ -448,7 +495,7 @@ export default function QuotationForm() {
                 <select value={form.discount_type} onChange={e => setForm(f => ({ ...f, discount_type: e.target.value }))} className="h-7 px-1 border rounded text-xs">
                   <option value="percent">%</option><option value="amount">VNĐ</option>
                 </select>
-                <input type="number" value={form.discount_value} onChange={e => setForm(f => ({ ...f, discount_value: parseFloat(e.target.value) || 0 }))} className="w-24 h-7 px-2 border rounded text-xs text-right" />
+                <input type="number" value={form.discount_value} onChange={e => setForm(f => ({ ...f, discount_value: parseFloat(e.target.value) || 0 }))} className="w-24 h-7 px-2 border rounded text-sm text-right" />
               </div>
               <span className="font-medium text-red-600">-{formatVND(calcs.discountAmt)}</span>
             </div>
