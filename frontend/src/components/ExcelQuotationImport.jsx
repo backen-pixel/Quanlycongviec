@@ -50,7 +50,7 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
           let specFactor = 0;
           let itemDiscount = 0;
           const qty = i.quantity || 1;
-          const price = i.unit_price || 0;
+          let price = i.unit_price || 0;
           const excelAmount = i.amount || 0;
           // group_discount_percent = CK từ header nhóm (đã tính vào Thành tiền per-item)
           // group_summary_discount_percent = CK từ summary rows (chưa tính vào Thành tiền, áp tổng nhóm)
