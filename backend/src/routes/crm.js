@@ -500,14 +500,23 @@ r.post('/leads', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // ✅ NOTIFICATION: Notify assigned sales person if set
-    if (body.assigned_to && body.assigned_to !== req.user.userId) {
-      const { data: assignee } = await supabase.from('users').select('full_name').eq('id', body.assigned_to).single();
-      await createNotification(req, body.assigned_to, 'lead_assigned',
-        '👤 Lead mới được giao',
-        `Lead "${body.title}" được giao cho bạn${assignee ? ` từ ${assignee.full_name}` : ''}`,
+    // 🔔 NOTIFICATION: Lead mới
+    try {
+      // Notify người được giao
+      if (body.assigned_to) {
+        await createNotification(req, body.assigned_to, 'lead_assigned',
+          '👤 Lead mới được giao',
+          `Lead "${body.title}" — KH: ${body.customer_name || data.customer?.full_name || 'N/A'}`,
+          'crm_lead', data.id);
+      }
+      // Notify tất cả admin
+      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+      const adminIds = (admins || []).map(u => u.id).filter(id => id !== body.assigned_to);
+      if (adminIds.length) await notifyMultiple(req, adminIds, 'lead_created',
+        '🆕 Lead mới',
+        `Lead "${body.title}" — Mã: ${code}`,
         'crm_lead', data.id);
-    }
+    } catch (ne) { console.warn('[NOTIFY] lead_created:', ne.message); }
 
     // ✅ CRM tasks: trigger fn_auto_gen_crm_tasks() đã tự động gen tasks
     // Fallback nếu trigger chưa chạy:
@@ -565,14 +574,21 @@ r.post('/deals', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notify assigned person if different from creator
-    if (body.assigned_to && body.assigned_to !== req.user.userId) {
-      const { data: assignee } = await supabase.from('users').select('full_name').eq('id', body.assigned_to).single();
-      await createNotification(req, body.assigned_to, 'lead_assigned',
-        '🎯 Deal mới được giao',
-        `Deal "${body.title}" được giao cho bạn${assignee ? ` từ ${assignee.full_name}` : ''}`,
-        'crm_lead', data.id);
-    }
+    // 🔔 NOTIFICATION: Deal mới
+    try {
+      if (body.assigned_to) {
+        await createNotification(req, body.assigned_to, 'deal_assigned',
+          '🎯 Deal mới được giao',
+          `Deal "${body.title}" — Mã: ${code}`,
+          'crm_deal', data.id);
+      }
+      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+      const adminIds = (admins || []).map(u => u.id).filter(id => id !== body.assigned_to);
+      if (adminIds.length) await notifyMultiple(req, adminIds, 'deal_created',
+        '🎯 Deal mới',
+        `Deal "${body.title}" — Mã: ${code} — GT: ${formatMoney(body.estimated_value)}`,
+        'crm_deal', data.id);
+    } catch (ne) { console.warn('[NOTIFY] deal_created:', ne.message); }
 
     // Auto-create CRM tasks for deal
     try {
