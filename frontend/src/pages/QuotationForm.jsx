@@ -35,6 +35,7 @@ export default function QuotationForm() {
     name: '', description: '', product_code: '', unit: 'bộ', quantity: 1, unit_price: 0,
     discount_percent: 0, vat_rate: 0, height: '', width: '', length: '', weight: '',
     dimensions: '', material: '', color: '', promo_code: '', is_promo: false,
+    spec_factor: 0,
   }]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -67,6 +68,7 @@ export default function QuotationForm() {
           height: i.height || '', width: i.width || '', length: i.length || '', weight: i.weight || '',
           dimensions: i.dimensions || '', material: i.material || '', color: i.color || '',
           product_id: i.product_id, promo_code: i.promo_code || '', is_promo: i.is_promo || false,
+          spec_factor: i.spec_factor || 0,
         })));
       });
     } else {
@@ -110,16 +112,21 @@ export default function QuotationForm() {
     }]);
   };
 
-  // Calculations with per-item VAT
+  // Calculations with per-item VAT + spec_factor (hệ số quy cách)
   const calcs = useMemo(() => {
     const rows = items.map(i => {
-      const grossAmount = (i.quantity || 0) * (i.unit_price || 0);
+      const factor = parseFloat(i.spec_factor) || 0;
+      // Nếu hệ số QC > 0: Thành tiền = Hệ số × SL × Đơn giá
+      // Nếu hệ số QC = 0: Thành tiền = SL × Đơn giá (bình thường)
+      const grossAmount = factor > 0
+        ? factor * (i.quantity || 0) * (i.unit_price || 0)
+        : (i.quantity || 0) * (i.unit_price || 0);
       const discountAmount = grossAmount * (i.discount_percent || 0) / 100;
       const amount = grossAmount - discountAmount;
       const vatRate = i.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
       const total = amount + vatAmount;
-      return { ...i, amount, discount_amount: discountAmount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total };
+      return { ...i, amount, gross_amount: grossAmount, discount_amount: discountAmount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total };
     });
     const subtotal = rows.reduce((s, r) => s + r.amount, 0);
     const discountAmt = form.discount_type === 'percent' ? subtotal * (form.discount_value || 0) / 100 : (form.discount_value || 0);
@@ -169,7 +176,7 @@ export default function QuotationForm() {
 
   const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
-  const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '' }]);
+  const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '', spec_factor: 0 }]);
 
   return (
     <div className="space-y-4 w-full">
@@ -277,6 +284,7 @@ export default function QuotationForm() {
               <th className="py-1.5 px-1 text-right w-16">Cao</th>
               <th className="py-1.5 px-1 text-right w-16">Rộng</th>
               <th className="py-1.5 px-1 text-right w-16">Dài</th>
+              <th className="py-1.5 px-1 text-right w-16" title="Hệ số quy cách: nhân vào đơn giá (VD: mét dài ngang tủ)">HS QC</th>
               <th className="py-1.5 px-1 text-right w-14">SL</th>
               <th className="py-1.5 px-1 text-right w-28">Đơn giá</th>
               <th className="py-1.5 px-1 text-right w-28">Thành tiền</th>
@@ -321,9 +329,10 @@ export default function QuotationForm() {
                     <td className="py-1 px-1"><input type="number" value={item.height || ''} onChange={e => updateItem(idx, 'height', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.width || ''} onChange={e => updateItem(idx, 'width', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.length || ''} onChange={e => updateItem(idx, 'length', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input type="number" step="any" value={item.spec_factor || ''} onChange={e => updateItem(idx, 'spec_factor', e.target.value)} placeholder="0" title="Hệ số quy cách" className={`w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
                     <td className="py-1 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{formatVND(row.amount || 0)}</td>
+                    <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{formatVND(row.gross_amount || 0)}</td>
                     <td className="py-1 px-1"><input type="number" value={item.discount_percent || 0} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs text-orange-600">{formatVND(row.discount_amount || 0)}</td>
                     <td className="py-1 px-1"><input type="number" value={item.vat_rate || 0} onChange={e => updateItem(idx, 'vat_rate', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>

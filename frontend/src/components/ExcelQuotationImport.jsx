@@ -44,21 +44,41 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
       // Build quotation payload
       const itemsPayload = preview.items
         .filter(i => !i.is_group)
-        .map((i, idx) => ({
-          name: i.name,
-          description: i.description || '',
-          unit: i.unit || 'bộ',
-          quantity: i.quantity || 1,
-          unit_price: i.unit_price || 0,
-          discount_percent: 0,
-          vat_rate: i.vat_rate || 0,
-          height: i.height || '',
-          width: i.width || '',
-          length: i.length || '',
-          dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '',
-          group_name: i.group_name || '',
-          notes: i.notes || '',
-        }));
+        .map((i, idx) => {
+          // Tính hệ số quy cách = amount / (quantity × unit_price)
+          // Nếu = 1 hoặc không có amount → spec_factor = 0 (tính bình thường)
+          let specFactor = 0;
+          const qty = i.quantity || 1;
+          const price = i.unit_price || 0;
+          const excelAmount = i.amount || 0;
+          if (price > 0 && qty > 0 && excelAmount > 0) {
+            const rawFactor = excelAmount / (qty * price);
+            // Nếu hệ số ≈ 1 (sai lệch < 0.5%) → giữ 0 (tính bình thường SL × ĐG)
+            if (Math.abs(rawFactor - 1) > 0.005) {
+              specFactor = Math.round(rawFactor * 1000) / 1000; // round 3 decimal
+            }
+          }
+
+          // Lấy discount_percent từ group info (nếu backend parse được)
+          const groupDiscount = i.group_discount_percent || 0;
+
+          return {
+            name: i.name,
+            description: i.description || '',
+            unit: i.unit || 'bộ',
+            quantity: qty,
+            unit_price: price,
+            spec_factor: specFactor,
+            discount_percent: groupDiscount,
+            vat_rate: i.vat_rate || 0,
+            height: i.height || '',
+            width: i.width || '',
+            length: i.length || '',
+            dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '',
+            group_name: i.group_name || '',
+            notes: i.notes || '',
+          };
+        });
 
       const payload = {
         title: preview.title || `Báo giá ${preview.customer_name || ''}`.trim(),
@@ -200,6 +220,7 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                         <th className="py-2 px-2 text-right w-16">SL</th>
                         <th className="py-2 px-2 text-right w-24">Đơn giá</th>
                         <th className="py-2 px-2 text-right w-28">Thành tiền</th>
+                        <th className="py-2 px-2 text-right w-14">CK%</th>
                         <th className="py-2 px-2 text-left w-20">Ghi chú</th>
                       </tr>
                     </thead>
@@ -208,10 +229,13 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                         if (item.is_group) {
                           return (
                             <tr key={idx} className="bg-indigo-50 cursor-pointer" onClick={() => toggleGroup(item.name)}>
-                              <td colSpan={9} className="py-2 px-3">
+                              <td colSpan={10} className="py-2 px-3">
                                 <div className="flex items-center gap-2">
                                   {expandGroups[item.name] ? <ChevronUp className="h-3.5 w-3.5 text-indigo-500" /> : <ChevronDown className="h-3.5 w-3.5 text-indigo-500" />}
                                   <span className="font-bold text-indigo-800 text-xs">{item.name}</span>
+                                  {item.group_discount_percent > 0 && (
+                                    <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-[10px] font-medium">CK {item.group_discount_percent}%</span>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -229,6 +253,7 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                             <td className="py-1.5 px-2 text-right">{item.quantity}</td>
                             <td className="py-1.5 px-2 text-right">{formatVND(item.unit_price)}</td>
                             <td className="py-1.5 px-2 text-right font-medium text-blue-700">{formatVND(item.amount || item.quantity * item.unit_price)}</td>
+                            <td className="py-1.5 px-2 text-right text-orange-600">{item.group_discount_percent > 0 ? `${item.group_discount_percent}%` : '—'}</td>
                             <td className="py-1.5 px-2 text-gray-500">{item.notes}</td>
                           </tr>
                         );

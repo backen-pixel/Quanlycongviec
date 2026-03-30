@@ -1400,9 +1400,12 @@ r.post('/quotations', async (req, res) => {
     const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     
-    // Calc totals with per-item VAT
+    // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     const processedItems = (items || []).map(item => {
-      const grossAmount = (item.quantity || 1) * (item.unit_price || 0);
+      const specFactor = parseFloat(item.spec_factor) || 0;
+      const grossAmount = specFactor > 0
+        ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
+        : (item.quantity || 1) * (item.unit_price || 0);
       const discountAmount = grossAmount * (item.discount_percent || 0) / 100;
       const amount = grossAmount - discountAmount;
       const vatRate = item.vat_rate || 0;
@@ -1412,6 +1415,7 @@ r.post('/quotations', async (req, res) => {
         product_id: item.product_id || null, product_code: item.product_code || null,
         name: item.name, description: item.description || null,
         unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
+        spec_factor: specFactor || null,
         height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
         discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
         amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
@@ -1457,9 +1461,12 @@ r.put('/quotations/:id', async (req, res) => {
     const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     
-    // Calc totals with per-item VAT
+    // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     const processedItems = (items || []).map(item => {
-      const grossAmount = (item.quantity || 1) * (item.unit_price || 0);
+      const specFactor = parseFloat(item.spec_factor) || 0;
+      const grossAmount = specFactor > 0
+        ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
+        : (item.quantity || 1) * (item.unit_price || 0);
       const discountAmount = grossAmount * (item.discount_percent || 0) / 100;
       const amount = grossAmount - discountAmount;
       const vatRate = item.vat_rate || 0;
@@ -1469,6 +1476,7 @@ r.put('/quotations/:id', async (req, res) => {
         product_id: item.product_id || null, product_code: item.product_code || null,
         name: item.name, description: item.description || null,
         unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
+        spec_factor: specFactor || null,
         height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
         discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
         amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
@@ -2607,6 +2615,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
     // ── 3. Parse items — stop at GHI CHÚ / notes section ──
     const items = [];
     let currentGroup = '';
+    let currentGroupDiscount = 0; // CK% từ header nhóm
     let summaryRows = []; // collect all TỔNG/CK rows
     let reachedNotes = false;
     let notesText = [];
@@ -2657,10 +2666,14 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
 
       if ((isGroupRow && !hasUnit) || isRomanGroup) {
         currentGroup = name;
+        // Parse chiết khấu % từ header nhóm: "PHỤ KIỆN BẾP (CHIẾT KHẤU 35%)" hoặc "CK 35%"
+        const ckMatch = name.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
+        currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
         items.push({
           is_group: true, group_name: name, name,
           description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
           height: null, width: null, length: null, notes: '',
+          group_discount_percent: currentGroupDiscount,
         });
         continue;
       }
@@ -2671,6 +2684,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       items.push({
         is_group: false,
         group_name: currentGroup,
+        group_discount_percent: currentGroupDiscount,
         name,
         description: colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '',
         unit: colMap.unit !== undefined ? String(row[colMap.unit] || '').trim() : 'bộ',
