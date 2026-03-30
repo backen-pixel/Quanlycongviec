@@ -1005,7 +1005,7 @@ function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
     all_day: event?.all_day || false,
     lead_id: event?.lead_id || '',
     customer_id: event?.customer_id || '',
-    assignee_id: event?.assignee_id || '',
+    assignee_id: event?.assignee_id || JSON.parse(localStorage.getItem('user') || '{}').id || '',
     result: event?.result || '',
     status: event?.status || 'planned',
   });
