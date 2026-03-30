@@ -18,7 +18,8 @@ export default function InvoiceForm() {
   });
   const [items, setItems] = useState([{
     name: '', description: '', product_code: '', unit: 'bộ', quantity: 1, unit_price: 0,
-    discount_percent: 0, vat_rate: 0,
+    discount_percent: 0, vat_rate: 0, height: '', width: '', length: '',
+    spec_factor: 0,
   }]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -42,18 +43,23 @@ export default function InvoiceForm() {
       product_code: p.code || '', unit: p.unit || 'bộ',
       quantity: 1, unit_price: p.base_price || 0, discount_percent: 0,
       vat_rate: p.vat_rate || 0,
+      height: '', width: '', length: '', spec_factor: 0,
     }]);
   };
 
+  // Calculations with spec_factor (hệ số quy cách)
   const calcs = useMemo(() => {
     const rows = items.map(i => {
-      const grossAmount = (i.quantity || 0) * (i.unit_price || 0);
+      const factor = parseFloat(i.spec_factor) || 0;
+      const grossAmount = factor > 0
+        ? factor * (i.quantity || 0) * (i.unit_price || 0)
+        : (i.quantity || 0) * (i.unit_price || 0);
       const discountAmount = grossAmount * (i.discount_percent || 0) / 100;
       const amount = grossAmount - discountAmount;
       const vatRate = i.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
       const total = amount + vatAmount;
-      return { ...i, amount, discount_amount: discountAmount, vat_rate: vatRate, vat_amount: vatAmount, total };
+      return { ...i, amount, gross_amount: grossAmount, discount_amount: discountAmount, vat_rate: vatRate, vat_amount: vatAmount, total };
     });
     const subtotal = rows.reduce((s, r) => s + r.amount, 0);
     const discountAmt = form.discount_type === 'percent' ? subtotal * (form.discount_value || 0) / 100 : (form.discount_value || 0);
@@ -67,7 +73,6 @@ export default function InvoiceForm() {
     if (items.every(i => !i.name)) return alert('Thêm ít nhất 1 sản phẩm');
     setSaving(true);
     try {
-      // Build invoice payload
       const payload = {
         ...form,
         subtotal: calcs.subtotal,
@@ -75,9 +80,7 @@ export default function InvoiceForm() {
         tax_amount: calcs.totalVat,
         total: calcs.total,
       };
-      // Create invoice via backend
       const { data } = await api.post('/crm/invoices', payload);
-      // Insert items
       if (calcs.rows.length) {
         await api.post(`/crm/invoices/${data.id}/items`, { items: calcs.rows });
       }
@@ -88,7 +91,7 @@ export default function InvoiceForm() {
 
   const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
-  const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0 }]);
+  const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, spec_factor: 0 }]);
 
   return (
     <div className="space-y-4 w-full">
@@ -142,7 +145,7 @@ export default function InvoiceForm() {
         </div>
       </div>
 
-      {/* Items Table with Product Search */}
+      {/* Items Table */}
       <div className="bg-white rounded-xl border p-3">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-bold text-gray-900">Chi tiết hàng hóa / dịch vụ</h2>
@@ -157,12 +160,16 @@ export default function InvoiceForm() {
         </div>
 
         <div className="overflow-x-auto border rounded-lg">
-          <table className="min-w-[900px] w-full text-xs">
+          <table className="min-w-[1400px] w-full text-xs">
             <thead><tr className="bg-gray-50 text-[9px] text-gray-500 uppercase tracking-wider">
               <th className="py-1.5 px-1 text-left w-9">STT</th>
               <th className="py-1.5 px-1 text-left w-24">Mã HH</th>
               <th className="py-1.5 px-1 text-left min-w-[200px]">Tên hàng hóa</th>
               <th className="py-1.5 px-1 text-center w-14">ĐVT</th>
+              <th className="py-1.5 px-1 text-right w-16" title="Ngang (m)">Ngang</th>
+              <th className="py-1.5 px-1 text-right w-16" title="Sâu (m)">Sâu</th>
+              <th className="py-1.5 px-1 text-right w-16" title="Cao (m)">Cao</th>
+              <th className="py-1.5 px-1 text-right w-16" title="Hệ số quy cách">HS QC</th>
               <th className="py-1.5 px-1 text-right w-14">SL</th>
               <th className="py-1.5 px-1 text-right w-28">Đơn giá</th>
               <th className="py-1.5 px-1 text-right w-28">Thành tiền</th>
@@ -197,9 +204,13 @@ export default function InvoiceForm() {
                       />
                     </td>
                     <td className="py-1 px-1"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-center" /></td>
+                    <td className="py-1 px-1"><input type="number" step="any" value={item.length || ''} onChange={e => updateItem(idx, 'length', e.target.value)} placeholder="0" title="Ngang (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input type="number" step="any" value={item.width || ''} onChange={e => updateItem(idx, 'width', e.target.value)} placeholder="0" title="Sâu (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input type="number" step="any" value={item.height || ''} onChange={e => updateItem(idx, 'height', e.target.value)} placeholder="0" title="Cao (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input type="number" step="any" value={item.spec_factor || ''} onChange={e => updateItem(idx, 'spec_factor', e.target.value)} placeholder="0" title="Hệ số quy cách" className={`w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
                     <td className="py-1 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{formatVND(row.amount || 0)}</td>
+                    <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{formatVND(row.gross_amount || 0)}</td>
                     <td className="py-1 px-1"><input type="number" value={item.discount_percent || 0} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.vat_rate || 0} onChange={e => updateItem(idx, 'vat_rate', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs text-gray-600">{formatVND(row.vat_amount || 0)}</td>
