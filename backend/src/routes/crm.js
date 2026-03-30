@@ -490,36 +490,52 @@ r.post('/test-notification', async (req, res) => {
     const userId = req.user.userId;
     console.log('[TEST-NOTIFY] userId:', userId);
     
-    // Direct insert
-    const { data, error } = await supabase.from('notifications').insert({
+    // 1. Check table exists
+    const { data: cols, error: colErr } = await supabase.from('notifications')
+      .select('id').limit(1);
+    console.log('[TEST-NOTIFY] Table check:', colErr ? `ERROR: ${colErr.message}` : `OK (${(cols||[]).length} rows)`);
+    if (colErr) return res.status(500).json({ step: 'table_check', error: colErr.message, code: colErr.code });
+
+    // 2. Direct insert
+    const insertData = {
       user_id: userId,
       type: 'system',
       title: '🧪 Test thông báo',
-      message: 'Thông báo test lúc ' + new Date().toLocaleString('vi-VN'),
+      message: 'Thông báo test lúc ' + new Date().toISOString(),
       entity_type: 'system',
       entity_id: userId,
-    }).select().single();
+    };
+    console.log('[TEST-NOTIFY] Inserting:', JSON.stringify(insertData));
+    
+    const { data, error } = await supabase.from('notifications')
+      .insert(insertData)
+      .select()
+      .single();
     
     if (error) {
-      console.error('[TEST-NOTIFY] Insert error:', error);
-      return res.status(500).json({ error: error.message, details: error });
+      console.error('[TEST-NOTIFY] Insert FAILED:', error.message, error.code, error.details, error.hint);
+      return res.status(500).json({ step: 'insert', error: error.message, code: error.code, details: error.details, hint: error.hint });
     }
     
-    console.log('[TEST-NOTIFY] Created:', data);
+    console.log('[TEST-NOTIFY] Insert OK:', data.id);
     
-    // Push via Socket.IO
+    // 3. Push via Socket.IO
     const pushFn = req.app?.get('pushNotification');
     if (pushFn && data) {
       pushFn(userId, data);
-      console.log('[TEST-NOTIFY] Pushed via Socket.IO');
+      console.log('[TEST-NOTIFY] Socket.IO pushed');
     } else {
-      console.log('[TEST-NOTIFY] No pushFn available:', !!pushFn);
+      console.log('[TEST-NOTIFY] No Socket.IO pushFn:', !!pushFn);
     }
     
-    res.json({ success: true, notification: data });
+    // 4. Verify read back
+    const { data: verify } = await supabase.from('notifications')
+      .select('*').eq('id', data.id).single();
+    
+    res.json({ success: true, notification: data, verified: !!verify, pushAvailable: !!pushFn });
   } catch (e) {
-    console.error('[TEST-NOTIFY] Error:', e);
-    res.status(500).json({ error: e.message });
+    console.error('[TEST-NOTIFY] Exception:', e.message, e.stack);
+    res.status(500).json({ step: 'exception', error: e.message });
   }
 });
 
