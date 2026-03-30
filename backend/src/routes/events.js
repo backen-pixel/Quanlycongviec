@@ -1,7 +1,10 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
+const { auth } = require('../middleware/auth');
 const { notifyMultiple } = require('../helpers/notifications');
 const r = Router();
+
+r.use(auth);
 
 // ═══════════════════════════════════════════════════════════════
 // EVENT TYPES — Quản lý loại sự kiện
