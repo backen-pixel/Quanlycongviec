@@ -13,8 +13,9 @@ const { supabase } = require('../config/supabase');
  * @returns {Promise<Object|null>} - Created notification object or null
  */
 async function createNotification(req, userId, type, title, message, entityType, entityId, metadata = null) {
-  // Don't notify the current user
-  if (!userId || userId === req.user?.userId) return null;
+  if (!userId) return null;
+
+  console.log(`[NOTIFY] Creating: type=${type}, user=${userId}, entity=${entityType}/${entityId}, title="${title}"`);
 
   const insert = {
     user_id: userId,
@@ -60,8 +61,7 @@ async function createNotification(req, userId, type, title, message, entityType,
  * @returns {Promise<Array>} - Array of created notifications
  */
 async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata = null) {
-  // Deduplicate and filter out current user
-  const unique = [...new Set(userIds.filter(id => id && id !== req.user?.userId))];
+  const unique = [...new Set(userIds.filter(Boolean))];
   const results = [];
 
   for (const uid of unique) {
