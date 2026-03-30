@@ -178,6 +178,8 @@ export default function NotificationCenter({ socket }) {
               navigate(`/crm/orders/${notif.entity_id}`);
             } else if (notif.entity_type === 'invoice') {
               navigate(`/crm/invoices/${notif.entity_id}`);
+            } else if (notif.entity_type === 'event') {
+              navigate(`/crm/events`);
             }
             setOpen(false);
           }}
@@ -271,6 +273,8 @@ export default function NotificationCenter({ socket }) {
                         navigate(`/crm/orders/${n.entity_id}`);
                       } else if (n.entity_type === 'invoice') {
                         navigate(`/crm/invoices/${n.entity_id}`);
+                      } else if (n.entity_type === 'event') {
+                        navigate(`/crm/events`);
                       }
                       setOpen(false);
                     }}
