@@ -134,19 +134,25 @@ export default function QuotationForm() {
     const afterDiscount = subtotal - discountAmt;
     const totalVat = rows.reduce((s, r) => s + r.vat_amount, 0);
     // Group details: subtotal, discount, after-discount per group
+    // Freebie items (unit_price=0, notes=HỖ TRỢ) excluded from discount calc
     const groupDetails = {};
     const groupOrder = [];
-    rows.forEach(r => {
+    rows.forEach((r, i) => {
       const g = r.group_name || '';
       if (g) {
         if (!groupDetails[g]) {
-          groupDetails[g] = { subtotal: 0, discountTotal: 0, afterDiscount: 0, vatTotal: 0 };
+          groupDetails[g] = { subtotal: 0, discountTotal: 0, afterDiscount: 0, vatTotal: 0, freebieCount: 0 };
           groupOrder.push(g);
         }
-        groupDetails[g].subtotal += (r.gross_amount || 0);
-        groupDetails[g].discountTotal += (r.discount_amount || 0);
-        groupDetails[g].afterDiscount += (r.amount || 0);
-        groupDetails[g].vatTotal += (r.vat_amount || 0);
+        const isFreebie = items[i]?.is_freebie || (items[i]?.notes === 'HỖ TRỢ' && (r.gross_amount || 0) === 0);
+        if (!isFreebie) {
+          groupDetails[g].subtotal += (r.gross_amount || 0);
+          groupDetails[g].discountTotal += (r.discount_amount || 0);
+          groupDetails[g].afterDiscount += (r.amount || 0);
+          groupDetails[g].vatTotal += (r.vat_amount || 0);
+        } else {
+          groupDetails[g].freebieCount++;
+        }
       }
     });
     // Also keep simple groupSubtotals for backward compat
@@ -374,7 +380,7 @@ export default function QuotationForm() {
                     <td className="py-1 px-1"><input type="number" step="any" value={item.spec_factor || ''} onChange={e => updateItem(idx, 'spec_factor', e.target.value)} placeholder="0" title="Hệ số quy cách" className={`w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
                     <td className="py-1 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="text" value={formatVND(item.unit_price).replace('đ', '').trim()} onFocus={e => { e.target.type = 'number'; e.target.value = item.unit_price || 0; }} onBlur={e => { updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0); e.target.type = 'text'; e.target.value = formatVND(parseFloat(e.target.value) || 0).replace('đ', '').trim(); }} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{formatVND(row.gross_amount || 0)}</td>
+                    <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-green-600 font-bold">HỖ TRỢ</span> : formatVND(row.gross_amount || 0)}</td>
                     <td className="py-1 px-1"><input type="number" value={item.discount_percent || 0} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs text-orange-600">{formatVND(row.discount_amount || 0)}</td>
                     <td className="py-1 px-1"><input type="number" value={item.vat_rate || 0} onChange={e => updateItem(idx, 'vat_rate', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
