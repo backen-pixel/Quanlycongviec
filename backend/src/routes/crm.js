@@ -2674,6 +2674,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       if (isSummary && !stt) {
         const amt = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
         summaryRows.push({ label: name || fullRowText, amount: amt });
+        console.log('[parse-excel] summary row:', { label: (name || fullRowText).slice(0,40), amt, rawCell: row[colMap.amount] });
         continue;
       }
 
@@ -2773,18 +2774,25 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
     // NOTE: CK from summary = applied to GROUP TOTAL (Thành tiền items are BEFORE discount)
     //       CK from header = applied PER ITEM (Thành tiền already includes discount)
     // → Mark differently: group_summary_discount_percent (not applied per-item in Thành tiền)
+    console.log('[parse-excel] groupTotals:', JSON.stringify(groupTotals));
+    console.log('[parse-excel] groupDiscounts:', JSON.stringify(groupDiscounts));
+    console.log('[parse-excel] groups:', items.filter(i => i.is_group).map(g => ({ name: g.name.slice(0,30), gdk: g.group_discount_percent })));
     for (const groupItem of items.filter(i => i.is_group && !i.group_discount_percent)) {
       const gTotal = groupTotals[groupItem.name];
       const gDiscount = groupDiscounts[groupItem.name];
+      console.log('[parse-excel] checking group:', groupItem.name.slice(0,30), 'gTotal:', gTotal, 'gDiscount:', gDiscount);
       if (gTotal > 0 && gDiscount > 0) {
         const ckPercent = Math.round((gDiscount / gTotal) * 10000) / 100; // round 2 decimal
         groupItem.group_summary_discount_percent = ckPercent;
         // Apply to child items as summary-level discount (NOT already in Thành tiền)
+        let applied = 0;
         items.forEach(i => {
           if (!i.is_group && i.group_name === groupItem.name) {
             i.group_summary_discount_percent = ckPercent;
+            applied++;
           }
         });
+        console.log('[parse-excel] applied summaryCK', ckPercent, '% to', applied, 'items in group:', groupItem.name.slice(0,30));
       }
     }
 
