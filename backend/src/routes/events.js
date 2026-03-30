@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
+const { notifyMultiple } = require('../helpers/notifications');
 const r = Router();
 
 // ═══════════════════════════════════════════════════════════════
@@ -194,6 +195,42 @@ r.post('/', async (req, res) => {
     const { data: full } = await supabase.from('crm_events')
       .select(EVENT_SELECT).eq('id', data.id).single();
 
+    // ═══ NOTIFICATION: Thông báo cho tất cả người tham gia + assignee ═══
+    try {
+      // Lấy tên người tạo
+      const { data: creator } = await supabase.from('users')
+        .select('full_name').eq('id', req.user.userId).single();
+      const creatorName = creator?.full_name || 'Ai đó';
+      const typeInfo = full?.event_type_ref || {};
+      const icon = typeInfo.icon || '📋';
+      const timeStr = new Date(insert.start_time).toLocaleString('vi-VN', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+      });
+
+      // Collect all users to notify: participants + assignee
+      const notifyIds = [...(b.participant_ids || [])];
+      if (insert.assignee_id && !notifyIds.includes(insert.assignee_id)) {
+        notifyIds.push(insert.assignee_id);
+      }
+      // Also notify ALL users (broadcast) — lấy tất cả user IDs
+      const { data: allUsers } = await supabase.from('users')
+        .select('id').eq('is_active', true);
+      const allUserIds = (allUsers || []).map(u => u.id);
+
+      await notifyMultiple(
+        req,
+        allUserIds,
+        'event_created',
+        `${icon} Sự kiện mới: ${full.title}`,
+        `${creatorName} tạo sự kiện "${full.title}" vào ${timeStr}${insert.location ? ` tại ${insert.location}` : ''}`,
+        'event',
+        full.id,
+        { event_type: insert.event_type, lead_id: insert.lead_id }
+      );
+    } catch (notifErr) {
+      console.warn('[EVENT] Notification error:', notifErr.message);
+    }
+
     res.status(201).json(full);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -246,6 +283,23 @@ r.put('/:id', async (req, res) => {
           data.auto_task_completed = { taskId: tasks[0].id, taskTitle: tasks[0].title };
         }
       } catch (taskErr) { console.warn('[EVENT] Auto-complete task:', taskErr.message); }
+    }
+
+    // Notification khi hoàn thành sự kiện
+    if (b.status === 'completed') {
+      try {
+        const { data: creator } = await supabase.from('users')
+          .select('full_name').eq('id', req.user.userId).single();
+        const { data: allUsers } = await supabase.from('users')
+          .select('id').eq('is_active', true);
+        await notifyMultiple(
+          req, (allUsers || []).map(u => u.id),
+          'event_completed',
+          `✅ Sự kiện hoàn thành: ${data.title}`,
+          `${creator?.full_name || 'Ai đó'} đã hoàn thành sự kiện "${data.title}"${data.result ? `: ${data.result}` : ''}`,
+          'event', data.id
+        );
+      } catch (ne) { console.warn('[EVENT] Complete notification error:', ne.message); }
     }
 
     res.json(data);

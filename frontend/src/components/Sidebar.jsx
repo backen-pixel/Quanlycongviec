@@ -77,7 +77,8 @@ const CRM_MENU_GROUPS = [
     title: '1. Tổng quan',
     emoji: '📊',
     items: [
-      { to: '/crm', icon: LayoutDashboard, label: 'Dashboard CRM' },
+      { to: '/crm/events', icon: Calendar, label: 'Sự kiện', end: true },
+      { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM' },
     ]
   },
   {
@@ -85,12 +86,11 @@ const CRM_MENU_GROUPS = [
     title: '2. Bán hàng',
     emoji: '💰',
     items: [
-      { to: '/crm', icon: Target, label: 'Pipeline & Leads', end: true },
+      { to: '/crm/pipeline', icon: Target, label: 'Pipeline & Leads', end: true },
       { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM' },
       { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
       { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
       { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },
-      { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
     ]
   },
   {

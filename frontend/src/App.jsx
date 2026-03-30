@@ -160,7 +160,10 @@ export default function App() {
             <Route path="/template-sets" element={<WorkflowHubPage />} />
             <Route path="/template-sets/:setId" element={<TemplateSetDetailPage />} />
             <Route path="/permissions" element={<PermissionsPage />} />
-            <Route path="/crm" element={<CRMDashboard />} />
+            <Route path="/crm" element={<Navigate to="/crm/events" replace />} />
+            <Route path="/crm/events" element={<EventsFeedPage />} />
+            <Route path="/crm/dashboard" element={<CRMDashboard />} />
+            <Route path="/crm/pipeline" element={<CRMDashboard />} />
             <Route path="/crm/leads/:id" element={<LeadDetail />} />
             <Route path="/crm/quotations" element={<QuotationsPage />} />
             <Route path="/crm/quotations/new" element={<QuotationForm />} />
@@ -173,7 +176,6 @@ export default function App() {
             <Route path="/crm/invoices/new" element={<InvoiceForm />} />
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<CRMReports />} />
-            <Route path="/crm/events" element={<EventsFeedPage />} />
             <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />
             <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
