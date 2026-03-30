@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
-import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search } from 'lucide-react';
+import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search, X } from 'lucide-react';
 import ProductSearchPicker from '../components/ProductSearchPicker';
 import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
 
@@ -20,6 +20,7 @@ export default function QuotationForm() {
   const isEdit = !!id;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const [descPopup, setDescPopup] = useState(null); // { idx, name, description }
 
   const todayISO = new Date().toISOString().slice(0, 10);
 
@@ -358,14 +359,21 @@ export default function QuotationForm() {
                         placeholder="Gõ tên SP..."
                       />
                     </td>
-                    <td className="py-1 px-1"><input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
+                    <td className="py-1 px-1">
+                      <div className="flex items-center gap-0.5">
+                        <input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent truncate" title={item.description || ''} />
+                        {item.description && item.description.length > 20 && (
+                          <button onClick={() => setDescPopup({ idx, name: item.name, description: item.description })} className="flex-shrink-0 p-0.5 text-blue-400 hover:text-blue-600 cursor-pointer" title="Xem chi tiết"><Search className="h-3 w-3" /></button>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-1 px-1"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-center" /></td>
                     <td className="py-1 px-1"><input type="number" step="any" value={item.length || ''} onChange={e => updateItem(idx, 'length', e.target.value)} placeholder="0" title="Ngang (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" step="any" value={item.width || ''} onChange={e => updateItem(idx, 'width', e.target.value)} placeholder="0" title="Sâu (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" step="any" value={item.height || ''} onChange={e => updateItem(idx, 'height', e.target.value)} placeholder="0" title="Cao (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" step="any" value={item.spec_factor || ''} onChange={e => updateItem(idx, 'spec_factor', e.target.value)} placeholder="0" title="Hệ số quy cách" className={`w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
                     <td className="py-1 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1"><input type="number" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input type="text" value={formatVND(item.unit_price).replace('đ', '').trim()} onFocus={e => { e.target.type = 'number'; e.target.value = item.unit_price || 0; }} onBlur={e => { updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0); e.target.type = 'text'; e.target.value = formatVND(parseFloat(e.target.value) || 0).replace('đ', '').trim(); }} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{formatVND(row.gross_amount || 0)}</td>
                     <td className="py-1 px-1"><input type="number" value={item.discount_percent || 0} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs text-orange-600">{formatVND(row.discount_amount || 0)}</td>
@@ -498,6 +506,30 @@ export default function QuotationForm() {
           </div>
         </div>
       </div>
+
+      {/* Description Detail Popup */}
+      {descPopup && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDescPopup(null)}>
+          <div className="bg-white rounded-xl max-w-lg w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b">
+              <h3 className="text-sm font-bold text-gray-900">📝 Chi tiết mô tả — {descPopup.name}</h3>
+              <button onClick={() => setDescPopup(null)} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer"><X className="h-4 w-4 text-gray-500" /></button>
+            </div>
+            <div className="p-5">
+              <textarea
+                value={items[descPopup.idx]?.description || ''}
+                onChange={e => updateItem(descPopup.idx, 'description', e.target.value)}
+                rows={8}
+                className="w-full px-3 py-2 border rounded-lg text-sm whitespace-pre-wrap leading-relaxed"
+                placeholder="Nhập mô tả chi tiết..."
+              />
+            </div>
+            <div className="px-5 py-3 border-t bg-gray-50 rounded-b-xl flex justify-end">
+              <button onClick={() => setDescPopup(null)} className="h-8 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer">Đóng</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

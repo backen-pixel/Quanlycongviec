@@ -10,6 +10,7 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [expandGroups, setExpandGroups] = useState({});
+  const [descPopup, setDescPopup] = useState(null); // { name, description }
   const fileRef = useRef(null);
 
   const handleFileSelect = async (e) => {
@@ -394,7 +395,13 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
                               <tr key={`gi-${gi}-${ii}`} className="border-b hover:bg-gray-50/50">
                                 <td className="py-1.5 px-2 text-gray-400">{globalStt}</td>
                                 <td className="py-1.5 px-2 font-medium text-gray-900">{item.name}</td>
-                                <td className="py-1.5 px-2 text-gray-600">{item.description}</td>
+                                <td className="py-1.5 px-2 text-gray-600">
+                                  {item.description ? (
+                                    <span className="cursor-pointer hover:text-blue-600 truncate block max-w-[150px]" title="Click xem chi tiết" onClick={() => setDescPopup({ name: item.name, description: item.description })}>
+                                      {item.description.length > 30 ? item.description.slice(0, 30) + '...' : item.description}
+                                    </span>
+                                  ) : '—'}
+                                </td>
                                 <td className="py-1.5 px-2 text-center">{item.unit}</td>
                                 <td className="py-1.5 px-2 text-right text-gray-600">{item.length || '—'}</td>
                                 <td className="py-1.5 px-2 text-right text-gray-600">{item.width || '—'}</td>
@@ -498,6 +505,24 @@ export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onC
           </div>
         </div>
       </div>
+
+      {/* Description Detail Popup */}
+      {descPopup && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" onClick={() => setDescPopup(null)}>
+          <div className="bg-white rounded-xl max-w-lg w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b">
+              <h3 className="text-sm font-bold text-gray-900">📝 Chi tiết mô tả — {descPopup.name}</h3>
+              <button onClick={() => setDescPopup(null)} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer"><X className="h-4 w-4 text-gray-500" /></button>
+            </div>
+            <div className="p-5">
+              <pre className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{descPopup.description}</pre>
+            </div>
+            <div className="px-5 py-3 border-t bg-gray-50 rounded-b-xl flex justify-end">
+              <button onClick={() => setDescPopup(null)} className="h-8 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer">Đóng</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
