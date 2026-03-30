@@ -484,61 +484,6 @@ r.get('/leads', async (req, res) => {
   }
 });
 
-// TEST: Tạo notification thử nghiệm
-r.post('/test-notification', async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    console.log('[TEST-NOTIFY] userId:', userId);
-    
-    // 1. Check table exists
-    const { data: cols, error: colErr } = await supabase.from('notifications')
-      .select('id').limit(1);
-    console.log('[TEST-NOTIFY] Table check:', colErr ? `ERROR: ${colErr.message}` : `OK (${(cols||[]).length} rows)`);
-    if (colErr) return res.status(500).json({ step: 'table_check', error: colErr.message, code: colErr.code });
-
-    // 2. Direct insert
-    const insertData = {
-      user_id: userId,
-      type: 'system',
-      title: '🧪 Test thông báo',
-      message: 'Thông báo test lúc ' + new Date().toISOString(),
-      entity_type: 'system',
-      entity_id: userId,
-    };
-    console.log('[TEST-NOTIFY] Inserting:', JSON.stringify(insertData));
-    
-    const { data, error } = await supabase.from('notifications')
-      .insert(insertData)
-      .select()
-      .single();
-    
-    if (error) {
-      console.error('[TEST-NOTIFY] Insert FAILED:', error.message, error.code, error.details, error.hint);
-      return res.status(500).json({ step: 'insert', error: error.message, code: error.code, details: error.details, hint: error.hint });
-    }
-    
-    console.log('[TEST-NOTIFY] Insert OK:', data.id);
-    
-    // 3. Push via Socket.IO
-    const pushFn = req.app?.get('pushNotification');
-    if (pushFn && data) {
-      pushFn(userId, data);
-      console.log('[TEST-NOTIFY] Socket.IO pushed');
-    } else {
-      console.log('[TEST-NOTIFY] No Socket.IO pushFn:', !!pushFn);
-    }
-    
-    // 4. Verify read back
-    const { data: verify } = await supabase.from('notifications')
-      .select('*').eq('id', data.id).single();
-    
-    res.json({ success: true, notification: data, verified: !!verify, pushAvailable: !!pushFn });
-  } catch (e) {
-    console.error('[TEST-NOTIFY] Exception:', e.message, e.stack);
-    res.status(500).json({ step: 'exception', error: e.message });
-  }
-});
-
 r.post('/leads', async (req, res) => {
   try {
     const code = await nextCode('LEAD');
@@ -553,42 +498,15 @@ r.post('/leads', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // 🔔 NOTIFICATION: Lead mới — INLINE INSERT (bypass helper để debug)
-    const notifyResults = [];
+    // 🔔 NOTIFICATION: Lead mới → tất cả active users
     try {
-      // Tìm TẤT CẢ active users
       const { data: allUsers } = await supabase.from('users').select('id').eq('is_active', true);
       const userIds = (allUsers || []).map(u => u.id);
-      console.log('[LEAD-NOTIFY] Active users:', userIds.length, userIds);
-
-      for (const uid of userIds) {
-        const { data: notif, error: nErr } = await supabase.from('notifications')
-          .insert({
-            user_id: uid,
-            type: 'lead_created',
-            title: '🆕 Lead mới',
-            message: `Lead "${body.title}" — Mã: ${code}`,
-            entity_type: 'crm_lead',
-            entity_id: data.id,
-          })
-          .select()
-          .single();
-        
-        if (nErr) {
-          console.error('[LEAD-NOTIFY] INSERT FAILED for user', uid, ':', nErr.message, nErr.code, nErr.details);
-          notifyResults.push({ uid, error: nErr.message, code: nErr.code });
-        } else {
-          console.log('[LEAD-NOTIFY] INSERT OK for user', uid, ':', notif.id);
-          notifyResults.push({ uid, ok: true, id: notif.id });
-          // Push realtime
-          const pushFn = req.app?.get('pushNotification');
-          if (pushFn) pushFn(uid, notif);
-        }
-      }
-    } catch (ne) {
-      console.error('[LEAD-NOTIFY] EXCEPTION:', ne.message, ne.stack);
-      notifyResults.push({ exception: ne.message });
-    }
+      if (userIds.length) await notifyMultiple(req, userIds, 'lead_created',
+        '🆕 Lead mới',
+        `Lead "${body.title}" — Mã: ${code}`,
+        'crm_lead', data.id);
+    } catch (ne) { console.warn('[NOTIFY] lead_created:', ne.message); }
 
     // CRM tasks
     try {
@@ -599,8 +517,7 @@ r.post('/leads', async (req, res) => {
       }
     } catch (autoErr) { console.error('Auto-create tasks error:', autoErr.message); }
 
-    // Trả kèm debug info
-    res.status(201).json({ ...data, _notifyDebug: notifyResults });
+    res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
