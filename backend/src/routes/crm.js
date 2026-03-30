@@ -2560,6 +2560,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       }
     }
     if (headerIdx < 0) return res.status(400).json({ error: 'Không tìm thấy dòng tiêu đề (cần có STT + HẠNG MỤC)' });
+    console.log('[parse-excel] headerIdx:', headerIdx, 'colMap:', JSON.stringify(colMap));
 
     // ── 2. Extract customer info — parse each cell separately ──
     let customer_name = '', customer_phone = '', customer_address = '', kts_info = '', title = '';
@@ -2655,6 +2656,11 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
 
       // Collect all text from this row
       const fullRowText = row.map(c => String(c || '').trim()).filter(Boolean).join(' ');
+
+      // Debug first 25 data rows
+      if (i - headerIdx <= 25) {
+        console.log(`[parse-excel] row ${i}: stt=[${stt}] name=[${name?.slice(0,30)}] cells=`, JSON.stringify(row.slice(0, 10)));
+      }
       const fullRowUpper = fullRowText.toUpperCase();
 
       // Detect "GHI CHÚ" section → stop parsing items
@@ -2668,35 +2674,52 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       }
 
       // Detect summary rows: TỔNG TỦ, TỔNG PHỤ KIỆN, TỔNG 2 HẠNG MỤC, CHIẾT KHẤU, TỔNG SAU CK
+      // Check both name column and full row text (summary rows often span merged cells)
       const isSummary = nameUpper.includes('TỔNG') || nameUpper.includes('CỘNG') ||
         nameUpper.includes('CHIẾT KHẤU') || nameUpper.includes('PHẦN TỪ') ||
         fullRowUpper.includes('TỔNG') || fullRowUpper.includes('CHIẾT KHẤU');
-      if (isSummary && !stt) {
-        const amt = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
-        summaryRows.push({ label: name || fullRowText, amount: amt });
-        console.log('[parse-excel] summary row:', { label: (name || fullRowText).slice(0,40), amt, rawCell: row[colMap.amount] });
+      // Summary rows: no STT number, OR STT contains summary text itself (merged cells)
+      const sttUpper = stt.toUpperCase();
+      const sttIsSummary = sttUpper.includes('TỔNG') || sttUpper.includes('CHIẾT KHẤU') || sttUpper.includes('PHẦN TỦ') || sttUpper.includes('PHẦN TỪ');
+      const sttIsNumber = /^\d/.test(stt);
+      if (isSummary && (!stt || sttIsSummary || !sttIsNumber)) {
+        // Find amount: try amount column, then scan row for largest number
+        let amt = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
+        if (amt === 0) {
+          // Scan all cells for a number (summary amount might be in unexpected column)
+          for (let ci = 0; ci < row.length; ci++) {
+            const cellVal = parseFloat(row[ci]);
+            if (cellVal > 1000 && cellVal > amt) amt = cellVal;
+          }
+        }
+        const summaryLabel = name || stt || fullRowText;
+        summaryRows.push({ label: summaryLabel, amount: amt });
+        console.log('[parse-excel] summary row:', { label: summaryLabel.slice(0,40), amt, stt, rawAmtCell: row[colMap.amount] });
         continue;
       }
 
-      // Skip empty name
-      if (!name) continue;
+      // Skip truly empty rows (no text at all)
+      // Note: don't skip if name is empty but STT has text (merged cells)
+      const effectiveName = name || (sttIsNumber ? '' : stt) || '';
+      if (!effectiveName && !name) continue;
 
       // Detect group title: has name but no STT number AND no unit_price
       const sttNum = parseInt(stt);
       const hasUnit = colMap.unit !== undefined && String(row[colMap.unit] || '').trim();
       const hasPrice = colMap.unit_price !== undefined && parseFloat(row[colMap.unit_price]) > 0;
-      const isGroupRow = (isNaN(sttNum) || !stt) && !hasPrice && name.length > 5;
+      const workingName = effectiveName || name;
+      const isGroupRow = (isNaN(sttNum) || !stt || sttIsSummary) && !hasPrice && workingName.length > 5;
 
       // Also check Roman numeral pattern: I., II., III., IV. at start
-      const isRomanGroup = /^[IVX]+[\.\)\s]/.test(name);
+      const isRomanGroup = /^[IVX]+[\.\)\s]/.test(workingName);
 
       if ((isGroupRow && !hasUnit) || isRomanGroup) {
-        currentGroup = name;
+        currentGroup = workingName;
         // Parse chiết khấu % từ header nhóm: "PHỤ KIỆN BẾP (CHIẾT KHẤU 35%)" hoặc "CK 35%"
-        const ckMatch = name.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
+        const ckMatch = workingName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
         currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
         items.push({
-          is_group: true, group_name: name, name,
+          is_group: true, group_name: workingName, name: workingName,
           description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
           height: null, width: null, length: null, notes: '',
           group_discount_percent: currentGroupDiscount,
