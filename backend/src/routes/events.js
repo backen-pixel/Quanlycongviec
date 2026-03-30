@@ -198,9 +198,8 @@ r.post('/', async (req, res) => {
     const { data: full } = await supabase.from('crm_events')
       .select(EVENT_SELECT).eq('id', data.id).single();
 
-    // ═══ NOTIFICATION: Thông báo cho tất cả người tham gia + assignee ═══
+    // ═══ NOTIFICATION: Chỉ thông báo cho người tham gia + người phụ trách ═══
     try {
-      // Lấy tên người tạo
       const { data: creator } = await supabase.from('users')
         .select('full_name').eq('id', req.user.userId).single();
       const creatorName = creator?.full_name || 'Ai đó';
@@ -210,19 +209,13 @@ r.post('/', async (req, res) => {
         day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
       });
 
-      // Collect all users to notify: participants + assignee
-      const notifyIds = [...(b.participant_ids || [])];
-      if (insert.assignee_id && !notifyIds.includes(insert.assignee_id)) {
-        notifyIds.push(insert.assignee_id);
-      }
-      // Also notify ALL users (broadcast) — lấy tất cả user IDs
-      const { data: allUsers } = await supabase.from('users')
-        .select('id').eq('is_active', true);
-      const allUserIds = (allUsers || []).map(u => u.id);
+      // Chỉ notify: participants + assignee (không broadcast all)
+      const notifyIds = new Set(b.participant_ids || []);
+      if (insert.assignee_id) notifyIds.add(insert.assignee_id);
 
-      await notifyMultiple(
+      if (notifyIds.size) await notifyMultiple(
         req,
-        allUserIds,
+        [...notifyIds],
         'event_created',
         `${icon} Sự kiện mới: ${full.title}`,
         `${creatorName} tạo sự kiện "${full.title}" vào ${timeStr}${insert.location ? ` tại ${insert.location}` : ''}`,

@@ -498,11 +498,13 @@ r.post('/leads', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // 🔔 NOTIFICATION: Lead mới → tất cả active users
+    // 🔔 NOTIFICATION: Lead mới → người phụ trách + admin
     try {
-      const { data: allUsers } = await supabase.from('users').select('id').eq('is_active', true);
-      const userIds = (allUsers || []).map(u => u.id);
-      if (userIds.length) await notifyMultiple(req, userIds, 'lead_created',
+      const targetIds = new Set();
+      if (body.assigned_to) targetIds.add(body.assigned_to);
+      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+      (admins || []).forEach(a => targetIds.add(a.id));
+      if (targetIds.size) await notifyMultiple(req, [...targetIds], 'lead_created',
         '🆕 Lead mới',
         `Lead "${body.title}" — Mã: ${code}`,
         'crm_lead', data.id);
@@ -563,17 +565,13 @@ r.post('/deals', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // 🔔 NOTIFICATION: Deal mới
+    // 🔔 NOTIFICATION: Deal mới → người phụ trách + admin
     try {
-      if (body.assigned_to) {
-        await createNotification(req, body.assigned_to, 'deal_assigned',
-          '🎯 Deal mới được giao',
-          `Deal "${body.title}" — Mã: ${code}`,
-          'crm_deal', data.id);
-      }
+      const targetIds = new Set();
+      if (body.assigned_to) targetIds.add(body.assigned_to);
       const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-      const adminIds = (admins || []).map(u => u.id).filter(id => id !== body.assigned_to);
-      if (adminIds.length) await notifyMultiple(req, adminIds, 'deal_created',
+      (admins || []).forEach(a => targetIds.add(a.id));
+      if (targetIds.size) await notifyMultiple(req, [...targetIds], 'deal_created',
         '🎯 Deal mới',
         `Deal "${body.title}" — Mã: ${code} — GT: ${formatMoney(body.estimated_value)}`,
         'crm_deal', data.id);

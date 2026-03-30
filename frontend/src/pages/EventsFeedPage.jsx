@@ -1140,7 +1140,18 @@ function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
 
           {/* Participants */}
           <div>
-            <label className="text-xs font-medium text-gray-600 block mb-2">Người tham gia ({participantIds.length})</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-gray-600">Người tham gia ({participantIds.length})</label>
+              <button type="button" onClick={() => {
+                if (participantIds.length === users.length) {
+                  setParticipantIds([]);
+                } else {
+                  setParticipantIds(users.map(u => u.id));
+                }
+              }} className="text-[10px] text-blue-600 hover:underline cursor-pointer">
+                {participantIds.length === users.length ? '❌ Bỏ chọn tất cả' : '✅ Chọn tất cả NV'}
+              </button>
+            </div>
             <UserMultiSelect users={users} value={participantIds} onChange={setParticipantIds} placeholder="👥 Chọn người tham gia..." />
           </div>
 
