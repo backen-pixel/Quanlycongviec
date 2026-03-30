@@ -2737,37 +2737,37 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
     let grandTotal = 0, subtotalBeforeDiscount = 0, discountAmount = 0;
 
     // Track group subtotals + discount amounts for CK% calculation
+    // Strategy: assign TỔNG/CK rows to groups in order (simpler than name matching)
     const groupTotals = {}; // { groupName: subtotal }
     const groupDiscounts = {}; // { groupName: discountAmount }
+    const groupNamesOrdered = items.filter(i => i.is_group).map(g => g.name);
+    const groupsWithoutHeaderCK = items.filter(i => i.is_group && !i.group_discount_percent).map(g => g.name);
+    let nextTotalGroupIdx = 0;
 
     for (const sr of summaryRows) {
       const label = sr.label.toUpperCase();
       if (label.includes('TỔNG') && label.includes('HẠNG MỤC')) {
         grandTotal = sr.amount; // "TỔNG 2 HẠNG MỤC" = final total
       } else if (label.includes('SAU') && (label.includes('CHIẾT KHẤU') || label.includes('CK'))) {
-        // "TỔNG TỦ SAU CHIẾT KHẤU" — subtotal after group discount
+        // "TỔNG TỦ SAU CHIẾT KHẤU" — skip for group calc, use as grandTotal fallback
         if (!grandTotal) grandTotal = sr.amount;
       } else if (label.includes('CHIẾT KHẤU') || label.includes('PHẦN TỪ') || label.includes('PHẦN TỦ')) {
         discountAmount += sr.amount;
-        // Try to match to a group: "PHẦN TỦ CHIẾT KHẤU" → group containing "TỦ"
-        const matchGroup = items.find(i => i.is_group && label.includes(i.name.split(' ').find(w => w.length > 2)?.toUpperCase() || '___'));
-        if (matchGroup) groupDiscounts[matchGroup.name] = (groupDiscounts[matchGroup.name] || 0) + sr.amount;
-        else {
-          // Fallback: assign to first group that doesn't have CK% from header
-          const firstGroupNoCK = items.find(i => i.is_group && !i.group_discount_percent);
-          if (firstGroupNoCK) groupDiscounts[firstGroupNoCK.name] = (groupDiscounts[firstGroupNoCK.name] || 0) + sr.amount;
-        }
+        // Assign discount to first group without header CK that doesn't have discount yet
+        const target = groupsWithoutHeaderCK.find(gn => !groupDiscounts[gn]);
+        if (target) groupDiscounts[target] = (groupDiscounts[target] || 0) + sr.amount;
       } else if (label.includes('TỔNG')) {
-        subtotalBeforeDiscount += sr.amount; // group subtotals
-        // "TỔNG TỦ" → map to closest preceding group
-        const precedingGroup = [...items].reverse().find(i => i.is_group && label.includes(i.name.split(' ').find(w => w.length > 2)?.toUpperCase() || '___'));
-        if (precedingGroup) groupTotals[precedingGroup.name] = sr.amount;
-        else {
-          const firstGroup = items.find(i => i.is_group && !groupTotals[i.name]);
-          if (firstGroup) groupTotals[firstGroup.name] = sr.amount;
+        subtotalBeforeDiscount += sr.amount;
+        // Assign to groups in file order
+        if (nextTotalGroupIdx < groupNamesOrdered.length) {
+          groupTotals[groupNamesOrdered[nextTotalGroupIdx]] = sr.amount;
+          nextTotalGroupIdx++;
         }
       }
     }
+    console.log('[parse-excel] summaryRows:', JSON.stringify(summaryRows.map(s => ({ l: s.label.slice(0,35), a: s.amount }))));
+    console.log('[parse-excel] groupTotals:', JSON.stringify(groupTotals));
+    console.log('[parse-excel] groupDiscounts:', JSON.stringify(groupDiscounts));
 
     // ── 5. Calculate CK% for groups that don't have it from header ──
     // E.g. "PHẦN TỦ CHIẾT KHẤU 1,998,101" + "TỔNG TỦ 66,603,375" → CK% = 1998101/66603375 ≈ 3%
