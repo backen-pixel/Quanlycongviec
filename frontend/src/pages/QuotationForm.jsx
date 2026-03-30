@@ -281,9 +281,9 @@ export default function QuotationForm() {
               <th className="py-1.5 px-1 text-left min-w-[180px]">Tên hàng hóa</th>
               <th className="py-1.5 px-1 text-left min-w-[140px]">Diễn giải</th>
               <th className="py-1.5 px-1 text-center w-14">ĐVT</th>
-              <th className="py-1.5 px-1 text-right w-16">Cao</th>
-              <th className="py-1.5 px-1 text-right w-16">Rộng</th>
-              <th className="py-1.5 px-1 text-right w-16">Dài</th>
+              <th className="py-1.5 px-1 text-right w-16" title="Ngang (m)">Ngang</th>
+              <th className="py-1.5 px-1 text-right w-16" title="Sâu (m)">Sâu</th>
+              <th className="py-1.5 px-1 text-right w-16" title="Cao (m)">Cao</th>
               <th className="py-1.5 px-1 text-right w-16" title="Hệ số quy cách: nhân vào đơn giá (VD: mét dài ngang tủ)">HS QC</th>
               <th className="py-1.5 px-1 text-right w-14">SL</th>
               <th className="py-1.5 px-1 text-right w-28">Đơn giá</th>
@@ -326,9 +326,9 @@ export default function QuotationForm() {
                     </td>
                     <td className="py-1 px-1"><input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent" /></td>
                     <td className="py-1 px-1"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-center" /></td>
-                    <td className="py-1 px-1"><input type="number" value={item.height || ''} onChange={e => updateItem(idx, 'height', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1"><input type="number" value={item.width || ''} onChange={e => updateItem(idx, 'width', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1"><input type="number" value={item.length || ''} onChange={e => updateItem(idx, 'length', e.target.value)} placeholder="0" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input type="number" step="any" value={item.length || ''} onChange={e => updateItem(idx, 'length', e.target.value)} placeholder="0" title="Ngang (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input type="number" step="any" value={item.width || ''} onChange={e => updateItem(idx, 'width', e.target.value)} placeholder="0" title="Sâu (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input type="number" step="any" value={item.height || ''} onChange={e => updateItem(idx, 'height', e.target.value)} placeholder="0" title="Cao (m)" className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" step="any" value={item.spec_factor || ''} onChange={e => updateItem(idx, 'spec_factor', e.target.value)} placeholder="0" title="Hệ số quy cách" className={`w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
                     <td className="py-1 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-xs outline-none bg-transparent text-right" /></td>
