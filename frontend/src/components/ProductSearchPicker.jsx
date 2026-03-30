@@ -22,26 +22,37 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
   const [groupFilter, setGroupFilter] = useState('');
   const [selected, setSelected] = useState([]); // for multiSelect
   const searchRef = useRef(null);
+  const [searchTimer, setSearchTimer] = useState(null);
 
   useEffect(() => {
-    loadData();
-    // Auto-focus search
+    loadCategories();
+    loadProducts('');
     setTimeout(() => searchRef.current?.focus(), 100);
   }, []);
 
-  const loadData = async () => {
+  // Debounce search → gọi API
+  useEffect(() => {
+    if (searchTimer) clearTimeout(searchTimer);
+    const t = setTimeout(() => loadProducts(search), 300);
+    setSearchTimer(t);
+    return () => clearTimeout(t);
+  }, [search, categoryFilter]);
+
+  const loadCategories = async () => {
+    try {
+      const { data } = await api.get('/products/categories');
+      setCategories(data.categories || data || []);
+    } catch {}
+  };
+
+  const loadProducts = async (q) => {
     setLoading(true);
     try {
-      const [prodRes, catRes] = await Promise.allSettled([
-        api.get('/products', { params: { limit: 500 } }),
-        api.get('/products/categories'),
-      ]);
-      if (prodRes.status === 'fulfilled') {
-        setProducts(prodRes.value.data.products || prodRes.value.data || []);
-      }
-      if (catRes.status === 'fulfilled') {
-        setCategories(catRes.value.data.categories || catRes.value.data || []);
-      }
+      const params = { limit: 500 };
+      if (q) params.search = q;
+      if (categoryFilter) params.category_id = categoryFilter;
+      const { data } = await api.get('/products', { params });
+      setProducts(data.products || data || []);
     } catch {}
     setLoading(false);
   };
@@ -56,25 +67,16 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
     return Object.entries(groups).sort((a, b) => b[1] - a[1]);
   }, [products]);
 
-  // Lọc sản phẩm
+  // Lọc sản phẩm — backend đã search + category, client chỉ filter group
   const filtered = useMemo(() => {
     return products.filter(p => {
-      // Filter by category
-      if (categoryFilter && p.category_id !== categoryFilter) return false;
-      // Filter by code_group
       if (groupFilter) {
         const pg = p.code_group || p.group;
         if (pg !== groupFilter) return false;
       }
-      // Search — hỗ trợ nhiều từ: "tủ trên" → match "tủ bếp trên"
-      if (search) {
-        const words = search.toLowerCase().split(/\s+/).filter(Boolean);
-        const target = `${p.name || ''} ${p.code || ''} ${p.sku || ''} ${p.description || ''}`.toLowerCase();
-        return words.every(w => target.includes(w));
-      }
       return true;
     });
-  }, [products, search, categoryFilter, groupFilter]);
+  }, [products, groupFilter]);
 
   const handleSelect = (product) => {
     if (multiSelect) {

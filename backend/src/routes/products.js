@@ -271,14 +271,10 @@ r.get('/', async (req, res) => {
     // Multi-word search: "tủ trên" → match "tủ bếp trên" (mỗi từ phải xuất hiện trong name hoặc code)
     if (search) {
       const words = search.trim().split(/\s+/).filter(Boolean);
-      if (words.length > 1) {
-        // Mỗi từ phải có trong name hoặc code
-        words.forEach(w => {
-          q = q.or(`name.ilike.%${w}%,code.ilike.%${w}%,sku.ilike.%${w}%`);
-        });
-      } else {
-        q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,sku.ilike.%${search}%`);
-      }
+      // Mỗi từ phải có trong name (chủ yếu tìm theo tên)
+      words.forEach(w => {
+        q = q.ilike('name', `%${w}%`);
+      });
     }
     if (category_id) q = q.eq('category_id', category_id);
     if (status && status !== 'all') q = q.eq('status', status);
@@ -397,13 +393,9 @@ r.get('/components/list', async (req, res) => {
     let q = supabase.from('product_components').select('*', { count: 'exact' });
     if (search) {
       const words = search.trim().split(/\s+/).filter(Boolean);
-      if (words.length > 1) {
-        words.forEach(w => {
-          q = q.or(`name.ilike.%${w}%,code.ilike.%${w}%`);
-        });
-      } else {
-        q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
-      }
+      words.forEach(w => {
+        q = q.ilike('name', `%${w}%`);
+      });
     }
     if (category) q = q.eq('category', category);
     const p = +page, l = +limit;
