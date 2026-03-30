@@ -161,7 +161,7 @@ export default function App() {
             <Route path="/template-sets" element={<WorkflowHubPage />} />
             <Route path="/template-sets/:setId" element={<TemplateSetDetailPage />} />
             <Route path="/permissions" element={<PermissionsPage />} />
-            <Route path="/crm" element={<Navigate to="/crm/events" replace />} />
+            <Route path="/crm" element={<Navigate to="/crm/dashboard" replace />} />
             <Route path="/crm/events" element={<EventsFeedPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
             <Route path="/crm/pipeline" element={<CRMDashboard />} />

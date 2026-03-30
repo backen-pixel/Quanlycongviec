@@ -77,8 +77,8 @@ const CRM_MENU_GROUPS = [
     title: '1. Tổng quan',
     emoji: '📊',
     items: [
-      { to: '/crm/events', icon: Calendar, label: 'Sự kiện', end: true },
       { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM' },
+      { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
     ]
   },
   {
