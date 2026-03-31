@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
@@ -6,7 +7,7 @@ import Dashboard from './pages/DashboardNew';
 import MyTasks from './pages/MyTasks';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
-import Tasks from './pages/Tasks';
+const Tasks = lazy(() => import('./pages/Tasks'));
 import StageView from './pages/StageView';
 import UsersPage from './pages/UsersPage';
 import CustomersPage from './pages/CustomersPage';
@@ -40,7 +41,7 @@ import CRMReports from './pages/CRMReports';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
 import CRMTasksPage from './pages/CRMTasksPage';
-import CRMTemplatesPage from './pages/CRMTemplatesPage';
+const CRMTemplatesPage = lazy(() => import('./pages/CRMTemplatesPage'));
 import AutoProjectConfigPage from './pages/AutoProjectConfigPage';
 // CRMProductsPage removed — merged into ProductsPage
 import StageGroupsPage from './pages/StageGroupsPage';
@@ -139,7 +140,7 @@ export default function App() {
             <Route path="/projects/create" element={<CreateProject />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />
             <Route path="/project-workflow" element={<ProjectWorkflowPage />} />
-            <Route path="/tasks" element={<Tasks />} />
+            <Route path="/tasks" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><Tasks /></Suspense>} />
             <Route path="/stage/:slug" element={<StageView />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/customers" element={<CustomersPage />} />
@@ -185,7 +186,7 @@ export default function App() {
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/crm/customers" element={<CustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
-            <Route path="/crm/task-templates" element={<CRMTemplatesPage />} />
+            <Route path="/crm/task-templates" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><CRMTemplatesPage /></Suspense>} />
             <Route path="/crm/auto-project-config" element={<AutoProjectConfigPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/sx" element={<ProductionDashboard />} />
