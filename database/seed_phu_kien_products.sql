@@ -130,7 +130,7 @@ ON CONFLICT (code) DO NOTHING;
 -- ─── 8. Phụ Kiện Cơ Bản ───
 INSERT INTO products (code, name, unit, selling_price, base_price, dimensions, material, category_id, status) VALUES
 ('EWP101', 'Bản lề giảm chấn', 'cái', 35000, 32000, '"Tải 40kg"', 'Thép mạ Niken', (SELECT id FROM product_categories WHERE slug='pk-co-ban'), 'active'),
-('ESD125', 'Ray trượt bi giảm chấn', 'đôi', 120000, 109000, '265mm', 'Thép mạ kẽm', (SELECT id FROM product_categories WHERE slug='pk-co-ban'), 'active'),
-('PT80N', 'Pittông giảm chấn 80N', 'cái', 45000, 41000, '265mm', 'Thép + Khí nén', (SELECT id FROM product_categories WHERE slug='pk-co-ban'), 'active'),
+('ESD125', 'Ray trượt bi giảm chấn', 'đôi', 120000, 109000, '"265mm"', 'Thép mạ kẽm', (SELECT id FROM product_categories WHERE slug='pk-co-ban'), 'active'),
+('PT80N', 'Pittông giảm chấn 80N', 'cái', 45000, 41000, '"265mm"', 'Thép + Khí nén', (SELECT id FROM product_categories WHERE slug='pk-co-ban'), 'active'),
 ('A332', 'Bánh xe tủ ngăn kéo', 'cái', 10000, 9000, '"Đa dạng"', 'Nhựa + Thép', (SELECT id FROM product_categories WHERE slug='pk-co-ban'), 'active')
 ON CONFLICT (code) DO NOTHING;
