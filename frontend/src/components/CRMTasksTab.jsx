@@ -281,6 +281,16 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     } catch (e) { alert('Lỗi'); }
   };
 
+  const toggleShareAttachment = async (taskId, attId) => {
+    try {
+      const { data } = await api.put(`/crm/leads/${leadId}/tasks/${taskId}/attachments/${attId}/toggle-share`);
+      setTaskAttachments(p => ({
+        ...p,
+        [taskId]: (p[taskId] || []).map(a => a.id === attId ? { ...a, shared_to_project: data.shared_to_project } : a)
+      }));
+    } catch (e) { alert('Lỗi chia sẻ'); }
+  };
+
   const ATT_ICONS = { image: Image, drawing: FileText, task_note: MessageSquare, other: FileText };
 
   // TaskRow renders inline — see renderTaskRow below
@@ -343,9 +353,9 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                         ? 'text-green-700 bg-green-50 hover:bg-green-100 border border-green-300'
                         : 'text-gray-500 hover:text-green-600 hover:bg-green-50'
                     }`}
-                    title={task.shared_to_project ? 'Đang chia sẻ — click để tắt' : 'Bật chia sẻ cho Khối khác xem'}>
+                    title={task.shared_to_project ? 'Ghi chú đang chia sẻ — click để tắt' : 'Bật chia sẻ ghi chú cho Khối khác xem'}>
                     {task.shared_to_project ? <Share2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-                    {task.shared_to_project ? ' Đang chia sẻ' : ' Chia sẻ'}
+                    {task.shared_to_project ? ' Ghi chú đang chia sẻ' : ' Chia sẻ ghi chú'}
                   </button>
                   {uploadingTask === task.id ? (
                     <span className="text-[10px] text-orange-600 flex items-center gap-1 px-1.5 py-0.5">
@@ -392,7 +402,12 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                         <div className="flex items-start gap-2">
                           <AttIcon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-gray-800 truncate">{att.name}</p>
+                            <div className="flex items-center gap-1">
+                              <p className="text-xs font-medium text-gray-800 truncate">{att.name}</p>
+                              {att.shared_to_project && (
+                                <span className="text-[9px] text-green-600 bg-green-50 px-1 py-0.5 rounded shrink-0">🔗 Đã chia sẻ</span>
+                              )}
+                            </div>
                             {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
                             {att.file_url && !att.mime_type?.startsWith('image/') && (
                               <a href={att.file_url} target="_blank" rel="noopener noreferrer"
@@ -400,10 +415,17 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                             )}
                             <span className="text-[9px] text-gray-400 ml-1">{att.creator?.full_name}</span>
                           </div>
-                          <button onClick={() => deleteAttachment(task.id, att.id)}
-                            className="opacity-0 group-hover/att:opacity-100 p-0.5 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
-                            <Trash2 className="h-2.5 w-2.5" />
-                          </button>
+                          <div className="opacity-0 group-hover/att:opacity-100 flex items-center gap-0.5 shrink-0">
+                            <button onClick={() => toggleShareAttachment(task.id, att.id)}
+                              className={`p-0.5 cursor-pointer ${att.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
+                              title={att.shared_to_project ? 'Đang chia sẻ — click để tắt' : 'Chia sẻ file này cho Khối khác'}>
+                              {att.shared_to_project ? <Share2 className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
+                            </button>
+                            <button onClick={() => deleteAttachment(task.id, att.id)}
+                              className="p-0.5 text-gray-400 hover:text-red-500 cursor-pointer">
+                              <Trash2 className="h-2.5 w-2.5" />
+                            </button>
+                          </div>
                         </div>
                         {/* Image preview */}
                         {att.file_url && att.mime_type?.startsWith('image/') && (
