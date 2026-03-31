@@ -512,6 +512,16 @@ export default function LeadDetail() {
               >
                 💬 Hoạt động ({activities.length})
               </button>
+              <button
+                onClick={() => setActiveTab('facebook')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'facebook'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                📘 Facebook
+              </button>
             </div>
 
             {/* Tab Content */}
@@ -551,7 +561,7 @@ export default function LeadDetail() {
                     </div>
                   )}
                 </>
-              ) : (
+              ) : activeTab === 'activities' ? (
                 <>
                   <div className="flex items-center justify-between mb-4">
                     <button onClick={() => setShowAddActivity(true)} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
@@ -592,7 +602,9 @@ export default function LeadDetail() {
                     </div>
                   )}
                 </>
-              )}
+              ) : activeTab === 'facebook' ? (
+                <FacebookChatTab leadId={id} />
+              ) : null}
             </div>
           </div>
         </div>
@@ -1211,3 +1223,98 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
   );
 }
 
+
+// ═══════════════════════════════════════
+// Facebook Chat Tab — embedded in LeadDetail
+// ═══════════════════════════════════════
+function FacebookChatTab({ leadId }) {
+  const [messages, setMessages] = useState([]);
+  const [reply, setReply] = useState('');
+  const [contact, setContact] = useState(null);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!leadId) return;
+    fetch(`${API}/api/facebook/leads/${leadId}/messages`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => {
+        setMessages(d);
+        if (d.length > 0 && d[0].contact) setContact(d[0].contact);
+      })
+      .catch(() => {});
+  }, [leadId]);
+
+  const sendReply = async () => {
+    if (!reply.trim() || !contact || sending) return;
+    // Find contact_id from messages
+    const contactId = messages[0]?.contact_id;
+    if (!contactId) return;
+    setSending(true);
+    try {
+      const res = await fetch(`${API}/api/facebook/contacts/${contactId}/reply`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: reply }),
+      });
+      if (res.ok) {
+        const msg = await res.json();
+        setMessages(prev => [...prev, msg]);
+        setReply('');
+      }
+    } catch (e) { console.error(e); }
+    setSending(false);
+  };
+
+  if (messages.length === 0) {
+    return (
+      <div className="text-center text-gray-400 py-8">
+        <p className="text-3xl mb-2">📘</p>
+        <p className="text-sm">Chưa có tin nhắn Facebook nào liên kết với lead này.</p>
+        <p className="text-xs mt-1">Khi KH nhắn tin qua Messenger, tin nhắn sẽ hiện ở đây.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {contact && (
+        <div className="flex items-center gap-2 mb-3 pb-2 border-b">
+          {contact.fb_profile_pic
+            ? <img src={contact.fb_profile_pic} className="w-8 h-8 rounded-full" alt="" />
+            : <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-xs">{(contact.fb_name || 'FB')[0]}</div>}
+          <span className="font-medium text-sm">{contact.fb_name}</span>
+          <span className="text-xs text-gray-500">via Messenger</span>
+        </div>
+      )}
+      <div className="max-h-[400px] overflow-y-auto space-y-2 mb-3">
+        {messages.map(m => (
+          <div key={m.id} className={`flex ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[70%] rounded-2xl px-3 py-2 text-sm ${
+              m.direction === 'outbound'
+                ? 'bg-blue-600 text-white rounded-br-sm'
+                : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+            }`}>
+              {m.attachment_url && m.message_type === 'image' && <img src={m.attachment_url} className="max-w-[200px] rounded mb-1" alt="" />}
+              <p className="whitespace-pre-wrap">{m.content}</p>
+              <p className={`text-[10px] mt-0.5 ${m.direction === 'outbound' ? 'text-blue-200' : 'text-gray-400'}`}>
+                {new Date(m.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input value={reply} onChange={e => setReply(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && sendReply()}
+          placeholder="Trả lời qua Messenger..."
+          className="flex-1 px-3 py-2 text-sm border rounded-full" />
+        <button onClick={sendReply} disabled={sending || !reply.trim()}
+          className="bg-blue-600 text-white rounded-full w-9 h-9 flex items-center justify-center text-sm hover:bg-blue-700 disabled:opacity-50 cursor-pointer">
+          ➤
+        </button>
+      </div>
+    </div>
+  );
+}

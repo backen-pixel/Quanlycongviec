@@ -34,6 +34,7 @@ import OrderForm from './pages/OrderForm';
 import InvoiceForm from './pages/InvoiceForm';
 import EventsFeedPage from './pages/EventsFeedPage';
 import ReleaseNotesPage from './pages/ReleaseNotesPage';
+import FacebookPage from './pages/FacebookPage';
 import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
@@ -177,6 +178,7 @@ export default function App() {
             <Route path="/crm/invoices/new" element={<InvoiceForm />} />
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<CRMReports />} />
+            <Route path="/crm/facebook" element={<FacebookPage />} />
             <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />
             <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
