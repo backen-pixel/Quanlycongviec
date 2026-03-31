@@ -1,8 +1,6 @@
 const express = require('express');
 const r = express.Router();
-const { createClient } = require('@supabase/supabase-js');
-
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const { supabase } = require('../config/supabase');
 
 // ═══════════════════════════════════════════════════════════════
 // FACEBOOK WEBHOOK — Nhận Lead Ads, Messenger, Comments
@@ -444,7 +442,7 @@ async function handleComment(pageId, value) {
 // API ENDPOINTS (Authenticated — for frontend)
 // ═══════════════════════════════════════════════════════════════
 
-const authMiddleware = require('../middleware/auth');
+const { auth: authMiddleware } = require('../middleware/auth');
 
 // ── Pages config CRUD ────────────────────────────────────────
 
