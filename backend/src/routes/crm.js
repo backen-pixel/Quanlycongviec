@@ -3296,7 +3296,7 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline'];
+    const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline','shared_to_project'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     if (b.status === 'completed' && !b.completed_at) update.completed_at = new Date().toISOString();
     if (b.status && b.status !== 'completed') update.completed_at = null;
@@ -3336,6 +3336,62 @@ r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
     const { error } = await supabase.from('crm_tasks').delete().eq('id', req.params.taskId);
     if (error) throw error;
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOGGLE SHARE TASK TO PROJECT (cho Khối khác xem)
+// ═══════════════════════════════════════════════════════════════════════════
+
+r.put('/leads/:leadId/tasks/:taskId/toggle-share', async (req, res) => {
+  try {
+    // Get current value
+    const { data: task, error: fetchErr } = await supabase.from('crm_tasks')
+      .select('id, shared_to_project').eq('id', req.params.taskId).single();
+    if (fetchErr) throw fetchErr;
+
+    const newVal = !task.shared_to_project;
+    const { data, error } = await supabase.from('crm_tasks')
+      .update({ shared_to_project: newVal, updated_at: new Date().toISOString() })
+      .eq('id', req.params.taskId)
+      .select('id, title, shared_to_project').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET shared CRM task notes for a project (dùng từ ProjectDetail)
+r.get('/project/:projectId/shared-notes', async (req, res) => {
+  try {
+    // Tìm lead/deal liên kết với project
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id').eq('project_id', req.params.projectId).single();
+    if (!lead) return res.json([]);
+
+    // Lấy tasks có shared_to_project = true
+    const { data: tasks } = await supabase.from('crm_tasks')
+      .select('id, title, notes, stage_slug, shared_to_project, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), updated_at')
+      .eq('lead_id', lead.id)
+      .eq('shared_to_project', true)
+      .order('order_index');
+
+    // Lấy attachments cho các tasks shared
+    const taskIds = (tasks || []).map(t => t.id);
+    let attachments = [];
+    if (taskIds.length) {
+      const { data: atts } = await supabase.from('crm_task_attachments')
+        .select('id, task_id, name, file_url, file_name, file_size, mime_type, notes, doc_type, created_by')
+        .in('task_id', taskIds);
+      attachments = atts || [];
+    }
+
+    // Merge attachments vào tasks
+    const result = (tasks || []).map(t => ({
+      ...t,
+      attachments: attachments.filter(a => a.task_id === t.id),
+    }));
+
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

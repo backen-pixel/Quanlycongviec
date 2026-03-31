@@ -4,7 +4,7 @@ import { formatDate } from '../lib/utils';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
-  Paperclip, FileUp, MessageSquare, FileText, Image
+  Paperclip, FileUp, MessageSquare, FileText, Image, Share2, Lock
 } from 'lucide-react';
 
 const LEAD_STAGES = [
@@ -86,6 +86,13 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const deleteTask = async (taskId) => {
     if (!confirm('Xóa công việc này?')) return;
     try { await api.delete(`/crm/leads/${leadId}/tasks/${taskId}`); loadTasks(); } catch (e) { alert('Lỗi'); }
+  };
+
+  const toggleShare = async (taskId) => {
+    try {
+      const { data } = await api.put(`/crm/leads/${leadId}/tasks/${taskId}/toggle-share`);
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, shared_to_project: data.shared_to_project } : t));
+    } catch (e) { alert('Lỗi kích hoạt chia sẻ'); }
   };
 
   // Stats
@@ -301,10 +308,20 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                   <Paperclip className="h-2.5 w-2.5" />{task.notes ? 'Ghi chú' : ''}{atts.length > 0 ? ` ${atts.length} file` : ''}
                 </span>
               )}
+              {task.shared_to_project && (
+                <span className="text-[10px] text-green-600 flex items-center gap-0.5">
+                  <Share2 className="h-2.5 w-2.5" />Đang chia sẻ
+                </span>
+              )}
             </div>
           </div>
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
           <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1">
+            <button onClick={() => toggleShare(task.id)}
+              className={`p-1 cursor-pointer ${task.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
+              title={task.shared_to_project ? 'Đang chia sẻ — click để tắt' : 'Chia sẻ cho Khối khác xem'}>
+              {task.shared_to_project ? <Share2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+            </button>
             <button onClick={() => toggleExpand(task.id, task.notes)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Ghi chú & file">
               <Paperclip className="h-3 w-3" />
             </button>
@@ -320,6 +337,16 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-[10px] font-semibold text-gray-500 uppercase">📝 Ghi chú & Đính kèm ({atts.length})</label>
                 <div className="flex items-center gap-1">
+                  <button onClick={() => toggleShare(task.id)}
+                    className={`text-[10px] flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded ${
+                      task.shared_to_project
+                        ? 'text-green-700 bg-green-50 hover:bg-green-100 border border-green-300'
+                        : 'text-gray-500 hover:text-green-600 hover:bg-green-50'
+                    }`}
+                    title={task.shared_to_project ? 'Đang chia sẻ — click để tắt' : 'Bật chia sẻ cho Khối khác xem'}>
+                    {task.shared_to_project ? <Share2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                    {task.shared_to_project ? ' Đang chia sẻ' : ' Chia sẻ'}
+                  </button>
                   {uploadingTask === task.id ? (
                     <span className="text-[10px] text-orange-600 flex items-center gap-1 px-1.5 py-0.5">
                       <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải...
