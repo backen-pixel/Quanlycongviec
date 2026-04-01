@@ -206,6 +206,31 @@ async function sendMessengerReply(pageId, psid, text) {
   return result;
 }
 
+// Gửi attachment (image/file/audio/video) qua URL
+async function sendMessengerAttachment(pageId, psid, type, url) {
+  const page = await getPageConfig(pageId);
+  if (!page?.access_token) return null;
+
+  const resp = await fetch(`https://graph.facebook.com/v19.0/${pageId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: psid },
+      message: {
+        attachment: {
+          type, // image, audio, video, file
+          payload: { url, is_reusable: true },
+        },
+      },
+      messaging_type: 'RESPONSE',
+      access_token: page.access_token,
+    }),
+  });
+  const result = await resp.json();
+  if (result.error) console.error('[FB] Send attachment error:', result.error);
+  return result;
+}
+
 // ── WEBHOOK VERIFY (GET) ─────────────────────────────────────
 
 r.get('/webhook', async (req, res) => {
@@ -693,15 +718,30 @@ r.get('/leads/:leadId/messages', authMiddleware, async (req, res) => {
 // Send reply via Messenger
 r.post('/contacts/:contactId/reply', authMiddleware, async (req, res) => {
   try {
-    const { message } = req.body;
-    if (!message) return res.status(400).json({ error: 'Message required' });
+    const { message, attachment_url, attachment_type } = req.body;
+    if (!message && !attachment_url) return res.status(400).json({ error: 'Message or attachment required' });
 
     const { data: contact } = await supabase.from('facebook_contacts')
       .select('*').eq('id', req.params.contactId).single();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
 
-    // Send via Facebook
-    const result = await sendMessengerReply(contact.page_id, contact.psid, message);
+    let result;
+    let msgType = 'text';
+    let content = message || '';
+
+    // Gửi attachment nếu có
+    if (attachment_url) {
+      const type = attachment_type || 'file'; // image, audio, video, file
+      result = await sendMessengerAttachment(contact.page_id, contact.psid, type, attachment_url);
+      msgType = type;
+      if (!content) content = `[${type}]`;
+    }
+
+    // Gửi text nếu có
+    if (message) {
+      result = await sendMessengerReply(contact.page_id, contact.psid, message);
+    }
+
     if (result?.error) return res.status(500).json({ error: result.error.message });
 
     // Save outbound message
@@ -710,8 +750,10 @@ r.post('/contacts/:contactId/reply', authMiddleware, async (req, res) => {
       lead_id: contact.lead_id,
       fb_message_id: result?.message_id,
       direction: 'outbound',
-      message_type: 'text',
-      content: message,
+      message_type: msgType,
+      content,
+      attachment_url: attachment_url || null,
+      attachment_type: attachment_type || null,
       sent_by: req.user.userId,
     }).select().single();
 
