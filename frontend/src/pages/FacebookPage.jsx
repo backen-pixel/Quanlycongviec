@@ -5,7 +5,8 @@ import api from '../lib/api';
 import {
   MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink,
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
-  X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff
+  X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
+  Mic, MicOff, File, Camera, Smile, ArrowLeft
 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -43,32 +44,34 @@ export default function FacebookPage() {
   ];
 
   return (
-    <div className="h-[calc(100vh-64px)] flex flex-col">
-      <div className="border-b bg-white px-6 py-3 flex items-center justify-between shrink-0">
+    <div className="h-[calc(100vh-64px)] flex flex-col bg-gray-100">
+      <div className="border-b bg-white px-6 py-3 flex items-center justify-between shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+          <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl flex items-center justify-center shadow-sm">
             <span className="text-white font-bold text-sm">f</span>
           </div>
-          <h1 className="text-lg font-bold text-gray-800">Facebook Integration</h1>
+          <div>
+            <h1 className="text-base font-bold text-gray-800">Facebook Messenger</h1>
+            <p className="text-[11px] text-gray-400">Quản lý tin nhắn & khách hàng</p>
+          </div>
         </div>
         {stats && (
           <div className="flex gap-4 text-xs text-gray-500">
-            <span>📨 {stats.messages_today} tin nhắn</span>
-            <span>👥 {stats.total_contacts} liên hệ</span>
-            <span>📋 {stats.lead_ads_today} lead ads</span>
+            <span className="bg-blue-50 px-2.5 py-1 rounded-full">📨 {stats.messages_today} hôm nay</span>
+            <span className="bg-green-50 px-2.5 py-1 rounded-full">👥 {stats.total_contacts} liên hệ</span>
           </div>
         )}
       </div>
 
-      <div className="border-b bg-white px-6 flex gap-1 shrink-0">
+      <div className="border-b bg-white px-6 flex gap-0.5 shrink-0">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all cursor-pointer ${
-              tab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+              tab === t.id ? 'border-blue-600 text-blue-600 bg-blue-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
             }`}>
-            <t.icon size={16} />
+            <t.icon size={15} />
             {t.label}
-            {t.badge > 0 && <span className="bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5 min-w-[18px] text-center">{t.badge}</span>}
+            {t.badge > 0 && <span className="bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5 min-w-[18px] text-center font-bold">{t.badge}</span>}
           </button>
         ))}
       </div>
@@ -85,7 +88,7 @@ export default function FacebookPage() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// INBOX TAB — Chat Messenger (realtime)
+// INBOX TAB — Messenger Chat (realtime + media)
 // ═══════════════════════════════════════════════════════════════
 
 function InboxTab() {
@@ -96,8 +99,13 @@ function InboxTab() {
   const [reply, setReply] = useState('');
   const [search, setSearch] = useState('');
   const [sending, setSending] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef(null);
   const selectedRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
   selectedRef.current = selected;
 
   const loadContacts = useCallback(() => {
@@ -119,7 +127,7 @@ function InboxTab() {
             unread_count: selectedRef.current?.id === data.contact_id ? 0 : (ex.unread_count || 0) + 1 };
           return [up, ...prev.filter(c => c.id !== data.contact_id)];
         }
-        return [data.contact || { id: data.contact_id, fb_name: 'Facebook User', unread_count: 1 }, ...prev];
+        return [data.contact || { id: data.contact_id, fb_name: 'Khách', unread_count: 1 }, ...prev];
       });
       if (selectedRef.current?.id === data.contact_id && data.message) {
         setMessages(prev => prev.some(m => m.id === data.message.id) ? prev : [...prev, data.message]);
@@ -137,6 +145,7 @@ function InboxTab() {
       .catch(() => {});
   }, [selected]);
 
+  // Send text
   const sendReply = async () => {
     if (!reply.trim() || !selected || sending) return;
     setSending(true);
@@ -144,113 +153,276 @@ function InboxTab() {
       const res = await fetch(`${API}/api/facebook/contacts/${selected.id}/reply`, {
         method: 'POST', headers: hdr(), body: JSON.stringify({ message: reply }),
       });
-      if (res.ok) {
-        const msg = await res.json();
-        setMessages(prev => [...prev, msg]);
-        setReply('');
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }
+      if (res.ok) { const msg = await res.json(); setMessages(prev => [...prev, msg]); setReply(''); messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }
     } catch (e) { console.error(e); }
     setSending(false);
   };
 
+  // Upload & send file/image
+  const handleFileUpload = async (e, type) => {
+    const file = e.target.files?.[0];
+    if (!file || !selected) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const upRes = await fetch(`${API}/api/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      });
+      if (!upRes.ok) throw new Error('Upload failed');
+      const upData = await upRes.json();
+      const fileUrl = upData.url || upData.file_url;
+
+      // Determine attachment type
+      let attType = type || 'file';
+      if (file.type.startsWith('image/')) attType = 'image';
+      else if (file.type.startsWith('video/')) attType = 'video';
+      else if (file.type.startsWith('audio/')) attType = 'audio';
+
+      const res = await fetch(`${API}/api/facebook/contacts/${selected.id}/reply`, {
+        method: 'POST', headers: hdr(),
+        body: JSON.stringify({ message: '', attachment_url: fileUrl, attachment_type: attType }),
+      });
+      if (res.ok) { const msg = await res.json(); setMessages(prev => [...prev, msg]); messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }
+    } catch (e) { alert('Lỗi gửi file: ' + e.message); }
+    setUploading(false);
+    e.target.value = '';
+  };
+
+  // Voice recording
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const file = new window.File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+
+        // Upload then send
+        setUploading(true);
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const upRes = await fetch(`${API}/api/upload`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+            body: formData,
+          });
+          if (!upRes.ok) throw new Error('Upload failed');
+          const upData = await upRes.json();
+          const fileUrl = upData.url || upData.file_url;
+
+          const res = await fetch(`${API}/api/facebook/contacts/${selected.id}/reply`, {
+            method: 'POST', headers: hdr(),
+            body: JSON.stringify({ message: '', attachment_url: fileUrl, attachment_type: 'audio' }),
+          });
+          if (res.ok) { const msg = await res.json(); setMessages(prev => [...prev, msg]); messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }
+        } catch (e) { alert('Lỗi gửi ghi âm'); }
+        setUploading(false);
+      };
+      recorder.start();
+      setMediaRecorder(recorder);
+      setRecording(true);
+    } catch (e) { alert('Không thể ghi âm. Hãy cấp quyền microphone.'); }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder) { mediaRecorder.stop(); setRecording(false); setMediaRecorder(null); }
+  };
+
+  const formatTime = (d) => new Date(d).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+
   return (
     <div className="flex h-full">
-      {/* Contact list */}
-      <div className="w-80 border-r bg-gray-50 flex flex-col shrink-0">
-        <div className="p-3 border-b">
+      {/* ── LEFT: Contact list ── */}
+      <div className={`w-80 border-r bg-white flex flex-col shrink-0 ${selected ? 'hidden md:flex' : 'flex'}`}>
+        <div className="p-3 border-b bg-gray-50">
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm kiếm..."
-              className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm kiếm khách hàng..."
+              className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {contacts.map(c => (
             <div key={c.id} onClick={() => setSelected(c)}
-              className={`flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-gray-100 hover:bg-blue-50 transition ${
-                selected?.id === c.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
+              className={`flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-gray-50 transition-all ${
+                selected?.id === c.id ? 'bg-blue-50 border-l-3 border-l-blue-500' : 'hover:bg-gray-50'
               }`}>
-              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-sm shrink-0">
-                {(c.fb_name || 'FB')[0]}
+              <div className="relative">
+                <div className="w-11 h-11 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm">
+                  {(c.fb_name || 'F')[0].toUpperCase()}
+                </div>
+                {c.unread_count > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] rounded-full w-5 h-5 flex items-center justify-center font-bold shadow">{c.unread_count}</span>
+                )}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <p className="font-medium text-sm text-gray-800 truncate">{c.fb_name}</p>
-                  {c.unread_count > 0 && <span className="bg-red-500 text-white text-[10px] rounded-full px-1.5 min-w-[18px] text-center">{c.unread_count}</span>}
-                </div>
-                <p className="text-xs text-gray-500 truncate">
-                  {c.lead ? `🏷 ${c.lead.code}` : c.phone || 'Messenger'}
+                <p className={`text-sm truncate ${c.unread_count > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>{c.fb_name}</p>
+                <p className="text-xs text-gray-400 truncate mt-0.5">
+                  {c.lead ? `🏷 ${c.lead.code}` : c.phone || '💬 Messenger'}
                 </p>
+              </div>
+              <div className="text-[10px] text-gray-400 shrink-0">
+                {c.last_message_at && new Date(c.last_message_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
               </div>
             </div>
           ))}
-          {!contacts.length && <p className="text-center text-sm text-gray-400 py-8">Chưa có liên hệ</p>}
+          {!contacts.length && (
+            <div className="text-center py-12">
+              <MessageCircle size={40} className="mx-auto mb-2 text-gray-200" />
+              <p className="text-sm text-gray-400">Chưa có cuộc hội thoại</p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Chat area */}
-      <div className="flex-1 flex flex-col">
+      {/* ── RIGHT: Chat area ── */}
+      <div className={`flex-1 flex flex-col bg-gray-50 ${!selected ? 'hidden md:flex' : 'flex'}`}>
         {selected ? (
           <>
-            <div className="border-b px-4 py-3 bg-white flex items-center justify-between shrink-0">
+            {/* Chat header */}
+            <div className="border-b px-4 py-3 bg-white flex items-center justify-between shrink-0 shadow-sm">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-xs">{(selected.fb_name || 'FB')[0]}</div>
+                <button onClick={() => setSelected(null)} className="md:hidden text-gray-400 hover:text-gray-600 cursor-pointer mr-1">
+                  <ArrowLeft size={20} />
+                </button>
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm">
+                  {(selected.fb_name || 'F')[0].toUpperCase()}
+                </div>
                 <div>
-                  <p className="font-medium text-sm">{selected.fb_name}</p>
-                  <p className="text-xs text-gray-500">{selected.phone || selected.email || 'Messenger'}</p>
+                  <p className="font-semibold text-sm text-gray-800">{selected.fb_name}</p>
+                  <p className="text-[11px] text-gray-400">{selected.phone || selected.email || 'Facebook Messenger'}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 {selected.lead ? (
-                  <a href={`/crm/leads/${selected.lead.id}`} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 flex items-center gap-1">
+                  <a href={`/crm/leads/${selected.lead.id}`} className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1 font-medium transition">
                     <ExternalLink size={12} /> {selected.lead.code}
                   </a>
                 ) : (
-                  <CreateLeadButton contactId={selected.id} onCreated={(lead) => {
-                    setSelected(prev => ({ ...prev, lead }));
-                    loadContacts();
-                  }} />
+                  <CreateLeadButton contactId={selected.id} onCreated={(lead) => { setSelected(prev => ({ ...prev, lead })); loadContacts(); }} />
                 )}
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
-              {messages.map(m => (
-                <div key={m.id} className={`flex ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[70%] rounded-2xl px-4 py-2 ${
-                    m.direction === 'outbound' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white text-gray-800 shadow-sm rounded-bl-sm'
-                  }`}>
-                    {m.attachment_url && m.message_type === 'image' && <img src={m.attachment_url} className="max-w-[250px] rounded-lg mb-1" alt="" />}
-                    {m.attachment_url && m.message_type !== 'image' && (
-                      <a href={m.attachment_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-sm underline"><Paperclip size={12} /> Tệp</a>
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+              {messages.map((m, i) => {
+                const isOut = m.direction === 'outbound';
+                const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(messages[i-1]?.created_at).toDateString();
+                return (
+                  <div key={m.id}>
+                    {showDate && (
+                      <div className="flex justify-center my-3">
+                        <span className="text-[10px] text-gray-400 bg-white px-3 py-1 rounded-full shadow-sm border">
+                          {new Date(m.created_at).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                        </span>
+                      </div>
                     )}
-                    <p className="text-sm whitespace-pre-wrap">{m.content}</p>
-                    <p className={`text-[10px] mt-1 ${m.direction === 'outbound' ? 'text-blue-200' : 'text-gray-400'}`}>
-                      {new Date(m.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
-                    </p>
+                    <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
+                        isOut ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
+                      }`}>
+                        {/* Image */}
+                        {m.attachment_url && (m.message_type === 'image' || m.attachment_type === 'image') && (
+                          <a href={m.attachment_url} target="_blank" rel="noreferrer">
+                            <img src={m.attachment_url} className="max-w-[280px] rounded-xl mb-2 hover:opacity-90 transition" alt="" />
+                          </a>
+                        )}
+                        {/* Audio */}
+                        {m.attachment_url && (m.message_type === 'audio' || m.attachment_type === 'audio') && (
+                          <audio src={m.attachment_url} controls className="max-w-[240px] mb-1" />
+                        )}
+                        {/* Video */}
+                        {m.attachment_url && (m.message_type === 'video' || m.attachment_type === 'video') && (
+                          <video src={m.attachment_url} controls className="max-w-[280px] rounded-xl mb-2" />
+                        )}
+                        {/* File */}
+                        {m.attachment_url && (m.message_type === 'file' || m.attachment_type === 'file') && (
+                          <a href={m.attachment_url} target="_blank" rel="noreferrer"
+                            className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-1 ${isOut ? 'bg-blue-400/30 hover:bg-blue-400/40' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                            <File size={16} /> Tệp đính kèm
+                          </a>
+                        )}
+                        {/* Text */}
+                        {m.content && m.content !== '[image]' && m.content !== '[audio]' && m.content !== '[video]' && m.content !== '[file]' && (
+                          <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{m.content}</p>
+                        )}
+                        <p className={`text-[10px] mt-1 ${isOut ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               <div ref={messagesEndRef} />
             </div>
 
-            <div className="border-t bg-white p-3 shrink-0">
-              <div className="flex gap-2">
+            {/* ── Input bar ── */}
+            <div className="border-t bg-white p-3 shrink-0 shadow-inner">
+              {uploading && (
+                <div className="flex items-center gap-2 text-xs text-blue-600 mb-2 px-2">
+                  <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  Đang tải lên...
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                {/* Image button */}
+                <button onClick={() => imageInputRef.current?.click()} disabled={uploading}
+                  className="p-2.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl cursor-pointer transition disabled:opacity-40" title="Gửi hình ảnh">
+                  <Image size={20} />
+                </button>
+                <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'image')} />
+
+                {/* File button */}
+                <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                  className="p-2.5 text-gray-400 hover:text-purple-500 hover:bg-purple-50 rounded-xl cursor-pointer transition disabled:opacity-40" title="Gửi file">
+                  <Paperclip size={20} />
+                </button>
+                <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'file')} />
+
+                {/* Voice button */}
+                {!recording ? (
+                  <button onClick={startRecording} disabled={uploading}
+                    className="p-2.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl cursor-pointer transition disabled:opacity-40" title="Ghi âm">
+                    <Mic size={20} />
+                  </button>
+                ) : (
+                  <button onClick={stopRecording}
+                    className="p-2.5 text-red-500 bg-red-50 rounded-xl cursor-pointer animate-pulse" title="Dừng ghi âm">
+                    <MicOff size={20} />
+                  </button>
+                )}
+
+                {/* Text input */}
                 <input value={reply} onChange={e => setReply(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendReply()}
-                  placeholder="Nhập tin nhắn..."
-                  className="flex-1 px-4 py-2 border rounded-full text-sm focus:ring-2 focus:ring-blue-500" />
-                <button onClick={sendReply} disabled={sending || !reply.trim()}
-                  className="bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-blue-700 disabled:opacity-50 cursor-pointer">
+                  placeholder={recording ? '🎙 Đang ghi âm...' : 'Nhập tin nhắn...'}
+                  disabled={recording}
+                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 disabled:opacity-40" />
+
+                {/* Send button */}
+                <button onClick={sendReply} disabled={sending || !reply.trim() || recording}
+                  className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl w-10 h-10 flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm">
                   <Send size={16} />
                 </button>
               </div>
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400">
-            <div className="text-center"><MessageCircle size={48} className="mx-auto mb-3 opacity-30" /><p className="text-sm">Chọn một cuộc hội thoại</p></div>
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <MessageCircle size={36} className="text-blue-400" />
+              </div>
+              <p className="text-gray-500 font-medium">Chọn cuộc hội thoại</p>
+              <p className="text-xs text-gray-400 mt-1">Tin nhắn từ Facebook Messenger sẽ hiện ở đây</p>
+            </div>
           </div>
         )}
       </div>
@@ -273,7 +445,7 @@ function CreateLeadButton({ contactId, onCreated }) {
   };
   return (
     <button onClick={create} disabled={loading}
-      className="text-xs bg-green-50 text-green-600 px-2 py-1 rounded hover:bg-green-100 flex items-center gap-1 cursor-pointer disabled:opacity-50">
+      className="text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded-lg hover:bg-green-100 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 font-medium transition">
       <UserPlus size={12} /> {loading ? 'Đang tạo...' : 'Tạo Lead'}
     </button>
   );
@@ -287,7 +459,7 @@ function ContactsTab() {
   const navigate = useNavigate();
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all'); // all | has_lead | no_lead
+  const [filter, setFilter] = useState('all');
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
 
@@ -313,10 +485,7 @@ function ContactsTab() {
 
   const deleteContact = async (id, name) => {
     if (!confirm(`Xóa liên hệ "${name}" và toàn bộ tin nhắn?`)) return;
-    try {
-      await fetch(`${API}/api/facebook/contacts/${id}`, { method: 'DELETE', headers: hdr() });
-      setContacts(prev => prev.filter(c => c.id !== id));
-    } catch (e) { alert('Lỗi'); }
+    try { await fetch(`${API}/api/facebook/contacts/${id}`, { method: 'DELETE', headers: hdr() }); setContacts(prev => prev.filter(c => c.id !== id)); } catch (e) { alert('Lỗi'); }
   };
 
   return (
@@ -325,8 +494,6 @@ function ContactsTab() {
         <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length})</h2>
         <button onClick={load} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 cursor-pointer"><RefreshCw size={14} /> Làm mới</button>
       </div>
-
-      {/* Filters */}
       <div className="flex gap-3 mb-4 flex-wrap">
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -340,9 +507,7 @@ function ContactsTab() {
           ))}
         </div>
       </div>
-
-      {/* Table */}
-      <div className="bg-white border rounded-xl overflow-hidden">
+      <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
             <tr>
@@ -373,7 +538,7 @@ function ContactsTab() {
                   <>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-xs shrink-0">{(c.fb_name || 'F')[0]}</div>
+                        <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0">{(c.fb_name || 'F')[0]}</div>
                         <span className="font-medium text-gray-800">{c.fb_name}</span>
                       </div>
                     </td>
@@ -410,18 +575,13 @@ function ContactsTab() {
 function LeadAdsTab() {
   const [ads, setAds] = useState([]);
   useEffect(() => {
-    fetch(`${API}/api/facebook/lead-ads`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : []).then(setAds).catch(() => {});
+    fetch(`${API}/api/facebook/lead-ads`, { headers: hdr() }).then(r => r.ok ? r.json() : []).then(setAds).catch(() => {});
   }, []);
-
   return (
     <div className="p-6 overflow-y-auto h-full">
       <h2 className="text-lg font-bold mb-4">📋 Facebook Lead Ads</h2>
       {!ads.length ? (
-        <div className="text-center text-gray-400 py-12">
-          <FileText size={48} className="mx-auto mb-3 opacity-30" />
-          <p>Chưa có lead ads. Khi KH submit form trên Facebook, dữ liệu sẽ hiện ở đây.</p>
-        </div>
+        <div className="text-center text-gray-400 py-12"><FileText size={48} className="mx-auto mb-3 opacity-30" /><p>Chưa có lead ads.</p></div>
       ) : (
         <div className="space-y-3">
           {ads.map(ad => (
@@ -431,22 +591,9 @@ function LeadAdsTab() {
                   <span className="text-lg">📋</span>
                   <span className="font-medium">{ad.full_name || 'N/A'}</span>
                   {ad.phone && <span className="text-sm text-gray-500">📞 {ad.phone}</span>}
-                  {ad.email && <span className="text-sm text-gray-500">✉ {ad.email}</span>}
                 </div>
-                <div className="flex items-center gap-2">
-                  {ad.lead && <a href={`/crm/leads/${ad.lead.id}`} className="text-xs bg-green-50 text-green-600 px-2 py-1 rounded hover:bg-green-100">✅ {ad.lead.code}</a>}
-                  {ad.processed && !ad.lead && <span className="text-xs text-orange-500">⚠ Đã xử lý</span>}
-                  {!ad.processed && <span className="text-xs text-red-500">🔴 Chưa xử lý</span>}
-                </div>
+                {ad.lead && <a href={`/crm/leads/${ad.lead.id}`} className="text-xs bg-green-50 text-green-600 px-2 py-1 rounded hover:bg-green-100">✅ {ad.lead.code}</a>}
               </div>
-              {ad.form_name && <p className="text-xs text-gray-500 mb-1">Form: {ad.form_name}</p>}
-              {ad.field_data && (
-                <div className="text-xs text-gray-600 bg-gray-50 rounded p-2 mt-1">
-                  {Object.entries(ad.field_data).map(([k, v]) => (
-                    <div key={k}><span className="font-medium">{k}:</span> {v}</div>
-                  ))}
-                </div>
-              )}
               <p className="text-[10px] text-gray-400 mt-2">{new Date(ad.created_at).toLocaleString('vi-VN')}</p>
             </div>
           ))}
@@ -464,57 +611,35 @@ function CommentsTab() {
   const [comments, setComments] = useState([]);
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
-
   useEffect(() => {
-    fetch(`${API}/api/facebook/comments`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : []).then(setComments).catch(() => {});
+    fetch(`${API}/api/facebook/comments`, { headers: hdr() }).then(r => r.ok ? r.json() : []).then(setComments).catch(() => {});
   }, []);
-
   const sendReply = async (commentId) => {
     if (!replyText.trim()) return;
     try {
-      await fetch(`${API}/api/facebook/comments/${commentId}/reply`, {
-        method: 'POST', headers: hdr(), body: JSON.stringify({ message: replyText }),
-      });
+      await fetch(`${API}/api/facebook/comments/${commentId}/reply`, { method: 'POST', headers: hdr(), body: JSON.stringify({ message: replyText }) });
       setComments(prev => prev.map(c => c.id === commentId ? { ...c, replied: true, reply_text: replyText } : c));
       setReplyingTo(null); setReplyText('');
     } catch (e) { console.error(e); }
   };
-
   return (
     <div className="p-6 overflow-y-auto h-full">
       <h2 className="text-lg font-bold mb-4">💬 Bình luận Facebook</h2>
       {!comments.length ? (
-        <div className="text-center text-gray-400 py-12">
-          <MessageSquare size={48} className="mx-auto mb-3 opacity-30" />
-          <p>Chưa có bình luận nào.</p>
-        </div>
+        <div className="text-center text-gray-400 py-12"><MessageSquare size={48} className="mx-auto mb-3 opacity-30" /><p>Chưa có bình luận.</p></div>
       ) : (
         <div className="space-y-3">
           {comments.map(c => (
             <div key={c.id} className="bg-white border rounded-lg p-4">
               <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-medium text-sm">{c.from_name || 'Ẩn danh'}</p>
-                  <p className="text-sm text-gray-700 mt-1">{c.message}</p>
-                  {c.attachment_url && <img src={c.attachment_url} className="max-w-[200px] rounded mt-2" alt="" />}
-                </div>
-                {c.replied ? (
-                  <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded shrink-0">✅ Đã trả lời</span>
-                ) : (
-                  <button onClick={() => { setReplyingTo(c.id); setReplyText(''); }}
-                    className="text-xs text-blue-600 hover:underline cursor-pointer shrink-0">Trả lời</button>
-                )}
+                <div><p className="font-medium text-sm">{c.from_name || 'Ẩn danh'}</p><p className="text-sm text-gray-700 mt-1">{c.message}</p></div>
+                {c.replied ? <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded shrink-0">✅ Đã trả lời</span> :
+                  <button onClick={() => { setReplyingTo(c.id); setReplyText(''); }} className="text-xs text-blue-600 hover:underline cursor-pointer shrink-0">Trả lời</button>}
               </div>
-              {c.replied && c.reply_text && (
-                <div className="mt-2 ml-4 border-l-2 border-blue-200 pl-3">
-                  <p className="text-xs text-blue-600">↩ {c.reply_text}</p>
-                </div>
-              )}
+              {c.replied && c.reply_text && <div className="mt-2 ml-4 border-l-2 border-blue-200 pl-3"><p className="text-xs text-blue-600">↩ {c.reply_text}</p></div>}
               {replyingTo === c.id && (
                 <div className="mt-3 flex gap-2">
-                  <input value={replyText} onChange={e => setReplyText(e.target.value)}
-                    placeholder="Nhập phản hồi..." className="flex-1 px-3 py-1.5 text-sm border rounded" />
+                  <input value={replyText} onChange={e => setReplyText(e.target.value)} placeholder="Nhập phản hồi..." className="flex-1 px-3 py-1.5 text-sm border rounded" />
                   <button onClick={() => sendReply(c.id)} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 cursor-pointer">Gửi</button>
                   <button onClick={() => setReplyingTo(null)} className="text-gray-500 text-sm cursor-pointer">Hủy</button>
                 </div>
@@ -538,14 +663,10 @@ function SettingsTab() {
   const [stages, setStages] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [showToken, setShowToken] = useState({});
   const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_company_id: '', default_stage_id: '' };
   const [form, setForm] = useState({ ...emptyForm });
 
-  const load = () => {
-    fetch(`${API}/api/facebook/pages`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : []).then(setPages).catch(() => {});
-  };
+  const load = () => { fetch(`${API}/api/facebook/pages`, { headers: hdr() }).then(r => r.ok ? r.json() : []).then(setPages).catch(() => {}); };
   useEffect(() => {
     load();
     api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
@@ -555,159 +676,107 @@ function SettingsTab() {
   const addPage = async () => {
     if (!form.page_id || !form.access_token) return alert('Cần nhập Page ID và Access Token');
     const res = await fetch(`${API}/api/facebook/pages`, { method: 'POST', headers: hdr(), body: JSON.stringify(form) });
-    if (res.ok) { load(); setShowAdd(false); setForm({ ...emptyForm }); }
-    else { const e = await res.json(); alert(e.error || 'Lỗi'); }
+    if (res.ok) { load(); setShowAdd(false); setForm({ ...emptyForm }); } else { const e = await res.json(); alert(e.error || 'Lỗi'); }
   };
-
   const updatePage = async (id, updates) => {
     const res = await fetch(`${API}/api/facebook/pages/${id}`, { method: 'PUT', headers: hdr(), body: JSON.stringify(updates) });
     if (res.ok) { const d = await res.json(); setPages(prev => prev.map(p => p.id === id ? { ...p, ...d } : p)); }
   };
-
   const deletePage = async (id, name) => {
-    if (!confirm(`Xóa Page "${name}"? Dữ liệu contacts/messages sẽ vẫn giữ.`)) return;
+    if (!confirm(`Xóa Page "${name}"?`)) return;
     await fetch(`${API}/api/facebook/pages/${id}`, { method: 'DELETE', headers: hdr() });
     setPages(prev => prev.filter(p => p.id !== id));
   };
-
-  const startEdit = (p) => {
-    setEditingId(p.id);
-    setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead, default_company_id: p.default_company_id || '', default_stage_id: p.default_stage_id || '' });
-  };
-
+  const startEdit = (p) => { setEditingId(p.id); setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead, default_company_id: p.default_company_id || '', default_stage_id: p.default_stage_id || '' }); };
   const saveEdit = async (id) => {
-    const updates = { ...form };
-    if (!updates.access_token) delete updates.access_token; // Don't clear token if empty
+    const updates = { ...form }; if (!updates.access_token) delete updates.access_token;
     await fetch(`${API}/api/facebook/pages/${id}`, { method: 'PUT', headers: hdr(), body: JSON.stringify(updates) });
-    setEditingId(null);
-    load();
+    setEditingId(null); load();
   };
 
   const webhookUrl = `${window.location.origin.replace(/:\d+$/, '').replace('http://', 'https://').replace('frontend-s30w', 'backend')}/api/facebook/webhook`;
 
+  const CompanyStageSelectors = () => (
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label className="text-xs text-gray-600 mb-1 block">Công ty mặc định (Lead vào)</label>
+        <select value={form.default_company_id} onChange={e => setForm({...form, default_company_id: e.target.value})}
+          className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
+          <option value="">-- Không chọn --</option>
+          {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-gray-600 mb-1 block">Giai đoạn mặc định</label>
+        <select value={form.default_stage_id} onChange={e => setForm({...form, default_stage_id: e.target.value})}
+          className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
+          <option value="">-- Tự động (Mới) --</option>
+          {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-6 overflow-y-auto h-full max-w-4xl">
-      <h2 className="text-lg font-bold mb-4">⚙ Cài đặt Facebook Integration</h2>
-
-      {/* Hướng dẫn */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-        <h3 className="font-bold text-blue-800 mb-2">📋 Hướng dẫn cài đặt</h3>
-        <ol className="text-sm text-blue-700 space-y-1.5 list-decimal list-inside">
-          <li>Vào <a href="https://developers.facebook.com" target="_blank" rel="noreferrer" className="underline font-medium">developers.facebook.com</a> → Tạo App loại Business</li>
-          <li>Thêm sản phẩm: <strong>Messenger</strong>, <strong>Webhooks</strong></li>
-          <li>Kết nối Facebook Page → Lấy <strong>Page Access Token</strong></li>
-          <li>Cài Webhook URL bên dưới, Subscribe events: <code>messages</code></li>
-          <li>Nhập Page ID + Token vào form bên dưới</li>
+      <h2 className="text-lg font-bold mb-4">⚙ Cài đặt Facebook</h2>
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+        <h3 className="font-bold text-blue-800 mb-2">📋 Hướng dẫn</h3>
+        <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
+          <li>Vào <a href="https://developers.facebook.com" target="_blank" rel="noreferrer" className="underline font-medium">developers.facebook.com</a> → Tạo App Business</li>
+          <li>Thêm Messenger + Webhooks → Kết nối Page → Lấy Token</li>
+          <li>Cài Webhook URL bên dưới → Subscribe <code>messages</code></li>
+          <li>Nhập Page ID + Token vào form</li>
         </ol>
       </div>
-
-      {/* Webhook URL */}
       <div className="bg-gray-50 border rounded-lg p-3 mb-6 flex items-center gap-3">
-        <span className="text-sm font-medium text-gray-600 shrink-0">Webhook URL:</span>
+        <span className="text-sm font-medium text-gray-600 shrink-0">Webhook:</span>
         <code className="text-xs bg-white px-2 py-1 rounded border flex-1 break-all">{webhookUrl}</code>
-        <button onClick={() => { navigator.clipboard.writeText(webhookUrl); }} className="text-xs bg-gray-200 px-2 py-1 rounded hover:bg-gray-300 cursor-pointer flex items-center gap-1"><Copy size={12} /> Copy</button>
+        <button onClick={() => navigator.clipboard.writeText(webhookUrl)} className="text-xs bg-gray-200 px-2 py-1 rounded hover:bg-gray-300 cursor-pointer flex items-center gap-1"><Copy size={12} /> Copy</button>
       </div>
 
-      {/* Pages list */}
       <div className="space-y-4 mb-6">
         {pages.map(p => (
           <div key={p.id} className="bg-white border rounded-xl p-5 shadow-sm">
             {editingId === p.id ? (
-              /* Edit mode */
               <div className="space-y-3">
-                <h3 className="font-bold text-sm text-gray-700">✏️ Sửa Page</h3>
+                <h3 className="font-bold text-sm">✏️ Sửa Page</h3>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-600 mb-1 block">Page ID</label>
-                    <input value={form.page_id} onChange={e => setForm({...form, page_id: e.target.value})} className="w-full px-3 py-2 text-sm border rounded" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600 mb-1 block">Tên Page</label>
-                    <input value={form.page_name} onChange={e => setForm({...form, page_name: e.target.value})} className="w-full px-3 py-2 text-sm border rounded" />
-                  </div>
+                  <div><label className="text-xs text-gray-600 mb-1 block">Page ID</label><input value={form.page_id} onChange={e => setForm({...form, page_id: e.target.value})} className="w-full px-3 py-2 text-sm border rounded" /></div>
+                  <div><label className="text-xs text-gray-600 mb-1 block">Tên Page</label><input value={form.page_name} onChange={e => setForm({...form, page_name: e.target.value})} className="w-full px-3 py-2 text-sm border rounded" /></div>
                 </div>
-                <div>
-                  <label className="text-xs text-gray-600 mb-1 block">Access Token mới (bỏ trống = giữ cũ)</label>
-                  <textarea value={form.access_token} onChange={e => setForm({...form, access_token: e.target.value})}
-                    rows={2} className="w-full px-3 py-2 text-sm border rounded font-mono" placeholder="Paste token mới..." />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-600 mb-1 block">Tin nhắn tự động trả lời</label>
-                  <input value={form.auto_reply_message} onChange={e => setForm({...form, auto_reply_message: e.target.value})}
-                    className="w-full px-3 py-2 text-sm border rounded" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id={`acl-${p.id}`} className="cursor-pointer" />
-                  <label htmlFor={`acl-${p.id}`} className="text-sm text-gray-700 cursor-pointer">Tự động tạo Lead khi có tin nhắn mới</label>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-600 mb-1 block">Công ty mặc định (tạo Lead vào)</label>
-                    <select value={form.default_company_id} onChange={e => setForm({...form, default_company_id: e.target.value})}
-                      className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
-                      <option value="">-- Không chọn --</option>
-                      {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600 mb-1 block">Giai đoạn mặc định</label>
-                    <select value={form.default_stage_id} onChange={e => setForm({...form, default_stage_id: e.target.value})}
-                      className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
-                      <option value="">-- Tự động (Mới) --</option>
-                      {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
-                </div>
+                <div><label className="text-xs text-gray-600 mb-1 block">Token mới (bỏ trống = giữ cũ)</label><textarea value={form.access_token} onChange={e => setForm({...form, access_token: e.target.value})} rows={2} className="w-full px-3 py-2 text-sm border rounded font-mono" placeholder="Paste token..." /></div>
+                <div><label className="text-xs text-gray-600 mb-1 block">Tin nhắn tự động</label><input value={form.auto_reply_message} onChange={e => setForm({...form, auto_reply_message: e.target.value})} className="w-full px-3 py-2 text-sm border rounded" /></div>
+                <div className="flex items-center gap-2"><input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id={`acl-${p.id}`} className="cursor-pointer" /><label htmlFor={`acl-${p.id}`} className="text-sm">Tự động tạo Lead</label></div>
+                <CompanyStageSelectors />
                 <div className="flex gap-2 pt-2">
                   <button onClick={() => saveEdit(p.id)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 cursor-pointer flex items-center gap-1"><Save size={14} /> Lưu</button>
                   <button onClick={() => setEditingId(null)} className="text-gray-500 text-sm cursor-pointer px-4 py-2">Hủy</button>
                 </div>
               </div>
             ) : (
-              /* View mode */
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 font-bold">f</div>
-                    <div>
-                      <h3 className="font-bold text-gray-800">{p.page_name || p.page_id}</h3>
-                      <p className="text-xs text-gray-500">Page ID: {p.page_id}</p>
-                    </div>
+                    <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center text-white font-bold shadow-sm">f</div>
+                    <div><h3 className="font-bold text-gray-800">{p.page_name || p.page_id}</h3><p className="text-xs text-gray-500">ID: {p.page_id}</p></div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => startEdit(p)} className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer flex items-center gap-1"><Edit3 size={12} /> Sửa</button>
                     <button onClick={() => deletePage(p.id, p.page_name)} className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer flex items-center gap-1"><Trash2 size={12} /> Xóa</button>
                   </div>
                 </div>
-
                 <div className="flex flex-wrap gap-2">
-                  {/* Toggle Active */}
                   <button onClick={() => updatePage(p.id, { is_active: !p.is_active })}
-                    className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition ${p.is_active ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'}`}>
-                    {p.is_active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
-                    {p.is_active ? 'Đang hoạt động' : 'Đã tắt'}
+                    className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition ${p.is_active ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
+                    {p.is_active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />} {p.is_active ? 'Active' : 'Tắt'}
                   </button>
-
-                  {/* Toggle Auto Lead */}
                   <button onClick={() => updatePage(p.id, { auto_create_lead: !p.auto_create_lead })}
-                    className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition ${p.auto_create_lead ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200'}`}>
-                    <UserPlus size={14} />
-                    {p.auto_create_lead ? 'Auto Lead: BẬT' : 'Auto Lead: TẮT'}
+                    className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition ${p.auto_create_lead ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-gray-100 text-gray-500 border border-gray-200'}`}>
+                    <UserPlus size={14} /> {p.auto_create_lead ? 'Auto Lead: BẬT' : 'Auto Lead: TẮT'}
                   </button>
-
-                  {/* Auto reply */}
-                  {p.auto_reply_message && (
-                    <span className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200">
-                      💬 "{p.auto_reply_message.substring(0, 30)}..."
-                    </span>
-                  )}
-
-                  {/* Default company */}
-                  {p.default_company_id && (
-                    <span className="text-xs px-3 py-1.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">
-                      🏢 {companies.find(c => c.id === p.default_company_id)?.short_name || companies.find(c => c.id === p.default_company_id)?.name || 'Công ty'}
-                    </span>
-                  )}
+                  {p.auto_reply_message && <span className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200">💬 "{p.auto_reply_message.substring(0, 25)}..."</span>}
+                  {p.default_company_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">🏢 {companies.find(c => c.id === p.default_company_id)?.short_name || companies.find(c => c.id === p.default_company_id)?.name || 'Công ty'}</span>}
                 </div>
               </div>
             )}
@@ -715,57 +784,20 @@ function SettingsTab() {
         ))}
       </div>
 
-      {/* Add page */}
       {!showAdd ? (
         <button onClick={() => { setShowAdd(true); setForm({ ...emptyForm }); }}
-          className="flex items-center gap-2 text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 cursor-pointer">
-          <Plus size={16} /> Thêm Facebook Page
-        </button>
+          className="flex items-center gap-2 text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 cursor-pointer"><Plus size={16} /> Thêm Page</button>
       ) : (
         <div className="bg-white border rounded-xl p-5 shadow-sm space-y-3">
           <h3 className="font-bold text-sm">➕ Thêm Facebook Page</h3>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-600 block mb-1">Page ID *</label>
-              <input value={form.page_id} onChange={e => setForm({...form, page_id: e.target.value})} placeholder="VD: 479307381939218" className="w-full px-3 py-2 text-sm border rounded" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-600 block mb-1">Tên Page</label>
-              <input value={form.page_name} onChange={e => setForm({...form, page_name: e.target.value})} placeholder="VD: Supermarket 3K1D" className="w-full px-3 py-2 text-sm border rounded" />
-            </div>
+            <div><label className="text-xs text-gray-600 mb-1 block">Page ID *</label><input value={form.page_id} onChange={e => setForm({...form, page_id: e.target.value})} placeholder="479307381939218" className="w-full px-3 py-2 text-sm border rounded" /></div>
+            <div><label className="text-xs text-gray-600 mb-1 block">Tên Page</label><input value={form.page_name} onChange={e => setForm({...form, page_name: e.target.value})} placeholder="Supermarket 3K1D" className="w-full px-3 py-2 text-sm border rounded" /></div>
           </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Page Access Token *</label>
-            <textarea value={form.access_token} onChange={e => setForm({...form, access_token: e.target.value})}
-              placeholder="Paste token từ Facebook Developer..." rows={2} className="w-full px-3 py-2 text-sm border rounded font-mono" />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Tin nhắn tự động trả lời</label>
-            <input value={form.auto_reply_message} onChange={e => setForm({...form, auto_reply_message: e.target.value})}
-              className="w-full px-3 py-2 text-sm border rounded" />
-          </div>
-          <div className="flex items-center gap-2">
-            <input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id="acl-new" className="cursor-pointer" />
-            <label htmlFor="acl-new" className="text-sm text-gray-700 cursor-pointer">Tự động tạo Lead khi có tin nhắn mới</label>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-600 mb-1 block">Công ty mặc định (tạo Lead vào)</label>
-              <select value={form.default_company_id} onChange={e => setForm({...form, default_company_id: e.target.value})}
-                className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
-                <option value="">-- Không chọn --</option>
-                {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-gray-600 mb-1 block">Giai đoạn mặc định</label>
-              <select value={form.default_stage_id} onChange={e => setForm({...form, default_stage_id: e.target.value})}
-                className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
-                <option value="">-- Tự động (Mới) --</option>
-                {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-          </div>
+          <div><label className="text-xs text-gray-600 mb-1 block">Token *</label><textarea value={form.access_token} onChange={e => setForm({...form, access_token: e.target.value})} rows={2} className="w-full px-3 py-2 text-sm border rounded font-mono" placeholder="Paste token..." /></div>
+          <div><label className="text-xs text-gray-600 mb-1 block">Tin nhắn tự động</label><input value={form.auto_reply_message} onChange={e => setForm({...form, auto_reply_message: e.target.value})} className="w-full px-3 py-2 text-sm border rounded" /></div>
+          <div className="flex items-center gap-2"><input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id="acl-new" className="cursor-pointer" /><label htmlFor="acl-new" className="text-sm">Tự động tạo Lead</label></div>
+          <CompanyStageSelectors />
           <div className="flex gap-2 pt-2">
             <button onClick={addPage} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 cursor-pointer">Lưu</button>
             <button onClick={() => setShowAdd(false)} className="text-gray-500 text-sm cursor-pointer px-4 py-2">Hủy</button>
