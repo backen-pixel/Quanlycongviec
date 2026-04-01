@@ -20,7 +20,19 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     .select('*').eq('page_id', pageId).eq('psid', psid).single();
   
   if (contact) {
-    // Cập nhật tên/ảnh nếu thay đổi
+    // Lần đầu lấy tên thật nếu vẫn là "Facebook User"
+    if (contact.fb_name === 'Facebook User' || !contact.fb_name) {
+      const profile = await fetchProfileViaConversations(pageId, psid);
+      if (profile?.name) {
+        await supabase.from('facebook_contacts').update({
+          fb_name: profile.name,
+          updated_at: new Date().toISOString(),
+        }).eq('id', contact.id);
+        contact.fb_name = profile.name;
+        console.log(`[FB] Updated name: ${profile.name} (psid: ${psid})`);
+      }
+    }
+    // Cập nhật tên/ảnh nếu caller truyền vào
     if ((name && name !== contact.fb_name) || (profilePic && profilePic !== contact.fb_profile_pic)) {
       const upd = {};
       if (name) upd.fb_name = name;
@@ -31,19 +43,13 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     return contact;
   }
 
-  // Lấy profile từ Facebook
+  // Contact mới → lấy tên từ Conversations API
   if (!name) {
-    try {
-      const page = await getPageConfig(pageId);
-      if (page?.access_token) {
-        const resp = await fetch(`https://graph.facebook.com/v19.0/${psid}?fields=name,profile_pic&access_token=${page.access_token}`);
-        if (resp.ok) {
-          const profile = await resp.json();
-          name = profile.name;
-          profilePic = profile.profile_pic;
-        }
-      }
-    } catch (e) { console.warn('[FB] Get profile error:', e.message); }
+    const profile = await fetchProfileViaConversations(pageId, psid);
+    if (profile?.name) {
+      name = profile.name;
+      console.log(`[FB] Got name from conversations: ${name}`);
+    }
   }
 
   // Tạo contact mới
@@ -52,6 +58,40 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     .select().single();
   if (error) { console.error('[FB] Create contact error:', error.message); return null; }
   return newContact;
+}
+
+// Lấy tên user qua Conversations API (không cần Advanced Access)
+// Flow: GET /me/conversations?user_id=PSID → GET /CONV_ID/messages?fields=message,from → extract name
+async function fetchProfileViaConversations(pageId, psid) {
+  try {
+    const page = await getPageConfig(pageId);
+    if (!page?.access_token) return null;
+    const token = page.access_token;
+
+    // Step 1: Get conversation ID
+    const convResp = await fetch(`https://graph.facebook.com/v22.0/me/conversations?user_id=${psid}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const convData = await convResp.json();
+    if (!convData.data?.[0]?.id) return null;
+
+    // Step 2: Get messages with from.name
+    const convId = convData.data[0].id;
+    const msgResp = await fetch(`https://graph.facebook.com/v22.0/${convId}/messages?fields=from&limit=5`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const msgData = await msgResp.json();
+    if (!msgData.data?.length) return null;
+
+    // Step 3: Find message from user (not from page)
+    const userMsg = msgData.data.find(m => m.from?.id === psid);
+    if (!userMsg?.from?.name) return null;
+
+    return { name: userMsg.from.name };
+  } catch (e) {
+    console.warn('[FB] fetchProfileViaConversations error:', e.message);
+    return null;
+  }
 }
 
 async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
