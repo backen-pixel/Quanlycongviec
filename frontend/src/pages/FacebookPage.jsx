@@ -140,9 +140,33 @@ function InboxTab() {
 
   useEffect(() => {
     if (!selected) return;
-    fetch(`${API}/api/facebook/contacts/${selected.id}/messages`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : []).then(d => { setMessages(d); setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); })
-      .catch(() => {});
+    
+    // Load messages
+    const loadMsgs = () => {
+      fetch(`${API}/api/facebook/contacts/${selected.id}/messages`, { headers: hdr() })
+        .then(r => r.ok ? r.json() : []).then(d => { 
+          setMessages(d); 
+          setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+          
+          // Auto-sync nếu ít tin nhắn (< 5) → có thể thiếu history
+          if (d.length < 5) {
+            fetch(`${API}/api/facebook/contacts/${selected.id}/sync-history`, { method: 'POST', headers: hdr() })
+              .then(r => r.ok ? r.json() : null)
+              .then(result => {
+                if (result?.synced > 0) {
+                  console.log(`[FB] Auto-synced ${result.synced} messages`);
+                  // Reload messages
+                  fetch(`${API}/api/facebook/contacts/${selected.id}/messages`, { headers: hdr() })
+                    .then(r => r.ok ? r.json() : [])
+                    .then(fresh => { setMessages(fresh); setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); });
+                }
+              });
+          }
+        })
+        .catch(() => {});
+    };
+    
+    loadMsgs();
   }, [selected]);
 
   // Send text
@@ -338,28 +362,47 @@ function InboxTab() {
                       }`}>
                         {/* Image */}
                         {m.attachment_url && (m.message_type === 'image' || m.attachment_type === 'image') && (
-                          <a href={m.attachment_url} target="_blank" rel="noreferrer">
-                            <img src={m.attachment_url} className="max-w-[280px] rounded-xl mb-2 hover:opacity-90 transition" alt="" />
-                          </a>
+                          <div className="mb-2">
+                            <img 
+                              src={m.attachment_url} 
+                              className="max-w-[280px] rounded-xl cursor-pointer hover:opacity-90 transition" 
+                              alt="Hình ảnh"
+                              onClick={() => window.open(m.attachment_url, '_blank')}
+                            />
+                          </div>
                         )}
                         {/* Audio */}
                         {m.attachment_url && (m.message_type === 'audio' || m.attachment_type === 'audio') && (
-                          <audio src={m.attachment_url} controls className="max-w-[240px] mb-1" />
+                          <div className="mb-1">
+                            <audio 
+                              src={m.attachment_url} 
+                              controls 
+                              className="max-w-[280px] h-10"
+                              style={{ filter: isOut ? 'invert(1) hue-rotate(180deg)' : 'none' }}
+                            />
+                          </div>
                         )}
                         {/* Video */}
                         {m.attachment_url && (m.message_type === 'video' || m.attachment_type === 'video') && (
-                          <video src={m.attachment_url} controls className="max-w-[280px] rounded-xl mb-2" />
+                          <div className="mb-2">
+                            <video 
+                              src={m.attachment_url} 
+                              controls 
+                              className="max-w-[280px] rounded-xl"
+                              preload="metadata"
+                            />
+                          </div>
                         )}
                         {/* File */}
                         {m.attachment_url && (m.message_type === 'file' || m.attachment_type === 'file') && (
                           <a href={m.attachment_url} target="_blank" rel="noreferrer"
-                            className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-1 ${isOut ? 'bg-blue-400/30 hover:bg-blue-400/40' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                            className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-1 transition ${isOut ? 'bg-blue-400/30 hover:bg-blue-400/50' : 'bg-gray-50 hover:bg-gray-100'}`}>
                             <File size={16} /> Tệp đính kèm
                           </a>
                         )}
                         {/* Text */}
                         {m.content && m.content !== '[image]' && m.content !== '[audio]' && m.content !== '[video]' && m.content !== '[file]' && (
-                          <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{m.content}</p>
+                          <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
                         )}
                         <p className={`text-[10px] mt-1 ${isOut ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
                       </div>
