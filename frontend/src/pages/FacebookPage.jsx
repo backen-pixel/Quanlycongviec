@@ -6,7 +6,7 @@ import {
   MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink,
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
-  Mic, MicOff, File, Camera, Smile, ArrowLeft
+  Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3
 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -38,6 +38,7 @@ export default function FacebookPage() {
   const tabs = [
     { id: 'inbox', label: 'Hộp thư', icon: MessageCircle, badge: stats?.total_unread },
     { id: 'contacts', label: 'Danh bạ', icon: Users },
+    { id: 'analytics', label: 'Phân tích', icon: BarChart3 },
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'settings', label: 'Cài đặt', icon: Settings },
@@ -79,6 +80,7 @@ export default function FacebookPage() {
       <div className="flex-1 overflow-hidden">
         {tab === 'inbox' && <InboxTab />}
         {tab === 'contacts' && <ContactsTab />}
+        {tab === 'analytics' && <AnalyticsTab />}
         {tab === 'lead-ads' && <LeadAdsTab />}
         {tab === 'comments' && <CommentsTab />}
         {tab === 'settings' && <SettingsTab />}
@@ -98,6 +100,8 @@ function InboxTab() {
   const [messages, setMessages] = useState([]);
   const [reply, setReply] = useState('');
   const [search, setSearch] = useState('');
+  const [pageFilter, setPageFilter] = useState('');
+  const [pages, setPages] = useState([]);
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
@@ -108,11 +112,20 @@ function InboxTab() {
   const imageInputRef = useRef(null);
   selectedRef.current = selected;
 
+  // Load pages
+  useEffect(() => {
+    fetch(`${API}/api/facebook/pages`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : []).then(setPages).catch(() => {});
+  }, []);
+
   const loadContacts = useCallback(() => {
-    const p = search ? `?search=${encodeURIComponent(search)}` : '';
-    fetch(`${API}/api/facebook/contacts${p}`, { headers: hdr() })
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (pageFilter) params.set('page_id', pageFilter);
+    const qs = params.toString() ? `?${params}` : '';
+    fetch(`${API}/api/facebook/contacts${qs}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : []).then(setContacts).catch(() => {});
-  }, [search]);
+  }, [search, pageFilter]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
@@ -280,6 +293,13 @@ function InboxTab() {
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm kiếm khách hàng..."
               className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
           </div>
+          {pages.length > 1 && (
+            <select value={pageFilter} onChange={e => setPageFilter(e.target.value)}
+              className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600">
+              <option value="">Tất cả Page</option>
+              {pages.map(p => <option key={p.id} value={p.page_id}>{p.page_name}</option>)}
+            </select>
+          )}
           <div className="flex gap-1 text-[11px]">
             {[
               { key: 'all', label: 'Tất cả', count: contacts.length },
@@ -761,6 +781,189 @@ function CommentsTab() {
 
 // ═══════════════════════════════════════════════════════════════
 // SETTINGS TAB — CRUD Facebook Pages
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+// ANALYTICS TAB — Phân tích hành vi khách hàng
+// ═══════════════════════════════════════════════════════════════
+
+function AnalyticsTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [pageFilter, setPageFilter] = useState('');
+  const [days, setDays] = useState(30);
+  const [pages, setPages] = useState([]);
+
+  useEffect(() => {
+    fetch(`${API}/api/facebook/pages`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : []).then(setPages).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    const params = new URLSearchParams({ days });
+    if (pageFilter) params.set('page_id', pageFilter);
+    fetch(`${API}/api/facebook/analytics?${params}`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : null).then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [pageFilter, days]);
+
+  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" /></div>;
+  if (!data) return <p className="text-center py-8 text-gray-400">Không có dữ liệu</p>;
+
+  const f = data.conversionFunnel;
+  const maxMsg = Math.max(...(data.messagesByHour || []).map(h => h.total), 1);
+  const maxDay = Math.max(...(data.messagesByDay || []).map(d => d.total), 1);
+
+  return (
+    <div className="p-6 overflow-y-auto h-full space-y-6">
+      {/* Header + Filters */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-gray-800">📊 Phân tích hành vi khách hàng</h2>
+        <div className="flex gap-2">
+          {pages.length > 1 && (
+            <select value={pageFilter} onChange={e => setPageFilter(e.target.value)}
+              className="text-sm border rounded-lg px-3 py-1.5 bg-white">
+              <option value="">Tất cả Page</option>
+              {pages.map(p => <option key={p.id} value={p.page_id}>{p.page_name}</option>)}
+            </select>
+          )}
+          <select value={days} onChange={e => setDays(Number(e.target.value))}
+            className="text-sm border rounded-lg px-3 py-1.5 bg-white">
+            <option value={7}>7 ngày</option>
+            <option value={14}>14 ngày</option>
+            <option value={30}>30 ngày</option>
+            <option value={90}>90 ngày</option>
+          </select>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        {[
+          { label: 'Tổng liên hệ', value: data.totalContacts, icon: '👥', color: 'blue' },
+          { label: 'Có SĐT', value: data.hasPhone, icon: '📞', color: 'green', sub: `${f.phone_rate}%` },
+          { label: 'Có Lead', value: data.hasLead, icon: '🏷️', color: 'purple', sub: `${f.lead_rate}%` },
+          { label: 'Đã chuyển Deal', value: data.dealCount, icon: '🤝', color: 'orange', sub: `${f.deal_rate}%` },
+          { label: 'Tin nhắn', value: data.totalMessages, icon: '💬', color: 'cyan' },
+          { label: 'TG phản hồi', value: data.avgResponseTime ? `${data.avgResponseTime} phút` : '—', icon: '⏱️', color: 'pink' },
+        ].map((kpi, i) => (
+          <div key={i} className={`bg-white rounded-xl border p-4 space-y-1`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xl">{kpi.icon}</span>
+              {kpi.sub && <span className={`text-xs font-bold px-2 py-0.5 rounded-full bg-${kpi.color}-50 text-${kpi.color}-600`}>{kpi.sub}</span>}
+            </div>
+            <p className="text-2xl font-bold text-gray-900">{kpi.value}</p>
+            <p className="text-xs text-gray-500">{kpi.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Conversion Funnel */}
+      <div className="bg-white rounded-xl border p-5">
+        <h3 className="text-sm font-bold text-gray-700 mb-4">🔄 Phễu chuyển đổi</h3>
+        <div className="space-y-3">
+          {[
+            { label: 'Tổng liên hệ nhắn tin', count: f.total_contacts, pct: 100, color: 'bg-blue-500' },
+            { label: 'Để lại SĐT', count: f.has_phone, pct: f.phone_rate, color: 'bg-green-500' },
+            { label: 'Tạo Lead', count: f.has_lead, pct: f.lead_rate, color: 'bg-purple-500' },
+            { label: 'Chuyển đổi Deal', count: f.has_deal, pct: f.overall_rate, color: 'bg-orange-500' },
+          ].map((step, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <div className="w-32 text-xs text-gray-600 text-right shrink-0">{step.label}</div>
+              <div className="flex-1 bg-gray-100 rounded-full h-7 relative overflow-hidden">
+                <div className={`${step.color} h-full rounded-full transition-all duration-500`} style={{ width: `${Math.max(step.pct, 2)}%` }} />
+                <span className="absolute inset-0 flex items-center justify-center text-xs font-medium">
+                  {step.count} ({step.pct}%)
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Messages by Hour */}
+        <div className="bg-white rounded-xl border p-5">
+          <h3 className="text-sm font-bold text-gray-700 mb-4">🕐 Khung giờ nhắn tin (UTC+7)</h3>
+          <div className="flex items-end gap-1 h-40">
+            {(data.messagesByHour || []).map((h, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                <div className="w-full flex flex-col items-center justify-end" style={{ height: '120px' }}>
+                  <div className="w-full bg-blue-400 rounded-t-sm transition-all" style={{ height: `${Math.max(h.total / maxMsg * 100, 2)}%` }}
+                    title={`${h.hour}: ${h.total} tin (${h.inbound} đến)`} />
+                </div>
+                <span className="text-[9px] text-gray-400">{i % 3 === 0 ? h.hour.split(':')[0] : ''}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex gap-4 text-[10px] text-gray-400">
+            <span>📥 Đến: {data.inboundMessages}</span>
+            <span>📤 Đi: {data.outboundMessages}</span>
+          </div>
+        </div>
+
+        {/* Messages by Day */}
+        <div className="bg-white rounded-xl border p-5">
+          <h3 className="text-sm font-bold text-gray-700 mb-4">📅 Tin nhắn theo ngày</h3>
+          <div className="flex items-end gap-0.5 h-40">
+            {(data.messagesByDay || []).slice(-30).map((d, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: '120px' }}>
+                <div className="w-full rounded-t-sm transition-all" style={{ height: `${Math.max(d.total / maxDay * 100, 2)}%` }}
+                  title={`${d.date}: ${d.inbound} đến + ${d.outbound} đi = ${d.total}`}>
+                  <div className="bg-blue-400 w-full rounded-t-sm" style={{ height: `${d.inbound / Math.max(d.total, 1) * 100}%` }} />
+                  <div className="bg-green-400 w-full" style={{ height: `${d.outbound / Math.max(d.total, 1) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex justify-between text-[9px] text-gray-400">
+            <span>{(data.messagesByDay || [])[0]?.date?.slice(5)}</span>
+            <span>{(data.messagesByDay || []).slice(-1)[0]?.date?.slice(5)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Page Breakdown */}
+      {data.pageBreakdown?.length > 1 && (
+        <div className="bg-white rounded-xl border p-5">
+          <h3 className="text-sm font-bold text-gray-700 mb-4">📄 Theo Page</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-gray-500">
+                  <th className="py-2 font-medium">Page</th>
+                  <th className="py-2 font-medium text-center">Liên hệ</th>
+                  <th className="py-2 font-medium text-center">Có SĐT</th>
+                  <th className="py-2 font-medium text-center">Có Lead</th>
+                  <th className="py-2 font-medium text-center">Tỷ lệ SĐT</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.pageBreakdown.map(p => (
+                  <tr key={p.page_id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="py-2.5 font-medium">{p.page_name}</td>
+                    <td className="py-2.5 text-center">{p.contacts}</td>
+                    <td className="py-2.5 text-center text-green-600">{p.has_phone}</td>
+                    <td className="py-2.5 text-center text-purple-600">{p.has_lead}</td>
+                    <td className="py-2.5 text-center">
+                      <span className="bg-green-50 text-green-700 px-2 py-0.5 rounded-full text-xs font-medium">
+                        {p.contacts ? Math.round(p.has_phone / p.contacts * 100) : 0}%
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SETTINGS TAB
 // ═══════════════════════════════════════════════════════════════
 
 function SettingsTab() {
