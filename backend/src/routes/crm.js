@@ -493,6 +493,43 @@ r.get('/leads', async (req, res) => {
   }
 });
 
+// ── CUSTOMERS CRUD ──
+
+r.get('/customers', async (req, res) => {
+  try {
+    const { search } = req.query;
+    let q = supabase.from('customers').select('*').order('created_at', { ascending: false }).limit(100);
+    if (search) q = q.or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%`);
+    const { data } = await q;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/customers', async (req, res) => {
+  try {
+    const { full_name, phone, email, address, company, tax_code, source, notes } = req.body;
+    if (!full_name?.trim()) return res.status(400).json({ error: 'Tên khách hàng là bắt buộc' });
+    const { data, error } = await supabase.from('customers')
+      .insert({ full_name, phone: phone || null, email: email || null, address: address || null, company: company || null, tax_code: tax_code || null, source: source || null, notes: notes || null })
+      .select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/customers/:id', async (req, res) => {
+  try {
+    const update = {};
+    ['full_name', 'phone', 'email', 'address', 'company', 'tax_code', 'notes', 'source', 'gender', 'birthday'].forEach(f => {
+      if (req.body[f] !== undefined) update[f] = req.body[f] || null;
+    });
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('customers').update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 r.post('/leads', async (req, res) => {
   try {
     const code = await nextCode('LEAD');

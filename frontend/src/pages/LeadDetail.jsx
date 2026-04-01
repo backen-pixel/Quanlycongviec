@@ -453,7 +453,7 @@ export default function LeadDetail() {
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-gray-500">Chưa chọn khách hàng</p>
+              <CustomerCreateForm leadId={lead?.id} onCreated={(c) => { setCustomer(c); load(); }} />
             )}
           </div>
 
@@ -1104,6 +1104,63 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
         value={lead?.description || ''}
         displayValue={lead?.description || null}
         type="textarea" />
+    </div>
+  );
+}
+
+// ── Form tạo khách hàng mới khi lead chưa có customer ──
+function CustomerCreateForm({ leadId, onCreated }) {
+  const [form, setForm] = useState({
+    full_name: '', phone: '', email: '', address: '', company: '', tax_code: '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const fields = [
+    { key: 'full_name', label: '👤 Họ tên', required: true, placeholder: 'Nguyễn Văn A' },
+    { key: 'phone', label: '📞 Số điện thoại', required: true, placeholder: '0912 345 678', type: 'tel' },
+    { key: 'email', label: '✉️ Email', placeholder: 'email@example.com', type: 'email' },
+    { key: 'address', label: '📍 Địa chỉ', placeholder: '123 Nguyễn Huệ, Quận 1, TP.HCM' },
+    { key: 'company', label: '🏢 Công ty', placeholder: 'Tên công ty' },
+    { key: 'tax_code', label: '🧾 Mã số thuế', placeholder: 'MST' },
+  ];
+
+  const handleSave = async () => {
+    if (!form.full_name.trim()) return alert('Vui lòng nhập tên khách hàng');
+    setSaving(true);
+    try {
+      const res = await api.post('/customers', { ...form, source: 'Manual' });
+      if (res?.id) {
+        // Link customer to lead
+        await api.put(`/crm/leads/${leadId}`, { customer_id: res.id });
+        onCreated(res);
+      }
+    } catch (e) { alert('Lỗi tạo khách hàng'); }
+    setSaving(false);
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+        ⚠️ Chưa có thông tin khách hàng. Nhập bên dưới:
+      </p>
+      {fields.map(f => (
+        <div key={f.key}>
+          <label className="text-xs text-gray-500 font-medium">
+            {f.label} {f.required && <span className="text-red-400">*</span>}
+          </label>
+          <input
+            type={f.type || 'text'}
+            value={form[f.key]}
+            onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
+            placeholder={f.placeholder}
+            className="mt-0.5 w-full h-9 px-3 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+      ))}
+      <button onClick={handleSave} disabled={saving}
+        className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 cursor-pointer transition">
+        {saving ? 'Đang lưu...' : '💾 Lưu khách hàng'}
+      </button>
     </div>
   );
 }
