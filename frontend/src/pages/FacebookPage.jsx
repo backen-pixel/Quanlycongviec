@@ -166,14 +166,14 @@ function InboxTab() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const upRes = await fetch(`${API}/api/upload`, {
+      const upRes = await fetch(`${API}/api/upload/single`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         body: formData,
       });
-      if (!upRes.ok) throw new Error('Upload failed');
+      if (!upRes.ok) { const err = await upRes.json().catch(() => ({})); throw new Error(err.error || 'Upload failed'); }
       const upData = await upRes.json();
-      const fileUrl = upData.url || upData.file_url;
+      const fileUrl = upData.file_url;
 
       // Determine attachment type
       let attType = type || 'file';
@@ -208,14 +208,14 @@ function InboxTab() {
         try {
           const formData = new FormData();
           formData.append('file', file);
-          const upRes = await fetch(`${API}/api/upload`, {
+          const upRes = await fetch(`${API}/api/upload/single`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
             body: formData,
           });
-          if (!upRes.ok) throw new Error('Upload failed');
+          if (!upRes.ok) { const err = await upRes.json().catch(() => ({})); throw new Error(err.error || 'Upload failed'); }
           const upData = await upRes.json();
-          const fileUrl = upData.url || upData.file_url;
+          const fileUrl = upData.file_url;
 
           const res = await fetch(`${API}/api/facebook/contacts/${selected.id}/reply`, {
             method: 'POST', headers: hdr(),
@@ -297,6 +297,10 @@ function InboxTab() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <SyncHistoryButton contactId={selected.id} onSynced={() => {
+                  fetch(`${API}/api/facebook/contacts/${selected.id}/messages`, { headers: hdr() })
+                    .then(r => r.ok ? r.json() : []).then(d => { setMessages(d); setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); }).catch(() => {});
+                }} />
                 {selected.lead ? (
                   <a href={`/crm/leads/${selected.lead.id}`} className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1 font-medium transition">
                     <ExternalLink size={12} /> {selected.lead.code}
@@ -432,6 +436,27 @@ function FBAvatar({ name, pic, size = 11 }) {
   const textSize = size >= 10 ? 'text-sm' : 'text-xs';
   if (pic) return <img src={pic} alt="" className={`w-${size} h-${size} rounded-full object-cover shrink-0 shadow-sm`} />;
   return <div className={`${cls} bg-gradient-to-br from-blue-400 to-blue-600 ${textSize}`}>{(name || 'F')[0].toUpperCase()}</div>;
+}
+
+// ── Helper: Nút sync lịch sử tin nhắn cũ từ Facebook ──
+function SyncHistoryButton({ contactId, onSynced }) {
+  const [loading, setLoading] = useState(false);
+  const sync = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/api/facebook/contacts/${contactId}/sync-history`, { method: 'POST', headers: hdr() });
+      const data = await res.json();
+      if (data.synced > 0) { alert(`✅ Đã đồng bộ ${data.synced} tin nhắn cũ`); onSynced?.(); }
+      else alert(data.message || 'Không có tin nhắn mới để đồng bộ');
+    } catch (e) { alert('Lỗi đồng bộ'); }
+    setLoading(false);
+  };
+  return (
+    <button onClick={sync} disabled={loading}
+      className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1.5 rounded-lg hover:bg-gray-100 flex items-center gap-1 cursor-pointer disabled:opacity-50 transition" title="Đồng bộ tin nhắn cũ từ Facebook">
+      <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> {loading ? 'Đang sync...' : 'Sync'}
+    </button>
+  );
 }
 
 // ── Helper: Nút tạo Lead nhanh từ contact ──

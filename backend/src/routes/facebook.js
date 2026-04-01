@@ -723,6 +723,65 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Sync lịch sử hội thoại cũ từ Facebook cho 1 contact
+r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
+  try {
+    const { data: contact } = await supabase.from('facebook_contacts')
+      .select('*').eq('id', req.params.id).single();
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+
+    const page = await getPageConfig(contact.page_id);
+    if (!page?.access_token) return res.status(400).json({ error: 'No page token' });
+
+    // Step 1: Get conversation
+    const convResp = await fetch(`https://graph.facebook.com/v22.0/me/conversations?user_id=${contact.psid}`, {
+      headers: { Authorization: `Bearer ${page.access_token}` },
+    });
+    const convData = await convResp.json();
+    if (!convData.data?.[0]?.id) return res.json({ synced: 0, message: 'Không tìm thấy hội thoại' });
+
+    // Step 2: Get messages (limit 50)
+    const convId = convData.data[0].id;
+    const msgResp = await fetch(`https://graph.facebook.com/v22.0/${convId}/messages?fields=message,from,created_time,attachments&limit=50`, {
+      headers: { Authorization: `Bearer ${page.access_token}` },
+    });
+    const msgData = await msgResp.json();
+    if (!msgData.data?.length) return res.json({ synced: 0, message: 'Không có tin nhắn' });
+
+    let synced = 0;
+    for (const msg of msgData.data) {
+      // Check duplicate
+      const fbMsgId = msg.id;
+      const { data: existing } = await supabase.from('facebook_messages')
+        .select('id').eq('fb_message_id', fbMsgId).limit(1);
+      if (existing?.length) continue;
+
+      const isFromPage = msg.from?.id === contact.page_id;
+      let attachmentUrl = null;
+      let messageType = 'text';
+      if (msg.attachments?.data?.[0]) {
+        const att = msg.attachments.data[0];
+        attachmentUrl = att.image_data?.url || att.file_url || att.url || null;
+        messageType = att.mime_type?.startsWith('image') ? 'image' : att.mime_type?.startsWith('video') ? 'video' : att.mime_type?.startsWith('audio') ? 'audio' : 'file';
+      }
+
+      await supabase.from('facebook_messages').insert({
+        contact_id: contact.id,
+        lead_id: contact.lead_id,
+        fb_message_id: fbMsgId,
+        direction: isFromPage ? 'outbound' : 'inbound',
+        message_type: messageType,
+        content: msg.message || (attachmentUrl ? `[${messageType}]` : ''),
+        attachment_url: attachmentUrl,
+        created_at: msg.created_time || new Date().toISOString(),
+      });
+      synced++;
+    }
+
+    res.json({ synced, total: msgData.data.length, message: `Đã đồng bộ ${synced} tin nhắn mới` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Messages (lịch sử chat) ─────────────────────────────────
 
 r.get('/contacts/:contactId/messages', authMiddleware, async (req, res) => {

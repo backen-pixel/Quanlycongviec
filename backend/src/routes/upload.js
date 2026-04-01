@@ -12,9 +12,9 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
   fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|zip|rar|mp4|mov/;
+    const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|zip|rar|mp4|mov|webm|ogg|mp3|wav/;
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.test(ext) || file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('application/')) {
+    if (allowed.test(ext) || file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('application/')) {
       cb(null, true);
     } else {
       cb(new Error('File không được hỗ trợ'));
@@ -58,6 +58,18 @@ async function uploadOneFile(file, entityType) {
     storage_path: storagePath,
   };
 }
+
+// Upload single file (cho Facebook chat, etc.)
+r.post('/single', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    const result = await uploadOneFile(req.file, req.body.entity_type || 'messenger');
+    res.status(201).json(result);
+  } catch (e) {
+    console.error('Upload single error:', e);
+    res.status(500).json({ error: e.message || 'Lỗi upload' });
+  }
+});
 
 // Upload files → Supabase Storage (SONG SONG, batch 5)
 r.post('/', upload.array('files', 20), async (req, res) => {
