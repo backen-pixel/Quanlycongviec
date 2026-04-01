@@ -72,8 +72,25 @@ r.post('/single', upload.single('file'), async (req, res) => {
 });
 
 // Upload files → Supabase Storage (SONG SONG, batch 5)
-r.post('/', upload.array('files', 20), async (req, res) => {
+// Cũng nhận single field 'file' khi gọi từ /api/upload thay vì /api/upload/single
+const uploadFlexible = (req, res, next) => {
+  // Thử array('files') trước, nếu không có thì thử single('file')
+  upload.any()(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    // normalize: nếu gửi field 'file' → req.files = [file]
+    if (!req.files?.length && req.file) req.files = [req.file];
+    next();
+  });
+};
+
+r.post('/', uploadFlexible, async (req, res) => {
   try {
+    // Nếu chỉ 1 file và không có entity_id → trả format giống /single
+    if (req.files?.length === 1 && !req.body.entity_id) {
+      const result = await uploadOneFile(req.files[0], req.body.entity_type || 'general');
+      return res.status(201).json(result);
+    }
+
     if (!req.files?.length) return res.status(400).json({ error: 'Không có file' });
 
     const { entity_type, entity_id } = req.body;
