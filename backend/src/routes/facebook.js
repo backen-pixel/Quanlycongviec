@@ -84,13 +84,28 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     .select('id', { count: 'exact', head: true }).eq('type', 'lead');
   const code = `LEAD-${String((count || 0) + 1).padStart(4, '0')}`;
 
+  // Default stage: từ page config hoặc stage đầu tiên của pipeline lead
+  let stageId = page.default_stage_id || null;
+  if (!stageId) {
+    const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
+      .select('id').eq('pipeline_type', 'lead').order('order_index').limit(1).single();
+    stageId = defaultStage?.id || null;
+  }
+
+  // Default company: từ page config
+  let companyId = null;
+  try {
+    if (page.default_company_id) companyId = page.default_company_id;
+  } catch (e) { /* column may not exist */ }
+
   const leadData = {
     code,
     title: `[FB] ${extraData.full_name || contact.fb_name || 'KH Facebook'}`,
     type: 'lead',
     customer_id: customerId,
     source_id: page.default_source_id || fbSource?.id || null,
-    stage_id: page.default_stage_id || null,
+    stage_id: stageId,
+    company_id: companyId,
     description: `Nguồn: Facebook ${source}\nTên: ${extraData.full_name || contact.fb_name || ''}\nSĐT: ${extraData.phone || contact.phone || ''}\nEmail: ${extraData.email || contact.email || ''}`.trim(),
     lead_owner_id: page.created_by,
     assigned_to: page.created_by,
@@ -445,7 +460,7 @@ const { auth: authMiddleware } = require('../middleware/auth');
 r.get('/pages', authMiddleware, async (req, res) => {
   try {
     const { data } = await supabase.from('facebook_pages')
-      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, created_at')
+      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_company_id, created_at')
       .order('created_at', { ascending: false });
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -453,7 +468,7 @@ r.get('/pages', authMiddleware, async (req, res) => {
 
 r.post('/pages', authMiddleware, async (req, res) => {
   try {
-    const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id } = req.body;
+    const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id, default_company_id } = req.body;
     const { data, error } = await supabase.from('facebook_pages').insert({
       page_id, page_name, access_token,
       webhook_verify_token: webhook_verify_token || 'tubep_pro_verify_2024',
@@ -461,6 +476,7 @@ r.post('/pages', authMiddleware, async (req, res) => {
       auto_reply_message: auto_reply_message || null,
       default_source_id: default_source_id || null,
       default_stage_id: default_stage_id || null,
+      default_company_id: default_company_id || null,
       created_by: req.user.userId,
     }).select().single();
     if (error) throw error;
@@ -472,7 +488,7 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
   try {
     const update = {};
     ['page_name', 'access_token', 'is_active', 'auto_create_lead', 'auto_reply_message',
-     'webhook_verify_token', 'default_source_id', 'default_stage_id', 'default_pipeline_id'].forEach(f => {
+     'webhook_verify_token', 'default_source_id', 'default_stage_id', 'default_pipeline_id', 'default_company_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     update.updated_at = new Date().toISOString();
@@ -558,6 +574,26 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
     if (contact.lead_id) return res.status(400).json({ error: 'Contact đã có Lead' });
 
+    // Lấy page config để biết default stage + company
+    const { data: page } = await supabase.from('facebook_pages')
+      .select('*').eq('page_id', contact.page_id).single();
+
+    // Lấy stage "Mới" (default) nếu page chưa set
+    let stageId = page?.default_stage_id || null;
+    if (!stageId) {
+      const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
+        .select('id').eq('pipeline_type', 'lead').order('order_index').limit(1).single();
+      stageId = defaultStage?.id || null;
+    }
+
+    // Company từ page config hoặc từ request body
+    let companyId = req.body.company_id || null;
+    try {
+      const { data: pg } = await supabase.from('facebook_pages')
+        .select('default_company_id').eq('page_id', contact.page_id).single();
+      if (pg?.default_company_id && !companyId) companyId = pg.default_company_id;
+    } catch (e) { /* column may not exist yet */ }
+
     // Tạo lead
     const { count } = await supabase.from('crm_leads')
       .select('id', { count: 'exact', head: true }).eq('type', 'lead');
@@ -567,7 +603,10 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       code,
       title: `[FB] ${contact.fb_name || 'KH Facebook'}`,
       type: 'lead',
-      description: `Từ Facebook Messenger\nSĐT: ${contact.phone || ''}\nEmail: ${contact.email || ''}`.trim(),
+      stage_id: stageId,
+      company_id: companyId,
+      source_id: page?.default_source_id || null,
+      description: `Từ Facebook Messenger\nTên: ${contact.fb_name || ''}\nSĐT: ${contact.phone || ''}\nEmail: ${contact.email || ''}`.trim(),
       lead_owner_id: req.user.userId,
       assigned_to: req.user.userId,
       created_by: req.user.userId,
