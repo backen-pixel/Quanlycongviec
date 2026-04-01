@@ -196,7 +196,7 @@ r.post('/webhook', async (req, res) => {
         // ═══ MESSENGER MESSAGES ═══
         if (entry.messaging) {
           for (const event of entry.messaging) {
-            await handleMessaging(pageId, event);
+            await handleMessaging(pageId, event, r._ioRef);
           }
         }
 
@@ -220,7 +220,7 @@ r.post('/webhook', async (req, res) => {
 
 // ── HANDLE MESSENGER ─────────────────────────────────────────
 
-async function handleMessaging(pageId, event) {
+async function handleMessaging(pageId, event, io) {
   const senderId = event.sender?.id;
   if (!senderId || senderId === pageId) return; // Skip page's own messages
 
@@ -293,14 +293,14 @@ async function handleMessaging(pageId, event) {
 
       // Push realtime notification
       try {
-        const ioRef = r._ioRef;
-        if (ioRef) {
-          ioRef.emit('fb_message', {
+        if (io) {
+          io.emit('fb_message', {
             contact_id: contact.id,
             lead_id: contact.lead_id,
             message: savedMsg,
             contact,
           });
+          console.log('[FB] Socket.IO emit fb_message →', contact.fb_name);
         }
       } catch (e) { /* ignore */ }
 
