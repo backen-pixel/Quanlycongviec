@@ -60,7 +60,10 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     return contact;
   }
 
-  // Contact mới → lấy tên từ Conversations API
+  // Contact mới → tạo trước với "Facebook User", rồi async lấy tên
+  // Khi webhook đến, FB đã có conversation → nhưng cần delay nhỏ để API sẵn sàng
+
+  // Thử lấy tên ngay
   if (!name) {
     const profile = await fetchProfileViaConversations(pageId, psid);
     if (profile?.name) {
@@ -75,6 +78,41 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     .insert({ page_id: pageId, psid, fb_name: name || 'Facebook User', fb_profile_pic: profilePic })
     .select().single();
   if (error) { console.error('[FB] Create contact error:', error.message); return null; }
+
+  // Nếu vẫn "Facebook User" → retry sau 2 giây (background, không block)
+  if (!name || name === 'Facebook User') {
+    setTimeout(async () => {
+      try {
+        const profile = await fetchProfileViaConversations(pageId, psid);
+        if (profile?.name && profile.name !== 'Facebook User') {
+          const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
+          if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+          await supabase.from('facebook_contacts').update(upd).eq('id', newContact.id);
+          console.log(`[FB] Delayed name update: ${profile.name} (psid: ${psid})`);
+
+          // Cập nhật lead + customer nếu đã tạo
+          const { data: freshContact } = await supabase.from('facebook_contacts')
+            .select('lead_id').eq('id', newContact.id).single();
+          if (freshContact?.lead_id) {
+            await supabase.from('crm_leads')
+              .update({ title: `[FB] ${profile.name}` })
+              .eq('id', freshContact.lead_id)
+              .ilike('title', '%Facebook User%');
+            const { data: leadData } = await supabase.from('crm_leads')
+              .select('customer_id').eq('id', freshContact.lead_id).single();
+            if (leadData?.customer_id) {
+              await supabase.from('customers')
+                .update({ full_name: profile.name })
+                .eq('id', leadData.customer_id)
+                .ilike('full_name', '%Facebook%');
+            }
+            console.log(`[FB] Delayed lead+customer update: ${profile.name}`);
+          }
+        }
+      } catch (e) { console.warn('[FB] Delayed name fetch failed:', e.message); }
+    }, 2000);
+  }
+
   return newContact;
 }
 
