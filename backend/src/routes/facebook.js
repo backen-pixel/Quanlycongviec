@@ -296,10 +296,9 @@ async function handleMessaging(pageId, event) {
 
       // Push realtime notification
       try {
-        const pushFn = r._app?.get?.('pushNotification');
-        const io = r._app?.get?.('io');
-        if (io) {
-          io.emit('fb_message', {
+        const ioRef = r._ioRef;
+        if (ioRef) {
+          ioRef.emit('fb_message', {
             contact_id: contact.id,
             lead_id: contact.lead_id,
             message: savedMsg,
