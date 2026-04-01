@@ -924,13 +924,19 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     const { data: contact } = await supabase.from('facebook_contacts')
       .select('*').eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
-    if (contact.lead_id) return res.status(400).json({ error: 'Contact đã có Lead' });
+    if (contact.lead_id) {
+      // Verify lead còn tồn tại
+      const { data: existLead } = await supabase.from('crm_leads').select('id').eq('id', contact.lead_id).single();
+      if (existLead) return res.status(400).json({ error: 'Contact đã có Lead' });
+      // Lead đã bị xóa → clear
+      await supabase.from('facebook_contacts').update({ lead_id: null }).eq('id', contact.id);
+    }
 
-    // Lấy page config để biết default stage + company
+    // Lấy page config
     const { data: page } = await supabase.from('facebook_pages')
       .select('*').eq('page_id', contact.page_id).single();
 
-    // Lấy stage "Mới" (default) nếu page chưa set
+    // Lấy stage "Mới" (default)
     let stageId = page?.default_stage_id || null;
     if (!stageId) {
       const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
@@ -938,11 +944,59 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       stageId = defaultStage?.id || null;
     }
 
-    // Company từ page config hoặc từ request body
+    // Company
     let companyId = req.body.company_id || null;
     if (!companyId && page?.default_company_id) companyId = page.default_company_id;
 
-    // Tạo lead
+    // Extract phone/address từ TẤT CẢ tin nhắn cũ
+    let extractedPhone = contact.phone || null;
+    let extractedAddress = null;
+    const { data: messages } = await supabase.from('facebook_messages')
+      .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
+      .order('created_at', { ascending: false }).limit(50);
+    
+    for (const msg of (messages || [])) {
+      if (msg.content) {
+        const { phone, address } = extractContactInfo(msg.content);
+        if (phone && !extractedPhone) extractedPhone = phone;
+        if (address && !extractedAddress) extractedAddress = address;
+        if (extractedPhone && extractedAddress) break;
+      }
+    }
+
+    console.log(`[FB] Manual create lead — name: ${contact.fb_name}, phone: ${extractedPhone}, address: ${extractedAddress}`);
+
+    // Tạo/lấy customer
+    let customerId = contact.customer_id;
+    if (!customerId) {
+      const { data: customer } = await supabase.from('customers').insert({
+        full_name: contact.fb_name || 'KH Facebook',
+        phone: extractedPhone,
+        address: extractedAddress,
+        source: 'Facebook',
+      }).select().single();
+      if (customer) {
+        customerId = customer.id;
+        await supabase.from('facebook_contacts').update({ 
+          customer_id: customer.id,
+          phone: extractedPhone || contact.phone,
+        }).eq('id', contact.id);
+      }
+    } else {
+      // Update customer nếu có thông tin mới
+      const custUpd = {};
+      if (extractedPhone) custUpd.phone = extractedPhone;
+      if (extractedAddress) custUpd.address = extractedAddress;
+      if (Object.keys(custUpd).length) {
+        await supabase.from('customers').update(custUpd).eq('id', customerId);
+      }
+    }
+
+    // Source Facebook
+    const { data: fbSource } = await supabase.from('crm_sources')
+      .select('id').eq('name', 'Facebook').single();
+
+    // Tạo lead code
     const { count } = await supabase.from('crm_leads')
       .select('id', { count: 'exact', head: true }).eq('type', 'lead');
     const code = `LEAD-${String((count || 0) + 1).padStart(4, '0')}`;
@@ -951,20 +1005,23 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       code,
       title: `[FB] ${contact.fb_name || 'KH Facebook'}`,
       type: 'lead',
+      customer_id: customerId,
       stage_id: stageId,
       company_id: companyId,
-      source_id: page?.default_source_id || null,
-      description: `Từ Facebook Messenger\nTên: ${contact.fb_name || ''}\nSĐT: ${contact.phone || ''}\nEmail: ${contact.email || ''}`.trim(),
+      source_id: page?.default_source_id || fbSource?.id || null,
+      install_address: extractedAddress,
+      description: `Từ Facebook Messenger\nTên: ${contact.fb_name || ''}\nSĐT: ${extractedPhone || ''}\nĐịa chỉ: ${extractedAddress || ''}`.trim(),
       lead_owner_id: req.user.userId,
       assigned_to: req.user.userId,
       created_by: req.user.userId,
     }).select('id, code, title').single();
     if (error) throw error;
 
-    // Link contact → lead
+    // Link contact → lead + messages
     await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
     await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
 
+    console.log(`[FB] ✅ Manual lead created: ${lead.code} — ${lead.title}`);
     res.status(201).json(lead);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
