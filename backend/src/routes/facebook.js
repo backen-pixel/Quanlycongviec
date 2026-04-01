@@ -232,6 +232,7 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
       full_name: extraData.full_name || contact.fb_name || 'Facebook KH',
       phone: extraData.phone || contact.phone || null,
       email: extraData.email || contact.email || null,
+      address: extraData.address || null,
       source: 'Facebook',
     };
     const { data: customer } = await supabase.from('customers')
@@ -239,6 +240,18 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     if (customer) {
       customerId = customer.id;
       await supabase.from('facebook_contacts').update({ customer_id: customer.id }).eq('id', contact.id);
+      console.log(`[FB] ✅ Customer created: ${customer.full_name} (phone: ${customer.phone || 'N/A'})`);
+    }
+  } else {
+    // Customer đã có → update thông tin mới nếu có
+    const custUpd = {};
+    if (extraData.phone) custUpd.phone = extraData.phone;
+    if (extraData.address) custUpd.address = extraData.address;
+    const fullName = extraData.full_name || contact.fb_name;
+    if (fullName && fullName !== 'Facebook User') custUpd.full_name = fullName;
+    if (Object.keys(custUpd).length) {
+      await supabase.from('customers').update(custUpd).eq('id', customerId);
+      console.log(`[FB] ✅ Customer updated:`, custUpd);
     }
   }
 
@@ -273,7 +286,8 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     source_id: page.default_source_id || fbSource?.id || null,
     stage_id: stageId,
     company_id: companyId,
-    description: `Nguồn: Facebook ${source}\nTên: ${extraData.full_name || contact.fb_name || ''}\nSĐT: ${extraData.phone || contact.phone || ''}\nEmail: ${extraData.email || contact.email || ''}`.trim(),
+    install_address: extraData.address || null,
+    description: `Nguồn: Facebook ${source}\nTên: ${extraData.full_name || contact.fb_name || ''}\nSĐT: ${extraData.phone || contact.phone || ''}\nĐịa chỉ: ${extraData.address || ''}`.trim(),
     lead_owner_id: page.created_by,
     assigned_to: page.created_by,
     created_by: page.created_by,
@@ -500,6 +514,18 @@ async function handleMessaging(pageId, event, io) {
         updated_at: new Date().toISOString(),
       }).eq('id', contact.id);
 
+      // ── Extract phone & address từ tin nhắn TRƯỚC khi tạo lead ──
+      let extractedPhone = null;
+      let extractedAddress = null;
+      if (content && content.length > 5) {
+        const extracted = extractContactInfo(content);
+        extractedPhone = extracted.phone;
+        extractedAddress = extracted.address;
+        if (extractedPhone || extractedAddress) {
+          console.log(`[FB] 📞 Detected — phone: ${extractedPhone || 'N/A'}, address: ${extractedAddress || 'N/A'}`);
+        }
+      }
+
       // Auto-create lead nếu chưa có (chỉ tạo 1 lần duy nhất)
       let isFirstMessage = false;
       if (!contact.lead_id) {
@@ -524,10 +550,18 @@ async function handleMessaging(pageId, event, io) {
             }
           }
 
+          // Update contact với phone nếu có
+          if (extractedPhone && !contact.phone) {
+            await supabase.from('facebook_contacts').update({ phone: extractedPhone }).eq('id', contact.id);
+            contact.phone = extractedPhone;
+          }
+
           console.log(`[FB] 🆕 Creating lead for contact ${contact.id} (${contactName})`);
           isFirstMessage = true;
           const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
             full_name: contactName,
+            phone: extractedPhone || contact.phone,
+            address: extractedAddress,
             description: `Tin nhắn đầu tiên: ${content}`,
           });
           if (lead) {
@@ -564,42 +598,32 @@ async function handleMessaging(pageId, event, io) {
         }
       }
 
-      // ── Extract phone & address từ tin nhắn ──
-      if (content && content.length > 5) {
-        const { phone, address } = extractContactInfo(content);
+      // ── Update lead/customer nếu có phone/address mới ──
+      if ((extractedPhone || extractedAddress) && contact.lead_id) {
+        // Update lead (install_address)
+        const leadUpd = {};
+        if (extractedAddress) leadUpd.install_address = extractedAddress;
+        if (Object.keys(leadUpd).length) {
+          await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
+          console.log(`[FB] ✅ Updated lead ${contact.lead_id}:`, leadUpd);
+        }
         
-        if (phone || address) {
-          console.log(`[FB] 📞 Detected — phone: ${phone || 'N/A'}, address: ${address || 'N/A'}`);
-          
-          // Update contact
-          const contactUpd = { updated_at: new Date().toISOString() };
-          if (phone && !contact.phone) contactUpd.phone = phone;
-          if (Object.keys(contactUpd).length > 1) {
-            await supabase.from('facebook_contacts').update(contactUpd).eq('id', contact.id);
+        // Update customer (phone + address) — luôn update nếu có giá trị mới
+        const { data: lead } = await supabase.from('crm_leads')
+          .select('customer_id').eq('id', contact.lead_id).single();
+        if (lead?.customer_id) {
+          const custUpd = {};
+          if (extractedPhone) custUpd.phone = extractedPhone;
+          if (extractedAddress) custUpd.address = extractedAddress;
+          if (Object.keys(custUpd).length) {
+            await supabase.from('customers').update(custUpd).eq('id', lead.customer_id);
+            console.log(`[FB] ✅ Updated customer ${lead.customer_id}:`, custUpd);
           }
-          
-          // Update lead (install_address)
-          if (contact.lead_id) {
-            const leadUpd = {};
-            if (address) leadUpd.install_address = address;
-            if (Object.keys(leadUpd).length) {
-              await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
-              console.log(`[FB] ✅ Updated lead ${contact.lead_id}:`, leadUpd);
-            }
-            
-            // Update customer (phone + address)
-            const { data: lead } = await supabase.from('crm_leads')
-              .select('customer_id').eq('id', contact.lead_id).single();
-            if (lead?.customer_id) {
-              const custUpd = {};
-              if (phone) custUpd.phone = phone;
-              if (address) custUpd.address = address;
-              if (Object.keys(custUpd).length) {
-                await supabase.from('customers').update(custUpd).eq('id', lead.customer_id);
-                console.log(`[FB] ✅ Updated customer ${lead.customer_id}:`, custUpd);
-              }
-            }
-          }
+        }
+        
+        // Update contact phone nếu chưa có
+        if (extractedPhone && !contact.phone) {
+          await supabase.from('facebook_contacts').update({ phone: extractedPhone }).eq('id', contact.id);
         }
       }
 
