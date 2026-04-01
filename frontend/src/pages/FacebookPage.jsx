@@ -534,17 +534,23 @@ function CommentsTab() {
 
 function SettingsTab() {
   const [pages, setPages] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [stages, setStages] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [showToken, setShowToken] = useState({});
-  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true };
+  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_company_id: '', default_stage_id: '' };
   const [form, setForm] = useState({ ...emptyForm });
 
   const load = () => {
     fetch(`${API}/api/facebook/pages`, { headers: hdr() })
       .then(r => r.ok ? r.json() : []).then(setPages).catch(() => {});
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
+    api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).then(r => setStages(r.data || [])).catch(() => {});
+  }, []);
 
   const addPage = async () => {
     if (!form.page_id || !form.access_token) return alert('Cần nhập Page ID và Access Token');
@@ -566,7 +572,7 @@ function SettingsTab() {
 
   const startEdit = (p) => {
     setEditingId(p.id);
-    setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead });
+    setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead, default_company_id: p.default_company_id || '', default_stage_id: p.default_stage_id || '' });
   };
 
   const saveEdit = async (id) => {
@@ -634,6 +640,24 @@ function SettingsTab() {
                   <input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id={`acl-${p.id}`} className="cursor-pointer" />
                   <label htmlFor={`acl-${p.id}`} className="text-sm text-gray-700 cursor-pointer">Tự động tạo Lead khi có tin nhắn mới</label>
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1 block">Công ty mặc định (tạo Lead vào)</label>
+                    <select value={form.default_company_id} onChange={e => setForm({...form, default_company_id: e.target.value})}
+                      className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
+                      <option value="">-- Không chọn --</option>
+                      {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1 block">Giai đoạn mặc định</label>
+                    <select value={form.default_stage_id} onChange={e => setForm({...form, default_stage_id: e.target.value})}
+                      className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
+                      <option value="">-- Tự động (Mới) --</option>
+                      {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                </div>
                 <div className="flex gap-2 pt-2">
                   <button onClick={() => saveEdit(p.id)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 cursor-pointer flex items-center gap-1"><Save size={14} /> Lưu</button>
                   <button onClick={() => setEditingId(null)} className="text-gray-500 text-sm cursor-pointer px-4 py-2">Hủy</button>
@@ -674,7 +698,14 @@ function SettingsTab() {
                   {/* Auto reply */}
                   {p.auto_reply_message && (
                     <span className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200">
-                      💬 Tự động: "{p.auto_reply_message.substring(0, 30)}..."
+                      💬 "{p.auto_reply_message.substring(0, 30)}..."
+                    </span>
+                  )}
+
+                  {/* Default company */}
+                  {p.default_company_id && (
+                    <span className="text-xs px-3 py-1.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">
+                      🏢 {companies.find(c => c.id === p.default_company_id)?.short_name || companies.find(c => c.id === p.default_company_id)?.name || 'Công ty'}
                     </span>
                   )}
                 </div>
@@ -716,6 +747,24 @@ function SettingsTab() {
           <div className="flex items-center gap-2">
             <input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id="acl-new" className="cursor-pointer" />
             <label htmlFor="acl-new" className="text-sm text-gray-700 cursor-pointer">Tự động tạo Lead khi có tin nhắn mới</label>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-600 mb-1 block">Công ty mặc định (tạo Lead vào)</label>
+              <select value={form.default_company_id} onChange={e => setForm({...form, default_company_id: e.target.value})}
+                className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
+                <option value="">-- Không chọn --</option>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-600 mb-1 block">Giai đoạn mặc định</label>
+              <select value={form.default_stage_id} onChange={e => setForm({...form, default_stage_id: e.target.value})}
+                className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
+                <option value="">-- Tự động (Mới) --</option>
+                {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
           </div>
           <div className="flex gap-2 pt-2">
             <button onClick={addPage} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 cursor-pointer">Lưu</button>
