@@ -66,6 +66,15 @@ const FALLBACK_DEAL_TASKS = [
 ];
 
 async function autoGenCrmTasks(leadId, type, userId) {
+  // ═══ CHECK DUPLICATE: Nếu đã có tasks thì không gen lại ═══
+  const { count: existingCount } = await supabase.from('crm_tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('lead_id', leadId);
+  if (existingCount > 0) {
+    console.log(`[AUTO-TASK] Skip: ${type} ${leadId} already has ${existingCount} tasks`);
+    return 0;
+  }
+
   const pipelineFilter = type === 'deal'
     ? 'pipeline_type.eq.deal,pipeline_type.eq.both,pipeline_type.is.null'
     : 'pipeline_type.eq.lead,pipeline_type.eq.both,pipeline_type.is.null';
