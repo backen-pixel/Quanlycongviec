@@ -240,7 +240,8 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
         const formData = new FormData();
         files.forEach(f => formData.append('files', f));
         const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-        const uploaded = uploadRes.files || [];
+        const uploaded = uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+        if (!uploaded?.length) throw new Error('Upload không trả về file');
         // 1 request duy nhất tạo tất cả attachments
         const items = uploaded.map(up => ({
           name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
