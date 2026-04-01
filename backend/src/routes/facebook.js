@@ -24,11 +24,11 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     if (contact.fb_name === 'Facebook User' || !contact.fb_name) {
       const profile = await fetchProfileViaConversations(pageId, psid);
       if (profile?.name) {
-        await supabase.from('facebook_contacts').update({
-          fb_name: profile.name,
-          updated_at: new Date().toISOString(),
-        }).eq('id', contact.id);
+        const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
+        if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+        await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
         contact.fb_name = profile.name;
+        if (profile.profilePic) contact.fb_profile_pic = profile.profilePic;
         console.log(`[FB] Updated name: ${profile.name} (psid: ${psid})`);
 
         // Cập nhật lead title nếu có
@@ -65,6 +65,7 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     const profile = await fetchProfileViaConversations(pageId, psid);
     if (profile?.name) {
       name = profile.name;
+      if (profile.profilePic) profilePic = profile.profilePic;
       console.log(`[FB] Got name from conversations: ${name}`);
     }
   }
@@ -104,7 +105,11 @@ async function fetchProfileViaConversations(pageId, psid) {
     const userMsg = msgData.data.find(m => m.from?.id === psid);
     if (!userMsg?.from?.name) return null;
 
-    return { name: userMsg.from.name };
+    // Tạo avatar URL từ tên (Facebook không trả avatar với Standard Access)
+    const name = userMsg.from.name;
+    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0D8ABC&color=fff&size=200&bold=true`;
+
+    return { name, profilePic: avatarUrl };
   } catch (e) {
     console.warn('[FB] fetchProfileViaConversations error:', e.message);
     return null;
