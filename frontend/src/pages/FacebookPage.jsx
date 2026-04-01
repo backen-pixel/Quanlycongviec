@@ -250,7 +250,14 @@ function InboxTab() {
         </div>
         <div className="flex-1 overflow-y-auto">
           {contacts.map(c => (
-            <div key={c.id} onClick={() => setSelected(c)}
+            <div key={c.id} onClick={() => {
+              setSelected(c);
+              // Reload contact để check lead còn tồn tại không
+              fetch(`${API}/api/facebook/contacts/${c.id}`, { headers: hdr() })
+                .then(r => r.ok ? r.json() : null)
+                .then(fresh => { if (fresh) setSelected(fresh); })
+                .catch(() => {});
+            }}
               className={`flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-gray-50 transition-all ${
                 selected?.id === c.id ? 'bg-blue-50 border-l-3 border-l-blue-500' : 'hover:bg-gray-50'
               }`}>

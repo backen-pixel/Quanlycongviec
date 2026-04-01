@@ -449,23 +449,44 @@ async function handleMessaging(pageId, event, io) {
         updated_at: new Date().toISOString(),
       }).eq('id', contact.id);
 
-      // Auto-create lead nếu chưa có
+      // Auto-create lead nếu chưa có (chỉ tạo 1 lần duy nhất)
       let isFirstMessage = false;
       if (!contact.lead_id) {
-        console.log(`[FB] 🆕 Creating lead for contact ${contact.id}`);
-        isFirstMessage = true;
-        const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
-          full_name: contact.fb_name,
-          description: `Tin nhắn đầu tiên: ${content}`,
-        });
-        if (lead) {
-          console.log(`[FB] ✅ Lead created: ${lead.code} (ID: ${lead.id})`);
-          contact.lead_id = lead.id; // cập nhật trong memory
-          if (savedMsg) {
-            await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+        // Check: có lead cũ đã bị xóa không? (tìm messages có lead_id)
+        const { data: oldMsgs } = await supabase.from('facebook_messages')
+          .select('lead_id').eq('contact_id', contact.id).not('lead_id', 'is', null).limit(1);
+        const hadLeadBefore = oldMsgs?.length > 0;
+
+        if (!hadLeadBefore) {
+          console.log(`[FB] 🆕 Creating lead for contact ${contact.id}`);
+          isFirstMessage = true;
+          const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
+            full_name: contact.fb_name,
+            description: `Tin nhắn đầu tiên: ${content}`,
+          });
+          if (lead) {
+            console.log(`[FB] ✅ Lead created: ${lead.code} (ID: ${lead.id})`);
+            contact.lead_id = lead.id;
+            if (savedMsg) {
+              await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+            }
+          } else {
+            console.log(`[FB] ❌ Failed to create lead`);
           }
         } else {
-          console.log(`[FB] ❌ Failed to create lead`);
+          console.log(`[FB] ⏭️ Contact ${contact.id} had a lead before (deleted), skip auto-create`);
+        }
+      } else {
+        // Verify lead vẫn tồn tại — nếu bị xóa thì clear lead_id
+        const { data: leadCheck } = await supabase.from('crm_leads')
+          .select('id').eq('id', contact.lead_id).single();
+        if (!leadCheck) {
+          console.log(`[FB] 🗑️ Lead ${contact.lead_id} was deleted, clearing contact.lead_id`);
+          await supabase.from('facebook_contacts').update({
+            lead_id: null,
+            updated_at: new Date().toISOString(),
+          }).eq('id', contact.id);
+          contact.lead_id = null;
         }
       }
 
@@ -704,6 +725,25 @@ r.get('/contacts', authMiddleware, async (req, res) => {
 
     const { data } = await q.limit(100);
     res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Get single contact (check lead still exists)
+r.get('/contacts/:id', authMiddleware, async (req, res) => {
+  try {
+    const { data: contact } = await supabase.from('facebook_contacts')
+      .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)')
+      .eq('id', req.params.id).single();
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    
+    // Nếu lead_id có nhưng lead không tồn tại → clear
+    if (contact.lead_id && !contact.lead) {
+      await supabase.from('facebook_contacts').update({ lead_id: null }).eq('id', contact.id);
+      contact.lead_id = null;
+      contact.lead = null;
+    }
+    
+    res.json(contact);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
