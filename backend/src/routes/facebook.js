@@ -30,6 +30,23 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
         }).eq('id', contact.id);
         contact.fb_name = profile.name;
         console.log(`[FB] Updated name: ${profile.name} (psid: ${psid})`);
+
+        // Cập nhật lead title nếu có
+        if (contact.lead_id) {
+          await supabase.from('crm_leads')
+            .update({ title: `[FB] ${profile.name}` })
+            .eq('id', contact.lead_id)
+            .ilike('title', '%Facebook User%');
+          // Cập nhật customer name
+          const { data: leadData } = await supabase.from('crm_leads')
+            .select('customer_id').eq('id', contact.lead_id).single();
+          if (leadData?.customer_id) {
+            await supabase.from('customers')
+              .update({ full_name: profile.name })
+              .eq('id', leadData.customer_id)
+              .ilike('full_name', '%Facebook%');
+          }
+        }
       }
     }
     // Cập nhật tên/ảnh nếu caller truyền vào
@@ -353,18 +370,23 @@ async function handleMessaging(pageId, event, io) {
       }).eq('id', contact.id);
 
       // Auto-create lead nếu chưa có
+      let isFirstMessage = false;
       if (!contact.lead_id) {
+        isFirstMessage = true;
         const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
           full_name: contact.fb_name,
           description: `Tin nhắn đầu tiên: ${content}`,
         });
-        if (lead && savedMsg) {
-          await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+        if (lead) {
+          contact.lead_id = lead.id; // cập nhật trong memory
+          if (savedMsg) {
+            await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+          }
         }
       }
 
-      // Auto-reply (chỉ cho tin nhắn đầu tiên)
-      if (!contact.lead_id) {
+      // Auto-reply chỉ cho tin nhắn đầu tiên (khi vừa tạo lead)
+      if (isFirstMessage) {
         const page = await getPageConfig(pageId);
         if (page?.auto_reply_message) {
           await sendMessengerReply(pageId, senderId, page.auto_reply_message);
