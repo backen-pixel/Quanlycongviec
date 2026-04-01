@@ -32,10 +32,25 @@ function sanitizeFilename(name) {
     .trim();
 }
 
+// Fix multer Latin-1 encoding → UTF-8
+function fixFilename(file) {
+  try {
+    // Multer decode filename as Latin-1, cần convert lại UTF-8
+    const buf = Buffer.from(file.originalname, 'latin1');
+    const utf8Name = buf.toString('utf8');
+    // Check xem có phải UTF-8 hợp lệ không (không chứa ký tự lỗi)
+    if (utf8Name && !utf8Name.includes('�') && utf8Name !== file.originalname) {
+      file.originalname = utf8Name;
+    }
+  } catch (e) { /* giữ nguyên */ }
+  return file;
+}
+
 // Upload 1 file → Supabase Storage (helper)
 // entity_type: 'lead', 'deal', 'messenger', 'task', 'general'
 // entity_id: lead_id, customer_id, etc. → làm thư mục
 async function uploadOneFile(file, entityType, entityId) {
+  fixFilename(file); // Fix encoding tiếng Việt
   const ext = path.extname(file.originalname);
   const safeName = sanitizeFilename(path.basename(file.originalname, ext));
   const timestamp = Date.now();
