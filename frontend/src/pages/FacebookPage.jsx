@@ -255,9 +255,7 @@ function InboxTab() {
                 selected?.id === c.id ? 'bg-blue-50 border-l-3 border-l-blue-500' : 'hover:bg-gray-50'
               }`}>
               <div className="relative">
-                <div className="w-11 h-11 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm">
-                  {(c.fb_name || 'F')[0].toUpperCase()}
-                </div>
+                <FBAvatar name={c.fb_name} pic={c.fb_profile_pic} size={11} />
                 {c.unread_count > 0 && (
                   <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] rounded-full w-5 h-5 flex items-center justify-center font-bold shadow">{c.unread_count}</span>
                 )}
@@ -292,9 +290,7 @@ function InboxTab() {
                 <button onClick={() => setSelected(null)} className="md:hidden text-gray-400 hover:text-gray-600 cursor-pointer mr-1">
                   <ArrowLeft size={20} />
                 </button>
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm">
-                  {(selected.fb_name || 'F')[0].toUpperCase()}
-                </div>
+                <FBAvatar name={selected.fb_name} pic={selected.fb_profile_pic} size={10} />
                 <div>
                   <p className="font-semibold text-sm text-gray-800">{selected.fb_name}</p>
                   <p className="text-[11px] text-gray-400">{selected.phone || selected.email || 'Facebook Messenger'}</p>
@@ -430,6 +426,14 @@ function InboxTab() {
   );
 }
 
+// ── Helper: Avatar ──
+function FBAvatar({ name, pic, size = 11 }) {
+  const cls = `w-${size} h-${size} rounded-full flex items-center justify-center text-white font-bold shrink-0 shadow-sm`;
+  const textSize = size >= 10 ? 'text-sm' : 'text-xs';
+  if (pic) return <img src={pic} alt="" className={`w-${size} h-${size} rounded-full object-cover shrink-0 shadow-sm`} />;
+  return <div className={`${cls} bg-gradient-to-br from-blue-400 to-blue-600 ${textSize}`}>{(name || 'F')[0].toUpperCase()}</div>;
+}
+
 // ── Helper: Nút tạo Lead nhanh từ contact ──
 function CreateLeadButton({ contactId, onCreated }) {
   const [loading, setLoading] = useState(false);
@@ -538,7 +542,7 @@ function ContactsTab() {
                   <>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0">{(c.fb_name || 'F')[0]}</div>
+                        <FBAvatar name={c.fb_name} pic={c.fb_profile_pic} size={8} />
                         <span className="font-medium text-gray-800">{c.fb_name}</span>
                       </div>
                     </td>
