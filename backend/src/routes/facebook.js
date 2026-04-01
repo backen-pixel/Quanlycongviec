@@ -600,7 +600,7 @@ const { auth: authMiddleware } = require('../middleware/auth');
 r.get('/pages', authMiddleware, async (req, res) => {
   try {
     const { data } = await supabase.from('facebook_pages')
-      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_company_id, created_at')
+      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, created_at')
       .order('created_at', { ascending: false });
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -609,16 +609,24 @@ r.get('/pages', authMiddleware, async (req, res) => {
 r.post('/pages', authMiddleware, async (req, res) => {
   try {
     const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id, default_company_id } = req.body;
-    const { data, error } = await supabase.from('facebook_pages').insert({
+    const insertData = {
       page_id, page_name, access_token,
       webhook_verify_token: webhook_verify_token || 'tubep_pro_verify_2024',
       auto_create_lead: auto_create_lead !== false,
       auto_reply_message: auto_reply_message || null,
       default_source_id: default_source_id || null,
       default_stage_id: default_stage_id || null,
-      default_company_id: default_company_id || null,
       created_by: req.user.userId,
-    }).select().single();
+    };
+    // default_company_id — cột có thể chưa tồn tại
+    if (default_company_id) insertData.default_company_id = default_company_id;
+
+    let { data, error } = await supabase.from('facebook_pages').insert(insertData).select().single();
+    // Retry without default_company_id if column doesn't exist
+    if (error?.message?.includes('default_company_id')) {
+      delete insertData.default_company_id;
+      ({ data, error } = await supabase.from('facebook_pages').insert(insertData).select().single());
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -632,7 +640,11 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     update.updated_at = new Date().toISOString();
-    const { data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single();
+    let { data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single();
+    if (error?.message?.includes('default_company_id')) {
+      delete update.default_company_id;
+      ({ data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single());
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -728,11 +740,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
 
     // Company từ page config hoặc từ request body
     let companyId = req.body.company_id || null;
-    try {
-      const { data: pg } = await supabase.from('facebook_pages')
-        .select('default_company_id').eq('page_id', contact.page_id).single();
-      if (pg?.default_company_id && !companyId) companyId = pg.default_company_id;
-    } catch (e) { /* column may not exist yet */ }
+    if (!companyId && page?.default_company_id) companyId = page.default_company_id;
 
     // Tạo lead
     const { count } = await supabase.from('crm_leads')
