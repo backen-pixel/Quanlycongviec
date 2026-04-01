@@ -772,6 +772,35 @@ r.get('/leads/:id/documents', async (req, res) => {
 });
 
 // Add document to lead + sync → crm_task_attachments (nếu có task_id)
+// Task documents cho lead — nhóm theo nhiệm vụ
+r.get('/leads/:id/task-documents', async (req, res) => {
+  try {
+    // Tìm project liên kết
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('project_id').eq('id', req.params.id).single();
+    if (!lead?.project_id) return res.json([]);
+    
+    // Lấy tất cả tasks + attachments
+    const { data: tasks } = await supabase.from('tasks')
+      .select('id, title').eq('project_id', lead.project_id);
+    if (!tasks?.length) return res.json([]);
+    
+    const taskIds = tasks.map(t => t.id);
+    const { data: attachments } = await supabase.from('crm_task_attachments')
+      .select('*').in('task_id', taskIds).order('created_at', { ascending: false });
+    
+    const taskMap = {};
+    tasks.forEach(t => { taskMap[t.id] = t.title; });
+    
+    const result = (attachments || []).map(a => ({
+      ...a,
+      task_title: taskMap[a.task_id] || 'Nhiệm vụ',
+    }));
+    
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 r.post('/leads/:id/documents', async (req, res) => {
   try {
     const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_departments, allowed_companies, task_id } = req.body;
