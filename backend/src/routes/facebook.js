@@ -522,6 +522,66 @@ r.put('/contacts/:id/link-lead', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Update contact info (sửa tên, phone, email, ghi chú)
+r.put('/contacts/:id', authMiddleware, async (req, res) => {
+  try {
+    const update = {};
+    ['fb_name', 'phone', 'email', 'notes', 'lead_id', 'customer_id'].forEach(f => {
+      if (req.body[f] !== undefined) update[f] = req.body[f] || null;
+    });
+    // fb_name keep truthy
+    if (req.body.fb_name) update.fb_name = req.body.fb_name;
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('facebook_contacts')
+      .update(update).eq('id', req.params.id)
+      .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Delete contact (xóa contact + messages)
+r.delete('/contacts/:id', authMiddleware, async (req, res) => {
+  try {
+    await supabase.from('facebook_messages').delete().eq('contact_id', req.params.id);
+    await supabase.from('facebook_contacts').delete().eq('id', req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Tạo lead nhanh từ contact
+r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
+  try {
+    const { data: contact } = await supabase.from('facebook_contacts')
+      .select('*').eq('id', req.params.id).single();
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    if (contact.lead_id) return res.status(400).json({ error: 'Contact đã có Lead' });
+
+    // Tạo lead
+    const { count } = await supabase.from('crm_leads')
+      .select('id', { count: 'exact', head: true }).eq('type', 'lead');
+    const code = `LEAD-${String((count || 0) + 1).padStart(4, '0')}`;
+
+    const { data: lead, error } = await supabase.from('crm_leads').insert({
+      code,
+      title: `[FB] ${contact.fb_name || 'KH Facebook'}`,
+      type: 'lead',
+      description: `Từ Facebook Messenger\nSĐT: ${contact.phone || ''}\nEmail: ${contact.email || ''}`.trim(),
+      lead_owner_id: req.user.userId,
+      assigned_to: req.user.userId,
+      created_by: req.user.userId,
+    }).select('id, code, title').single();
+    if (error) throw error;
+
+    // Link contact → lead
+    await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
+    await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
+
+    res.status(201).json(lead);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Messages (lịch sử chat) ─────────────────────────────────
 
 r.get('/contacts/:contactId/messages', authMiddleware, async (req, res) => {
