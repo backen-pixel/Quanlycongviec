@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useAuth } from '../lib/auth';
 import { MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink, Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -10,13 +11,24 @@ const headers = () => ({ Authorization: `Bearer ${token()}`, 'Content-Type': 'ap
 // ═══════════════════════════════════════════════════════════════
 
 export default function FacebookPage() {
+  const { socket } = useAuth();
   const [tab, setTab] = useState('inbox');
   const [stats, setStats] = useState(null);
 
-  useEffect(() => {
+  const loadStats = useCallback(() => {
     fetch(`${API}/api/facebook/stats`, { headers: headers() })
       .then(r => r.ok ? r.json() : {}).then(setStats).catch(() => {});
-  }, [tab]);
+  }, []);
+
+  useEffect(() => { loadStats(); }, [tab, loadStats]);
+
+  // Realtime stats update
+  useEffect(() => {
+    if (!socket) return;
+    const handleFbMessage = () => { loadStats(); };
+    socket.on('fb_message', handleFbMessage);
+    return () => { socket.off('fb_message', handleFbMessage); };
+  }, [socket, loadStats]);
 
   const tabs = [
     { id: 'inbox', label: 'Hộp thư', icon: MessageCircle, badge: stats?.total_unread },
@@ -74,6 +86,7 @@ export default function FacebookPage() {
 // ═══════════════════════════════════════════════════════════════
 
 function InboxTab() {
+  const { socket } = useAuth();
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -89,6 +102,46 @@ function InboxTab() {
   }, [search]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
+
+  // ═══ REALTIME: Listen for new Facebook messages via Socket.IO ═══
+  const selectedRef = useRef(null);
+  selectedRef.current = selected;
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleFbMessage = (data) => {
+      // Update contact list — move to top, update unread
+      setContacts(prev => {
+        const existing = prev.find(c => c.id === data.contact_id);
+        if (existing) {
+          const updated = {
+            ...existing,
+            last_message_at: new Date().toISOString(),
+            unread_count: selectedRef.current?.id === data.contact_id ? 0 : (existing.unread_count || 0) + 1,
+          };
+          return [updated, ...prev.filter(c => c.id !== data.contact_id)];
+        } else {
+          // New contact — add to top
+          const newContact = data.contact || { id: data.contact_id, fb_name: 'Facebook User', unread_count: 1, last_message_at: new Date().toISOString() };
+          return [newContact, ...prev];
+        }
+      });
+
+      // If viewing this contact's chat, append message
+      if (selectedRef.current?.id === data.contact_id && data.message) {
+        setMessages(prev => {
+          // Avoid duplicate
+          if (prev.some(m => m.id === data.message.id)) return prev;
+          return [...prev, data.message];
+        });
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      }
+    };
+
+    socket.on('fb_message', handleFbMessage);
+    return () => { socket.off('fb_message', handleFbMessage); };
+  }, [socket]);
 
   useEffect(() => {
     if (!selected) return;
