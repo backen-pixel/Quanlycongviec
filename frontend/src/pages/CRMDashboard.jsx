@@ -23,6 +23,9 @@ export default function CRMDashboard() {
   const [sources, setSources] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [filterAssignee, setFilterAssignee] = useState('');
+  const [users, setUsers] = useState([]);
   const [alerts, setAlerts] = useState(null);
   const [pipelineType, setPipelineType] = useState(() => localStorage.getItem('crm_pinned_tab') || 'lead'); // lead | deal
   const [showNewLead, setShowNewLead] = useState(false);
@@ -74,22 +77,32 @@ export default function CRMDashboard() {
   };
 
   useEffect(() => { load(); }, []);
-  useEffect(() => { load(); }, [filterCompany]);
+  useEffect(() => { load(); }, [filterCompany, filterAssignee]);
+
+  // Debounce search
+  useEffect(() => {
+    const t = setTimeout(() => load(), 400);
+    return () => clearTimeout(t);
+  }, [searchText]);
 
   const load = async () => {
     setLoading(true);
     const companyParam = filterCompany ? { company_id: filterCompany } : {};
+    const assigneeParam = filterAssignee ? { assigned_to: filterAssignee } : {};
+    const searchParam = searchText.trim() ? { search: searchText.trim() } : {};
+    const extraParams = { ...companyParam, ...assigneeParam, ...searchParam };
     try {
-      const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: 'lead', ...companyParam } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/dashboard', { params: { type: 'deal', ...companyParam } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/leads', { params: { type: 'lead', ...companyParam } }).catch(() => ({ data: [] })),
-        api.get('/crm/leads', { params: { type: 'deal', ...companyParam } }).catch(() => ({ data: [] })),
+      const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes] = await Promise.all([
+        api.get('/crm/dashboard', { params: { type: 'lead', ...extraParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/dashboard', { params: { type: 'deal', ...extraParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/leads', { params: { type: 'lead', ...extraParams } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: { type: 'deal', ...extraParams } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
         api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
         api.get('/companies').catch(() => ({ data: { companies: [] } })),
+        api.get('/users').catch(() => ({ data: [] })),
       ]);
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
@@ -99,6 +112,7 @@ export default function CRMDashboard() {
       setStagesDeal(stagesDealRes.data);
       setSources(sourcesRes.data);
       setCompanies(companiesRes.data?.companies || companiesRes.data || []);
+      setUsers(Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || []);
       setAlerts(alertsRes.data);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -277,25 +291,65 @@ export default function CRMDashboard() {
         </button>
       </div>
 
-      {/* Company Filter */}
-      {companies.length > 0 && (
-        <div data-tour="crm-company-filter" className="flex items-center gap-3 flex-wrap">
-          <Building2 className="h-4 w-4 text-gray-500" />
-          <span className="text-sm font-medium text-gray-600">Công ty:</span>
-          <div className="flex items-center gap-2 overflow-x-auto pb-1">
-            <button onClick={() => setFilterCompany('')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all cursor-pointer ${
-                !filterCompany ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
-              }`}>Tất cả</button>
-            {companies.map(c => (
-              <button key={c.id} onClick={() => setFilterCompany(c.id)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all cursor-pointer ${
-                  filterCompany === c.id ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-300'
-                }`}>{c.short_name || c.name}</button>
-            ))}
-          </div>
+      {/* Search & Filters */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Search */}
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            value={searchText}
+            onChange={e => setSearchText(e.target.value)}
+            placeholder={`Tìm ${pipelineType === 'lead' ? 'lead' : 'deal'}... (tên, mã)`}
+            className="w-full h-9 pl-9 pr-8 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          {searchText && (
+            <button onClick={() => setSearchText('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
-      )}
+
+        {/* Assignee filter */}
+        <div className="flex items-center gap-2">
+          <User className="h-4 w-4 text-gray-500" />
+          <select
+            value={filterAssignee}
+            onChange={e => setFilterAssignee(e.target.value)}
+            className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+          >
+            <option value="">Tất cả nhân viên</option>
+            {users.map(u => (
+              <option key={u.id} value={u.id}>{u.full_name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Company filter */}
+        {companies.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-gray-500" />
+            <select
+              value={filterCompany}
+              onChange={e => setFilterCompany(e.target.value)}
+              className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="">Tất cả công ty</option>
+              {companies.map(c => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Active filter badges */}
+        {(searchText || filterAssignee || filterCompany) && (
+          <button onClick={() => { setSearchText(''); setFilterAssignee(''); setFilterCompany(''); }}
+            className="h-9 px-3 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer transition-all">
+            <X className="h-3.5 w-3.5" /> Xóa bộ lọc
+          </button>
+        )}
+      </div>
 
       {/* KPI Summary Row - MISA Style */}
       <div data-tour="crm-kpis" className="grid grid-cols-2 md:grid-cols-4 gap-4">
