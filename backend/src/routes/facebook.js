@@ -478,7 +478,8 @@ async function handleMessaging(pageId, event, io) {
       content = `[Sticker: ${msg.sticker_id}]`;
     }
 
-    // Check duplicate — Facebook có thể gửi webhook 2 lần
+    // Check duplicate — Facebook có thể gửi webhook 2 lần (~30ms)
+    // Dùng upsert với fb_message_id để tránh race condition
     if (msg.mid) {
       const { data: existing } = await supabase.from('facebook_messages')
         .select('id').eq('fb_message_id', msg.mid).limit(1);
@@ -491,8 +492,8 @@ async function handleMessaging(pageId, event, io) {
     console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
     console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
 
-    // Save message
-    const { data: savedMsg } = await supabase.from('facebook_messages').insert({
+    // Save message — dùng upsert để tránh duplicate
+    const insertData = {
       contact_id: contact.id,
       lead_id: contact.lead_id,
       fb_message_id: msg.mid,
@@ -502,7 +503,26 @@ async function handleMessaging(pageId, event, io) {
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
       metadata: msg.attachments ? { attachments: msg.attachments } : null,
-    }).select().single();
+    };
+
+    // Upsert: nếu fb_message_id đã tồn tại thì bỏ qua (onConflict ignore)
+    const { data: savedMsg, error: insertErr } = await supabase.from('facebook_messages')
+      .upsert(insertData, { onConflict: 'fb_message_id', ignoreDuplicates: true })
+      .select().single();
+    
+    if (insertErr) {
+      // Nếu lỗi unique constraint → duplicate, skip
+      if (insertErr.code === '23505' || insertErr.message?.includes('duplicate')) {
+        console.log(`[FB] ⏭️  Duplicate insert blocked: ${msg.mid}`);
+        return;
+      }
+      console.error('[FB] Insert error:', insertErr.message);
+    }
+    
+    if (!savedMsg) {
+      console.log(`[FB] ⏭️  No row returned (duplicate upsert): ${msg.mid}`);
+      return;
+    }
 
     console.log(`[FB] ✅ Message saved: ${savedMsg?.id} (${isEcho ? 'outbound' : 'inbound'})`);
 
