@@ -353,6 +353,16 @@ async function handleMessaging(pageId, event, io) {
       content = `[Sticker: ${msg.sticker_id}]`;
     }
 
+    // Check duplicate — Facebook có thể gửi webhook 2 lần
+    if (msg.mid) {
+      const { data: existing } = await supabase.from('facebook_messages')
+        .select('id').eq('fb_message_id', msg.mid).limit(1);
+      if (existing?.length) {
+        console.log(`[FB] Skip duplicate message: ${msg.mid}`);
+        return;
+      }
+    }
+
     // Save message
     const { data: savedMsg } = await supabase.from('facebook_messages').insert({
       contact_id: contact.id,
