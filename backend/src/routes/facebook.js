@@ -170,6 +170,57 @@ async function fetchProfileViaConversations(pageId, psid) {
   }
 }
 
+// ── Helper: Extract phone & address từ text ──
+function extractContactInfo(text) {
+  if (!text) return { phone: null, address: null };
+  
+  // Phone patterns (VN)
+  const phonePatterns = [
+    /(?:0|\+84)(?:\d[\s.-]?){9,10}/g,  // 0912345678, +84912345678, 0912 345 678
+    /(?:84)(?:\d[\s.-]?){9,10}/g,       // 84912345678
+  ];
+  
+  let phone = null;
+  for (const pattern of phonePatterns) {
+    const matches = text.match(pattern);
+    if (matches?.[0]) {
+      phone = matches[0].replace(/[\s.-]/g, ''); // Remove spaces/dashes
+      // Normalize: +84 → 0
+      if (phone.startsWith('84')) phone = '0' + phone.slice(2);
+      if (phone.startsWith('+84')) phone = '0' + phone.slice(3);
+      break;
+    }
+  }
+  
+  // Address patterns (keywords)
+  const addressKeywords = ['địa chỉ', 'đ/c', 'dc:', 'address:', 'ship:', 'giao:', 'giao hàng', 'nhận hàng'];
+  let address = null;
+  
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].toLowerCase();
+    if (addressKeywords.some(kw => line.includes(kw))) {
+      // Lấy dòng này + dòng sau (nếu có)
+      address = lines[i];
+      if (lines[i + 1]) address += ' ' + lines[i + 1];
+      // Clean up keyword
+      addressKeywords.forEach(kw => {
+        address = address.replace(new RegExp(kw, 'gi'), '').trim();
+      });
+      address = address.replace(/^[:：\s]+/, '').trim();
+      break;
+    }
+  }
+  
+  // Fallback: nếu có số nhà + đường/phường/quận
+  if (!address && /\d+.*(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)/i.test(text)) {
+    const match = text.match(/\d+[^.!?\n]{10,100}(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)[^.!?\n]{0,50}/i);
+    if (match) address = match[0].trim();
+  }
+  
+  return { phone, address };
+}
+
 async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   const page = await getPageConfig(pageId);
   if (!page?.auto_create_lead) return null;
@@ -495,6 +546,45 @@ async function handleMessaging(pageId, event, io) {
         const page = await getPageConfig(pageId);
         if (page?.auto_reply_message) {
           await sendMessengerReply(pageId, senderId, page.auto_reply_message);
+        }
+      }
+
+      // ── Extract phone & address từ tin nhắn ──
+      if (content && content.length > 5) {
+        const { phone, address } = extractContactInfo(content);
+        
+        if (phone || address) {
+          console.log(`[FB] 📞 Detected — phone: ${phone || 'N/A'}, address: ${address || 'N/A'}`);
+          
+          // Update contact
+          const contactUpd = { updated_at: new Date().toISOString() };
+          if (phone && !contact.phone) contactUpd.phone = phone;
+          if (Object.keys(contactUpd).length > 1) {
+            await supabase.from('facebook_contacts').update(contactUpd).eq('id', contact.id);
+          }
+          
+          // Update lead (install_address)
+          if (contact.lead_id) {
+            const leadUpd = {};
+            if (address) leadUpd.install_address = address;
+            if (Object.keys(leadUpd).length) {
+              await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
+              console.log(`[FB] ✅ Updated lead ${contact.lead_id}:`, leadUpd);
+            }
+            
+            // Update customer (phone + address)
+            const { data: lead } = await supabase.from('crm_leads')
+              .select('customer_id').eq('id', contact.lead_id).single();
+            if (lead?.customer_id) {
+              const custUpd = {};
+              if (phone) custUpd.phone = phone;
+              if (address) custUpd.address = address;
+              if (Object.keys(custUpd).length) {
+                await supabase.from('customers').update(custUpd).eq('id', lead.customer_id);
+                console.log(`[FB] ✅ Updated customer ${lead.customer_id}:`, custUpd);
+              }
+            }
+          }
         }
       }
 
