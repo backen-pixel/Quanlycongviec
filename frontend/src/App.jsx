@@ -60,6 +60,7 @@ import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import DivisionDashboardPage from './pages/DivisionDashboardPage';
 import GuidePage from './pages/GuidePage';
 import CategoriesPage from './pages/CategoriesPage';
+import PrivacyPage from './pages/PrivacyPage';
 
 import { Settings } from 'lucide-react';
 
@@ -131,6 +132,7 @@ export default function App() {
         
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
           <Route element={<ProtectedLayout />}>
             <Route path="/" element={<DefaultRedirect />} />
             <Route path="/dashboard" element={<Dashboard />} />
