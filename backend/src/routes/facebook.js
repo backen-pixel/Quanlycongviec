@@ -509,10 +509,25 @@ async function handleMessaging(pageId, event, io) {
         const hadLeadBefore = oldMsgs?.length > 0;
 
         if (!hadLeadBefore) {
-          console.log(`[FB] 🆕 Creating lead for contact ${contact.id}`);
+          // Đảm bảo có tên thật trước khi tạo lead
+          let contactName = contact.fb_name;
+          if (!contactName || contactName === 'Facebook User') {
+            console.log(`[FB] 🔍 Fetching name before creating lead...`);
+            const profile = await fetchProfileViaConversations(pageId, contact.psid || senderId);
+            if (profile?.name) {
+              contactName = profile.name;
+              const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
+              if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+              await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
+              contact.fb_name = profile.name;
+              console.log(`[FB] ✅ Got name before lead: ${profile.name}`);
+            }
+          }
+
+          console.log(`[FB] 🆕 Creating lead for contact ${contact.id} (${contactName})`);
           isFirstMessage = true;
           const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
-            full_name: contact.fb_name,
+            full_name: contactName,
             description: `Tin nhắn đầu tiên: ${content}`,
           });
           if (lead) {
