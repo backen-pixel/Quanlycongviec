@@ -27,6 +27,7 @@ export default function LeadDetail() {
   const [customer, setCustomer] = useState(null);
   const [activities, setActivities] = useState([]);
   const [documents, setDocuments] = useState([]);
+  const [taskDocuments, setTaskDocuments] = useState([]);
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   const [flows, setFlows] = useState([]);
@@ -75,7 +76,7 @@ export default function LeadDetail() {
   const load = async () => {
     setLoading(true);
     try {
-      const [leadRes, actRes, docRes, stagesLeadRes, stagesDealRes, flowsRes, usersRes] = await Promise.all([
+      const [leadRes, actRes, docRes, stagesLeadRes, stagesDealRes, flowsRes, usersRes, taskDocRes] = await Promise.all([
         api.get(`/crm/leads/${id}/detail`).then(r => r.data),
         api.get(`/crm/leads/${id}/activities`).catch(() => ({ data: [] })),
         api.get(`/crm/leads/${id}/documents`).catch(() => ({ data: [] })),
@@ -83,11 +84,13 @@ export default function LeadDetail() {
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/flows').then(r => r.data?.flows || r.data || []).catch(() => []),
         api.get('/users').then(r => r.data?.users || []).catch(() => []),
+        api.get(`/crm/leads/${id}/task-documents`).catch(() => ({ data: [] })),
       ]);
       setLead(leadRes);
       setCustomer(leadRes?.customer);
       setActivities(actRes.data || []);
       setDocuments(docRes.data || []);
+      setTaskDocuments(taskDocRes.data || taskDocRes || []);
       setStagesLead(stagesLeadRes.data || []);
       setStagesDeal(stagesDealRes.data || []);
       setFlows(flowsRes || []);
@@ -547,6 +550,43 @@ export default function LeadDetail() {
                     </div>
                   </div>
 
+                  {/* Task Documents — nhóm theo nhiệm vụ */}
+                  {taskDocuments.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📂 File nhiệm vụ</p>
+                      <div className="space-y-3">
+                        {Object.entries(
+                          taskDocuments.reduce((acc, td) => {
+                            const key = td.task_title || 'Khác';
+                            if (!acc[key]) acc[key] = { task: td, files: [] };
+                            acc[key].files.push(td);
+                            return acc;
+                          }, {})
+                        ).map(([title, group]) => (
+                          <div key={title} className="border rounded-lg overflow-hidden">
+                            <div className="bg-gray-50 px-3 py-2 border-b">
+                              <p className="text-xs font-medium text-gray-700">📋 {title}</p>
+                            </div>
+                            <div className="divide-y">
+                              {group.files.map(f => (
+                                <a key={f.id} href={f.file_url} target="_blank" rel="noreferrer"
+                                  className="flex items-center gap-3 px-3 py-2 hover:bg-blue-50 transition text-sm">
+                                  <span className="text-lg">{getFileIcon(f.file_name)}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-gray-800 truncate">{f.file_name}</p>
+                                    <p className="text-[10px] text-gray-400">{f.file_size ? `${(f.file_size / 1024).toFixed(1)} KB` : ''}</p>
+                                  </div>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Lead Documents */}
+                  <p className="text-xs font-bold text-gray-500 uppercase mb-2">📄 Tài liệu Lead</p>
                   {documents.length === 0 ? (
                     <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
                       <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
@@ -658,6 +698,13 @@ const DOC_TYPES = [
   { value: 'measurement', label: 'Số đo', icon: '📏' },
   { value: 'other', label: 'Khác', icon: '📎' },
 ];
+
+function getFileIcon(name) {
+  if (!name) return '📄';
+  const ext = name.split('.').pop()?.toLowerCase();
+  const map = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', dwg: '📐', dxf: '📐', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', zip: '📦', rar: '📦', mp4: '🎬', mp3: '🎵' };
+  return map[ext] || '📄';
+}
 
 function DocumentRow({ doc, onDelete }) {
   const [expanded, setExpanded] = useState(false);

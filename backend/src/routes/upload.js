@@ -24,10 +24,26 @@ const upload = multer({
 
 const BUCKET = 'attachments';
 
+// Sanitize filename: giữ tiếng Việt, bỏ ký tự đặc biệt nguy hiểm
+function sanitizeFilename(name) {
+  return name
+    .replace(/[<>:"/\\|?*]/g, '') // Bỏ ký tự không hợp lệ
+    .replace(/\s+/g, '_')         // Spaces → underscore
+    .trim();
+}
+
 // Upload 1 file → Supabase Storage (helper)
-async function uploadOneFile(file, entityType) {
+// entity_type: 'lead', 'deal', 'messenger', 'task', 'general'
+// entity_id: lead_id, customer_id, etc. → làm thư mục
+async function uploadOneFile(file, entityType, entityId) {
   const ext = path.extname(file.originalname);
-  const storagePath = `${entityType || 'general'}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+  const safeName = sanitizeFilename(path.basename(file.originalname, ext));
+  const timestamp = Date.now();
+  
+  // Phân thư mục: entity_type/entity_id/timestamp_filename.ext
+  // VD: lead/abc-123/1711936800_Bao_gia_tu_bep.pdf
+  const folder = entityId ? `${entityType || 'general'}/${entityId}` : (entityType || 'general');
+  const storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
 
   const { data: uploadData, error: uploadError } = await supabase.storage
     .from(BUCKET)
@@ -63,7 +79,7 @@ async function uploadOneFile(file, entityType) {
 r.post('/single', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Không có file' });
-    const result = await uploadOneFile(req.file, req.body.entity_type || 'messenger');
+    const result = await uploadOneFile(req.file, req.body.entity_type || 'messenger', req.body.entity_id);
     res.status(201).json(result);
   } catch (e) {
     console.error('Upload single error:', e);
@@ -85,19 +101,19 @@ const uploadFlexible = (req, res, next) => {
 
 r.post('/', uploadFlexible, async (req, res) => {
   try {
+    const { entity_type, entity_id } = req.body;
+
     // Nếu chỉ 1 file và không có entity_id → trả format giống /single
-    if (req.files?.length === 1 && !req.body.entity_id) {
-      const result = await uploadOneFile(req.files[0], req.body.entity_type || 'general');
+    if (req.files?.length === 1 && !entity_id) {
+      const result = await uploadOneFile(req.files[0], entity_type || 'general');
       return res.status(201).json(result);
     }
 
     if (!req.files?.length) return res.status(400).json({ error: 'Không có file' });
 
-    const { entity_type, entity_id } = req.body;
-
-    // Upload TẤT CẢ files song song
+    // Upload TẤT CẢ files song song — truyền entity_id cho thư mục
     const results = await Promise.all(
-      req.files.map(file => uploadOneFile(file, entity_type))
+      req.files.map(file => uploadOneFile(file, entity_type, entity_id))
     );
 
     // Save to DB song song nếu có entity_id
