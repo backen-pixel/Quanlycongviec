@@ -1268,4 +1268,114 @@ r.get('/stats', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// ANALYTICS — Phân tích hành vi khách hàng
+// ═══════════════════════════════════════════════════════════════
+
+r.get('/analytics', authMiddleware, async (req, res) => {
+  try {
+    const { page_id, days = 30 } = req.query;
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+
+    // 1. Contacts
+    let contactQ = supabase.from('facebook_contacts').select('id, phone, lead_id, page_id, created_at');
+    if (page_id) contactQ = contactQ.eq('page_id', page_id);
+    const { data: allContacts } = await contactQ;
+    const contacts = allContacts || [];
+
+    const totalContacts = contacts.length;
+    const hasPhone = contacts.filter(c => c.phone).length;
+    const hasLead = contacts.filter(c => c.lead_id).length;
+
+    // Deals
+    const leadIds = contacts.filter(c => c.lead_id).map(c => c.lead_id);
+    let dealCount = 0;
+    if (leadIds.length) {
+      const { count } = await supabase.from('crm_leads')
+        .select('id', { count: 'exact', head: true })
+        .in('id', leadIds).eq('type', 'deal');
+      dealCount = count || 0;
+    }
+
+    // 2. Messages
+    const pageContactIds = contacts.map(c => c.id);
+    let msgQ = supabase.from('facebook_messages')
+      .select('id, direction, created_at, contact_id')
+      .gte('created_at', since).order('created_at');
+    if (page_id && pageContactIds.length) msgQ = msgQ.in('contact_id', pageContactIds);
+    const { data: msgs } = await (page_id && !pageContactIds.length ? Promise.resolve({ data: [] }) : msgQ);
+    const messages = msgs || [];
+
+    // By day + hour
+    const byDay = {};
+    const byHour = Array(24).fill(0);
+    const inboundByHour = Array(24).fill(0);
+    messages.forEach(m => {
+      const d = new Date(m.created_at);
+      const day = d.toISOString().split('T')[0];
+      if (!byDay[day]) byDay[day] = { date: day, inbound: 0, outbound: 0, total: 0 };
+      byDay[day][m.direction === 'inbound' ? 'inbound' : 'outbound']++;
+      byDay[day].total++;
+      const hour = d.getUTCHours();
+      byHour[hour]++;
+      if (m.direction === 'inbound') inboundByHour[hour]++;
+    });
+
+    // New contacts by day
+    const newByDay = {};
+    contacts.forEach(c => {
+      const day = new Date(c.created_at).toISOString().split('T')[0];
+      if (day >= since.split('T')[0]) { newByDay[day] = (newByDay[day] || 0) + 1; }
+    });
+
+    // Funnel
+    const funnel = {
+      total_contacts: totalContacts,
+      has_phone: hasPhone, has_lead: hasLead, has_deal: dealCount,
+      phone_rate: totalContacts ? Math.round(hasPhone / totalContacts * 100) : 0,
+      lead_rate: totalContacts ? Math.round(hasLead / totalContacts * 100) : 0,
+      deal_rate: hasLead ? Math.round(dealCount / hasLead * 100) : 0,
+      overall_rate: totalContacts ? Math.round(dealCount / totalContacts * 100) : 0,
+    };
+
+    // Page breakdown
+    const { data: pages } = await supabase.from('facebook_pages').select('page_id, page_name');
+    const pageMap = {};
+    (pages || []).forEach(p => { pageMap[p.page_id] = p.page_name; });
+    const pageBk = {};
+    contacts.forEach(c => {
+      if (!pageBk[c.page_id]) pageBk[c.page_id] = { page_id: c.page_id, page_name: pageMap[c.page_id] || c.page_id, contacts: 0, has_phone: 0, has_lead: 0 };
+      pageBk[c.page_id].contacts++;
+      if (c.phone) pageBk[c.page_id].has_phone++;
+      if (c.lead_id) pageBk[c.page_id].has_lead++;
+    });
+
+    // Avg response time
+    let totalRT = 0, rtCount = 0;
+    const byC = {};
+    messages.forEach(m => { if (!byC[m.contact_id]) byC[m.contact_id] = []; byC[m.contact_id].push(m); });
+    Object.values(byC).forEach(cm => {
+      for (let i = 0; i < cm.length - 1; i++) {
+        if (cm[i].direction === 'inbound' && cm[i + 1].direction === 'outbound') {
+          const diff = new Date(cm[i + 1].created_at) - new Date(cm[i].created_at);
+          if (diff > 0 && diff < 86400000) { totalRT += diff; rtCount++; }
+        }
+      }
+    });
+
+    res.json({
+      totalContacts, hasPhone, hasLead, dealCount,
+      totalMessages: messages.length,
+      inboundMessages: messages.filter(m => m.direction === 'inbound').length,
+      outboundMessages: messages.filter(m => m.direction === 'outbound').length,
+      messagesByDay: Object.values(byDay).sort((a, b) => a.date.localeCompare(b.date)),
+      messagesByHour: byHour.map((t, h) => ({ hour: `${String(h).padStart(2, '0')}:00`, total: t, inbound: inboundByHour[h] })),
+      newContactsByDay: newByDay,
+      conversionFunnel: funnel,
+      pageBreakdown: Object.values(pageBk),
+      avgResponseTime: rtCount ? Math.round(totalRT / rtCount / 60000) : null,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = r;
