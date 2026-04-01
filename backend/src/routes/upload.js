@@ -103,12 +103,6 @@ r.post('/', uploadFlexible, async (req, res) => {
   try {
     const { entity_type, entity_id } = req.body;
 
-    // Nếu chỉ 1 file và không có entity_id → trả format giống /single
-    if (req.files?.length === 1 && !entity_id) {
-      const result = await uploadOneFile(req.files[0], entity_type || 'general');
-      return res.status(201).json(result);
-    }
-
     if (!req.files?.length) return res.status(400).json({ error: 'Không có file' });
 
     // Upload TẤT CẢ files song song — truyền entity_id cho thư mục
