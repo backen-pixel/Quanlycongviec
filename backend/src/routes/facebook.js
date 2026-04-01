@@ -120,8 +120,12 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
 // Flow: GET /me/conversations?user_id=PSID → GET /CONV_ID/messages?fields=message,from → extract name
 async function fetchProfileViaConversations(pageId, psid) {
   try {
+    console.log(`[FB] 🔍 Fetching name for PSID: ${psid}`);
     const page = await getPageConfig(pageId);
-    if (!page?.access_token) return null;
+    if (!page?.access_token) {
+      console.log('[FB] ❌ No page access token');
+      return null;
+    }
     const token = page.access_token;
 
     // Step 1: Get conversation ID
@@ -129,7 +133,10 @@ async function fetchProfileViaConversations(pageId, psid) {
       headers: { Authorization: `Bearer ${token}` },
     });
     const convData = await convResp.json();
-    if (!convData.data?.[0]?.id) return null;
+    if (!convData.data?.[0]?.id) {
+      console.log('[FB] ❌ No conversation found');
+      return null;
+    }
 
     // Step 2: Get messages with from.name
     const convId = convData.data[0].id;
@@ -137,15 +144,24 @@ async function fetchProfileViaConversations(pageId, psid) {
       headers: { Authorization: `Bearer ${token}` },
     });
     const msgData = await msgResp.json();
-    if (!msgData.data?.length) return null;
+    if (!msgData.data?.length) {
+      console.log('[FB] ❌ No messages in conversation');
+      return null;
+    }
 
     // Step 3: Find message from user (not from page)
     const userMsg = msgData.data.find(m => m.from?.id === psid);
-    if (!userMsg?.from?.name) return null;
+    if (!userMsg?.from?.name) {
+      console.log('[FB] ❌ No name in messages');
+      return null;
+    }
 
     // Tạo avatar URL từ tên (Facebook không trả avatar với Standard Access)
     const name = userMsg.from.name;
     const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0D8ABC&color=fff&size=200&bold=true`;
+
+    console.log(`[FB] ✅ Got name: ${name}`);
+    console.log(`[FB] 🖼️  Avatar: ${avatarUrl}`);
 
     return { name, profilePic: avatarUrl };
   } catch (e) {
@@ -364,9 +380,15 @@ async function handleMessaging(pageId, event, io) {
   const senderId = event.sender?.id;
   if (!senderId || senderId === pageId) return; // Skip page's own messages
 
+  console.log(`\n[FB] 📨 Incoming message from PSID: ${senderId}`);
+
   // Get or create contact
   const contact = await getOrCreateContact(pageId, senderId);
   if (!contact) return;
+
+  console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
+  console.log(`[FB] 🖼️  Avatar: ${contact.fb_profile_pic ? 'Yes' : 'No'} ${contact.fb_profile_pic || ''}`);
+  console.log(`[FB] 🏷️  Lead: ${contact.lead_id ? 'Yes (ID: ' + contact.lead_id + ')' : 'No'}`);
 
   if (event.message) {
     const msg = event.message;
@@ -396,10 +418,13 @@ async function handleMessaging(pageId, event, io) {
       const { data: existing } = await supabase.from('facebook_messages')
         .select('id').eq('fb_message_id', msg.mid).limit(1);
       if (existing?.length) {
-        console.log(`[FB] Skip duplicate message: ${msg.mid}`);
+        console.log(`[FB] ⏭️  Skip duplicate message: ${msg.mid}`);
         return;
       }
     }
+
+    console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
+    console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
 
     // Save message
     const { data: savedMsg } = await supabase.from('facebook_messages').insert({
@@ -414,6 +439,8 @@ async function handleMessaging(pageId, event, io) {
       metadata: msg.attachments ? { attachments: msg.attachments } : null,
     }).select().single();
 
+    console.log(`[FB] ✅ Message saved: ${savedMsg?.id} (${isEcho ? 'outbound' : 'inbound'})`);
+
     if (!isEcho) {
       // Update last message + unread count
       await supabase.from('facebook_contacts').update({
@@ -425,16 +452,20 @@ async function handleMessaging(pageId, event, io) {
       // Auto-create lead nếu chưa có
       let isFirstMessage = false;
       if (!contact.lead_id) {
+        console.log(`[FB] 🆕 Creating lead for contact ${contact.id}`);
         isFirstMessage = true;
         const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
           full_name: contact.fb_name,
           description: `Tin nhắn đầu tiên: ${content}`,
         });
         if (lead) {
+          console.log(`[FB] ✅ Lead created: ${lead.code} (ID: ${lead.id})`);
           contact.lead_id = lead.id; // cập nhật trong memory
           if (savedMsg) {
             await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
           }
+        } else {
+          console.log(`[FB] ❌ Failed to create lead`);
         }
       }
 
