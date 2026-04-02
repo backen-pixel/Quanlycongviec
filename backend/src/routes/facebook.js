@@ -352,24 +352,22 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
 
   console.log(`[FB] Lead created: ${lead.code} — ${lead.title}`);
 
-  // Notify admins
+  // Notify lead owner only (không gửi cho tất cả admin)
   try {
-    const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-    for (const admin of (admins || [])) {
+    const ownerId = page?.default_lead_owner_id || page?.created_by;
+    if (ownerId) {
       await supabase.from('notifications').insert({
-        user_id: admin.id,
+        user_id: ownerId,
         type: 'lead_created',
         title: '📘 Lead mới từ Facebook',
         message: `${lead.title} — ${extraData.phone || contact.fb_name || ''}`,
         entity_type: 'crm_lead',
         entity_id: lead.id,
       });
-    }
-    // Push via Socket.IO
-    const pushFn = r._app?.get?.('pushNotification');
-    if (pushFn) {
-      for (const admin of (admins || [])) {
-        pushFn(admin.id, { type: 'lead_created', title: '📘 Lead mới từ Facebook', message: lead.title, entity_type: 'crm_lead', entity_id: lead.id });
+      // Push via Socket.IO
+      const pushFn = r._app?.get?.('pushNotification');
+      if (pushFn) {
+        pushFn(ownerId, { type: 'lead_created', title: '📘 Lead mới từ Facebook', message: lead.title, entity_type: 'crm_lead', entity_id: lead.id });
       }
     }
   } catch (e) { console.warn('[FB] Notify error:', e.message); }
@@ -700,23 +698,7 @@ async function handleMessaging(pageId, event, io) {
                 }).catch(e => console.warn('[FB] Background profile fetch:', e.message));
               }
 
-              // Thông báo tạo lead mới
-              if (autoLeadCfg.notify_on_new_lead) {
-                try {
-                  const page = await getPageConfig(pageId);
-                  const ownerId = page?.default_lead_owner_id || page?.created_by;
-                  if (ownerId) {
-                    await supabase.from('notifications').insert({
-                      user_id: ownerId,
-                      type: 'fb_new_lead',
-                      title: '🆕 Lead mới từ Facebook',
-                      message: `"${contactName}" nhắn tin → tự động tạo lead ${lead.code}`,
-                      entity_type: 'crm_lead',
-                      entity_id: lead.id,
-                    });
-                  }
-                } catch (ne) { /* ignore */ }
-              }
+              // Notification đã được gửi trong createLeadFromFacebook() — không cần gửi lại
             } else {
               console.log(`[FB] ❌ Failed to create lead`);
             }
