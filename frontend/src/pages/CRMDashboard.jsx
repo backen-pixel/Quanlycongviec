@@ -22,9 +22,14 @@ export default function CRMDashboard() {
   const [stagesDeal, setStagesDeal] = useState([]);
   const [sources, setSources] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [allLeads, setAllLeads] = useState([]);
+  const [allDeals, setAllDeals] = useState([]);
   const [filterCompany, setFilterCompany] = useState('');
   const [searchText, setSearchText] = useState('');
   const [filterAssignee, setFilterAssignee] = useState('');
+  const [filterSource, setFilterSource] = useState('');
+  const [filterStage, setFilterStage] = useState('');
+  const [showAdvSearch, setShowAdvSearch] = useState(false);
   const [users, setUsers] = useState([]);
   const [alerts, setAlerts] = useState(null);
   const [pipelineType, setPipelineType] = useState(() => localStorage.getItem('crm_pinned_tab') || 'lead'); // lead | deal
@@ -77,26 +82,15 @@ export default function CRMDashboard() {
   };
 
   useEffect(() => { load(); }, []);
-  useEffect(() => { load(); }, [filterCompany, filterAssignee]);
-
-  // Debounce search
-  useEffect(() => {
-    const t = setTimeout(() => load(), 400);
-    return () => clearTimeout(t);
-  }, [searchText]);
 
   const load = async () => {
     setLoading(true);
-    const companyParam = filterCompany ? { company_id: filterCompany } : {};
-    const assigneeParam = filterAssignee ? { assigned_to: filterAssignee } : {};
-    const searchParam = searchText.trim() ? { search: searchText.trim() } : {};
-    const extraParams = { ...companyParam, ...assigneeParam, ...searchParam };
     try {
       const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: 'lead', ...extraParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/dashboard', { params: { type: 'deal', ...extraParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/leads', { params: { type: 'lead', ...extraParams } }).catch(() => ({ data: [] })),
-        api.get('/crm/leads', { params: { type: 'deal', ...extraParams } }).catch(() => ({ data: [] })),
+        api.get('/crm/dashboard', { params: { type: 'lead' } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/dashboard', { params: { type: 'deal' } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/leads', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
@@ -106,8 +100,8 @@ export default function CRMDashboard() {
       ]);
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
-      setLeads(leadsRes.data);
-      setDeals(dealsRes.data);
+      setAllLeads(leadsRes.data);
+      setAllDeals(dealsRes.data);
       setStagesLead(stagesLeadRes.data);
       setStagesDeal(stagesDealRes.data);
       setSources(sourcesRes.data);
@@ -117,6 +111,58 @@ export default function CRMDashboard() {
     } catch (e) { console.error(e); }
     setLoading(false);
   };
+
+  // ── Client-side search + filter (instant, no API) ──
+  const filterItems = useCallback((items) => {
+    let result = items;
+    
+    // Company filter
+    if (filterCompany) {
+      result = result.filter(l => l.company_id === filterCompany);
+    }
+    
+    // Assignee filter
+    if (filterAssignee) {
+      result = result.filter(l => l.assigned_to === filterAssignee || l.lead_owner_id === filterAssignee);
+    }
+
+    // Source filter
+    if (filterSource) {
+      result = result.filter(l => l.source_id === filterSource);
+    }
+
+    // Stage filter
+    if (filterStage) {
+      result = result.filter(l => l.stage_id === filterStage);
+    }
+
+    // Text search — tìm trong tên, mã, SĐT, mô tả, tên KH, email
+    if (searchText.trim()) {
+      const q = searchText.trim().toLowerCase();
+      result = result.filter(l => {
+        const fields = [
+          l.title,
+          l.code,
+          l.description,
+          l.install_address,
+          l.customer?.full_name,
+          l.customer?.phone,
+          l.customer?.email,
+          l.customer?.address,
+          l.customer?.company,
+          l.assignee?.full_name,
+          l.lead_owner?.full_name,
+          l.source?.name,
+        ].filter(Boolean).map(s => s.toLowerCase());
+        return fields.some(f => f.includes(q));
+      });
+    }
+    
+    return result;
+  }, [searchText, filterCompany, filterAssignee, filterSource, filterStage]);
+
+  const leads = useMemo(() => filterItems(allLeads), [allLeads, filterItems]);
+  const deals = useMemo(() => filterItems(allDeals), [allDeals, filterItems]);
 
   // Pipeline view: group leads/deals by stage
   const pipelineLead = useMemo(() => {
@@ -142,14 +188,14 @@ export default function CRMDashboard() {
   const kpis = currentData?.kpis || {};
 
   const handleMoveStage = useCallback(async (leadId, newStageId) => {
-    const prevLeads = leads;
-    const prevDeals = deals;
+    const prevLeads = allLeads;
+    const prevDeals = allDeals;
     
     // Optimistic update
     if (pipelineType === 'lead') {
-      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId } : l));
+      setAllLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId } : l));
     } else {
-      setDeals(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId } : l));
+      setAllDeals(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId } : l));
     }
 
     try {
@@ -157,8 +203,8 @@ export default function CRMDashboard() {
       
       if (data.requires_conversion) {
         alert('Để chuyển Lead sang Deal, vui lòng dùng nút "Chuyển sang Deal" trên trang chi tiết.');
-        if (pipelineType === 'lead') setLeads(prevLeads);
-        else setDeals(prevDeals);
+        if (pipelineType === 'lead') setAllLeads(prevLeads);
+        else setAllDeals(prevDeals);
       }
 
       if (data.deal_won) {
@@ -168,10 +214,10 @@ export default function CRMDashboard() {
     } catch (e) {
       console.error(e);
       // Revert on error
-      if (pipelineType === 'lead') setLeads(prevLeads);
-      else setDeals(prevDeals);
+      if (pipelineType === 'lead') setAllLeads(prevLeads);
+      else setAllDeals(prevDeals);
     }
-  }, [pipelineType, leads, deals]);
+  }, [pipelineType, allLeads, allDeals]);
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
@@ -292,62 +338,122 @@ export default function CRMDashboard() {
       </div>
 
       {/* Search & Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Search */}
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            value={searchText}
-            onChange={e => setSearchText(e.target.value)}
-            placeholder={`Tìm ${pipelineType === 'lead' ? 'lead' : 'deal'}... (tên, mã)`}
-            className="w-full h-9 pl-9 pr-8 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-          {searchText && (
-            <button onClick={() => setSearchText('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
-              <X className="h-4 w-4" />
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search with instant results dropdown */}
+          <div className="relative flex-1 min-w-[200px] max-w-lg">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              type="text"
+              value={searchText}
+              onChange={e => setSearchText(e.target.value)}
+              placeholder={`🔍 Tìm nhanh: tên, SĐT, mã, mô tả, người phụ trách...`}
+              className="w-full h-10 pl-9 pr-8 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
+            />
+            {searchText && (
+              <button onClick={() => setSearchText('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+            {/* Instant search results dropdown */}
+            {searchText.trim().length >= 2 && (pipelineType === 'lead' ? leads : deals).length > 0 && (pipelineType === 'lead' ? leads : deals).length <= 10 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 max-h-80 overflow-y-auto">
+                <div className="p-2 border-b bg-gray-50 rounded-t-xl">
+                  <p className="text-[11px] text-gray-500 font-medium">
+                    ⚡ {(pipelineType === 'lead' ? leads : deals).length} kết quả cho "{searchText}"
+                  </p>
+                </div>
+                {(pipelineType === 'lead' ? leads : deals).map(item => (
+                  <Link key={item.id} to={`/crm/leads/${item.id}`}
+                    className="flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50 transition cursor-pointer border-b border-gray-50 last:border-0"
+                    onClick={() => setSearchText('')}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-gray-400">{item.code}</span>
+                        <p className="text-sm font-medium text-gray-900 truncate">{item.title}</p>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {item.customer?.phone && <span className="text-[10px] text-green-600">📞 {item.customer.phone}</span>}
+                        {item.customer?.full_name && <span className="text-[10px] text-gray-500">👤 {item.customer.full_name}</span>}
+                        {item.assignee?.full_name && <span className="text-[10px] text-blue-500">🤝 {item.assignee.full_name}</span>}
+                      </div>
+                    </div>
+                    <ChevronRight className="h-3.5 w-3.5 text-gray-300" />
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Toggle advanced filters */}
+          <button onClick={() => setShowAdvSearch(!showAdvSearch)}
+            className={`h-10 px-4 rounded-xl text-sm font-medium flex items-center gap-2 cursor-pointer transition-all border ${
+              showAdvSearch || filterAssignee || filterCompany || filterSource || filterStage
+                ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+            }`}>
+            <Filter className="h-4 w-4" />
+            Bộ lọc
+            {(filterAssignee || filterCompany || filterSource || filterStage) && (
+              <span className="bg-blue-600 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                {[filterAssignee, filterCompany, filterSource, filterStage].filter(Boolean).length}
+              </span>
+            )}
+          </button>
+
+          {/* Clear all filters */}
+          {(searchText || filterAssignee || filterCompany || filterSource || filterStage) && (
+            <button onClick={() => { setSearchText(''); setFilterAssignee(''); setFilterCompany(''); setFilterSource(''); setFilterStage(''); }}
+              className="h-10 px-4 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-sm font-medium flex items-center gap-1.5 cursor-pointer transition-all border border-red-200">
+              <X className="h-3.5 w-3.5" /> Xóa bộ lọc
             </button>
+          )}
+
+          {/* Result count */}
+          {(searchText || filterAssignee || filterCompany || filterSource || filterStage) && (
+            <span className="text-xs text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
+              {pipelineType === 'lead' ? leads.length : deals.length} / {pipelineType === 'lead' ? allLeads.length : allDeals.length} kết quả
+            </span>
           )}
         </div>
 
-        {/* Assignee filter */}
-        <div className="flex items-center gap-2">
-          <User className="h-4 w-4 text-gray-500" />
-          <select
-            value={filterAssignee}
-            onChange={e => setFilterAssignee(e.target.value)}
-            className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-          >
-            <option value="">Tất cả nhân viên</option>
-            {users.map(u => (
-              <option key={u.id} value={u.id}>{u.full_name}</option>
-            ))}
-          </select>
-        </div>
+        {/* Advanced filters row */}
+        {showAdvSearch && (
+          <div className="flex flex-wrap items-center gap-3 bg-white border border-gray-200 rounded-xl p-3 shadow-sm">
+            <span className="text-xs font-bold text-gray-500 uppercase">Lọc nâng cao:</span>
+            
+            {/* Assignee */}
+            <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
+              className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+              <option value="">👤 Tất cả nhân viên</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+            </select>
 
-        {/* Company filter */}
-        {companies.length > 0 && (
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-gray-500" />
-            <select
-              value={filterCompany}
-              onChange={e => setFilterCompany(e.target.value)}
-              className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-            >
-              <option value="">Tất cả công ty</option>
-              {companies.map(c => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-              ))}
+            {/* Company */}
+            {companies.length > 0 && (
+              <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)}
+                className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                <option value="">🏢 Tất cả công ty</option>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+              </select>
+            )}
+
+            {/* Source */}
+            {sources.length > 0 && (
+              <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
+                className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                <option value="">🔗 Tất cả nguồn</option>
+                {sources.map(s => <option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}
+              </select>
+            )}
+
+            {/* Stage */}
+            <select value={filterStage} onChange={e => setFilterStage(e.target.value)}
+              className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+              <option value="">📊 Tất cả giai đoạn</option>
+              {(pipelineType === 'lead' ? stagesLead : stagesDeal).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
-        )}
-
-        {/* Active filter badges */}
-        {(searchText || filterAssignee || filterCompany) && (
-          <button onClick={() => { setSearchText(''); setFilterAssignee(''); setFilterCompany(''); }}
-            className="h-9 px-3 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer transition-all">
-            <X className="h-3.5 w-3.5" /> Xóa bộ lọc
-          </button>
         )}
       </div>
 
