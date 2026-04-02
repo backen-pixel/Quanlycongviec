@@ -264,7 +264,15 @@ function extractContactInfo(text) {
 
 async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   const page = await getPageConfig(pageId);
-  if (!page) return null; // Chỉ check page tồn tại, luôn tạo lead
+  if (!page) return null;
+
+  // ── ANTI-DUPLICATE: Re-check contact.lead_id ngay trước khi tạo ──
+  const { data: freshContact } = await supabase.from('facebook_contacts')
+    .select('lead_id').eq('id', contact.id).single();
+  if (freshContact?.lead_id) {
+    console.log(`[FB] ⏭️ Contact ${contact.id} already has lead ${freshContact.lead_id} (race condition avoided)`);
+    return { id: freshContact.lead_id, code: 'EXISTING', customer_id: contact.customer_id };
+  }
 
   // Tìm/tạo customer
   let customerId = contact.customer_id;
@@ -1037,7 +1045,21 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (has_lead === 'false') q = q.is('lead_id', null);
     if (search) q = q.or(`fb_name.ilike.%${search}%,phone.ilike.%${search}%`);
 
-    const { data } = await q.limit(100);
+    const { data } = await q.limit(200);
+    
+    // Thêm message_count cho mỗi contact (batch query)
+    if (data?.length) {
+      const contactIds = data.map(c => c.id);
+      const { data: counts } = await supabase.from('facebook_messages')
+        .select('contact_id')
+        .in('contact_id', contactIds)
+        .eq('direction', 'inbound');
+      // Count per contact
+      const countMap = {};
+      (counts || []).forEach(m => { countMap[m.contact_id] = (countMap[m.contact_id] || 0) + 1; });
+      data.forEach(c => { c.message_count = countMap[c.id] || 0; });
+    }
+
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

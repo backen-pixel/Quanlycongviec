@@ -701,8 +701,9 @@ function ContactsTab() {
           <thead className="bg-gray-50 border-b">
             <tr>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">Tên</th>
+              <th className="text-center px-3 py-3 font-semibold text-gray-600">💬</th>
+              <th className="text-left px-3 py-3 font-semibold text-gray-600">Lần cuối</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">SĐT</th>
-              <th className="text-left px-4 py-3 font-semibold text-gray-600">Email</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">Lead</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">Ghi chú</th>
               <th className="text-right px-4 py-3 font-semibold text-gray-600">Thao tác</th>
@@ -714,8 +715,9 @@ function ContactsTab() {
                 {editing === c.id ? (
                   <>
                     <td className="px-4 py-2"><input value={form.fb_name} onChange={e => setForm({...form, fb_name: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" /></td>
+                    <td className="px-3 py-2 text-center text-xs text-gray-400">{c.message_count || 0}</td>
+                    <td className="px-3 py-2 text-xs text-gray-400">—</td>
                     <td className="px-4 py-2"><input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" placeholder="SĐT" /></td>
-                    <td className="px-4 py-2"><input value={form.email} onChange={e => setForm({...form, email: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" placeholder="Email" /></td>
                     <td className="px-4 py-2">—</td>
                     <td className="px-4 py-2"><input value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" placeholder="Ghi chú" /></td>
                     <td className="px-4 py-2 text-right">
@@ -728,11 +730,21 @@ function ContactsTab() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <FBAvatar name={c.fb_name} pic={c.fb_profile_pic} size={8} />
-                        <span className="font-medium text-gray-800">{c.fb_name}</span>
+                        <div>
+                          <span className="font-medium text-gray-800">{c.fb_name}</span>
+                          {c.unread_count > 0 && <span className="ml-1.5 bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">{c.unread_count} mới</span>}
+                        </div>
                       </div>
                     </td>
+                    <td className="px-3 py-3 text-center">
+                      {c.message_count > 0 ? (
+                        <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{c.message_count}</span>
+                      ) : <span className="text-gray-300 text-xs">0</span>}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-gray-500">
+                      {c.last_message_at ? new Date(c.last_message_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : <span className="text-gray-300">—</span>}
+                    </td>
                     <td className="px-4 py-3 text-gray-600">{c.phone || <span className="text-gray-300">—</span>}</td>
-                    <td className="px-4 py-3 text-gray-600">{c.email || <span className="text-gray-300">—</span>}</td>
                     <td className="px-4 py-3">
                       {c.lead ? (
                         <a href={`/crm/leads/${c.lead.id}`} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100">{c.lead.code}</a>
