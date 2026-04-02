@@ -207,6 +207,8 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     }
   };
 
+  const [uploadProgress, setUploadProgress] = useState({}); // { taskId: { percent, name } }
+
   const compressImage = (file, maxWidth = 1920, quality = 0.8) => {
     return new Promise((resolve) => {
       if (!file.type.startsWith('image/') || file.size < 500 * 1024) { resolve(file); return; }
@@ -235,16 +237,57 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
       const rawFiles = Array.from(e.target.files || []).slice(0, 20);
       if (!rawFiles.length) return;
       setUploadingTask(taskId);
+
       try {
-        // Nén ảnh song song trước upload
-        const files = await Promise.all(rawFiles.map(f => compressImage(f)));
-        const formData = new FormData();
-        files.forEach(f => formData.append('files', f));
-        const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-        const uploaded = uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
-        if (!uploaded?.length) throw new Error('Upload không trả về file');
-        // 1 request duy nhất tạo tất cả attachments
-        const items = uploaded.map(up => ({
+        // Chia thành ảnh và video/file
+        const imageFiles = rawFiles.filter(f => f.type.startsWith('image/'));
+        const otherFiles = rawFiles.filter(f => !f.type.startsWith('image/'));
+
+        const allUploaded = [];
+
+        // Upload ảnh: nén + batch
+        if (imageFiles.length) {
+          const compressed = await Promise.all(imageFiles.map(f => compressImage(f)));
+          const formData = new FormData();
+          compressed.forEach(f => formData.append('files', f));
+          const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+          allUploaded.push(...(uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes])));
+        }
+
+        // Upload video/file: từng file riêng với progress (XMLHttpRequest)
+        for (const file of otherFiles) {
+          setUploadProgress(p => ({ ...p, [taskId]: { percent: 0, name: file.name } }));
+          const result = await new Promise((resolve, reject) => {
+            const formData = new FormData();
+            formData.append('file', file);
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${api.defaults.baseURL}/upload/single`);
+            xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
+            xhr.upload.onprogress = (ev) => {
+              if (ev.lengthComputable) {
+                const pct = Math.round((ev.loaded / ev.total) * 100);
+                setUploadProgress(p => ({ ...p, [taskId]: { percent: pct, name: file.name } }));
+              }
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(JSON.parse(xhr.responseText));
+              } else {
+                reject(new Error(`Upload lỗi: ${xhr.status}`));
+              }
+            };
+            xhr.onerror = () => reject(new Error('Lỗi mạng'));
+            xhr.send(formData);
+          });
+          allUploaded.push(result);
+        }
+
+        setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
+
+        if (!allUploaded.length) throw new Error('Upload không trả về file');
+
+        // Tạo attachments
+        const items = allUploaded.map(up => ({
           name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
           doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.mime_type || '').startsWith('video/') ? 'video' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
           file_url: up.file_url,
@@ -254,7 +297,11 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
         }));
         await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments/bulk`, { items });
         loadAttachments(taskId);
-      } catch (err) { alert(err.response?.data?.error || err.message || 'Upload lỗi'); }
+        loadTasks(); // Refresh counts
+      } catch (err) {
+        setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
+        alert(err.response?.data?.error || err.message || 'Upload lỗi');
+      }
       setUploadingTask(null);
     };
     input.click();
@@ -407,7 +454,10 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                   </button>
                   {uploadingTask === task.id ? (
                     <span className="text-[10px] text-orange-600 flex items-center gap-1 px-1.5 py-0.5">
-                      <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải...
+                      <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" />
+                      {uploadProgress[task.id]
+                        ? <span>{uploadProgress[task.id].name} — {uploadProgress[task.id].percent}%</span>
+                        : 'Đang tải...'}
                     </span>
                   ) : (
                     <button onClick={() => uploadTaskFile(task.id)}
@@ -439,6 +489,20 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                   <Save className="h-2.5 w-2.5" /> {savingNote === task.id ? 'Đang lưu...' : savingNote === 'saved-' + task.id ? '✓ Đã lưu' : 'Lưu ghi chú'}
                 </button>
               </div>
+
+              {/* Upload progress bar */}
+              {uploadProgress[task.id] && (
+                <div className="mb-2">
+                  <div className="flex items-center justify-between text-[10px] text-blue-600 mb-1">
+                    <span className="truncate max-w-[200px]">📤 {uploadProgress[task.id].name}</span>
+                    <span className="font-bold">{uploadProgress[task.id].percent}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
+                      style={{ width: `${uploadProgress[task.id].percent}%` }} />
+                  </div>
+                </div>
+              )}
 
               {/* Attachment list */}
               {atts.length > 0 && (
