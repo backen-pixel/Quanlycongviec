@@ -775,26 +775,40 @@ r.get('/leads/:id/documents', async (req, res) => {
 // Task documents cho lead — nhóm theo nhiệm vụ
 r.get('/leads/:id/task-documents', async (req, res) => {
   try {
-    // Tìm project liên kết
+    // Lấy tất cả crm_tasks của lead (có stage_slug)
+    const { data: crmTasks } = await supabase.from('crm_tasks')
+      .select('id, title, stage_slug')
+      .eq('lead_id', req.params.id);
+
+    // Fallback: cũng check project tasks
     const { data: lead } = await supabase.from('crm_leads')
       .select('project_id').eq('id', req.params.id).single();
-    if (!lead?.project_id) return res.json([]);
     
-    // Lấy tất cả tasks + attachments
-    const { data: tasks } = await supabase.from('tasks')
-      .select('id, title').eq('project_id', lead.project_id);
-    if (!tasks?.length) return res.json([]);
-    
-    const taskIds = tasks.map(t => t.id);
+    let projectTasks = [];
+    if (lead?.project_id) {
+      const { data: pTasks } = await supabase.from('tasks')
+        .select('id, title').eq('project_id', lead.project_id);
+      projectTasks = pTasks || [];
+    }
+
+    const allTaskIds = [
+      ...(crmTasks || []).map(t => t.id),
+      ...projectTasks.map(t => t.id),
+    ];
+    if (!allTaskIds.length) return res.json([]);
+
     const { data: attachments } = await supabase.from('crm_task_attachments')
-      .select('*').in('task_id', taskIds).order('created_at', { ascending: false });
+      .select('*').in('task_id', allTaskIds).order('created_at', { ascending: false });
     
+    // Build task info map
     const taskMap = {};
-    tasks.forEach(t => { taskMap[t.id] = t.title; });
+    (crmTasks || []).forEach(t => { taskMap[t.id] = { title: t.title, stage_slug: t.stage_slug }; });
+    projectTasks.forEach(t => { if (!taskMap[t.id]) taskMap[t.id] = { title: t.title, stage_slug: null }; });
     
     const result = (attachments || []).map(a => ({
       ...a,
-      task_title: taskMap[a.task_id] || 'Nhiệm vụ',
+      task_title: taskMap[a.task_id]?.title || 'Nhiệm vụ',
+      stage_slug: taskMap[a.task_id]?.stage_slug || null,
     }));
     
     res.json(result);
@@ -3296,6 +3310,28 @@ r.get('/leads/:id/tasks', async (req, res) => {
           data = newData || [];
         }
       }
+    }
+
+    // Đếm số file + ghi chú cho mỗi task
+    if (data?.length) {
+      const taskIds = data.map(t => t.id);
+      const { data: attCounts } = await supabase.from('crm_task_attachments')
+        .select('task_id, doc_type')
+        .in('task_id', taskIds);
+      
+      const countMap = {};
+      (attCounts || []).forEach(a => {
+        if (!countMap[a.task_id]) countMap[a.task_id] = { files: 0, notes: 0 };
+        if (a.doc_type === 'task_note') countMap[a.task_id].notes++;
+        else countMap[a.task_id].files++;
+      });
+      
+      data = data.map(t => ({
+        ...t,
+        file_count: countMap[t.id]?.files || 0,
+        note_count: countMap[t.id]?.notes || 0,
+        attachment_count: (countMap[t.id]?.files || 0) + (countMap[t.id]?.notes || 0),
+      }));
     }
 
     res.json(data || []);

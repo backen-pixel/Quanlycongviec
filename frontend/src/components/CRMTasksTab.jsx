@@ -301,6 +301,9 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     const isExpanded = expandedTask === task.id;
     const atts = taskAttachments[task.id] || [];
     const hasContent = task.notes || atts.length > 0;
+    const fileCount = task.file_count || 0;
+    const noteCount = task.note_count || 0;
+    const hasNotes = !!task.notes;
     return (
       <div key={task.id} className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'} ${task.status === 'completed' ? 'opacity-50' : ''}`}>
         {/* Main row */}
@@ -314,9 +317,20 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
               {task.deadline && <span className={`text-[10px] flex items-center gap-0.5 ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}><Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}</span>}
               {task.assignee && <span className="text-[10px] text-blue-600 flex items-center gap-0.5"><User className="h-2.5 w-2.5" />{task.assignee.full_name}</span>}
               {task.supervisor && <span className="text-[10px] text-purple-600 flex items-center gap-0.5"><Eye className="h-2.5 w-2.5" />{task.supervisor.full_name}</span>}
-              {hasContent && !isExpanded && (
-                <span className="text-[10px] text-amber-500 flex items-center gap-0.5">
-                  <Paperclip className="h-2.5 w-2.5" />{task.notes ? 'Ghi chú' : ''}{atts.length > 0 ? ` ${atts.length} file` : ''}
+              {/* File & Note count badges — always visible */}
+              {fileCount > 0 && (
+                <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium">
+                  <Paperclip className="h-2.5 w-2.5" />{fileCount} file
+                </span>
+              )}
+              {noteCount > 0 && (
+                <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium">
+                  <MessageSquare className="h-2.5 w-2.5" />{noteCount} ghi chú
+                </span>
+              )}
+              {hasNotes && !isExpanded && (
+                <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium">
+                  <FileText className="h-2.5 w-2.5" />Có ghi chú
                 </span>
               )}
               {task.shared_to_project && (
@@ -579,7 +593,19 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                   {expanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400" />}
                   <span className="text-sm">{stage.icon}</span>
                   <span className="text-sm font-semibold" style={{color: stage.color}}>{stage.label}</span>
-                  <span className="text-[10px] text-gray-400 ml-auto">{completed}/{stageTasks.length}</span>
+                  <span className="text-[10px] text-gray-400">{completed}/{stageTasks.length}</span>
+                  {/* Tổng file + ghi chú của nhóm */}
+                  {(() => {
+                    const totalFiles = stageTasks.reduce((s, t) => s + (t.file_count || 0), 0);
+                    const totalNotes = stageTasks.reduce((s, t) => s + (t.note_count || 0), 0);
+                    return (
+                      <>
+                        {totalFiles > 0 && <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">📎 {totalFiles}</span>}
+                        {totalNotes > 0 && <span className="text-[9px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full">📝 {totalNotes}</span>}
+                      </>
+                    );
+                  })()}
+                  <span className="ml-auto" />
                   {stageTasks.length > 0 && (
                     <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                       <div className="h-full bg-emerald-500 rounded-full" style={{width: `${stageTasks.length ? completed/stageTasks.length*100 : 0}%`}} />

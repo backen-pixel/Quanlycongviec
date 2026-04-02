@@ -553,34 +553,76 @@ export default function LeadDetail() {
                   {/* Task Documents — nhóm theo nhiệm vụ */}
                   {taskDocuments.length > 0 && (
                     <div className="mb-4">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📂 File nhiệm vụ</p>
-                      <div className="space-y-3">
-                        {Object.entries(
-                          taskDocuments.reduce((acc, td) => {
-                            const key = td.task_title || 'Khác';
-                            if (!acc[key]) acc[key] = { task: td, files: [] };
-                            acc[key].files.push(td);
-                            return acc;
-                          }, {})
-                        ).map(([title, group]) => (
-                          <div key={title} className="border rounded-lg overflow-hidden">
-                            <div className="bg-gray-50 px-3 py-2 border-b">
-                              <p className="text-xs font-medium text-gray-700">📋 {title}</p>
-                            </div>
-                            <div className="divide-y">
-                              {group.files.map(f => (
-                                <a key={f.id} href={f.file_url} target="_blank" rel="noreferrer"
-                                  className="flex items-center gap-3 px-3 py-2 hover:bg-blue-50 transition text-sm">
-                                  <span className="text-lg">{getFileIcon(f.file_name)}</span>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-gray-800 truncate">{f.file_name}</p>
-                                    <p className="text-[10px] text-gray-400">{f.file_size ? `${(f.file_size / 1024).toFixed(1)} KB` : ''}</p>
-                                  </div>
-                                </a>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
+                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📂 File nhiệm vụ ({taskDocuments.length})</p>
+                      <div className="space-y-4">
+                        {/* Nhóm theo stage_slug → task_title */}
+                        {(() => {
+                          const STAGE_LABELS = {
+                            consulting: '💬 Tư vấn',
+                            deal_new: '📋 Nhiệm vụ Deal mới',
+                            deal_quote_contract: '📄 Báo giá & Hợp đồng',
+                            deal_ordering: '🛒 Tiến hành đặt hàng',
+                            deal_schedule: '📅 Hẹn ngày lắp đặt',
+                            deal_shipping: '🚛 Đặt Vận chuyển',
+                            deal_notes: '📝 Ghi chú khác',
+                          };
+                          // Group by stage → task
+                          const stageGroups = {};
+                          taskDocuments.forEach(td => {
+                            const stageKey = td.stage_slug || '_other';
+                            if (!stageGroups[stageKey]) stageGroups[stageKey] = {};
+                            const taskKey = td.task_title || 'Khác';
+                            if (!stageGroups[stageKey][taskKey]) stageGroups[stageKey][taskKey] = [];
+                            stageGroups[stageKey][taskKey].push(td);
+                          });
+                          return Object.entries(stageGroups).map(([stageSlug, taskGroups]) => {
+                            const stageLabel = STAGE_LABELS[stageSlug] || (stageSlug === '_other' ? '📋 Khác' : stageSlug);
+                            const stageFileCount = Object.values(taskGroups).flat().length;
+                            const stageNoteCount = Object.values(taskGroups).flat().filter(f => f.doc_type === 'task_note').length;
+                            return (
+                              <div key={stageSlug} className="border rounded-xl overflow-hidden">
+                                {/* Stage header */}
+                                <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-3 py-2 border-b flex items-center gap-2">
+                                  <p className="text-xs font-bold text-gray-700">{stageLabel}</p>
+                                  <span className="text-[10px] text-gray-400 bg-white px-2 py-0.5 rounded-full">{stageFileCount} file</span>
+                                  {stageNoteCount > 0 && <span className="text-[10px] text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full">{stageNoteCount} ghi chú</span>}
+                                </div>
+                                {/* Tasks inside this stage */}
+                                <div className="divide-y">
+                                  {Object.entries(taskGroups).map(([taskTitle, files]) => {
+                                    const fileFiles = files.filter(f => f.doc_type !== 'task_note');
+                                    const noteFiles = files.filter(f => f.doc_type === 'task_note');
+                                    return (
+                                      <div key={taskTitle}>
+                                        <div className="bg-white px-3 py-1.5 border-b flex items-center gap-2">
+                                          <span className="text-[11px] font-semibold text-gray-600">📋 {taskTitle}</span>
+                                          {fileFiles.length > 0 && <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">📎 {fileFiles.length}</span>}
+                                          {noteFiles.length > 0 && <span className="text-[9px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full">📝 {noteFiles.length}</span>}
+                                        </div>
+                                        <div className="divide-y divide-gray-50">
+                                          {files.map(f => (
+                                            <a key={f.id} href={f.file_url || '#'} target={f.file_url ? '_blank' : undefined} rel="noreferrer"
+                                              className="flex items-center gap-3 px-4 py-2 hover:bg-blue-50 transition text-sm">
+                                              <span className="text-lg">{f.doc_type === 'task_note' ? '📝' : getFileIcon(f.file_name)}</span>
+                                              <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-medium text-gray-800 truncate">{f.doc_type === 'task_note' ? (f.name || 'Ghi chú') : (f.file_name || f.name)}</p>
+                                                {f.notes && <p className="text-[10px] text-gray-500 truncate mt-0.5">{f.notes}</p>}
+                                                <div className="flex items-center gap-2 mt-0.5">
+                                                  {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(1)} KB</span>}
+                                                  {f.created_at && <span className="text-[10px] text-gray-400">{new Date(f.created_at).toLocaleDateString('vi-VN')}</span>}
+                                                </div>
+                                              </div>
+                                            </a>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
                       </div>
                     </div>
                   )}
