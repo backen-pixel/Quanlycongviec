@@ -202,7 +202,7 @@ export default function LeadDetail() {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf';
+    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.mp4,.mov,.webm,.avi';
     input.onchange = async (e) => {
       const rawFiles = Array.from(e.target.files || []).slice(0, 20);
       if (!rawFiles.length) return;
@@ -600,20 +600,41 @@ export default function LeadDetail() {
                                           {noteFiles.length > 0 && <span className="text-[9px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full">📝 {noteFiles.length}</span>}
                                         </div>
                                         <div className="divide-y divide-gray-50">
-                                          {files.map(f => (
-                                            <a key={f.id} href={f.file_url || '#'} target={f.file_url ? '_blank' : undefined} rel="noreferrer"
-                                              className="flex items-center gap-3 px-4 py-2 hover:bg-blue-50 transition text-sm">
-                                              <span className="text-lg">{f.doc_type === 'task_note' ? '📝' : getFileIcon(f.file_name)}</span>
-                                              <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-medium text-gray-800 truncate">{f.doc_type === 'task_note' ? (f.name || 'Ghi chú') : (f.file_name || f.name)}</p>
-                                                {f.notes && <p className="text-[10px] text-gray-500 truncate mt-0.5">{f.notes}</p>}
-                                                <div className="flex items-center gap-2 mt-0.5">
-                                                  {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(1)} KB</span>}
-                                                  {f.created_at && <span className="text-[10px] text-gray-400">{new Date(f.created_at).toLocaleDateString('vi-VN')}</span>}
+                                          {files.map(f => {
+                                            const isVideo = f.doc_type === 'video' || f.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi)$/i.test(f.file_name || '');
+                                            const isImage = f.doc_type === 'image' || f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_name || '');
+                                            return (
+                                              <div key={f.id} className="px-4 py-2 hover:bg-blue-50 transition">
+                                                <div className="flex items-center gap-3">
+                                                  <span className="text-lg">{f.doc_type === 'task_note' ? '📝' : isVideo ? '🎬' : getFileIcon(f.file_name)}</span>
+                                                  <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-medium text-gray-800 truncate">{f.doc_type === 'task_note' ? (f.name || 'Ghi chú') : (f.file_name || f.name)}</p>
+                                                    {f.notes && <p className="text-[10px] text-gray-500 truncate mt-0.5">{f.notes}</p>}
+                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                      {f.file_size && <span className="text-[10px] text-gray-400">{f.file_size > 1024 * 1024 ? `${(f.file_size / 1024 / 1024).toFixed(1)} MB` : `${(f.file_size / 1024).toFixed(1)} KB`}</span>}
+                                                      {f.created_at && <span className="text-[10px] text-gray-400">{new Date(f.created_at).toLocaleDateString('vi-VN')}</span>}
+                                                      {f.file_url && <a href={f.file_url} target="_blank" rel="noreferrer" className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>}
+                                                    </div>
+                                                  </div>
                                                 </div>
+                                                {/* Video player */}
+                                                {isVideo && f.file_url && (
+                                                  <div className="mt-2 ml-8">
+                                                    <video src={f.file_url} controls preload="metadata"
+                                                      className="max-w-full max-h-64 rounded-lg border border-gray-200 bg-black shadow-sm" />
+                                                  </div>
+                                                )}
+                                                {/* Image preview */}
+                                                {isImage && f.file_url && (
+                                                  <div className="mt-2 ml-8">
+                                                    <a href={f.file_url} target="_blank" rel="noreferrer">
+                                                      <img src={f.file_url} alt={f.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain hover:opacity-90 cursor-pointer" />
+                                                    </a>
+                                                  </div>
+                                                )}
                                               </div>
-                                            </a>
-                                          ))}
+                                            );
+                                          })}
                                         </div>
                                       </div>
                                     );
@@ -744,7 +765,7 @@ const DOC_TYPES = [
 function getFileIcon(name) {
   if (!name) return '📄';
   const ext = name.split('.').pop()?.toLowerCase();
-  const map = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', dwg: '📐', dxf: '📐', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', zip: '📦', rar: '📦', mp4: '🎬', mp3: '🎵' };
+  const map = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', dwg: '📐', dxf: '📐', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️', zip: '📦', rar: '📦', mp4: '🎬', mov: '🎬', webm: '🎬', avi: '🎬', mkv: '🎬', mp3: '🎵', wav: '🎵' };
   return map[ext] || '📄';
 }
 
@@ -753,17 +774,19 @@ function DocumentRow({ doc, onDelete }) {
   const typeInfo = DOC_TYPES.find(t => t.value === doc.doc_type) || DOC_TYPES[5];
   const isFile = !!doc.file_url;
   const isImage = isFile && (doc.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_name || doc.file_url || ''));
-  const hasExtra = doc.notes || isImage;
+  const isVideo = isFile && (doc.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(doc.file_name || doc.file_url || ''));
+  const hasExtra = doc.notes || isImage || isVideo;
 
   return (
     <div className="bg-gray-50 rounded-lg border overflow-hidden">
       <div className="flex items-center justify-between p-3">
         <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer" onClick={() => hasExtra && setExpanded(!expanded)}>
-          <span className="text-lg shrink-0">{typeInfo.icon}</span>
+          <span className="text-lg shrink-0">{isVideo ? '🎬' : typeInfo.icon}</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
             <div className="flex items-center gap-1.5">
-              <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}{isImage ? ' • 🖼️' : ''}</p>
+              <p className="text-xs text-gray-500">{typeInfo.label}{isFile ? ` • ${doc.file_name}` : ' • Văn bản'}{isImage ? ' • 🖼️' : ''}{isVideo ? ' • 🎬' : ''}</p>
+              {doc.file_size && <span className="text-[10px] text-gray-400">{doc.file_size > 1024 * 1024 ? `${(doc.file_size / 1024 / 1024).toFixed(1)} MB` : `${(doc.file_size / 1024).toFixed(1)} KB`}</span>}
               {doc.is_from_task && (
                 <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full font-medium">📌 Từ nhiệm vụ</span>
               )}
@@ -772,7 +795,7 @@ function DocumentRow({ doc, onDelete }) {
               )}
             </div>
           </div>
-          {isFile && !isImage && (
+          {isFile && !isImage && !isVideo && (
             <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>
               Mở
             </a>
@@ -783,6 +806,13 @@ function DocumentRow({ doc, onDelete }) {
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
+      {/* Video preview — always show player */}
+      {isVideo && (
+        <div className={`px-3 ${expanded ? 'pb-3' : 'pb-2'}`}>
+          <video src={doc.file_url} controls preload="metadata"
+            className={`w-full rounded-lg border border-gray-200 bg-black shadow-sm ${expanded ? 'max-h-96' : 'max-h-40'}`} />
+        </div>
+      )}
       {/* Image preview — show thumbnail even when collapsed */}
       {isImage && !expanded && (
         <div className="px-3 pb-2">

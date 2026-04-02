@@ -4,7 +4,7 @@ import { formatDate } from '../lib/utils';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
-  Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock
+  Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film
 } from 'lucide-react';
 
 const LEAD_STAGES = [
@@ -230,7 +230,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf';
+    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.mp4,.mov,.webm,.avi';
     input.onchange = async (e) => {
       const rawFiles = Array.from(e.target.files || []).slice(0, 20);
       if (!rawFiles.length) return;
@@ -246,7 +246,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
         // 1 request duy nhất tạo tất cả attachments
         const items = uploaded.map(up => ({
           name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-          doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+          doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.mime_type || '').startsWith('video/') ? 'video' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
           file_url: up.file_url,
           file_name: up.file_name,
           file_size: up.file_size,
@@ -293,7 +293,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     } catch (e) { alert('Lỗi chia sẻ'); }
   };
 
-  const ATT_ICONS = { image: ImageIcon, drawing: FileText, task_note: MessageSquare, other: FileText };
+  const ATT_ICONS = { image: ImageIcon, video: Film, drawing: FileText, task_note: MessageSquare, other: FileText };
 
   // TaskRow renders inline — see renderTaskRow below
   const renderTaskRow = (task) => {
@@ -481,6 +481,13 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                           <a href={att.file_url} target="_blank" rel="noopener noreferrer" className="block mt-1.5 ml-5">
                             <img src={att.file_url} alt={att.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
                           </a>
+                        )}
+                        {/* Video preview */}
+                        {att.file_url && (att.mime_type?.startsWith('video/') || att.doc_type === 'video') && (
+                          <div className="mt-1.5 ml-5">
+                            <video src={att.file_url} controls preload="metadata"
+                              className="max-h-52 max-w-full rounded-lg border border-gray-200 bg-black" />
+                          </div>
                         )}
                       </div>
                     );
