@@ -4,7 +4,7 @@ import { formatDate } from '../lib/utils';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
-  Paperclip, FileUp, MessageSquare, FileText, Image, Share2, Lock
+  Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock
 } from 'lucide-react';
 
 const LEAD_STAGES = [
@@ -292,7 +292,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     } catch (e) { alert('Lỗi chia sẻ'); }
   };
 
-  const ATT_ICONS = { image: Image, drawing: FileText, task_note: MessageSquare, other: FileText };
+  const ATT_ICONS = { image: ImageIcon, drawing: FileText, task_note: MessageSquare, other: FileText };
 
   // TaskRow renders inline — see renderTaskRow below
   const renderTaskRow = (task) => {
