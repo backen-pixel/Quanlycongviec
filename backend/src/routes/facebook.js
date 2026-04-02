@@ -1115,7 +1115,49 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
       synced++;
     }
 
-    res.json({ synced, total: msgData.data.length, message: `Đã đồng bộ ${synced} tin nhắn mới` });
+    // ── Auto tạo lead nếu contact chưa có ──
+    let leadCreated = null;
+    if (!contact.lead_id && synced > 0) {
+      // Extract phone/address từ messages vừa sync
+      let extractedPhone = contact.phone || null;
+      let extractedAddress = null;
+      const { data: allMsgs } = await supabase.from('facebook_messages')
+        .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
+        .order('created_at', { ascending: false }).limit(50);
+      
+      for (const m of (allMsgs || [])) {
+        if (m.content) {
+          const { phone, address } = extractContactInfo(m.content);
+          if (phone && !extractedPhone) extractedPhone = phone;
+          if (address && !extractedAddress) extractedAddress = address;
+          if (extractedPhone && extractedAddress) break;
+        }
+      }
+
+      // Update contact phone
+      if (extractedPhone && !contact.phone) {
+        await supabase.from('facebook_contacts').update({ phone: extractedPhone }).eq('id', contact.id);
+      }
+
+      // Tạo lead
+      const lead = await createLeadFromFacebook(contact.page_id, contact, 'Messenger (sync)', {
+        full_name: contact.fb_name,
+        phone: extractedPhone,
+        address: extractedAddress,
+      });
+      if (lead) {
+        leadCreated = lead;
+        await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
+        console.log(`[FB Sync] ✅ Lead auto-created: ${lead.code} — ${contact.fb_name}`);
+      }
+    }
+
+    res.json({
+      synced,
+      total: msgData.data.length,
+      message: `Đã đồng bộ ${synced} tin nhắn mới` + (leadCreated ? ` + tạo Lead ${leadCreated.code}` : ''),
+      lead: leadCreated ? { id: leadCreated.id, code: leadCreated.code, title: leadCreated.title } : null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1375,6 +1417,194 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       pageBreakdown: Object.values(pageBk),
       avgResponseTime: rtCount ? Math.round(totalRT / rtCount / 60000) : null,
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// BATCH: Tạo lead cho TẤT CẢ contacts chưa có lead + Extract SĐT
+// POST /facebook/batch-create-leads
+// ═══════════════════════════════════════════════════════════════
+
+r.post('/batch-create-leads', authMiddleware, async (req, res) => {
+  try {
+    // Lấy tất cả contacts chưa có lead
+    const { data: contacts } = await supabase.from('facebook_contacts')
+      .select('*').is('lead_id', null).order('created_at');
+    
+    if (!contacts?.length) return res.json({ created: 0, updated: 0, message: 'Không có contact nào cần xử lý' });
+
+    let created = 0, updated = 0, skipped = 0;
+    const results = [];
+
+    for (const contact of contacts) {
+      try {
+        // Verify lead chưa có (double check)
+        if (contact.lead_id) { skipped++; continue; }
+
+        // Lấy page config
+        const page = await getPageConfig(contact.page_id);
+        if (!page || !page.is_active) {
+          results.push({ contact: contact.fb_name, status: 'skipped', reason: 'Page không active' });
+          skipped++;
+          continue;
+        }
+
+        // Extract phone/address từ TẤT CẢ tin nhắn inbound
+        let extractedPhone = contact.phone || null;
+        let extractedAddress = null;
+
+        const { data: messages } = await supabase.from('facebook_messages')
+          .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
+          .order('created_at', { ascending: false }).limit(50);
+        
+        for (const msg of (messages || [])) {
+          if (msg.content) {
+            const { phone, address } = extractContactInfo(msg.content);
+            if (phone && !extractedPhone) extractedPhone = phone;
+            if (address && !extractedAddress) extractedAddress = address;
+            if (extractedPhone && extractedAddress) break;
+          }
+        }
+
+        // Cập nhật phone vào contact nếu tìm được
+        if (extractedPhone && !contact.phone) {
+          await supabase.from('facebook_contacts').update({
+            phone: extractedPhone,
+            updated_at: new Date().toISOString(),
+          }).eq('id', contact.id);
+          updated++;
+        }
+
+        // Tạo lead
+        const lead = await createLeadFromFacebook(contact.page_id, contact, 'Messenger (batch)', {
+          full_name: contact.fb_name,
+          phone: extractedPhone,
+          address: extractedAddress,
+        });
+
+        if (lead) {
+          // Link messages → lead
+          await supabase.from('facebook_messages')
+            .update({ lead_id: lead.id }).eq('contact_id', contact.id);
+          
+          created++;
+          results.push({
+            contact: contact.fb_name,
+            phone: extractedPhone || null,
+            lead_code: lead.code,
+            status: 'created',
+          });
+          console.log(`[FB Batch] ✅ Lead ${lead.code} — ${contact.fb_name} (phone: ${extractedPhone || 'N/A'})`);
+        } else {
+          results.push({ contact: contact.fb_name, status: 'failed', reason: 'createLeadFromFacebook returned null' });
+          skipped++;
+        }
+      } catch (e) {
+        results.push({ contact: contact.fb_name, status: 'error', reason: e.message });
+        skipped++;
+        console.error(`[FB Batch] ❌ ${contact.fb_name}:`, e.message);
+      }
+    }
+
+    console.log(`[FB Batch] Done: created=${created}, updated=${updated}, skipped=${skipped}`);
+    res.json({
+      total: contacts.length,
+      created,
+      phone_updated: updated,
+      skipped,
+      results,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// BATCH: Extract SĐT từ tin nhắn cho contacts ĐÃ CÓ lead nhưng thiếu phone
+// POST /facebook/batch-extract-phones
+// ═══════════════════════════════════════════════════════════════
+
+r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
+  try {
+    // Contacts có lead nhưng phone = null
+    const { data: contacts } = await supabase.from('facebook_contacts')
+      .select('*').not('lead_id', 'is', null).is('phone', null);
+    
+    if (!contacts?.length) return res.json({ updated: 0, message: 'Không có contact nào thiếu SĐT' });
+
+    let updated = 0;
+    const results = [];
+
+    for (const contact of contacts) {
+      // Quét tất cả tin nhắn inbound
+      const { data: messages } = await supabase.from('facebook_messages')
+        .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
+        .order('created_at', { ascending: false }).limit(50);
+      
+      let extractedPhone = null;
+      let extractedAddress = null;
+      
+      for (const msg of (messages || [])) {
+        if (msg.content) {
+          const { phone, address } = extractContactInfo(msg.content);
+          if (phone && !extractedPhone) extractedPhone = phone;
+          if (address && !extractedAddress) extractedAddress = address;
+          if (extractedPhone && extractedAddress) break;
+        }
+      }
+
+      if (extractedPhone) {
+        // Update contact
+        await supabase.from('facebook_contacts').update({
+          phone: extractedPhone,
+          updated_at: new Date().toISOString(),
+        }).eq('id', contact.id);
+
+        // Update customer
+        if (contact.customer_id) {
+          await supabase.from('customers').update({
+            phone: extractedPhone,
+            address: extractedAddress || undefined,
+          }).eq('id', contact.customer_id);
+        } else {
+          // Tìm customer qua lead
+          const { data: lead } = await supabase.from('crm_leads')
+            .select('customer_id').eq('id', contact.lead_id).single();
+          if (lead?.customer_id) {
+            await supabase.from('customers').update({
+              phone: extractedPhone,
+              address: extractedAddress || undefined,
+            }).eq('id', lead.customer_id);
+          }
+        }
+
+        // Update lead description
+        if (contact.lead_id) {
+          const { data: lead } = await supabase.from('crm_leads')
+            .select('description').eq('id', contact.lead_id).single();
+          const leadUpd = { updated_at: new Date().toISOString() };
+          if (extractedAddress) leadUpd.install_address = extractedAddress;
+          if (lead?.description) {
+            leadUpd.description = lead.description.replace(/SĐT:.*$/m, `SĐT: ${extractedPhone}`);
+            if (extractedAddress) {
+              leadUpd.description = leadUpd.description.replace(/Địa chỉ:.*$/m, `Địa chỉ: ${extractedAddress}`);
+            }
+          }
+          await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
+        }
+
+        updated++;
+        results.push({
+          contact: contact.fb_name,
+          phone: extractedPhone,
+          address: extractedAddress,
+          status: 'updated',
+        });
+        console.log(`[FB Extract] ✅ ${contact.fb_name}: phone=${extractedPhone}`);
+      } else {
+        results.push({ contact: contact.fb_name, status: 'no_phone_found' });
+      }
+    }
+
+    res.json({ total: contacts.length, updated, results });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
