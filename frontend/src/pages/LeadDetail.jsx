@@ -471,7 +471,7 @@ export default function LeadDetail() {
             </div>
             <div className="bg-amber-50 rounded-lg border border-amber-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">Tài liệu</p>
-              <p className="text-xl font-bold text-amber-600">{documents.length + taskDocuments.length}</p>
+              <p className="text-xl font-bold text-amber-600">{documents.filter(d => !d.is_from_task && !d.source_attachment_id).length + taskDocuments.length}</p>
             </div>
             <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">File NV</p>
@@ -503,7 +503,7 @@ export default function LeadDetail() {
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                📋 Tài liệu ({documents.length + taskDocuments.length})
+                📋 Tài liệu ({documents.filter(d => !d.is_from_task && !d.source_attachment_id).length + taskDocuments.length})
               </button>
               <button
                 onClick={() => setActiveTab('activities')}
@@ -648,21 +648,28 @@ export default function LeadDetail() {
                     </div>
                   )}
 
-                  {/* Lead Documents */}
-                  <p className="text-xs font-bold text-gray-500 uppercase mb-2">📄 Tài liệu Lead</p>
-                  {documents.length === 0 ? (
-                    <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
-                      <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-                      <p className="text-sm text-gray-500">Chưa có tài liệu</p>
-                      <p className="text-xs text-gray-400 mt-1">Upload file hoặc nhập văn bản để thêm tài liệu</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-96 overflow-y-auto">
-                      {documents.map(doc => (
-                        <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
-                      ))}
-                    </div>
-                  )}
+                  {/* Lead Documents — chỉ hiện file KHÔNG phải sync từ nhiệm vụ */}
+                  {(() => {
+                    const ownDocs = documents.filter(d => !d.is_from_task && !d.source_attachment_id);
+                    return (
+                      <>
+                        <p className="text-xs font-bold text-gray-500 uppercase mb-2">📄 Tài liệu Lead ({ownDocs.length})</p>
+                        {ownDocs.length === 0 ? (
+                          <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
+                            <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                            <p className="text-sm text-gray-500">Chưa có tài liệu</p>
+                            <p className="text-xs text-gray-400 mt-1">Upload file hoặc nhập văn bản để thêm tài liệu</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-96 overflow-y-auto">
+                            {ownDocs.map(doc => (
+                              <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </>
               ) : activeTab === 'activities' ? (
                 <>
