@@ -41,6 +41,7 @@ export default function FacebookPage() {
     { id: 'analytics', label: 'Phân tích', icon: BarChart3 },
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
+    { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
     { id: 'settings', label: 'Cài đặt', icon: Settings },
   ];
 
@@ -84,6 +85,7 @@ export default function FacebookPage() {
         {tab === 'lead-ads' && <LeadAdsTab />}
         {tab === 'comments' && <CommentsTab />}
         {tab === 'settings' && <SettingsTab />}
+        {tab === 'auto-lead' && <AutoLeadTab />}
       </div>
     </div>
   );
@@ -1026,6 +1028,240 @@ function AnalyticsTab() {
 // ═══════════════════════════════════════════════════════════════
 // SETTINGS TAB
 // ═══════════════════════════════════════════════════════════════
+
+function AutoLeadTab() {
+  const [config, setConfig] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/api/facebook/auto-lead-config`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : null).then(setConfig).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/api/facebook/auto-lead-config`, {
+        method: 'PUT', headers: hdr(), body: JSON.stringify(config),
+      });
+      if (res.ok) { const d = await res.json(); setConfig(d); setSaved(true); setTimeout(() => setSaved(false), 3000); }
+      else { const e = await res.json(); alert(e.error || 'Lỗi'); }
+    } catch (e) { alert('Lỗi: ' + e.message); }
+    setSaving(false);
+  };
+
+  const reset = async () => {
+    if (!confirm('Khôi phục cài đặt mặc định?')) return;
+    const res = await fetch(`${API}/api/facebook/auto-lead-config/defaults`, { headers: hdr() });
+    if (res.ok) { const d = await res.json(); setConfig(d); }
+  };
+
+  const set = (key, val) => setConfig(prev => ({ ...prev, [key]: val }));
+
+  if (!config) return <div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" /></div>;
+
+  const triggers = [
+    { id: 'first_message', icon: '⚡', label: 'Tạo ngay khi có tin nhắn', desc: 'Khách nhắn tin lần đầu → tự động tạo Lead ngay lập tức' },
+    { id: 'message_count', icon: '🔢', label: 'Sau N tin nhắn', desc: 'Chờ khách nhắn đủ số tin nhắn mới tạo Lead' },
+    { id: 'has_phone', icon: '📞', label: 'Khi có số điện thoại', desc: 'Chỉ tạo Lead khi tìm được SĐT trong tin nhắn' },
+    { id: 'manual', icon: '🖱️', label: 'Thủ công', desc: 'Không tự tạo — chỉ tạo Lead bằng tay' },
+  ];
+
+  return (
+    <div className="p-6 overflow-y-auto h-full max-w-3xl">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">🤖 Điều kiện tự động tạo Lead</h2>
+          <p className="text-sm text-gray-500 mt-0.5">Cấu hình khi nào hệ thống tự tạo Lead từ tin nhắn Facebook</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={reset} className="text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 cursor-pointer">
+            Mặc định
+          </button>
+          <button onClick={save} disabled={saving}
+            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-sm">
+            {saving ? <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" /> : <Save size={14} />}
+            Lưu cài đặt
+          </button>
+        </div>
+      </div>
+
+      {saved && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 flex items-center gap-2">
+          <Check size={16} /> Đã lưu cài đặt thành công!
+        </div>
+      )}
+
+      {/* ═══ TRIGGER — Điều kiện tạo Lead ═══ */}
+      <div className="bg-white border rounded-xl p-5 shadow-sm mb-4">
+        <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+          <span className="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center text-xs">1</span>
+          Điều kiện tạo Lead
+        </h3>
+        <div className="space-y-2">
+          {triggers.map(t => (
+            <label key={t.id}
+              className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition ${config.trigger === t.id ? 'border-blue-500 bg-blue-50' : 'border-gray-100 hover:border-gray-200'}`}
+              onClick={() => set('trigger', t.id)}>
+              <input type="radio" name="trigger" checked={config.trigger === t.id} onChange={() => set('trigger', t.id)}
+                className="mt-0.5 cursor-pointer" />
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span>{t.icon}</span>
+                  <span className="text-sm font-semibold text-gray-800">{t.label}</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5">{t.desc}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        {/* Threshold cho message_count */}
+        {config.trigger === 'message_count' && (
+          <div className="mt-3 ml-9 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <label className="text-xs font-medium text-amber-800 block mb-1.5">Số tin nhắn tối thiểu</label>
+            <div className="flex items-center gap-3">
+              <input type="range" min={1} max={10} value={config.message_count_threshold || 2}
+                onChange={e => set('message_count_threshold', parseInt(e.target.value))}
+                className="flex-1 cursor-pointer" />
+              <span className="text-lg font-bold text-amber-700 w-8 text-center">{config.message_count_threshold || 2}</span>
+            </div>
+            <p className="text-[10px] text-amber-600 mt-1">
+              Khách phải nhắn ít nhất {config.message_count_threshold || 2} tin nhắn mới tự động tạo Lead
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* ═══ TÊN KHÁCH MẶC ĐỊNH ═══ */}
+      <div className="bg-white border rounded-xl p-5 shadow-sm mb-4">
+        <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+          <span className="w-6 h-6 bg-purple-100 rounded-lg flex items-center justify-center text-xs">2</span>
+          Tên khách mặc định
+        </h3>
+        <div className="flex items-center gap-3">
+          <input value={config.default_customer_name || ''} onChange={e => set('default_customer_name', e.target.value)}
+            placeholder="User" className="flex-1 px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500" />
+          <p className="text-xs text-gray-500">Tên tạm khi chưa biết tên thật</p>
+        </div>
+      </div>
+
+      {/* ═══ TỰ ĐỘNG CẬP NHẬT ═══ */}
+      <div className="bg-white border rounded-xl p-5 shadow-sm mb-4">
+        <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+          <span className="w-6 h-6 bg-green-100 rounded-lg flex items-center justify-center text-xs">3</span>
+          Tự động cập nhật thông tin
+        </h3>
+        <div className="space-y-3">
+          {[
+            { key: 'auto_update_name', icon: '👤', label: 'Cập nhật tên', desc: 'Tự động cập nhật tên khách khi lấy được từ Facebook' },
+            { key: 'auto_update_phone', icon: '📞', label: 'Cập nhật SĐT', desc: 'Tự động cập nhật SĐT khi tìm được trong tin nhắn' },
+            { key: 'auto_update_address', icon: '📍', label: 'Cập nhật địa chỉ', desc: 'Tự động cập nhật địa chỉ khi tìm được trong tin nhắn' },
+          ].map(item => (
+            <div key={item.key} className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
+              <div className="flex items-center gap-2">
+                <span>{item.icon}</span>
+                <div>
+                  <p className="text-sm font-medium text-gray-700">{item.label}</p>
+                  <p className="text-[10px] text-gray-500">{item.desc}</p>
+                </div>
+              </div>
+              <button onClick={() => set(item.key, !config[item.key])}
+                className={`w-10 h-6 rounded-full transition cursor-pointer flex items-center ${config[item.key] ? 'bg-green-500 justify-end' : 'bg-gray-300 justify-start'}`}>
+                <span className="w-5 h-5 bg-white rounded-full shadow mx-0.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ═══ HÀNH VI KHÁC ═══ */}
+      <div className="bg-white border rounded-xl p-5 shadow-sm mb-4">
+        <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+          <span className="w-6 h-6 bg-amber-100 rounded-lg flex items-center justify-center text-xs">4</span>
+          Hành vi khác
+        </h3>
+        <div className="space-y-3">
+          {[
+            { key: 'auto_reply_first_message', icon: '💬', label: 'Tự động trả lời tin đầu', desc: 'Gửi tin nhắn tự động khi khách nhắn lần đầu (cấu hình ở Cài đặt Page)' },
+            { key: 'recreate_deleted_leads', icon: '♻️', label: 'Tạo lại Lead đã xóa', desc: 'Nếu Lead cũ bị xóa, tạo lại khi khách nhắn tin tiếp' },
+            { key: 'notify_on_new_lead', icon: '🔔', label: 'Thông báo Lead mới', desc: 'Gửi thông báo cho người phụ trách khi tạo Lead mới' },
+            { key: 'notify_on_phone_found', icon: '📲', label: 'Thông báo tìm SĐT', desc: 'Gửi thông báo khi tìm được SĐT mới trong tin nhắn' },
+          ].map(item => (
+            <div key={item.key} className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
+              <div className="flex items-center gap-2">
+                <span>{item.icon}</span>
+                <div>
+                  <p className="text-sm font-medium text-gray-700">{item.label}</p>
+                  <p className="text-[10px] text-gray-500">{item.desc}</p>
+                </div>
+              </div>
+              <button onClick={() => set(item.key, !config[item.key])}
+                className={`w-10 h-6 rounded-full transition cursor-pointer flex items-center ${config[item.key] ? 'bg-green-500 justify-end' : 'bg-gray-300 justify-start'}`}>
+                <span className="w-5 h-5 bg-white rounded-full shadow mx-0.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ═══ PREVIEW ═══ */}
+      <div className="bg-gradient-to-br from-gray-50 to-blue-50 border-2 border-dashed border-blue-200 rounded-xl p-5">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">👁️ Xem trước luồng hoạt động</h3>
+        <div className="space-y-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="w-5 h-5 bg-blue-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
+            <span className="text-gray-600">Khách nhắn tin trên Facebook Messenger</span>
+          </div>
+          <div className="ml-2.5 border-l-2 border-blue-200 h-3" />
+          {config.trigger === 'first_message' ? (
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 bg-green-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+              <span className="text-gray-600">⚡ <strong>Tạo Lead ngay</strong> — tên: "{config.default_customer_name || 'User'}"</span>
+            </div>
+          ) : config.trigger === 'message_count' ? (
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 bg-amber-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+              <span className="text-gray-600">⏳ Chờ khách nhắn đủ <strong>{config.message_count_threshold}</strong> tin → tạo Lead</span>
+            </div>
+          ) : config.trigger === 'has_phone' ? (
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 bg-purple-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+              <span className="text-gray-600">📞 Chờ phát hiện SĐT trong tin nhắn → tạo Lead</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 bg-gray-400 text-white rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+              <span className="text-gray-600">🖱️ Không tạo Lead tự động — chờ nhân viên tạo thủ công</span>
+            </div>
+          )}
+          <div className="ml-2.5 border-l-2 border-blue-200 h-3" />
+          <div className="flex items-center gap-2">
+            <span className="w-5 h-5 bg-blue-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold">3</span>
+            <span className="text-gray-600">
+              {config.auto_update_name && '👤 Cập nhật tên'}
+              {config.auto_update_name && config.auto_update_phone && ' → '}
+              {config.auto_update_phone && '📞 Cập nhật SĐT'}
+              {(config.auto_update_name || config.auto_update_phone) && config.auto_update_address && ' → '}
+              {config.auto_update_address && '📍 Cập nhật địa chỉ'}
+              {!config.auto_update_name && !config.auto_update_phone && !config.auto_update_address && 'Không tự cập nhật'}
+            </span>
+          </div>
+          {config.notify_on_new_lead && (
+            <>
+              <div className="ml-2.5 border-l-2 border-blue-200 h-3" />
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 bg-orange-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold">4</span>
+                <span className="text-gray-600">🔔 Thông báo cho người phụ trách</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function SettingsTab() {
   const [pages, setPages] = useState([]);

@@ -587,65 +587,133 @@ async function handleMessaging(pageId, event, io) {
         }
       }
 
-      // Auto-create lead nếu chưa có — TẠO NGAY khi khách nhắn, không chờ
+      // Auto-create lead nếu chưa có — theo cấu hình auto-lead-config
+      const autoLeadCfg = getAutoLeadConfig();
       let isFirstMessage = false;
       if (!contact.lead_id) {
-        // Check: có lead cũ đã bị xóa không? (tìm messages có lead_id)
+        // Check: có lead cũ đã bị xóa không?
         const { data: oldMsgs } = await supabase.from('facebook_messages')
           .select('lead_id').eq('contact_id', contact.id).not('lead_id', 'is', null).limit(1);
         const hadLeadBefore = oldMsgs?.length > 0;
 
-        if (!hadLeadBefore) {
-          // Tạo lead NGAY với tên hiện có, không fetch profile (tốn thời gian)
-          const contactName = contact.fb_name || 'User';
+        // Nếu lead bị xóa, check config cho phép tạo lại không
+        if (hadLeadBefore && !autoLeadCfg.recreate_deleted_leads) {
+          console.log(`[FB] ⏭️ Contact ${contact.id} had a lead before (deleted), config: no recreate`);
+        } else {
+          let shouldCreate = false;
+          const reason = [];
 
-          // Update contact với phone nếu có
-          if (extractedPhone && !contact.phone) {
-            await supabase.from('facebook_contacts').update({ phone: extractedPhone }).eq('id', contact.id);
-            contact.phone = extractedPhone;
-          }
+          // Kiểm tra điều kiện tạo lead theo config
+          switch (autoLeadCfg.trigger) {
+            case 'first_message':
+              // Tạo ngay khi có tin nhắn đầu tiên
+              shouldCreate = true;
+              reason.push('first_message trigger');
+              break;
 
-          console.log(`[FB] 🆕 Creating lead IMMEDIATELY for "${contactName}" (contact ${contact.id})`);
-          isFirstMessage = true;
-          const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
-            full_name: contactName,
-            phone: extractedPhone || contact.phone,
-            address: extractedAddress,
-            description: `Tin nhắn đầu tiên: ${content}`,
-          });
-          if (lead) {
-            console.log(`[FB] ✅ Lead created: ${lead.code} — "${contactName}"`);
-            contact.lead_id = lead.id;
-            if (savedMsg) {
-              await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+            case 'message_count': {
+              // Tạo khi đủ X tin nhắn
+              const threshold = autoLeadCfg.message_count_threshold || 2;
+              const { count: msgCount } = await supabase.from('facebook_messages')
+                .select('id', { count: 'exact', head: true })
+                .eq('contact_id', contact.id)
+                .eq('direction', 'inbound');
+              if ((msgCount || 0) >= threshold) {
+                shouldCreate = true;
+                reason.push(`message_count: ${msgCount} >= ${threshold}`);
+              } else {
+                console.log(`[FB] ⏳ Contact ${contact.id}: ${msgCount}/${threshold} messages, waiting...`);
+              }
+              break;
             }
 
-            // Fetch profile tên thật SAU khi đã tạo lead (background, không block)
-            if (!contact.fb_name || contact.fb_name === 'User' || contact.fb_name === 'Facebook User') {
-              fetchProfileViaConversations(pageId, contact.psid || senderId).then(async (profile) => {
-                if (profile?.name && profile.name !== contactName) {
-                  // Cập nhật contact
-                  const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
-                  if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
-                  await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
-                  // Cập nhật lead title + customer name
-                  await supabase.from('crm_leads').update({
-                    title: `[FB] ${profile.name}`,
-                    updated_at: new Date().toISOString(),
-                  }).eq('id', lead.id);
-                  if (lead.customer_id) {
-                    await supabase.from('customers').update({
-                      full_name: profile.name,
+            case 'has_phone':
+              // Chỉ tạo khi có SĐT
+              if (extractedPhone || contact.phone) {
+                shouldCreate = true;
+                reason.push(`has_phone: ${extractedPhone || contact.phone}`);
+              } else {
+                console.log(`[FB] ⏳ Contact ${contact.id}: no phone yet, waiting...`);
+              }
+              break;
+
+            case 'manual':
+              // Không tự động tạo
+              console.log(`[FB] ⏭️ Contact ${contact.id}: manual mode, skip auto-create`);
+              break;
+
+            default:
+              shouldCreate = true;
+              reason.push('default trigger');
+          }
+
+          if (shouldCreate) {
+            const contactName = contact.fb_name || autoLeadCfg.default_customer_name || 'User';
+
+            if (extractedPhone && !contact.phone) {
+              await supabase.from('facebook_contacts').update({ phone: extractedPhone }).eq('id', contact.id);
+              contact.phone = extractedPhone;
+            }
+
+            console.log(`[FB] 🆕 Creating lead: "${contactName}" (${reason.join(', ')})`);
+            isFirstMessage = true;
+            const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
+              full_name: contactName,
+              phone: extractedPhone || contact.phone,
+              address: extractedAddress,
+              description: `Tin nhắn đầu tiên: ${content}`,
+            });
+            if (lead) {
+              console.log(`[FB] ✅ Lead created: ${lead.code} — "${contactName}"`);
+              contact.lead_id = lead.id;
+              if (savedMsg) {
+                await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+              }
+
+              // Fetch profile tên thật SAU khi đã tạo lead (background)
+              if (autoLeadCfg.auto_update_name && (!contact.fb_name || contact.fb_name === autoLeadCfg.default_customer_name || contact.fb_name === 'User' || contact.fb_name === 'Facebook User')) {
+                fetchProfileViaConversations(pageId, contact.psid || senderId).then(async (profile) => {
+                  if (profile?.name && profile.name !== contactName) {
+                    const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
+                    if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+                    await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
+                    await supabase.from('crm_leads').update({
+                      title: `[FB] ${profile.name}`,
                       updated_at: new Date().toISOString(),
-                    }).eq('id', lead.customer_id);
+                    }).eq('id', lead.id);
+                    if (lead.customer_id) {
+                      await supabase.from('customers').update({
+                        full_name: profile.name,
+                        updated_at: new Date().toISOString(),
+                      }).eq('id', lead.customer_id);
+                    }
+                    console.log(`[FB] 🔄 Background: name "${contactName}" → "${profile.name}"`);
                   }
-                  console.log(`[FB] 🔄 Background: Updated name "${contactName}" → "${profile.name}" on lead ${lead.code}`);
-                }
-              }).catch(e => console.warn('[FB] Background profile fetch:', e.message));
+                }).catch(e => console.warn('[FB] Background profile fetch:', e.message));
+              }
+
+              // Thông báo tạo lead mới
+              if (autoLeadCfg.notify_on_new_lead) {
+                try {
+                  const page = await getPageConfig(pageId);
+                  const ownerId = page?.default_lead_owner_id || page?.created_by;
+                  if (ownerId) {
+                    await supabase.from('notifications').insert({
+                      user_id: ownerId,
+                      type: 'fb_new_lead',
+                      title: '🆕 Lead mới từ Facebook',
+                      message: `"${contactName}" nhắn tin → tự động tạo lead ${lead.code}`,
+                      entity_type: 'crm_lead',
+                      entity_id: lead.id,
+                    });
+                  }
+                } catch (ne) { /* ignore */ }
+              }
+            } else {
+              console.log(`[FB] ❌ Failed to create lead`);
             }
-          } else {
-            console.log(`[FB] ❌ Failed to create lead`);
           }
+        }
         } else {
           console.log(`[FB] ⏭️ Contact ${contact.id} had a lead before (deleted), skip auto-create`);
         }
@@ -664,15 +732,15 @@ async function handleMessaging(pageId, event, io) {
       }
 
       // Auto-reply chỉ cho tin nhắn đầu tiên (khi vừa tạo lead)
-      if (isFirstMessage) {
+      if (isFirstMessage && autoLeadCfg.auto_reply_first_message) {
         const page = await getPageConfig(pageId);
         if (page?.auto_reply_message) {
           await sendMessengerReply(pageId, senderId, page.auto_reply_message);
         }
       }
 
-      // ── Update lead/customer/contact khi có phone/address MỚI ──
-      if (extractedPhone || extractedAddress) {
+      // ── Update lead/customer/contact khi có phone/address MỚI (theo config) ──
+      if ((extractedPhone && autoLeadCfg.auto_update_phone) || (extractedAddress && autoLeadCfg.auto_update_address)) {
         // Update contact — luôn cập nhật phone mới
         const contactUpd = { updated_at: new Date().toISOString() };
         if (extractedPhone && extractedPhone !== contact.phone) {
@@ -1708,6 +1776,34 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
     res.json({ total: contacts.length, updated, results });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// AUTO-LEAD CONFIG — Điều kiện tự động tạo Lead
+// ═══════════════════════════════════════════════════════════════
+
+const { getConfig: getAutoLeadConfig, saveConfig: saveAutoLeadConfig, DEFAULT_CONFIG: AUTO_LEAD_DEFAULTS } = require('../config/autoLeadConfig');
+
+// GET /facebook/auto-lead-config
+r.get('/auto-lead-config', authMiddleware, async (req, res) => {
+  try {
+    const config = getAutoLeadConfig();
+    res.json(config);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /facebook/auto-lead-config
+r.put('/auto-lead-config', authMiddleware, async (req, res) => {
+  try {
+    const saved = saveAutoLeadConfig(req.body);
+    console.log('[AutoLead] ✅ Config updated:', JSON.stringify(saved));
+    res.json(saved);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /facebook/auto-lead-config/defaults
+r.get('/auto-lead-config/defaults', authMiddleware, (req, res) => {
+  res.json(AUTO_LEAD_DEFAULTS);
 });
 
 module.exports = r;
