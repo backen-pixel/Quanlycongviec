@@ -16,8 +16,7 @@ export default function CRMDashboard() {
   const { user } = useAuth();
   const [dataLead, setDataLead] = useState(null);
   const [dataDeal, setDataDeal] = useState(null);
-  const [leads, setLeads] = useState([]);
-  const [deals, setDeals] = useState([]);
+  // leads & deals are computed via useMemo (client-side filter) — see below
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   const [sources, setSources] = useState([]);
