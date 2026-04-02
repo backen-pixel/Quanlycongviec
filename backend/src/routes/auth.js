@@ -20,7 +20,7 @@ r.post('/login', async (req, res) => {
     if (!(await bcrypt.compare(password, user.password))) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
 
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
-    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role, fullName: user.full_name }, config.jwtSecret, { expiresIn: '2h' });
+    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role, fullName: user.full_name }, config.jwtSecret, { expiresIn: '12h' });
 
     res.json({ token, user: { id: user.id, email: user.email, fullName: user.full_name, role: user.role, avatar: user.avatar, phone: user.phone } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }

@@ -970,9 +970,10 @@ function SettingsTab() {
   const [pages, setPages] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [stages, setStages] = useState([]);
+  const [users, setUsers] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_company_id: '', default_stage_id: '' };
+  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_company_id: '', default_stage_id: '', default_lead_owner_id: '' };
   const [form, setForm] = useState({ ...emptyForm });
 
   const load = () => { fetch(`${API}/api/facebook/pages`, { headers: hdr() }).then(r => r.ok ? r.json() : []).then(setPages).catch(() => {}); };
@@ -980,6 +981,7 @@ function SettingsTab() {
     load();
     api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
     api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).then(r => setStages(r.data || [])).catch(() => {});
+    api.get('/users').then(r => setUsers(r.data?.users || r.data || [])).catch(() => {});
   }, []);
 
   const addPage = async () => {
@@ -996,7 +998,7 @@ function SettingsTab() {
     await fetch(`${API}/api/facebook/pages/${id}`, { method: 'DELETE', headers: hdr() });
     setPages(prev => prev.filter(p => p.id !== id));
   };
-  const startEdit = (p) => { setEditingId(p.id); setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead, default_company_id: p.default_company_id || '', default_stage_id: p.default_stage_id || '' }); };
+  const startEdit = (p) => { setEditingId(p.id); setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead, default_company_id: p.default_company_id || '', default_stage_id: p.default_stage_id || '', default_lead_owner_id: p.default_lead_owner_id || '' }); };
   const saveEdit = async (id) => {
     const updates = { ...form }; if (!updates.access_token) delete updates.access_token;
     await fetch(`${API}/api/facebook/pages/${id}`, { method: 'PUT', headers: hdr(), body: JSON.stringify(updates) });
@@ -1022,6 +1024,15 @@ function SettingsTab() {
           <option value="">-- Tự động (Mới) --</option>
           {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
+      </div>
+      <div className="col-span-2">
+        <label className="text-xs text-gray-600 mb-1 block">👤 Người chịu trách nhiệm Lead mặc định</label>
+        <select value={form.default_lead_owner_id} onChange={e => setForm({...form, default_lead_owner_id: e.target.value})}
+          className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
+          <option value="">-- Người tạo Page (mặc định) --</option>
+          {users.map(u => <option key={u.id} value={u.id}>{u.full_name || u.email} {u.role === 'admin' ? '(Admin)' : ''}</option>)}
+        </select>
+        <p className="text-[10px] text-gray-400 mt-1">Khi có lead mới từ Facebook, người này sẽ được gán làm chủ lead + người phụ trách</p>
       </div>
     </div>
   );
@@ -1086,6 +1097,7 @@ function SettingsTab() {
                   </button>
                   {p.auto_reply_message && <span className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200">💬 "{p.auto_reply_message.substring(0, 25)}..."</span>}
                   {p.default_company_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">🏢 {companies.find(c => c.id === p.default_company_id)?.short_name || companies.find(c => c.id === p.default_company_id)?.name || 'Công ty'}</span>}
+                  {p.default_lead_owner_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">👤 {users.find(u => u.id === p.default_lead_owner_id)?.full_name || 'Người phụ trách'}</span>}
                 </div>
               </div>
             )}

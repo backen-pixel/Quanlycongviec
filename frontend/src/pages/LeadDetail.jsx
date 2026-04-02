@@ -250,7 +250,7 @@ export default function LeadDetail() {
   };
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-4 mx-auto">
       {/* Auto-create project banner */}
       {autoCreateStatus === 'loading' && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
@@ -383,7 +383,7 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Left: Customer Info */}
         <div className="lg:col-span-1 space-y-4">
           {/* Customer Card - Inline Edit */}
@@ -471,17 +471,17 @@ export default function LeadDetail() {
             </div>
             <div className="bg-amber-50 rounded-lg border border-amber-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">Tài liệu</p>
-              <p className="text-xl font-bold text-amber-600">{documents.length}</p>
+              <p className="text-xl font-bold text-amber-600">{documents.length + taskDocuments.length}</p>
             </div>
             <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
-              <p className="text-xs text-gray-600 mb-1">Cuộc gọi</p>
-              <p className="text-xl font-bold text-purple-600">{activities.filter(a => a.type === 'call').length}</p>
+              <p className="text-xs text-gray-600 mb-1">File NV</p>
+              <p className="text-xl font-bold text-purple-600">{taskDocuments.length}</p>
             </div>
           </div>
         </div>
 
         {/* Right: Documents + Activities with Tabs */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-3 space-y-4">
           {/* Tab Switcher */}
           <div className="bg-white rounded-xl border">
             <div className="flex border-b">
@@ -503,7 +503,7 @@ export default function LeadDetail() {
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                📋 Tài liệu ({documents.length})
+                📋 Tài liệu ({documents.length + taskDocuments.length})
               </button>
               <button
                 onClick={() => setActiveTab('activities')}
