@@ -3435,6 +3435,19 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
           `Bạn được giao: "${data.title}"`,
           'crm_task', data.id);
       }
+      // 📅 Notify khi set/thay đổi deadline
+      if (b.deadline !== undefined) {
+        const { data: leadInfo2 } = await supabase.from('crm_leads')
+          .select('assigned_to, lead_owner_id, title, code').eq('id', req.params.leadId).single();
+        const targetIds = [...new Set([data.assignee_id, leadInfo2?.assigned_to, leadInfo2?.lead_owner_id].filter(Boolean))];
+        const filtered = targetIds.filter(id => id !== req.user.userId);
+        if (filtered.length && b.deadline) {
+          await notifyMultiple(req, filtered, 'crm_deadline_set',
+            '📅 Đặt ngày hẹn nhiệm vụ',
+            `"${data.title}" — ${leadInfo2?.code || ''} ${leadInfo2?.title || ''} — hạn: ${new Date(b.deadline).toLocaleDateString('vi-VN')}`,
+            'crm_lead', req.params.leadId);
+        }
+      }
     } catch (ne) { console.warn('[NOTIFY] crm_task_update:', ne.message); }
 
     res.json(data);
