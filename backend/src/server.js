@@ -141,20 +141,12 @@ server.listen(config.port, () => {
       const tomorrowEnd = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate() + 1).toISOString();
       const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
 
-      // CRM tasks deadline trong 1-2 giờ tới (nhắc thực hiện)
+      // CRM tasks deadline trong 1-2 giờ tới (nhắc trước 1 giờ)
       const { data: crmDueSoon } = await supabase.from('crm_tasks')
         .select('id, title, assignee_id, lead_id, deadline, stage_slug')
         .neq('status', 'completed')
-        .gte('deadline', in1h.toISOString())
-        .lt('deadline', in2h.toISOString())
-        .limit(100);
-
-      // CRM tasks deadline trong vòng 1 giờ (nhắc gấp)
-      const { data: crmDueVSoon } = await supabase.from('crm_tasks')
-        .select('id, title, assignee_id, lead_id, deadline, stage_slug')
-        .neq('status', 'completed')
         .gte('deadline', now.toISOString())
-        .lt('deadline', in1h.toISOString())
+        .lt('deadline', in2h.toISOString())
         .limit(100);
 
       // CRM tasks due tomorrow (nhắc trước 1 ngày)
@@ -163,14 +155,6 @@ server.listen(config.port, () => {
         .neq('status', 'completed')
         .gte('deadline', tomorrowStart)
         .lt('deadline', tomorrowEnd)
-        .limit(100);
-
-      // CRM tasks due today (but > 2h from now — avoid overlap with crmDueSoon)
-      const { data: crmDueToday } = await supabase.from('crm_tasks')
-        .select('id, title, assignee_id, lead_id, deadline, stage_slug')
-        .neq('status', 'completed')
-        .gte('deadline', in2h.toISOString())
-        .lt('deadline', todayEnd)
         .limit(100);
 
       // CRM tasks overdue
@@ -183,9 +167,7 @@ server.listen(config.port, () => {
       // Get lead info for CRM tasks
       const crmTaskLeadIds = [...new Set([
         ...(crmDueSoon || []).map(t => t.lead_id),
-        ...(crmDueVSoon || []).map(t => t.lead_id),
         ...(crmDueTomorrow || []).map(t => t.lead_id),
-        ...(crmDueToday || []).map(t => t.lead_id),
         ...(crmOverdue || []).map(t => t.lead_id),
       ].filter(Boolean))];
       
@@ -201,7 +183,7 @@ server.listen(config.port, () => {
       const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
       const { data: recentNotifs } = await supabase.from('notifications')
         .select('entity_id, type')
-        .in('type', ['crm_deadline_1h', 'crm_deadline_now', 'crm_deadline_warning', 'crm_deadline_today', 'crm_deadline_overdue'])
+        .in('type', ['crm_deadline_1h', 'crm_deadline_warning', 'crm_deadline_overdue'])
         .gte('created_at', fourHoursAgo);
       const notifSet = new Set((recentNotifs || []).map(n => `${n.type}:${n.entity_id}`));
       const shouldNotify = (type, entityId) => !notifSet.has(`${type}:${entityId}`);
@@ -225,21 +207,13 @@ server.listen(config.port, () => {
         }
       };
 
-      // 🔔 Còn 1-2 giờ
-      addCrmNotif(crmDueSoon, 'crm_deadline_1h', '🔔 Còn ~1 giờ nữa đến hạn!',
+      // 📅 Nhắc trước 1 ngày
+      addCrmNotif(crmDueTomorrow, 'crm_deadline_warning', '📅 Nhắc: Ngày mai đến hạn',
         (t, lead, dl) => `Nhiệm vụ "${t.title}" — ${lead.code || ''} ${lead.title || ''} — hạn: ${dl}`);
 
-      // 🚨 Còn dưới 1 giờ  
-      addCrmNotif(crmDueVSoon, 'crm_deadline_now', '🚨 Sắp đến hạn!',
-        (t, lead, dl) => `"${t.title}" — ${lead.code || ''} ${lead.title || ''} — hạn: ${dl}. Hãy thực hiện ngay!`);
-
-      // 📅 Ngày mai
-      addCrmNotif(crmDueTomorrow, 'crm_deadline_warning', '📅 Ngày mai đến hạn',
-        (t, lead, dl) => `Nhiệm vụ "${t.title}" — ${lead.code || ''} ${lead.title || ''} — hạn: ${dl}`);
-
-      // ⏰ Hôm nay (>2h)
-      addCrmNotif(crmDueToday, 'crm_deadline_today', '⏰ Hôm nay đến hạn!',
-        (t, lead, dl) => `Nhiệm vụ "${t.title}" — ${lead.code || ''} ${lead.title || ''} — hạn: ${dl}`);
+      // 🔔 Nhắc trước 1 giờ
+      addCrmNotif(crmDueSoon, 'crm_deadline_1h', '🔔 Nhắc: Còn 1 giờ nữa đến hạn!',
+        (t, lead, dl) => `Nhiệm vụ "${t.title}" — ${lead.code || ''} ${lead.title || ''} — hạn: ${dl}. Hãy thực hiện ngay!`);
 
       // 🚨 Quá hạn
       for (const t of (crmOverdue || [])) {
@@ -311,7 +285,7 @@ server.listen(config.port, () => {
         (inserted || []).forEach(n => io.to(`user:${n.user_id}`).emit('notification', n));
       }
 
-      console.log(`⏰ Deadline check: Tasks ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn | CRM: ${crmDueVSoon?.length || 0} <1h, ${crmDueSoon?.length || 0} 1-2h, ${crmDueToday?.length || 0} hôm nay, ${crmDueTomorrow?.length || 0} ngày mai, ${crmOverdue?.length || 0} quá hạn | ${notifs.length} thông báo`);
+      console.log(`⏰ Deadline check: Tasks ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn | CRM: ${crmDueSoon?.length || 0} <2h, ${crmDueTomorrow?.length || 0} ngày mai, ${crmOverdue?.length || 0} quá hạn | ${notifs.length} thông báo`);
     } catch (e) { console.error('Deadline check error:', e.message); }
   };
 

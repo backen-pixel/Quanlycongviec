@@ -999,8 +999,8 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     }
 
     // Update lead → deal
-    const dealAssignedTo = req.body.assigned_to || lead.assigned_to || null;
-    const leadOwnerId = lead.assigned_to || lead.created_by || null;
+    const dealAssignedTo = req.body.assigned_to || lead.assigned_to || req.user.userId;
+    const leadOwnerId = lead.lead_owner_id || lead.assigned_to || req.user.userId;
     const { data: updatedLead, error: leadError } = await supabase
       .from('crm_leads')
       .update({
