@@ -264,7 +264,7 @@ function extractContactInfo(text) {
 
 async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   const page = await getPageConfig(pageId);
-  if (!page?.auto_create_lead) return null;
+  if (!page) return null; // Chỉ check page tồn tại, luôn tạo lead
 
   // Tìm/tạo customer
   let customerId = contact.customer_id;
@@ -587,7 +587,7 @@ async function handleMessaging(pageId, event, io) {
         }
       }
 
-      // Auto-create lead nếu chưa có (chỉ tạo 1 lần duy nhất)
+      // Auto-create lead nếu chưa có — TẠO NGAY khi khách nhắn, không chờ
       let isFirstMessage = false;
       if (!contact.lead_id) {
         // Check: có lead cũ đã bị xóa không? (tìm messages có lead_id)
@@ -596,20 +596,8 @@ async function handleMessaging(pageId, event, io) {
         const hadLeadBefore = oldMsgs?.length > 0;
 
         if (!hadLeadBefore) {
-          // Đảm bảo có tên thật trước khi tạo lead
-          let contactName = contact.fb_name;
-          if (!contactName || contactName === 'Facebook User') {
-            console.log(`[FB] 🔍 Fetching name before creating lead...`);
-            const profile = await fetchProfileViaConversations(pageId, contact.psid || senderId);
-            if (profile?.name) {
-              contactName = profile.name;
-              const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
-              if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
-              await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
-              contact.fb_name = profile.name;
-              console.log(`[FB] ✅ Got name before lead: ${profile.name}`);
-            }
-          }
+          // Tạo lead NGAY với tên hiện có, không fetch profile (tốn thời gian)
+          const contactName = contact.fb_name || 'User';
 
           // Update contact với phone nếu có
           if (extractedPhone && !contact.phone) {
@@ -617,7 +605,7 @@ async function handleMessaging(pageId, event, io) {
             contact.phone = extractedPhone;
           }
 
-          console.log(`[FB] 🆕 Creating lead for contact ${contact.id} (${contactName})`);
+          console.log(`[FB] 🆕 Creating lead IMMEDIATELY for "${contactName}" (contact ${contact.id})`);
           isFirstMessage = true;
           const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
             full_name: contactName,
@@ -626,10 +614,34 @@ async function handleMessaging(pageId, event, io) {
             description: `Tin nhắn đầu tiên: ${content}`,
           });
           if (lead) {
-            console.log(`[FB] ✅ Lead created: ${lead.code} (ID: ${lead.id})`);
+            console.log(`[FB] ✅ Lead created: ${lead.code} — "${contactName}"`);
             contact.lead_id = lead.id;
             if (savedMsg) {
               await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+            }
+
+            // Fetch profile tên thật SAU khi đã tạo lead (background, không block)
+            if (!contact.fb_name || contact.fb_name === 'User' || contact.fb_name === 'Facebook User') {
+              fetchProfileViaConversations(pageId, contact.psid || senderId).then(async (profile) => {
+                if (profile?.name && profile.name !== contactName) {
+                  // Cập nhật contact
+                  const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
+                  if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+                  await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
+                  // Cập nhật lead title + customer name
+                  await supabase.from('crm_leads').update({
+                    title: `[FB] ${profile.name}`,
+                    updated_at: new Date().toISOString(),
+                  }).eq('id', lead.id);
+                  if (lead.customer_id) {
+                    await supabase.from('customers').update({
+                      full_name: profile.name,
+                      updated_at: new Date().toISOString(),
+                    }).eq('id', lead.customer_id);
+                  }
+                  console.log(`[FB] 🔄 Background: Updated name "${contactName}" → "${profile.name}" on lead ${lead.code}`);
+                }
+              }).catch(e => console.warn('[FB] Background profile fetch:', e.message));
             }
           } else {
             console.log(`[FB] ❌ Failed to create lead`);
@@ -689,13 +701,27 @@ async function handleMessaging(pageId, event, io) {
           await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
           console.log(`[FB] ✅ Updated lead ${contact.lead_id}:`, { phone: extractedPhone, address: extractedAddress });
 
-          // Update customer — luôn ghi đè phone/address mới nhất
+          // Update customer — cập nhật phone/address + tên nếu vẫn là 'User'
           const { data: lead } = await supabase.from('crm_leads')
-            .select('customer_id').eq('id', contact.lead_id).single();
+            .select('customer_id, title').eq('id', contact.lead_id).single();
           if (lead?.customer_id) {
             const custUpd = { updated_at: new Date().toISOString() };
             if (extractedPhone) custUpd.phone = extractedPhone;
             if (extractedAddress) custUpd.address = extractedAddress;
+            // Nếu customer tên vẫn là 'User' và contact đã có tên thật → cập nhật
+            if (contact.fb_name && contact.fb_name !== 'User' && contact.fb_name !== 'Facebook User') {
+              const { data: cust } = await supabase.from('customers')
+                .select('full_name').eq('id', lead.customer_id).single();
+              if (cust?.full_name === 'User' || cust?.full_name === 'Facebook KH' || cust?.full_name === 'Facebook User') {
+                custUpd.full_name = contact.fb_name;
+                // Cũng cập nhật lead title
+                await supabase.from('crm_leads').update({
+                  title: `[FB] ${contact.fb_name}`,
+                  updated_at: new Date().toISOString(),
+                }).eq('id', contact.lead_id);
+                console.log(`[FB] 🔄 Updated customer + lead name: "User" → "${contact.fb_name}"`);
+              }
+            }
             await supabase.from('customers').update(custUpd).eq('id', lead.customer_id);
             console.log(`[FB] ✅ Updated customer ${lead.customer_id}: phone=${extractedPhone}, address=${extractedAddress}`);
           }
