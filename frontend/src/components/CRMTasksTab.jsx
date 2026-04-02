@@ -165,6 +165,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   }, [calMonth]);
 
   const [expandedTask, setExpandedTask] = useState(null);
+  const [editingDeadline, setEditingDeadline] = useState(null); // taskId currently editing deadline
   const [taskAttachments, setTaskAttachments] = useState({});
   const [taskNoteText, setTaskNoteText] = useState({});
   const [savingNote, setSavingNote] = useState(null);
@@ -314,7 +315,40 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpand(task.id, task.notes)}>
             <p className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-              {task.deadline && <span className={`text-[10px] flex items-center gap-0.5 ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}><Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}</span>}
+              {task.deadline && editingDeadline !== task.id && (
+                <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
+                  className={`text-[10px] flex items-center gap-0.5 cursor-pointer hover:bg-gray-100 px-1 py-0.5 rounded ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}
+                  title="Click để đổi ngày hẹn">
+                  <Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}
+                </span>
+              )}
+              {!task.deadline && editingDeadline !== task.id && (
+                <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
+                  className="text-[10px] text-gray-300 flex items-center gap-0.5 cursor-pointer hover:text-blue-500 hover:bg-blue-50 px-1 py-0.5 rounded"
+                  title="Chọn ngày hẹn">
+                  <Calendar className="h-2.5 w-2.5" />+ Ngày hẹn
+                </span>
+              )}
+              {editingDeadline === task.id && (
+                <span className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                  <input type="date" autoFocus
+                    defaultValue={task.deadline ? task.deadline.substring(0, 10) : ''}
+                    onChange={e => {
+                      const val = e.target.value;
+                      updateTask(task.id, { deadline: val || null });
+                      setEditingDeadline(null);
+                    }}
+                    onBlur={() => setTimeout(() => setEditingDeadline(null), 200)}
+                    className="text-[10px] px-1.5 py-0.5 border border-blue-300 rounded bg-blue-50 outline-none focus:ring-1 focus:ring-blue-400 w-[120px]"
+                  />
+                  {task.deadline && (
+                    <button onClick={() => { updateTask(task.id, { deadline: null }); setEditingDeadline(null); }}
+                      className="text-[10px] text-red-400 hover:text-red-600 cursor-pointer p-0.5" title="Xóa ngày hẹn">
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
+              )}
               {task.assignee && <span className="text-[10px] text-blue-600 flex items-center gap-0.5"><User className="h-2.5 w-2.5" />{task.assignee.full_name}</span>}
               {task.supervisor && <span className="text-[10px] text-purple-600 flex items-center gap-0.5"><Eye className="h-2.5 w-2.5" />{task.supervisor.full_name}</span>}
               {/* File & Note count badges — always visible */}

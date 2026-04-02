@@ -133,6 +133,99 @@ server.listen(config.port, () => {
         .lt('due_date', now.toISOString())
         .limit(50);
 
+      // ═══ CRM Tasks (crm_tasks) — deadline check ═══
+      const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      const tomorrowStart = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate()).toISOString();
+      const tomorrowEnd = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate() + 1).toISOString();
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+
+      // CRM tasks due tomorrow (nhắc trước 1 ngày)
+      const { data: crmDueTomorrow } = await supabase.from('crm_tasks')
+        .select('id, title, assignee_id, lead_id, deadline, stage_slug')
+        .neq('status', 'completed')
+        .gte('deadline', tomorrowStart)
+        .lt('deadline', tomorrowEnd)
+        .limit(100);
+
+      // CRM tasks due today
+      const { data: crmDueToday } = await supabase.from('crm_tasks')
+        .select('id, title, assignee_id, lead_id, deadline, stage_slug')
+        .neq('status', 'completed')
+        .gte('deadline', todayStart)
+        .lt('deadline', todayEnd)
+        .limit(100);
+
+      // CRM tasks overdue
+      const { data: crmOverdue } = await supabase.from('crm_tasks')
+        .select('id, title, assignee_id, lead_id, deadline, stage_slug')
+        .neq('status', 'completed')
+        .lt('deadline', todayStart)
+        .limit(100);
+
+      // Get lead info for CRM tasks (for notification link)
+      const crmTaskLeadIds = [...new Set([
+        ...(crmDueTomorrow || []).map(t => t.lead_id),
+        ...(crmDueToday || []).map(t => t.lead_id),
+        ...(crmOverdue || []).map(t => t.lead_id),
+      ].filter(Boolean))];
+      
+      let leadMap = {};
+      if (crmTaskLeadIds.length) {
+        const { data: leads } = await supabase.from('crm_leads')
+          .select('id, title, code, assigned_to, lead_owner_id')
+          .in('id', crmTaskLeadIds);
+        (leads || []).forEach(l => { leadMap[l.id] = l; });
+      }
+
+      // CRM tasks — due tomorrow (nhắc trước 1 ngày)
+      for (const t of (crmDueTomorrow || [])) {
+        const lead = leadMap[t.lead_id] || {};
+        const uids = [...new Set([t.assignee_id, lead.assigned_to, lead.lead_owner_id].filter(Boolean))];
+        for (const uid of uids) {
+          notifs.push({
+            user_id: uid,
+            type: 'crm_deadline_warning',
+            title: '📅 Ngày mai đến hạn',
+            message: `Nhiệm vụ "${t.title}" — ${lead.code || ''} ${lead.title || ''} — hạn: ${new Date(t.deadline).toLocaleDateString('vi-VN')}`,
+            entity_type: 'crm_lead',
+            entity_id: t.lead_id || t.id,
+          });
+        }
+      }
+
+      // CRM tasks — due today
+      for (const t of (crmDueToday || [])) {
+        const lead = leadMap[t.lead_id] || {};
+        const uids = [...new Set([t.assignee_id, lead.assigned_to, lead.lead_owner_id].filter(Boolean))];
+        for (const uid of uids) {
+          notifs.push({
+            user_id: uid,
+            type: 'crm_deadline_today',
+            title: '⏰ Hôm nay đến hạn!',
+            message: `Nhiệm vụ "${t.title}" — ${lead.code || ''} ${lead.title || ''} — hạn hôm nay!`,
+            entity_type: 'crm_lead',
+            entity_id: t.lead_id || t.id,
+          });
+        }
+      }
+
+      // CRM tasks — overdue
+      for (const t of (crmOverdue || [])) {
+        const lead = leadMap[t.lead_id] || {};
+        const daysLate = Math.floor((now - new Date(t.deadline)) / (1000 * 60 * 60 * 24));
+        const uids = [...new Set([t.assignee_id, lead.assigned_to, lead.lead_owner_id].filter(Boolean))];
+        for (const uid of uids) {
+          notifs.push({
+            user_id: uid,
+            type: 'crm_deadline_overdue',
+            title: '🚨 Quá hạn nhiệm vụ CRM!',
+            message: `"${t.title}" — ${lead.code || ''} ${lead.title || ''} — quá hạn ${daysLate} ngày`,
+            entity_type: 'crm_lead',
+            entity_id: t.lead_id || t.id,
+          });
+        }
+      }
+
       // Invoices overdue (due_date < today, paid_amount < total)
       const { data: overdueInvoices } = await supabase.from('invoices')
         .select('id,code,total,paid_amount,due_date,created_by')
@@ -185,7 +278,7 @@ server.listen(config.port, () => {
         (inserted || []).forEach(n => io.to(`user:${n.user_id}`).emit('notification', n));
       }
 
-      console.log(`⏰ Deadline check: ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn, ${overdueInvoices?.length || 0} hóa đơn quá hạn`);
+      console.log(`⏰ Deadline check: ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn, ${overdueInvoices?.length || 0} HĐ quá hạn | CRM: ${crmDueTomorrow?.length || 0} ngày mai, ${crmDueToday?.length || 0} hôm nay, ${crmOverdue?.length || 0} quá hạn`);
     } catch (e) { console.error('Deadline check error:', e.message); }
   };
 
