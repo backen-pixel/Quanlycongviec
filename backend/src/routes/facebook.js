@@ -815,11 +815,10 @@ async function handleMessaging(pageId, event, io) {
           });
           console.log('[FB] Socket.IO emit fb_message →', contact.fb_name);
         }
-      } catch (e) { /* ignore */ }
+            } catch (e) { /* ignore */ }
 
-      console.log(`[FB] Messenger inbound: ${contact.fb_name} → "${content.substring(0, 50)}"`);
+            console.log(`[FB] Messenger inbound: ${contact.fb_name} → "${content.substring(0, 50)}"`);
     }
-  }
 
   // Read receipts
   if (event.read) {
