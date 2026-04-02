@@ -7,13 +7,44 @@ const { supabase } = require('../config/supabase');
   try {
     // Test thêm cột default_lead_owner_id
     const { error } = await supabase.from('facebook_pages')
-      .update({ default_lead_owner_id: null }).eq('id', '00000000-0000-0000-0000-000000000000');
+      .select('default_lead_owner_id').limit(1);
     if (error?.message?.includes('default_lead_owner_id')) {
-      console.log('[FB] ⚠️ Column default_lead_owner_id chưa có. Hãy chạy SQL:');
-      console.log('ALTER TABLE facebook_pages ADD COLUMN default_lead_owner_id UUID;');
+      console.log('[FB] ⚠️ Column default_lead_owner_id chưa có, sẽ dùng fallback (created_by)');
+    } else {
+      console.log('[FB] ✅ Column default_lead_owner_id OK');
     }
   } catch (e) { /* ignore */ }
 })();
+
+// Migration endpoint — chạy 1 lần để thêm cột mới
+r.post('/migrate', async (req, res) => {
+  try {
+    // Kiểm tra có RPC chưa
+    const { error: checkErr } = await supabase.from('facebook_pages')
+      .select('default_lead_owner_id').limit(1);
+    
+    if (!checkErr) {
+      return res.json({ message: 'Column default_lead_owner_id already exists', ok: true });
+    }
+
+    // Tạo RPC function tạm để chạy DDL
+    const { error: rpcErr } = await supabase.rpc('_fb_add_lead_owner_col');
+    if (rpcErr) {
+      return res.json({
+        message: 'Cannot auto-migrate. Please run this SQL in Supabase Dashboard → SQL Editor:',
+        sql: 'ALTER TABLE facebook_pages ADD COLUMN default_lead_owner_id UUID;',
+        error: rpcErr.message,
+      });
+    }
+    res.json({ ok: true, message: 'Migration done' });
+  } catch (e) {
+    res.json({ 
+      message: 'Run this SQL manually in Supabase Dashboard → SQL Editor:', 
+      sql: 'ALTER TABLE facebook_pages ADD COLUMN default_lead_owner_id UUID;',
+      error: e.message 
+    });
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // FACEBOOK WEBHOOK — Nhận Lead Ads, Messenger, Comments
