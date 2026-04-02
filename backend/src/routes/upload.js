@@ -1,6 +1,8 @@
 const { Router } = require('express');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const config = require('../config');
@@ -8,13 +10,30 @@ const config = require('../config');
 const r = Router();
 r.use(auth);
 
+// ── Memory upload (ảnh, PDF, file nhỏ < 20MB) ──
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB (video lớn)
+  limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|zip|rar|mp4|mov|webm|ogg|mp3|wav/;
+    const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|zip|rar|mp4|mov|webm|ogg|mp3|wav|avi|mkv/;
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowed.test(ext) || file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('application/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('File không được hỗ trợ'));
+    }
+  }
+});
+
+// ── Disk upload (video, file lớn) — ghi ra /tmp trước ──
+const diskUpload = multer({
+  storage: multer.diskStorage({
+    destination: os.tmpdir(),
+    filename: (req, file, cb) => cb(null, `upload_${Date.now()}_${Math.random().toString(36).slice(2)}${path.extname(file.originalname)}`),
+  }),
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB cho video
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('image/') || file.mimetype.startsWith('application/')) {
       cb(null, true);
     } else {
       cb(new Error('File không được hỗ trợ'));
@@ -89,6 +108,81 @@ async function uploadOneFile(file, entityType, entityId) {
     storage_path: storagePath,
   };
 }
+
+// Upload 1 file từ disk (stream) → Supabase Storage — NHANH cho video lớn
+async function uploadOneFileFromDisk(filePath, originalName, mimetype, fileSize, entityType, entityId) {
+  // Fix tiếng Việt
+  let fixedName = originalName;
+  try {
+    const buf = Buffer.from(originalName, 'latin1');
+    const utf8Name = buf.toString('utf8');
+    if (utf8Name && !utf8Name.includes('�') && utf8Name !== originalName) fixedName = utf8Name;
+  } catch (e) {}
+
+  const ext = path.extname(fixedName);
+  const safeName = sanitizeFilename(path.basename(fixedName, ext));
+  const timestamp = Date.now();
+  const folder = entityId ? `${entityType || 'general'}/${entityId}` : (entityType || 'general');
+  const storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
+
+  // Stream read từ disk → upload Supabase
+  const fileStream = fs.createReadStream(filePath);
+  const { data: uploadData, error: uploadError } = await supabase.storage
+    .from(BUCKET)
+    .upload(storagePath, fileStream, {
+      contentType: mimetype,
+      duplex: 'half',
+      upsert: false,
+    });
+
+  // Xóa file tạm
+  fs.unlink(filePath, () => {});
+
+  if (uploadError) {
+    console.error('Storage stream upload error:', uploadError);
+    // Fallback: đọc buffer rồi upload lại
+    try {
+      const buffer = fs.readFileSync(filePath);
+      const { error: retryErr } = await supabase.storage.from(BUCKET).upload(storagePath, buffer, { contentType: mimetype, upsert: false });
+      fs.unlink(filePath, () => {});
+      if (retryErr) throw retryErr;
+    } catch (e2) {
+      return { file_name: fixedName, file_url: null, file_size: fileSize, mime_type: mimetype, storage_path: null, error: uploadError.message };
+    }
+  }
+
+  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
+  return {
+    file_name: fixedName,
+    file_url: urlData.publicUrl,
+    file_size: fileSize,
+    mime_type: mimetype,
+    storage_path: storagePath,
+  };
+}
+
+// ═══ STREAM UPLOAD — Video/file lớn (disk → Supabase) ═══
+// Nhanh hơn memory upload vì không cần buffer toàn bộ vào RAM
+r.post('/stream', diskUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    const result = await uploadOneFileFromDisk(
+      req.file.path,
+      req.file.originalname,
+      req.file.mimetype,
+      req.file.size,
+      req.body.entity_type || 'general',
+      req.body.entity_id
+    );
+    if (result.error) return res.status(500).json({ error: result.error });
+    res.status(201).json(result);
+  } catch (e) {
+    // Cleanup temp file
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    console.error('Stream upload error:', e);
+    res.status(500).json({ error: e.message || 'Lỗi upload' });
+  }
+});
 
 // Upload single file (cho Facebook chat, etc.)
 r.post('/single', upload.single('file'), async (req, res) => {
