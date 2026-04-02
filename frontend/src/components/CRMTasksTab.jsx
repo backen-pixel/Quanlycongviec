@@ -318,28 +318,27 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
               {task.deadline && editingDeadline !== task.id && (
                 <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
                   className={`text-[10px] flex items-center gap-0.5 cursor-pointer hover:bg-gray-100 px-1 py-0.5 rounded ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}
-                  title="Click để đổi ngày hẹn">
-                  <Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}
+                  title="Click để đổi ngày giờ hẹn">
+                  <Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}{task.deadline?.includes('T') ? ` ${new Date(task.deadline).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
                 </span>
               )}
               {!task.deadline && editingDeadline !== task.id && (
                 <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
                   className="text-[10px] text-gray-300 flex items-center gap-0.5 cursor-pointer hover:text-blue-500 hover:bg-blue-50 px-1 py-0.5 rounded"
-                  title="Chọn ngày hẹn">
+                  title="Chọn ngày giờ hẹn">
                   <Calendar className="h-2.5 w-2.5" />+ Ngày hẹn
                 </span>
               )}
               {editingDeadline === task.id && (
                 <span className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <input type="date" autoFocus
-                    defaultValue={task.deadline ? task.deadline.substring(0, 10) : ''}
+                  <input type="datetime-local" autoFocus
+                    defaultValue={task.deadline ? (task.deadline.includes('T') ? task.deadline.substring(0, 16) : task.deadline.substring(0, 10) + 'T08:00') : ''}
                     onChange={e => {
                       const val = e.target.value;
-                      updateTask(task.id, { deadline: val || null });
-                      setEditingDeadline(null);
+                      if (val) updateTask(task.id, { deadline: val });
                     }}
-                    onBlur={() => setTimeout(() => setEditingDeadline(null), 200)}
-                    className="text-[10px] px-1.5 py-0.5 border border-blue-300 rounded bg-blue-50 outline-none focus:ring-1 focus:ring-blue-400 w-[120px]"
+                    onBlur={() => setTimeout(() => setEditingDeadline(null), 300)}
+                    className="text-[10px] px-1.5 py-0.5 border border-blue-300 rounded bg-blue-50 outline-none focus:ring-1 focus:ring-blue-400 w-[175px]"
                   />
                   {task.deadline && (
                     <button onClick={() => { updateTask(task.id, { deadline: null }); setEditingDeadline(null); }}
@@ -513,7 +512,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           className="px-2 py-1 rounded border text-xs">
           <option value="low">Thấp</option><option value="medium">TB</option><option value="high">Cao</option><option value="urgent">Gấp</option>
         </select>
-        <input type="date" value={newTask.deadline} onChange={e => setNewTask(p => ({...p, deadline: e.target.value}))}
+        <input type="datetime-local" value={newTask.deadline} onChange={e => setNewTask(p => ({...p, deadline: e.target.value}))}
           className="px-2 py-1 rounded border text-xs" />
         <select value={newTask.assignee_id} onChange={e => setNewTask(p => ({...p, assignee_id: e.target.value}))}
           className="px-2 py-1 rounded border text-xs">
