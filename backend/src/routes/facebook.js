@@ -1227,12 +1227,31 @@ r.get('/contacts/:contactId/messages', authMiddleware, async (req, res) => {
 // Get messages by lead_id
 r.get('/leads/:leadId/messages', authMiddleware, async (req, res) => {
   try {
+    // Tìm contact linked to lead
+    const { data: contact } = await supabase.from('facebook_contacts')
+      .select('id, fb_name, fb_profile_pic, phone, psid, page_id')
+      .eq('lead_id', req.params.leadId).limit(1).single();
+    
+    if (!contact) {
+      // Fallback: tìm messages trực tiếp theo lead_id
+      const { data } = await supabase.from('facebook_messages')
+        .select('*, contact:facebook_contacts(id, fb_name, fb_profile_pic, phone, psid, page_id)')
+        .eq('lead_id', req.params.leadId)
+        .order('created_at', { ascending: true })
+        .limit(200);
+      return res.json(data || []);
+    }
+
+    // Lấy TẤT CẢ messages của contact (không chỉ theo lead_id)
     const { data } = await supabase.from('facebook_messages')
-      .select('*, contact:facebook_contacts(fb_name, fb_profile_pic)')
-      .eq('lead_id', req.params.leadId)
+      .select('*')
+      .eq('contact_id', contact.id)
       .order('created_at', { ascending: true })
-      .limit(200);
-    res.json(data || []);
+      .limit(500);
+    
+    // Gắn contact info vào mỗi message
+    const messages = (data || []).map(m => ({ ...m, contact }));
+    res.json(messages);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
