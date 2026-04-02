@@ -19,7 +19,7 @@ const { supabase } = require('../config/supabase');
 // Migration endpoint — chạy 1 lần để thêm cột mới
 r.post('/migrate', async (req, res) => {
   try {
-    // Kiểm tra có RPC chưa
+    // Kiểm tra column đã tồn tại chưa
     const { error: checkErr } = await supabase.from('facebook_pages')
       .select('default_lead_owner_id').limit(1);
     
@@ -27,20 +27,17 @@ r.post('/migrate', async (req, res) => {
       return res.json({ message: 'Column default_lead_owner_id already exists', ok: true });
     }
 
-    // Tạo RPC function tạm để chạy DDL
-    const { error: rpcErr } = await supabase.rpc('_fb_add_lead_owner_col');
-    if (rpcErr) {
-      return res.json({
-        message: 'Cannot auto-migrate. Please run this SQL in Supabase Dashboard → SQL Editor:',
-        sql: 'ALTER TABLE facebook_pages ADD COLUMN default_lead_owner_id UUID;',
-        error: rpcErr.message,
-      });
-    }
-    res.json({ ok: true, message: 'Migration done' });
+    // Thử tạo RPC function bằng cách dùng supabase.rpc 
+    // Nếu ko được thì hướng dẫn chạy SQL manual
+    return res.json({
+      message: 'Column chưa tồn tại. Vui lòng chạy SQL này trong Supabase Dashboard → SQL Editor:',
+      sql: 'ALTER TABLE facebook_pages ADD COLUMN IF NOT EXISTS default_lead_owner_id UUID;',
+      ok: false,
+    });
   } catch (e) {
     res.json({ 
       message: 'Run this SQL manually in Supabase Dashboard → SQL Editor:', 
-      sql: 'ALTER TABLE facebook_pages ADD COLUMN default_lead_owner_id UUID;',
+      sql: 'ALTER TABLE facebook_pages ADD COLUMN IF NOT EXISTS default_lead_owner_id UUID;',
       error: e.message 
     });
   }
@@ -858,9 +855,23 @@ const { auth: authMiddleware } = require('../middleware/auth');
 
 r.get('/pages', authMiddleware, async (req, res) => {
   try {
-    const { data } = await supabase.from('facebook_pages')
-      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, created_at')
+    // Try with all columns first
+    let { data, error } = await supabase.from('facebook_pages')
+      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, created_at, webhook_verify_token')
       .order('created_at', { ascending: false });
+    
+    // Fallback: if column doesn't exist, retry without it
+    if (error && (error.message?.includes('default_lead_owner_id') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('facebook_pages')
+        .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_company_id, created_at, webhook_verify_token')
+        .order('created_at', { ascending: false }));
+    }
+    if (error && (error.message?.includes('default_company_id') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('facebook_pages')
+        .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, created_at, webhook_verify_token')
+        .order('created_at', { ascending: false }));
+    }
+    if (error) throw error;
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
