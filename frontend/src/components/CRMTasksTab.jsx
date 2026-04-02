@@ -254,14 +254,16 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           allUploaded.push(...(uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes])));
         }
 
-        // Upload video/file: từng file riêng với progress (XMLHttpRequest)
+        // Upload video/file: từng file riêng với progress + stream endpoint
         for (const file of otherFiles) {
-          setUploadProgress(p => ({ ...p, [taskId]: { percent: 0, name: file.name } }));
+          setUploadProgress(p => ({ ...p, [taskId]: { percent: 0, name: file.name, size: file.size } }));
+          const isLarge = file.size > 10 * 1024 * 1024; // >10MB dùng stream
+          const endpoint = isLarge ? '/upload/stream' : '/upload/single';
           const result = await new Promise((resolve, reject) => {
             const formData = new FormData();
             formData.append('file', file);
             const xhr = new XMLHttpRequest();
-            xhr.open('POST', `${api.defaults.baseURL}/upload/single`);
+            xhr.open('POST', `${api.defaults.baseURL}${endpoint}`);
             xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
             xhr.upload.onprogress = (ev) => {
               if (ev.lengthComputable) {
@@ -456,8 +458,8 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                     <span className="text-[10px] text-orange-600 flex items-center gap-1 px-1.5 py-0.5">
                       <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" />
                       {uploadProgress[task.id]
-                        ? <span>{uploadProgress[task.id].name} — {uploadProgress[task.id].percent}%</span>
-                        : 'Đang tải...'}
+                        ? <span>{uploadProgress[task.id].name} — {uploadProgress[task.id].percent}% {uploadProgress[task.id].size > 1024*1024 ? `(${(uploadProgress[task.id].size/1024/1024).toFixed(0)}MB)` : ''}</span>
+                        : 'Đang nén ảnh...'}
                     </span>
                   ) : (
                     <button onClick={() => uploadTaskFile(task.id)}
@@ -494,7 +496,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
               {uploadProgress[task.id] && (
                 <div className="mb-2">
                   <div className="flex items-center justify-between text-[10px] text-blue-600 mb-1">
-                    <span className="truncate max-w-[200px]">📤 {uploadProgress[task.id].name}</span>
+                    <span className="truncate max-w-[200px]">📤 {uploadProgress[task.id].name} {uploadProgress[task.id].size > 1024*1024 ? `(${(uploadProgress[task.id].size/1024/1024).toFixed(1)}MB)` : ''}</span>
                     <span className="font-bold">{uploadProgress[task.id].percent}%</span>
                   </div>
                   <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
