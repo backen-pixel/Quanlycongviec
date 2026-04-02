@@ -588,6 +588,7 @@ function ContactsTab() {
   const [filter, setFilter] = useState('all');
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
+  const [batchStatus, setBatchStatus] = useState(null); // { type, loading, result }
 
   const load = useCallback(() => {
     const p = new URLSearchParams();
@@ -614,12 +615,72 @@ function ContactsTab() {
     try { await fetch(`${API}/api/facebook/contacts/${id}`, { method: 'DELETE', headers: hdr() }); setContacts(prev => prev.filter(c => c.id !== id)); } catch (e) { alert('Lỗi'); }
   };
 
+  // Batch: tạo Lead cho contact chưa có lead
+  const batchCreateLeads = async () => {
+    const noLead = contacts.filter(c => !c.lead_id);
+    if (!noLead.length) return alert('Tất cả liên hệ đã có Lead!');
+    if (!confirm(`Tạo Lead cho ${noLead.length} liên hệ chưa có Lead?`)) return;
+    setBatchStatus({ type: 'leads', loading: true, result: null });
+    try {
+      const res = await fetch(`${API}/api/facebook/batch-create-leads`, { method: 'POST', headers: hdr() });
+      const data = await res.json();
+      setBatchStatus({ type: 'leads', loading: false, result: data });
+      load(); // Refresh danh sách
+    } catch (e) {
+      setBatchStatus({ type: 'leads', loading: false, result: { error: e.message } });
+    }
+  };
+
+  // Batch: quét SĐT + thông tin từ tin nhắn
+  const batchExtractPhones = async () => {
+    if (!confirm('Quét toàn bộ tin nhắn để tìm SĐT và thông tin khách hàng?')) return;
+    setBatchStatus({ type: 'phones', loading: true, result: null });
+    try {
+      const res = await fetch(`${API}/api/facebook/batch-extract-phones`, { method: 'POST', headers: hdr() });
+      const data = await res.json();
+      setBatchStatus({ type: 'phones', loading: false, result: data });
+      load(); // Refresh danh sách
+    } catch (e) {
+      setBatchStatus({ type: 'phones', loading: false, result: { error: e.message } });
+    }
+  };
+
   return (
     <div className="p-6 overflow-y-auto h-full">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length})</h2>
-        <button onClick={load} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 cursor-pointer"><RefreshCw size={14} /> Làm mới</button>
+        <div className="flex items-center gap-2">
+          <button onClick={batchCreateLeads} disabled={batchStatus?.loading}
+            className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+            {batchStatus?.type === 'leads' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" /> : '🆕'}
+            Tạo Lead hàng loạt
+          </button>
+          <button onClick={batchExtractPhones} disabled={batchStatus?.loading}
+            className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+            {batchStatus?.type === 'phones' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full" /> : '📞'}
+            Quét SĐT & thông tin
+          </button>
+          <button onClick={load} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 cursor-pointer"><RefreshCw size={14} /> Làm mới</button>
+        </div>
       </div>
+
+      {/* Batch result banner */}
+      {batchStatus?.result && !batchStatus.loading && (
+        <div className={`mb-4 p-3 rounded-lg text-sm ${batchStatus.result.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              {batchStatus.result.error ? (
+                <span>❌ Lỗi: {batchStatus.result.error}</span>
+              ) : batchStatus.type === 'leads' ? (
+                <span>✅ Đã tạo <strong>{batchStatus.result.created || 0}</strong> Lead mới — Bỏ qua: {batchStatus.result.skipped || 0} (đã có Lead)</span>
+              ) : (
+                <span>✅ Đã quét <strong>{batchStatus.result.scanned || batchStatus.result.total || 0}</strong> liên hệ — Tìm thấy: <strong>{batchStatus.result.updated || batchStatus.result.found || 0}</strong> SĐT mới</span>
+              )}
+            </div>
+            <button onClick={() => setBatchStatus(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer">✕</button>
+          </div>
+        </div>
+      )}
       <div className="flex gap-3 mb-4 flex-wrap">
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
