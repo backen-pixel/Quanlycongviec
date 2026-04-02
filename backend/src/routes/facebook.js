@@ -230,7 +230,7 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   if (!customerId) {
     const customerData = {
       full_name: extraData.full_name || contact.fb_name || 'Facebook KH',
-      phone: extraData.phone || contact.phone || null,
+      phone: extraData.phone || contact.phone || '',
       email: extraData.email || contact.email || null,
       address: extraData.address || null,
       source: 'Facebook',
@@ -1005,7 +1005,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     if (!customerId) {
       const { data: customer } = await supabase.from('customers').insert({
         full_name: contact.fb_name || 'KH Facebook',
-        phone: extractedPhone,
+        phone: extractedPhone || '',
         address: extractedAddress,
         source: 'Facebook',
       }).select().single();
