@@ -1029,7 +1029,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
 
   // Load sources + companies
   useEffect(() => {
-    api.get('/crm/sources').then(r => setSources(r.data || [])).catch(() => {});
+    api.get('/crm/sources').then(r => setSources(r.data?.sources || (Array.isArray(r.data) ? r.data : []))).catch(() => {});
     api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
   }, []);
 
