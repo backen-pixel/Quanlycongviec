@@ -388,30 +388,30 @@ export default function QuotationForm() {
         </div>
 
         <div className="overflow-x-auto border rounded-lg" style={{ maxHeight: '65vh' }}>
-          <table className="min-w-[1550px] w-full text-sm">
+          <table className="min-w-[2200px] w-full text-xs">
             <thead className="sticky top-0 z-10"><tr className="bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wider">
-              <th className="py-2.5 px-2 text-left w-10">STT</th>
-              <th className="py-2.5 px-2 text-left w-28">Mã HH</th>
-              <th className="py-2.5 px-2 text-left min-w-[220px]">Tên hàng hóa</th>
-              <th className="py-2.5 px-2 text-left min-w-[180px]">Diễn giải</th>
-              <th className="py-2.5 px-2 text-center w-16">ĐVT</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Ngang (mm)">Ngang</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Sâu (mm)">Sâu</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Cao (mm)">Cao</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Diện tích chuẩn (mm²) — đơn giá dựa trên DT này">DT Chuẩn</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Diện tích thực tế (mm²) = Ngang × Cao">DT Thực</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Hệ số quy cách: nhân vào đơn giá (VD: mét dài ngang tủ)">HS QC</th>
-              <th className="py-2.5 px-2 text-right w-16">SL</th>
-              <th className="py-2.5 px-2 text-right w-32">Đơn giá</th>
-              <th className="py-2.5 px-2 text-right w-32">Thành tiền</th>
-              <th className="py-2.5 px-2 text-right w-16">CK%</th>
-              <th className="py-2.5 px-2 text-right w-28">Tiền CK</th>
-              <th className="py-2.5 px-2 text-right w-16">%VAT</th>
-              <th className="py-2.5 px-2 text-right w-28">Tiền thuế</th>
-              <th className="py-2.5 px-2 text-right w-32">Tổng tiền</th>
-              <th className="py-2.5 px-2 text-left w-24">CTKM</th>
-              <th className="py-2.5 px-2 text-center w-12">KM</th>
-              <th className="py-2.5 px-2 w-10"></th>
+              <th className="py-2.5 px-1.5 text-left" style={{width:36}}>STT</th>
+              <th className="py-2.5 px-1.5 text-left" style={{width:100}}>Mã HH</th>
+              <th className="py-2.5 px-1.5 text-left" style={{minWidth:180}}>Tên hàng hóa</th>
+              <th className="py-2.5 px-1.5 text-left" style={{width:140}}>Diễn giải</th>
+              <th className="py-2.5 px-1.5 text-center" style={{width:50}}>ĐVT</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:65}} title="Ngang (mm)">Ngang</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:60}} title="Sâu (mm)">Sâu</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:60}} title="Cao (mm)">Cao</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:85}} title="Diện tích chuẩn (mm²)">DT Chuẩn</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:85}} title="Diện tích thực tế = Ngang × Cao">DT Thực</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:60}} title="Hệ số quy cách">HS QC</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:50}}>SL</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:120}}>Đơn giá</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:120}}>Thành tiền</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:50}}>CK%</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:100}}>Tiền CK</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:50}}>%VAT</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:100}}>Tiền thuế</th>
+              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:130}}>Tổng tiền</th>
+              <th className="py-2.5 px-1.5 text-left" style={{width:80}}>CTKM</th>
+              <th className="py-2.5 px-1.5 text-center" style={{width:36}}>KM</th>
+              <th className="py-2.5 px-1.5" style={{width:36}}></th>
             </tr></thead>
             <tbody>
               {items.map((item, idx) => {
@@ -433,9 +433,9 @@ export default function QuotationForm() {
                     </tr>
                   )}
                   <tr className="border-b hover:bg-blue-50/30">
-                    <td className="py-2 px-2 text-gray-400 text-sm">{idx + 1}</td>
-                    <td className="py-2 px-2"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent" /></td>
-                    <td className="py-2 px-2">
+                    <td className="py-1 px-1 text-gray-400 text-xs">{idx + 1}</td>
+                    <td className="py-1 px-1"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent" /></td>
+                    <td className="py-1 px-1">
                       <ProductAutocompleteCell
                         value={item.name}
                         products={products}
@@ -468,24 +468,24 @@ export default function QuotationForm() {
                         placeholder="Gõ tên SP..."
                       />
                     </td>
-                    <td className="py-2 px-2">
+                    <td className="py-1 px-1">
                       <div className="flex items-center gap-1">
-                        <input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent truncate" title={item.description || ''} />
+                        <input value={item.description || ''} onChange={e => updateItem(idx, 'description', e.target.value)} placeholder="Mô tả" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent truncate" title={item.description || ''} />
                         {item.description && item.description.length > 20 && (
                           <button onClick={() => setDescPopup({ idx, name: item.name, description: item.description })} className="flex-shrink-0 p-1 text-blue-400 hover:text-blue-600 cursor-pointer" title="Xem chi tiết"><Search className="h-3.5 w-3.5" /></button>
                         )}
                       </div>
                     </td>
-                    <td className="py-2 px-2"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-center" /></td>
-                    <td className="py-2 px-2"><NumericInput value={item.length || ''} onChange={v => updateItem(idx, 'length', v)} placeholder="mm" title="Ngang (mm)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2"><NumericInput value={item.width || ''} onChange={v => updateItem(idx, 'width', v)} placeholder="mm" title="Sâu (mm)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2"><NumericInput value={item.height || ''} onChange={v => updateItem(idx, 'height', v)} placeholder="mm" title="Cao (mm)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-center" /></td>
+                    <td className="py-1 px-1"><NumericInput value={item.length || ''} onChange={v => updateItem(idx, 'length', v)} placeholder="mm" title="Ngang (mm)" allowEmpty className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><NumericInput value={item.width || ''} onChange={v => updateItem(idx, 'width', v)} placeholder="mm" title="Sâu (mm)" allowEmpty className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><NumericInput value={item.height || ''} onChange={v => updateItem(idx, 'height', v)} placeholder="mm" title="Cao (mm)" allowEmpty className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     {/* DT Chuẩn — diện tích chuẩn: Ngang × Cao (mm²) — tự tính từ dimensions SP */}
-                    <td className="py-2 px-2">
-                      <NumericInput value={item.standard_area || ''} onChange={v => updateItem(idx, 'standard_area', v)} placeholder="0" title={item.standard_area ? `DT Chuẩn: ${formatNum(item.standard_area)} mm²` : 'Diện tích chuẩn (mm²)'} allowEmpty className={`w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right ${parseFloat(item.standard_area) > 0 ? 'text-teal-700 font-semibold' : ''}`} />
+                    <td className="py-1 px-1">
+                      <NumericInput value={item.standard_area || ''} onChange={v => updateItem(idx, 'standard_area', v)} placeholder="0" title={item.standard_area ? `DT Chuẩn: ${formatNum(item.standard_area)} mm²` : 'Diện tích chuẩn (mm²)'} allowEmpty className={`w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right ${parseFloat(item.standard_area) > 0 ? 'text-teal-700 font-semibold' : ''}`} />
                     </td>
                     {/* DT Thực — = Ngang × Cao (mm²), readonly */}
-                    <td className="py-2 px-2 text-right text-sm">
+                    <td className="py-1 px-1 text-right text-xs whitespace-nowrap">
                       {row.actual_area > 0 ? (
                         <span className={`font-medium ${row.area_ratio > 0 ? (row.area_ratio > 1 ? 'text-orange-600' : 'text-teal-700') : 'text-gray-600'}`} title={`${formatNum(row.actual_area)} mm²${row.area_ratio > 0 ? ` | Tỷ lệ: ×${row.area_ratio.toFixed(3)}` : ''}`}>
                           {formatNum(row.actual_area)}
@@ -495,18 +495,18 @@ export default function QuotationForm() {
                         <span className="text-gray-300">—</span>
                       )}
                     </td>
-                    <td className="py-2 px-2"><NumericInput value={item.spec_factor || ''} onChange={v => updateItem(idx, 'spec_factor', v)} placeholder="0" title="Hệ số quy cách" allowEmpty className={`w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
-                    <td className="py-2 px-2"><NumericInput value={item.quantity} onChange={v => updateItem(idx, 'quantity', v)} placeholder="1" className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2"><NumericInput value={item.unit_price} onChange={v => updateItem(idx, 'unit_price', v)} placeholder="0" className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2 text-right text-sm font-medium text-gray-900">{item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-green-600 font-bold">HỖ TRỢ</span> : formatVND(row.gross_amount || 0)}</td>
-                    <td className="py-2 px-2"><NumericInput value={item.discount_percent || 0} onChange={v => updateItem(idx, 'discount_percent', v)} className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2 text-right text-sm text-orange-600">{formatVND(row.discount_amount || 0)}</td>
-                    <td className="py-2 px-2"><NumericInput value={item.vat_rate || 0} onChange={v => updateItem(idx, 'vat_rate', v)} className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2 text-right text-sm text-gray-600">{formatVND(row.tax_amount || 0)}</td>
-                    <td className="py-2 px-2 text-right text-sm font-bold text-blue-700">{formatVND(row.total || 0)}</td>
-                    <td className="py-2 px-2"><input value={item.promo_code || ''} onChange={e => updateItem(idx, 'promo_code', e.target.value)} placeholder="" className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent" /></td>
-                    <td className="py-2 px-2 text-center"><input type="checkbox" checked={item.is_promo || false} onChange={e => updateItem(idx, 'is_promo', e.target.checked)} className="h-4 w-4 rounded cursor-pointer" /></td>
-                    <td className="py-2 px-2"><button onClick={() => removeItem(idx)} className="p-1 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-4 w-4" /></button></td>
+                    <td className="py-1 px-1"><NumericInput value={item.spec_factor || ''} onChange={v => updateItem(idx, 'spec_factor', v)} placeholder="0" title="Hệ số quy cách" allowEmpty className={`w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
+                    <td className="py-1 px-1"><NumericInput value={item.quantity} onChange={v => updateItem(idx, 'quantity', v)} placeholder="1" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><NumericInput value={item.unit_price} onChange={v => updateItem(idx, 'unit_price', v)} placeholder="0" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1 text-right text-xs font-medium whitespace-nowrap text-gray-900">{item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-green-600 font-bold">HỖ TRỢ</span> : formatVND(row.gross_amount || 0)}</td>
+                    <td className="py-1 px-1"><NumericInput value={item.discount_percent || 0} onChange={v => updateItem(idx, 'discount_percent', v)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1 text-right text-xs text-orange-600 whitespace-nowrap">{formatVND(row.discount_amount || 0)}</td>
+                    <td className="py-1 px-1"><NumericInput value={item.vat_rate || 0} onChange={v => updateItem(idx, 'vat_rate', v)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1 text-right text-xs text-gray-600 whitespace-nowrap">{formatVND(row.tax_amount || 0)}</td>
+                    <td className="py-1 px-1 text-right text-xs font-bold whitespace-nowrap text-blue-700">{formatVND(row.total || 0)}</td>
+                    <td className="py-1 px-1"><input value={item.promo_code || ''} onChange={e => updateItem(idx, 'promo_code', e.target.value)} placeholder="" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent" /></td>
+                    <td className="py-1 px-1 text-center"><input type="checkbox" checked={item.is_promo || false} onChange={e => updateItem(idx, 'is_promo', e.target.checked)} className="h-4 w-4 rounded cursor-pointer" /></td>
+                    <td className="py-1 px-1"><button onClick={() => removeItem(idx)} className="p-1 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-4 w-4" /></button></td>
                   </tr>
                   {/* Group summary rows after last item in group */}
                   {isLastInGroup && gd && (
