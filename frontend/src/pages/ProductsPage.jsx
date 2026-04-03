@@ -101,27 +101,44 @@ export default function ProductsPage() {
           }
           headerCells.push(val);
         }
-        // Also check row right after headerEndIdx for sub-headers (Ngang, Cao, Sâu often in sub-header row)
-        const subHeaderRow = rawRows[headerEndIdx + 1] || [];
-        const subStr = subHeaderRow.map(v => (v ?? '').toString().toLowerCase()).join('|');
-        const hasSubHeader = subStr.includes('ngang') || subStr.includes('cao') || subStr.includes('sâu');
-        if (hasSubHeader) {
-          // Merge sub-header into headerCells (fill empty cells)
-          for (let c = 0; c < subHeaderRow.length; c++) {
-            const cell = ((subHeaderRow[c]) ?? '').toString().trim();
-            if (cell && (!headerCells[c] || headerCells[c] === '')) headerCells[c] = cell;
+        // Also check rows after headerEndIdx for sub-headers (Ngang, Cao, Sâu often in sub-header row)
+        // Check up to 3 rows below for sub-headers
+        for (let sr = 1; sr <= 3; sr++) {
+          const subHeaderRow = rawRows[headerEndIdx + sr] || [];
+          const subStr = subHeaderRow.map(v => (v ?? '').toString().toLowerCase()).join('|');
+          const hasSubHeader = subStr.includes('ngang') || subStr.includes('cao') || subStr.includes('sâu') || subStr.includes('sau');
+          if (hasSubHeader) {
+            // Merge sub-header into headerCells (fill empty cells OR overwrite generic headers like 'kích thước')
+            for (let c = 0; c < subHeaderRow.length; c++) {
+              const cell = ((subHeaderRow[c]) ?? '').toString().trim();
+              if (cell && (!headerCells[c] || headerCells[c] === '' || headerCells[c].toLowerCase().includes('kích thước'))) {
+                headerCells[c] = cell;
+              }
+            }
+            headerEndIdx = headerEndIdx + sr;
+            break;
           }
-          headerEndIdx = headerEndIdx + 1;
         }
         console.log('Headers (merged):', headerCells);
         console.log('Header rows:', headerIdx, '-', headerEndIdx);
 
-        // Find column index by pattern
-        const findCol = (patterns) => {
+        // Find column index by pattern. exactMode=true matches the full header text exactly
+        const findCol = (patterns, exactMode = false) => {
           for (const pat of patterns) {
             const p = pat.toLowerCase();
-            const idx = headerCells.findIndex(h => h.toLowerCase().includes(p));
+            const idx = headerCells.findIndex(h => {
+              const hl = h.toLowerCase();
+              return exactMode ? (hl === p) : hl.includes(p);
+            });
             if (idx >= 0) return idx;
+          }
+          // Fallback: partial match if exact didn't find
+          if (exactMode) {
+            for (const pat of patterns) {
+              const p = pat.toLowerCase();
+              const idx = headerCells.findIndex(h => h.toLowerCase().includes(p));
+              if (idx >= 0) return idx;
+            }
           }
           return -1;
         };
@@ -150,9 +167,10 @@ export default function ProductsPage() {
         const cSellPrice = findCol(['gồm vat', 'giá bán gồm']);
         const cBasePrice = findCol(['chưa vat', 'giá bán chưa']);
         const cUnit = findCol(['đơn vị', 'don vi']);
-        const cNgang = findCol(['ngang']);
-        const cCao = findCol(['cao']);
-        const cSau = findCol(['sâu', 'sau']);
+        const cNgang = findCol(['ngang'], true);
+        const cCao = findCol(['cao'], true);
+        const cSau = findCol(['sâu', 'sau'], true);
+        console.log('Dimension cols:', { cNgang, cCao, cSau });
 
         // Parse data rows (start after all header rows)
         const parsed = [];
