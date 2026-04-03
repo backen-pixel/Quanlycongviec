@@ -169,7 +169,7 @@ export default function CRMDashboard() {
     }
   };
 
-  // ── Load company employees + FB pages on mount ──
+  // ── Load company employees on mount ──
   useEffect(() => {
     const loadCompanyEmployees = async () => {
       try {
@@ -181,14 +181,7 @@ export default function CRMDashboard() {
         console.warn('Load company employees failed:', e.message);
       }
     };
-    const loadFbPages = async () => {
-      try {
-        const { data } = await api.get('/facebook/pages');
-        setFbPages(Array.isArray(data) ? data : data?.pages || []);
-      } catch (e) { /* ignore */ }
-    };
     loadCompanyEmployees();
-    loadFbPages();
   }, []);
 
   useEffect(() => { load(); }, []);
@@ -219,7 +212,8 @@ export default function CRMDashboard() {
       setAllDeals(dealsRes.data);
       setStagesLead(stagesLeadRes.data);
       setStagesDeal(stagesDealRes.data);
-      setSources(sourcesRes.data);
+      setSources(sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []));
+      if (sourcesRes.data?.fb_pages) setFbPages(sourcesRes.data.fb_pages);
       setCompanies(companiesRes.data?.companies || companiesRes.data || []);
       setUsers(Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || []);
       setAlerts(alertsRes.data);
@@ -259,50 +253,41 @@ export default function CRMDashboard() {
     return users;
   }, [companyEmployees, users]);
 
-  // ── Computed: nguồn thông minh — chỉ nguồn đang dùng, FB → [FB] Tên Page ──
+  // ── Computed: nguồn thông minh — non-FB giữ nguyên, FB → [FB] Tên Page ──
   const smartSources = useMemo(() => {
+    // Non-FB sources (chỉ đang dùng)
     const allItems = [...allLeads, ...allDeals];
-    // Collect source_ids đang dùng
     const usedIds = new Set(allItems.map(l => l.source_id).filter(Boolean));
-    // Filter sources → only used ones
-    const usedSources = sources.filter(s => usedIds.has(s.id));
-    
-    // Build FB page name map: source_id → page_name
-    // FB sources share name "Facebook" → merge with page names
-    const fbSourceIds = usedSources.filter(s => (s.name || '').toLowerCase().includes('facebook')).map(s => s.id);
-    
-    if (fbSourceIds.length <= 1 || fbPages.length === 0) {
-      // Simple case: 0-1 FB source, or no pages loaded
-      // Just rename FB sources to include page name if available
-      return usedSources.map(s => {
-        if (fbSourceIds.includes(s.id) && fbPages.length > 0) {
-          // Try to find which page this source maps to
-          // For now, show all FB as "[FB] Page1, Page2"
-          const pageNames = fbPages.filter(p => p.is_active).map(p => p.page_name).join(', ');
-          return { ...s, label: `[FB] ${pageNames || 'Facebook'}` };
-        }
-        return { ...s, label: `${s.icon || ''} ${s.name}`.trim() };
-      });
-    }
-    
-    // Multiple FB sources: try to map each to a page
-    // Heuristic: match by order (older source = first page, newer = second)
-    const sortedFbSources = [...usedSources.filter(s => fbSourceIds.includes(s.id))]
-      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    const activePages = fbPages.filter(p => p.is_active).sort((a, b) => (a.page_name || '').localeCompare(b.page_name || ''));
-    
-    const fbMap = {};
-    sortedFbSources.forEach((s, i) => {
-      const page = activePages[i];
-      fbMap[s.id] = page ? `[FB] ${page.page_name}` : `[FB] Facebook ${i + 1}`;
-    });
-    
-    // Non-FB sources keep original name
-    return usedSources.map(s => ({
-      ...s,
-      label: fbMap[s.id] || `${s.icon || ''} ${s.name}`.trim(),
-    }));
+    const nonFb = sources
+      .filter(s => usedIds.has(s.id) && !(s.name || '').toLowerCase().includes('facebook'))
+      .map(s => ({ id: s.id, type: 'source', label: `${s.icon || ''} ${s.name}`.trim() }));
+    // FB pages (luôn hiển thị nếu active)
+    const fb = fbPages
+      .filter(p => p.is_active)
+      .map(p => ({ id: `fb:${p.page_id}`, type: 'fb_page', page_id: p.page_id, label: `[FB] ${p.page_name}` }));
+    return [...fb, ...nonFb];
   }, [sources, allLeads, allDeals, fbPages]);
+
+  // ── Map FB page_id → lead_ids (từ allLeads/allDeals join facebook_contacts) ──
+  // Fetch once when filterSource starts with 'fb:'
+  const [fbPageLeadIds, setFbPageLeadIds] = useState(new Set());
+  const lastFbFilter = useRef('');
+  useEffect(() => {
+    if (!filterSource.startsWith('fb:')) {
+      setFbPageLeadIds(new Set());
+      lastFbFilter.current = '';
+      return;
+    }
+    const pageId = filterSource.replace('fb:', '');
+    if (lastFbFilter.current === pageId) return;
+    lastFbFilter.current = pageId;
+    (async () => {
+      try {
+        const { data } = await api.get('/crm/leads-by-fb-page', { params: { page_id: pageId, type: pipelineType } });
+        setFbPageLeadIds(new Set((data || []).map(l => l.id)));
+      } catch { setFbPageLeadIds(new Set()); }
+    })();
+  }, [filterSource, pipelineType]);
 
   // ── Client-side search + filter (instant, no API) ──
   const filterItems = useCallback((items) => {
@@ -318,9 +303,13 @@ export default function CRMDashboard() {
       result = result.filter(l => l.assigned_to === filterAssignee || l.lead_owner_id === filterAssignee);
     }
 
-    // Source filter
+    // Source filter — FB page dùng lead IDs, non-FB dùng source_id
     if (filterSource) {
-      result = result.filter(l => l.source_id === filterSource);
+      if (filterSource.startsWith('fb:')) {
+        result = result.filter(l => fbPageLeadIds.has(l.id));
+      } else {
+        result = result.filter(l => l.source_id === filterSource);
+      }
     }
 
     // Stage filter
@@ -358,7 +347,7 @@ export default function CRMDashboard() {
     }
     
     return result;
-  }, [searchText, filterCompany, filterAssignee, filterSource, filterStage, filterPhone]);
+  }, [searchText, filterCompany, filterAssignee, filterSource, filterStage, filterPhone, fbPageLeadIds]);
 
   const leads = useMemo(() => filterItems(allLeads), [allLeads, filterItems]);
   const deals = useMemo(() => filterItems(allDeals), [allDeals, filterItems]);
