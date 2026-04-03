@@ -173,6 +173,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const [addingAttNote, setAddingAttNote] = useState(null);
   const [attNoteText, setAttNoteText] = useState('');
   const [attNoteName, setAttNoteName] = useState('');
+  const [uploadProgress, setUploadProgress] = useState({}); // { taskId: { percent, name } }
 
   if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
@@ -206,8 +207,6 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
       setSavingNote(null);
     }
   };
-
-  const [uploadProgress, setUploadProgress] = useState({}); // { taskId: { percent, name } }
 
   const compressImage = (file, maxWidth = 1920, quality = 0.8) => {
     return new Promise((resolve) => {
