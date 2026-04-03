@@ -1,11 +1,11 @@
 services:
-  # Backend — Web Service
+  # Backend — Web Service (also serves frontend)
   - type: web
     name: tubep-backend
     runtime: node
-    rootDir: backend
-    buildCommand: npm ci --prefer-offline --no-audit
-    startCommand: npm start
+    rootDir: ./
+    buildCommand: cd frontend && npm ci --prefer-offline --no-audit && npm run build && cd ../backend && npm ci --prefer-offline --no-audit
+    startCommand: cd backend && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -20,15 +20,3 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
-
-  # Frontend — Static Site
-  - type: web
-    name: tubep-frontend
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm ci --prefer-offline --no-audit && npm run build
-    staticPublishPath: dist
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
