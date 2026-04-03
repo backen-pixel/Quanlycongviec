@@ -196,6 +196,17 @@ export default function ProductsPage() {
             sau: gn(cSau) || null,
           };
 
+          // Fallback: parse dimensions from product name if no Excel columns
+          if (!p.ngang && !p.cao && p.name) {
+            // Pattern: "700×380", "700 x 380", "700x380x320", "700*380"
+            const dimMatch = p.name.match(/(\d{2,4})\s*[×xX\*]\s*(\d{2,4})(?:\s*[×xX\*]\s*(\d{2,4}))?/);
+            if (dimMatch) {
+              p.ngang = parseInt(dimMatch[1]) || null;
+              p.cao = parseInt(dimMatch[2]) || null;
+              if (dimMatch[3]) p.sau = parseInt(dimMatch[3]) || null;
+            }
+          }
+
           // Fallback: split MÃ THÀNH PHẨM if individual codes empty
           if (p.code && !p.code_group) {
             const pts = p.code.split('-');

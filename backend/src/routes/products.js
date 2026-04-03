@@ -150,10 +150,19 @@ r.post('/import', async (req, res) => {
         const finalSellingPrice = sellingPrice || (basePrice ? Math.round(basePrice * 1.1) : 0);
         const finalBasePrice = basePrice || (sellingPrice ? Math.round(sellingPrice / 1.1) : 0);
 
-        // Parse dimensions (Ngang, Cao, Sâu)
-        const dimNgang = parseInt(row['Ngang'] || row['ngang']) || null;
-        const dimCao = parseInt(row['Cao'] || row['cao']) || null;
-        const dimSau = parseInt(row['Sâu'] || row['sau'] || row['sâu']) || null;
+        // Parse dimensions (Ngang, Cao, Sâu) - from Excel cols or auto-parse from name
+        let dimNgang = parseInt(row['Ngang'] || row['ngang']) || null;
+        let dimCao = parseInt(row['Cao'] || row['cao']) || null;
+        let dimSau = parseInt(row['Sâu'] || row['sau'] || row['sâu']) || null;
+        // Fallback: parse dimensions from product name
+        if (!dimNgang && !dimCao && name) {
+          const dimMatch = name.match(/(\d{2,4})\s*[×xX\*]\s*(\d{2,4})(?:\s*[×xX\*]\s*(\d{2,4}))?/);
+          if (dimMatch) {
+            dimNgang = parseInt(dimMatch[1]) || null;
+            dimCao = parseInt(dimMatch[2]) || null;
+            if (dimMatch[3]) dimSau = parseInt(dimMatch[3]) || null;
+          }
+        }
         const dimensions = (dimNgang || dimCao || dimSau) ? { ngang: dimNgang, cao: dimCao, sau: dimSau } : null;
 
         const productData = {
