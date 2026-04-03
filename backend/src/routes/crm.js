@@ -532,11 +532,32 @@ r.get('/employees-by-company', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SOURCES
+// SOURCES — bao gồm nguồn thông thường + FB pages gộp
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/sources', async (req, res) => {
   const { data } = await supabase.from('crm_sources').select('*').eq('is_active', true).order('name');
-  res.json(data || []);
+  // Fetch FB pages to enrich sources
+  const { data: pages } = await supabase.from('facebook_pages').select('id, page_id, page_name, is_active').eq('is_active', true);
+  res.json({ sources: data || [], fb_pages: pages || [] });
+});
+
+// ── Lọc leads theo Facebook Page (qua facebook_contacts) ──
+// GET /crm/leads-by-fb-page?page_id=114251548348282&type=lead
+r.get('/leads-by-fb-page', async (req, res) => {
+  try {
+    const { page_id, type = 'lead' } = req.query;
+    if (!page_id) return res.status(400).json({ error: 'page_id required' });
+    // Get lead_ids from facebook_contacts for this page
+    const { data: contacts } = await supabase.from('facebook_contacts')
+      .select('lead_id').eq('page_id', page_id).not('lead_id', 'is', null);
+    const leadIds = [...new Set((contacts || []).map(c => c.lead_id))];
+    if (!leadIds.length) return res.json([]);
+    const { data } = await supabase.from('crm_leads')
+      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
+      .in('id', leadIds).eq('type', type)
+      .order('created_at', { ascending: false });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
