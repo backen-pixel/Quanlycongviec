@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../lib/auth';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
@@ -285,6 +285,21 @@ function InboxTab() {
     return true;
   });
 
+  // Dedup messages — loại bỏ tin nhắn trùng fb_message_id hoặc id
+  const uniqueMessages = useMemo(() => {
+    const seen = new Set();
+    return messages.filter(m => {
+      const key = m.fb_message_id || m.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      if (m.id && key !== m.id) {
+        if (seen.has(m.id)) return false;
+        seen.add(m.id);
+      }
+      return true;
+    });
+  }, [messages]);
+
   return (
     <div className="flex h-full">
       {/* ── LEFT: Contact list ── */}
@@ -391,11 +406,11 @@ function InboxTab() {
               </div>
             </div>
 
-            {/* Messages */}
+              {/* Messages */}
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-              {messages.map((m, i) => {
+              {uniqueMessages.map((m, i) => {
                 const isOut = m.direction === 'outbound';
-                const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(messages[i-1]?.created_at).toDateString();
+                const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(uniqueMessages[i-1]?.created_at).toDateString();
                 return (
                   <div key={m.id}>
                     {showDate && (
