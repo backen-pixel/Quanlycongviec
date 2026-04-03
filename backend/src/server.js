@@ -74,6 +74,19 @@ app.use('/api/settings', require('./routes/settings'));
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
 try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
 
+// ─── Serve Frontend (SPA) in production ──
+const frontendDist = path.join(__dirname, '../../frontend/dist');
+const fs = require('fs');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  // SPA fallback: any non-API route → index.html
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/socket.io')) return next();
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+  console.log('🌐 Serving frontend from', frontendDist);
+}
+
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;

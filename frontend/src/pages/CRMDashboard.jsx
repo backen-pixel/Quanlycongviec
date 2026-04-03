@@ -64,15 +64,10 @@ function getDateRange(preset) {
 }
 
 const TIME_PRESETS = [
-  { key: '', label: '⏰ Tất cả thời gian' },
-  { key: 'today', label: '📅 Hôm nay' },
-  { key: 'this_week', label: '📆 Tuần này' },
-  { key: 'last_week', label: '📆 Tuần trước' },
-  { key: 'this_month', label: '🗓️ Tháng này' },
-  { key: 'last_month', label: '🗓️ Tháng trước' },
-  { key: 'this_quarter', label: '📊 Quý này' },
-  { key: 'this_year', label: '📅 Năm nay' },
-  { key: 'custom', label: '🔧 Tùy chỉnh...' },
+  { key: '', label: 'Tất cả' },
+  { key: 'this_week', label: 'Tuần này' },
+  { key: 'this_month', label: 'Tháng này' },
+  { key: 'custom', label: 'Tùy chỉnh' },
 ];
 
 export default function CRMDashboard() {
@@ -111,6 +106,7 @@ export default function CRMDashboard() {
   const [companyEmployees, setCompanyEmployees] = useState([]);
   const [companyDepts, setCompanyDepts] = useState([]);
   const [userCompanyId, setUserCompanyId] = useState('');
+  const [fbPages, setFbPages] = useState([]); // Facebook pages for source labels
 
   const switchTab = (tab) => {
     setPipelineType(tab);
@@ -173,7 +169,7 @@ export default function CRMDashboard() {
     }
   };
 
-  // ── Load company employees on mount ──
+  // ── Load company employees + FB pages on mount ──
   useEffect(() => {
     const loadCompanyEmployees = async () => {
       try {
@@ -185,7 +181,14 @@ export default function CRMDashboard() {
         console.warn('Load company employees failed:', e.message);
       }
     };
+    const loadFbPages = async () => {
+      try {
+        const { data } = await api.get('/facebook/pages');
+        setFbPages(Array.isArray(data) ? data : data?.pages || []);
+      } catch (e) { /* ignore */ }
+    };
     loadCompanyEmployees();
+    loadFbPages();
   }, []);
 
   useEffect(() => { load(); }, []);
@@ -255,6 +258,51 @@ export default function CRMDashboard() {
     if (companyEmployees.length > 0) return companyEmployees;
     return users;
   }, [companyEmployees, users]);
+
+  // ── Computed: nguồn thông minh — chỉ nguồn đang dùng, FB → [FB] Tên Page ──
+  const smartSources = useMemo(() => {
+    const allItems = [...allLeads, ...allDeals];
+    // Collect source_ids đang dùng
+    const usedIds = new Set(allItems.map(l => l.source_id).filter(Boolean));
+    // Filter sources → only used ones
+    const usedSources = sources.filter(s => usedIds.has(s.id));
+    
+    // Build FB page name map: source_id → page_name
+    // FB sources share name "Facebook" → merge with page names
+    const fbSourceIds = usedSources.filter(s => (s.name || '').toLowerCase().includes('facebook')).map(s => s.id);
+    
+    if (fbSourceIds.length <= 1 || fbPages.length === 0) {
+      // Simple case: 0-1 FB source, or no pages loaded
+      // Just rename FB sources to include page name if available
+      return usedSources.map(s => {
+        if (fbSourceIds.includes(s.id) && fbPages.length > 0) {
+          // Try to find which page this source maps to
+          // For now, show all FB as "[FB] Page1, Page2"
+          const pageNames = fbPages.filter(p => p.is_active).map(p => p.page_name).join(', ');
+          return { ...s, label: `[FB] ${pageNames || 'Facebook'}` };
+        }
+        return { ...s, label: `${s.icon || ''} ${s.name}`.trim() };
+      });
+    }
+    
+    // Multiple FB sources: try to map each to a page
+    // Heuristic: match by order (older source = first page, newer = second)
+    const sortedFbSources = [...usedSources.filter(s => fbSourceIds.includes(s.id))]
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const activePages = fbPages.filter(p => p.is_active).sort((a, b) => (a.page_name || '').localeCompare(b.page_name || ''));
+    
+    const fbMap = {};
+    sortedFbSources.forEach((s, i) => {
+      const page = activePages[i];
+      fbMap[s.id] = page ? `[FB] ${page.page_name}` : `[FB] Facebook ${i + 1}`;
+    });
+    
+    // Non-FB sources keep original name
+    return usedSources.map(s => ({
+      ...s,
+      label: fbMap[s.id] || `${s.icon || ''} ${s.name}`.trim(),
+    }));
+  }, [sources, allLeads, allDeals, fbPages]);
 
   // ── Client-side search + filter (instant, no API) ──
   const filterItems = useCallback((items) => {
@@ -674,12 +722,12 @@ export default function CRMDashboard() {
               </select>
             )}
 
-            {/* Source */}
-            {sources.length > 0 && (
+            {/* Source — smart: chỉ nguồn đang dùng, FB → [FB] Tên Page */}
+            {smartSources.length > 0 && (
               <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
                 className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
                 <option value="">🔗 Tất cả nguồn</option>
-                {sources.map(s => <option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}
+                {smartSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             )}
 
