@@ -4,24 +4,40 @@ import { AuthProvider, useAuth } from './lib/auth';
 
 // Error Boundary — hiện lỗi thay vì trang trắng
 class ErrorBoundary extends Component {
-  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
-  componentDidCatch(error, info) { console.error('ErrorBoundary:', error, info); }
+  componentDidCatch(error, info) {
+    this.setState({ errorInfo: info });
+    console.error('ErrorBoundary:', error, info);
+  }
   render() {
     if (this.state.hasError) {
+      const currentPath = window.location.pathname;
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 p-8">
-          <div className="bg-white rounded-xl shadow-lg p-8 max-w-lg w-full text-center">
+          <div className="bg-white rounded-xl shadow-lg p-8 max-w-2xl w-full text-center">
             <p className="text-4xl mb-4">😵</p>
             <h2 className="text-xl font-bold text-gray-900 mb-2">Đã xảy ra lỗi</h2>
-            <p className="text-sm text-gray-500 mb-4">{this.state.error?.message || 'Lỗi không xác định'}</p>
-            <pre className="text-xs text-left bg-gray-100 rounded-lg p-3 mb-4 max-h-40 overflow-auto text-red-600">
+            <p className="text-sm text-gray-500 mb-1">Trang: <code className="bg-gray-100 px-2 py-0.5 rounded">{currentPath}</code></p>
+            <p className="text-sm text-red-500 mb-4">{this.state.error?.message || 'Lỗi không xác định'}</p>
+            <pre className="text-xs text-left bg-gray-100 rounded-lg p-3 mb-2 max-h-32 overflow-auto text-red-600">
               {this.state.error?.stack?.split('\n').slice(0, 5).join('\n')}
             </pre>
-            <button onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer">
-              🔄 Tải lại trang
-            </button>
+            {this.state.errorInfo?.componentStack && (
+              <pre className="text-xs text-left bg-blue-50 rounded-lg p-3 mb-4 max-h-32 overflow-auto text-blue-700">
+                {this.state.errorInfo.componentStack.split('\n').slice(0, 8).join('\n')}
+              </pre>
+            )}
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => { window.location.href = '/crm'; }}
+                className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 cursor-pointer">
+                🏠 Về trang chủ
+              </button>
+              <button onClick={() => { this.setState({ hasError: false, error: null, errorInfo: null }); window.location.reload(); }}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer">
+                🔄 Tải lại trang
+              </button>
+            </div>
           </div>
         </div>
       );
