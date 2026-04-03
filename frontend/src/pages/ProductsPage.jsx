@@ -79,14 +79,42 @@ export default function ProductsPage() {
         // Raw parse — handle multi-row headers + duplicate "mã" columns
         const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-        // Find header row (contains 'thành phẩm' or 'đơn vị')
+        // Find header rows — Excel may have multi-row merged headers
+        // Scan first 15 rows for header content
         let headerIdx = 0;
-        for (let r = 0; r < Math.min(rawRows.length, 10); r++) {
+        let headerEndIdx = 0;
+        for (let r = 0; r < Math.min(rawRows.length, 15); r++) {
           const rowStr = (rawRows[r] || []).map(v => (v ?? '').toString().toLowerCase()).join('|');
-          if (rowStr.includes('thành phẩm') || rowStr.includes('đơn vị')) { headerIdx = r; break; }
+          if (rowStr.includes('thành phẩm') || rowStr.includes('đơn vị') || rowStr.includes('mã thành phẩm')) {
+            if (!headerIdx && !headerEndIdx) headerIdx = r;
+            headerEndIdx = r;
+          }
         }
-        const headerCells = (rawRows[headerIdx] || []).map(h => (h ?? '').toString().trim());
-        console.log('Headers:', headerCells);
+        // Merge multi-row headers: for each column, take first non-empty value across header rows
+        const maxCols = Math.max(...rawRows.slice(headerIdx, headerEndIdx + 1).map(r => (r||[]).length), 0);
+        const headerCells = [];
+        for (let c = 0; c < maxCols; c++) {
+          let val = '';
+          for (let r = headerIdx; r <= headerEndIdx; r++) {
+            const cell = ((rawRows[r] || [])[c] ?? '').toString().trim();
+            if (cell && !val) { val = cell; break; }
+          }
+          headerCells.push(val);
+        }
+        // Also check row right after headerEndIdx for sub-headers (Ngang, Cao, Sâu often in sub-header row)
+        const subHeaderRow = rawRows[headerEndIdx + 1] || [];
+        const subStr = subHeaderRow.map(v => (v ?? '').toString().toLowerCase()).join('|');
+        const hasSubHeader = subStr.includes('ngang') || subStr.includes('cao') || subStr.includes('sâu');
+        if (hasSubHeader) {
+          // Merge sub-header into headerCells (fill empty cells)
+          for (let c = 0; c < subHeaderRow.length; c++) {
+            const cell = ((subHeaderRow[c]) ?? '').toString().trim();
+            if (cell && (!headerCells[c] || headerCells[c] === '')) headerCells[c] = cell;
+          }
+          headerEndIdx = headerEndIdx + 1;
+        }
+        console.log('Headers (merged):', headerCells);
+        console.log('Header rows:', headerIdx, '-', headerEndIdx);
 
         // Find column index by pattern
         const findCol = (patterns) => {
@@ -126,9 +154,9 @@ export default function ProductsPage() {
         const cCao = findCol(['cao']);
         const cSau = findCol(['sâu', 'sau']);
 
-        // Parse data rows
+        // Parse data rows (start after all header rows)
         const parsed = [];
-        for (let r = headerIdx + 1; r < rawRows.length; r++) {
+        for (let r = headerEndIdx + 1; r < rawRows.length; r++) {
           const v = rawRows[r];
           if (!v || v.every(x => x === '' || x == null)) continue;
           const gv = (i) => i >= 0 ? (v[i] ?? '').toString().trim() : '';
