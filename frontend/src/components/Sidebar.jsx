@@ -197,6 +197,12 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Auto-collapse sidebar on quotation form pages (need more screen space)
+  useEffect(() => {
+    const isQuotationForm = /\/crm\/quotations\/(new|[0-9a-f-]{36})/.test(location.pathname);
+    if (isQuotationForm && !collapsed) setCollapsed(true);
+  }, [location.pathname]);
+
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
   const isCRM = location.pathname.startsWith('/crm');
   const isSX = location.pathname.startsWith('/sx');
