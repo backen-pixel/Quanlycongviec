@@ -167,18 +167,28 @@ export default function QuotationForm() {
     else setForm(f => ({ ...f, customer_id: cid }));
   };
 
-  // Add product to items — auto-fill vat_rate from product
+  // Add product to items — auto-fill vat_rate, dimensions, standard_area from product
   const addProduct = (pid) => {
     const p = products.find(x => x.id === pid);
-    if (p) setItems(prev => [...prev, {
-      product_id: p.id, name: p.name, description: p.description || '',
-      product_code: p.code || '', unit: p.unit || 'bộ',
-      quantity: 1, unit_price: p.base_price || 0, discount_percent: 0,
-      vat_rate: p.vat_rate || 0,
-      height: '', width: '', length: '', weight: '',
-      dimensions: p.dimensions || '', material: p.material || '', color: p.color || '',
-      promo_code: '', is_promo: false,
-    }]);
+    if (p) {
+      const dim = p.dimensions || {};
+      const dimNgang = dim.ngang || dim.width || '';
+      const dimCao = dim.cao || dim.height || '';
+      const dimSau = dim.sau || dim.depth || '';
+      const stdAreaMM = (parseFloat(dimNgang) || 0) * (parseFloat(dimCao) || 0);
+      setItems(prev => [...prev, {
+        product_id: p.id, name: p.name, description: p.description || '',
+        product_code: p.code || '', unit: p.unit || 'bộ',
+        quantity: 1, unit_price: p.base_price || 0, discount_percent: 0,
+        vat_rate: p.vat_rate || 0,
+        length: dimNgang || '', width: dimSau || '', height: dimCao || '',
+        weight: '',
+        dimensions: p.dimensions || '', material: p.material || '', color: p.color || '',
+        promo_code: '', is_promo: false,
+        standard_area: stdAreaMM > 0 ? stdAreaMM : 0,
+        spec_factor: 0, group_name: '',
+      }]);
+    }
   };
 
   // Calculations with per-item VAT + spec_factor (hệ số quy cách) + area formula
@@ -189,14 +199,13 @@ export default function QuotationForm() {
       const price = i.unit_price || 0;
       
       // ── Tính diện tích thực tế từ kích thước ──
-      const lengthVal = parseFloat(i.length) || 0; // Ngang (m)
-      const widthVal = parseFloat(i.width) || 0;   // Sâu (m)
-      const heightVal = parseFloat(i.height) || 0;  // Cao (m)
+      const lengthVal = parseFloat(i.length) || 0; // Ngang (mm)
+      const widthVal = parseFloat(i.width) || 0;   // Sâu (mm)
+      const heightVal = parseFloat(i.height) || 0;  // Cao (mm)
       
-      // Diện tích thực tế: Ngang × Sâu (hoặc Ngang × Cao tùy hàng hóa)
-      // Dùng 2 chiều lớn nhất khác 0 để tính
-      const dims = [lengthVal, widthVal, heightVal].filter(d => d > 0);
-      const actualArea = dims.length >= 2 ? dims[0] * dims[1] : (dims.length === 1 ? dims[0] : 0);
+      // Diện tích thực tế = Ngang × Cao (mm²)
+      // Đây là diện tích mặt tủ — dùng để so với DT chuẩn
+      const actualArea = (lengthVal > 0 && heightVal > 0) ? lengthVal * heightVal : 0;
       
       // ── Diện tích chuẩn (standard_area) — nếu có ──
       const standardArea = parseFloat(i.standard_area) || 0;
@@ -386,11 +395,11 @@ export default function QuotationForm() {
               <th className="py-2.5 px-2 text-left min-w-[220px]">Tên hàng hóa</th>
               <th className="py-2.5 px-2 text-left min-w-[180px]">Diễn giải</th>
               <th className="py-2.5 px-2 text-center w-16">ĐVT</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Ngang (m)">Ngang</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Sâu (m)">Sâu</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Cao (m)">Cao</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Diện tích chuẩn (m²) — đơn giá dựa trên DT này">DT Chuẩn</th>
-              <th className="py-2.5 px-2 text-right w-20" title="Diện tích thực tế (m²) — tự tính từ kích thước">DT Thực</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Ngang (mm)">Ngang</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Sâu (mm)">Sâu</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Cao (mm)">Cao</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Diện tích chuẩn (mm²) — đơn giá dựa trên DT này">DT Chuẩn</th>
+              <th className="py-2.5 px-2 text-right w-20" title="Diện tích thực tế (mm²) = Ngang × Cao">DT Thực</th>
               <th className="py-2.5 px-2 text-right w-20" title="Hệ số quy cách: nhân vào đơn giá (VD: mét dài ngang tủ)">HS QC</th>
               <th className="py-2.5 px-2 text-right w-16">SL</th>
               <th className="py-2.5 px-2 text-right w-32">Đơn giá</th>
@@ -432,6 +441,14 @@ export default function QuotationForm() {
                         products={products}
                         onChange={(val) => updateItem(idx, 'name', val)}
                         onSelectProduct={(p) => {
+                          // Parse dimensions from product (jsonb: {ngang, cao, sau})
+                          const dim = p.dimensions || {};
+                          const dimNgang = dim.ngang || dim.width || '';
+                          const dimCao = dim.cao || dim.height || '';
+                          const dimSau = dim.sau || dim.depth || '';
+                          // Standard area = ngang × cao (in mm, convert to m²)
+                          const stdAreaMM = (parseFloat(dimNgang) || 0) * (parseFloat(dimCao) || 0);
+                          const stdArea = stdAreaMM > 0 ? stdAreaMM : 0;
                           setItems(prev => prev.map((it, i) => i === idx ? {
                             ...it,
                             product_id: p.id, name: p.name, description: p.description || it.description,
@@ -441,6 +458,11 @@ export default function QuotationForm() {
                             dimensions: p.dimensions || it.dimensions,
                             material: p.material || it.material,
                             color: p.color || it.color,
+                            // Fill dimensions into size fields
+                            length: dimNgang || it.length,   // Ngang
+                            height: dimCao || it.height,      // Cao  
+                            width: dimSau || it.width,        // Sâu
+                            standard_area: stdArea || it.standard_area,
                           } : it));
                         }}
                         placeholder="Gõ tên SP..."
@@ -455,17 +477,19 @@ export default function QuotationForm() {
                       </div>
                     </td>
                     <td className="py-2 px-2"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-center" /></td>
-                    <td className="py-2 px-2"><NumericInput value={item.length || ''} onChange={v => updateItem(idx, 'length', v)} placeholder="0" title="Ngang (m)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2"><NumericInput value={item.width || ''} onChange={v => updateItem(idx, 'width', v)} placeholder="0" title="Sâu (m)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    <td className="py-2 px-2"><NumericInput value={item.height || ''} onChange={v => updateItem(idx, 'height', v)} placeholder="0" title="Cao (m)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
-                    {/* DT Chuẩn — diện tích chuẩn: đơn giá dựa trên DT này */}
-                    <td className="py-2 px-2"><NumericInput value={item.standard_area || ''} onChange={v => updateItem(idx, 'standard_area', v)} placeholder="0" title="Diện tích chuẩn (m²)" allowEmpty className={`w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right ${parseFloat(item.standard_area) > 0 ? 'text-teal-700 font-semibold' : ''}`} /></td>
-                    {/* DT Thực — tự tính từ kích thước, readonly */}
+                    <td className="py-2 px-2"><NumericInput value={item.length || ''} onChange={v => updateItem(idx, 'length', v)} placeholder="mm" title="Ngang (mm)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2"><NumericInput value={item.width || ''} onChange={v => updateItem(idx, 'width', v)} placeholder="mm" title="Sâu (mm)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
+                    <td className="py-2 px-2"><NumericInput value={item.height || ''} onChange={v => updateItem(idx, 'height', v)} placeholder="mm" title="Cao (mm)" allowEmpty className="w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right" /></td>
+                    {/* DT Chuẩn — diện tích chuẩn: Ngang × Cao (mm²) — tự tính từ dimensions SP */}
+                    <td className="py-2 px-2">
+                      <NumericInput value={item.standard_area || ''} onChange={v => updateItem(idx, 'standard_area', v)} placeholder="0" title={item.standard_area ? `DT Chuẩn: ${formatNum(item.standard_area)} mm²` : 'Diện tích chuẩn (mm²)'} allowEmpty className={`w-full px-2 py-1.5 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-sm outline-none bg-transparent text-right ${parseFloat(item.standard_area) > 0 ? 'text-teal-700 font-semibold' : ''}`} />
+                    </td>
+                    {/* DT Thực — = Ngang × Cao (mm²), readonly */}
                     <td className="py-2 px-2 text-right text-sm">
                       {row.actual_area > 0 ? (
-                        <span className={`font-medium ${row.area_ratio > 0 ? 'text-teal-700' : 'text-gray-600'}`} title={row.area_ratio > 0 ? `Tỷ lệ: ×${row.area_ratio.toFixed(3)}` : ''}>
-                          {row.actual_area.toFixed(2)}
-                          {row.area_ratio > 0 && <span className="text-[10px] text-teal-500 block">×{row.area_ratio.toFixed(2)}</span>}
+                        <span className={`font-medium ${row.area_ratio > 0 ? (row.area_ratio > 1 ? 'text-orange-600' : 'text-teal-700') : 'text-gray-600'}`} title={`${formatNum(row.actual_area)} mm²${row.area_ratio > 0 ? ` | Tỷ lệ: ×${row.area_ratio.toFixed(3)}` : ''}`}>
+                          {formatNum(row.actual_area)}
+                          {row.area_ratio > 0 && <span className={`text-[10px] block ${row.area_ratio > 1 ? 'text-orange-500' : 'text-teal-500'}`}>×{row.area_ratio.toFixed(2)}</span>}
                         </span>
                       ) : (
                         <span className="text-gray-300">—</span>
