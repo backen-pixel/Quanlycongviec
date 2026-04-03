@@ -207,7 +207,7 @@ async function nextCode(prefix) {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/dashboard', async (req, res) => {
   try {
-    const { type = 'lead', company_id } = req.query; // 'lead' or 'deal'
+    const { type = 'lead', company_id, date_from, date_to } = req.query; // 'lead' or 'deal'
 
     // Pipeline stages for the specified type
     const { data: stages } = await supabase
@@ -217,12 +217,14 @@ r.get('/dashboard', async (req, res) => {
       .eq('pipeline_type', type)
       .order('order_index');
 
-    // Leads/Deals count per stage (with optional company filter)
+    // Leads/Deals count per stage (with optional company + date filter)
     let leadsQuery = supabase
       .from('crm_leads')
       .select('id, stage_id, estimated_value, probability, type')
       .eq('type', type);
     if (company_id) leadsQuery = leadsQuery.eq('company_id', company_id);
+    if (date_from) leadsQuery = leadsQuery.gte('created_at', date_from);
+    if (date_to) leadsQuery = leadsQuery.lte('created_at', date_to + 'T23:59:59.999Z');
     const { data: leads } = await leadsQuery;
 
     const stageStats = (stages || []).map(s => {
@@ -460,6 +462,76 @@ r.put('/pipeline-stages-reorder', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// EMPLOYEES BY COMPANY — Lọc nhân viên theo công ty của user đăng nhập
+// Chỉ hiển thị nhân viên thuộc phòng ban kinh doanh (sales) của công ty đó
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/employees-by-company', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { company_id: queryCompanyId } = req.query;
+
+    // Resolve company_id: ưu tiên query param, fallback sang user's company
+    let companyId = queryCompanyId;
+    if (!companyId) {
+      // Lấy company_id từ user → department → company
+      const { data: userData } = await supabase.from('users')
+        .select('department_id')
+        .eq('id', userId).single();
+      
+      if (userData?.department_id) {
+        const { data: deptData } = await supabase.from('departments')
+          .select('company_id')
+          .eq('id', userData.department_id).single();
+        companyId = deptData?.company_id;
+      }
+    }
+
+    if (!companyId) {
+      return res.json({ users: [], departments: [], company_id: null });
+    }
+
+    // Lấy phòng ban kinh doanh (sales-related) của công ty
+    // Match: tên chứa "kinh doanh", "sales", "CSKH", "marketing", "tư vấn"
+    const { data: allDepts } = await supabase.from('departments')
+      .select('id, name, color, company_id')
+      .eq('company_id', companyId)
+      .eq('is_active', true)
+      .order('name');
+
+    const SALES_KEYWORDS = ['kinh doanh', 'sales', 'cskh', 'marketing', 'tư vấn', 'chăm sóc', 'thương mại', 'phát triển'];
+    const salesDepts = (allDepts || []).filter(d => {
+      const lowerName = (d.name || '').toLowerCase();
+      return SALES_KEYWORDS.some(kw => lowerName.includes(kw));
+    });
+
+    // Nếu không có phòng ban kinh doanh nào → trả về tất cả phòng ban
+    const targetDepts = salesDepts.length > 0 ? salesDepts : (allDepts || []);
+    const deptIds = targetDepts.map(d => d.id);
+
+    if (!deptIds.length) {
+      return res.json({ users: [], departments: [], company_id: companyId });
+    }
+
+    // Lấy nhân viên thuộc các phòng ban đó
+    const { data: users } = await supabase.from('users')
+      .select('id, full_name, email, phone, avatar, role, department_id, position')
+      .in('department_id', deptIds)
+      .eq('is_active', true)
+      .order('full_name');
+
+    res.json({
+      users: users || [],
+      departments: targetDepts,
+      company_id: companyId,
+      is_sales_filtered: salesDepts.length > 0,
+    });
+  } catch (e) {
+    console.error('employees-by-company error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SOURCES
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/sources', async (req, res) => {
@@ -472,7 +544,7 @@ r.get('/sources', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/leads', async (req, res) => {
   try {
-    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead', company_id } = req.query;
+    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead', company_id, date_from, date_to } = req.query;
     let q = supabase.from('crm_leads')
       .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
       .eq('type', type) // Filter by type: lead or deal
@@ -483,6 +555,8 @@ r.get('/leads', async (req, res) => {
     if (assigned_to) q = q.eq('assigned_to', assigned_to);
     if (source_id) q = q.eq('source_id', source_id);
     if (company_id) q = q.eq('company_id', company_id);
+    if (date_from) q = q.gte('created_at', date_from);
+    if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
     if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%`);
 
     const { data, error } = await q;
