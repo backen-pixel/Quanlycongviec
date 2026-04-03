@@ -22,7 +22,16 @@ r.post('/login', async (req, res) => {
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
     const token = jwt.sign({ userId: user.id, email: user.email, role: user.role, fullName: user.full_name }, config.jwtSecret, { expiresIn: '12h' });
 
-    res.json({ token, user: { id: user.id, email: user.email, fullName: user.full_name, role: user.role, avatar: user.avatar, phone: user.phone } });
+    // Resolve company_id from department
+    let company_id = user.company_id || null;
+    if (!company_id && user.department_id) {
+      try {
+        const { data: dept } = await supabase.from('departments').select('company_id').eq('id', user.department_id).single();
+        company_id = dept?.company_id || null;
+      } catch (_) {}
+    }
+
+    res.json({ token, user: { id: user.id, email: user.email, fullName: user.full_name, role: user.role, avatar: user.avatar, phone: user.phone, department_id: user.department_id || null, company_id } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
 });
 

@@ -7,10 +7,73 @@ import {
   TrendingUp, Users, User, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
-  Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin
+  Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
+  Clock
 } from 'lucide-react';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
+
+// ── HELPER: tính khoảng thời gian ──
+function getDateRange(preset) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (preset) {
+    case 'today': {
+      return { from: today.toISOString().split('T')[0], to: today.toISOString().split('T')[0] };
+    }
+    case 'this_week': {
+      const dayOfWeek = today.getDay();
+      const monday = new Date(today);
+      monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      return { from: monday.toISOString().split('T')[0], to: sunday.toISOString().split('T')[0] };
+    }
+    case 'last_week': {
+      const dayOfWeek = today.getDay();
+      const thisMonday = new Date(today);
+      thisMonday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+      const lastMonday = new Date(thisMonday);
+      lastMonday.setDate(thisMonday.getDate() - 7);
+      const lastSunday = new Date(lastMonday);
+      lastSunday.setDate(lastMonday.getDate() + 6);
+      return { from: lastMonday.toISOString().split('T')[0], to: lastSunday.toISOString().split('T')[0] };
+    }
+    case 'this_month': {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { from: firstDay.toISOString().split('T')[0], to: lastDay.toISOString().split('T')[0] };
+    }
+    case 'last_month': {
+      const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastDay = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { from: firstDay.toISOString().split('T')[0], to: lastDay.toISOString().split('T')[0] };
+    }
+    case 'this_quarter': {
+      const qMonth = Math.floor(now.getMonth() / 3) * 3;
+      const firstDay = new Date(now.getFullYear(), qMonth, 1);
+      const lastDay = new Date(now.getFullYear(), qMonth + 3, 0);
+      return { from: firstDay.toISOString().split('T')[0], to: lastDay.toISOString().split('T')[0] };
+    }
+    case 'this_year': {
+      return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
+    }
+    default:
+      return { from: '', to: '' };
+  }
+}
+
+const TIME_PRESETS = [
+  { key: '', label: '⏰ Tất cả thời gian' },
+  { key: 'today', label: '📅 Hôm nay' },
+  { key: 'this_week', label: '📆 Tuần này' },
+  { key: 'last_week', label: '📆 Tuần trước' },
+  { key: 'this_month', label: '🗓️ Tháng này' },
+  { key: 'last_month', label: '🗓️ Tháng trước' },
+  { key: 'this_quarter', label: '📊 Quý này' },
+  { key: 'this_year', label: '📅 Năm nay' },
+  { key: 'custom', label: '🔧 Tùy chỉnh...' },
+];
 
 export default function CRMDashboard() {
   const { user } = useAuth();
@@ -28,6 +91,7 @@ export default function CRMDashboard() {
   const [filterAssignee, setFilterAssignee] = useState('');
   const [filterSource, setFilterSource] = useState('');
   const [filterStage, setFilterStage] = useState('');
+  const [filterPhone, setFilterPhone] = useState(''); // '' | 'has_phone' | 'no_phone'
   const [showAdvSearch, setShowAdvSearch] = useState(false);
   const [users, setUsers] = useState([]);
   const [alerts, setAlerts] = useState(null);
@@ -36,6 +100,17 @@ export default function CRMDashboard() {
   const [showNewDeal, setShowNewDeal] = useState(false);
   const [pinnedTab, setPinnedTab] = useState(() => localStorage.getItem('crm_pinned_tab') || '');
   const [loading, setLoading] = useState(true);
+
+  // ── TIME FILTER STATE ──
+  const [timePreset, setTimePreset] = useState(''); // '' = all time
+  const [customDateFrom, setCustomDateFrom] = useState('');
+  const [customDateTo, setCustomDateTo] = useState('');
+  const [showCustomDate, setShowCustomDate] = useState(false);
+
+  // ── COMPANY-BASED EMPLOYEE FILTER ──
+  const [companyEmployees, setCompanyEmployees] = useState([]);
+  const [companyDepts, setCompanyDepts] = useState([]);
+  const [userCompanyId, setUserCompanyId] = useState('');
 
   const switchTab = (tab) => {
     setPipelineType(tab);
@@ -80,16 +155,54 @@ export default function CRMDashboard() {
     }
   };
 
+  // ── Handle time preset change ──
+  const handleTimePresetChange = (preset) => {
+    setTimePreset(preset);
+    if (preset === 'custom') {
+      setShowCustomDate(true);
+    } else {
+      setShowCustomDate(false);
+      if (preset === '') {
+        setCustomDateFrom('');
+        setCustomDateTo('');
+      } else {
+        const range = getDateRange(preset);
+        setCustomDateFrom(range.from);
+        setCustomDateTo(range.to);
+      }
+    }
+  };
+
+  // ── Load company employees on mount ──
+  useEffect(() => {
+    const loadCompanyEmployees = async () => {
+      try {
+        const { data } = await api.get('/crm/employees-by-company');
+        setCompanyEmployees(data.users || []);
+        setCompanyDepts(data.departments || []);
+        setUserCompanyId(data.company_id || '');
+      } catch (e) {
+        console.warn('Load company employees failed:', e.message);
+      }
+    };
+    loadCompanyEmployees();
+  }, []);
+
   useEffect(() => { load(); }, []);
 
   const load = async () => {
     setLoading(true);
     try {
+      // Build date params for API
+      const dateParams = {};
+      if (customDateFrom) dateParams.date_from = customDateFrom;
+      if (customDateTo) dateParams.date_to = customDateTo;
+
       const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: 'lead' } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/dashboard', { params: { type: 'deal' } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/leads', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
-        api.get('/crm/leads', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
+        api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/leads', { params: { type: 'lead', ...dateParams } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: { type: 'deal', ...dateParams } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
@@ -110,6 +223,38 @@ export default function CRMDashboard() {
     } catch (e) { console.error(e); }
     setLoading(false);
   };
+
+  // ── Reload when time filter changes (debounced) ──
+  const timeFilterRef = useRef(null);
+  useEffect(() => {
+    // Skip initial mount (load() already called above)
+    if (timeFilterRef.current === null) {
+      timeFilterRef.current = true;
+      return;
+    }
+    // Only reload when we have valid dates or clearing filter
+    if (timePreset === 'custom' && (!customDateFrom || !customDateTo)) return;
+    load();
+  }, [customDateFrom, customDateTo]);
+
+  // ── Computed: label hiển thị cho time filter ──
+  const timeFilterLabel = useMemo(() => {
+    if (!timePreset) return '';
+    if (timePreset === 'custom') {
+      if (customDateFrom && customDateTo) {
+        return `${customDateFrom} → ${customDateTo}`;
+      }
+      return 'Tùy chỉnh';
+    }
+    return TIME_PRESETS.find(p => p.key === timePreset)?.label || '';
+  }, [timePreset, customDateFrom, customDateTo]);
+
+  // ── Computed: danh sách nhân viên hiển thị trong filter ──
+  // Ưu tiên companyEmployees (phòng kinh doanh), fallback users (tất cả)
+  const employeeFilterList = useMemo(() => {
+    if (companyEmployees.length > 0) return companyEmployees;
+    return users;
+  }, [companyEmployees, users]);
 
   // ── Client-side search + filter (instant, no API) ──
   const filterItems = useCallback((items) => {
@@ -135,6 +280,13 @@ export default function CRMDashboard() {
       result = result.filter(l => l.stage_id === filterStage);
     }
 
+    // Phone filter
+    if (filterPhone === 'has_phone') {
+      result = result.filter(l => l.customer?.phone && l.customer.phone.trim() !== '');
+    } else if (filterPhone === 'no_phone') {
+      result = result.filter(l => !l.customer?.phone || l.customer.phone.trim() === '');
+    }
+
     // Text search — tìm trong tên, mã, SĐT, mô tả, tên KH, email
     if (searchText.trim()) {
       const q = searchText.trim().toLowerCase();
@@ -158,7 +310,7 @@ export default function CRMDashboard() {
     }
     
     return result;
-  }, [searchText, filterCompany, filterAssignee, filterSource, filterStage]);
+  }, [searchText, filterCompany, filterAssignee, filterSource, filterStage, filterPhone]);
 
   const leads = useMemo(() => filterItems(allLeads), [allLeads, filterItems]);
   const deals = useMemo(() => filterItems(allDeals), [allDeals, filterItems]);
@@ -384,48 +536,133 @@ export default function CRMDashboard() {
             )}
           </div>
 
+          {/* ── TIME FILTER DROPDOWN ── */}
+          <div className="relative">
+            <select
+              value={timePreset}
+              onChange={e => handleTimePresetChange(e.target.value)}
+              className={`h-10 px-3 pl-9 rounded-xl text-sm font-medium cursor-pointer transition-all border appearance-none pr-8 ${
+                timePreset
+                  ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+              style={{ minWidth: '160px' }}
+            >
+              {TIME_PRESETS.map(p => (
+                <option key={p.key} value={p.key}>{p.label}</option>
+              ))}
+            </select>
+            <Clock className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 ${timePreset ? 'text-purple-500' : 'text-gray-400'}`} />
+          </div>
+
           {/* Toggle advanced filters */}
           <button onClick={() => setShowAdvSearch(!showAdvSearch)}
             className={`h-10 px-4 rounded-xl text-sm font-medium flex items-center gap-2 cursor-pointer transition-all border ${
-              showAdvSearch || filterAssignee || filterCompany || filterSource || filterStage
+              showAdvSearch || filterAssignee || filterCompany || filterSource || filterStage || filterPhone
                 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             }`}>
             <Filter className="h-4 w-4" />
             Bộ lọc
-            {(filterAssignee || filterCompany || filterSource || filterStage) && (
+            {(filterAssignee || filterCompany || filterSource || filterStage || filterPhone) && (
               <span className="bg-blue-600 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {[filterAssignee, filterCompany, filterSource, filterStage].filter(Boolean).length}
+                {[filterAssignee, filterCompany, filterSource, filterStage, filterPhone].filter(Boolean).length}
               </span>
             )}
           </button>
 
           {/* Clear all filters */}
-          {(searchText || filterAssignee || filterCompany || filterSource || filterStage) && (
-            <button onClick={() => { setSearchText(''); setFilterAssignee(''); setFilterCompany(''); setFilterSource(''); setFilterStage(''); }}
+          {(searchText || filterAssignee || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
+            <button onClick={() => { setSearchText(''); setFilterAssignee(''); setFilterCompany(''); setFilterSource(''); setFilterStage(''); setFilterPhone(''); handleTimePresetChange(''); }}
               className="h-10 px-4 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-sm font-medium flex items-center gap-1.5 cursor-pointer transition-all border border-red-200">
               <X className="h-3.5 w-3.5" /> Xóa bộ lọc
             </button>
           )}
 
           {/* Result count */}
-          {(searchText || filterAssignee || filterCompany || filterSource || filterStage) && (
+          {(searchText || filterAssignee || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
             <span className="text-xs text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
               {pipelineType === 'lead' ? leads.length : deals.length} / {pipelineType === 'lead' ? allLeads.length : allDeals.length} kết quả
             </span>
           )}
         </div>
 
+        {/* ── CUSTOM DATE RANGE PICKER ── */}
+        {showCustomDate && (
+          <div className="flex flex-wrap items-center gap-3 bg-purple-50 border border-purple-200 rounded-xl p-3 shadow-sm">
+            <span className="text-xs font-bold text-purple-600 uppercase flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" /> Khoảng thời gian:
+            </span>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={customDateFrom}
+                onChange={e => setCustomDateFrom(e.target.value)}
+                className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer"
+              />
+              <span className="text-gray-400 text-sm">→</span>
+              <input
+                type="date"
+                value={customDateTo}
+                onChange={e => setCustomDateTo(e.target.value)}
+                min={customDateFrom || undefined}
+                className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer"
+              />
+            </div>
+            {customDateFrom && customDateTo && (
+              <button
+                onClick={() => load()}
+                className="h-9 px-4 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Search className="h-3.5 w-3.5" /> Áp dụng
+              </button>
+            )}
+            <button
+              onClick={() => { handleTimePresetChange(''); }}
+              className="h-9 px-3 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg text-sm transition cursor-pointer border border-gray-200"
+            >
+              Hủy
+            </button>
+          </div>
+        )}
+
+        {/* ── ACTIVE TIME FILTER BADGE ── */}
+        {timePreset && timePreset !== 'custom' && (
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium border border-purple-200">
+              <Clock className="h-3 w-3" />
+              {timeFilterLabel}
+              <button onClick={() => handleTimePresetChange('')} className="ml-1 hover:text-purple-900 cursor-pointer">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          </div>
+        )}
+
         {/* Advanced filters row */}
         {showAdvSearch && (
           <div className="flex flex-wrap items-center gap-3 bg-white border border-gray-200 rounded-xl p-3 shadow-sm">
             <span className="text-xs font-bold text-gray-500 uppercase">Lọc nâng cao:</span>
             
-            {/* Assignee */}
+            {/* Assignee — filtered by company's sales departments */}
             <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
               className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
               <option value="">👤 Tất cả nhân viên</option>
-              {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+              {companyDepts.length > 0 ? (
+                // Group by department
+                companyDepts.map(dept => {
+                  const deptUsers = employeeFilterList.filter(u => u.department_id === dept.id);
+                  if (!deptUsers.length) return null;
+                  return (
+                    <optgroup key={dept.id} label={`📁 ${dept.name}`}>
+                      {deptUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}{u.position ? ` (${u.position})` : ''}</option>)}
+                    </optgroup>
+                  );
+                })
+              ) : (
+                // Fallback: flat list
+                employeeFilterList.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)
+              )}
             </select>
 
             {/* Company */}
@@ -452,6 +689,23 @@ export default function CRMDashboard() {
               <option value="">📊 Tất cả giai đoạn</option>
               {(pipelineType === 'lead' ? stagesLead : stagesDeal).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+
+            {/* Phone filter */}
+            <select value={filterPhone} onChange={e => setFilterPhone(e.target.value)}
+              className={`h-9 px-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${
+                filterPhone ? 'bg-green-50 border-green-300 text-green-700' : 'bg-gray-50 border-gray-200'
+              }`}>
+              <option value="">📞 SĐT: Tất cả</option>
+              <option value="has_phone">✅ Đã có SĐT</option>
+              <option value="no_phone">❌ Chưa có SĐT</option>
+            </select>
+
+            {/* Company employees info badge */}
+            {companyDepts.length > 0 && (
+              <span className="text-[10px] text-green-600 bg-green-50 px-2 py-1 rounded-lg border border-green-200">
+                🏢 {companyEmployees.length} NV kinh doanh
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -582,11 +836,21 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
   );
 }
 
-// Kanban Stage Card - MISA Style
+// Kanban Stage Card - MISA Style (with pagination)
+const ITEMS_PER_PAGE = 10;
+
 function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
+  const [page, setPage] = useState(0);
   
   const stageColor = stage.color || '#e5e7eb';
+  const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+  const pagedItems = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
+
+  // Reset page khi items thay đổi
+  useEffect(() => {
+    if (page > 0 && page >= totalPages) setPage(Math.max(0, totalPages - 1));
+  }, [items.length, totalPages, page]);
   
   const handleColumnDragOver = (e) => {
     e.preventDefault();
@@ -595,7 +859,6 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
   };
 
   const handleColumnDragLeave = (e) => {
-    // Only leave if dragging out of the column completely
     if (e.target === e.currentTarget) {
       setIsOverColumn(false);
     }
@@ -658,7 +921,7 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
             </p>
           </div>
         ) : (
-          items.map(item => (
+          pagedItems.map(item => (
             <KanbanCard
               key={item.id}
               item={item}
@@ -670,6 +933,29 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
           ))
         )}
       </div>
+
+      {/* Pagination Footer */}
+      {totalPages > 1 && (
+        <div className="bg-white border border-gray-200 border-t-0 px-3 py-2 flex items-center justify-between">
+          <button
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="h-7 px-2 text-xs font-medium rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition"
+          >
+            ← Trước
+          </button>
+          <span className="text-[11px] text-gray-500 font-medium">
+            {page + 1}/{totalPages} ({items.length})
+          </span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            disabled={page >= totalPages - 1}
+            className="h-7 px-2 text-xs font-medium rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition"
+          >
+            Sau →
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -709,9 +995,16 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
       {/* Title */}
       <p className="text-sm font-medium text-gray-900 truncate mb-2">{item.title}</p>
 
-      {/* Customer name */}
-      {item.customer?.full_name && (
-        <p className="text-xs text-gray-600 truncate mb-2">{item.customer.full_name}</p>
+      {/* Customer name + Phone */}
+      {(item.customer?.full_name || item.customer?.phone) && (
+        <div className="mb-2 space-y-0.5">
+          {item.customer?.full_name && (
+            <p className="text-xs text-gray-600 truncate">👤 {item.customer.full_name}</p>
+          )}
+          {item.customer?.phone && (
+            <p className="text-xs text-green-600 font-medium truncate">📞 {item.customer.phone}</p>
+          )}
+        </div>
       )}
 
       {/* Avatar + Assignee + Age tag */}
