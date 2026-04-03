@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
@@ -1438,6 +1438,17 @@ function FacebookChatTab({ leadId }) {
       .catch(() => {});
   }, [leadId]);
 
+  // Dedup messages
+  const uniqueMessages = useMemo(() => {
+    const seen = new Set();
+    return messages.filter(m => {
+      const key = m.fb_message_id || m.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [messages]);
+
   useEffect(() => { loadMessages(); }, [loadMessages]);
 
   // Auto-refresh mỗi 15s
@@ -1543,16 +1554,16 @@ function FacebookChatTab({ leadId }) {
               className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1.5 rounded-lg hover:bg-gray-100 flex items-center gap-1 cursor-pointer disabled:opacity-50 transition">
               <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} /> Sync
             </button>
-            <span className="text-[10px] text-gray-400">{messages.length} tin nhắn</span>
+            <span className="text-[10px] text-gray-400">{uniqueMessages.length} tin nhắn</span>
           </div>
         </div>
       )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-        {messages.map((m, i) => {
+        {uniqueMessages.map((m, i) => {
           const isOut = m.direction === 'outbound';
-          const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(messages[i-1]?.created_at).toDateString();
+          const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(uniqueMessages[i-1]?.created_at).toDateString();
           return (
             <div key={m.id || i}>
               {showDate && (

@@ -47,6 +47,17 @@ r.post('/migrate', async (req, res) => {
 // FACEBOOK WEBHOOK — Nhận Lead Ads, Messenger, Comments
 // ═══════════════════════════════════════════════════════════════
 
+// ── In-memory dedup: chống race condition khi chưa có UNIQUE INDEX ──
+const _processingMids = new Set();
+function acquireMidLock(mid) {
+  if (!mid) return true; // no mid = no dedup
+  if (_processingMids.has(mid)) return false; // already processing
+  _processingMids.add(mid);
+  // Auto-cleanup after 60s
+  setTimeout(() => _processingMids.delete(mid), 60000);
+  return true;
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 async function getPageConfig(pageId) {
@@ -526,7 +537,12 @@ async function handleMessaging(pageId, event, io) {
     }
 
     // Check duplicate — Facebook có thể gửi webhook 2 lần (~30ms)
-    // Dùng upsert với fb_message_id để tránh race condition
+    // Layer 1: In-memory lock (chống race condition khi 2 request song song)
+    if (msg.mid && !acquireMidLock(msg.mid)) {
+      console.log(`[FB] ⏭️  In-memory lock: duplicate mid ${msg.mid}`);
+      return;
+    }
+    // Layer 2: DB check
     if (msg.mid) {
       const { data: existing } = await supabase.from('facebook_messages')
         .select('id').eq('fb_message_id', msg.mid).limit(1);
@@ -1241,8 +1257,9 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
 
     let synced = 0;
     for (const msg of msgData.data) {
-      // Check duplicate
+      // Check duplicate (memory lock + DB check)
       const fbMsgId = msg.id;
+      if (!acquireMidLock(fbMsgId)) continue;
       const { data: existing } = await supabase.from('facebook_messages')
         .select('id').eq('fb_message_id', fbMsgId).limit(1);
       if (existing?.length) continue;
