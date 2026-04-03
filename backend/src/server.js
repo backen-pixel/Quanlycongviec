@@ -289,7 +289,119 @@ server.listen(config.port, () => {
     } catch (e) { console.error('Deadline check error:', e.message); }
   };
 
+  // ── Periodic scan: tạo lead cho contacts chưa có lead ──
+  const scanMissingLeads = async () => {
+    try {
+      const { getConfig } = require('./config/autoLeadConfig');
+      const cfg = getConfig();
+      if (cfg.trigger === 'manual') return; // Không tự động
+
+      // Contacts chưa có lead_id, có ít nhất 1 inbound message
+      const { data: contacts } = await supabase.from('facebook_contacts')
+        .select('id, fb_name, phone, page_id, psid, lead_id, customer_id')
+        .is('lead_id', null);
+
+      if (!contacts?.length) return;
+
+      let created = 0;
+      for (const contact of contacts) {
+        // Check có message inbound không
+        const { count } = await supabase.from('facebook_messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('contact_id', contact.id)
+          .eq('direction', 'inbound');
+
+        if (!count || count === 0) continue;
+
+        // Check trigger condition
+        let shouldCreate = false;
+        if (cfg.trigger === 'first_message') {
+          shouldCreate = true;
+        } else if (cfg.trigger === 'message_count') {
+          shouldCreate = count >= (cfg.message_count_threshold || 2);
+        } else if (cfg.trigger === 'has_phone') {
+          // Extract phone from messages
+          const { data: msgs } = await supabase.from('facebook_messages')
+            .select('content').eq('contact_id', contact.id).eq('direction', 'inbound').limit(20);
+          const phoneMatch = (msgs || []).map(m => m.content || '').join(' ').match(/(0[1-9][0-9]{8,9})/);
+          if (phoneMatch) {
+            contact.phone = phoneMatch[1];
+            await supabase.from('facebook_contacts').update({ phone: phoneMatch[1] }).eq('id', contact.id);
+          }
+          shouldCreate = !!(contact.phone || phoneMatch);
+        }
+
+        if (!shouldCreate) continue;
+
+        // Check lead cũ bị xóa
+        if (!cfg.recreate_deleted_leads) {
+          const { data: oldMsgs } = await supabase.from('facebook_messages')
+            .select('lead_id').eq('contact_id', contact.id).not('lead_id', 'is', null).limit(1);
+          if (oldMsgs?.length) continue;
+        }
+
+        // Import createLeadFromFacebook — gọi trực tiếp qua route
+        const page = await supabase.from('facebook_pages')
+          .select('*').eq('page_id', contact.page_id).eq('is_active', true).single();
+        if (!page.data) continue;
+
+        // Tạo customer + lead
+        const { data: fbSource } = await supabase.from('crm_sources')
+          .select('id').eq('name', 'Facebook').single();
+        const { count: leadCount } = await supabase.from('crm_leads')
+          .select('id', { count: 'exact', head: true }).eq('type', 'lead');
+        const code = 'LEAD-' + String((leadCount || 0) + 1).padStart(4, '0');
+
+        let stageId = page.data.default_stage_id || null;
+        if (!stageId) {
+          const { data: ds } = await supabase.from('crm_pipeline_stages')
+            .select('id').eq('pipeline_type', 'lead').order('order_index').limit(1).single();
+          stageId = ds?.id || null;
+        }
+
+        let customerId = contact.customer_id;
+        if (!customerId) {
+          const { data: cust } = await supabase.from('customers')
+            .insert({ full_name: contact.fb_name || 'Facebook KH', phone: contact.phone || '', source: 'Facebook' })
+            .select().single();
+          if (cust) {
+            customerId = cust.id;
+            await supabase.from('facebook_contacts').update({ customer_id: cust.id }).eq('id', contact.id);
+          }
+        }
+
+        const { data: lead, error: leadErr } = await supabase.from('crm_leads').insert({
+          code,
+          title: '[FB] ' + (contact.fb_name || 'KH Facebook'),
+          type: 'lead',
+          customer_id: customerId,
+          source_id: page.data.default_source_id || fbSource?.id || null,
+          stage_id: stageId,
+          company_id: page.data.default_company_id || null,
+          lead_owner_id: page.data.default_lead_owner_id || page.data.created_by,
+          assigned_to: page.data.default_lead_owner_id || page.data.created_by,
+          created_by: page.data.created_by,
+        }).select().single();
+
+        if (leadErr) { console.error('[Scan] Lead create error:', leadErr.message); continue; }
+
+        await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
+        await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
+        created++;
+        console.log(`[Scan] ✅ Lead auto-created: ${lead.code} — ${contact.fb_name}`);
+      }
+
+      if (created > 0) console.log(`[Scan] Created ${created} leads from ${contacts.length} orphan contacts`);
+    } catch (e) {
+      console.error('[Scan] Error:', e.message);
+    }
+  };
+
   // Run deadline check 60s after start, then every 15 minutes
   setTimeout(checkDeadlines, 60000);
   setInterval(checkDeadlines, 15 * 60 * 1000);
+
+  // Run missing leads scan 90s after start, then every 5 minutes
+  setTimeout(scanMissingLeads, 90000);
+  setInterval(scanMissingLeads, 5 * 60 * 1000);
 });

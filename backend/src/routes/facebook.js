@@ -720,9 +720,6 @@ async function handleMessaging(pageId, event, io) {
             }
           }
         }
-        } else {
-          console.log(`[FB] ⏭️ Contact ${contact.id} had a lead before (deleted), skip auto-create`);
-        }
       } else {
         // Verify lead vẫn tồn tại — nếu bị xóa thì clear lead_id
         const { data: leadCheck } = await supabase.from('crm_leads')
@@ -822,6 +819,7 @@ async function handleMessaging(pageId, event, io) {
   if (event.read) {
     await supabase.from('facebook_contacts').update({ unread_count: 0 }).eq('id', contact.id);
   }
+}
 }
 
 // ── HANDLE LEAD ADS ──────────────────────────────────────────
