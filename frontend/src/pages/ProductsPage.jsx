@@ -122,6 +122,9 @@ export default function ProductsPage() {
         const cSellPrice = findCol(['gồm vat', 'giá bán gồm']);
         const cBasePrice = findCol(['chưa vat', 'giá bán chưa']);
         const cUnit = findCol(['đơn vị', 'don vi']);
+        const cNgang = findCol(['ngang']);
+        const cCao = findCol(['cao']);
+        const cSau = findCol(['sâu', 'sau']);
 
         // Parse data rows
         const parsed = [];
@@ -142,6 +145,9 @@ export default function ProductsPage() {
             code: gv(cFullCode), name: gv(cName),
             selling_price: gn(cSellPrice), base_price: gn(cBasePrice),
             unit: gv(cUnit) || 'cái',
+            ngang: gn(cNgang) || null,
+            cao: gn(cCao) || null,
+            sau: gn(cSau) || null,
           };
 
           // Fallback: split MÃ THÀNH PHẨM if individual codes empty
@@ -161,6 +167,7 @@ export default function ProductsPage() {
         // Build normalized rows for backend
         const importRows = parsed.map(p => ({
           'MÃ THÀNH PHẨM': p.code, 'TÊN THÀNH PHẨM': p.name,
+          'Ngang': p.ngang || '', 'Cao': p.cao || '', 'Sâu': p.sau || '',
           'GIÁ BÁN GỒM VAT 10%': p.selling_price, 'GIÁ BÁN CHƯA VAT 10%': p.base_price,
           'đơn vị tính': p.unit, 'nhóm sp': p.code_group, 'mã quy cách': p.code_spec,
           'mã tiêu chuẩn': p.code_standard, 'mã loại/ phân loại': p.code_category,
@@ -194,8 +201,8 @@ export default function ProductsPage() {
 
   // ── Download template ──
   const downloadTemplate = () => {
-    const headers = ['STT','nhóm sp','mã quy cách','mã tiêu chuẩn','mã loại/ phân loại','mã hình thức','mã kính','mã chuẩn loại','mã hông','mã Kích thước quy ước','MÃ THÀNH PHẨM','TÊN THÀNH PHẨM','GIÁ BÁN GỒM VAT 10%','GIÁ BÁN CHƯA VAT 10%','đơn vị tính'];
-    const sample = [1,'BEPTR','L','N','nhỏ','trên','4L','T','380','TB-BEPTR-L-N','Tủ bếp trên nhỏ kính 4ly',5500000,5000000,'cái'];
+    const headers = ['STT','nhóm sp','mã quy cách','mã tiêu chuẩn','mã loại/ phân loại','mã hình thức','mã kính','mã chuẩn loại','mã hông','mã Kích thước quy ước','MÃ THÀNH PHẨM','TÊN THÀNH PHẨM','Ngang','Cao','Sâu','GIÁ BÁN GỒM VAT 10%','GIÁ BÁN CHƯA VAT 10%','đơn vị tính'];
+    const sample = [1,'BEPTR','L','N','nhỏ','trên','4L','T','','380','BEPTR-L-N-4L-T-380','Tủ bếp trên nhỏ kính 4ly',700,380,320,5500000,5000000,'Md'];
     const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
     ws['!cols'] = headers.map((h) => ({wch: Math.max(h.length + 2, 12)}));
     const wb = XLSX.utils.book_new();
@@ -270,6 +277,9 @@ export default function ProductsPage() {
               <th className="p-3">Mã thành phẩm</th>
               <th className="p-3">Tên thành phẩm</th>
               <th className="p-3">Nhóm ngành</th>
+              <th className="p-3 text-center">Ngang</th>
+              <th className="p-3 text-center">Cao</th>
+              <th className="p-3 text-center">Sâu</th>
               <th className="p-3 text-right">Giá bán (VAT)</th>
               <th className="p-3 text-right">Giá chưa VAT</th>
               <th className="p-3">ĐVT</th>
@@ -278,9 +288,9 @@ export default function ProductsPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="p-8 text-center text-gray-400">Đang tải...</td></tr>
+              <tr><td colSpan={11} className="p-8 text-center text-gray-400">Đang tải...</td></tr>
             ) : products.length === 0 ? (
-              <tr><td colSpan={8} className="p-8 text-center text-gray-400">Chưa có sản phẩm</td></tr>
+              <tr><td colSpan={11} className="p-8 text-center text-gray-400">Chưa có sản phẩm</td></tr>
             ) : products.map((p, i) => (
               <tr key={p.id} className="border-b hover:bg-gray-50">
                 <td className="p-3 text-gray-400">{i + 1}</td>
@@ -295,6 +305,9 @@ export default function ProductsPage() {
                     <span className="text-xs text-gray-300">—</span>
                   )}
                 </td>
+                <td className="p-3 text-center text-xs font-mono text-gray-600">{p.dimensions?.ngang || '—'}</td>
+                <td className="p-3 text-center text-xs font-mono text-gray-600">{p.dimensions?.cao || '—'}</td>
+                <td className="p-3 text-center text-xs font-mono text-gray-600">{p.dimensions?.sau || '—'}</td>
                 <td className="p-3 text-right font-semibold text-emerald-600">{formatVND(p.selling_price || 0)}</td>
                 <td className="p-3 text-right text-gray-600">{formatVND(p.base_price || 0)}</td>
                 <td className="p-3 text-gray-500">{p.unit}</td>
@@ -350,6 +363,9 @@ export default function ProductsPage() {
                     <th className="p-2">K.Thước</th>
                     <th className="p-2 bg-blue-50 font-bold">MÃ THÀNH PHẨM</th>
                     <th className="p-2 bg-blue-50 font-bold min-w-[200px]">TÊN THÀNH PHẨM</th>
+                    <th className="p-2 text-center">Ngang</th>
+                    <th className="p-2 text-center">Cao</th>
+                    <th className="p-2 text-center">Sâu</th>
                     <th className="p-2 text-right bg-emerald-50">GIÁ (VAT)</th>
                     <th className="p-2 text-right">GIÁ (chưa VAT)</th>
                     <th className="p-2">ĐVT</th>
@@ -372,6 +388,9 @@ export default function ProductsPage() {
                       <td className="p-2 bg-blue-50/50 font-medium text-gray-900">
                         {p.name || <span className="text-red-500 italic">Thiếu tên</span>}
                       </td>
+                      <td className="p-2 text-center text-[10px] font-mono">{p.ngang || '-'}</td>
+                      <td className="p-2 text-center text-[10px] font-mono">{p.cao || '-'}</td>
+                      <td className="p-2 text-center text-[10px] font-mono">{p.sau || '-'}</td>
                       <td className="p-2 text-right font-semibold text-emerald-600 bg-emerald-50/50">{p.selling_price ? formatVND(p.selling_price) : '-'}</td>
                       <td className="p-2 text-right text-gray-600">{p.base_price ? formatVND(p.base_price) : '-'}</td>
                       <td className="p-2 text-gray-500">{p.unit}</td>

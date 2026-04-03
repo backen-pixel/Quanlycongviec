@@ -98,6 +98,9 @@ r.get('/export', async (req, res) => {
       'mã Kích thước quy ước': p.code_size || '',
       'MÃ THÀNH PHẨM': p.code,
       'TÊN THÀNH PHẨM': p.name,
+      'Ngang': p.dimensions?.ngang || '',
+      'Cao': p.dimensions?.cao || '',
+      'Sâu': p.dimensions?.sau || '',
       'GIÁ BÁN GỒM VAT 10%': p.selling_price || 0,
       'GIÁ BÁN CHƯA VAT 10%': p.base_price || 0,
       'đơn vị tính': p.unit || 'cái',
@@ -147,10 +150,17 @@ r.post('/import', async (req, res) => {
         const finalSellingPrice = sellingPrice || (basePrice ? Math.round(basePrice * 1.1) : 0);
         const finalBasePrice = basePrice || (sellingPrice ? Math.round(sellingPrice / 1.1) : 0);
 
+        // Parse dimensions (Ngang, Cao, Sâu)
+        const dimNgang = parseInt(row['Ngang'] || row['ngang']) || null;
+        const dimCao = parseInt(row['Cao'] || row['cao']) || null;
+        const dimSau = parseInt(row['Sâu'] || row['sau'] || row['sâu']) || null;
+        const dimensions = (dimNgang || dimCao || dimSau) ? { ngang: dimNgang, cao: dimCao, sau: dimSau } : null;
+
         const productData = {
           name, unit,
           selling_price: finalSellingPrice,
           base_price: finalBasePrice,
+          dimensions,
           code_group: codeGroup || null, code_spec: codeSpec || null, code_standard: codeStandard || null,
           code_category: codeCategory || null, code_style: codeStyle || null, code_glass: codeGlass || null,
           code_type_std: codeTypeStd || null, code_side: codeSide || null, code_size: codeSize || null,
