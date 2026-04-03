@@ -3,9 +3,9 @@ services:
   - type: web
     name: tubep-backend
     runtime: node
-    rootDir: ./
-    buildCommand: cd frontend && npm ci --prefer-offline --no-audit && npm run build && cd ../backend && npm ci --prefer-offline --no-audit
-    startCommand: cd backend && npm start
+    rootDir: backend
+    buildCommand: npm ci --prefer-offline --no-audit
+    startCommand: npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
