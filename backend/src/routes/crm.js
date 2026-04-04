@@ -543,6 +543,32 @@ r.get('/sources', async (req, res) => {
 
 // ── Lọc leads theo Facebook Page (qua facebook_contacts) ──
 // GET /crm/leads-by-fb-page?page_id=114251548348282&type=lead
+// Dọn dẹp lead trùng theo customer
+r.post('/leads/cleanup-duplicates', async (req, res) => {
+  try {
+    const { data: leads } = await supabase.from('crm_leads')
+      .select('id, title, customer_id, created_at');
+    const grouped = {};
+    leads.forEach(l => {
+      if (!l.customer_id) return;
+      if (!grouped[l.customer_id]) grouped[l.customer_id] = [];
+      grouped[l.customer_id].push(l);
+    });
+    
+    let deleted = 0;
+    for (const cid in grouped) {
+      if (grouped[cid].length > 1) {
+        const sorted = grouped[cid].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+        for(let i=1; i<sorted.length; i++) {
+          await supabase.from('crm_leads').delete().eq('id', sorted[i].id);
+          deleted++;
+        }
+      }
+    }
+    res.json({ success: true, deleted });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 r.get('/leads-by-fb-page', async (req, res) => {
   try {
     const { page_id, type = 'lead' } = req.query;
