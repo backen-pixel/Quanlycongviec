@@ -1286,6 +1286,178 @@ function AutoLeadTab() {
           )}
         </div>
       </div>
+
+      {/* ══ LEAD SCAN — Quét SĐT → Tạo lead theo lịch ══ */}
+      <LeadScanPanel />
+    </div>
+  );
+}
+
+function LeadScanPanel() {
+  const [cfg, setCfg] = useState({ enabled: false, interval_minutes: 60, timer_active: false });
+  const [preview, setPreview] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const loadCfg = () => fetch(`${API}/api/facebook/lead-scan/config`, { headers: hdr() })
+    .then(r => r.ok ? r.json() : null).then(d => d && setCfg(d)).catch(() => {});
+
+  const loadPreview = () => fetch(`${API}/api/facebook/lead-scan/preview`, { headers: hdr() })
+    .then(r => r.ok ? r.json() : null).then(d => d && setPreview(d)).catch(() => {});
+
+  useEffect(() => { loadCfg(); loadPreview(); }, []);
+
+  const saveCfg = async (patch) => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/api/facebook/lead-scan/config`, {
+        method: 'PUT', headers: hdr(), body: JSON.stringify({ ...cfg, ...patch }),
+      });
+      if (res.ok) { const d = await res.json(); setCfg(d); }
+    } catch (e) { alert('Lỗi: ' + e.message); }
+    setSaving(false);
+  };
+
+  const runNow = async () => {
+    if (!confirm(`Chạy quét ngay bây giờ? Sẽ tạo lead cho ${preview?.count || 0} contact có SĐT.`)) return;
+    setRunning(true); setResult(null);
+    try {
+      const res = await fetch(`${API}/api/facebook/lead-scan/run`, { method: 'POST', headers: hdr() });
+      const d = await res.json();
+      setResult(d);
+      loadPreview();
+    } catch (e) { alert('Lỗi: ' + e.message); }
+    setRunning(false);
+  };
+
+  const INTERVALS = [
+    { value: 15, label: 'Mỗi 15 phút' },
+    { value: 30, label: 'Mỗi 30 phút' },
+    { value: 60, label: 'Mỗi 1 giờ' },
+    { value: 120, label: 'Mỗi 2 giờ' },
+    { value: 360, label: 'Mỗi 6 giờ' },
+    { value: 720, label: 'Mỗi 12 giờ' },
+    { value: 1440, label: 'Mỗi 24 giờ' },
+  ];
+
+  return (
+    <div className="bg-white border rounded-xl p-5 shadow-sm mt-4">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+            📶 Quét contact có SĐT → Tạo Lead tự động
+          </h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Hệ thống sẽ quét tất cả contact Facebook có số điện thoại nhưng chưa có Lead → tự động tạo Lead theo lịch.
+            Nguồn Lead sẽ được đặt theo tên Page Facebook tương ứng.
+          </p>
+        </div>
+        {/* Toggle enabled */}
+        <label className="flex items-center gap-2 cursor-pointer ml-4">
+          <div
+            onClick={() => saveCfg({ enabled: !cfg.enabled })}
+            className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
+              cfg.enabled ? 'bg-green-500' : 'bg-gray-300'
+            }`}>
+            <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${cfg.enabled ? 'translate-x-6' : ''}`} />
+          </div>
+          <span className={`text-xs font-medium ${cfg.enabled ? 'text-green-700' : 'text-gray-500'}`}>
+            {cfg.enabled ? '✅ Đang bật' : 'Tắt'}
+          </span>
+        </label>
+      </div>
+
+      {/* Preview count */}
+      <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-blue-50 border border-blue-100">
+        <span className="text-2xl font-bold text-blue-700">{preview?.count ?? '...'}</span>
+        <div>
+          <div className="text-sm font-medium text-blue-800">contact có SĐT, chưa có Lead</div>
+          <button onClick={() => { loadPreview(); setShowPreview(v => !v); }}
+            className="text-xs text-blue-600 hover:underline cursor-pointer">
+            {showPreview ? 'Ẩn danh sách' : 'Xem danh sách'}
+          </button>
+        </div>
+        <div className="ml-auto flex gap-2">
+          <button onClick={runNow} disabled={running || (preview?.count ?? 0) === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 disabled:opacity-50 cursor-pointer shadow-sm">
+            {running
+              ? <span className="animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full" />
+              : '▶️'}
+            Chạy ngay
+          </button>
+        </div>
+      </div>
+
+      {/* Preview list */}
+      {showPreview && preview?.contacts?.length > 0 && (
+        <div className="mb-4 border rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-3 py-2 text-left text-gray-500">Tên</th>
+                <th className="px-3 py-2 text-left text-gray-500">SĐT</th>
+                <th className="px-3 py-2 text-left text-gray-500">Page Facebook</th>
+                <th className="px-3 py-2 text-left text-gray-500">Tin nhắn</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {preview.contacts.map(c => (
+                <tr key={c.id} className="hover:bg-gray-50">
+                  <td className="px-3 py-2">{c.fb_name || 'Facebook User'}</td>
+                  <td className="px-3 py-2 font-mono text-green-700">{c.phone}</td>
+                  <td className="px-3 py-2 text-blue-700">{c.page_name}</td>
+                  <td className="px-3 py-2 text-gray-500">{c.message_count || 0} tin</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Schedule settings */}
+      {cfg.enabled && (
+        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg mb-4">
+          <span className="text-sm text-gray-700 whitespace-nowrap">⏰ Chạy tự động:</span>
+          <select
+            value={cfg.interval_minutes}
+            onChange={e => saveCfg({ interval_minutes: parseInt(e.target.value) })}
+            className="flex-1 px-3 py-1.5 text-sm border rounded-lg focus:ring-2 focus:ring-blue-400 cursor-pointer bg-white">
+            {INTERVALS.map(i => <option key={i.value} value={i.value}>{i.label}</option>)}
+          </select>
+          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+            cfg.timer_active ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+          }`}>
+            {cfg.timer_active ? '⏰ Đang chạy' : '⏹️ Chưa chạy'}
+          </span>
+        </div>
+      )}
+
+      {/* Last scan result */}
+      {result && (
+        <div className={`p-3 rounded-lg border text-sm ${
+          result.errors?.length ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'
+        }`}>
+          <div className="font-semibold mb-1">📊 Kết quả quét:</div>
+          <div className="flex gap-4 text-xs">
+            <span>🔍 Quét: <b>{result.scanned}</b></span>
+            <span className="text-green-700">✅ Tạo: <b>{result.created}</b></span>
+            <span className="text-gray-500">⏩ Bỏ qua: <b>{result.skipped}</b></span>
+            {result.errors?.length > 0 && <span className="text-red-600">❌ Lỗi: <b>{result.errors.length}</b></span>}
+          </div>
+          {result.leads?.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {result.leads.map((l, i) => (
+                <div key={i} className="text-xs text-green-700">✅ {l.code} — {l.name} — {l.phone}</div>
+              ))}
+            </div>
+          )}
+          {result.errors?.length > 0 && (
+            <div className="mt-1 text-xs text-red-600">{result.errors.join('; ')}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
