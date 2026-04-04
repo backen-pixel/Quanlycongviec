@@ -784,6 +784,8 @@ function ContactsTab() {
                 <span>❌ Lỗi: {batchStatus.result.error}</span>
               ) : batchStatus.type === 'leads' ? (
                 <span>✅ Đã tạo <strong>{batchStatus.result.created || 0}</strong> Lead mới — Bỏ qua: {batchStatus.result.skipped || 0} (đã có Lead)</span>
+              ) : batchStatus.type === 'dedup' ? (
+                <span>✅ {batchStatus.result.message}</span>
               ) : (
                 <span>✅ Đã quét <strong>{batchStatus.result.scanned || batchStatus.result.total || 0}</strong> liên hệ — Tìm thấy: <strong>{batchStatus.result.updated || batchStatus.result.found || 0}</strong> SĐT mới</span>
               )}
