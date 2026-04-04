@@ -1440,10 +1440,35 @@ r.post('/contacts/:contactId/reply', authMiddleware, async (req, res) => {
     }).select().single();
 
     res.json(saved);
+
+    // Update last_message_at cho contact
+    await supabase.from('facebook_contacts').update({
+      last_message_at: new Date().toISOString(),
+    }).eq('id', contact.id);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Lead Ads ─────────────────────────────────────────────────
+// POST /facebook/contacts/backfill-last-message — backfill last_message_at từ facebook_messages
+r.post('/contacts/backfill-last-message', authMiddleware, async (req, res) => {
+  try {
+    const { data: msgs } = await supabase.from('facebook_messages')
+      .select('contact_id, created_at').order('created_at', { ascending: false });
+    const maxByContact = {};
+    (msgs || []).forEach(m => {
+      if (!maxByContact[m.contact_id] || m.created_at > maxByContact[m.contact_id])
+        maxByContact[m.contact_id] = m.created_at;
+    });
+    const entries = Object.entries(maxByContact);
+    let updated = 0;
+    for (const [contactId, lastAt] of entries) {
+      const { error } = await supabase.from('facebook_contacts')
+        .update({ last_message_at: lastAt }).eq('id', contactId).is('last_message_at', null);
+      if (!error) updated++;
+    }
+    console.log(`[FB Backfill] Updated ${updated} contacts with last_message_at`);
+    res.json({ updated, total: entries.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}); ─────────────────────────────────────────────────
 
 r.get('/lead-ads', authMiddleware, async (req, res) => {
   try {
@@ -1499,13 +1524,35 @@ r.post('/comments/:id/reply', authMiddleware, async (req, res) => {
 r.get('/stats', authMiddleware, async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const [contacts, messages, leadAds, comments, unread] = await Promise.all([
+    const week = new Date(Date.now() - 7 * 86400000).toISOString();
+
+    const [contacts, messages, leadAds, comments, unread, allContacts, pages] = await Promise.all([
       supabase.from('facebook_contacts').select('id', { count: 'exact', head: true }),
       supabase.from('facebook_messages').select('id', { count: 'exact', head: true }).eq('direction', 'inbound').gte('created_at', today),
       supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true }).gte('created_at', today),
       supabase.from('facebook_comments').select('id', { count: 'exact', head: true }).gte('created_at', today),
       supabase.from('facebook_contacts').select('unread_count').gt('unread_count', 0),
+      supabase.from('facebook_contacts').select('id, page_id, created_at'),
+      supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true),
     ]);
+
+    // Tính số user mới theo page (7 ngày gần nhất)
+    const contactsData = allContacts.data || [];
+    const pagesData = pages.data || [];
+    const newContactsByPage = {};
+    const totalByPage = {};
+    contactsData.forEach(c => {
+      totalByPage[c.page_id] = (totalByPage[c.page_id] || 0) + 1;
+      if (c.created_at >= week) {
+        newContactsByPage[c.page_id] = (newContactsByPage[c.page_id] || 0) + 1;
+      }
+    });
+    const pageStats = pagesData.map(p => ({
+      page_id: p.page_id,
+      page_name: p.page_name,
+      total_contacts: totalByPage[p.page_id] || 0,
+      new_contacts_7d: newContactsByPage[p.page_id] || 0,
+    }));
 
     res.json({
       total_contacts: contacts.count || 0,
@@ -1513,6 +1560,7 @@ r.get('/stats', authMiddleware, async (req, res) => {
       lead_ads_today: leadAds.count || 0,
       comments_today: comments.count || 0,
       total_unread: (unread.data || []).reduce((s, c) => s + c.unread_count, 0),
+      page_stats: pageStats,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

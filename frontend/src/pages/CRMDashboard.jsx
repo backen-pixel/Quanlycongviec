@@ -86,7 +86,7 @@ export default function CRMDashboard() {
   const [filterAssignee, setFilterAssignee] = useState('');
   const [filterSource, setFilterSource] = useState('');
   const [filterStage, setFilterStage] = useState('');
-  const [filterPhone, setFilterPhone] = useState(''); // '' | 'has_phone' | 'no_phone'
+  const [filterPhone, setFilterPhone] = useState('has_phone'); // '' | 'has_phone' | 'no_phone'
   const [showAdvSearch, setShowAdvSearch] = useState(false);
   const [users, setUsers] = useState([]);
   const [alerts, setAlerts] = useState(null);
