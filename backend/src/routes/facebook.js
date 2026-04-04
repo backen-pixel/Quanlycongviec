@@ -315,9 +315,28 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     }
   }
 
-  // Tìm source "Facebook"
-  const { data: fbSource } = await supabase.from('crm_sources')
-    .select('id').eq('name', 'Facebook').single();
+  // Tìm/tạo source riêng cho page Facebook: "[FB] Page Name"
+  // Nếu page có default_source_id dùng luôn, còn không thì tìm/tạo "[FB] <page_name>"
+  let resolvedSourceId = page.default_source_id || null;
+  if (!resolvedSourceId && page.page_name) {
+    const fbPageSourceName = `[FB] ${page.page_name}`;
+    let { data: fbPageSource } = await supabase.from('crm_sources')
+      .select('id').eq('name', fbPageSourceName).single();
+    if (!fbPageSource) {
+      // Tạo source mới cho page này
+      const { data: created } = await supabase.from('crm_sources')
+        .insert({ name: fbPageSourceName, is_active: true }).select('id').single();
+      fbPageSource = created;
+      console.log(`[FB] ✅ Created CRM source: "${fbPageSourceName}"`);
+    }
+    resolvedSourceId = fbPageSource?.id || null;
+  }
+  // Fallback: source generic "Facebook"
+  if (!resolvedSourceId) {
+    const { data: fbSource } = await supabase.from('crm_sources')
+      .select('id').ilike('name', 'Facebook').single();
+    resolvedSourceId = fbSource?.id || null;
+  }
 
   // Tạo lead code
   const { count } = await supabase.from('crm_leads')
@@ -343,7 +362,7 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     title: `[FB] ${extraData.full_name || contact.fb_name || 'KH Facebook'}`,
     type: 'lead',
     customer_id: customerId,
-    source_id: page.default_source_id || fbSource?.id || null,
+    source_id: resolvedSourceId,
     stage_id: stageId,
     company_id: companyId,
     install_address: extraData.address || null,
@@ -1822,6 +1841,157 @@ r.put('/auto-lead-config', authMiddleware, async (req, res) => {
 // GET /facebook/auto-lead-config/defaults
 r.get('/auto-lead-config/defaults', authMiddleware, (req, res) => {
   res.json(AUTO_LEAD_DEFAULTS);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SCHEDULED LEAD SCAN — Quét contacts có SĐT → tạo lead tự động
+// ═══════════════════════════════════════════════════════════════
+
+let scanTimer = null;
+let scanConfig = { enabled: false, interval_minutes: 60 };
+const SCAN_CONFIG_FILE = require('path').join(__dirname, '..', '..', 'lead-scan-config.json');
+
+function loadScanConfig() {
+  try {
+    if (require('fs').existsSync(SCAN_CONFIG_FILE)) {
+      const raw = require('fs').readFileSync(SCAN_CONFIG_FILE, 'utf8');
+      scanConfig = { enabled: false, interval_minutes: 60, ...JSON.parse(raw) };
+    }
+  } catch (e) { console.warn('[LeadScan] Config load error:', e.message); }
+  return scanConfig;
+}
+function saveScanConfig(cfg) {
+  scanConfig = { ...scanConfig, ...cfg };
+  require('fs').writeFileSync(SCAN_CONFIG_FILE, JSON.stringify(scanConfig, null, 2), 'utf8');
+  return scanConfig;
+}
+
+/**
+ * scanAndCreateLeads — Quét facebook_contacts có SĐT nhưng chưa có lead → tạo lead
+ * Chạy theo lịch hoặc gọi thủ công
+ */
+async function scanAndCreateLeads() {
+  console.log('[LeadScan] 🔍 Starting scan...');
+  const results = { scanned: 0, created: 0, skipped: 0, errors: [], leads: [] };
+
+  try {
+    const autoLeadCfg = getAutoLeadConfig();
+
+    // Lấy tất cả contacts có phone, chưa có lead
+    const { data: contacts, error } = await supabase.from('facebook_contacts')
+      .select('*')
+      .not('phone', 'is', null).neq('phone', '')
+      .is('lead_id', null)
+      .order('updated_at', { ascending: false });
+
+    if (error) { results.errors.push(error.message); return results; }
+    results.scanned = (contacts || []).length;
+    console.log(`[LeadScan] Found ${results.scanned} contacts with phone, no lead`);
+
+    for (const contact of (contacts || [])) {
+      try {
+        // Kiểm tra lead cũ bị xóa
+        if (!autoLeadCfg.recreate_deleted_leads) {
+          const { data: oldLead } = await supabase.from('crm_leads')
+            .select('id').eq('customer_id', contact.customer_id).limit(1).single();
+          if (oldLead) {
+            results.skipped++;
+            continue;
+          }
+        }
+
+        const lead = await createLeadFromFacebook(contact.page_id, contact, 'Scan (SĐT)', {
+          phone: contact.phone,
+          full_name: contact.fb_name || 'KH Facebook',
+        });
+
+        if (lead && lead.code !== 'EXISTING') {
+          results.created++;
+          results.leads.push({ name: contact.fb_name, phone: contact.phone, code: lead.code, page_id: contact.page_id });
+          console.log(`[LeadScan] ✅ Lead created: ${lead.code} — ${contact.fb_name} — ${contact.phone}`);
+        } else {
+          results.skipped++;
+        }
+      } catch (e) {
+        results.errors.push(`${contact.fb_name}: ${e.message}`);
+      }
+    }
+  } catch (e) {
+    results.errors.push(e.message);
+  }
+
+  console.log(`[LeadScan] ✅ Done — Scanned: ${results.scanned}, Created: ${results.created}, Skipped: ${results.skipped}`);
+  return results;
+}
+
+function startScanTimer() {
+  if (scanTimer) clearInterval(scanTimer);
+  if (!scanConfig.enabled || !scanConfig.interval_minutes) return;
+  const ms = scanConfig.interval_minutes * 60 * 1000;
+  console.log(`[LeadScan] ⏰ Timer started — every ${scanConfig.interval_minutes} minutes`);
+  scanTimer = setInterval(() => scanAndCreateLeads(), ms);
+}
+
+function stopScanTimer() {
+  if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  console.log('[LeadScan] ⏹️ Timer stopped');
+}
+
+// Auto-start on load
+loadScanConfig();
+if (scanConfig.enabled) startScanTimer();
+
+// GET /facebook/lead-scan/config — xem cấu hình
+r.get('/lead-scan/config', authMiddleware, (req, res) => {
+  res.json({ ...scanConfig, timer_active: !!scanTimer });
+});
+
+// PUT /facebook/lead-scan/config — cập nhật cấu hình
+r.put('/lead-scan/config', authMiddleware, (req, res) => {
+  try {
+    const { enabled, interval_minutes } = req.body;
+    const cfg = saveScanConfig({
+      ...(enabled !== undefined && { enabled }),
+      ...(interval_minutes && { interval_minutes: Math.max(5, parseInt(interval_minutes) || 60) }),
+    });
+    // Restart timer
+    stopScanTimer();
+    if (cfg.enabled) startScanTimer();
+    res.json({ ...cfg, timer_active: !!scanTimer });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /facebook/lead-scan/run — chạy quét thủ công
+r.post('/lead-scan/run', authMiddleware, async (req, res) => {
+  try {
+    const results = await scanAndCreateLeads();
+    res.json(results);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /facebook/lead-scan/preview — xem trước contacts sẽ được tạo lead
+r.get('/lead-scan/preview', authMiddleware, async (req, res) => {
+  try {
+    const { data: contacts } = await supabase.from('facebook_contacts')
+      .select('id, fb_name, phone, page_id, updated_at, message_count')
+      .not('phone', 'is', null).neq('phone', '')
+      .is('lead_id', null)
+      .order('updated_at', { ascending: false });
+
+    // Enrich with page names
+    const pageIds = [...new Set((contacts || []).map(c => c.page_id))];
+    const { data: pages } = await supabase.from('facebook_pages')
+      .select('page_id, page_name').in('page_id', pageIds);
+    const pageMap = Object.fromEntries((pages || []).map(p => [p.page_id, p.page_name]));
+
+    res.json({
+      count: (contacts || []).length,
+      contacts: (contacts || []).map(c => ({
+        ...c,
+        page_name: pageMap[c.page_id] || c.page_id,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = r;
