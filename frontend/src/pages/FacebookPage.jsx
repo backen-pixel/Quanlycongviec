@@ -164,10 +164,15 @@ function InboxTab({ pageStats }) {
     fetch(`${API}/api/facebook/contacts${qs}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : [])
       .then(data => {
-        // Sort: tin nhắn mới nhất lên trước; null last_message_at xuống cuối
+        // Sort: unread lên trước, rồi theo tin nhắn mới nhất
         const sorted = [...(data || [])].sort((a, b) => {
-          const dateA = a.last_message_at ? new Date(a.last_message_at) : new Date(0);
-          const dateB = b.last_message_at ? new Date(b.last_message_at) : new Date(0);
+          // Unread first
+          const ua = (a.unread_count || 0) > 0 ? 1 : 0;
+          const ub = (b.unread_count || 0) > 0 ? 1 : 0;
+          if (ub !== ua) return ub - ua;
+          // Then by last_message_at desc
+          const dateA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+          const dateB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
           return dateB - dateA;
         });
         setContacts(sorted);
@@ -205,6 +210,11 @@ function InboxTab({ pageStats }) {
 
   useEffect(() => {
     if (!selected) return;
+    
+    // Mark as read in local state immediately
+    setContacts(prev => prev.map(c => 
+      c.id === selected.id ? { ...c, unread_count: 0 } : c
+    ));
     
     // Load messages
     const loadMsgs = () => {
@@ -403,11 +413,15 @@ function InboxTab({ pageStats }) {
               </div>
               <div className="flex-1 min-w-0">
                 <p className={`text-sm truncate ${c.unread_count > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>{c.fb_name}</p>
+                {c.last_message_preview ? (
+                  <p className={`text-xs truncate mt-0.5 ${c.unread_count > 0 ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>{c.last_message_preview}</p>
+                ) : (
                 <div className="flex items-center gap-1.5 mt-0.5">
                   {c.phone && <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded-md">📞 {c.phone}</span>}
                   {c.lead && <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-md">🏷 {c.lead.code}</span>}
                   {!c.phone && !c.lead && <span className="text-xs text-gray-400">💬 Messenger</span>}
                 </div>
+                )}
               </div>
               <div className="text-[10px] text-gray-400 shrink-0">
                 {c.last_message_at && (() => {
