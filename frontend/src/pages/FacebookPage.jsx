@@ -95,6 +95,42 @@ export default function FacebookPage() {
 // INBOX TAB — Messenger Chat (realtime + media)
 // ═══════════════════════════════════════════════════════════════
 
+
+function PageSelector({ value, onChange, pages, pageStats }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedPage = pages.find(p => p.page_id === value);
+  const count = (ps) => (ps?.new_contacts_7d || 0) + (ps?.unread_count || 0);
+
+  return (
+    <div className="relative">
+      <button onClick={() => setIsOpen(!isOpen)} 
+        className="w-full text-left text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 flex justify-between items-center hover:bg-gray-50">
+        <span className="truncate">{selectedPage ? selectedPage.page_name : 'Tất cả các Page'}</span>
+        <ChevronRight size={12} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+      </button>
+      {isOpen && (
+        <div className="absolute top-full left-0 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1 max-h-60 overflow-y-auto">
+          <button onClick={() => { onChange(''); setIsOpen(false); }} 
+            className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 ${!value ? 'bg-blue-50 text-blue-600' : ''}`}>
+            Tất cả các Page
+          </button>
+          {pages.map(p => {
+            const ps = pageStats?.find(s => s.page_id === p.page_id);
+            const cnt = count(ps);
+            return (
+              <button key={p.id} onClick={() => { onChange(p.page_id); setIsOpen(false); }}
+                className={`w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-gray-50 ${value === p.page_id ? 'bg-blue-50' : ''}`}>
+                <span className="truncate">{p.page_name}</span>
+                {cnt > 0 && <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px]">{cnt}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InboxTab({ pageStats }) {
   const { socket } = useAuth();
   const [contacts, setContacts] = useState([]);
@@ -130,10 +166,9 @@ function InboxTab({ pageStats }) {
       .then(data => {
         // Sort: tin nhắn mới nhất lên trước; null last_message_at xuống cuối
         const sorted = [...(data || [])].sort((a, b) => {
-          if (!a.last_message_at && !b.last_message_at) return 0;
-          if (!a.last_message_at) return 1;
-          if (!b.last_message_at) return -1;
-          return new Date(b.last_message_at) - new Date(a.last_message_at);
+          const dateA = a.last_message_at ? new Date(a.last_message_at) : new Date(0);
+          const dateB = b.last_message_at ? new Date(b.last_message_at) : new Date(0);
+          return dateB - dateA;
         });
         setContacts(sorted);
       }).catch(() => {});
@@ -325,16 +360,13 @@ function InboxTab({ pageStats }) {
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm kiếm khách hàng..."
               className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
           </div>
-          {pages.length > 1 && (
-            <select value={pageFilter} onChange={e => setPageFilter(e.target.value)}
-              className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600">
-              <option value="">Ất cả Page</option>
-              {pages.map(p => {
-                const ps = pageStats?.find(s => s.page_id === p.page_id);
-                const newBadge = ps?.new_contacts_7d > 0 ? ` (+${ps.new_contacts_7d} mới)` : '';
-                return <option key={p.id} value={p.page_id}>{p.page_name}{newBadge}</option>;
-              })}
-            </select>
+              {pages.length > 1 && (
+            <PageSelector
+              value={pageFilter}
+              onChange={setPageFilter}
+              pages={pages}
+              pageStats={pageStats}
+            />
           )}
           <div className="flex gap-1 text-[11px]">
             {[

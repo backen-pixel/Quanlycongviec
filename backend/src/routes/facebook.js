@@ -1542,7 +1542,7 @@ r.get('/stats', authMiddleware, async (req, res) => {
       supabase.from('facebook_messages').select('id', { count: 'exact', head: true }).eq('direction', 'inbound').gte('created_at', today),
       supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true }).gte('created_at', today),
       supabase.from('facebook_comments').select('id', { count: 'exact', head: true }).gte('created_at', today),
-      supabase.from('facebook_contacts').select('unread_count').gt('unread_count', 0),
+      supabase.from('facebook_contacts').select('unread_count, page_id').gt('unread_count', 0),
       supabase.from('facebook_contacts').select('id, page_id, created_at'),
       supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true),
     ]);
@@ -1558,11 +1558,18 @@ r.get('/stats', authMiddleware, async (req, res) => {
         newContactsByPage[c.page_id] = (newContactsByPage[c.page_id] || 0) + 1;
       }
     });
+    const unreadMap = {};
+    const unreadData = unread.data || [];
+    unreadData.forEach(c => {
+      unreadMap[c.page_id] = (unreadMap[c.page_id] || 0) + (c.unread_count || 0);
+    });
+    
     const pageStats = pagesData.map(p => ({
       page_id: p.page_id,
       page_name: p.page_name,
       total_contacts: totalByPage[p.page_id] || 0,
       new_contacts_7d: newContactsByPage[p.page_id] || 0,
+      unread_count: unreadMap[p.page_id] || 0,
     }));
 
     res.json({
