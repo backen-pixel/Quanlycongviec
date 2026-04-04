@@ -208,8 +208,8 @@ async function fetchProfileViaConversations(pageId, psid) {
       return null;
     }
 
-    // Cập nhật avatar thật từ platform-lookaside
-    const avatarUrl = `https://platform-lookaside.fbsbx.com/platform/profilepic/?psid=${psid}&width=200`;
+    // Tạo avatar URL từ tên (Đảm bảo luôn lấy được avatar qua ui-avatars.com)
+    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'FB')}&background=0D8ABC&color=fff&size=200&bold=true`;
 
     console.log(`[FB] ✅ Got name: ${name}`);
     console.log(`[FB] 🖼️  Avatar: ${avatarUrl}`);
@@ -276,12 +276,24 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   const page = await getPageConfig(pageId);
   if (!page) return null;
 
-  // ── ANTI-DUPLICATE: Re-check contact.lead_id ngay trước khi tạo ──
+  // ── ANTI-DUPLICATE ──
   const { data: freshContact } = await supabase.from('facebook_contacts')
-    .select('lead_id').eq('id', contact.id).single();
+    .select('lead_id, customer_id').eq('id', contact.id).single();
+  
+  // 1. Check race condition (nếu đã có lead_id)
   if (freshContact?.lead_id) {
-    console.log(`[FB] ⏭️ Contact ${contact.id} already has lead ${freshContact.lead_id} (race condition avoided)`);
-    return { id: freshContact.lead_id, code: 'EXISTING', customer_id: contact.customer_id };
+    return { id: freshContact.lead_id };
+  }
+  
+  // 2. Check trùng theo customer_id (đề phòng chưa có lead_id nhưng đã có lead)
+  if (freshContact?.customer_id) {
+     const { data: existing } = await supabase.from('crm_leads')
+       .select('id').eq('customer_id', freshContact.customer_id).limit(1);
+     if (existing?.length > 0) {
+       console.log(`[FB] ⚠️  Đã có lead cho customer ${freshContact.customer_id}, sync lại lead_id.`);
+       await supabase.from('facebook_contacts').update({ lead_id: existing[0].id }).eq('id', contact.id);
+       return { id: existing[0].id };
+     }
   }
 
   // Tìm/tạo customer
