@@ -208,9 +208,8 @@ async function fetchProfileViaConversations(pageId, psid) {
       return null;
     }
 
-    // Tạo avatar URL từ tên (Facebook không trả avatar với Standard Access)
-    const name = userMsg.from.name;
-    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0D8ABC&color=fff&size=200&bold=true`;
+    // Cập nhật avatar thật từ platform-lookaside
+    const avatarUrl = `https://platform-lookaside.fbsbx.com/platform/profilepic/?psid=${psid}&width=200`;
 
     console.log(`[FB] ✅ Got name: ${name}`);
     console.log(`[FB] 🖼️  Avatar: ${avatarUrl}`);
