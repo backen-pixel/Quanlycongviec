@@ -731,9 +731,23 @@ function ContactsTab() {
       const res = await fetch(`${API}/api/facebook/batch-extract-phones`, { method: 'POST', headers: hdr() });
       const data = await res.json();
       setBatchStatus({ type: 'phones', loading: false, result: data });
-      load(); // Refresh danh sách
+      load();
     } catch (e) {
       setBatchStatus({ type: 'phones', loading: false, result: { error: e.message } });
+    }
+  };
+
+  // Kiểm tra & xóa lead trùng không liên kết FB
+  const dedupLeads = async () => {
+    if (!confirm('Kiểm tra và xóa lead trùng không liên kết với Facebook?')) return;
+    setBatchStatus({ type: 'dedup', loading: true, result: null });
+    try {
+      const res = await fetch(`${API}/api/facebook/dedup-leads`, { method: 'POST', headers: hdr() });
+      const data = await res.json();
+      setBatchStatus({ type: 'dedup', loading: false, result: data });
+      load();
+    } catch (e) {
+      setBatchStatus({ type: 'dedup', loading: false, result: { error: e.message } });
     }
   };
 
@@ -746,6 +760,11 @@ function ContactsTab() {
             className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
             {batchStatus?.type === 'leads' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" /> : '🆕'}
             Tạo Lead hàng loạt
+          </button>
+          <button onClick={dedupLeads} disabled={batchStatus?.loading}
+            className="px-3 py-1.5 text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded-lg hover:bg-orange-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+            {batchStatus?.type === 'dedup' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" /> : '🔍'}
+            Xóa Lead trùng
           </button>
           <button onClick={batchExtractPhones} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">

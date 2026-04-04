@@ -1699,6 +1699,70 @@ r.get('/analytics', authMiddleware, async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // BATCH: Tạo lead cho TẤT CẢ contacts chưa có lead + Extract SĐT
+// POST /facebook/dedup-leads — Kiểm tra và xóa lead trùng không liên kết FB
+r.post('/dedup-leads', authMiddleware, async (req, res) => {
+  try {
+    // 1. Lấy danh sách lead_id đang liên kết với facebook_contacts
+    const { data: fbContacts } = await supabase.from('facebook_contacts')
+      .select('lead_id, fb_name').not('lead_id', 'is', null);
+    const linkedLeadIds = new Set((fbContacts || []).map(c => c.lead_id));
+
+    // 2. Lấy tất cả leads loại lead (không phải deal)
+    const { data: allLeads } = await supabase.from('crm_leads')
+      .select('id, customer_id, title, contact_name, phone, type, created_at')
+      .order('created_at', { ascending: true });
+    
+    if (!allLeads?.length) return res.json({ deleted: 0, scanned: 0, message: 'Không có lead nào' });
+
+    // 3. Group leads theo customer_id
+    const byCustomer = {};
+    (allLeads || []).forEach(lead => {
+      const key = lead.customer_id;
+      if (!key) return;
+      if (!byCustomer[key]) byCustomer[key] = [];
+      byCustomer[key].push(lead);
+    });
+
+    // 4. Tìm lead trùng: giữ lead linked với FB, xóa lead không linked
+    const toDelete = [];
+    const details = [];
+    
+    Object.entries(byCustomer).forEach(([custId, leads]) => {
+      if (leads.length <= 1) return; // Không trùng
+      
+      const linked = leads.filter(l => linkedLeadIds.has(l.id));
+      const unlinked = leads.filter(l => !linkedLeadIds.has(l.id));
+      
+      if (linked.length > 0 && unlinked.length > 0) {
+        // Có lead liên kết FB và có lead không liên kết → xóa lead không liên kết
+        unlinked.forEach(l => {
+          toDelete.push(l.id);
+          details.push({ id: l.id, title: l.title, reason: 'Trùng customer, không liên kết FB' });
+        });
+      }
+    });
+
+    // 5. Xóa leads trùng
+    if (toDelete.length > 0) {
+      // Xóa từng batch 50 để tránh query quá lớn
+      for (let i = 0; i < toDelete.length; i += 50) {
+        const batch = toDelete.slice(i, i + 50);
+        await supabase.from('crm_leads').delete().in('id', batch);
+      }
+    }
+
+    res.json({
+      deleted: toDelete.length,
+      scanned: allLeads.length,
+      duplicateGroups: Object.values(byCustomer).filter(g => g.length > 1).length,
+      details: details.slice(0, 50), // Giới hạn 50 chi tiết
+      message: toDelete.length > 0
+        ? `Đã xóa ${toDelete.length} lead trùng không liên kết Facebook`
+        : 'Không có lead trùng cần xóa',
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /facebook/batch-create-leads
 // ═══════════════════════════════════════════════════════════════
 
