@@ -620,9 +620,11 @@ async function handleMessaging(pageId, event, io) {
     console.log(`[FB] ✅ Message saved: ${savedMsg?.id} (${isEcho ? 'outbound' : 'inbound'})`);
 
     if (!isEcho) {
-      // Update last message + unread count
+      // Update last message + unread count + preview
+      const preview = content ? content.substring(0, 100) : (attachments?.length ? '[Tệp đính kèm]' : '');
       await supabase.from('facebook_contacts').update({
         last_message_at: new Date().toISOString(),
+        last_message_preview: preview,
         unread_count: (contact.unread_count || 0) + 1,
         updated_at: new Date().toISOString(),
       }).eq('id', contact.id);
@@ -1453,8 +1455,10 @@ r.post('/contacts/:contactId/reply', authMiddleware, async (req, res) => {
     res.json(saved);
 
     // Update last_message_at cho contact
+    const outPreview = content ? content.substring(0, 100) : (attachment_url ? '[Tệp đính kèm]' : '');
     await supabase.from('facebook_contacts').update({
       last_message_at: new Date().toISOString(),
+      last_message_preview: outPreview ? `Bạn: ${outPreview}` : null,
     }).eq('id', contact.id);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
