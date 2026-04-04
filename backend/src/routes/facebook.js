@@ -1468,7 +1468,7 @@ r.post('/contacts/backfill-last-message', authMiddleware, async (req, res) => {
     console.log(`[FB Backfill] Updated ${updated} contacts with last_message_at`);
     res.json({ updated, total: entries.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
-}); ─────────────────────────────────────────────────
+});
 
 r.get('/lead-ads', authMiddleware, async (req, res) => {
   try {
