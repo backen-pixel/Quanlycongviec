@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import EmployeePicker from '../components/EmployeePicker';
+import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Send, Image, Paperclip, RefreshCw
+  FileUp, FileText, Zap, ChevronDown, Send, Image, Paperclip, RefreshCw, Users
 } from 'lucide-react';
 
 const ACTIVITY_TYPES = [
@@ -22,6 +24,7 @@ const ACTIVITY_TYPES = [
 
 export default function LeadDetail() {
   const { id } = useParams();
+  const { socket } = useAuth();
   const navigate = useNavigate();
   const [lead, setLead] = useState(null);
   const [customer, setCustomer] = useState(null);
@@ -525,6 +528,26 @@ export default function LeadDetail() {
               >
                 📘 Facebook
               </button>
+              <button
+                onClick={() => setActiveTab('team')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'team'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                👥 Thành viên
+              </button>
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'chat'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                💬 Trao đổi
+              </button>
             </div>
 
             {/* Tab Content */}
@@ -714,6 +737,10 @@ export default function LeadDetail() {
                 </>
               ) : activeTab === 'facebook' ? (
                 <FacebookChatTab leadId={id} />
+              ) : activeTab === 'team' ? (
+                <LeadMembersTab leadId={id} allUsers={allUsers} />
+              ) : activeTab === 'chat' ? (
+                <LeadChatTab leadId={id} socket={socket} />
               ) : null}
             </div>
           </div>
