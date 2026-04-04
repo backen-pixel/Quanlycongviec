@@ -105,6 +105,8 @@ io.on('connection', (socket) => {
   if (userId) socket.join(`user:${userId}`);
 
   socket.on('join:project', (id) => socket.join(`project:${id}`));
+  socket.on('join:lead', (id) => socket.join(`lead:${id}`));
+  socket.on('leave:lead', (id) => socket.leave(`lead:${id}`));
 
   socket.on('task:moved', (data) => {
     io.emit('task:updated', data);

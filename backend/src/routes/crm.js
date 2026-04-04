@@ -4223,4 +4223,129 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LEAD MEMBERS — Thành viên tham gia Lead/Deal
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /leads/:id/members
+r.get('/leads/:id/members', async (req, res) => {
+  try {
+    const { data } = await supabase.from('lead_members')
+      .select('*, user:users(id, full_name, email, avatar_url, role)')
+      .eq('lead_id', req.params.id)
+      .order('created_at');
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/members — thêm thành viên
+r.post('/leads/:id/members', async (req, res) => {
+  try {
+    const { user_id, role = 'member' } = req.body;
+    if (!user_id) return res.status(400).json({ error: 'Thiếu user_id' });
+
+    const { data, error } = await supabase.from('lead_members')
+      .upsert({ lead_id: req.params.id, user_id, role, added_by: req.user.userId }, { onConflict: 'lead_id,user_id' })
+      .select('*, user:users(id, full_name, email, avatar_url, role)')
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Tạo tin nhắn hệ thống
+    const { data: adder } = await supabase.from('users').select('full_name').eq('id', req.user.userId).single();
+    const memberName = data?.user?.full_name || 'Thành viên';
+    await supabase.from('lead_messages').insert({
+      lead_id: req.params.id, user_id: req.user.userId,
+      content: `${adder?.full_name || 'Admin'} đã thêm ${memberName} vào nhóm`,
+      message_type: 'system', is_system: true,
+    });
+
+    // Emit realtime
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`lead:${req.params.id}`).emit('lead:member_added', data);
+      io.to(`user:${user_id}`).emit('notification', {
+        type: 'lead_member', title: 'Bạn được thêm vào Lead',
+        message: `${adder?.full_name} đã thêm bạn vào nhóm trao đổi`,
+        entity_type: 'lead', entity_id: req.params.id,
+      });
+    }
+
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /leads/:id/members/:userId — xóa thành viên
+r.delete('/leads/:id/members/:userId', async (req, res) => {
+  try {
+    // Lấy tên người bị xóa
+    const { data: removedUser } = await supabase.from('users').select('full_name').eq('id', req.params.userId).single();
+    
+    await supabase.from('lead_members')
+      .delete().eq('lead_id', req.params.id).eq('user_id', req.params.userId);
+
+    // Tin nhắn hệ thống
+    const { data: remover } = await supabase.from('users').select('full_name').eq('id', req.user.userId).single();
+    await supabase.from('lead_messages').insert({
+      lead_id: req.params.id, user_id: req.user.userId,
+      content: `${remover?.full_name || 'Admin'} đã xóa ${removedUser?.full_name || 'thành viên'} khỏi nhóm`,
+      message_type: 'system', is_system: true,
+    });
+
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:member_removed', { user_id: req.params.userId });
+
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEAD CHAT — Trao đổi realtime trong Lead/Deal
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /leads/:id/chat
+r.get('/leads/:id/chat', async (req, res) => {
+  try {
+    const { data } = await supabase.from('lead_messages')
+      .select('*, user:users(id, full_name, avatar_url)')
+      .eq('lead_id', req.params.id)
+      .order('created_at', { ascending: true })
+      .limit(500);
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/chat — gửi tin nhắn
+r.post('/leads/:id/chat', async (req, res) => {
+  try {
+    const { content, message_type = 'text', attachment_url, attachment_name } = req.body;
+    if (!content && !attachment_url) return res.status(400).json({ error: 'Thiếu nội dung' });
+
+    const { data, error } = await supabase.from('lead_messages').insert({
+      lead_id: req.params.id, user_id: req.user.userId,
+      content: content || '', message_type, attachment_url, attachment_name,
+    }).select('*, user:users(id, full_name, avatar_url)').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Emit realtime tới tất cả thành viên trong room
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`lead:${req.params.id}`).emit('lead:chat', data);
+      
+      // Notify các thành viên khác (không gửi cho chính mình)
+      const { data: members } = await supabase.from('lead_members')
+        .select('user_id').eq('lead_id', req.params.id).neq('user_id', req.user.userId);
+      const senderName = data?.user?.full_name || 'Ai đó';
+      (members || []).forEach(m => {
+        io.to(`user:${m.user_id}`).emit('notification', {
+          type: 'lead_chat', title: `Tin nhắn mới trong Lead`,
+          message: `${senderName}: ${(content || '[Tệp đính kèm]').substring(0, 80)}`,
+          entity_type: 'lead', entity_id: req.params.id,
+        });
+      });
+    }
+
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = r;
