@@ -79,7 +79,7 @@ export default function FacebookPage() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'inbox' && <InboxTab />}
+        {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} />}
         {tab === 'contacts' && <ContactsTab />}
         {tab === 'analytics' && <AnalyticsTab />}
         {tab === 'lead-ads' && <LeadAdsTab />}
@@ -95,7 +95,7 @@ export default function FacebookPage() {
 // INBOX TAB — Messenger Chat (realtime + media)
 // ═══════════════════════════════════════════════════════════════
 
-function InboxTab() {
+function InboxTab({ pageStats }) {
   const { socket } = useAuth();
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -126,7 +126,17 @@ function InboxTab() {
     if (pageFilter) params.set('page_id', pageFilter);
     const qs = params.toString() ? `?${params}` : '';
     fetch(`${API}/api/facebook/contacts${qs}`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : []).then(setContacts).catch(() => {});
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        // Sort: tin nhắn mới nhất lên trước; null last_message_at xuống cuối
+        const sorted = [...(data || [])].sort((a, b) => {
+          if (!a.last_message_at && !b.last_message_at) return 0;
+          if (!a.last_message_at) return 1;
+          if (!b.last_message_at) return -1;
+          return new Date(b.last_message_at) - new Date(a.last_message_at);
+        });
+        setContacts(sorted);
+      }).catch(() => {});
   }, [search, pageFilter]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
@@ -136,13 +146,18 @@ function InboxTab() {
     if (!socket) return;
     const h = (data) => {
       setContacts(prev => {
+        const now = data.message?.created_at || new Date().toISOString();
         const ex = prev.find(c => c.id === data.contact_id);
         if (ex) {
-          const up = { ...ex, last_message_at: new Date().toISOString(),
+          const up = { ...ex, last_message_at: now,
             unread_count: selectedRef.current?.id === data.contact_id ? 0 : (ex.unread_count || 0) + 1 };
           return [up, ...prev.filter(c => c.id !== data.contact_id)];
         }
-        return [data.contact || { id: data.contact_id, fb_name: 'Khách', unread_count: 1 }, ...prev];
+        // Contact mới chưa có trong list — thêm vào đầu
+        const newContact = data.contact
+          ? { ...data.contact, last_message_at: now, unread_count: 1 }
+          : { id: data.contact_id, fb_name: 'Khách', unread_count: 1, last_message_at: now };
+        return [newContact, ...prev];
       });
       if (selectedRef.current?.id === data.contact_id && data.message) {
         setMessages(prev => prev.some(m => m.id === data.message.id) ? prev : [...prev, data.message]);
@@ -313,8 +328,12 @@ function InboxTab() {
           {pages.length > 1 && (
             <select value={pageFilter} onChange={e => setPageFilter(e.target.value)}
               className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600">
-              <option value="">Tất cả Page</option>
-              {pages.map(p => <option key={p.id} value={p.page_id}>{p.page_name}</option>)}
+              <option value="">Ất cả Page</option>
+              {pages.map(p => {
+                const ps = pageStats?.find(s => s.page_id === p.page_id);
+                const newBadge = ps?.new_contacts_7d > 0 ? ` (+${ps.new_contacts_7d} mới)` : '';
+                return <option key={p.id} value={p.page_id}>{p.page_name}{newBadge}</option>;
+              })}
             </select>
           )}
           <div className="flex gap-1 text-[11px]">
@@ -359,7 +378,17 @@ function InboxTab() {
                 </div>
               </div>
               <div className="text-[10px] text-gray-400 shrink-0">
-                {c.last_message_at && new Date(c.last_message_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                {c.last_message_at && (() => {
+                  const d = new Date(c.last_message_at);
+                  const today = new Date();
+                  const isToday = d.toDateString() === today.toDateString();
+                  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+                  const isYesterday = d.toDateString() === yesterday.toDateString();
+                  const time = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                  if (isToday) return time;
+                  if (isYesterday) return `H.qua ${time}`;
+                  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) + ' ' + time;
+                })()}
               </div>
             </div>
           ))}
