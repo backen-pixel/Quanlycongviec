@@ -167,7 +167,7 @@ export default function QuotationForm() {
     else setForm(f => ({ ...f, customer_id: cid }));
   };
 
-  // Add product to items — auto-fill vat_rate, dimensions, standard_area from product
+      // Add product to items — auto-fill vat_rate, dimensions, standard_area from product
   const addProduct = (pid) => {
     const p = products.find(x => x.id === pid);
     if (p) {
@@ -175,18 +175,29 @@ export default function QuotationForm() {
       const dimNgang = dim.ngang || dim.width || '';
       const dimCao = dim.cao || dim.height || '';
       const dimSau = dim.sau || dim.depth || '';
-      const stdAreaMM = (parseFloat(dimNgang) || 0) * (parseFloat(dimCao) || 0);
+      
+      // Mặc định diện tích chuẩn = Ngang * Cao (hoặc theo công thức của bạn)
+      const stdArea = (parseFloat(dimNgang) || 0) * (parseFloat(dimCao) || 0);
+
       setItems(prev => [...prev, {
-        product_id: p.id, name: p.name, description: p.description || '',
-        product_code: p.code || '', unit: p.unit || 'bộ',
-        quantity: 1, unit_price: p.base_price || 0, discount_percent: 0,
+        product_id: p.id, 
+        name: p.name, 
+        description: p.description || '',
+        product_code: p.code || '', 
+        unit: p.unit || 'bộ',
+        quantity: 1, 
+        unit_price: p.base_price || 0, 
+        discount_percent: 0,
         vat_rate: p.vat_rate || 0,
-        length: dimNgang || '', width: dimSau || '', height: dimCao || '',
-        weight: '',
-        dimensions: p.dimensions || '', material: p.material || '', color: p.color || '',
-        promo_code: '', is_promo: false,
-        standard_area: stdAreaMM > 0 ? stdAreaMM : 0,
-        spec_factor: 0, group_name: '',
+        length: dimNgang, // Ngang
+        width: dimSau,    // Sâu
+        height: dimCao,   // Cao
+        dimensions: JSON.stringify(dim), 
+        material: p.material || '', 
+        color: p.color || '',
+        standard_area: stdArea > 0 ? stdArea : 0,
+        spec_factor: 1, // Mặc định hệ số 1
+        group_name: p.category_name || '', // Lấy tên nhóm ngành nếu có
       }]);
     }
   };
@@ -587,14 +598,21 @@ export default function QuotationForm() {
           onSelect={(p) => { addProduct(p.id); setShowProductPicker(false); }}
           onSelectMulti={(prods) => {
             prods.forEach(p => {
+              const dim = p.dimensions || {};
+              const dimNgang = dim.ngang || dim.width || '';
+              const dimCao = dim.cao || dim.height || '';
+              const dimSau = dim.sau || dim.depth || '';
+              const stdArea = (parseFloat(dimNgang) || 0) * (parseFloat(dimCao) || 0);
               setItems(prev => [...prev, {
                 product_id: p.id, name: p.name, description: p.description || '',
                 product_code: p.code || '', unit: p.unit || 'bộ',
                 quantity: 1, unit_price: p.base_price || 0, discount_percent: 0,
                 vat_rate: p.vat_rate || 0,
-                height: '', width: '', length: '', weight: '',
-                dimensions: p.dimensions || '', material: p.material || '', color: p.color || '',
+                length: dimNgang, width: dimSau, height: dimCao, weight: '',
+                dimensions: JSON.stringify(dim), material: p.material || '', color: p.color || '',
                 promo_code: '', is_promo: false,
+                standard_area: stdArea > 0 ? stdArea : 0,
+                spec_factor: 0, group_name: p.category_name || '',
               }]);
             });
             setShowProductPicker(false);
