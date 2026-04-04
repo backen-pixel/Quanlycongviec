@@ -738,7 +738,7 @@ export default function LeadDetail() {
               ) : activeTab === 'facebook' ? (
                 <FacebookChatTab leadId={id} />
               ) : activeTab === 'team' ? (
-                <LeadMembersTab leadId={id} allUsers={allUsers} />
+                <LeadMembersTab leadId={id} />
               ) : activeTab === 'chat' ? (
                 <LeadChatTab leadId={id} socket={socket} />
               ) : null}

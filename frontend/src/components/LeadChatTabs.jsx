@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../lib/api';
-import { UserPlus, Trash2, Send, Users, Crown, Shield } from 'lucide-react';
+import { Trash2, Send, Users, Crown, Shield, Building2 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-
-const API = import.meta.env.VITE_API_URL || '';
+import EmployeePicker from './EmployeePicker';
 
 function Avatar({ name, url, size = 8 }) {
   if (url) return <img src={url} alt="" className={`w-${size} h-${size} rounded-full object-cover`} />;
@@ -23,15 +22,21 @@ const formatTime = (d) => {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// Tab Thành viên
+// Tab Thành viên — dùng EmployeePicker lọc theo Công ty + Phòng ban
 // ═══════════════════════════════════════════════════════════════
-export function LeadMembersTab({ leadId, allUsers }) {
+export function LeadMembersTab({ leadId }) {
   const [members, setMembers] = useState([]);
-  const [selectedUser, setSelectedUser] = useState('');
+  const [companies, setCompanies] = useState([]);
+  const [companyId, setCompanyId] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState(null);
   const [loading, setLoading] = useState(false);
   const { user } = useAuth();
 
-  useEffect(() => { load(); }, [leadId]);
+  useEffect(() => {
+    load();
+    api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
+  }, [leadId]);
+
   const load = async () => {
     try {
       const r = await api.get(`/crm/leads/${leadId}/members`);
@@ -40,11 +45,11 @@ export function LeadMembersTab({ leadId, allUsers }) {
   };
 
   const add = async () => {
-    if (!selectedUser) return;
+    if (!selectedUserId) return;
     setLoading(true);
     try {
-      await api.post(`/crm/leads/${leadId}/members`, { user_id: selectedUser });
-      setSelectedUser('');
+      await api.post(`/crm/leads/${leadId}/members`, { user_id: selectedUserId });
+      setSelectedUserId(null);
       load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
     setLoading(false);
@@ -58,9 +63,6 @@ export function LeadMembersTab({ leadId, allUsers }) {
     } catch (e) { alert('Lỗi'); }
   };
 
-  const memberIds = new Set(members.map(m => m.user_id));
-  const availableUsers = (allUsers || []).filter(u => !memberIds.has(u.id));
-
   const roleLabel = (r) => {
     if (r === 'owner') return { text: 'Chủ sở hữu', icon: <Crown size={12} className="text-amber-500" /> };
     if (r === 'viewer') return { text: 'Xem', icon: <Shield size={12} className="text-gray-400" /> };
@@ -69,18 +71,30 @@ export function LeadMembersTab({ leadId, allUsers }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2">
-        <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)}
-          className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
-          <option value="">Chọn thành viên để thêm...</option>
-          {availableUsers.map(u => <option key={u.id} value={u.id}>{u.full_name} {u.email ? `(${u.email})` : ''}</option>)}
-        </select>
-        <button onClick={add} disabled={!selectedUser || loading}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50 font-medium transition">
-          <UserPlus size={14} /> Thêm
+      {/* Chọn công ty + nhân viên */}
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-2">
+        <p className="text-xs font-medium text-blue-700 flex items-center gap-1"><Building2 size={12} /> Thêm thành viên</p>
+        <div className="grid grid-cols-2 gap-2">
+          <select value={companyId} onChange={e => { setCompanyId(e.target.value); setSelectedUserId(null); }}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400">
+            <option value="">Chọn công ty...</option>
+            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <EmployeePicker
+            companyId={companyId}
+            value={selectedUserId}
+            onChange={(id) => setSelectedUserId(id)}
+            placeholder="Chọn nhân viên..."
+            size="md"
+          />
+        </div>
+        <button onClick={add} disabled={!selectedUserId || loading}
+          className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition cursor-pointer disabled:opacity-40">
+          {loading ? 'Đang thêm...' : 'Thêm thành viên'}
         </button>
       </div>
 
+      {/* Danh sách thành viên */}
       <p className="text-xs text-gray-400">{members.length} thành viên</p>
 
       <div className="space-y-2">
@@ -110,7 +124,7 @@ export function LeadMembersTab({ leadId, allUsers }) {
           <div className="text-center py-8">
             <Users size={36} className="mx-auto text-gray-200 mb-2" />
             <p className="text-sm text-gray-400">Chưa có thành viên nào</p>
-            <p className="text-xs text-gray-300 mt-1">Thêm thành viên để cùng trao đổi về Lead/Deal này</p>
+            <p className="text-xs text-gray-300 mt-1">Chọn công ty → phòng ban → nhân viên để thêm vào nhóm</p>
           </div>
         )}
       </div>
