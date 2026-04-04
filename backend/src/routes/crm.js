@@ -4231,7 +4231,7 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
 r.get('/leads/:id/members', async (req, res) => {
   try {
     const { data } = await supabase.from('lead_members')
-      .select('*, user:users(id, full_name, email, avatar_url, role)')
+      .select('*, user:users(id, full_name, email, avatar, role)')
       .eq('lead_id', req.params.id)
       .order('created_at');
     res.json(data || []);
@@ -4246,7 +4246,7 @@ r.post('/leads/:id/members', async (req, res) => {
 
     const { data, error } = await supabase.from('lead_members')
       .upsert({ lead_id: req.params.id, user_id, role, added_by: req.user.userId }, { onConflict: 'lead_id,user_id' })
-      .select('*, user:users(id, full_name, email, avatar_url, role)')
+      .select('*, user:users(id, full_name, email, avatar, role)')
       .single();
     if (error) return res.status(400).json({ error: error.message });
 
@@ -4306,45 +4306,140 @@ r.delete('/leads/:id/members/:userId', async (req, res) => {
 r.get('/leads/:id/chat', async (req, res) => {
   try {
     const { data } = await supabase.from('lead_messages')
-      .select('*, user:users(id, full_name, avatar_url)')
+      .select('*, user:users(id, full_name, avatar), reply:lead_messages!lead_messages_reply_to_fkey(id, content, user:users(id, full_name))')
       .eq('lead_id', req.params.id)
       .order('created_at', { ascending: true })
       .limit(500);
-    res.json(data || []);
+    // Load reactions cho tất cả messages
+    const msgIds = (data || []).map(m => m.id);
+    let reactionsMap = {};
+    if (msgIds.length) {
+      const { data: reactions } = await supabase.from('lead_message_reactions')
+        .select('*, user:users(id, full_name)').in('message_id', msgIds);
+      (reactions || []).forEach(r => {
+        if (!reactionsMap[r.message_id]) reactionsMap[r.message_id] = [];
+        reactionsMap[r.message_id].push(r);
+      });
+    }
+    const result = (data || []).map(m => ({ ...m, reactions: reactionsMap[m.id] || [] }));
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /leads/:id/chat — gửi tin nhắn
+// POST /leads/:id/chat — gửi tin nhắn (text, file, image, video, audio)
 r.post('/leads/:id/chat', async (req, res) => {
   try {
-    const { content, message_type = 'text', attachment_url, attachment_name } = req.body;
+    const { content, message_type = 'text', attachment_url, attachment_name, attachment_size, attachment_mime, reply_to } = req.body;
     if (!content && !attachment_url) return res.status(400).json({ error: 'Thiếu nội dung' });
 
     const { data, error } = await supabase.from('lead_messages').insert({
       lead_id: req.params.id, user_id: req.user.userId,
       content: content || '', message_type, attachment_url, attachment_name,
-    }).select('*, user:users(id, full_name, avatar_url)').single();
+      attachment_size, attachment_mime, reply_to: reply_to || null,
+    }).select('*, user:users(id, full_name, avatar)').single();
     if (error) return res.status(400).json({ error: error.message });
 
-    // Emit realtime tới tất cả thành viên trong room
+    // Load reply info nếu có
+    if (reply_to) {
+      const { data: replyMsg } = await supabase.from('lead_messages')
+        .select('id, content, user:users(id, full_name)').eq('id', reply_to).single();
+      data.reply = replyMsg ? [replyMsg] : [];
+    }
+
     const io = req.app.get('io');
     if (io) {
       io.to(`lead:${req.params.id}`).emit('lead:chat', data);
-      
-      // Notify các thành viên khác (không gửi cho chính mình)
       const { data: members } = await supabase.from('lead_members')
         .select('user_id').eq('lead_id', req.params.id).neq('user_id', req.user.userId);
       const senderName = data?.user?.full_name || 'Ai đó';
+      const preview = message_type === 'image' ? '[🖼️ Hình ảnh]' : message_type === 'video' ? '[🎬 Video]' : message_type === 'audio' ? '[🎙️ Ghi âm]' : message_type === 'file' ? '[📎 Tệp]' : (content || '').substring(0, 80);
       (members || []).forEach(m => {
         io.to(`user:${m.user_id}`).emit('notification', {
           type: 'lead_chat', title: `Tin nhắn mới trong Lead`,
-          message: `${senderName}: ${(content || '[Tệp đính kèm]').substring(0, 80)}`,
+          message: `${senderName}: ${preview}`,
           entity_type: 'lead', entity_id: req.params.id,
         });
       });
     }
-
     res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/chat/upload — upload file/image/video/audio
+const chatUpload = multer({ storage: multer.diskStorage({
+  destination: 'uploads/lead-chat/',
+  filename: (_, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_'))
+}), limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB max
+
+r.post('/leads/:id/chat/upload', chatUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    const mime = req.file.mimetype;
+    let message_type = 'file';
+    if (mime.startsWith('image/')) message_type = 'image';
+    else if (mime.startsWith('video/')) message_type = 'video';
+    else if (mime.startsWith('audio/')) message_type = 'audio';
+
+    const attachment_url = `/uploads/lead-chat/${req.file.filename}`;
+    const { data, error } = await supabase.from('lead_messages').insert({
+      lead_id: req.params.id, user_id: req.user.userId,
+      content: req.body.content || '', message_type,
+      attachment_url, attachment_name: req.file.originalname,
+      attachment_size: req.file.size, attachment_mime: mime,
+      reply_to: req.body.reply_to || null,
+    }).select('*, user:users(id, full_name, avatar)').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:chat', data);
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/chat/:msgId/react — thêm/xóa cảm xúc
+r.post('/leads/:id/chat/:msgId/react', async (req, res) => {
+  try {
+    const { emoji } = req.body;
+    if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
+    // Toggle: nếu đã có thì xóa, chưa có thì thêm
+    const { data: existing } = await supabase.from('lead_message_reactions')
+      .select('id').eq('message_id', req.params.msgId).eq('user_id', req.user.userId).eq('emoji', emoji).single();
+    if (existing) {
+      await supabase.from('lead_message_reactions').delete().eq('id', existing.id);
+    } else {
+      await supabase.from('lead_message_reactions').insert({
+        message_id: req.params.msgId, user_id: req.user.userId, emoji,
+      });
+    }
+    // Reload reactions cho message này
+    const { data: reactions } = await supabase.from('lead_message_reactions')
+      .select('*, user:users(id, full_name)').eq('message_id', req.params.msgId);
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:reactions', { message_id: req.params.msgId, reactions });
+    res.json({ reactions });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /leads/:id/chat/:msgId/pin — ghim/bỏ ghim
+r.put('/leads/:id/chat/:msgId/pin', async (req, res) => {
+  try {
+    const { data: msg } = await supabase.from('lead_messages').select('is_pinned').eq('id', req.params.msgId).single();
+    const newPin = !msg?.is_pinned;
+    await supabase.from('lead_messages').update({ is_pinned: newPin }).eq('id', req.params.msgId);
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:pin', { message_id: req.params.msgId, is_pinned: newPin });
+    res.json({ is_pinned: newPin });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/chat/pinned — danh sách tin ghim
+r.get('/leads/:id/chat/pinned', async (req, res) => {
+  try {
+    const { data } = await supabase.from('lead_messages')
+      .select('*, user:users(id, full_name, avatar)')
+      .eq('lead_id', req.params.id).eq('is_pinned', true)
+      .order('created_at', { ascending: false });
+    res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
