@@ -131,16 +131,17 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     .select().single();
   if (error) { console.error('[FB] Create contact error:', error.message); return null; }
 
-  // Nếu vẫn "Facebook User" → retry sau 2 giây (background, không block)
+  // Nếu vẫn "Facebook User" → retry 3 lần, mỗi lần cách nhau 5 giây
   if (!name || name === 'Facebook User') {
-    setTimeout(async () => {
+    let retryCount = 0;
+    const retryFetch = async () => {
       try {
         const profile = await fetchProfileViaConversations(pageId, psid);
         if (profile?.name && profile.name !== 'Facebook User') {
           const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
           if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
           await supabase.from('facebook_contacts').update(upd).eq('id', newContact.id);
-          console.log(`[FB] Delayed name update: ${profile.name} (psid: ${psid})`);
+          console.log(`[FB] ✅ Background name update: ${profile.name} (psid: ${psid})`);
 
           // Cập nhật lead + customer nếu đã tạo
           const { data: freshContact } = await supabase.from('facebook_contacts')
@@ -158,11 +159,21 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
                 .eq('id', leadData.customer_id)
                 .ilike('full_name', '%Facebook%');
             }
-            console.log(`[FB] Delayed lead+customer update: ${profile.name}`);
+            console.log(`[FB] ✅ Background lead+customer update: ${profile.name}`);
           }
+        } else if (retryCount < 2) {
+          retryCount++;
+          setTimeout(retryFetch, 5000); // Retry sau 5s
         }
-      } catch (e) { console.warn('[FB] Delayed name fetch failed:', e.message); }
-    }, 2000);
+      } catch (e) { 
+        console.warn('[FB] Background profile fetch failed:', e.message);
+        if (retryCount < 2) {
+          retryCount++;
+          setTimeout(retryFetch, 5000);
+        }
+      }
+    };
+    setTimeout(retryFetch, 5000);
   }
 
   return newContact;
