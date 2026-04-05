@@ -1,61 +1,73 @@
 /**
  * Auto Lead Config — lưu điều kiện tự động tạo lead từ Facebook
- * Lưu file JSON (không cần migration DB)
+ * Lưu vào Supabase (app_settings) thay vì file JSON
  */
-const fs = require('fs');
-const path = require('path');
+const { supabase } = require('./supabase');
 
-const CONFIG_FILE = path.join(__dirname, '..', '..', 'auto-lead-config.json');
+const CONFIG_KEY = 'auto_lead_config';
 
 const DEFAULT_CONFIG = {
-  // Điều kiện tạo lead
-  trigger: 'first_message',  // 'first_message' | 'message_count' | 'has_phone' | 'manual'
-  message_count_threshold: 1, // Số tin nhắn tối thiểu (khi trigger = 'message_count')
-
-  // Tên khách mặc định
-  default_customer_name: 'User', // Tên mặc định khi chưa biết
-
-  // Tự động cập nhật
-  auto_update_name: true,     // Tự động cập nhật tên khi fetch được từ FB
-  auto_update_phone: true,    // Tự động cập nhật SĐT khi tìm được trong tin nhắn
-  auto_update_address: true,  // Tự động cập nhật địa chỉ khi tìm được
-
-  // Auto-reply
-  auto_reply_first_message: true, // Tự động trả lời tin nhắn đầu tiên
-
-  // Xử lý khách cũ (lead bị xóa)
-  recreate_deleted_leads: false, // Tạo lại lead nếu lead cũ bị xóa
-
-  // Thông báo
-  notify_on_new_lead: true,     // Thông báo khi tạo lead mới
-  notify_on_phone_found: true,  // Thông báo khi tìm được SĐT
+  trigger: 'first_message',
+  message_count_threshold: 1,
+  default_customer_name: 'User',
+  auto_update_name: true,
+  auto_update_phone: true,
+  auto_update_address: true,
+  auto_reply_first_message: true,
+  recreate_deleted_leads: false,
+  notify_on_new_lead: true,
+  notify_on_phone_found: true,
 };
 
-function loadConfig() {
+// In-memory cache (tránh query DB mỗi lần webhook đến)
+let _cache = null;
+let _cacheTime = 0;
+const CACHE_TTL = 60000; // 1 phút
+
+async function loadConfig() {
+  // Return cache nếu còn fresh
+  if (_cache && Date.now() - _cacheTime < CACHE_TTL) return _cache;
+
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const raw = fs.readFileSync(CONFIG_FILE, 'utf8');
-      return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+    const { data } = await supabase.from('app_settings')
+      .select('value').eq('key', CONFIG_KEY).single();
+    if (data?.value) {
+      _cache = { ...DEFAULT_CONFIG, ...data.value };
+      _cacheTime = Date.now();
+      return _cache;
     }
   } catch (e) {
-    console.warn('[AutoLead] Config load error:', e.message);
+    // Table chưa tạo hoặc lỗi → dùng default
+    console.warn('[AutoLead] DB load error (using defaults):', e.message);
   }
   return { ...DEFAULT_CONFIG };
 }
 
-function saveConfig(config) {
+async function saveConfig(config) {
+  const merged = { ...DEFAULT_CONFIG, ...config };
   try {
-    const merged = { ...DEFAULT_CONFIG, ...config };
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2), 'utf8');
-    return merged;
+    await supabase.from('app_settings').upsert({
+      key: CONFIG_KEY,
+      value: merged,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'key' });
+    // Update cache
+    _cache = merged;
+    _cacheTime = Date.now();
+    console.log('[AutoLead] ✅ Config saved to DB');
   } catch (e) {
-    console.error('[AutoLead] Config save error:', e.message);
+    console.error('[AutoLead] DB save error:', e.message);
     throw e;
   }
+  return merged;
 }
 
+// Sync getter (dùng cache, fallback default nếu chưa load)
 function getConfig() {
-  return loadConfig();
+  if (_cache) return _cache;
+  // Trigger async load cho lần tiếp theo
+  loadConfig().catch(() => {});
+  return { ...DEFAULT_CONFIG };
 }
 
-module.exports = { getConfig, saveConfig, DEFAULT_CONFIG };
+module.exports = { getConfig, loadConfig, saveConfig, DEFAULT_CONFIG };

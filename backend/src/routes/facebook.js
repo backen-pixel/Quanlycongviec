@@ -1977,12 +1977,15 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 // AUTO-LEAD CONFIG — Điều kiện tự động tạo Lead
 // ═══════════════════════════════════════════════════════════════
 
-const { getConfig: getAutoLeadConfig, saveConfig: saveAutoLeadConfig, DEFAULT_CONFIG: AUTO_LEAD_DEFAULTS } = require('../config/autoLeadConfig');
+const { getConfig: getAutoLeadConfig, loadConfig: loadAutoLeadConfig, saveConfig: saveAutoLeadConfig, DEFAULT_CONFIG: AUTO_LEAD_DEFAULTS } = require('../config/autoLeadConfig');
+
+// Preload config vào cache khi khởi động
+loadAutoLeadConfig().then(() => console.log('[AutoLead] ✅ Config loaded from DB'));
 
 // GET /facebook/auto-lead-config
 r.get('/auto-lead-config', authMiddleware, async (req, res) => {
   try {
-    const config = getAutoLeadConfig();
+    const config = await loadAutoLeadConfig();
     res.json(config);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1990,7 +1993,7 @@ r.get('/auto-lead-config', authMiddleware, async (req, res) => {
 // PUT /facebook/auto-lead-config
 r.put('/auto-lead-config', authMiddleware, async (req, res) => {
   try {
-    const saved = saveAutoLeadConfig(req.body);
+    const saved = await saveAutoLeadConfig(req.body);
     console.log('[AutoLead] ✅ Config updated:', JSON.stringify(saved));
     res.json(saved);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2007,22 +2010,27 @@ r.get('/auto-lead-config/defaults', authMiddleware, (req, res) => {
 
 let scanTimer = null;
 let scanConfig = { enabled: false, interval_minutes: 60 };
-const SCAN_CONFIG_FILE = require('path').join(__dirname, '..', '..', 'lead-scan-config.json');
 
-function loadScanConfig() {
+async function loadScanConfig() {
   try {
-    if (require('fs').existsSync(SCAN_CONFIG_FILE)) {
-      const raw = require('fs').readFileSync(SCAN_CONFIG_FILE, 'utf8');
-      scanConfig = { enabled: false, interval_minutes: 60, ...JSON.parse(raw) };
-    }
-  } catch (e) { console.warn('[LeadScan] Config load error:', e.message); }
+    const { data } = await supabase.from('app_settings')
+      .select('value').eq('key', 'lead_scan_config').single();
+    if (data?.value) scanConfig = { enabled: false, interval_minutes: 60, ...data.value };
+  } catch (e) { console.warn('[LeadScan] DB config load error:', e.message); }
   return scanConfig;
 }
-function saveScanConfig(cfg) {
+async function saveScanConfig(cfg) {
   scanConfig = { ...scanConfig, ...cfg };
-  require('fs').writeFileSync(SCAN_CONFIG_FILE, JSON.stringify(scanConfig, null, 2), 'utf8');
+  await supabase.from('app_settings').upsert({
+    key: 'lead_scan_config',
+    value: scanConfig,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'key' });
   return scanConfig;
 }
+
+// Preload
+loadScanConfig().then(() => console.log('[LeadScan] ✅ Config loaded'));
 
 /**
  * scanAndCreateLeads — Quét facebook_contacts có SĐT nhưng chưa có lead → tạo lead
@@ -2100,15 +2108,16 @@ loadScanConfig();
 if (scanConfig.enabled) startScanTimer();
 
 // GET /facebook/lead-scan/config — xem cấu hình
-r.get('/lead-scan/config', authMiddleware, (req, res) => {
-  res.json({ ...scanConfig, timer_active: !!scanTimer });
+r.get('/lead-scan/config', authMiddleware, async (req, res) => {
+  const cfg = await loadScanConfig();
+  res.json({ ...cfg, timer_active: !!scanTimer });
 });
 
 // PUT /facebook/lead-scan/config — cập nhật cấu hình
-r.put('/lead-scan/config', authMiddleware, (req, res) => {
+r.put('/lead-scan/config', authMiddleware, async (req, res) => {
   try {
     const { enabled, interval_minutes } = req.body;
-    const cfg = saveScanConfig({
+    const cfg = await saveScanConfig({
       ...(enabled !== undefined && { enabled }),
       ...(interval_minutes && { interval_minutes: Math.max(5, parseInt(interval_minutes) || 60) }),
     });
@@ -2194,8 +2203,15 @@ r.get('/webhook-logs', authMiddleware, async (req, res) => {
     const { data } = await supabase.from('facebook_webhook_logs')
       .select('*')
       .order('processed_at', { ascending: false })
-      .limit(50);
+      .limit(100);
     res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.delete('/webhook-logs', authMiddleware, async (req, res) => {
+  try {
+    await supabase.from('facebook_webhook_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
