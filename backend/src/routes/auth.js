@@ -31,7 +31,7 @@ r.post('/login', async (req, res) => {
       } catch (_) {}
     }
 
-    res.json({ token, user: { id: user.id, email: user.email, fullName: user.full_name, role: user.role, avatar: user.avatar, phone: user.phone, department_id: user.department_id || null, company_id } });
+    res.json({ token, user: { id: user.id, userId: user.id, email: user.email, fullName: user.full_name, full_name: user.full_name, role: user.role, avatar: user.avatar, phone: user.phone, department_id: user.department_id || null, company_id, position: user.position || null } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
 });
 
@@ -61,7 +61,20 @@ r.post('/reset-seed-passwords', async (req, res) => {
 });
 
 // Thông tin user hiện tại
-r.get('/me', auth, (req, res) => res.json({ user: req.user }));
+r.get('/me', auth, async (req, res) => {
+  try {
+    const { data: u } = await supabase.from('users')
+      .select('id,email,full_name,role,avatar,phone,department_id,company_id,position,is_active')
+      .eq('id', req.user.userId).single();
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    let company_id = u.company_id || null;
+    if (!company_id && u.department_id) {
+      const { data: dept } = await supabase.from('departments').select('company_id').eq('id', u.department_id).single();
+      company_id = dept?.company_id || null;
+    }
+    res.json({ user: { id: u.id, userId: u.id, email: u.email, fullName: u.full_name, full_name: u.full_name, role: u.role, avatar: u.avatar, phone: u.phone, department_id: u.department_id, company_id, position: u.position } });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
+});
 
 // ─────────────────────────────────────────────────────────────
 // PERMISSION APIs

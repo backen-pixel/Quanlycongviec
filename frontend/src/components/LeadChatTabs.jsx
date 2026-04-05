@@ -103,7 +103,7 @@ export function LeadMembersTab({ leadId }) {
           return (
             <div key={m.user_id} className="flex items-center justify-between p-3 bg-gray-50 border rounded-xl hover:bg-gray-100 transition">
               <div className="flex items-center gap-3">
-                <Avatar name={m.user?.full_name} url={m.user?.avatar_url} />
+                <Avatar name={m.user?.full_name} url={m.user?.avatar} />
                 <div>
                   <p className="text-sm font-medium text-gray-800">{m.user?.full_name}</p>
                   <div className="flex items-center gap-1 mt-0.5">
@@ -193,7 +193,7 @@ export function LeadChatTab({ leadId, socket }) {
           }
           return (
             <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} gap-2`}>
-              {!isMe && <Avatar name={m.user?.full_name} url={m.user?.avatar_url} size={7} />}
+              {!isMe && <Avatar name={m.user?.full_name} url={m.user?.avatar} size={7} />}
               <div className={`max-w-[70%] rounded-2xl px-3.5 py-2 shadow-sm ${
                 isMe ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
               }`}>
