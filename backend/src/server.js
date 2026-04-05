@@ -107,6 +107,8 @@ io.on('connection', (socket) => {
   socket.on('join:project', (id) => socket.join(`project:${id}`));
   socket.on('join:lead', (id) => socket.join(`lead:${id}`));
   socket.on('leave:lead', (id) => socket.leave(`lead:${id}`));
+  socket.on('join:dept', (id) => socket.join(`dept:${id}`));
+  socket.on('leave:dept', (id) => socket.leave(`dept:${id}`));
 
   socket.on('task:moved', (data) => {
     io.emit('task:updated', data);

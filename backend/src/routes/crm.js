@@ -4259,16 +4259,26 @@ r.post('/leads/:id/members', async (req, res) => {
       message_type: 'system', is_system: true,
     });
 
+    // Tạo notification cho người được thêm
+    const { data: leadInfo } = await supabase.from('crm_leads').select('code,title').eq('id', req.params.id).single();
+    const leadLabel = leadInfo ? `${leadInfo.code || ''} ${leadInfo.title || ''}`.trim() : 'nhóm trao đổi';
+    await createNotification(req, user_id, 'lead_member_added', '👥 Bạn được thêm vào nhóm',
+      `${adder?.full_name || 'Admin'} đã thêm bạn vào ${leadLabel}`, 'lead', req.params.id,
+      { nav_tab: 'chat' });
+
+    // Thông báo cho các thành viên khác biết có người mới
+    const { data: otherMembers } = await supabase.from('lead_members')
+      .select('user_id').eq('lead_id', req.params.id)
+      .neq('user_id', user_id).neq('user_id', req.user.userId);
+    if (otherMembers?.length) {
+      await notifyMultipleShared(req, otherMembers.map(m => m.user_id), 'lead_member_added',
+        '👥 Thành viên mới', `${adder?.full_name || 'Admin'} đã thêm ${memberName} vào ${leadLabel}`,
+        'lead', req.params.id, { nav_tab: 'chat' });
+    }
+
     // Emit realtime
     const io = req.app.get('io');
-    if (io) {
-      io.to(`lead:${req.params.id}`).emit('lead:member_added', data);
-      io.to(`user:${user_id}`).emit('notification', {
-        type: 'lead_member', title: 'Bạn được thêm vào Lead',
-        message: `${adder?.full_name} đã thêm bạn vào nhóm trao đổi`,
-        entity_type: 'lead', entity_id: req.params.id,
-      });
-    }
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:member_added', data);
 
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4347,19 +4357,16 @@ r.post('/leads/:id/chat', async (req, res) => {
     }
 
     const io = req.app.get('io');
-    if (io) {
-      io.to(`lead:${req.params.id}`).emit('lead:chat', data);
-      const { data: members } = await supabase.from('lead_members')
-        .select('user_id').eq('lead_id', req.params.id).neq('user_id', req.user.userId);
-      const senderName = data?.user?.full_name || 'Ai đó';
-      const preview = message_type === 'image' ? '[🖼️ Hình ảnh]' : message_type === 'video' ? '[🎬 Video]' : message_type === 'audio' ? '[🎙️ Ghi âm]' : message_type === 'file' ? '[📎 Tệp]' : (content || '').substring(0, 80);
-      (members || []).forEach(m => {
-        io.to(`user:${m.user_id}`).emit('notification', {
-          type: 'lead_chat', title: `Tin nhắn mới trong Lead`,
-          message: `${senderName}: ${preview}`,
-          entity_type: 'lead', entity_id: req.params.id,
-        });
-      });
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:chat', data);
+
+    // Notify các thành viên khác (lưu DB + push socket)
+    const { data: members } = await supabase.from('lead_members')
+      .select('user_id').eq('lead_id', req.params.id).neq('user_id', req.user.userId);
+    const senderName = data?.user?.full_name || 'Ai đó';
+    const preview = message_type === 'image' ? '[🖼️ Hình ảnh]' : message_type === 'video' ? '[🎬 Video]' : message_type === 'audio' ? '[🎙️ Ghi âm]' : message_type === 'file' ? '[📎 Tệp]' : (content || '').substring(0, 80);
+    if (members?.length) {
+      await notifyMultipleShared(req, members.map(m => m.user_id), 'lead_chat',
+        `Tin nhắn mới: ${senderName}`, preview, 'lead', req.params.id);
     }
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4392,6 +4399,17 @@ r.post('/leads/:id/chat/upload', chatUpload.single('file'), async (req, res) => 
 
     const io = req.app.get('io');
     if (io) io.to(`lead:${req.params.id}`).emit('lead:chat', data);
+
+    // Notify các thành viên khác (upload file cũng cần thông báo)
+    const { data: uploadMembers } = await supabase.from('lead_members')
+      .select('user_id').eq('lead_id', req.params.id).neq('user_id', req.user.userId);
+    if (uploadMembers?.length) {
+      const senderName = data?.user?.full_name || 'Ai đó';
+      const preview = message_type === 'image' ? '[🖼️ Hình ảnh]' : message_type === 'video' ? '[🎬 Video]' : message_type === 'audio' ? '[🎙️ Ghi âm]' : `[📎 ${req.file.originalname || 'Tệp'}]`;
+      await notifyMultipleShared(req, uploadMembers.map(m => m.user_id), 'lead_chat',
+        `Tin nhắn mới: ${senderName}`, preview, 'lead', req.params.id, { nav_tab: 'chat' });
+    }
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

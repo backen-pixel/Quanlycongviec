@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -27,6 +27,9 @@ const ICON_MAP = {
   lead_created: FolderKanban,
   lead_converted: FolderKanban,
   lead_stage_changed: FolderKanban,
+  lead_member_added: Users,
+  lead_chat: MessageSquare,
+  lead_member: CheckSquare,
   deal_assigned: CheckSquare,
   deal_created: FolderKanban,
   deal_won: FolderKanban,
@@ -64,6 +67,9 @@ const COLOR_MAP = {
   deadline_overdue: 'bg-red-100 text-red-600',
   checklist_completed: 'bg-lime-100 text-lime-700',
   lead_assigned: 'bg-cyan-100 text-cyan-600',
+  lead_member_added: 'bg-indigo-100 text-indigo-600',
+  lead_chat: 'bg-purple-100 text-purple-600',
+  lead_member: 'bg-cyan-100 text-cyan-600',
   deal_won: 'bg-emerald-100 text-emerald-600',
   order_confirmed: 'bg-orange-100 text-orange-600',
   invoice_overdue: 'bg-red-100 text-red-600',
@@ -188,8 +194,9 @@ export default function NotificationCenter({ socket }) {
             const navTab = notif.metadata?.nav_tab;
             if (pid) {
               navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
-            } else if (notif.entity_type === 'crm_lead' || notif.entity_type === 'crm_deal') {
-              navigate(`/crm/leads/${notif.entity_id}`);
+            } else if (notif.entity_type === 'crm_lead' || notif.entity_type === 'crm_deal' || notif.entity_type === 'lead') {
+              const chatTab = notif.metadata?.nav_tab;
+              navigate(chatTab ? `/crm/leads/${notif.entity_id}?tab=${chatTab}` : `/crm/leads/${notif.entity_id}`);
             } else if (notif.entity_type === 'quotation') {
               navigate(`/crm/quotations/${notif.entity_id}`);
             } else if (notif.entity_type === 'order') {
@@ -289,8 +296,9 @@ export default function NotificationCenter({ socket }) {
                         navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
                       } else if (n.entity_type === 'task' && n.entity_id) {
                         navigate(`/tasks?task=${n.entity_id}`);
-                      } else if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal') {
-                        navigate(`/crm/leads/${n.entity_id}`);
+                      } else if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal' || n.entity_type === 'lead') {
+                        const chatTab = n.metadata?.nav_tab;
+                        navigate(chatTab ? `/crm/leads/${n.entity_id}?tab=${chatTab}` : `/crm/leads/${n.entity_id}`);
                       } else if (n.entity_type === 'quotation') {
                         navigate(`/crm/quotations/${n.entity_id}`);
                       } else if (n.entity_type === 'order') {
