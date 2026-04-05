@@ -510,6 +510,17 @@ r.post('/webhook', async (req, res) => {
   // Luôn trả 200 ngay để Facebook không retry
   res.sendStatus(200);
 
+  // Ghi log vào DB
+  if (body.object === 'page' && body.entry) {
+    for (const entry of body.entry) {
+      await supabase.from('facebook_webhook_logs').insert({
+        page_id: entry.id,
+        payload: entry,
+        status: 'received'
+      });
+    }
+  }
+
   try {
     if (body.object === 'page') {
       for (const entry of (body.entry || [])) {
@@ -2175,6 +2186,16 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
       }
     }
     res.json({ updated, total: stuckContacts.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.get('/webhook-logs', authMiddleware, async (req, res) => {
+  try {
+    const { data } = await supabase.from('facebook_webhook_logs')
+      .select('*')
+      .order('processed_at', { ascending: false })
+      .limit(50);
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
