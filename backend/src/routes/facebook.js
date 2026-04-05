@@ -208,13 +208,15 @@ async function fetchProfileViaConversations(pageId, psid) {
       return null;
     }
 
-    // Tạo avatar URL từ tên (Đảm bảo luôn lấy được avatar qua ui-avatars.com)
-    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'FB')}&background=0D8ABC&color=fff&size=200&bold=true`;
+    const userName = userMsg.from.name;
 
-    console.log(`[FB] ✅ Got name: ${name}`);
+    // Tạo avatar URL từ tên
+    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=0D8ABC&color=fff&size=200&bold=true`;
+
+    console.log(`[FB] ✅ Got name: ${userName}`);
     console.log(`[FB] 🖼️  Avatar: ${avatarUrl}`);
 
-    return { name, profilePic: avatarUrl };
+    return { name: userName, profilePic: avatarUrl };
   } catch (e) {
     console.warn('[FB] fetchProfileViaConversations error:', e.message);
     return null;
@@ -2125,6 +2127,43 @@ r.get('/lead-scan/preview', authMiddleware, async (req, res) => {
         page_name: pageMap[c.page_id] || c.page_id,
       })),
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Refresh tên cho các contact đang bị "Facebook User" ──
+r.post('/refresh-names', authMiddleware, async (req, res) => {
+  try {
+    const { data: stuckContacts } = await supabase.from('facebook_contacts')
+      .select('id, page_id, psid, fb_name, lead_id')
+      .or('fb_name.eq.Facebook User,fb_name.is.null')
+      .limit(50);
+    if (!stuckContacts?.length) return res.json({ updated: 0, message: 'Không có contact nào cần cập nhật' });
+
+    let updated = 0;
+    for (const c of stuckContacts) {
+      const profile = await fetchProfileViaConversations(c.page_id, c.psid);
+      if (profile?.name && profile.name !== 'Facebook User') {
+        const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
+        if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+        await supabase.from('facebook_contacts').update(upd).eq('id', c.id);
+
+        if (c.lead_id) {
+          await supabase.from('crm_leads')
+            .update({ title: `[FB] ${profile.name}`, updated_at: new Date().toISOString() })
+            .eq('id', c.lead_id).or('title.ilike.%Facebook User%,title.ilike.%[FB] User%');
+          const { data: leadData } = await supabase.from('crm_leads')
+            .select('customer_id').eq('id', c.lead_id).single();
+          if (leadData?.customer_id) {
+            await supabase.from('customers')
+              .update({ full_name: profile.name, updated_at: new Date().toISOString() })
+              .eq('id', leadData.customer_id).ilike('full_name', '%Facebook%');
+          }
+        }
+        updated++;
+        console.log(`[FB Refresh] ${c.psid}: "${c.fb_name}" → "${profile.name}"`);
+      }
+    }
+    res.json({ updated, total: stuckContacts.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
