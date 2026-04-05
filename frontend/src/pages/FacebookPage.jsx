@@ -737,6 +737,22 @@ function ContactsTab() {
     }
   };
 
+  // Refresh tên các contact bị "Facebook User"
+  const refreshNames = async () => {
+    const stuckCount = contacts.filter(c => !c.fb_name || c.fb_name === 'Facebook User' || c.fb_name === 'User').length;
+    if (!stuckCount) return alert('Tất cả liên hệ đã có tên!');
+    if (!confirm(`Cập nhật tên cho ${stuckCount} liên hệ đang thiếu tên?`)) return;
+    setBatchStatus({ type: 'names', loading: true, result: null });
+    try {
+      const res = await fetch(`${API}/api/facebook/refresh-names`, { method: 'POST', headers: hdr() });
+      const data = await res.json();
+      setBatchStatus({ type: 'names', loading: false, result: data });
+      load();
+    } catch (e) {
+      setBatchStatus({ type: 'names', loading: false, result: { error: e.message } });
+    }
+  };
+
   // Kiểm tra & xóa lead trùng không liên kết FB
   const dedupLeads = async () => {
     if (!confirm('Kiểm tra và xóa lead trùng không liên kết với Facebook?')) return;
@@ -760,6 +776,11 @@ function ContactsTab() {
             className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
             {batchStatus?.type === 'leads' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" /> : '🆕'}
             Tạo Lead hàng loạt
+          </button>
+          <button onClick={refreshNames} disabled={batchStatus?.loading}
+            className="px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+            {batchStatus?.type === 'names' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-purple-600 border-t-transparent rounded-full" /> : '🔄'}
+            Refresh tên
           </button>
           <button onClick={dedupLeads} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded-lg hover:bg-orange-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
