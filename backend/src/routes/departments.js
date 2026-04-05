@@ -194,9 +194,26 @@ r.delete('/:id/members/:userId', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// ═══════════════════════════════════════════════
-// DEPARTMENT MESSAGES (TRAO ĐỔI)
-// ═══════════════════════════════════════════════
+// Simple in-memory Map for rate limiting (per-user last message time)
+const lastMessageMap = new Map();
+const messageCountMap = new Map(); // Store array of timestamps for sliding window
+
+function checkRateLimit(userId) {
+  const now = Date.now();
+  const lastTime = lastMessageMap.get(userId) || 0;
+  if (now - lastTime < 1000) return { blocked: true, reason: 'Gửi quá nhanh, vui lòng chờ' };
+
+  // Sliding window (max 30 messages per minute)
+  const windowStart = now - 60000;
+  let timestamps = messageCountMap.get(userId) || [];
+  timestamps = timestamps.filter(t => t > windowStart);
+  if (timestamps.length >= 30) return { blocked: true, reason: 'Gửi quá nhiều, vui lòng chờ' };
+
+  timestamps.push(now);
+  messageCountMap.set(userId, timestamps);
+  lastMessageMap.set(userId, now);
+  return { blocked: false };
+}
 
 // LIST messages (paginated)
 r.get('/:id/messages', async (req, res) => {
@@ -216,6 +233,19 @@ r.get('/:id/messages', async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
 
+    // Load reactions
+    const msgIds = (data || []).map(m => m.id);
+    let reactionsMap = {};
+    if (msgIds.length) {
+      const { data: reactions } = await supabase.from('department_message_reactions')
+        .select('*, user:users(id, full_name)')
+        .in('message_id', msgIds);
+      (reactions || []).forEach(r => {
+        if (!reactionsMap[r.message_id]) reactionsMap[r.message_id] = [];
+        reactionsMap[r.message_id].push(r);
+      });
+    }
+
     // Mark as read
     await supabase.from('department_message_reads').upsert({
       department_id: req.params.id,
@@ -223,13 +253,17 @@ r.get('/:id/messages', async (req, res) => {
       last_read_at: new Date().toISOString(),
     }, { onConflict: 'department_id,user_id' });
 
-    res.json({ messages: (data || []).reverse() });
+    res.json({ messages: (data || []).reverse().map(m => ({ ...m, reactions: reactionsMap[m.id] || [] })) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
 // SEND message
 r.post('/:id/messages', async (req, res) => {
   try {
+    // Rate limit check
+    const limitCheck = checkRateLimit(req.user.userId);
+    if (limitCheck.blocked) return res.status(429).json({ error: limitCheck.reason });
+
     const { content, reply_to_id, attachments } = req.body;
     if (!content?.trim() && !(attachments?.length)) return res.status(400).json({ error: 'Nội dung trống' });
 
@@ -248,17 +282,32 @@ r.post('/:id/messages', async (req, res) => {
     // Realtime push via Socket.IO
     const io = req.app.get('io');
     if (io) {
-      // Get all members of this dept
-      const { data: members } = await supabase.from('users')
-        .select('id').eq('department_id', req.params.id).eq('is_active', true);
-      (members || []).forEach(m => {
-        if (m.id !== req.user.userId) {
-          io.to(`user:${m.id}`).emit('department_message', {
-            department_id: req.params.id,
-            message: data,
-          });
-        }
+      io.to(`dept:${req.params.id}`).emit('department_message', {
+        department_id: req.params.id,
+        message: data,
       });
+    }
+
+    // Push notifications
+    const { data: members } = await supabase.from('users')
+      .select('id, full_name').eq('department_id', req.params.id).eq('is_active', true);
+    const { data: dept } = await supabase.from('departments').select('name').eq('id', req.params.id).single();
+
+    if (members) {
+      const { sendWebPush } = require('./push');
+      for (const m of members) {
+        if (m.id !== req.user.userId) {
+          const { data: notif } = await supabase.from('notifications').insert({
+            user_id: m.id,
+            type: 'department_chat',
+            title: dept.name,
+            message: `${req.user.fullName}: ${content?.slice(0, 100) || 'Đã gửi file'}`,
+            entity_type: 'department',
+            entity_id: req.params.id,
+          }).select().single();
+          if (notif) sendWebPush(m.id, notif);
+        }
+      }
     }
 
     // Update own read marker
@@ -269,6 +318,29 @@ r.post('/:id/messages', async (req, res) => {
     }, { onConflict: 'department_id,user_id' });
 
     res.status(201).json({ message: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// Reaction toggling
+r.post('/:deptId/messages/:msgId/react', async (req, res) => {
+  try {
+    const { emoji } = req.body;
+    if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
+    const { data: existing } = await supabase.from('department_message_reactions')
+      .select('id').eq('message_id', req.params.msgId).eq('user_id', req.user.userId).eq('emoji', emoji).single();
+    if (existing) {
+      await supabase.from('department_message_reactions').delete().eq('id', existing.id);
+    } else {
+      await supabase.from('department_message_reactions').insert({
+        message_id: req.params.msgId, user_id: req.user.userId, emoji,
+      });
+    }
+    const { data: reactions } = await supabase.from('department_message_reactions')
+      .select('*, user:users(id, full_name)').eq('message_id', req.params.msgId);
+    
+    const io = req.app.get('io');
+    if (io) io.to(`dept:${req.params.deptId}`).emit('department_reaction', { message_id: req.params.msgId, reactions });
+    res.json({ reactions });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
