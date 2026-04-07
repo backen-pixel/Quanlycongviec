@@ -362,6 +362,23 @@ export default function LeadDetail() {
         </div>
       </div>
 
+      {/* Lost Banner — hiển thị nổi bật khi deal/lead thua */}
+      {lead?.lost_reason && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+          <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center text-lg shrink-0">❌</div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-sm font-bold text-red-700">THUA / MẤT</span>
+              <span className="text-xs text-red-500 bg-red-100 px-2 py-0.5 rounded-full">Đã kết thúc</span>
+            </div>
+            <p className="text-sm text-red-800 font-medium">Lý do: {lead.lost_reason}</p>
+            {lead.lost_at && (
+              <p className="text-xs text-red-400 mt-1">Vào lúc {new Date(lead.lost_at).toLocaleString('vi-VN')}</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Pipeline Progress - MISA Style Stepper */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
         <div className="flex items-start justify-between overflow-x-auto">
