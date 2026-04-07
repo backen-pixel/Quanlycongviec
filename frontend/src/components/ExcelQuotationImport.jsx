@@ -138,11 +138,18 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
 
       const { data } = await api.post('/crm/quotations', payload);
       // Hiển thị thông báo auto-link + auto-complete
+      let msg = '';
       if (data.auto_task) {
-        alert(`🚀 Tự động:\n• Liên kết báo giá ${data.code} với Deal\n• Hoàn thành nhiệm vụ "${data.auto_task.taskTitle}"\n• File báo giá đã ghi vào ghi chú nhiệm vụ`);
+        msg += `🚀 Tự động:\n• Liên kết báo giá ${data.code} với Deal\n• Hoàn thành nhiệm vụ "${data.auto_task.taskTitle}"\n• File báo giá đã ghi vào ghi chú nhiệm vụ\n`;
       } else if (data.lead_id && !(dealId || leadId)) {
-        alert(`🔗 Tự động liên kết báo giá ${data.code} với Deal qua khách hàng`);
+        msg += `🔗 Tự động liên kết báo giá ${data.code} với Deal qua khách hàng\n`;
       }
+      if (data.synced_products?.length) {
+        const updated = data.synced_products.filter(p => p.action === 'updated').length;
+        const created = data.synced_products.filter(p => p.action === 'created').length;
+        msg += `📦 Đồng bộ sản phẩm: ${updated > 0 ? `${updated} cập nhật giá` : ''}${updated > 0 && created > 0 ? ', ' : ''}${created > 0 ? `${created} sản phẩm mới` : ''}\n`;
+      }
+      if (msg) alert(msg);
       if (onImportDone) onImportDone(data);
     } catch (e) {
       setError(e.response?.data?.error || 'Lỗi tạo báo giá');
