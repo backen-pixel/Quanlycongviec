@@ -1205,6 +1205,23 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
         displayValue={lead?.estimated_value > 0 ? formatVND(lead.estimated_value) : null}
         type="number" />
 
+      {lead?.type === 'deal' && (
+        <EditableRow icon="📅" label="Deadline" field="expected_close_date"
+          value={lead?.expected_close_date || ''}
+          displayValue={lead?.expected_close_date ? formatDate(lead.expected_close_date) : null}
+          type="date" />
+      )}
+
+      {lead?.lost_reason && (
+        <div className="flex items-start gap-2 py-1.5 px-1">
+          <span className="text-sm">❌</span>
+          <div>
+            <span className="text-xs text-gray-500">Lý do thua</span>
+            <p className="text-sm text-red-600">{lead.lost_reason}</p>
+          </div>
+        </div>
+      )}
+
       <div>
         <EditableRow icon="📊" label="Xác suất" field="probability"
           value={lead?.probability ?? ''}
