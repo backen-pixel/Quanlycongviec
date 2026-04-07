@@ -868,11 +868,15 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           onImportDone={(data) => {
             setExcelImportTaskId(null);
             loadTasks();
-            setImportToast({
-              message: `✅ Đã tạo báo giá ${data.code || ''} — ${formatVND(data.total || 0)}. Task đã hoàn thành!`,
-              type: 'success'
-            });
-            setTimeout(() => setImportToast(null), 5000);
+            let msg = `✅ Đã tạo báo giá ${data.code || ''} — ${formatVND(data.total || 0)}. Task đã hoàn thành!`;
+            if (data.synced_products?.length) {
+              const updated = data.synced_products.filter(p => p.action === 'updated').length;
+              const created = data.synced_products.filter(p => p.action === 'created').length;
+              if (updated > 0) msg += ` 📦 ${updated} SP cập nhật giá.`;
+              if (created > 0) msg += ` 📦 ${created} SP mới được thêm vào danh mục.`;
+            }
+            setImportToast({ message: msg, type: 'success' });
+            setTimeout(() => setImportToast(null), 7000);
           }}
           onClose={() => setExcelImportTaskId(null)}
         />

@@ -1806,6 +1806,43 @@ r.post('/quotations', async (req, res) => {
       await supabase.from('quotation_items').insert(itemRows);
     }
 
+    // ═══ ĐỒNG BỘ SẢN PHẨM: so khớp items với danh mục web products ═══
+    const syncedProducts = [];
+    try {
+      for (const item of processedItems) {
+        if (!item.name || item.name.trim().length < 3) continue;
+        // Tìm sản phẩm theo tên gần đúng (case-insensitive)
+        const nameSearch = item.name.trim();
+        const { data: existing } = await supabase.from('products')
+          .select('id, name, selling_price, unit')
+          .ilike('name', `%${nameSearch}%`)
+          .limit(1);
+        if (existing?.length) {
+          const p = existing[0];
+          let changed = false;
+          const update = { updated_at: new Date().toISOString() };
+          if (item.unit_price && item.unit_price !== p.selling_price) { update.selling_price = item.unit_price; changed = true; }
+          if (item.unit && item.unit !== p.unit) { update.unit = item.unit; changed = true; }
+          if (changed) {
+            await supabase.from('products').update(update).eq('id', p.id);
+            syncedProducts.push({ name: item.name, action: 'updated', price: item.unit_price });
+          }
+        } else {
+          // Thêm mới sản phẩm
+          const { data: newP } = await supabase.from('products').insert({
+            name: item.name,
+            selling_price: item.unit_price || 0,
+            unit: item.unit || 'bộ',
+            category: item.group_name || 'Bếp',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }).select('id, name').single();
+          if (newP) syncedProducts.push({ name: item.name, action: 'created' });
+        }
+      }
+      console.log('[QUOTATION] Product sync:', syncedProducts.length, 'changed');
+    } catch (e) { console.warn('[QUOTATION] Product sync error:', e.message); }
+
     // ═══ AUTO-LINK: Tìm deal qua customer nếu chưa có lead_id ═══
     let linkedLeadId = quote.lead_id;
     if (!linkedLeadId && (quote.customer_id || quote.customer_name)) {
@@ -1948,7 +1985,7 @@ r.post('/quotations', async (req, res) => {
       }
     }
 
-    res.status(201).json(quote);
+    res.status(201).json({ ...quote, synced_products: syncedProducts });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -3624,11 +3661,49 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
     if (parseRes.notes) notesParts.push(parseRes.notes);
     notesParts.push(`📋 Import từ task: ${task.title}`);
 
+    // 4b. Đồng bộ sản phẩm vào danh mục web (so khớp theo tên)
+    const syncedProducts = [];
+    try {
+      for (const item of items) {
+        if (!item.name || item.name.trim().length < 3) continue;
+        // Tìm sản phẩm đã có theo tên gần đúng (case-insensitive)
+        const nameSearch = item.name.trim().toLowerCase();
+        const { data: existing } = await supabase.from('products')
+          .select('id, name, selling_price, unit')
+          .ilike('name', `%${nameSearch}%`)
+          .limit(1);
+        if (existing?.length) {
+          // Cập nhật giá + đơn vị nếu khác
+          const p = existing[0];
+          if ((item.unit_price && item.unit_price !== p.selling_price) || item.unit !== p.unit) {
+            await supabase.from('products').update({
+              selling_price: item.unit_price || p.selling_price,
+              unit: item.unit || p.unit,
+              updated_at: new Date().toISOString(),
+            }).eq('id', p.id);
+            syncedProducts.push({ name: item.name, action: 'updated', price: item.unit_price });
+          }
+        } else {
+          // Thêm mới
+          const { data: newP } = await supabase.from('products').insert({
+            name: item.name,
+            selling_price: item.unit_price || 0,
+            unit: item.unit || 'bộ',
+            category: item.group_name || 'Bếp',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }).select('id, name').single();
+          if (newP) syncedProducts.push({ name: item.name, action: 'created' });
+        }
+      }
+      console.log('[TASK-IMPORT] Product sync:', syncedProducts.length, 'changed', syncedProducts.slice(0, 3));
+    } catch (e) { console.warn('[TASK-IMPORT] Product sync error:', e.message); }
+
     // 5. Create quotation via internal POST /crm/quotations
     const axios = require('axios');
     const port = process.env.PORT || 3000;
     const { data: quote } = await axios.post(`http://localhost:${port}/api/crm/quotations`, {
-      title: parseRes.title || `Báo giá ${customerName}`.trim(),
+      title: parseRes.title || req.file.originalname.replace(/\.(xlsx?|xls)$/i, '') || `Báo giá ${customerName}`.trim(),
       customer_name: customerName,
       customer_phone: customerPhone,
       customer_address: customerAddress,
@@ -3682,6 +3757,7 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
       item_count: items.length,
       task_completed: true,
       customer_updated: !!customerId,
+      synced_products: syncedProducts,
     });
   } catch (e) {
     console.error('[TASK-IMPORT-EXCEL]', e);
