@@ -1806,7 +1806,7 @@ r.post('/quotations', async (req, res) => {
       await supabase.from('quotation_items').insert(itemRows);
     }
 
-    // ═══ ĐỒNG BỘ SẢN PHẨM: so khớp items với danh mục web products ═══
+    // ═══ ĐỒNG BỘ SẢN PHẨM: chỉ liên kết product_id theo tên, KHÔNG cập nhật giá / không tạo mới ═══
     const syncedProducts = [];
     try {
       for (const item of processedItems) {
@@ -1814,34 +1814,17 @@ r.post('/quotations', async (req, res) => {
         // Tìm sản phẩm theo tên gần đúng (case-insensitive)
         const nameSearch = item.name.trim();
         const { data: existing } = await supabase.from('products')
-          .select('id, name, selling_price, unit')
+          .select('id, name')
           .ilike('name', `%${nameSearch}%`)
           .limit(1);
         if (existing?.length) {
-          const p = existing[0];
-          let changed = false;
-          const update = { updated_at: new Date().toISOString() };
-          if (item.unit_price && item.unit_price !== p.selling_price) { update.selling_price = item.unit_price; changed = true; }
-          if (item.unit && item.unit !== p.unit) { update.unit = item.unit; changed = true; }
-          if (changed) {
-            await supabase.from('products').update(update).eq('id', p.id);
-            syncedProducts.push({ name: item.name, action: 'updated', price: item.unit_price });
-          }
-        } else {
-          // Thêm mới sản phẩm
-          const { data: newP } = await supabase.from('products').insert({
-            name: item.name,
-            selling_price: item.unit_price || 0,
-            unit: item.unit || 'bộ',
-            category: item.group_name || 'Bếp',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }).select('id, name').single();
-          if (newP) syncedProducts.push({ name: item.name, action: 'created' });
+          item.product_id = existing[0].id; // Gán product_id vào item
+          syncedProducts.push({ name: item.name, product_id: existing[0].id });
         }
+        // Không tìm thấy → giữ nguyên, không tạo mới
       }
-      console.log('[QUOTATION] Product sync:', syncedProducts.length, 'changed');
-    } catch (e) { console.warn('[QUOTATION] Product sync error:', e.message); }
+      console.log('[QUOTATION] Product link:', syncedProducts.length, 'items linked');
+    } catch (e) { console.warn('[QUOTATION] Product link error:', e.message); }
 
     // ═══ AUTO-LINK: Tìm deal qua customer nếu chưa có lead_id ═══
     let linkedLeadId = quote.lead_id;
@@ -3661,43 +3644,24 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
     if (parseRes.notes) notesParts.push(parseRes.notes);
     notesParts.push(`📋 Import từ task: ${task.title}`);
 
-    // 4b. Đồng bộ sản phẩm vào danh mục web (so khớp theo tên)
+    // 4b. Liên kết product_id theo tên — KHÔNG cập nhật giá, KHÔNG tạo mới
     const syncedProducts = [];
     try {
       for (const item of items) {
         if (!item.name || item.name.trim().length < 3) continue;
-        // Tìm sản phẩm đã có theo tên gần đúng (case-insensitive)
         const nameSearch = item.name.trim().toLowerCase();
         const { data: existing } = await supabase.from('products')
-          .select('id, name, selling_price, unit')
+          .select('id, name')
           .ilike('name', `%${nameSearch}%`)
           .limit(1);
         if (existing?.length) {
-          // Cập nhật giá + đơn vị nếu khác
-          const p = existing[0];
-          if ((item.unit_price && item.unit_price !== p.selling_price) || item.unit !== p.unit) {
-            await supabase.from('products').update({
-              selling_price: item.unit_price || p.selling_price,
-              unit: item.unit || p.unit,
-              updated_at: new Date().toISOString(),
-            }).eq('id', p.id);
-            syncedProducts.push({ name: item.name, action: 'updated', price: item.unit_price });
-          }
-        } else {
-          // Thêm mới
-          const { data: newP } = await supabase.from('products').insert({
-            name: item.name,
-            selling_price: item.unit_price || 0,
-            unit: item.unit || 'bộ',
-            category: item.group_name || 'Bếp',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }).select('id, name').single();
-          if (newP) syncedProducts.push({ name: item.name, action: 'created' });
+          item.product_id = existing[0].id;
+          syncedProducts.push({ name: item.name, product_id: existing[0].id });
         }
+        // Không tìm thấy → giữ nguyên item, không tạo mới
       }
-      console.log('[TASK-IMPORT] Product sync:', syncedProducts.length, 'changed', syncedProducts.slice(0, 3));
-    } catch (e) { console.warn('[TASK-IMPORT] Product sync error:', e.message); }
+      console.log('[TASK-IMPORT] Product link:', syncedProducts.length, 'items linked');
+    } catch (e) { console.warn('[TASK-IMPORT] Product link error:', e.message); }
 
     // 5. Create quotation via internal POST /crm/quotations
     const axios = require('axios');

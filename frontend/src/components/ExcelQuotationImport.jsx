@@ -145,9 +145,9 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
         msg += `🔗 Tự động liên kết báo giá ${data.code} với Deal qua khách hàng\n`;
       }
       if (data.synced_products?.length) {
-        const updated = data.synced_products.filter(p => p.action === 'updated').length;
-        const created = data.synced_products.filter(p => p.action === 'created').length;
-        msg += `📦 Đồng bộ sản phẩm: ${updated > 0 ? `${updated} cập nhật giá` : ''}${updated > 0 && created > 0 ? ', ' : ''}${created > 0 ? `${created} sản phẩm mới` : ''}\n`;
+        const linked = data.synced_products?.length || 0;
+        
+        msg += linked > 0 ? `📦 ${linked} sản phẩm đã liên kết với danh mục web.\n` : '';
       }
       if (msg) alert(msg);
       if (onImportDone) onImportDone(data);
