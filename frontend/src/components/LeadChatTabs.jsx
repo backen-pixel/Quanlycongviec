@@ -239,16 +239,32 @@ export function LeadChatTab({ leadId, socket }) {
     setSending(false);
   };
 
-  const renderAttachments = (attachments) => {
-    if (!attachments || !Array.isArray(attachments)) return null;
-    return attachments.map((att, i) => {
+  const renderAttachments = (message) => {
+    const items = Array.isArray(message.attachments) && message.attachments.length
+      ? message.attachments
+      : message.attachment_url
+        ? [{ url: message.attachment_url, name: message.attachment_name, type: message.attachment_mime, size: message.attachment_size }]
+        : [];
+
+    if (!items.length) return null;
+
+    return items.map((att, i) => {
       const isImg = att.type?.startsWith('image/');
       const isVideo = att.type?.startsWith('video/');
+      const isAudio = att.type?.startsWith('audio/');
       return (
-        <div key={i} className="mt-2 cursor-pointer" onClick={() => setMediaPreview(att)}>
-          {isImg ? <img src={att.url} className="rounded-lg max-w-full max-h-48" alt={att.name} /> :
-           isVideo ? <video src={att.url} className="rounded-lg max-w-full max-h-48" /> :
-           <div className="bg-gray-100 p-2 rounded-lg flex items-center gap-2 text-xs text-blue-600"><Paperclip size={12} /> {att.name}</div>}
+        <div key={i} className="mt-2">
+          {isImg ? (
+            <img src={att.url} className="rounded-lg max-w-full max-h-48 cursor-pointer" alt={att.name} onClick={() => setMediaPreview(att)} />
+          ) : isVideo ? (
+            <video src={att.url} controls className="rounded-lg max-w-full max-h-48 cursor-pointer" onClick={() => setMediaPreview(att)} />
+          ) : isAudio ? (
+            <audio src={att.url} controls className="w-full max-w-xs" />
+          ) : (
+            <a href={att.url} target="_blank" rel="noreferrer" className="bg-gray-100 p-2 rounded-lg flex items-center gap-2 text-xs text-blue-600 hover:bg-gray-200">
+              <Paperclip size={12} /> {att.name || 'Tệp đính kèm'}
+            </a>
+          )}
         </div>
       );
     });
@@ -286,7 +302,7 @@ export function LeadChatTab({ leadId, socket }) {
               }`}>
                 {!isMe && <p className={`text-[10px] font-medium mb-0.5 ${isMe ? 'text-blue-200' : 'text-blue-600'}`}>{m.user?.full_name}</p>}
                 <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
-                {renderAttachments(m.attachments)}
+                {renderAttachments(m)}
                 <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
               </div>
             </div>
