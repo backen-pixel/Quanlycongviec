@@ -1,7 +1,7 @@
 const express = require('express');
 const r = express.Router();
 const { generateRestToken, stringeeAPI, STRINGEE_SID } = require('../helpers/stringee');
-const supabase = require('../config/supabase');
+const { supabase } = require('../config/supabase');
 
 // ═══════════════════════════════════════════════════════════════
 // TEST: Kiểm tra kết nối Stringee
