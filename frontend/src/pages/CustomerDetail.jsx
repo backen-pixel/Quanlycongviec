@@ -87,6 +87,21 @@ export default function CustomerDetail() {
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Doanh thu</h3>
           <p className="text-2xl font-bold text-gray-900">{formatVND(totalRevenue)}</p>
           <p className="text-xs text-gray-500">{customer.projects?.length || 0} dự án</p>
+          {customer.last_quotation_amount > 0 && (
+            <div className="pt-2 border-t border-gray-100 mt-2">
+              <p className="text-xs text-gray-500 flex items-center gap-1">
+                💰 Báo giá gần nhất: <strong className="text-gray-900">{formatVND(customer.last_quotation_amount)}</strong>
+              </p>
+              {customer.last_quotation_at && (
+                <p className="text-[10px] text-gray-400 mt-0.5">{formatDate(customer.last_quotation_at)}</p>
+              )}
+              {customer.total_quotation_value > 0 && customer.total_quotation_value !== customer.last_quotation_amount && (
+                <p className="text-[10px] text-gray-400 mt-0.5">
+                  Tổng giá trị báo giá: <strong>{formatVND(customer.total_quotation_value)}</strong>
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <div className="bg-white rounded-xl border p-4 space-y-2">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Thông tin</h3>
