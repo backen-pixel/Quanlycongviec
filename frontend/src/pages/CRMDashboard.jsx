@@ -8,8 +8,9 @@ import {
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
-  Clock
+  Clock, List, LayoutGrid
 } from 'lucide-react';
+import { ListView, PlannerView } from '../components/CRMViews';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -95,6 +96,7 @@ export default function CRMDashboard() {
   const [showNewDeal, setShowNewDeal] = useState(false);
   const [pinnedTab, setPinnedTab] = useState(() => localStorage.getItem('crm_pinned_tab') || '');
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState('kanban'); // kanban | list | planner
 
   // ── TIME FILTER STATE ──
   const [timePreset, setTimePreset] = useState(''); // '' = all time
@@ -822,7 +824,22 @@ export default function CRMDashboard() {
         )}
       </div>
 
-      {/* Kanban View - MISA Style */}
+      {/* View Mode Toggle */}
+      <div className="flex items-center gap-1 mb-3">
+        {[
+          { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
+          { id: 'list', icon: List, label: 'Danh sách' },
+          { id: 'planner', icon: Users, label: 'Planner' },
+        ].map(v => (
+          <button key={v.id} onClick={() => setViewMode(v.id)}
+            className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${viewMode === v.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+            <v.icon className="h-3.5 w-3.5" />{v.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Kanban View */}
+      {viewMode === 'kanban' && (
       <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
         <KanbanView 
           pipeline={currentPipeline} 
@@ -831,6 +848,25 @@ export default function CRMDashboard() {
           calculateDays={calculateDays}
         />
       </div>
+      )}
+
+      {/* List View */}
+      {viewMode === 'list' && (
+        <ListView
+          pipeline={currentPipeline}
+          pipelineType={pipelineType}
+          calculateDays={calculateDays}
+        />
+      )}
+
+      {/* Planner View */}
+      {viewMode === 'planner' && (
+        <PlannerView
+          pipeline={currentPipeline}
+          pipelineType={pipelineType}
+          users={users}
+        />
+      )}
 
       {showNewLead && (
         <NewLeadModal

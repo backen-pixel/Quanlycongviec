@@ -121,8 +121,10 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
         if (preview.kts_info) notesParts.push(`KT Phụ trách: ${preview.kts_info}`);
         if (preview.notes) notesParts.push(preview.notes);
 
+        // Tên file (không extension) làm tên báo giá mặc định
+        const fileTitle = file?.name?.replace(/\.[^.]+$/, '').trim() || '';
         const payload = {
-          title: preview.title || `Báo giá ${preview.customer_name || ''}`.trim(),
+          title: preview.title || fileTitle || `Báo giá ${preview.customer_name || ''}`.trim(),
           customer_name: preview.customer_name || '',
           customer_phone: preview.customer_phone || '',
           customer_address: preview.customer_address || '',

@@ -281,8 +281,8 @@ r.get('/', async (req, res) => {
     }
 
     // ── Lọc thông thường (không có ecosystem_unit_id) ──
-    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams(id,name,color)`;
-    const basicCols = `id,email,full_name,phone,avatar,role,department_id,team_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams(id,name,color)`;
+    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams!users_team_id_fkey(id,name,color)`;
+    const basicCols = `id,email,full_name,phone,avatar,role,department_id,team_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams!users_team_id_fkey(id,name,color)`;
     const basicColsNoDept = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at`;
 
     let data = null, error = null;
@@ -361,7 +361,7 @@ r.get('/:id', async (req, res) => {
       date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,
       is_active,last_login_at,created_at,
       department:departments!users_department_id_fkey(id,name,color),
-      team:teams(id,name,color)
+      team:teams!users_team_id_fkey(id,name,color)
     `).eq('id', req.params.id).single();
     if (!e1) { user = u1; }
     else {

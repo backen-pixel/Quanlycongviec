@@ -205,6 +205,9 @@ server.listen(config.port, () => {
       const notifSet = new Set((recentNotifs || []).map(n => `${n.type}:${n.entity_id}`));
       const shouldNotify = (type, entityId) => !notifSet.has(`${type}:${entityId}`);
 
+      // Batch: collect all notifications to insert
+      const notifs = [];
+
       const addCrmNotif = (taskList, type, titleText, msgFn) => {
         for (const t of (taskList || [])) {
           if (!shouldNotify(type, t.lead_id || t.id)) continue;
@@ -256,8 +259,7 @@ server.listen(config.port, () => {
         .lt('due_date', todayStart)
         .limit(50);
 
-      // Batch: collect all notifications to insert
-      const notifs = [];
+      // Batch: collect all notifications to insert (tasks)
       for (const t of (dueSoon || [])) {
         const uid = t.assignee_id || t.created_by_id;
         if (uid) notifs.push({ user_id: uid, type: 'deadline_warning', title: '⏰ Sắp hết hạn', message: `"${t.title}" — hạn: ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
@@ -309,6 +311,7 @@ server.listen(config.port, () => {
   // ── Periodic scan: tạo lead cho contacts chưa có lead ──
   const scanMissingLeads = async () => {
     try {
+      const { supabase } = require('./config/supabase');
       const { getConfig } = require('./config/autoLeadConfig');
       const cfg = getConfig();
       if (cfg.trigger === 'manual') return; // Không tự động
