@@ -1347,7 +1347,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.patch('/leads/:id/stage', async (req, res) => {
   try {
-    const { stage_id } = req.body;
+    const { stage_id, lost_reason } = req.body;
     const { data: lead } = await supabase.from('crm_leads').select('type, project_id').eq('id', req.params.id).single();
     
     const { data: stage } = await supabase
@@ -1371,6 +1371,10 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     const updates = { stage_id, updated_at: new Date().toISOString() };
     if (stage?.is_won) updates.actual_close_date = new Date().toISOString().split('T')[0];
+    if (stage?.is_lost) {
+      updates.lost_reason = lost_reason || null;
+      updates.actual_close_date = new Date().toISOString().split('T')[0];
+    }
     
     const { data, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
@@ -1762,6 +1766,9 @@ r.post('/quotations', async (req, res) => {
     // Sanitize: empty strings → null for UUID fields
     const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
+    // Sanitize: empty strings → null for date fields
+    const dateFields = ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'];
+    dateFields.forEach(f => { if (quoteData[f] === '') quoteData[f] = null; });
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     const processedItems = (items || []).map(item => {
@@ -1989,6 +1996,8 @@ r.put('/quotations/:id', async (req, res) => {
     // Sanitize: empty strings → null for UUID fields
     const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
+    // Sanitize: empty strings → null for date fields
+    ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'].forEach(f => { if (quoteData[f] === '') quoteData[f] = null; });
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     const processedItems = (items || []).map(item => {

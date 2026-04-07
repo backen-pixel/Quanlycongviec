@@ -44,6 +44,9 @@ export default function LeadDetail() {
   const [activeTab, setActiveTab] = useState('tasks');
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
+  const [showLostModal, setShowLostModal] = useState(false);
+  const [lostReason, setLostReason] = useState('');
+  const [pendingLostStageId, setPendingLostStageId] = useState(null);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -111,20 +114,26 @@ export default function LeadDetail() {
     setLoading(false);
   };
 
-  const moveStage = async (stageId) => {
+  const moveStage = async (stageId, extraData = {}) => {
     const stages = lead?.type === 'deal' ? stagesDeal : stagesLead;
     const targetStage = stages.find(s => s.id === stageId);
 
+    // Nếu stage là Thua/Mất → hiện modal nhập lý do
+    if (targetStage?.is_lost && !extraData.lost_reason) {
+      setPendingLostStageId(stageId);
+      setLostReason('');
+      setShowLostModal(true);
+      return;
+    }
+
     try {
-      const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId });
+      const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId, ...extraData });
       if (data.requires_conversion) {
         setShowConvertModal(true);
       } else if (data.deal_won && !lead?.project_id) {
-        // Deal thắng + chưa có dự án → tạo dự án ngầm
         autoCreateProject(id);
         load();
       } else if (data.deal_won && lead?.project_id) {
-        // Deal đã có dự án → chỉ reload
         load();
       } else {
         load();
@@ -132,6 +141,13 @@ export default function LeadDetail() {
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
     }
+  };
+
+  const confirmLost = () => {
+    if (!lostReason.trim()) return alert('Vui lòng nhập lý do thua');
+    setShowLostModal(false);
+    moveStage(pendingLostStageId, { lost_reason: lostReason.trim() });
+    setPendingLostStageId(null);
   };
 
   const deleteLead = async () => {
@@ -781,6 +797,26 @@ export default function LeadDetail() {
           }}
           onClose={() => setShowExcelImport(false)}
         />
+      )}
+
+      {/* Modal lý do thua */}
+      {showLostModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowLostModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-3">❌ Lý do thua / mất</h3>
+            <textarea
+              className="w-full border rounded-lg p-3 text-sm min-h-[100px] focus:ring-2 focus:ring-red-300 focus:border-red-400"
+              placeholder="Nhập lý do thua (giá cao, đối thủ, KH hủy...)"
+              value={lostReason}
+              onChange={e => setLostReason(e.target.value)}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => { setShowLostModal(false); setPendingLostStageId(null); }} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Hủy</button>
+              <button onClick={confirmLost} className="px-4 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg">Xác nhận thua</button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
