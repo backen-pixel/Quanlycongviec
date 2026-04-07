@@ -362,7 +362,7 @@ export default function LeadDetail() {
           {/* Settings */}
           <div className="relative">
             <button onClick={() => setShowSettingsMenu(p => !p)}
-              className={`h-9 px-3 border rounded-lg text-sm flex items-center gap-1.5 cursor-pointer transition ${showSettingsMenu ? 'bg-gray-100 border-gray-400' : 'border-gray-200 hover:bg-gray-50 text-gray-600'}`}>
+              className="h-9 px-3 border rounded-lg text-sm flex items-center gap-1.5 cursor-pointer transition border-gray-200 hover:bg-gray-50 text-gray-600">
               <Settings className="h-4 w-4" /> <span className="hidden md:inline">Cài đặt</span>
             </button>
             {showSettingsMenu && (
