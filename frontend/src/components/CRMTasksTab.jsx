@@ -5,7 +5,7 @@ import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film,
-  FileSpreadsheet
+  FileSpreadsheet, Edit3
 } from 'lucide-react';
 import ExcelQuotationImport from './ExcelQuotationImport';
 
@@ -35,6 +35,8 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const [showAdd, setShowAdd] = useState(null); // stage_slug
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
   const [editingId, setEditingId] = useState(null);
+  const [editingTask, setEditingTask] = useState(null);
+  const [editForm, setEditForm] = useState({});
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
 
   const loadTasks = async () => {
@@ -88,6 +90,36 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const deleteTask = async (taskId) => {
     if (!confirm('Xóa công việc này?')) return;
     try { await api.delete(`/crm/leads/${leadId}/tasks/${taskId}`); loadTasks(); } catch (e) { alert('Lỗi'); }
+  };
+
+  const openEditModal = (task) => {
+    setEditingTask(task);
+    setEditForm({
+      title: task.title || '',
+      description: task.description || '',
+      priority: task.priority || 'medium',
+      deadline: task.deadline ? (task.deadline.includes('T') ? task.deadline.substring(0, 16) : task.deadline.substring(0, 10) + 'T08:00') : '',
+      assignee_id: task.assignee_id || '',
+      supervisor_id: task.supervisor_id || '',
+      stage_slug: task.stage_slug || '',
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editForm.title.trim()) return alert('Nhập tên nhiệm vụ');
+    try {
+      await api.put(`/crm/leads/${leadId}/tasks/${editingTask.id}`, {
+        title: editForm.title,
+        description: editForm.description,
+        priority: editForm.priority,
+        deadline: editForm.deadline || null,
+        assignee_id: editForm.assignee_id || null,
+        supervisor_id: editForm.supervisor_id || null,
+        stage_slug: editForm.stage_slug,
+      });
+      setEditingTask(null);
+      loadTasks();
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
   };
 
   const toggleShare = async (taskId) => {
@@ -446,7 +478,13 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
             <button onClick={() => toggleExpand(task.id, task.notes)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Ghi chú & file">
               <Paperclip className="h-3 w-3" />
             </button>
-            <button onClick={() => deleteTask(task.id)} className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
+            <button onClick={() => openEditModal(task)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Sửa nhiệm vụ">
+              <Edit3 className="h-3 w-3" />
+            </button>
+            <button onClick={() => openEditModal(task)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Sửa nhiệm vụ">
+              <Edit3 className="h-3 w-3" />
+            </button>
+            <button onClick={() => openEditModal(task)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Sửa nhiệm vụ"><Edit3 className="h-3 w-3" /></button><button onClick={() => deleteTask(task.id)} className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
           </div>
         </div>
 
@@ -882,7 +920,87 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
         />
       )}
 
+
+      {editingTask && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setEditingTask(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b">
+              <div className="flex items-center gap-2">
+                <Edit3 className="h-4 w-4 text-blue-600" />
+                <h3 className="text-sm font-bold text-gray-900">Sửa nhiệm vụ</h3>
+              </div>
+              <button onClick={() => setEditingTask(null)} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer">
+                <X className="h-4 w-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Tên nhiệm vụ *</label>
+                <input value={editForm.title} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none" placeholder="Nhập tên nhiệm vụ..." />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Mô tả</label>
+                <textarea value={editForm.description || ''} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none resize-y min-h-[70px]" placeholder="Mô tả chi tiết..." />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Giai đoạn</label>
+                  <select value={editForm.stage_slug} onChange={e => setEditForm(f => ({ ...f, stage_slug: e.target.value }))}
+                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                    <option value="">— Chọn giai đoạn —</option>
+                    {ALL_STAGES.map(s => (<option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Hạn hoàn thành</label>
+                  <input type="datetime-local" value={editForm.deadline} onChange={e => setEditForm(f => ({ ...f, deadline: e.target.value }))}
+                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Người phụ trách</label>
+                  <select value={editForm.assignee_id} onChange={e => setEditForm(f => ({ ...f, assignee_id: e.target.value }))}
+                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                    <option value="">— Chưa giao —</option>
+                    {(users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Giám sát</label>
+                  <select value={editForm.supervisor_id} onChange={e => setEditForm(f => ({ ...f, supervisor_id: e.target.value }))}
+                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                    <option value="">— Không giám sát —</option>
+                    {(users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Độ ưu tiên</label>
+                <div className="mt-1 flex gap-2">
+                  {['low','medium','high','urgent'].map(p => (
+                    <button key={p} onClick={() => setEditForm(f => ({ ...f, priority: p }))}
+                      className={"px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border transition-colors " + (editForm.priority === p ? PRIORITY_COLORS[p] + ' border-current ring-1 ring-offset-1 ring-current' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100')}>
+                      {PRIORITY_LABELS[p]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2">
+              <button onClick={() => setEditingTask(null)} className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition-colors">Hủy</button>
+              <button onClick={saveEdit} className="h-9 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors">
+                <Save className="h-3.5 w-3.5" /> Lưu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast notification */}
+
       {importToast && (
         <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium animate-in slide-in-from-bottom-4 ${
           importToast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
