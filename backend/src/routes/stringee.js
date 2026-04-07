@@ -4,6 +4,13 @@ const { generateRestToken, stringeeAPI, STRINGEE_SID } = require('../helpers/str
 const { supabase } = require('../config/supabase');
 
 // ═══════════════════════════════════════════════════════════════
+// DEBUG: version check
+// ═══════════════════════════════════════════════════════════════
+r.get('/debug', (req, res) => {
+  res.json({ v: '47e4dbb', supabaseType: typeof supabase?.from, hasFrom: !!supabase?.from });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // TEST: Kiểm tra kết nối Stringee
 // ═══════════════════════════════════════════════════════════════
 r.get('/test', async (req, res) => {
