@@ -380,16 +380,25 @@ export default function CRMDashboard() {
   const handleMoveStage = useCallback(async (leadId, newStageId) => {
     const prevLeads = allLeads;
     const prevDeals = allDeals;
+    const stages = pipelineType === 'lead' ? stagesLead : stagesDeal;
+    const targetStage = stages.find(s => s.id === newStageId);
+
+    let extraData = {};
+    if (targetStage?.is_lost) {
+      const lostReason = window.prompt(`Nhập lý do thua cho ${pipelineType === 'lead' ? 'lead' : 'deal'}:`)?.trim();
+      if (!lostReason) return;
+      extraData.lost_reason = lostReason;
+    }
     
     // Optimistic update
     if (pipelineType === 'lead') {
-      setAllLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId } : l));
+      setAllLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l));
     } else {
-      setAllDeals(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId } : l));
+      setAllDeals(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l));
     }
 
     try {
-      const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId });
+      const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId, ...extraData });
       
       if (data.requires_conversion) {
         alert('Để chuyển Lead sang Deal, vui lòng dùng nút "Chuyển sang Deal" trên trang chi tiết.');
@@ -398,16 +407,14 @@ export default function CRMDashboard() {
       }
 
       if (data.deal_won) {
-        // Deal thắng → tạo dự án ngầm
         autoCreateProject(leadId);
       }
     } catch (e) {
       console.error(e);
-      // Revert on error
       if (pipelineType === 'lead') setAllLeads(prevLeads);
       else setAllDeals(prevDeals);
     }
-  }, [pipelineType, allLeads, allDeals]);
+  }, [pipelineType, allLeads, allDeals, stagesLead, stagesDeal]);
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
