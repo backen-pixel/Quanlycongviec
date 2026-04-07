@@ -1,13 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { getSocket } from '../lib/socket';
 import { getInitials, avatarColor, ROLE_LABELS } from '../lib/utils';
-import { FileUploadButton } from '../components/FileUpload';
 import {
   Send, ArrowLeft, Pin, Reply, Trash2, Edit, MoreVertical, Paperclip, X,
-  Users, Building, Image, File
+  Users, Building, Image, File, Plus, Video, UserPlus
 } from 'lucide-react';
 
 export default function DepartmentChat() {
@@ -24,8 +23,14 @@ export default function DepartmentChat() {
   const [sending, setSending] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [menuMsg, setMenuMsg] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [availableUsers, setAvailableUsers] = useState([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [mediaPreview, setMediaPreview] = useState(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Load department + messages
   useEffect(() => {
@@ -77,8 +82,60 @@ export default function DepartmentChat() {
       }
       setText('');
       inputRef.current?.focus();
-    } catch { }
+    } catch {}
     setSending(false);
+  };
+
+  const uploadFiles = async (files) => {
+    if (!files?.length) return;
+    setUploading(true);
+    try {
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('content', text.trim() || '');
+        const { data } = await api.post(`/departments/${id}/chat/upload`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        setMessages(prev => [...prev, data.message]);
+      }
+      setText('');
+      setReplyTo(null);
+    } catch (e) {
+      console.error(e);
+      alert(e?.response?.data?.error || 'Upload thất bại');
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const loadAvailableUsers = async (search = '') => {
+    try {
+      const { data } = await api.get(`/departments/${id}/chat/available-users`, { params: { search } });
+      setAvailableUsers(data.users || []);
+    } catch {}
+  };
+
+  const addParticipant = async (userId) => {
+    try {
+      const { data } = await api.post(`/departments/${id}/chat/participants`, { user_id: userId });
+      setMembers(prev => [...prev, data.member]);
+      setShowAddMember(false);
+      setUserSearch('');
+      loadAvailableUsers('');
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không thêm được thành viên');
+    }
+  };
+
+  const removeParticipant = async (userId) => {
+    if (!confirm('Xóa thành viên khỏi nhóm chat?')) return;
+    try {
+      await api.delete(`/departments/${id}/chat/participants/${userId}`);
+      setMembers(prev => prev.filter(m => m.id !== userId));
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không xóa được thành viên');
+    }
   };
 
   const deleteMessage = async (msgId) => {
@@ -127,6 +184,7 @@ export default function DepartmentChat() {
   };
 
   const pinnedMessages = messages.filter(m => m.is_pinned);
+  const isAdmin = ['admin', 'manager'].includes(user?.role);
 
   if (loading) {
     return (
@@ -137,7 +195,6 @@ export default function DepartmentChat() {
   }
 
   const dateGroups = groupByDate(messages);
-  const isAdmin = ['admin', 'manager'].includes(user?.role);
 
   return (
     <div className="flex flex-col h-[calc(100vh-80px)]">
@@ -153,6 +210,12 @@ export default function DepartmentChat() {
           <h2 className="text-sm font-bold text-gray-900">{dept?.name || 'Phòng ban'}</h2>
           <p className="text-xs text-gray-500">{members.length} thành viên</p>
         </div>
+        {isAdmin && (
+          <button onClick={() => { setShowAddMember(true); loadAvailableUsers(''); }}
+            className="h-8 px-3 rounded-lg text-xs font-medium cursor-pointer flex items-center gap-1.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
+            <UserPlus className="h-3.5 w-3.5" /> Thêm người
+          </button>
+        )}
         <button onClick={() => setShowMembers(!showMembers)}
           className={`h-8 px-3 rounded-lg text-xs font-medium cursor-pointer flex items-center gap-1.5 ${showMembers ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
           <Users className="h-3.5 w-3.5" /> {members.length}
@@ -231,14 +294,40 @@ export default function DepartmentChat() {
 
                             {/* Attachments */}
                             {msg.attachments?.length > 0 && (
-                              <div className="mt-1.5 space-y-1">
-                                {msg.attachments.map((a, ai) => (
-                                  <a key={ai} href={a.url} target="_blank" rel="noopener noreferrer"
-                                    className={`flex items-center gap-1.5 text-xs ${isMe ? 'text-blue-200 hover:text-white' : 'text-blue-600 hover:text-blue-700'}`}>
-                                    {a.type?.startsWith('image') ? <Image className="h-3 w-3" /> : <File className="h-3 w-3" />}
-                                    {a.name || 'File'}
-                                  </a>
-                                ))}
+                              <div className="mt-1.5 space-y-2">
+                                {msg.attachments.map((a, ai) => {
+                                  const isImage = a.type?.startsWith('image');
+                                  const isVideo = a.type?.startsWith('video');
+                                  const isAudio = a.type?.startsWith('audio');
+                                  if (isImage) {
+                                    return (
+                                      <img key={ai} src={a.url} alt={a.name || 'image'}
+                                        onClick={() => setMediaPreview({ type: 'image', url: a.url, name: a.name })}
+                                        className="max-w-[240px] rounded-xl cursor-pointer hover:opacity-90 border border-black/5" />
+                                    );
+                                  }
+                                  if (isVideo) {
+                                    return (
+                                      <div key={ai} className="space-y-1">
+                                        <video src={a.url} controls className="max-w-[240px] rounded-xl" preload="metadata" />
+                                        <button type="button" onClick={() => setMediaPreview({ type: 'video', url: a.url, name: a.name })}
+                                          className={`text-[11px] ${isMe ? 'text-blue-200 hover:text-white' : 'text-blue-600 hover:text-blue-700'}`}>
+                                          Mở trình chiếu
+                                        </button>
+                                      </div>
+                                    );
+                                  }
+                                  if (isAudio) {
+                                    return <audio key={ai} src={a.url} controls className="max-w-[240px] h-9" />;
+                                  }
+                                  return (
+                                    <a key={ai} href={a.url} target="_blank" rel="noopener noreferrer"
+                                      className={`flex items-center gap-1.5 text-xs ${isMe ? 'text-blue-200 hover:text-white' : 'text-blue-600 hover:text-blue-700'}`}>
+                                      <File className="h-3 w-3" />
+                                      {a.name || 'File'}
+                                    </a>
+                                  );
+                                })}
                               </div>
                             )}
 
@@ -315,13 +404,29 @@ export default function DepartmentChat() {
           {/* Input */}
           <div className="bg-white border-t px-4 py-3">
             <div className="flex items-end gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar"
+                onChange={(e) => uploadFiles(Array.from(e.target.files || []))}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="w-10 h-10 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center hover:bg-gray-200 cursor-pointer disabled:opacity-50 shrink-0"
+                title="Tải ảnh/video/file">
+                <Paperclip className="h-4 w-4" />
+              </button>
               <div className="flex-1 relative">
                 <textarea ref={inputRef} value={text} onChange={e => setText(e.target.value)} onKeyDown={handleKeyDown}
-                  placeholder="Nhập tin nhắn..." rows={1}
+                  placeholder={uploading ? 'Đang tải file...' : 'Nhập tin nhắn...'} rows={1}
                   className="w-full px-4 py-2.5 bg-gray-100 rounded-2xl text-sm resize-none outline-none focus:bg-gray-50 focus:ring-2 focus:ring-blue-500 max-h-32"
                   style={{ minHeight: '40px' }} />
               </div>
-              <button onClick={sendMessage} disabled={!text.trim() || sending}
+              <button onClick={sendMessage} disabled={!text.trim() || sending || uploading}
                 className="w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center hover:bg-blue-700 cursor-pointer disabled:opacity-50 shrink-0">
                 <Send className="h-4 w-4" />
               </button>
@@ -337,7 +442,7 @@ export default function DepartmentChat() {
             </div>
             <div className="p-2 space-y-0.5">
               {members.map(m => (
-                <div key={m.id} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-white">
+                <div key={m.id} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-white group">
                   <div className="h-7 w-7 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
                     style={{ backgroundColor: avatarColor(m.full_name) }}>
                     {getInitials(m.full_name)}
@@ -346,12 +451,75 @@ export default function DepartmentChat() {
                     <p className="text-xs font-medium text-gray-900 truncate">{m.full_name}</p>
                     <p className="text-[10px] text-gray-400">{m.position || ROLE_LABELS[m.role] || m.role}</p>
                   </div>
+                  {isAdmin && m.id !== user?.userId && (
+                    <button onClick={() => removeParticipant(m.id)} className="opacity-0 group-hover:opacity-100 text-[10px] text-red-500 hover:text-red-700 cursor-pointer">
+                      Xóa
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           </div>
         )}
       </div>
+
+      {showAddMember && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setShowAddMember(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-gray-900">Thêm thành viên vào chat</h3>
+                <p className="text-xs text-gray-500">Có thể thêm người ngoài phòng ban vào nhóm chat này</p>
+              </div>
+              <button onClick={() => setShowAddMember(false)} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer">
+                <X className="h-4 w-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-4 border-b">
+              <input
+                value={userSearch}
+                onChange={(e) => { setUserSearch(e.target.value); loadAvailableUsers(e.target.value); }}
+                placeholder="Tìm tên nhân viên..."
+                className="w-full h-10 px-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="p-3 overflow-y-auto max-h-[50vh] space-y-1">
+              {availableUsers.length === 0 ? (
+                <div className="text-sm text-gray-400 text-center py-8">Không có người phù hợp</div>
+              ) : availableUsers.map(u => (
+                <button key={u.id} onClick={() => addParticipant(u.id)}
+                  className="w-full text-left flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 cursor-pointer border border-transparent hover:border-gray-200">
+                  <div className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                    style={{ backgroundColor: avatarColor(u.full_name) }}>
+                    {getInitials(u.full_name)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{u.full_name}</p>
+                    <p className="text-xs text-gray-500 truncate">{u.position || ROLE_LABELS[u.role] || u.role}{u.department_id ? ' • Khác phòng ban' : ' • Chưa vào phòng ban'}</p>
+                  </div>
+                  <Plus className="h-4 w-4 text-emerald-600" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mediaPreview && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4" onClick={() => setMediaPreview(null)}>
+          <button className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer">
+            <X className="h-5 w-5" />
+          </button>
+          <div className="max-w-[92vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            {mediaPreview.type === 'image' ? (
+              <img src={mediaPreview.url} alt={mediaPreview.name || 'preview'} className="max-w-[92vw] max-h-[90vh] rounded-2xl shadow-2xl" />
+            ) : (
+              <video src={mediaPreview.url} controls autoPlay className="max-w-[92vw] max-h-[90vh] rounded-2xl shadow-2xl" />
+            )}
+            {mediaPreview.name && <p className="text-center text-white/80 text-sm mt-3">{mediaPreview.name}</p>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
