@@ -214,12 +214,12 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
 
   if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
-  const loadAttachments = useCallback(async (taskId) => {
+  const loadAttachments = async (taskId) => {
     try {
       const { data } = await api.get(`/crm/leads/${leadId}/tasks/${taskId}/attachments`);
       setTaskAttachments(p => ({ ...p, [taskId]: data || [] }));
     } catch (e) { console.error(e); }
-  }, [leadId]);
+  };
 
   const toggleExpand = (taskId, taskNotes) => {
     if (expandedTask === taskId) {
