@@ -78,6 +78,8 @@ r.post('/webhook', async (req, res) => {
           .or(`phone.eq.${cleanPhone},phone.eq.+84${cleanPhone.slice(1)}`)
           .limit(1).maybeSingle();
 
+        let matchedLeadId = null;
+
         if (customer) {
           await supabase.from('crm_call_logs').update({
             customer_id: customer.id,
@@ -91,13 +93,31 @@ r.post('/webhook', async (req, res) => {
             .order('created_at', { ascending: false })
             .limit(1).maybeSingle();
 
-          if (lead) {
-            await supabase.from('crm_call_logs').update({
-              lead_id: lead.id,
-            }).eq('id', log.id);
+          if (lead) matchedLeadId = lead.id;
+        }
+
+        // Fallback: tìm lead trực tiếp qua số điện thoại trong crm_leads
+        if (!matchedLeadId) {
+          const { data: leadByPhone } = await supabase.from('crm_leads')
+            .select('id, customer_id')
+            .or(`phone.eq.${cleanPhone},phone.eq.+84${cleanPhone.slice(1)}`)
+            .in('status', ['new', 'contacted', 'qualified', 'negotiation', 'proposal', 'open', 'active'])
+            .order('created_at', { ascending: false })
+            .limit(1).maybeSingle();
+
+          if (leadByPhone) {
+            matchedLeadId = leadByPhone.id;
+            if (leadByPhone.customer_id && !customer) {
+              await supabase.from('crm_call_logs').update({ customer_id: leadByPhone.customer_id }).eq('id', log.id);
+            }
           }
         }
-        console.log(`[STRINGEE] Matched phone ${cleanPhone} → customer: ${customer?.id || 'none'}`);
+
+        if (matchedLeadId) {
+          await supabase.from('crm_call_logs').update({ lead_id: matchedLeadId }).eq('id', log.id);
+        }
+
+        console.log(`[STRINGEE] Matched phone ${cleanPhone} → customer: ${customer?.id || 'none'}, lead: ${matchedLeadId || 'none'}`);
       }
     }
 

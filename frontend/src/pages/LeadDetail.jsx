@@ -7,6 +7,7 @@ import CRMTasksTab from '../components/CRMTasksTab';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
+import CallLogsTab from '../components/CallLogsTab';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -583,6 +584,16 @@ export default function LeadDetail() {
               >
                 💬 Trao đổi
               </button>
+              <button
+                onClick={() => setActiveTab('calls')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'calls'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                📞 Ghi âm
+              </button>
             </div>
 
             {/* Tab Content */}
@@ -776,6 +787,8 @@ export default function LeadDetail() {
                 <LeadMembersTab leadId={id} />
               ) : activeTab === 'chat' ? (
                 <LeadChatTab leadId={id} socket={socket} />
+              ) : activeTab === 'calls' ? (
+                <CallLogsTab leadId={id} customerId={lead?.customer_id} />
               ) : null}
             </div>
           </div>
