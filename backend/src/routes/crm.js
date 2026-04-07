@@ -722,6 +722,270 @@ r.post('/leads/cleanup-duplicates', async (req, res) => {
   }
 });
 
+r.get('/leads-by-fb-page', async (req, res) => {
+  try {
+    const { page_id, type = 'lead' } = req.query;
+    if (!page_id) return res.status(400).json({ error: 'page_id required' });
+    const { data: contacts } = await supabase.from('facebook_contacts')
+      .select('lead_id').eq('page_id', page_id).not('lead_id', 'is', null);
+    const leadIds = [...new Set((contacts || []).map(c => c.lead_id))];
+    if (!leadIds.length) return res.json([]);
+    const { data } = await supabase.from('crm_leads')
+      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
+      .in('id', leadIds).eq('type', type)
+      .order('created_at', { ascending: false });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEADS (CRUD + Pipeline)
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/leads', async (req, res) => {
+  try {
+    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead', company_id, date_from, date_to } = req.query;
+    let q = supabase.from('crm_leads')
+      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
+      .eq('type', type)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit));
+
+    if (stage_id) q = q.eq('stage_id', stage_id);
+    if (assigned_to) q = q.eq('assigned_to', assigned_to);
+    if (source_id) q = q.eq('source_id', source_id);
+    if (company_id) q = q.eq('company_id', company_id);
+    if (date_from) q = q.gte('created_at', date_from);
+    if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
+    if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%`);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── CUSTOMERS CRUD ──
+r.get('/customers', async (req, res) => {
+  try {
+    const { search } = req.query;
+    let q = supabase.from('customers').select('*').order('created_at', { ascending: false }).limit(100);
+    if (search) q = q.or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%`);
+    const { data } = await q;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/customers', async (req, res) => {
+  try {
+    const { full_name, phone, email, address, company, tax_code, source, notes } = req.body;
+    if (!full_name?.trim()) return res.status(400).json({ error: 'Tên khách hàng là bắt buộc' });
+    const { data, error } = await supabase.from('customers')
+      .insert({ full_name, phone: phone || null, email: email || null, address: address || null, company: company || null, tax_code: tax_code || null, source: source || null, notes: notes || null })
+      .select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/customers/:id', async (req, res) => {
+  try {
+    const update = {};
+    ['full_name', 'phone', 'email', 'address', 'company', 'tax_code', 'notes', 'source', 'gender', 'birthday'].forEach(f => {
+      if (req.body[f] !== undefined) update[f] = req.body[f] || null;
+    });
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('customers').update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/leads', async (req, res) => {
+  try {
+    const code = await nextCode('LEAD');
+    const body = { ...req.body };
+    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id'].forEach(f => {
+      if (body[f] === '' || body[f] === undefined) body[f] = null;
+    });
+    if (!body.assigned_to) body.assigned_to = req.user.userId;
+    const { data, error } = await supabase.from('crm_leads')
+      .insert({ ...body, code, type: 'lead', lead_owner_id: req.user.userId, created_by: req.user.userId })
+      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
+      .single();
+    if (error) throw error;
+
+    try {
+      const targetIds = new Set();
+      if (body.assigned_to) targetIds.add(body.assigned_to);
+      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+      (admins || []).forEach(a => targetIds.add(a.id));
+      if (targetIds.size) await notifyMultiple(req, [...targetIds], 'lead_created',
+        '🆕 Lead mới',
+        `Lead "${body.title}" — Mã: ${code}`,
+        'crm_lead', data.id);
+    } catch (ne) { console.warn('[NOTIFY] lead_created:', ne.message); }
+
+    try {
+      const { data: existingTasks } = await supabase.from('crm_tasks')
+        .select('id').eq('lead_id', data.id).limit(1);
+      if (!existingTasks?.length) {
+        await autoGenCrmTasks(data.id, 'lead', req.user.userId);
+      }
+    } catch (autoErr) { console.error('Auto-create tasks error:', autoErr.message); }
+
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/deals', async (req, res) => {
+  try {
+    const body = { ...req.body };
+    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id'].forEach(f => {
+      if (body[f] === '' || body[f] === undefined) body[f] = null;
+    });
+
+    if (!body.title) return res.status(400).json({ error: 'Nhập tên Deal' });
+    if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
+    if (!body.assigned_to) body.assigned_to = req.user.userId;
+
+    const { data: firstStage } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('pipeline_type', 'deal')
+      .eq('is_active', true)
+      .order('order_index')
+      .limit(1)
+      .single();
+    if (!firstStage) return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên' });
+
+    const code = await nextCode('DEAL');
+    const { data, error } = await supabase.from('crm_leads')
+      .insert({
+        ...body,
+        code,
+        type: 'deal',
+        stage_id: body.stage_id || firstStage.id,
+        lead_owner_id: req.user.userId,
+        created_by: req.user.userId,
+      })
+      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
+      .single();
+    if (error) throw error;
+
+    try {
+      const targetIds = new Set();
+      if (body.assigned_to) targetIds.add(body.assigned_to);
+      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
+      (admins || []).forEach(a => targetIds.add(a.id));
+      if (targetIds.size) await notifyMultiple(req, [...targetIds], 'deal_created',
+        '🎯 Deal mới',
+        `Deal "${body.title}" — Mã: ${code} — GT: ${formatMoney(body.estimated_value)}`,
+        'crm_deal', data.id);
+    } catch (ne) { console.warn('[NOTIFY] deal_created:', ne.message); }
+
+    try {
+      await autoGenCrmTasks(data.id, 'deal', req.user.userId);
+    } catch (autoErr) { console.error('Auto-create tasks on deal create error:', autoErr.message); }
+
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/leads/:id/detail', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('crm_leads')
+      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar), creator:users!crm_leads_created_by_fkey(id, full_name)')
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/leads/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type').eq('id', id).single();
+    const { data, error } = await supabase.from('crm_leads')
+      .update({ ...req.body, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
+      .single();
+    if (error) throw error;
+
+    try {
+      if (req.body.assigned_to && req.body.assigned_to !== oldLead?.assigned_to && req.body.assigned_to !== req.user.userId) {
+        const label = oldLead?.type === 'deal' ? 'Deal' : 'Lead';
+        await createNotification(req, req.body.assigned_to, 'lead_assigned',
+          `👤 ${label} được giao cho bạn`,
+          `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
+          oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id);
+      }
+      if (req.body.lead_owner_id && req.body.lead_owner_id !== oldLead?.lead_owner_id && req.body.lead_owner_id !== req.user.userId) {
+        await createNotification(req, req.body.lead_owner_id, 'lead_assigned',
+          '👤 Bạn được giao phụ trách Lead',
+          `Lead "${oldLead?.title || data.title}" được giao cho bạn`,
+          'crm_lead', id);
+      }
+    } catch (_) {}
+
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/leads/:id', async (req, res) => {
+  try {
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id, title, project_id')
+      .eq('id', req.params.id).single();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
+
+    if (lead.project_id) {
+      const { data: taskIds } = await supabase.from('tasks').select('id').eq('project_id', lead.project_id);
+      if (taskIds?.length) {
+        const ids = taskIds.map(t => t.id);
+        try { await supabase.from('task_checklists').delete().in('task_id', ids); } catch (_) {}
+        try { await supabase.from('task_comments').delete().in('task_id', ids); } catch (_) {}
+        try { await supabase.from('task_participants').delete().in('task_id', ids); } catch (_) {}
+        try { await supabase.from('task_time_logs').delete().in('task_id', ids); } catch (_) {}
+        try { await supabase.from('file_attachments').delete().eq('entity_type', 'task').in('entity_id', ids); } catch (_) {}
+      }
+
+      try { await supabase.from('tasks').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_comments').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('stage_transitions').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_workflow_lines').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_products').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_company_assignments').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('project_approvals').delete().eq('project_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id); } catch (_) {}
+      try { await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id); } catch (_) {}
+      await supabase.from('projects').delete().eq('id', lead.project_id);
+    }
+
+    try { await supabase.from('lead_documents').delete().eq('lead_id', lead.id); } catch (_) {}
+    try { await supabase.from('crm_activities').delete().eq('lead_id', lead.id); } catch (_) {}
+
+    const { error } = await supabase.from('crm_leads').delete().eq('id', lead.id);
+    if (error) throw error;
+
+    res.json({ success: true, message: `Đã xóa lead "${lead.title}"${lead.project_id ? ' và dự án liên kết' : ''}` });
+  } catch (e) {
+    console.error('Delete lead error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // LEAD DOCUMENTS
 // ═══════════════════════════════════════════════════════════════════════════
