@@ -87,7 +87,7 @@ export default function LeadDuplicateScanner({ onClose, onMerged }) {
                 <Users className="h-8 w-8 text-orange-500" />
               </div>
               <p className="text-sm text-gray-600 mb-1">Quét tất cả lead để tìm trùng lặp dựa vào:</p>
-              <p className="text-xs text-gray-400 mb-4">• Cùng khách hàng (customer_id) &nbsp; • Cùng Facebook User (PSID)</p>
+              <p className="text-xs text-gray-400 mb-4">• Cùng khách hàng + cùng người phụ trách + cùng nguồn</p>
               <button onClick={scan} className="h-10 px-6 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium cursor-pointer flex items-center gap-2 mx-auto">
                 <Search className="h-4 w-4" /> Bắt đầu quét
               </button>
@@ -149,14 +149,12 @@ export default function LeadDuplicateScanner({ onClose, onMerged }) {
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-900">
-                          {group.reason === 'customer_id'
-                            ? `Cùng KH: ${group.customer?.full_name || 'N/A'}`
-                            : `Cùng Facebook: ${group.fb_name || group.psid || 'N/A'}`}
+                          {group.reason === 'combo_match'
+                            ? `Trùng Combo: ${group.customer?.full_name || 'N/A'} • ${group.assignee?.full_name || 'N/A'} • ${group.source?.name || 'N/A'}`
+                            : 'Lead trùng lặp'}
                         </p>
                         <p className="text-[10px] text-gray-400">
                           {group.leads.length} lead trùng
-                          {group.customer?.phone && ` • ${group.customer.phone}`}
-                          {group.customer?.email && ` • ${group.customer.email}`}
                         </p>
                       </div>
                       {merged ? (

@@ -558,60 +558,32 @@ r.get('/leads/scan-duplicates', async (req, res) => {
       leadFbMap[fc.lead_id].push(fc);
     });
 
-    // Group by customer_id
-    const byCustomer = {};
+    // Group by Combo: customer_id + assigned_to + source_id
+    const byCombo = {};
     (leads || []).forEach(l => {
-      if (!l.customer_id) return;
-      if (!byCustomer[l.customer_id]) byCustomer[l.customer_id] = [];
-      byCustomer[l.customer_id].push({ ...l, fb_contacts: leadFbMap[l.id] || [] });
-    });
-
-    // Group by Facebook PSID
-    const byPsid = {};
-    (fbContacts || []).forEach(fc => {
-      if (!fc.psid || !fc.lead_id) return;
-      const key = `${fc.page_id}_${fc.psid}`;
-      if (!byPsid[key]) byPsid[key] = { psid: fc.psid, page_id: fc.page_id, fb_name: fc.fb_name, fb_profile_pic: fc.fb_profile_pic, lead_ids: new Set() };
-      byPsid[key].lead_ids.add(fc.lead_id);
+      // Chỉ nhóm nếu có ĐỦ 3 yếu tố này
+      if (!l.customer_id || !l.assigned_to || !l.source_id) return;
+      const key = `${l.customer_id}_${l.assigned_to}_${l.source_id}`;
+      if (!byCombo[key]) byCombo[key] = [];
+      byCombo[key].push({ ...l, fb_contacts: leadFbMap[l.id] || [] });
     });
 
     const groups = [];
     const usedLeadIds = new Set();
 
-    // Group A: Same customer_id (>1 lead)
-    for (const cid in byCustomer) {
-      if (byCustomer[cid].length > 1) {
+    // Group A: Combo trùng
+    for (const key in byCombo) {
+      if (byCombo[key].length > 1) {
         const group = {
-          reason: 'customer_id',
-          customer_id: cid,
-          customer: byCustomer[cid][0].customer,
-          leads: byCustomer[cid].sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)),
+          reason: 'combo_match',
+          key: key,
+          customer: byCombo[key][0].customer,
+          assignee: byCombo[key][0].assignee,
+          source: byCombo[key][0].source,
+          leads: byCombo[key].sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)),
         };
         group.leads.forEach(l => usedLeadIds.add(l.id));
         groups.push(group);
-      }
-    }
-
-    // Group B: Same Facebook PSID (>1 lead, not already grouped)
-    for (const key in byPsid) {
-      const psidGroup = byPsid[key];
-      const leadIds = [...psidGroup.lead_ids];
-      const newIds = leadIds.filter(id => !usedLeadIds.has(id));
-      if (newIds.length > 1) {
-        const groupLeads = newIds.map(id => {
-          const lead = (leads || []).find(l => l.id === id);
-          return lead ? { ...lead, fb_contacts: leadFbMap[id] || [] } : null;
-        }).filter(Boolean).sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
-        if (groupLeads.length > 1) {
-          groups.push({
-            reason: 'facebook_psid',
-            psid: psidGroup.psid,
-            fb_name: psidGroup.fb_name,
-            fb_profile_pic: psidGroup.fb_profile_pic,
-            customer: groupLeads[0].customer,
-            leads: groupLeads,
-          });
-        }
       }
     }
 
@@ -662,9 +634,20 @@ r.post('/leads/merge-duplicates', async (req, res) => {
         movedQuotations += quotes.length;
       }
 
+      // Move orders, invoices
+      await supabase.from('orders').update({ lead_id: keep_id }).eq('lead_id', delId);
+      await supabase.from('invoices').update({ lead_id: keep_id }).eq('lead_id', delId);
+
       // Move facebook_contacts + messages
       await supabase.from('facebook_contacts').update({ lead_id: keep_id }).eq('lead_id', delId);
       await supabase.from('facebook_messages').update({ lead_id: keep_id }).eq('lead_id', delId);
+
+      // Delete lead_members + lead_messages (cascade-safe cleanup)
+      await supabase.from('lead_members').delete().eq('lead_id', delId);
+      await supabase.from('lead_messages').delete().eq('lead_id', delId);
+
+      // Move crm_pipeline_history
+      await supabase.from('crm_pipeline_history').update({ lead_id: keep_id }).eq('lead_id', delId);
 
       // Sum estimated_value
       const { data: delLead } = await supabase.from('crm_leads').select('estimated_value').eq('id', delId).single();
@@ -676,7 +659,12 @@ r.post('/leads/merge-duplicates', async (req, res) => {
       }
 
       // Delete the duplicate lead
-      await supabase.from('crm_leads').delete().eq('id', delId);
+      const { error: delErr } = await supabase.from('crm_leads').delete().eq('id', delId);
+      if (delErr) {
+        console.error('Delete lead error:', delId, delErr);
+        // Try to identify blocking FK
+        throw new Error(`Không xóa được lead ${delId}: ${delErr.message || delErr.details || JSON.stringify(delErr)}`);
+      }
     }
 
     res.json({
