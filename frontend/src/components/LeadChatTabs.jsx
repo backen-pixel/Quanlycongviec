@@ -227,14 +227,22 @@ export function LeadChatTab({ leadId, socket }) {
   const send = async (files = null) => {
     if ((!text.trim() && !files) || sending) return;
     setSending(true);
-    const formData = new FormData();
-    formData.append('content', text);
-    if (files) {
-      for (let i = 0; i < files.length; i++) formData.append('files', files[i]);
-    }
     try {
-      await api.post(`/crm/leads/${leadId}/chat`, formData);
+      if (files && files.length) {
+        // Upload từng file qua endpoint riêng để backend lưu attachment_url/attachment_mime đúng format
+        for (let i = 0; i < files.length; i++) {
+          const fd = new FormData();
+          fd.append('file', files[i]);
+          if (i === 0 && text.trim()) fd.append('content', text); // chỉ file đầu tiên mang theo text
+          await api.post(`/crm/leads/${leadId}/chat/upload`, fd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+        }
+      } else {
+        await api.post(`/crm/leads/${leadId}/chat`, { content: text });
+      }
       setText('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (e) { alert('Lỗi gửi tin nhắn'); }
     setSending(false);
   };
