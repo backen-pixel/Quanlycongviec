@@ -399,6 +399,11 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           </button>
           <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpand(task.id, task.notes)}>
             <p className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
+            {hasNotes && !isExpanded && (
+              <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1 italic" title={task.notes}>
+                💬 {task.notes.slice(0, 80)}{task.notes.length > 80 ? '...' : ''}
+              </p>
+            )}
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               {task.deadline && editingDeadline !== task.id && (
                 <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
@@ -481,10 +486,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
             <button onClick={() => openEditModal(task)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Sửa nhiệm vụ">
               <Edit3 className="h-3 w-3" />
             </button>
-            <button onClick={() => openEditModal(task)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Sửa nhiệm vụ">
-              <Edit3 className="h-3 w-3" />
-            </button>
-            <button onClick={() => openEditModal(task)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Sửa nhiệm vụ"><Edit3 className="h-3 w-3" /></button><button onClick={() => deleteTask(task.id)} className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
+            <button onClick={() => deleteTask(task.id)} className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
           </div>
         </div>
 
