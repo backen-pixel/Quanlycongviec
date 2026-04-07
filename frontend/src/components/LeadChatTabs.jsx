@@ -225,25 +225,26 @@ export function LeadChatTab({ leadId, socket }) {
   };
 
   const send = async (files = null) => {
-    if ((!text.trim() && !files) || sending) return;
+    const pickedFiles = files ? Array.from(files).filter(Boolean) : [];
+    if ((!text.trim() && pickedFiles.length === 0) || sending) return;
     setSending(true);
     try {
-      if (files && files.length) {
+      if (pickedFiles.length > 0) {
         // Upload từng file qua endpoint riêng để backend lưu attachment_url/attachment_mime đúng format
-        for (let i = 0; i < files.length; i++) {
+        for (let i = 0; i < pickedFiles.length; i++) {
           const fd = new FormData();
-          fd.append('file', files[i]);
+          fd.append('file', pickedFiles[i]);
           if (i === 0 && text.trim()) fd.append('content', text); // chỉ file đầu tiên mang theo text
           await api.post(`/crm/leads/${leadId}/chat/upload`, fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
         }
       } else {
-        await api.post(`/crm/leads/${leadId}/chat`, { content: text });
+        await api.post(`/crm/leads/${leadId}/chat`, { content: text.trim() });
       }
       setText('');
       if (fileInputRef.current) fileInputRef.current.value = '';
-    } catch (e) { alert('Lỗi gửi tin nhắn'); }
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi gửi tin nhắn'); }
     setSending(false);
   };
 
