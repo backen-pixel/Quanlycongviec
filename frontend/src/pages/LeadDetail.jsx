@@ -44,24 +44,12 @@ export default function LeadDetail() {
   const [activeTab, setActiveTab] = useState('tasks');
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [notesExpanded, setNotesExpanded] = useState(localStorage.getItem('crm_notes_default_open') === 'true');
   // const [notesExpanded, setNotesExpanded] = useState(localStorage.getItem('crm_notes_default_open') === 'true'); // TBD
   const [showLostModal, setShowLostModal] = useState(false);
   const [lostReason, setLostReason] = useState('');
   const [pendingLostStageId, setPendingLostStageId] = useState(null);
 
   // Auto-create project (chạy ngầm)
-  // Close settings menu on outside click
-  useEffect(() => {
-    if (!showSettingsMenu) return;
-    const handler = (e) => {
-      if (!e.target.closest('.settings-menu')) setShowSettingsMenu(false);
-    };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [showSettingsMenu]);
-
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
   const [autoCreateResult, setAutoCreateResult] = useState(null); // { project_id, project_code, tasks_created }
   const [autoCreateError, setAutoCreateError] = useState('');
@@ -600,7 +588,7 @@ export default function LeadDetail() {
             {/* Tab Content */}
             <div className="p-5">
               {activeTab === 'tasks' ? (
-                <CRMTasksTab leadId={id} leadType={lead?.type || 'lead'} users={allUsers} notesExpanded={notesExpanded} />
+                <CRMTasksTab leadId={id} leadType={lead?.type || 'lead'} users={allUsers} />
               ) : activeTab === 'documents' ? (
                 <>
                   <div className="flex items-center justify-between mb-4">

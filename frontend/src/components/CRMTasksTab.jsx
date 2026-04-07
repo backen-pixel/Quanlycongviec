@@ -25,7 +25,7 @@ const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
-export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], notesExpanded = false }) {
+export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const STAGES = leadType === 'deal' ? DEAL_STAGES : LEAD_STAGES;
   const [tasks, setTasks] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -56,16 +56,6 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], not
     setLoading(false);
   };
   useEffect(() => { loadTasks(); }, [leadId]);
-
-  // Auto-expand first task with notes when notesExpanded is true
-  useEffect(() => {
-    if (!notesExpanded) return;
-    const first = tasks.find(t => t.notes);
-    if (first) {
-      setExpandedTask(first.id);
-      loadAttachments(first.id);
-    }
-  }, [notesExpanded, tasks.length]);
 
   const addTask = async (stageSlug) => {
     if (!newTask.title.trim()) return;
