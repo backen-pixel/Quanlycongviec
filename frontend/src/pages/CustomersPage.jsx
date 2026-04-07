@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import Modal from '../components/Modal';
-import { Plus, Search, Phone, Mail, MapPin, Building2, Trash2, Users as UsersIcon } from 'lucide-react';
+import { Plus, Search, Phone, Mail, MapPin, Building2, Trash2, Users as UsersIcon, ScanSearch } from 'lucide-react';
+import LeadDuplicateScanner from '../components/LeadDuplicateScanner';
 import { formatDate, formatVND, getInitials, avatarColor } from '../lib/utils';
 
 const SOURCE_LABELS = { facebook: 'Facebook', zalo: 'Zalo', referral: 'Giới thiệu', website: 'Website', walk_in: 'Đến trực tiếp', phone: 'Gọi điện', other: 'Khác' };
@@ -16,6 +17,7 @@ export default function CustomersPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState(null);
   const [custStatuses, setCustStatuses] = useState([]);
+  const [showDupScanner, setShowDupScanner] = useState(false);
 
   // Load customer statuses from API
   useEffect(() => {
@@ -77,10 +79,16 @@ export default function CustomersPage() {
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Khách hàng</h1>
           <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{stats.total || customers.length} khách hàng</p>
         </div>
-        <button onClick={() => { setEditId(null); setShowCreate(true); }}
-          className="h-9 px-3 sm:px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
-          <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Thêm KH</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowDupScanner(true)}
+            className="h-9 px-3 bg-orange-500 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-orange-600 cursor-pointer">
+            <ScanSearch className="h-4 w-4" /> <span className="hidden sm:inline">Quét trùng Lead</span>
+          </button>
+          <button onClick={() => { setEditId(null); setShowCreate(true); }}
+            className="h-9 px-3 sm:px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
+            <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Thêm KH</span>
+          </button>
+        </div>
       </div>
 
       {/* Status tabs from customer_statuses */}
@@ -170,6 +178,13 @@ export default function CustomersPage() {
       )}
 
       <CustomerFormModal open={showCreate} onClose={() => setShowCreate(false)} onSaved={load} editId={editId} custStatuses={custStatuses} />
+
+      {showDupScanner && (
+        <LeadDuplicateScanner
+          onClose={() => setShowDupScanner(false)}
+          onMerged={() => load()}
+        />
+      )}
     </div>
   );
 }

@@ -541,8 +541,152 @@ r.get('/sources', async (req, res) => {
   res.json({ sources: data || [], fb_pages: pages || [] });
 });
 
-// ── Lọc leads theo Facebook Page (qua facebook_contacts) ──
-// GET /crm/leads-by-fb-page?page_id=114251548348282&type=lead
+// ═══ QUÉT TRÙNG LEAD — Scan duplicates by customer_id + Facebook PSID ═══
+r.get('/leads/scan-duplicates', async (req, res) => {
+  try {
+    const { data: leads } = await supabase.from('crm_leads')
+      .select('id, code, title, type, customer_id, estimated_value, created_at, updated_at, stage_id, assigned_to, source_id, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), source:crm_sources(id, name, icon)')
+      .order('created_at', { ascending: false });
+
+    const { data: fbContacts } = await supabase.from('facebook_contacts')
+      .select('id, psid, lead_id, fb_name, fb_profile_pic, page_id')
+      .not('lead_id', 'is', null);
+
+    const leadFbMap = {};
+    (fbContacts || []).forEach(fc => {
+      if (!leadFbMap[fc.lead_id]) leadFbMap[fc.lead_id] = [];
+      leadFbMap[fc.lead_id].push(fc);
+    });
+
+    // Group by customer_id
+    const byCustomer = {};
+    (leads || []).forEach(l => {
+      if (!l.customer_id) return;
+      if (!byCustomer[l.customer_id]) byCustomer[l.customer_id] = [];
+      byCustomer[l.customer_id].push({ ...l, fb_contacts: leadFbMap[l.id] || [] });
+    });
+
+    // Group by Facebook PSID
+    const byPsid = {};
+    (fbContacts || []).forEach(fc => {
+      if (!fc.psid || !fc.lead_id) return;
+      const key = `${fc.page_id}_${fc.psid}`;
+      if (!byPsid[key]) byPsid[key] = { psid: fc.psid, page_id: fc.page_id, fb_name: fc.fb_name, fb_profile_pic: fc.fb_profile_pic, lead_ids: new Set() };
+      byPsid[key].lead_ids.add(fc.lead_id);
+    });
+
+    const groups = [];
+    const usedLeadIds = new Set();
+
+    // Group A: Same customer_id (>1 lead)
+    for (const cid in byCustomer) {
+      if (byCustomer[cid].length > 1) {
+        const group = {
+          reason: 'customer_id',
+          customer_id: cid,
+          customer: byCustomer[cid][0].customer,
+          leads: byCustomer[cid].sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)),
+        };
+        group.leads.forEach(l => usedLeadIds.add(l.id));
+        groups.push(group);
+      }
+    }
+
+    // Group B: Same Facebook PSID (>1 lead, not already grouped)
+    for (const key in byPsid) {
+      const psidGroup = byPsid[key];
+      const leadIds = [...psidGroup.lead_ids];
+      const newIds = leadIds.filter(id => !usedLeadIds.has(id));
+      if (newIds.length > 1) {
+        const groupLeads = newIds.map(id => {
+          const lead = (leads || []).find(l => l.id === id);
+          return lead ? { ...lead, fb_contacts: leadFbMap[id] || [] } : null;
+        }).filter(Boolean).sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
+        if (groupLeads.length > 1) {
+          groups.push({
+            reason: 'facebook_psid',
+            psid: psidGroup.psid,
+            fb_name: psidGroup.fb_name,
+            fb_profile_pic: psidGroup.fb_profile_pic,
+            customer: groupLeads[0].customer,
+            leads: groupLeads,
+          });
+        }
+      }
+    }
+
+    const totalDuplicates = groups.reduce((s, g) => s + g.leads.length - 1, 0);
+    res.json({ groups, total_groups: groups.length, total_duplicates: totalDuplicates });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══ GỘP LEAD — Merge duplicates: keep one, delete others ═══
+r.post('/leads/merge-duplicates', async (req, res) => {
+  try {
+    const { keep_id, delete_ids } = req.body;
+    if (!keep_id || !delete_ids?.length) return res.status(400).json({ error: 'keep_id và delete_ids[] là bắt buộc' });
+
+    const { data: keepLead } = await supabase.from('crm_leads').select('id, title, customer_id, estimated_value').eq('id', keep_id).single();
+    if (!keepLead) return res.status(404).json({ error: 'Lead giữ lại không tồn tại' });
+
+    let movedTasks = 0, movedDocs = 0, movedActivities = 0, movedQuotations = 0;
+
+    for (const delId of delete_ids) {
+      if (delId === keep_id) continue;
+
+      // Move crm_tasks
+      const { data: tasks } = await supabase.from('crm_tasks').select('id').eq('lead_id', delId);
+      if (tasks?.length) {
+        await supabase.from('crm_tasks').update({ lead_id: keep_id }).eq('lead_id', delId);
+        movedTasks += tasks.length;
+      }
+
+      // Move lead_documents
+      const { data: docs } = await supabase.from('lead_documents').select('id').eq('lead_id', delId);
+      if (docs?.length) {
+        await supabase.from('lead_documents').update({ lead_id: keep_id }).eq('lead_id', delId);
+        movedDocs += docs.length;
+      }
+
+      // Move crm_activities
+      const { data: acts } = await supabase.from('crm_activities').select('id').eq('lead_id', delId);
+      if (acts?.length) {
+        await supabase.from('crm_activities').update({ lead_id: keep_id }).eq('lead_id', delId);
+        movedActivities += acts.length;
+      }
+
+      // Move quotations
+      const { data: quotes } = await supabase.from('quotations').select('id').eq('lead_id', delId);
+      if (quotes?.length) {
+        await supabase.from('quotations').update({ lead_id: keep_id }).eq('lead_id', delId);
+        movedQuotations += quotes.length;
+      }
+
+      // Move facebook_contacts + messages
+      await supabase.from('facebook_contacts').update({ lead_id: keep_id }).eq('lead_id', delId);
+      await supabase.from('facebook_messages').update({ lead_id: keep_id }).eq('lead_id', delId);
+
+      // Sum estimated_value
+      const { data: delLead } = await supabase.from('crm_leads').select('estimated_value').eq('id', delId).single();
+      if (delLead?.estimated_value > 0) {
+        await supabase.from('crm_leads').update({
+          estimated_value: (keepLead.estimated_value || 0) + delLead.estimated_value,
+        }).eq('id', keep_id);
+        keepLead.estimated_value = (keepLead.estimated_value || 0) + delLead.estimated_value;
+      }
+
+      // Delete the duplicate lead
+      await supabase.from('crm_leads').delete().eq('id', delId);
+    }
+
+    res.json({
+      success: true, kept: keep_id,
+      deleted: delete_ids.filter(id => id !== keep_id).length,
+      moved: { tasks: movedTasks, documents: movedDocs, activities: movedActivities, quotations: movedQuotations },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Dọn dẹp lead trùng theo customer
 r.post('/leads/cleanup-duplicates', async (req, res) => {
   try {
@@ -554,310 +698,26 @@ r.post('/leads/cleanup-duplicates', async (req, res) => {
       if (!grouped[l.customer_id]) grouped[l.customer_id] = [];
       grouped[l.customer_id].push(l);
     });
-    
+
     let deleted = 0;
     for (const cid in grouped) {
-      if (grouped[cid].length > 1) {
-        const sorted = grouped[cid].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-        for(let i=1; i<sorted.length; i++) {
-          await supabase.from('crm_leads').delete().eq('id', sorted[i].id);
+      const arr = grouped[cid].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      if (arr.length > 1) {
+        const keep = arr[0];
+        const dupes = arr.slice(1);
+        for (const d of dupes) {
+          await supabase.from('crm_tasks').update({ lead_id: keep.id }).eq('lead_id', d.id);
+          await supabase.from('crm_activities').update({ lead_id: keep.id }).eq('lead_id', d.id);
+          await supabase.from('lead_documents').update({ lead_id: keep.id }).eq('lead_id', d.id);
+          await supabase.from('quotations').update({ lead_id: keep.id }).eq('lead_id', d.id);
+          await supabase.from('crm_leads').delete().eq('id', d.id);
           deleted++;
         }
       }
     }
+
     res.json({ success: true, deleted });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.get('/leads-by-fb-page', async (req, res) => {
-  try {
-    const { page_id, type = 'lead' } = req.query;
-    if (!page_id) return res.status(400).json({ error: 'page_id required' });
-    // Get lead_ids from facebook_contacts for this page
-    const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('lead_id').eq('page_id', page_id).not('lead_id', 'is', null);
-    const leadIds = [...new Set((contacts || []).map(c => c.lead_id))];
-    if (!leadIds.length) return res.json([]);
-    const { data } = await supabase.from('crm_leads')
-      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
-      .in('id', leadIds).eq('type', type)
-      .order('created_at', { ascending: false });
-    res.json(data || []);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// LEADS (CRUD + Pipeline)
-// ═══════════════════════════════════════════════════════════════════════════
-r.get('/leads', async (req, res) => {
-  try {
-    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead', company_id, date_from, date_to } = req.query;
-    let q = supabase.from('crm_leads')
-      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
-      .eq('type', type) // Filter by type: lead or deal
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
-
-    if (stage_id) q = q.eq('stage_id', stage_id);
-    if (assigned_to) q = q.eq('assigned_to', assigned_to);
-    if (source_id) q = q.eq('source_id', source_id);
-    if (company_id) q = q.eq('company_id', company_id);
-    if (date_from) q = q.gte('created_at', date_from);
-    if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
-    if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%`);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data || []);
   } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── CUSTOMERS CRUD ──
-
-r.get('/customers', async (req, res) => {
-  try {
-    const { search } = req.query;
-    let q = supabase.from('customers').select('*').order('created_at', { ascending: false }).limit(100);
-    if (search) q = q.or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%`);
-    const { data } = await q;
-    res.json(data || []);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.post('/customers', async (req, res) => {
-  try {
-    const { full_name, phone, email, address, company, tax_code, source, notes } = req.body;
-    if (!full_name?.trim()) return res.status(400).json({ error: 'Tên khách hàng là bắt buộc' });
-    const { data, error } = await supabase.from('customers')
-      .insert({ full_name, phone: phone || null, email: email || null, address: address || null, company: company || null, tax_code: tax_code || null, source: source || null, notes: notes || null })
-      .select().single();
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.put('/customers/:id', async (req, res) => {
-  try {
-    const update = {};
-    ['full_name', 'phone', 'email', 'address', 'company', 'tax_code', 'notes', 'source', 'gender', 'birthday'].forEach(f => {
-      if (req.body[f] !== undefined) update[f] = req.body[f] || null;
-    });
-    update.updated_at = new Date().toISOString();
-    const { data, error } = await supabase.from('customers').update(update).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.post('/leads', async (req, res) => {
-  try {
-    const code = await nextCode('LEAD');
-    const body = { ...req.body };
-    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id'].forEach(f => {
-      if (body[f] === '' || body[f] === undefined) body[f] = null;
-    });
-    if (!body.assigned_to) body.assigned_to = req.user.userId;
-    const { data, error } = await supabase.from('crm_leads')
-      .insert({ ...body, code, type: 'lead', lead_owner_id: req.user.userId, created_by: req.user.userId })
-      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
-      .single();
-    if (error) throw error;
-
-    // 🔔 NOTIFICATION: Lead mới → người phụ trách + admin
-    try {
-      const targetIds = new Set();
-      if (body.assigned_to) targetIds.add(body.assigned_to);
-      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-      (admins || []).forEach(a => targetIds.add(a.id));
-      if (targetIds.size) await notifyMultiple(req, [...targetIds], 'lead_created',
-        '🆕 Lead mới',
-        `Lead "${body.title}" — Mã: ${code}`,
-        'crm_lead', data.id);
-    } catch (ne) { console.warn('[NOTIFY] lead_created:', ne.message); }
-
-    // CRM tasks
-    try {
-      const { data: existingTasks } = await supabase.from('crm_tasks')
-        .select('id').eq('lead_id', data.id).limit(1);
-      if (!existingTasks?.length) {
-        await autoGenCrmTasks(data.id, 'lead', req.user.userId);
-      }
-    } catch (autoErr) { console.error('Auto-create tasks error:', autoErr.message); }
-
-    res.status(201).json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── CREATE DEAL DIRECTLY (skip Lead) ──────────────────────────────────────
-r.post('/deals', async (req, res) => {
-  try {
-    const body = { ...req.body };
-    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id'].forEach(f => {
-      if (body[f] === '' || body[f] === undefined) body[f] = null;
-    });
-
-    // Validate required
-    if (!body.title) return res.status(400).json({ error: 'Nhập tên Deal' });
-    if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
-
-    // Auto-assign to creator
-    if (!body.assigned_to) body.assigned_to = req.user.userId;
-
-    // Get first deal stage
-    const { data: firstStage } = await supabase
-      .from('crm_pipeline_stages')
-      .select('id')
-      .eq('pipeline_type', 'deal')
-      .eq('is_active', true)
-      .order('order_index')
-      .limit(1)
-      .single();
-    if (!firstStage) return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên' });
-
-    const code = await nextCode('DEAL');
-    const { data, error } = await supabase.from('crm_leads')
-      .insert({
-        ...body,
-        code,
-        type: 'deal',
-        stage_id: body.stage_id || firstStage.id,
-        lead_owner_id: req.user.userId,
-        created_by: req.user.userId,
-      })
-      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
-      .single();
-    if (error) throw error;
-
-    // 🔔 NOTIFICATION: Deal mới → người phụ trách + admin
-    try {
-      const targetIds = new Set();
-      if (body.assigned_to) targetIds.add(body.assigned_to);
-      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-      (admins || []).forEach(a => targetIds.add(a.id));
-      if (targetIds.size) await notifyMultiple(req, [...targetIds], 'deal_created',
-        '🎯 Deal mới',
-        `Deal "${body.title}" — Mã: ${code} — GT: ${formatMoney(body.estimated_value)}`,
-        'crm_deal', data.id);
-    } catch (ne) { console.warn('[NOTIFY] deal_created:', ne.message); }
-
-    // Auto-create CRM tasks for deal
-    try {
-      await autoGenCrmTasks(data.id, 'deal', req.user.userId);
-    } catch (autoErr) { console.error('Auto-create tasks on deal create error:', autoErr.message); }
-
-    res.status(201).json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET single lead/deal by ID (regardless of type)
-r.get('/leads/:id/detail', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('crm_leads')
-      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar), creator:users!crm_leads_created_by_fkey(id, full_name)')
-      .eq('id', req.params.id)
-      .single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-r.put('/leads/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    // Get current lead to check if assigned_to changed
-    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type').eq('id', id).single();
-    
-    const { data, error } = await supabase.from('crm_leads')
-      .update({ ...req.body, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
-      .single();
-    if (error) throw error;
-
-    // ✅ NOTIFICATION: Notify new assignee when assigned_to changes
-    try {
-      if (req.body.assigned_to && req.body.assigned_to !== oldLead?.assigned_to && req.body.assigned_to !== req.user.userId) {
-        const label = oldLead?.type === 'deal' ? 'Deal' : 'Lead';
-        await createNotification(req, req.body.assigned_to, 'lead_assigned',
-          `👤 ${label} được giao cho bạn`,
-          `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
-          oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id);
-      }
-      // Notify new lead_owner if changed
-      if (req.body.lead_owner_id && req.body.lead_owner_id !== oldLead?.lead_owner_id && req.body.lead_owner_id !== req.user.userId) {
-        await createNotification(req, req.body.lead_owner_id, 'lead_assigned',
-          '👤 Bạn được giao phụ trách Lead',
-          `Lead "${oldLead?.title || data.title}" được giao cho bạn`,
-          'crm_lead', id);
-      }
-    } catch (_) {}
-
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-r.delete('/leads/:id', async (req, res) => {
-  try {
-    // Get lead info + linked project
-    const { data: lead } = await supabase.from('crm_leads')
-      .select('id, title, project_id')
-      .eq('id', req.params.id).single();
-    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
-
-    // Delete linked project if exists (cascade: tasks, checklists, comments, etc.)
-    if (lead.project_id) {
-      console.log(`Deleting lead ${lead.id} → cascade delete project ${lead.project_id}`);
-
-      // Delete task sub-tables first
-      const { data: taskIds } = await supabase.from('tasks').select('id').eq('project_id', lead.project_id);
-      if (taskIds?.length) {
-        const ids = taskIds.map(t => t.id);
-        try { await supabase.from('task_checklists').delete().in('task_id', ids); } catch (_) {}
-        try { await supabase.from('task_comments').delete().in('task_id', ids); } catch (_) {}
-        try { await supabase.from('task_participants').delete().in('task_id', ids); } catch (_) {}
-        try { await supabase.from('task_time_logs').delete().in('task_id', ids); } catch (_) {}
-        try { await supabase.from('file_attachments').delete().eq('entity_type', 'task').in('entity_id', ids); } catch (_) {}
-      }
-
-      // Delete project related tables
-      try { await supabase.from('tasks').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_comments').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('stage_transitions').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_workflow_lines').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_products').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_company_assignments').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_approvals').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id); } catch (_) {}
-
-      // Delete the project
-      await supabase.from('projects').delete().eq('id', lead.project_id);
-      console.log(`Project ${lead.project_id} deleted`);
-    }
-
-    // Delete lead documents
-    try { await supabase.from('lead_documents').delete().eq('lead_id', lead.id); } catch (_) {}
-
-    // Delete lead activities
-    try { await supabase.from('crm_activities').delete().eq('lead_id', lead.id); } catch (_) {}
-
-    // Delete lead
-    const { error } = await supabase.from('crm_leads').delete().eq('id', lead.id);
-    if (error) throw error;
-
-    res.json({ success: true, message: `Đã xóa lead "${lead.title}"${lead.project_id ? ' và dự án liên kết' : ''}` });
-  } catch (e) {
-    console.error('Delete lead error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -1734,7 +1594,7 @@ r.post('/quotations', async (req, res) => {
         const { data: tasks } = await supabase.from('crm_tasks')
           .select('id, title, stage_slug, status')
           .eq('lead_id', linkedLeadId)
-          .eq('stage_slug', 'quotation')
+          .in('stage_slug', ['quotation', 'deal_quote_contract'])
           .neq('status', 'completed')
           .order('order_index')
           .limit(5);
@@ -1795,6 +1655,39 @@ r.post('/quotations', async (req, res) => {
         `Báo giá ${quote.code} — KH: ${quote.customer_name || 'N/A'} — ${formatMoney(quote.total)}`,
         'quotation', quote.id);
     } catch (ne) { console.warn('[NOTIFY] quotation_created:', ne.message); }
+
+    // ═══ SYNC: Update customer's last quotation amount ═══
+    if (quote.customer_id) {
+      try {
+        const { data: allQuotes } = await supabase.from('quotations')
+          .select('total')
+          .eq('customer_id', quote.customer_id)
+          .in('status', ['draft', 'sent', 'accepted', 'converted']);
+        const totalQuotationValue = (allQuotes || []).reduce((s, q) => s + (q.total || 0), 0);
+        await supabase.from('customers').update({
+          last_quotation_amount: quote.total,
+          last_quotation_at: new Date().toISOString(),
+          total_quotation_value: totalQuotationValue,
+          updated_at: new Date().toISOString(),
+        }).eq('id', quote.customer_id);
+        quote.customer_synced = true;
+      } catch (syncErr) {
+        console.warn('[QUOTATION] Sync customer error:', syncErr.message);
+      }
+    }
+
+    // Sync deal estimated_value
+    if (linkedLeadId && quote.total > 0) {
+      try {
+        await supabase.from('crm_leads').update({
+          estimated_value: quote.total,
+          updated_at: new Date().toISOString(),
+        }).eq('id', linkedLeadId);
+        quote.deal_value_synced = true;
+      } catch (syncErr) {
+        console.warn('[QUOTATION] Sync deal value error:', syncErr.message);
+      }
+    }
 
     res.status(201).json(quote);
   } catch (e) {
@@ -3360,6 +3253,178 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
   } catch (e) {
     console.error('[parse-excel]', e);
     res.status(500).json({ error: 'Lỗi đọc file Excel: ' + e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IMPORT EXCEL → TẠO BÁO GIÁ TỪ TASK (parse + tạo quotation + complete task + sync KH)
+// ═══════════════════════════════════════════════════════════════════════════
+r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('file'), async (req, res) => {
+  try {
+    const { id: leadId, taskId } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
+
+    // 1. Verify task exists and belongs to this lead
+    const { data: task, error: taskErr } = await supabase.from('crm_tasks')
+      .select('id, title, stage_slug, status, lead_id')
+      .eq('id', taskId).eq('lead_id', leadId).single();
+    if (taskErr || !task) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
+
+    // 2. Get lead info (customer_id, type)
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id, type, customer_id, title, project_id, estimated_value')
+      .eq('id', leadId).single();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+
+    // 3. Parse Excel — call internal parse logic
+    const XLSX = require('xlsx');
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    if (!rows.length) return res.status(400).json({ error: 'File rỗng' });
+
+    // Forward to parse-excel logic via internal HTTP call (reuse same endpoint)
+    const parseRes = await new Promise((resolve, reject) => {
+      const mockReq = { file: req.file, user: req.user };
+      const mockRes = {
+        _data: null, _status: 200,
+        status(s) { this._status = s; return this; },
+        json(d) { this._data = d; if (this._status >= 400) reject(new Error(d.error || 'Parse error')); else resolve(d); },
+      };
+      // We can't easily call the route handler directly, so use the API
+      // Instead, just do a fetch to ourselves — simpler: use axios/api
+      // Actually simplest: just forward the file to /crm/quotations/parse-excel
+      const FormData = require('form-data');
+      const fd = new FormData();
+      fd.append('file', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
+      const axios = require('axios');
+      const port = process.env.PORT || 3000;
+      axios.post(`http://localhost:${port}/api/crm/quotations/parse-excel`, fd, {
+        headers: { ...fd.getHeaders(), authorization: req.headers.authorization },
+        maxContentLength: 20 * 1024 * 1024,
+      }).then(r => resolve(r.data)).catch(e => reject(new Error(e.response?.data?.error || e.message)));
+    });
+
+    if (!parseRes.items?.length) return res.status(400).json({ error: 'Không tìm thấy sản phẩm trong file Excel' });
+
+    // 4. Build quotation payload from parsed data
+    const items = parseRes.items.filter(i => !i.is_group).map(i => {
+      const qty = i.quantity || 1;
+      const price = i.unit_price || 0;
+      const excelAmount = i.amount || 0;
+      let specFactor = 0, itemDiscount = 0;
+
+      if (i.is_freebie) {
+        return { name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: qty, unit_price: 0, spec_factor: 0, discount_percent: 0, vat_rate: 0, height: i.height || '', width: i.width || '', length: i.length || '', dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '', group_name: i.group_name || '', notes: 'HỖ TRỢ' };
+      }
+
+      if (price > 0 && qty > 0 && excelAmount > 0) {
+        const rawRatio = excelAmount / (qty * price);
+        if (rawRatio > 1.005) specFactor = Math.round(rawRatio * 1000) / 1000;
+        else if (rawRatio < 0.995) {
+          const impliedCK = Math.round((1 - rawRatio) * 10000) / 100;
+          const headerCK = i.group_discount_percent || 0;
+          itemDiscount = (headerCK > 0 && Math.abs(impliedCK - headerCK) < 1) ? headerCK : impliedCK;
+        }
+      }
+
+      return { name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: qty, unit_price: price, spec_factor: specFactor, discount_percent: itemDiscount, vat_rate: i.vat_rate || 0, height: i.height || '', width: i.width || '', length: i.length || '', dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '', group_name: i.group_name || '', notes: i.notes || '' };
+    });
+
+    // Compute discount
+    const itemsGrossTotal = items.reduce((s, i) => {
+      const f = parseFloat(i.spec_factor) || 0;
+      const gross = f > 0 ? f * (i.quantity || 1) * (i.unit_price || 0) : (i.quantity || 1) * (i.unit_price || 0);
+      return s + (gross - gross * (i.discount_percent || 0) / 100);
+    }, 0);
+    const excelGrandTotal = parseRes.summary?.total || 0;
+    const computedDiscount = (excelGrandTotal > 0 && itemsGrossTotal > excelGrandTotal)
+      ? Math.round(itemsGrossTotal - excelGrandTotal)
+      : (parseRes.summary?.discount_amount || 0);
+
+    // Get customer info
+    let customerName = parseRes.customer_name || '';
+    let customerPhone = parseRes.customer_phone || '';
+    let customerAddress = parseRes.customer_address || '';
+    let customerId = lead.customer_id;
+
+    // If lead has customer_id, get customer info
+    if (customerId) {
+      const { data: cust } = await supabase.from('customers').select('full_name, phone, address').eq('id', customerId).single();
+      if (cust) {
+        customerName = customerName || cust.full_name || '';
+        customerPhone = customerPhone || cust.phone || '';
+        customerAddress = customerAddress || cust.address || '';
+      }
+    }
+
+    const notesParts = [];
+    if (parseRes.kts_info) notesParts.push(`KT Phụ trách: ${parseRes.kts_info}`);
+    if (parseRes.notes) notesParts.push(parseRes.notes);
+    notesParts.push(`📋 Import từ task: ${task.title}`);
+
+    // 5. Create quotation via internal POST /crm/quotations
+    const axios = require('axios');
+    const port = process.env.PORT || 3000;
+    const { data: quote } = await axios.post(`http://localhost:${port}/api/crm/quotations`, {
+      title: parseRes.title || `Báo giá ${customerName}`.trim(),
+      customer_name: customerName,
+      customer_phone: customerPhone,
+      customer_address: customerAddress,
+      customer_id: customerId || '',
+      lead_id: leadId,
+      items,
+      discount_type: 'amount',
+      discount_value: computedDiscount,
+      notes: notesParts.join('\n\n'),
+      payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
+    }, { headers: { authorization: req.headers.authorization } });
+
+    // 6. Force-complete this specific task (in case auto-complete didn't match)
+    if (task.status !== 'completed') {
+      await supabase.from('crm_tasks').update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+        notes: (task.notes ? task.notes + '\n\n' : '') + `✅ Đã tạo báo giá ${quote.code} (${formatMoney(quote.total)})\n📎 /crm/quotations/${quote.id}`,
+        updated_at: new Date().toISOString(),
+      }).eq('id', taskId);
+    }
+
+    // 7. Sync estimated_value vào lead
+    if (quote.total > 0) {
+      await supabase.from('crm_leads').update({
+        estimated_value: quote.total,
+        updated_at: new Date().toISOString(),
+      }).eq('id', leadId);
+    }
+
+    // 8. Sync customer
+    if (customerId && quote.total > 0) {
+      try {
+        const { data: allQuotes } = await supabase.from('quotations')
+          .select('total').eq('customer_id', customerId)
+          .in('status', ['draft', 'sent', 'accepted', 'converted']);
+        const totalVal = (allQuotes || []).reduce((s, q) => s + (q.total || 0), 0);
+        await supabase.from('customers').update({
+          last_quotation_amount: quote.total,
+          last_quotation_at: new Date().toISOString(),
+          total_quotation_value: totalVal,
+          updated_at: new Date().toISOString(),
+        }).eq('id', customerId);
+      } catch (e) { console.warn('[TASK-IMPORT] Sync customer error:', e.message); }
+    }
+
+    res.json({
+      quotation_id: quote.id,
+      quotation_code: quote.code,
+      total: quote.total,
+      item_count: items.length,
+      task_completed: true,
+      customer_updated: !!customerId,
+    });
+  } catch (e) {
+    console.error('[TASK-IMPORT-EXCEL]', e);
+    res.status(500).json({ error: e.message || 'Lỗi import Excel' });
   }
 });
 

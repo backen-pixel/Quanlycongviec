@@ -1,11 +1,13 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../lib/api';
-import { formatDate } from '../lib/utils';
+import { formatDate, formatVND } from '../lib/utils';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
-  Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film
+  Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film,
+  FileSpreadsheet
 } from 'lucide-react';
+import ExcelQuotationImport from './ExcelQuotationImport';
 
 const LEAD_STAGES = [
   { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
@@ -174,6 +176,9 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const [attNoteText, setAttNoteText] = useState('');
   const [attNoteName, setAttNoteName] = useState('');
   const [uploadProgress, setUploadProgress] = useState({}); // { taskId: { percent, name } }
+  const [excelImportTaskId, setExcelImportTaskId] = useState(null); // taskId đang mở Excel import modal
+  const [importingExcel, setImportingExcel] = useState(null); // taskId đang import
+  const [importToast, setImportToast] = useState(null); // { message, type }
 
   if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
@@ -418,6 +423,16 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                 <span className="text-[10px] text-green-600 flex items-center gap-0.5">
                   <Share2 className="h-2.5 w-2.5" />Đang chia sẻ
                 </span>
+              )}
+              {/* Nút Upload Excel Báo giá — chỉ hiện cho task báo giá trong Deal, chưa hoàn thành */}
+              {leadType === 'deal' && (task.stage_slug === 'deal_quote_contract' || task.stage_slug === 'quotation') && task.status !== 'completed' && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setExcelImportTaskId(task.id); }}
+                  className="text-[10px] text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium cursor-pointer border border-emerald-200 transition-colors"
+                  title="Upload file Excel để tạo báo giá tự động"
+                >
+                  <FileSpreadsheet className="h-2.5 w-2.5" />📊 Upload Excel BG
+                </button>
               )}
             </div>
           </div>
@@ -832,7 +847,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
         </div>
       )}
 
-      {/* Completed tasks (collapsed) */}
+            {/* Completed tasks (collapsed) */}
       {tasks.filter(t => t.status === 'completed').length > 0 && viewMode !== 'list' && (
         <details className="mt-4">
           <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">
@@ -842,6 +857,37 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
             {tasks.filter(t => t.status === 'completed').map(t => renderTaskRow(t))}
           </div>
         </details>
+      )}
+
+      {/* Excel Quotation Import Modal */}
+      {excelImportTaskId && (
+        <ExcelQuotationImport
+          dealId={leadId}
+          leadId={leadId}
+          taskId={excelImportTaskId}
+          onImportDone={(data) => {
+            setExcelImportTaskId(null);
+            loadTasks();
+            setImportToast({
+              message: `✅ Đã tạo báo giá ${data.code || ''} — ${formatVND(data.total || 0)}. Task đã hoàn thành!`,
+              type: 'success'
+            });
+            setTimeout(() => setImportToast(null), 5000);
+          }}
+          onClose={() => setExcelImportTaskId(null)}
+        />
+      )}
+
+      {/* Toast notification */}
+      {importToast && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium animate-in slide-in-from-bottom-4 ${
+          importToast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
+        }`}>
+          <span>{importToast.message}</span>
+          <button onClick={() => setImportToast(null)} className="p-0.5 hover:bg-white/20 rounded cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
     </div>
   );

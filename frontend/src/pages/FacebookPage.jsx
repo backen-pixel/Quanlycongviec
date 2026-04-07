@@ -1611,13 +1611,25 @@ function WebhookLogsTab() {
   };
 
   // Extract useful info from payload
-  const extractInfo = (payload) => {
+  const extractInfo = (payload, result) => {
     if (!payload) return { type: '?', sender: '?', content: '?' };
+    // Log xử lý tin nhắn
+    if (payload.type === 'message_processed') {
+      const name = result?.contact_name || payload.psid;
+      const lead = result?.has_lead ? `✅ Lead ${result.lead_id?.substring(0,8)}` : '❌ Chưa có lead';
+      return { type: '⚙️ Xử lý', sender: name, content: `PSID: ${payload.psid} | ${lead}` };
+    }
+    // Log fetch tên
+    if (payload.type === 'fetch_name') {
+      const name = payload.name || '?';
+      return { type: '🔍 Tìm tên', sender: payload.psid, content: name !== '?' ? `✅ ${name}` : '❌ Không lấy được' };
+    }
+    // Webhook raw
     if (payload.messaging) {
       const m = payload.messaging[0];
       const sender = m?.sender?.id || '?';
       const text = m?.message?.text || m?.message?.attachments?.[0]?.type || (m?.read ? 'read receipt' : (m?.delivery ? 'delivery' : '?'));
-      return { type: '📩 Message', sender, content: text?.substring(0, 100) || '' };
+      return { type: '📩 Webhook', sender, content: text?.substring(0, 100) || '' };
     }
     if (payload.changes) {
       const c = payload.changes[0];
@@ -1653,7 +1665,7 @@ function WebhookLogsTab() {
 
       <div className="space-y-2">
         {logs.map(log => {
-          const info = extractInfo(log.payload);
+          const info = extractInfo(log.payload, log.result);
           const isOpen = expanded === log.id;
           return (
             <div key={log.id} className="bg-white border rounded-xl overflow-hidden shadow-sm">

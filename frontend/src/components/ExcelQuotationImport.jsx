@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { formatVND } from '../lib/utils';
 import { Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 
-export default function ExcelQuotationImport({ dealId, leadId, onImportDone, onClose }) {
+export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportDone, onClose }) {
   const [file, setFile] = useState(null);
   const [parsing, setParsing] = useState(false);
   const [preview, setPreview] = useState(null); // parsed data
