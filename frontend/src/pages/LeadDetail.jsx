@@ -44,6 +44,8 @@ export default function LeadDetail() {
   const [activeTab, setActiveTab] = useState('tasks');
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [notesExpanded, setNotesExpanded] = useState(localStorage.getItem('crm_notes_default_open') === 'true');
   const [showLostModal, setShowLostModal] = useState(false);
   const [lostReason, setLostReason] = useState('');
   const [pendingLostStageId, setPendingLostStageId] = useState(null);
