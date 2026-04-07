@@ -1,11 +1,12 @@
 import { useState, useRef } from 'react';
 import api from '../lib/api';
-import { Paperclip, X, FileText, Image, Film, File } from 'lucide-react';
+import { Paperclip, X, FileText, Image, Film, File, Box } from 'lucide-react';
 
 const ICON_MAP = {
   image: Image,
   video: Film,
   pdf: FileText,
+  skp: Box,   // SketchUp 3D
   default: File,
 };
 
@@ -14,6 +15,7 @@ function getFileIcon(mime) {
   if (mime.startsWith('image/')) return ICON_MAP.image;
   if (mime.startsWith('video/')) return ICON_MAP.video;
   if (mime.includes('pdf')) return ICON_MAP.pdf;
+  if (mime.includes('skp') || mime.includes('sketch')) return ICON_MAP.skp;
   return ICON_MAP.default;
 }
 
@@ -52,7 +54,7 @@ export function FileUploadButton({ onFilesUploaded, multiple = true, compact = f
   return (
     <>
       <input ref={inputRef} type="file" multiple={multiple} onChange={handleFiles}
-        accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.zip,.rar" className="hidden" />
+        accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.zip,.rar,.skp,.skb" className="hidden" />
       <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading}
         className={`flex items-center gap-1 cursor-pointer ${compact
           ? 'text-gray-400 hover:text-blue-500'
