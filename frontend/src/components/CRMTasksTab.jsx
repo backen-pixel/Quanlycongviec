@@ -25,7 +25,7 @@ const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
-export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
+export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], notesExpanded = false }) {
   const STAGES = leadType === 'deal' ? DEAL_STAGES : LEAD_STAGES;
   const [tasks, setTasks] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -56,6 +56,16 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     setLoading(false);
   };
   useEffect(() => { loadTasks(); }, [leadId]);
+
+  // Auto-expand first task with notes when notesExpanded is true
+  useEffect(() => {
+    if (!notesExpanded) return;
+    const first = tasks.find(t => t.notes);
+    if (first) {
+      setExpandedTask(first.id);
+      loadAttachments(first.id);
+    }
+  }, [notesExpanded, tasks.length]);
 
   const addTask = async (stageSlug) => {
     if (!newTask.title.trim()) return;
@@ -214,12 +224,12 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
 
   if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
-  const loadAttachments = async (taskId) => {
+  const loadAttachments = useCallback(async (taskId) => {
     try {
       const { data } = await api.get(`/crm/leads/${leadId}/tasks/${taskId}/attachments`);
       setTaskAttachments(p => ({ ...p, [taskId]: data || [] }));
     } catch (e) { console.error(e); }
-  };
+  }, [leadId]);
 
   const toggleExpand = (taskId, taskNotes) => {
     if (expandedTask === taskId) {
