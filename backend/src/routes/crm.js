@@ -4679,34 +4679,36 @@ r.get('/leads/:id/chat', async (req, res) => {
 });
 
 // POST /leads/:id/chat — gửi tin nhắn (text, file, image, video, audio)
-r.post('/leads/:id/chat', async (req, res) => {
+r.post('/leads/:id/chat', multer({ dest: 'uploads/lead-chat/' }).array('files'), async (req, res) => {
   try {
-    const { content, message_type = 'text', attachment_url, attachment_name, attachment_size, attachment_mime, reply_to } = req.body;
-    if (!content && !attachment_url) return res.status(400).json({ error: 'Thiếu nội dung' });
+    const { content, reply_to } = req.body;
+    const files = req.files || [];
+    const attachments = files.map(f => ({
+      name: f.originalname,
+      url: `/uploads/lead-chat/${f.filename}`,
+      type: f.mimetype,
+      size: f.size
+    }));
+
+    if (!content && !attachments.length) return res.status(400).json({ error: 'Thiếu nội dung' });
 
     const { data, error } = await supabase.from('lead_messages').insert({
-      lead_id: req.params.id, user_id: req.user.userId,
-      content: content || '', message_type, attachment_url, attachment_name,
-      attachment_size, attachment_mime, reply_to: reply_to || null,
-    }).select('*, user:users(id, full_name, avatar)').single();
+      lead_id: req.params.id,
+      user_id: req.user.userId,
+      content: content || '',
+      attachments: attachments.length ? attachments : null,
+      reply_to: reply_to || null,
+    }).select('*, user:users!lead_messages_user_id_fkey(id, full_name, avatar)').single();
+
     if (error) return res.status(400).json({ error: error.message });
 
-    // Load reply info nếu có
-    if (reply_to) {
-      const { data: replyMsg } = await supabase.from('lead_messages')
-        .select('id, content, user:users(id, full_name)').eq('id', reply_to).single();
-      data.reply = replyMsg ? [replyMsg] : [];
-    }
-
+    // Emit realtime
     const io = req.app.get('io');
     if (io) io.to(`lead:${req.params.id}`).emit('lead:chat', data);
 
-    // Notify các thành viên khác (lưu DB + push socket)
-    const { data: members } = await supabase.from('lead_members')
-      .select('user_id').eq('lead_id', req.params.id).neq('user_id', req.user.userId);
-    const senderName = data?.user?.full_name || 'Ai đó';
-    const preview = message_type === 'image' ? '[🖼️ Hình ảnh]' : message_type === 'video' ? '[🎬 Video]' : message_type === 'audio' ? '[🎙️ Ghi âm]' : message_type === 'file' ? '[📎 Tệp]' : (content || '').substring(0, 80);
-    if (members?.length) {
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
       await notifyMultipleShared(req, members.map(m => m.user_id), 'lead_chat',
         `Tin nhắn mới: ${senderName}`, preview, 'lead', req.params.id);
     }

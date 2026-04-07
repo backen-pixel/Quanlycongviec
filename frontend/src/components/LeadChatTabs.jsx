@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../lib/api';
-import { Trash2, Send, Users, Crown, Shield, Building2, Eye } from 'lucide-react';
+import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import EmployeePicker from './EmployeePicker';
 
@@ -195,6 +195,8 @@ export function LeadChatTab({ leadId, socket }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [mediaPreview, setMediaPreview] = useState(null);
+  const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
@@ -222,18 +224,47 @@ export function LeadChatTab({ leadId, socket }) {
     } catch (e) { console.error(e); }
   };
 
-  const send = async () => {
-    if (!text.trim() || sending) return;
+  const send = async (files = null) => {
+    if ((!text.trim() && !files) || sending) return;
     setSending(true);
+    const formData = new FormData();
+    formData.append('content', text);
+    if (files) {
+      for (let i = 0; i < files.length; i++) formData.append('files', files[i]);
+    }
     try {
-      await api.post(`/crm/leads/${leadId}/chat`, { content: text });
+      await api.post(`/crm/leads/${leadId}/chat`, formData);
       setText('');
     } catch (e) { alert('Lỗi gửi tin nhắn'); }
     setSending(false);
   };
 
+  const renderAttachments = (attachments) => {
+    if (!attachments || !Array.isArray(attachments)) return null;
+    return attachments.map((att, i) => {
+      const isImg = att.type?.startsWith('image/');
+      const isVideo = att.type?.startsWith('video/');
+      return (
+        <div key={i} className="mt-2 cursor-pointer" onClick={() => setMediaPreview(att)}>
+          {isImg ? <img src={att.url} className="rounded-lg max-w-full max-h-48" alt={att.name} /> :
+           isVideo ? <video src={att.url} className="rounded-lg max-w-full max-h-48" /> :
+           <div className="bg-gray-100 p-2 rounded-lg flex items-center gap-2 text-xs text-blue-600"><Paperclip size={12} /> {att.name}</div>}
+        </div>
+      );
+    });
+  };
+
   return (
     <div className="flex flex-col" style={{ height: '450px' }}>
+      {/* Media Lightbox */}
+      {mediaPreview && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
+          <button onClick={() => setMediaPreview(null)} className="absolute top-4 right-4 text-white p-2 hover:bg-white/10 rounded-full"><X /></button>
+          {mediaPreview.type?.startsWith('image/') ? <img src={mediaPreview.url} className="max-h-[80vh] max-w-full rounded-lg" /> :
+           <video src={mediaPreview.url} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />}
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50 rounded-t-xl">
         {messages.map((m) => {
@@ -255,28 +286,26 @@ export function LeadChatTab({ leadId, socket }) {
               }`}>
                 {!isMe && <p className={`text-[10px] font-medium mb-0.5 ${isMe ? 'text-blue-200' : 'text-blue-600'}`}>{m.user?.full_name}</p>}
                 <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
+                {renderAttachments(m.attachments)}
                 <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
               </div>
             </div>
           );
         })}
-        {!messages.length && (
-          <div className="text-center py-12">
-            <Send size={32} className="mx-auto text-gray-200 mb-2" />
-            <p className="text-sm text-gray-400">Chưa có tin nhắn</p>
-            <p className="text-xs text-gray-300 mt-1">Bắt đầu trao đổi với các thành viên trong nhóm</p>
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
       <div className="p-3 border-t bg-white rounded-b-xl flex gap-2">
+        <input type="file" multiple className="hidden" ref={fileInputRef} onChange={e => send(e.target.files)} />
+        <button onClick={() => fileInputRef.current?.click()} className="text-gray-400 hover:text-blue-500 cursor-pointer p-2">
+          <Paperclip size={18} />
+        </button>
         <input value={text} onChange={e => setText(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
           placeholder="Nhập tin nhắn..."
           className="flex-1 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50" />
-        <button onClick={send} disabled={sending || !text.trim()}
+        <button onClick={() => send()} disabled={sending || (!text.trim())}
           className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl w-10 h-10 flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm">
           <Send size={16} />
         </button>
