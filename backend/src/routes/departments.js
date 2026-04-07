@@ -1,8 +1,22 @@
 const { Router } = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { syncDepartmentToEcosystem, syncUserToEcosystem, removeUserFromEcosystem } = require('../helpers/ecosystemSync');
+
+// Upload storage for department chat
+const uploadDir = 'uploads/dept-chat/';
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const deptChatUpload = multer({
+  storage: multer.diskStorage({
+    destination: uploadDir,
+    filename: (_, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_'))
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB
+});
 
 const r = Router();
 r.use(auth);
@@ -375,6 +389,156 @@ r.put('/:deptId/messages/:msgId/pin', async (req, res) => {
     const { data } = await supabase.from('department_messages')
       .update({ is_pinned }).eq('id', req.params.msgId).select().single();
     res.json({ message: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══════════════════════════════════════════════
+// CHAT: UPLOAD FILE/IMAGE/VIDEO
+// ═══════════════════════════════════════════════
+r.post('/:id/chat/upload', deptChatUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    const mime = req.file.mimetype;
+    let file_type = 'file';
+    if (mime.startsWith('image/')) file_type = 'image';
+    else if (mime.startsWith('video/')) file_type = 'video';
+    else if (mime.startsWith('audio/')) file_type = 'audio';
+
+    const attachment_url = `/uploads/dept-chat/${req.file.filename}`;
+    const attachment = {
+      url: attachment_url,
+      name: req.file.originalname,
+      size: req.file.size,
+      type: mime,
+      file_type,
+    };
+
+    const { data, error } = await supabase.from('department_messages').insert({
+      department_id: req.params.id,
+      sender_id: req.user.userId,
+      content: req.body.content || '',
+      attachments: [attachment],
+    }).select(`
+      *,
+      sender:users!department_messages_sender_id_fkey(id,full_name,avatar,role)
+    `).single();
+    if (error) throw error;
+
+    // Realtime
+    const io = req.app.get('io');
+    if (io) io.to(`dept:${req.params.id}`).emit('department_message', { department_id: req.params.id, message: data });
+
+    // Notifications
+    const { data: members } = await supabase.from('users')
+      .select('id').eq('department_id', req.params.id).eq('is_active', true);
+    const { data: dept } = await supabase.from('departments').select('name').eq('id', req.params.id).single();
+    if (members) {
+      const { sendWebPush } = require('./push');
+      const preview = file_type === 'image' ? '[🖼️ Hình ảnh]' : file_type === 'video' ? '[🎬 Video]' : `[📎 ${req.file.originalname}]`;
+      for (const m of members) {
+        if (m.id !== req.user.userId) {
+          const { data: notif } = await supabase.from('notifications').insert({
+            user_id: m.id, type: 'department_chat', title: dept?.name || 'Chat',
+            message: `${req.user.fullName}: ${preview}`,
+            entity_type: 'department', entity_id: req.params.id,
+          }).select().single();
+          if (notif) sendWebPush(m.id, notif);
+        }
+      }
+    }
+
+    // Update read marker
+    await supabase.from('department_message_reads').upsert({
+      department_id: req.params.id, user_id: req.user.userId,
+      last_read_at: new Date().toISOString(),
+    }, { onConflict: 'department_id,user_id' });
+
+    res.json({ message: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi upload' }); }
+});
+
+// ═══════════════════════════════════════════════
+// CHAT: ADD/REMOVE CHAT PARTICIPANTS (beyond dept members)
+// ═══════════════════════════════════════════════
+
+// GET users available to add (not in this department)
+r.get('/:id/chat/available-users', async (req, res) => {
+  try {
+    const { search } = req.query;
+    let q = supabase.from('users')
+      .select('id,full_name,email,avatar,role,position,department_id')
+      .eq('is_active', true)
+      .neq('department_id', req.params.id)
+      .order('full_name')
+      .limit(50);
+    if (search) q = q.ilike('full_name', `%${search}%`);
+    const { data } = await q;
+    // Also include users with null department_id
+    let q2 = supabase.from('users')
+      .select('id,full_name,email,avatar,role,position,department_id')
+      .eq('is_active', true)
+      .is('department_id', null)
+      .order('full_name')
+      .limit(50);
+    if (search) q2 = q2.ilike('full_name', `%${search}%`);
+    const { data: noDepUsers } = await q2;
+    const merged = [...(data || []), ...(noDepUsers || [])].filter((u, i, arr) => arr.findIndex(x => x.id === u.id) === i);
+    res.json({ users: merged });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// POST /:id/chat/participants — add user to dept chat (update dept_id)
+r.post('/:id/chat/participants', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    const { user_id } = req.body;
+    if (!user_id) return res.status(400).json({ error: 'Thiếu user_id' });
+
+    const { data, error } = await supabase.from('users')
+      .update({ department_id: req.params.id })
+      .eq('id', user_id)
+      .select('id,full_name,email,phone,avatar,role,position,is_active')
+      .single();
+    if (error) throw error;
+
+    // Sync ecosystem
+    try { await syncUserToEcosystem(user_id, req.params.id, 'member'); } catch {}
+
+    // System message
+    const { data: sysMsg } = await supabase.from('department_messages').insert({
+      department_id: req.params.id,
+      sender_id: req.user.userId,
+      content: `📢 ${req.user.fullName} đã thêm ${data.full_name} vào nhóm`,
+      attachments: [],
+    }).select(`*, sender:users!department_messages_sender_id_fkey(id,full_name,avatar,role)`).single();
+
+    const io = req.app.get('io');
+    if (io && sysMsg) io.to(`dept:${req.params.id}`).emit('department_message', { department_id: req.params.id, message: sysMsg });
+
+    res.json({ member: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi thêm thành viên' }); }
+});
+
+// DELETE /:id/chat/participants/:userId — remove from dept chat
+r.delete('/:id/chat/participants/:userId', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    await supabase.from('users').update({ department_id: null }).eq('id', req.params.userId).eq('department_id', req.params.id);
+    try { await removeUserFromEcosystem(req.params.userId, req.params.id); } catch {}
+
+    // System message
+    const { data: removed } = await supabase.from('users').select('full_name').eq('id', req.params.userId).single();
+    const { data: sysMsg } = await supabase.from('department_messages').insert({
+      department_id: req.params.id,
+      sender_id: req.user.userId,
+      content: `👋 ${removed?.full_name || 'Thành viên'} đã rời nhóm`,
+      attachments: [],
+    }).select(`*, sender:users!department_messages_sender_id_fkey(id,full_name,avatar,role)`).single();
+
+    const io = req.app.get('io');
+    if (io && sysMsg) io.to(`dept:${req.params.id}`).emit('department_message', { department_id: req.params.id, message: sysMsg });
+
+    res.json({ message: 'Đã xóa thành viên' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
