@@ -4709,12 +4709,6 @@ r.post('/leads/:id/chat', multer({ dest: 'uploads/lead-chat/' }).array('files'),
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-      await notifyMultipleShared(req, members.map(m => m.user_id), 'lead_chat',
-        `Tin nhắn mới: ${senderName}`, preview, 'lead', req.params.id);
-    }
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
 
 // POST /leads/:id/chat/upload — upload file/image/video/audio
 const chatUpload = multer({ storage: multer.diskStorage({
