@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../lib/api';
-import { Trash2, Send, Users, Crown, Shield, Building2 } from 'lucide-react';
+import { Trash2, Send, Users, Crown, Shield, Building2, Eye } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import EmployeePicker from './EmployeePicker';
 
@@ -28,9 +28,18 @@ export function LeadMembersTab({ leadId }) {
   const [members, setMembers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [companyId, setCompanyId] = useState('');
-  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [selectedUsers, setSelectedUsers] = useState([]); // [{user_id, role, name}]
+  const [pickUserId, setPickUserId] = useState(null);
+  const [pickRole, setPickRole] = useState('member');
   const [loading, setLoading] = useState(false);
   const { user } = useAuth();
+
+  const MEMBER_ROLES = [
+    { value: 'responsible', label: 'Chịu trách nhiệm', icon: <Crown size={12} className="text-red-500" />, color: 'text-red-600 bg-red-50' },
+    { value: 'member', label: 'Tham gia', icon: <Users size={12} className="text-blue-500" />, color: 'text-blue-600 bg-blue-50' },
+    { value: 'supervisor', label: 'Giám sát', icon: <Shield size={12} className="text-amber-500" />, color: 'text-amber-600 bg-amber-50' },
+    { value: 'viewer', label: 'Xem', icon: <Eye size={12} className="text-gray-400" />, color: 'text-gray-500 bg-gray-100' },
+  ];
 
   useEffect(() => {
     load();
@@ -44,14 +53,25 @@ export function LeadMembersTab({ leadId }) {
     } catch (e) { console.error(e); }
   };
 
-  const add = async () => {
-    if (!selectedUserId) return;
+  const addToQueue = () => {
+    if (!pickUserId) return;
+    if (selectedUsers.find(u => u.user_id === pickUserId)) return;
+    setSelectedUsers(prev => [...prev, { user_id: pickUserId, role: pickRole }]);
+    setPickUserId(null);
+  };
+
+  const removeFromQueue = (uid) => setSelectedUsers(prev => prev.filter(u => u.user_id !== uid));
+
+  const updateQueueRole = (uid, role) => setSelectedUsers(prev => prev.map(u => u.user_id === uid ? { ...u, role } : u));
+
+  const submitAll = async () => {
+    if (!selectedUsers.length) return;
     setLoading(true);
     try {
-      await api.post(`/crm/leads/${leadId}/members`, { user_id: selectedUserId });
-      setSelectedUserId(null);
+      await api.post(`/crm/leads/${leadId}/members`, { members: selectedUsers });
+      setSelectedUsers([]);
       load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi thêm thành viên'); }
     setLoading(false);
   };
 
@@ -63,35 +83,65 @@ export function LeadMembersTab({ leadId }) {
     } catch (e) { alert('Lỗi'); }
   };
 
-  const roleLabel = (r) => {
-    if (r === 'owner') return { text: 'Chủ sở hữu', icon: <Crown size={12} className="text-amber-500" /> };
-    if (r === 'viewer') return { text: 'Xem', icon: <Shield size={12} className="text-gray-400" /> };
-    return { text: 'Thành viên', icon: <Users size={12} className="text-blue-500" /> };
+  const changeRole = async (uid, newRole) => {
+    try {
+      await api.post(`/crm/leads/${leadId}/members`, { user_id: uid, role: newRole });
+      load();
+    } catch (e) { alert('Lỗi cập nhật quyền'); }
   };
+
+  const getRoleMeta = (r) => MEMBER_ROLES.find(x => x.value === r) || MEMBER_ROLES[1];
 
   return (
     <div className="space-y-4">
-      {/* Chọn công ty + nhân viên */}
+      {/* Thêm thành viên */}
       <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-2">
         <p className="text-xs font-medium text-blue-700 flex items-center gap-1"><Building2 size={12} /> Thêm thành viên</p>
-        <div className="grid grid-cols-2 gap-2">
-          <select value={companyId} onChange={e => { setCompanyId(e.target.value); setSelectedUserId(null); }}
+        <div className="grid grid-cols-3 gap-2">
+          <select value={companyId} onChange={e => { setCompanyId(e.target.value); setPickUserId(null); }}
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400">
             <option value="">Chọn công ty...</option>
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <EmployeePicker
             companyId={companyId}
-            value={selectedUserId}
-            onChange={(id) => setSelectedUserId(id)}
+            value={pickUserId}
+            onChange={(id) => setPickUserId(id)}
             placeholder="Chọn nhân viên..."
             size="md"
           />
+          <select value={pickRole} onChange={e => setPickRole(e.target.value)}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400">
+            {MEMBER_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </select>
         </div>
-        <button onClick={add} disabled={!selectedUserId || loading}
-          className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition cursor-pointer disabled:opacity-40">
-          {loading ? 'Đang thêm...' : 'Thêm thành viên'}
+        <button onClick={addToQueue} disabled={!pickUserId}
+          className="w-full py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg text-sm font-medium transition cursor-pointer disabled:opacity-40">
+          + Thêm vào danh sách
         </button>
+
+        {/* Queue */}
+        {selectedUsers.length > 0 && (
+          <div className="space-y-1.5 pt-2 border-t border-blue-200">
+            <p className="text-[10px] text-blue-600 font-medium">Đang chọn {selectedUsers.length} người:</p>
+            {selectedUsers.map(su => (
+              <div key={su.user_id} className="flex items-center gap-2 bg-white rounded-lg px-2 py-1.5 border border-blue-100">
+                <span className="flex-1 text-xs text-gray-700 truncate">{su.user_id.slice(0, 8)}...</span>
+                <select value={su.role} onChange={e => updateQueueRole(su.user_id, e.target.value)}
+                  className="text-[10px] border rounded px-1 py-0.5 bg-white">
+                  {MEMBER_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+                <button onClick={() => removeFromQueue(su.user_id)} className="text-red-400 hover:text-red-600 cursor-pointer">
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+            <button onClick={submitAll} disabled={loading}
+              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition cursor-pointer disabled:opacity-40">
+              {loading ? 'Đang thêm...' : `Thêm ${selectedUsers.length} thành viên`}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Danh sách thành viên */}
@@ -99,7 +149,7 @@ export function LeadMembersTab({ leadId }) {
 
       <div className="space-y-2">
         {members.map(m => {
-          const rl = roleLabel(m.role);
+          const rl = getRoleMeta(m.role);
           return (
             <div key={m.user_id} className="flex items-center justify-between p-3 bg-gray-50 border rounded-xl hover:bg-gray-100 transition">
               <div className="flex items-center gap-3">
@@ -108,15 +158,21 @@ export function LeadMembersTab({ leadId }) {
                   <p className="text-sm font-medium text-gray-800">{m.user?.full_name}</p>
                   <div className="flex items-center gap-1 mt-0.5">
                     {rl.icon}
-                    <span className="text-[10px] text-gray-400">{rl.text}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${rl.color}`}>{rl.label}</span>
                     {m.user?.email && <span className="text-[10px] text-gray-400 ml-1">• {m.user.email}</span>}
                   </div>
                 </div>
               </div>
-              <button onClick={() => remove(m.user_id)}
-                className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-500 rounded-lg cursor-pointer transition" title="Xóa">
-                <Trash2 size={14} />
-              </button>
+              <div className="flex items-center gap-1">
+                <select value={m.role} onChange={e => changeRole(m.user_id, e.target.value)}
+                  className="text-[10px] border rounded-lg px-2 py-1 bg-white cursor-pointer">
+                  {MEMBER_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+                <button onClick={() => remove(m.user_id)}
+                  className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-500 rounded-lg cursor-pointer transition" title="Xóa">
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
           );
         })}
@@ -124,7 +180,7 @@ export function LeadMembersTab({ leadId }) {
           <div className="text-center py-8">
             <Users size={36} className="mx-auto text-gray-200 mb-2" />
             <p className="text-sm text-gray-400">Chưa có thành viên nào</p>
-            <p className="text-xs text-gray-300 mt-1">Chọn công ty → phòng ban → nhân viên để thêm vào nhóm</p>
+            <p className="text-xs text-gray-300 mt-1">Chọn công ty → nhân viên → quyền để thêm vào nhóm</p>
           </div>
         )}
       </div>

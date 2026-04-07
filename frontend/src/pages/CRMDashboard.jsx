@@ -830,6 +830,7 @@ export default function CRMDashboard() {
           { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
           { id: 'list', icon: List, label: 'Danh sách' },
           { id: 'planner', icon: Users, label: 'Planner' },
+          { id: 'calendar', icon: Calendar, label: 'Lịch' },
         ].map(v => (
           <button key={v.id} onClick={() => setViewMode(v.id)}
             className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${viewMode === v.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
@@ -866,6 +867,12 @@ export default function CRMDashboard() {
           pipelineType={pipelineType}
           users={users}
         />
+      )}
+      {viewMode === 'calendar' && (
+        <div className="bg-white rounded-xl border p-12 text-center text-gray-500">
+          <Calendar className="h-12 w-12 mx-auto mb-3 opacity-30" />
+          <p>Chức năng Lịch đang được phát triển</p>
+        </div>
       )}
 
       {showNewLead && (
@@ -1099,6 +1106,14 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
           {calculateDays(item.created_at)}
         </span>
       </div>
+
+      {/* Lý do thua */}
+      {item.lost_reason && (
+        <div className="mt-2 px-2 py-1.5 bg-red-50 border border-red-100 rounded-lg">
+          <p className="text-[10px] text-red-400 font-medium">❌ Lý do thua</p>
+          <p className="text-xs text-red-600 line-clamp-2">{item.lost_reason}</p>
+        </div>
+      )}
     </div>
   );
 }
