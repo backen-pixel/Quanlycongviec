@@ -4557,56 +4557,72 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
 r.get('/leads/:id/members', async (req, res) => {
   try {
     const { data } = await supabase.from('lead_members')
-      .select('*, user:users(id, full_name, email, avatar, role)')
+      .select('*, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role)')
       .eq('lead_id', req.params.id)
       .order('created_at');
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /leads/:id/members — thêm thành viên
+// POST /leads/:id/members — thêm thành viên (1 hoặc nhiều)
 r.post('/leads/:id/members', async (req, res) => {
   try {
-    const { user_id, role = 'member' } = req.body;
-    if (!user_id) return res.status(400).json({ error: 'Thiếu user_id' });
+    const { user_id, role = 'member', members: batchMembers } = req.body;
 
-    const { data, error } = await supabase.from('lead_members')
-      .upsert({ lead_id: req.params.id, user_id, role, added_by: req.user.userId }, { onConflict: 'lead_id,user_id' })
-      .select('*, user:users(id, full_name, email, avatar, role)')
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
+    // Batch mode: members: [{ user_id, role }]
+    const toAdd = batchMembers?.length
+      ? batchMembers.map(m => ({ user_id: m.user_id, role: m.role || 'member' }))
+      : user_id ? [{ user_id, role }] : [];
 
-    // Tạo tin nhắn hệ thống
+    if (!toAdd.length) return res.status(400).json({ error: 'Thiếu user_id hoặc members[]' });
+
     const { data: adder } = await supabase.from('users').select('full_name').eq('id', req.user.userId).single();
-    const memberName = data?.user?.full_name || 'Thành viên';
-    await supabase.from('lead_messages').insert({
-      lead_id: req.params.id, user_id: req.user.userId,
-      content: `${adder?.full_name || 'Admin'} đã thêm ${memberName} vào nhóm`,
-      message_type: 'system', is_system: true,
-    });
-
-    // Tạo notification cho người được thêm
     const { data: leadInfo } = await supabase.from('crm_leads').select('code,title').eq('id', req.params.id).single();
     const leadLabel = leadInfo ? `${leadInfo.code || ''} ${leadInfo.title || ''}`.trim() : 'nhóm trao đổi';
-    await createNotification(req, user_id, 'lead_member_added', '👥 Bạn được thêm vào nhóm',
-      `${adder?.full_name || 'Admin'} đã thêm bạn vào ${leadLabel}`, 'lead', req.params.id,
-      { nav_tab: 'chat' });
+    const results = [];
 
-    // Thông báo cho các thành viên khác biết có người mới
+    for (const item of toAdd) {
+      const { data, error } = await supabase.from('lead_members')
+        .upsert({ lead_id: req.params.id, user_id: item.user_id, role: item.role, added_by: req.user.userId }, { onConflict: 'lead_id,user_id' })
+        .select('*, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role)')
+        .single();
+      if (error) { console.error('Add member error:', error); continue; }
+      results.push(data);
+
+      const memberName = data?.user?.full_name || 'Thành viên';
+      const ROLE_LABELS = { member: 'Tham gia', supervisor: 'Giám sát', responsible: 'Chịu trách nhiệm', viewer: 'Xem' };
+      const roleLabel = ROLE_LABELS[item.role] || item.role;
+
+      // System message
+      await supabase.from('lead_messages').insert({
+        lead_id: req.params.id, user_id: req.user.userId,
+        content: `${adder?.full_name || 'Admin'} đã thêm ${memberName} (${roleLabel}) vào nhóm`,
+        message_type: 'system', is_system: true,
+      });
+
+      // Notify added user
+      await createNotification(req, item.user_id, 'lead_member_added', '👥 Bạn được thêm vào nhóm',
+        `${adder?.full_name || 'Admin'} đã thêm bạn vào ${leadLabel} với vai trò ${roleLabel}`, 'lead', req.params.id,
+        { nav_tab: 'chat' });
+    }
+
+    // Notify existing members
     const { data: otherMembers } = await supabase.from('lead_members')
       .select('user_id').eq('lead_id', req.params.id)
-      .neq('user_id', user_id).neq('user_id', req.user.userId);
+      .not('user_id', 'in', `(${toAdd.map(m => m.user_id).join(',')})`)
+      .neq('user_id', req.user.userId);
     if (otherMembers?.length) {
+      const names = results.map(r => r?.user?.full_name).filter(Boolean).join(', ');
       await notifyMultipleShared(req, otherMembers.map(m => m.user_id), 'lead_member_added',
-        '👥 Thành viên mới', `${adder?.full_name || 'Admin'} đã thêm ${memberName} vào ${leadLabel}`,
+        '👥 Thành viên mới', `${adder?.full_name || 'Admin'} đã thêm ${names} vào ${leadLabel}`,
         'lead', req.params.id, { nav_tab: 'chat' });
     }
 
     // Emit realtime
     const io = req.app.get('io');
-    if (io) io.to(`lead:${req.params.id}`).emit('lead:member_added', data);
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:member_added', results);
 
-    res.json(data);
+    res.json(results.length === 1 ? results[0] : results);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
