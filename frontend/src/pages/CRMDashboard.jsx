@@ -1114,6 +1114,19 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
         </span>
       </div>
 
+      {/* Deadline */}
+      {item.expected_close_date && (
+        <div className={`mt-2 text-[10px] px-2 py-1 rounded-lg font-medium ${
+          new Date(item.expected_close_date) < new Date()
+            ? 'bg-red-100 text-red-600'
+            : new Date(item.expected_close_date) < new Date(Date.now() + 3 * 86400000)
+            ? 'bg-amber-100 text-amber-600'
+            : 'bg-purple-100 text-purple-600'
+        }`}>
+          📅 Deadline: {new Date(item.expected_close_date).toLocaleDateString('vi-VN')}
+        </div>
+      )}
+
       {/* Lý do thua */}
       {item.lost_reason && (
         <div className="mt-2 px-2 py-1.5 bg-red-50 border border-red-100 rounded-lg">
