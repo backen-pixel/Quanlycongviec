@@ -10,7 +10,7 @@ import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Send, Image, Paperclip, RefreshCw, Users, Settings
+  FileUp, FileText, Zap, ChevronDown, Send, Image, Paperclip, RefreshCw, Users
 } from 'lucide-react';
 
 const ACTIVITY_TYPES = [
@@ -44,8 +44,7 @@ export default function LeadDetail() {
   const [activeTab, setActiveTab] = useState('tasks');
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [notesExpanded, setNotesExpanded] = useState(localStorage.getItem('crm_notes_default_open') === 'true');
+  // const [notesExpanded, setNotesExpanded] = useState(localStorage.getItem('crm_notes_default_open') === 'true'); // TBD
   const [showLostModal, setShowLostModal] = useState(false);
   const [lostReason, setLostReason] = useState('');
   const [pendingLostStageId, setPendingLostStageId] = useState(null);
@@ -359,33 +358,7 @@ export default function LeadDetail() {
           <button onClick={deleteLead} className="h-9 px-3 text-red-500 border border-red-200 rounded-lg text-sm flex items-center gap-1.5 cursor-pointer hover:bg-red-50">
             <Trash2 className="h-4 w-4" />
           </button>
-          {/* Settings */}
-          <div className="relative">
-            <button onClick={() => setShowSettingsMenu(p => !p)}
-              className="h-9 px-3 border rounded-lg text-sm flex items-center gap-1.5 cursor-pointer transition border-gray-200 hover:bg-gray-50 text-gray-600">
-              <Settings className="h-4 w-4" /> <span className="hidden md:inline">Cài đặt</span>
-            </button>
-            {showSettingsMenu && (
-              <div className="absolute right-0 top-full mt-1 w-56 bg-white border rounded-xl shadow-lg z-50 py-1">
-                <div className="px-3 py-2 border-b">
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase">Hiển thị mặc định</p>
-                </div>
-                <button
-                  onClick={() => {
-                    const next = !notesExpanded;
-                    setNotesExpanded(next);
-                    localStorage.setItem('crm_notes_default_open', String(next));
-                    setShowSettingsMenu(false);
-                  }}
-                  className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-gray-50 cursor-pointer text-sm">
-                  <span className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-gray-500" /> Ghi chú mở rộng
-                  </span>
-                  {notesExpanded && <span className="text-emerald-500 text-base">✓</span>}
-                </button>
-              </div>
-            )}
-          </div>
+
         </div>
       </div>
 
@@ -598,7 +571,7 @@ export default function LeadDetail() {
             {/* Tab Content */}
             <div className="p-5">
               {activeTab === 'tasks' ? (
-                <CRMTasksTab leadId={id} leadType={lead?.type || 'lead'} users={allUsers} notesExpanded={notesExpanded} />
+                <CRMTasksTab leadId={id} leadType={lead?.type || 'lead'} users={allUsers} />
               ) : activeTab === 'documents' ? (
                 <>
                   <div className="flex items-center justify-between mb-4">
