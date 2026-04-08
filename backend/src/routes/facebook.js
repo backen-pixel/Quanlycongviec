@@ -2281,49 +2281,31 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
-    // Lấy TẤT CẢ contacts (không chỉ có lead) để quét SĐT
+
+    // Chỉ quét các contact CHƯA có SĐT ở contact và customer
     const { data: contacts } = await supabase.from('facebook_contacts')
       .select('*')
-      .not('psid', 'is', null);
-    
-    if (!contacts?.length) return res.json({ updated: 0, message: 'Không có contact nào' });
+      .not('psid', 'is', null)
+      .is('phone', null)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(5000);
+
+    if (!contacts?.length) return res.json({ total: 0, updated: 0, message: 'Không còn contact nào thiếu SĐT để quét' });
 
     let updated = 0;
-    let newPhones = 0;
-    let updatedPhones = 0;
+    let foundPhones = 0;
+    let foundAddresses = 0;
+    let noInfo = 0;
     const results = [];
     const total = contacts.length;
 
     if (io) io.emit('batch_progress', { type: 'extract_phones', phase: 'start', total, current: 0 });
 
-    // Pre-fetch ALL messages — phân trang vì Supabase giới hạn 1000 rows/request
-    const contactIds = contacts.map(c => c.id);
-    const msgsByContact = {};
-    const PAGE_SIZE = 1000;
-    let msgOffset = 0;
-    let totalMsgsFetched = 0;
-    while (true) {
-      const { data: batch } = await supabase.from('facebook_messages')
-        .select('contact_id, content, direction')
-        .in('contact_id', contactIds)
-        .order('created_at', { ascending: false })
-        .range(msgOffset, msgOffset + PAGE_SIZE - 1);
-      if (!batch || batch.length === 0) break;
-      batch.forEach(m => {
-        if (!msgsByContact[m.contact_id]) msgsByContact[m.contact_id] = [];
-        msgsByContact[m.contact_id].push(m);
-      });
-      totalMsgsFetched += batch.length;
-      if (batch.length < PAGE_SIZE) break; // hết data
-      msgOffset += PAGE_SIZE;
-    }
-    console.log(`[ExtractPhones] Fetched ${totalMsgsFetched} messages for ${contactIds.length} contacts`);
-
-    // Pre-fetch customer phone để so sánh
+    // Preload lead + customer để cập nhật nhanh hơn
     const leadIds = contacts.map(c => c.lead_id).filter(Boolean);
-    const { data: leads } = await supabase.from('crm_leads')
-      .select('id, customer_id, description, install_address')
-      .in('id', leadIds);
+    const { data: leads } = leadIds.length
+      ? await supabase.from('crm_leads').select('id, customer_id, description, install_address').in('id', leadIds)
+      : { data: [] };
     const leadMap = {};
     (leads || []).forEach(l => { leadMap[l.id] = l; });
 
@@ -2336,109 +2318,104 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
-      // Dùng messages đã pre-fetch (cả inbound + outbound)
-      const messages = msgsByContact[contact.id] || [];
-      
-      // Tìm TẤT CẢ SĐT trong tin nhắn
-      const allPhones = new Set();
-      let extractedAddress = null;
-      
-      for (const msg of messages) {
-        if (msg.content) {
-          const { phone, address } = extractContactInfo(msg.content);
-          if (phone) allPhones.add(phone);
-          if (address && !extractedAddress) extractedAddress = address;
-        }
-      }
-
-      // So sánh với phone hiện tại
       const lead = leadMap[contact.lead_id];
       const cust = lead ? custMap[lead.customer_id] : null;
-      const currentPhone = contact.phone || cust?.phone || null;
-      const currentPhoneNorm = currentPhone ? currentPhone.replace(/[^0-9]/g, '').slice(-9) : null;
-      
-      // Lọc ra SĐT MỚI (khác với phone hiện tại)
-      const newPhones = [...allPhones].filter(p => {
-        const norm = p.replace(/[^0-9]/g, '').slice(-9);
-        return norm !== currentPhoneNorm;
-      });
+      const hasAnyPhone = !!(contact.phone || cust?.phone);
+      if (hasAnyPhone) {
+        results.push({ contact: contact.fb_name, status: 'skip_has_phone' });
+        if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'skip_has_phone' });
+        continue;
+      }
 
-      // Xác định phone tốt nhất: ưu tiên phone đầu tiên tìm thấy
-      const bestPhone = currentPhone ? null : ([...allPhones][0] || null); // chỉ gán nếu chưa có
-      const hasNewData = bestPhone || (newPhones.length > 0) || (extractedAddress && !cust?.address);
-      
-      if (!hasNewData && allPhones.size === 0) {
+      // Đọc tin nhắn của TỪNG user riêng biệt, ưu tiên inbound
+      const { data: messages } = await supabase.from('facebook_messages')
+        .select('content, direction, created_at')
+        .eq('contact_id', contact.id)
+        .order('created_at', { ascending: false })
+        .limit(300);
+
+      let extractedPhone = null;
+      let extractedAddress = null;
+      const extraPhones = [];
+
+      for (const msg of (messages || [])) {
+        if (!msg.content) continue;
+        const { phone, address } = extractContactInfo(msg.content);
+        if (phone && !extractedPhone) {
+          extractedPhone = phone;
+        } else if (phone && phone !== extractedPhone && !extraPhones.includes(phone)) {
+          extraPhones.push(phone);
+        }
+        if (address && !extractedAddress) extractedAddress = address;
+        if (extractedPhone && extractedAddress) break;
+      }
+
+      if (!extractedPhone && !extractedAddress) {
+        noInfo++;
         results.push({ contact: contact.fb_name, status: 'no_info_found' });
         if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'no_info' });
         continue;
       }
 
-      if (!hasNewData) {
-        // Có phone nhưng trùng với hiện tại
-        results.push({ contact: contact.fb_name, phone: currentPhone, status: 'already_has' });
-        if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'already_has', phone: currentPhone });
-        continue;
-      }
-
-      const extractedPhone = bestPhone; // chỉ phone mới (chưa có trước đó)
-
-      // Update contact phone (chỉ khi chưa có)
+      // Update contact
+      const contactUpd = { updated_at: new Date().toISOString() };
       if (extractedPhone && !contact.phone) {
-        await supabase.from('facebook_contacts').update({
-          phone: extractedPhone,
-          updated_at: new Date().toISOString(),
-        }).eq('id', contact.id);
+        contactUpd.phone = extractedPhone;
+        foundPhones++;
+      }
+      if (Object.keys(contactUpd).length > 1) {
+        await supabase.from('facebook_contacts').update(contactUpd).eq('id', contact.id);
       }
 
-      // Update customer
-      let custId = lead?.customer_id;
-      if (custId) {
+      // Update customer nếu có
+      if (lead?.customer_id) {
         const custUpd = {};
         if (extractedPhone && !cust?.phone) custUpd.phone = extractedPhone;
-        if (extractedAddress && !cust?.address) custUpd.address = extractedAddress;
+        if (extractedAddress && !cust?.address) {
+          custUpd.address = extractedAddress;
+          foundAddresses++;
+        }
         if (Object.keys(custUpd).length) {
-          await supabase.from('customers').update(custUpd).eq('id', custId);
+          await supabase.from('customers').update(custUpd).eq('id', lead.customer_id);
         }
       }
 
-      // Update lead: install_address, description
-      if (contact.lead_id && lead) {
+      // Update lead nếu có
+      if (lead && contact.lead_id) {
         const leadUpd = { updated_at: new Date().toISOString() };
         if (extractedAddress && !lead.install_address) leadUpd.install_address = extractedAddress;
 
-        // Description: chỉ thêm dòng mới nếu chưa có
         let desc = lead.description || '';
-        if (extractedPhone && !/SĐT:/.test(desc)) {
-          desc = desc.trimEnd() + `\nSĐT: ${extractedPhone}`;
-        }
-        if (extractedAddress && !/Địa chỉ:/.test(desc)) {
-          desc = desc.trimEnd() + `\nĐịa chỉ: ${extractedAddress}`;
-        }
-        // Thêm SĐT phụ nếu tìm thấy nhiều số
-        if (newPhones.length > 0 && !/SĐT khác:/.test(desc)) {
-          desc = desc.trimEnd() + `\nSĐT khác: ${newPhones.join(', ')}`;
-        }
-        if (desc !== (lead.description || '')) {
-          leadUpd.description = desc.trim();
-        }
-        if (Object.keys(leadUpd).length > 1) { // > 1 vì luôn có updated_at
+        if (extractedPhone && !/SĐT:/.test(desc)) desc = `${desc.trimEnd()}\nSĐT: ${extractedPhone}`.trim();
+        if (extractedAddress && !/Địa chỉ:/.test(desc)) desc = `${desc.trimEnd()}\nĐịa chỉ: ${extractedAddress}`.trim();
+        if (extraPhones.length && !/SĐT khác:/.test(desc)) desc = `${desc.trimEnd()}\nSĐT khác: ${extraPhones.join(', ')}`.trim();
+        if (desc !== (lead.description || '')) leadUpd.description = desc;
+
+        if (Object.keys(leadUpd).length > 1) {
           await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
         }
       }
 
       updated++;
-      if (extractedPhone) newPhones.length > 0 ? updatedPhones++ : newPhones++;
       results.push({
         contact: contact.fb_name,
-        phone: extractedPhone || currentPhone,
-        newPhones: newPhones.length > 0 ? newPhones : undefined,
+        phone: extractedPhone,
         address: extractedAddress,
-        status: extractedPhone ? 'new_phone' : newPhones.length > 0 ? 'extra_phones' : 'address_only',
+        extraPhones: extraPhones.length ? extraPhones : undefined,
+        status: extractedPhone ? 'updated_phone' : 'updated_address',
       });
-      if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'found', phone: extractedPhone || currentPhone, extra: newPhones.length });
+      if (io) io.emit('batch_progress', {
+        type: 'extract_phones',
+        current: i + 1,
+        total,
+        name: contact.fb_name,
+        status: 'found',
+        phone: extractedPhone,
+        address: extractedAddress,
+      });
     }
 
-    const summary = { total, updated, newPhones, updatedPhones, results };
+    const summary = { total, updated, foundPhones, foundAddresses, noInfo, results };
     if (io) io.emit('batch_done', { type: 'extract_phones', ...summary });
     res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
