@@ -6,7 +6,7 @@ import { getSocket } from '../lib/socket';
 import { getInitials, avatarColor, ROLE_LABELS } from '../lib/utils';
 import {
   Send, ArrowLeft, Pin, Reply, Trash2, Edit, MoreVertical, Paperclip, X,
-  Users, Building, Image, File, Plus, Video, UserPlus
+  Users, Building, Image, File, Plus, Video, UserPlus, Smile
 } from 'lucide-react';
 
 export default function DepartmentChat() {
@@ -28,6 +28,7 @@ export default function DepartmentChat() {
   const [availableUsers, setAvailableUsers] = useState([]);
   const [userSearch, setUserSearch] = useState('');
   const [mediaPreview, setMediaPreview] = useState(null);
+  const [emojiPickerMsg, setEmojiPickerMsg] = useState(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -49,15 +50,35 @@ export default function DepartmentChat() {
   // Socket.IO realtime
   useEffect(() => {
     const socket = getSocket();
-    if (!socket) return;
-    const handler = (data) => {
+    if (!socket || !id) return;
+
+    // Join department room
+    socket.emit('join:dept', id);
+
+    const msgHandler = (data) => {
       if (data.department_id === id) {
-        setMessages(prev => [...prev, data.message]);
+        // Avoid duplicate if sender is current user (already added optimistically)
+        setMessages(prev => {
+          if (data.message?.sender_id === user?.userId && prev.some(m => m.id === data.message.id)) return prev;
+          if (prev.some(m => m.id === data.message.id)) return prev;
+          return [...prev, data.message];
+        });
       }
     };
-    socket.on('department_message', handler);
-    return () => socket.off('department_message', handler);
-  }, [id]);
+    const reactionHandler = (data) => {
+      setMessages(prev => prev.map(m =>
+        m.id === data.message_id ? { ...m, reactions: data.reactions } : m
+      ));
+    };
+
+    socket.on('department_message', msgHandler);
+    socket.on('department_reaction', reactionHandler);
+    return () => {
+      socket.emit('leave:dept', id);
+      socket.off('department_message', msgHandler);
+      socket.off('department_reaction', reactionHandler);
+    };
+  }, [id, user?.userId]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -166,6 +187,30 @@ export default function DepartmentChat() {
 
   const cancelEdit = () => { setEditMsg(null); setText(''); };
   const cancelReply = () => setReplyTo(null);
+
+  // Emoji reactions
+  const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '😡', '🔥', '👏'];
+
+  const toggleReaction = async (msgId, emoji) => {
+    try {
+      const { data } = await api.post(`/departments/${id}/messages/${msgId}/react`, { emoji });
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: data.reactions } : m));
+    } catch {}
+    setEmojiPickerMsg(null);
+  };
+
+  // Group reactions by emoji for display
+  const groupReactions = (reactions) => {
+    if (!reactions?.length) return [];
+    const map = {};
+    reactions.forEach(r => {
+      if (!map[r.emoji]) map[r.emoji] = { emoji: r.emoji, count: 0, users: [], myReaction: false };
+      map[r.emoji].count++;
+      map[r.emoji].users.push(r.user?.full_name || '');
+      if (r.user_id === user?.userId) map[r.emoji].myReaction = true;
+    });
+    return Object.values(map);
+  };
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -337,12 +382,45 @@ export default function DepartmentChat() {
                             </div>
                           </div>
 
-                          {/* Context menu trigger */}
-                          <div className={`absolute top-0 ${isMe ? 'left-0 -translate-x-full' : 'right-0 translate-x-full'} opacity-0 group-hover:opacity-100 transition-opacity`}>
+                          {/* Reactions display */}
+                          {msg.reactions?.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {groupReactions(msg.reactions).map(r => (
+                                <button key={r.emoji} onClick={() => toggleReaction(msg.id, r.emoji)}
+                                  title={r.users.join(', ')}
+                                  className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs border cursor-pointer transition-colors ${
+                                    r.myReaction ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                                  }`}>
+                                  <span>{r.emoji}</span>
+                                  <span className="text-[10px] font-medium">{r.count}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Context menu trigger + emoji button */}
+                          <div className={`absolute top-0 ${isMe ? 'left-0 -translate-x-full' : 'right-0 translate-x-full'} opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5`}>
+                            <button onClick={() => setEmojiPickerMsg(emojiPickerMsg === msg.id ? null : msg.id)}
+                              className="w-6 h-6 rounded hover:bg-gray-200 flex items-center justify-center cursor-pointer"
+                              title="Thêm cảm xúc">
+                              <Smile className="h-3 w-3 text-gray-400" />
+                            </button>
                             <button onClick={() => setMenuMsg(menuMsg === msg.id ? null : msg.id)}
                               className="w-6 h-6 rounded hover:bg-gray-200 flex items-center justify-center cursor-pointer">
                               <MoreVertical className="h-3 w-3 text-gray-400" />
                             </button>
+                            {/* Emoji picker popup */}
+                            {emojiPickerMsg === msg.id && (
+                              <div className="absolute z-50 bg-white rounded-xl shadow-lg border p-1.5 flex items-center gap-0.5"
+                                style={{ [isMe ? 'left' : 'right']: 0, bottom: '100%', marginBottom: '4px' }}>
+                                {QUICK_EMOJIS.map(emoji => (
+                                  <button key={emoji} onClick={() => toggleReaction(msg.id, emoji)}
+                                    className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-lg cursor-pointer transition-transform hover:scale-125">
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             {menuMsg === msg.id && (
                               <div className="absolute z-50 bg-white rounded-lg shadow-lg border py-1 min-w-[120px]"
                                 style={{ [isMe ? 'left' : 'right']: 0, top: '100%' }}>

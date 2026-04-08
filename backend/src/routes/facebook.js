@@ -266,19 +266,29 @@ function extractContactInfo(text) {
   
   // Phone patterns (VN)
   const phonePatterns = [
-    /(?:0|\+84)(?:\d[\s.-]?){9,10}/g,  // 0912345678, +84912345678, 0912 345 678
-    /(?:84)(?:\d[\s.-]?){9,10}/g,       // 84912345678
+    /(?:0|\+84)(?:\d[\s.\-\/]?){9,10}/g,  // 0912345678, +84912345678, 0912 345 678, 0984/462/000
+    /(?:84)(?:\d[\s.\-\/]?){9,10}/g,       // 84912345678
   ];
   
   let phone = null;
   for (const pattern of phonePatterns) {
     const matches = text.match(pattern);
     if (matches?.[0]) {
-      phone = matches[0].replace(/[\s.-]/g, ''); // Remove spaces/dashes
+      phone = matches[0].replace(/[\s.\-\/]/g, ''); // Remove spaces/dashes/slashes
       // Normalize: +84 → 0
-      if (phone.startsWith('84')) phone = '0' + phone.slice(2);
       if (phone.startsWith('+84')) phone = '0' + phone.slice(3);
-      break;
+      else if (phone.startsWith('84') && phone.length >= 11) phone = '0' + phone.slice(2);
+      // Validate length: VN phone = 10 digits (0xxx) or 11 digits (01xxx old format)
+      if (phone.length < 10 || phone.length > 11) phone = null;
+      if (phone) break;
+    }
+  }
+  
+  // Fallback: tìm dãy 9-10 chữ số liên tiếp (không có prefix 0) — có thể user gửi thiếu số 0
+  if (!phone) {
+    const bareMatch = text.match(/(?:^|[^\d])([3-9]\d{8})(?:[^\d]|$)/);
+    if (bareMatch?.[1]) {
+      phone = '0' + bareMatch[1]; // Thêm prefix 0
     }
   }
   
@@ -2267,19 +2277,28 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
     if (io) io.emit('batch_progress', { type: 'extract_phones', phase: 'start', total, current: 0 });
 
-    // Pre-fetch ALL messages cho tất cả contacts 1 lần (cả inbound + outbound)
+    // Pre-fetch ALL messages — phân trang vì Supabase giới hạn 1000 rows/request
     const contactIds = contacts.map(c => c.id);
-    const { data: allMsgs } = await supabase.from('facebook_messages')
-      .select('contact_id, content, direction')
-      .in('contact_id', contactIds)
-      .order('created_at', { ascending: false })
-      .limit(50000);
-    // Group messages by contact_id
     const msgsByContact = {};
-    (allMsgs || []).forEach(m => {
-      if (!msgsByContact[m.contact_id]) msgsByContact[m.contact_id] = [];
-      msgsByContact[m.contact_id].push(m);
-    });
+    const PAGE_SIZE = 1000;
+    let msgOffset = 0;
+    let totalMsgsFetched = 0;
+    while (true) {
+      const { data: batch } = await supabase.from('facebook_messages')
+        .select('contact_id, content, direction')
+        .in('contact_id', contactIds)
+        .order('created_at', { ascending: false })
+        .range(msgOffset, msgOffset + PAGE_SIZE - 1);
+      if (!batch || batch.length === 0) break;
+      batch.forEach(m => {
+        if (!msgsByContact[m.contact_id]) msgsByContact[m.contact_id] = [];
+        msgsByContact[m.contact_id].push(m);
+      });
+      totalMsgsFetched += batch.length;
+      if (batch.length < PAGE_SIZE) break; // hết data
+      msgOffset += PAGE_SIZE;
+    }
+    console.log(`[ExtractPhones] Fetched ${totalMsgsFetched} messages for ${contactIds.length} contacts`);
 
     // Pre-fetch customer phone để so sánh
     const leadIds = contacts.map(c => c.lead_id).filter(Boolean);
