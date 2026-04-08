@@ -344,6 +344,9 @@ function InboxTab({ pageStats }) {
     if (contactFilter === 'has_phone') return !!c.phone;
     if (contactFilter === 'no_phone') return !c.phone;
     if (contactFilter === 'has_lead') return !!c.lead;
+    if (contactFilter === 'no_lead') return !c.lead;
+    if (contactFilter === 'lead_has_phone') return !!c.lead && !!c.phone;
+    if (contactFilter === 'lead_no_phone') return !!c.lead && !c.phone;
     return true;
   });
 
@@ -380,15 +383,20 @@ function InboxTab({ pageStats }) {
               pageStats={pageStats}
             />
           )}
-          <div className="flex gap-1 text-[11px]">
+          <div className="flex gap-1 flex-wrap text-[11px]">
             {[
-              { key: 'all', label: 'Tất cả', count: contacts.length },
-              { key: 'has_phone', label: '📞 Có SĐT', count: contacts.filter(c => c.phone).length },
-              { key: 'no_phone', label: '❌ Chưa SĐT', count: contacts.filter(c => !c.phone).length },
-              { key: 'has_lead', label: '🏷 Có Lead', count: contacts.filter(c => c.lead).length },
+              { key: 'all',           label: 'Tất cả',              count: contacts.length },
+              { key: 'has_phone',     label: '📞 Có SĐT',           count: contacts.filter(c => c.phone).length },
+              { key: 'no_phone',      label: '❌ Chưa có SĐT',       count: contacts.filter(c => !c.phone).length },
+              { key: 'has_lead',      label: '🏷 Có Lead',           count: contacts.filter(c => c.lead).length },
+              { key: 'no_lead',       label: '🔔 Chưa có Lead',     count: contacts.filter(c => !c.lead).length },
+              { key: 'lead_has_phone',label: '✅ Lead + SĐT',        count: contacts.filter(c => c.lead && c.phone).length },
+              { key: 'lead_no_phone', label: '⚠️ Lead chưa có SĐT', count: contacts.filter(c => c.lead && !c.phone).length },
             ].map(f => (
               <button key={f.key} onClick={() => setContactFilter(f.key)}
-                className={`px-2 py-1 rounded-lg cursor-pointer transition ${contactFilter === f.key ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:bg-gray-100'}`}>
+                className={`px-2 py-1 rounded-lg cursor-pointer transition whitespace-nowrap ${
+                  contactFilter === f.key ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:bg-gray-100'
+                }`}>
                 {f.label} ({f.count})
               </button>
             ))}
