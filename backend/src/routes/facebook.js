@@ -1860,7 +1860,7 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
 
     // 1. Lấy tất cả leads (không join customer để tránh lỗi FK)
     const { data: allLeads, error: leadsErr } = await supabase.from('crm_leads')
-      .select('id, code, customer_id, source_id, title, phone, type, estimated_value, created_at, updated_at, stage_id, assigned_to, description, install_address')
+      .select('id, code, customer_id, source_id, title, type, estimated_value, created_at, updated_at, stage_id, assigned_to, description, install_address')
       .eq('type', 'lead')
       .order('created_at', { ascending: false })
       .limit(5000);
@@ -1932,7 +1932,7 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
     // Group by phone (last 9 digits)
     const byPhone = {};
     allLeads.forEach(l => {
-      const p = normalizePhone(l.phone) || normalizePhone(l.customer?.phone);
+      const p = normalizePhone(l.customer?.phone);
       if (!p) return;
       if (!byPhone[p]) byPhone[p] = [];
       byPhone[p].push(l.id);
@@ -1983,8 +1983,8 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
         const aFb = fbLeadMap[a.id] ? 1 : 0;
         const bFb = fbLeadMap[b.id] ? 1 : 0;
         if (bFb !== aFb) return bFb - aFb;
-        const aPhone = (a.phone || a.customer?.phone) ? 1 : 0;
-        const bPhone = (b.phone || b.customer?.phone) ? 1 : 0;
+        const aPhone = (a.customer?.phone) ? 1 : 0;
+        const bPhone = (b.customer?.phone) ? 1 : 0;
         if (bPhone !== aPhone) return bPhone - aPhone;
         const aVal = a.estimated_value || 0;
         const bVal = b.estimated_value || 0;
@@ -2002,9 +2002,11 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
             await supabase.from('crm_leads').update({ estimated_value: dupe.estimated_value }).eq('id', keep.id);
           }
           // Gộp phone nếu keep thiếu
-          if (!keep.phone && dupe.phone) {
-            await supabase.from('crm_leads').update({ phone: dupe.phone }).eq('id', keep.id);
-            keep.phone = dupe.phone;
+          const keepCust = custMap[keep.customer_id];
+          const dupeCust = custMap[dupe.customer_id];
+          if (keepCust && !keepCust.phone && dupeCust?.phone) {
+            await supabase.from('customers').update({ phone: dupeCust.phone }).eq('id', keep.customer_id);
+            keepCust.phone = dupeCust.phone;
           }
           // Gộp install_address nếu keep thiếu
           if (!keep.install_address && dupe.install_address) {
@@ -2064,7 +2066,7 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
 r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
   try {
     const { data: allLeads, error: err } = await supabase.from('crm_leads')
-      .select('id, code, title, phone, customer_id, source_id, created_at')
+      .select('id, code, title, customer_id, source_id, created_at')
       .eq('type', 'lead')
       .limit(5000);
     
@@ -2085,14 +2087,14 @@ r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
       if (!norm || norm === 'kh facebook' || norm === 'user' || norm === 'facebook user' || norm.length < 3) return;
       if (!byTitle[norm]) byTitle[norm] = [];
       const cust = custMap[l.customer_id];
-      byTitle[norm].push({ id: l.id, code: l.code, title: l.title, phone: l.phone, custPhone: cust?.phone, custName: cust?.full_name, customer_id: l.customer_id });
+      byTitle[norm].push({ id: l.id, code: l.code, title: l.title, phone: cust?.phone, custName: cust?.full_name, customer_id: l.customer_id });
     });
 
     // Group theo phone (last 9 digits)
     const byPhone = {};
     allLeads.forEach(l => {
       const cust = custMap[l.customer_id];
-      const raw = l.phone || cust?.phone;
+      const raw = cust?.phone;
       if (!raw) return;
       const clean = raw.replace(/[^0-9]/g, '');
       const norm = clean.length >= 9 ? clean.slice(-9) : null;
