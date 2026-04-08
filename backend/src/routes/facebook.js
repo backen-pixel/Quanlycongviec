@@ -125,7 +125,6 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     if (profile?.name) {
       name = profile.name;
       if (profile.profilePic) profilePic = profile.profilePic;
-      console.log(`[FB] Got name from conversations: ${name}`);
     }
   }
 
@@ -133,7 +132,16 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
   const { data: newContact, error } = await supabase.from('facebook_contacts')
     .insert({ page_id: pageId, psid, fb_name: name || 'Facebook User', fb_profile_pic: profilePic })
     .select().single();
-  if (error) { console.error('[FB] Create contact error:', error.message); return null; }
+  if (error) {
+    // Race condition: contact đã được tạo bởi request khác → select lại
+    if (error.message.includes('duplicate key') || error.code === '23505') {
+      const { data: existing } = await supabase.from('facebook_contacts')
+        .select('*').eq('page_id', pageId).eq('psid', psid).single();
+      if (existing) return existing;
+    }
+    console.error('[FB] Create contact error:', error.message);
+    return null;
+  }
 
   // Nếu vẫn "Facebook User" → retry 3 lần, mỗi lần cách nhau 5 giây
   if (!name || name === 'Facebook User') {
@@ -199,73 +207,50 @@ async function logFetchResult(pageId, psid, status, details) {
 // Fallback: GET /CONV_ID?fields=participants → filter by PSID
 async function fetchProfileViaConversations(pageId, psid) {
   try {
-    console.log(`[FB] 🔍 Fetching name for PSID: ${psid}`);
     const page = await getPageConfig(pageId);
-    if (!page?.access_token) {
-      console.log('[FB] ❌ No page access token');
-      await logFetchResult(pageId, psid, 'no_token', null);
-      return null;
-    }
+    if (!page?.access_token) { await logFetchResult(pageId, psid, 'no_token', null); return null; }
     const token = page.access_token;
 
     // Step 1: Get conversation ID
-    const convUrl = `https://graph.facebook.com/v22.0/me/conversations?user_id=${psid}`;
-    const convResp = await fetch(convUrl, { headers: { Authorization: `Bearer ${token}` } });
+    const convResp = await fetch(`https://graph.facebook.com/v22.0/me/conversations?user_id=${psid}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const convData = await convResp.json();
-    console.log(`[FB] Step1 conversations:`, JSON.stringify(convData).substring(0, 300));
-    
     if (!convData.data?.[0]?.id) {
-      console.log('[FB] ❌ No conversation found');
-      await logFetchResult(pageId, psid, 'no_conversation', { convData });
+      await logFetchResult(pageId, psid, 'no_conversation', null);
       return null;
     }
-
     const convId = convData.data[0].id;
 
-    // Step 2: Try participants API first (more reliable for name)
+    // Step 2a: Try participants API (fastest, most reliable)
     try {
-      const partUrl = `https://graph.facebook.com/v22.0/${convId}?fields=participants`;
-      const partResp = await fetch(partUrl, { headers: { Authorization: `Bearer ${token}` } });
+      const partResp = await fetch(`https://graph.facebook.com/v22.0/${convId}?fields=participants`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const partData = await partResp.json();
-      console.log(`[FB] Step2a participants:`, JSON.stringify(partData).substring(0, 500));
-      
       const participant = partData.participants?.data?.find(p => p.id === psid);
       if (participant?.name && participant.name !== 'Facebook User') {
         const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(participant.name)}&background=0D8ABC&color=fff&size=200&bold=true`;
-        console.log(`[FB] ✅ Got name via participants: ${participant.name}`);
         await logFetchResult(pageId, psid, 'success_participants', { name: participant.name });
         return { name: participant.name, profilePic: avatarUrl };
       }
-    } catch (e) {
-      console.log(`[FB] participants API failed:`, e.message);
-    }
+    } catch (e) { /* fallthrough */ }
 
-    // Step 3: Fallback — Get messages with from.name
-    const msgUrl = `https://graph.facebook.com/v22.0/${convId}/messages?fields=from&limit=5`;
-    const msgResp = await fetch(msgUrl, { headers: { Authorization: `Bearer ${token}` } });
+    // Step 2b: Fallback — messages with from.name
+    const msgResp = await fetch(`https://graph.facebook.com/v22.0/${convId}/messages?fields=from&limit=5`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const msgData = await msgResp.json();
-    console.log(`[FB] Step2b messages:`, JSON.stringify(msgData).substring(0, 500));
+    if (!msgData.data?.length) { await logFetchResult(pageId, psid, 'no_messages', null); return null; }
 
-    if (!msgData.data?.length) {
-      console.log('[FB] ❌ No messages in conversation');
-      await logFetchResult(pageId, psid, 'no_messages', { convId });
-      return null;
-    }
-
-    // Find message from user (not from page)
     const userMsg = msgData.data.find(m => m.from?.id === psid);
     if (!userMsg?.from?.name) {
-      // Log ALL from.name values for debugging
-      const allNames = msgData.data.map(m => ({ id: m.from?.id, name: m.from?.name }));
-      console.log('[FB] ❌ No name in messages. All from:', JSON.stringify(allNames));
-      await logFetchResult(pageId, psid, 'no_name', { allNames, pageId });
+      await logFetchResult(pageId, psid, 'no_name', null);
       return null;
     }
 
     const userName = userMsg.from.name;
     const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=0D8ABC&color=fff&size=200&bold=true`;
-
-    console.log(`[FB] ✅ Got name via messages: ${userName}`);
     await logFetchResult(pageId, psid, 'success_messages', { name: userName });
 
     return { name: userName, profilePic: avatarUrl };
