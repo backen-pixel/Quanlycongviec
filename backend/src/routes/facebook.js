@@ -2460,6 +2460,71 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       });
     }
 
+    // ═══ VÒNG CUỐI: Sync phone từ customer → lead cho TẤT CẢ leads ═══
+    console.log('[ExtractPhones] 🔄 Vòng cuối: sync customer.phone → lead...');
+    if (io) io.emit('batch_progress', { type: 'extract_phones', phase: 'lead_sync', current: 0, total: 0, name: 'Sync SĐT vào lead...' });
+
+    const leadsUpdated = [];
+    let leadsStillMissing = 0;
+
+    // Lấy tất cả leads loại 'lead' có customer_id
+    let allLeads = [];
+    let lp = 0;
+    while (true) {
+      const { data: lpage } = await supabase.from('crm_leads')
+        .select('id, code, title, customer_id, description')
+        .eq('type', 'lead')
+        .not('customer_id', 'is', null)
+        .range(lp, lp + 999);
+      if (!lpage?.length) break;
+      allLeads = allLeads.concat(lpage);
+      if (lpage.length < 1000) break;
+      lp += 1000;
+    }
+
+    // Lấy tất cả customers có phone
+    const allCustIds = [...new Set(allLeads.map(l => l.customer_id))];
+    const fullCustMap = {};
+    for (let b = 0; b < allCustIds.length; b += 500) {
+      const batch = allCustIds.slice(b, b + 500);
+      const { data: custs } = await supabase.from('customers').select('id, phone').in('id', batch);
+      (custs || []).forEach(c => { fullCustMap[c.id] = c; });
+    }
+
+    for (const lead of allLeads) {
+      const cPhone = fullCustMap[lead.customer_id]?.phone;
+      if (!cPhone || !String(cPhone).trim()) {
+        leadsStillMissing++;
+        continue;
+      }
+
+      // Kiểm tra lead description đã có SĐT chưa
+      let desc = lead.description || '';
+      const hasPhoneInDesc = /SĐT:\s*\S/.test(desc);
+      // Nếu đã có SĐT và trùng → bỏ qua
+      if (hasPhoneInDesc) {
+        const match = desc.match(/SĐT:\s*(\S+)/);
+        if (match && match[1] === cPhone) continue; // đã đúng
+      }
+
+      // Cập nhật SĐT vào description
+      if (hasPhoneInDesc) {
+        desc = desc.replace(/SĐT:.*$/m, `SĐT: ${cPhone}`);
+      } else {
+        desc = `${desc.trimEnd()}\nSĐT: ${cPhone}`.trim();
+      }
+
+      const upd = { description: desc, updated_at: new Date().toISOString() };
+      await supabase.from('crm_leads').update(upd).eq('id', lead.id);
+      leadsUpdated.push({ id: lead.id, code: lead.code, title: lead.title, phone: cPhone });
+    }
+
+    // Đếm leads vẫn thiếu phone hoàn toàn (customer cũng không có)
+    const totalLeads = allLeads.length;
+    const leadsWithPhone = totalLeads - leadsStillMissing;
+
+    console.log(`[ExtractPhones] ✅ Lead sync done: updated=${leadsUpdated.length}, withPhone=${leadsWithPhone}, stillMissing=${leadsStillMissing}, totalLeads=${totalLeads}`);
+
     const summary = {
       total,
       updated,
@@ -2471,9 +2536,15 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       updatedCustomerAddress,
       updatedLeadAddress,
       updatedLeadDescription,
+      // Vòng cuối: lead sync
+      leadsUpdatedPhone: leadsUpdated.length,
+      leadsWithPhone,
+      leadsStillMissingPhone: leadsStillMissing,
+      totalLeads,
+      leadsUpdatedList: leadsUpdated.slice(0, 200), // giới hạn 200 mẫu
       results,
     };
-    console.log(`[ExtractPhones] DONE total=${total} updated=${updated} phones=${foundPhones} addresses=${foundAddresses} noInfo=${noInfo}`);
+    console.log(`[ExtractPhones] DONE total=${total} updated=${updated} phones=${foundPhones} addresses=${foundAddresses} noInfo=${noInfo} leadsUpdatedPhone=${leadsUpdated.length}`);
     if (io) io.emit('batch_done', { type: 'extract_phones', ...summary });
     res.json(summary);
   } catch (e) {
