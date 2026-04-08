@@ -918,6 +918,21 @@ async function handleMessaging(pageId, event, io) {
       }
 
       // ── Update lead/customer/contact khi có phone/address MỚI (theo config) ──
+      // Nếu không tìm thấy SĐT trong tin nhắn hiện tại, quét tin nhắn cũ nếu lead chưa có phone
+      if (!extractedPhone && contact.lead_id && !contact.phone) {
+        const { data: oldMsgs } = await supabase.from('facebook_messages')
+          .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
+          .order('created_at', { ascending: false }).limit(50);
+        for (const m of (oldMsgs || [])) {
+          if (m.content) {
+            const ex = extractContactInfo(m.content);
+            if (ex.phone) { extractedPhone = ex.phone; break; }
+            if (ex.address && !extractedAddress) extractedAddress = ex.address;
+          }
+        }
+        if (extractedPhone) console.log(`[FB] 📞 Found phone in old messages: ${extractedPhone}`);
+      }
+
       if ((extractedPhone && autoLeadCfg.auto_update_phone) || (extractedAddress && autoLeadCfg.auto_update_address)) {
         // Update contact — luôn cập nhật phone mới
         const contactUpd = { updated_at: new Date().toISOString() };
