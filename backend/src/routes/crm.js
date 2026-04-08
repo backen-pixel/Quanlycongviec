@@ -536,9 +536,15 @@ r.get('/employees-by-company', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/sources', async (req, res) => {
   const { data } = await supabase.from('crm_sources').select('*').eq('is_active', true).order('name');
-  // Fetch FB pages to enrich sources
-  const { data: pages } = await supabase.from('facebook_pages').select('id, page_id, page_name, is_active').eq('is_active', true);
-  res.json({ sources: data || [], fb_pages: pages || [] });
+  // Fetch FB pages to enrich sources — deduplicate by page_id
+  const { data: rawPages } = await supabase.from('facebook_pages').select('id, page_id, page_name, is_active').eq('is_active', true);
+  const seenPageIds = new Set();
+  const pages = (rawPages || []).filter(p => {
+    if (seenPageIds.has(p.page_id)) return false;
+    seenPageIds.add(p.page_id);
+    return true;
+  });
+  res.json({ sources: data || [], fb_pages: pages });
 });
 
 // ═══ QUÉT TRÙNG LEAD — Scan duplicates by customer_id + Facebook PSID ═══

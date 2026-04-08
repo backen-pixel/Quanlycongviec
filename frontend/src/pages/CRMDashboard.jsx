@@ -264,9 +264,14 @@ export default function CRMDashboard() {
     const nonFb = sources
       .filter(s => usedIds.has(s.id) && !(s.name || '').toLowerCase().includes('facebook'))
       .map(s => ({ id: s.id, type: 'source', label: `${s.icon || ''} ${s.name}`.trim() }));
-    // FB pages (luôn hiển thị nếu active)
+    // FB pages (đã dedup theo page_id từ backend, nhưng phòng hờ)
+    const seenFb = new Set();
     const fb = fbPages
-      .filter(p => p.is_active)
+      .filter(p => {
+        if (!p.is_active || seenFb.has(p.page_id)) return false;
+        seenFb.add(p.page_id);
+        return true;
+      })
       .map(p => ({ id: `fb:${p.page_id}`, type: 'fb_page', page_id: p.page_id, label: `[FB] ${p.page_name}` }));
     return [...fb, ...nonFb];
   }, [sources, allLeads, allDeals, fbPages]);
