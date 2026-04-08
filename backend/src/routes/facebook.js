@@ -1216,7 +1216,8 @@ r.delete('/pages/:id', authMiddleware, async (req, res) => {
 
 r.get('/contacts', authMiddleware, async (req, res) => {
   try {
-    const { page_id, has_lead, search } = req.query;
+    const { page_id, has_lead, search, limit: rawLimit } = req.query;
+    const maxLimit = Math.min(parseInt(rawLimit) || 1000, 5000);
     let q = supabase.from('facebook_contacts')
       .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)')
       .order('last_message_at', { ascending: false, nullsFirst: false });
@@ -1226,7 +1227,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (has_lead === 'false') q = q.is('lead_id', null);
     if (search) q = q.or(`fb_name.ilike.%${search}%,phone.ilike.%${search}%`);
 
-    const { data } = await q.limit(200);
+    const { data } = await q.limit(maxLimit);
     
     // Thêm message_count cho mỗi contact (batch query)
     if (data?.length) {

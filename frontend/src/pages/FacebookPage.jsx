@@ -690,7 +690,17 @@ function ContactsTab() {
     if (filter === 'has_lead') p.set('has_lead', 'true');
     if (filter === 'no_lead') p.set('has_lead', 'false');
     fetch(`${API}/api/facebook/contacts?${p}`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : []).then(setContacts).catch(() => {});
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        // Sort: tin nhắn mới nhất lên đầu
+        const sorted = [...(data || [])].sort((a, b) => {
+          const dateA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+          const dateB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+          return dateB - dateA;
+        });
+        setContacts(sorted);
+      })
+      .catch(() => {});
   }, [search, filter]);
 
   useEffect(() => { load(); }, [load]);
