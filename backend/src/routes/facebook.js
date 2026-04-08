@@ -2028,6 +2028,29 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// DEBUG: Scan duplicate leads based on title normalization
+r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
+  try {
+    const { data: allLeads } = await supabase.from('crm_leads')
+      .select('id, title, phone, customer:customers(phone)').eq('type', 'lead');
+    
+    // Group theo title chuẩn hóa (loại bỏ tag [FB] và case-insensitive)
+    const byTitle = {};
+    allLeads.forEach(l => {
+      const norm = (l.title || '').replace(/\[.*\]/g, '').toLowerCase().trim();
+      if (!norm || norm === 'kh facebook' || norm === 'user' || norm === 'facebook user') return;
+      if (!byTitle[norm]) byTitle[norm] = [];
+      byTitle[norm].push({ id: l.id, title: l.title, phone: l.phone, custPhone: l.customer?.phone });
+    });
+
+    const duplicates = Object.entries(byTitle)
+      .filter(([_, leads]) => leads.length > 1)
+      .map(([title, leads]) => ({ title, count: leads.length, leads }));
+
+    res.json(duplicates);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /facebook/batch-create-leads
 // ═══════════════════════════════════════════════════════════════
 
