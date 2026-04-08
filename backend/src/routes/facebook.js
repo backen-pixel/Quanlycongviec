@@ -2237,11 +2237,12 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
-    // Lấy TẤT CẢ contacts có lead (quét lại toàn bộ, kể cả đã có SĐT)
+    // Lấy TẤT CẢ contacts (không chỉ có lead) để quét SĐT
     const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('*').not('lead_id', 'is', null);
+      .select('*')
+      .not('psid', 'is', null);
     
-    if (!contacts?.length) return res.json({ updated: 0, message: 'Không có contact nào có lead' });
+    if (!contacts?.length) return res.json({ updated: 0, message: 'Không có contact nào' });
 
     let updated = 0;
     let newPhones = 0;
@@ -2397,6 +2398,9 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
     const mode = req.body?.mode || 'smart'; // 'smart' | 'all'
+    const offsetIdx = parseInt(req.body?.offset) || 0;  // bắt đầu từ index nào
+    const timeoutMs = Math.min(parseInt(req.body?.timeout) || 0, 300) * 1000; // giới hạn thời gian (s)
+    const startTime = Date.now();
 
     // Lấy tất cả contacts có PSID
     const { data: allContacts } = await supabase.from('facebook_contacts')
@@ -2441,19 +2445,34 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
       });
     }
 
-    if (!contacts.length) return res.json({ synced: 0, total: 0, filtered: allContacts.length, message: `Smart: ${allContacts.length} contacts đều đã cập nhật` });
+    if (!candidates.length) return res.json({ synced: 0, total: 0, filtered: allContacts.length, nextOffset: 0, done: true, message: 'Smart: tất cả đã cập nhật' });
+
+    // Slice từ offset
+    const contacts = candidates.slice(offsetIdx);
+    if (!contacts.length) return res.json({ synced: 0, total: candidates.length, nextOffset: 0, done: true, message: 'Đã đồng bộ hết' });
 
     // Group contacts theo page_id để lấy token 1 lần
     const pageTokens = {};
-    const total = contacts.length;
+    const total = candidates.length;
     let totalSynced = 0;
     let totalErrors = 0;
+    let processedCount = 0;
     const results = [];
 
     if (io) io.emit('batch_progress', { type: 'sync_messages', phase: 'start', total, current: 0 });
 
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
+
+      // Kiểm tra timeout — dừng và trả về nextOffset để caller tiếp tục
+      if (timeoutMs > 0 && (Date.now() - startTime) >= timeoutMs) {
+        const nextOffset = offsetIdx + i;
+        if (io) io.emit('batch_progress', { type: 'sync_messages', phase: 'timeout', current: i, total: contacts.length, nextOffset });
+        const summary = { total, totalSynced, totalErrors, processedCount: i, nextOffset, done: false, details: results };
+        if (io) io.emit('batch_done', { type: 'sync_messages', ...summary });
+        return res.json(summary);
+      }
+
       try {
         // Lấy page token (cache)
         if (!pageTokens[contact.page_id]) {
@@ -2526,6 +2545,7 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
 
         totalSynced += synced;
+        processedCount++;
         if (synced > 0) results.push({ contact: contact.fb_name, synced });
         if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: synced > 0 ? 'synced' : 'up_to_date', synced });
       } catch (err) {
@@ -2539,7 +2559,9 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
       if (i < contacts.length - 1) await new Promise(r => setTimeout(r, 50));
     }
 
-    const summary = { total, totalSynced, totalErrors, allContacts: allContacts.length, filtered: allContacts.length - contacts.length, mode, details: results };
+    const nextOffset = offsetIdx + contacts.length;
+    const done = nextOffset >= total;
+    const summary = { total, totalSynced, totalErrors, processedCount, nextOffset: done ? 0 : nextOffset, done, allContacts: allContacts.length, mode, details: results };
     if (io) io.emit('batch_done', { type: 'sync_messages', ...summary });
     res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
