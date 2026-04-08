@@ -1775,16 +1775,16 @@ r.get('/analytics', authMiddleware, async (req, res) => {
 // POST /facebook/dedup-leads — Kiểm tra và xóa lead trùng không liên kết FB
 r.post('/dedup-leads', authMiddleware, async (req, res) => {
   try {
-    // 1. Lấy danh sách lead_id đang liên kết với facebook_contacts
+    // 1. Lấy map facebook_contacts → lead_id + psid
     const { data: fbContacts } = await supabase.from('facebook_contacts')
-      .select('lead_id, fb_name').not('lead_id', 'is', null);
-    const linkedLeadIds = new Set((fbContacts || []).map(c => c.lead_id));
+      .select('lead_id, psid, fb_name, customer_id').not('lead_id', 'is', null);
+    const fbLeadMap = {}; // lead_id → psid
+    (fbContacts || []).forEach(c => { if (c.lead_id) fbLeadMap[c.lead_id] = c.psid; });
 
-    // 2. Lấy tất cả leads loại lead (không phải deal)
+    // 2. Lấy tất cả leads (cả lead + deal)
     const { data: allLeads } = await supabase.from('crm_leads')
-      .select('id, customer_id, title, contact_name, phone, type, created_at')
-      .order('created_at', { ascending: true });
-    
+      .select('id, customer_id, source_id, title, phone, type, created_at, updated_at')
+      .order('created_at', { ascending: false });
     if (!allLeads?.length) return res.json({ deleted: 0, scanned: 0, message: 'Không có lead nào' });
 
     // 3. Group leads theo customer_id
@@ -1796,28 +1796,62 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
       byCustomer[key].push(lead);
     });
 
-    // 4. Tìm lead trùng: giữ lead linked với FB, xóa lead không linked
-    const toDelete = [];
-    const details = [];
-    
-    Object.entries(byCustomer).forEach(([custId, leads]) => {
-      if (leads.length <= 1) return; // Không trùng
-      
-      const linked = leads.filter(l => linkedLeadIds.has(l.id));
-      const unlinked = leads.filter(l => !linkedLeadIds.has(l.id));
-      
-      if (linked.length > 0 && unlinked.length > 0) {
-        // Có lead liên kết FB và có lead không liên kết → xóa lead không liên kết
-        unlinked.forEach(l => {
-          toDelete.push(l.id);
-          details.push({ id: l.id, title: l.title, reason: 'Trùng customer, không liên kết FB' });
-        });
-      }
+    // 4. Cũng group theo FB psid (cùng user Facebook)
+    const byPsid = {};
+    (allLeads || []).forEach(lead => {
+      const psid = fbLeadMap[lead.id];
+      if (!psid) return;
+      if (!byPsid[psid]) byPsid[psid] = [];
+      byPsid[psid].push(lead);
     });
 
-    // 5. Xóa leads trùng
+    // 5. Merge các nhóm trùng
+    const processedIds = new Set();
+    const toDelete = [];
+    const details = [];
+
+    const processGroup = (leads) => {
+      if (leads.length <= 1) return;
+      // Chỉ giữ lại nếu KHÁC nguồn (source_id)
+      const bySource = {};
+      leads.forEach(l => {
+        const src = l.source_id || '__none__';
+        if (!bySource[src]) bySource[src] = [];
+        bySource[src].push(l);
+      });
+
+      Object.values(bySource).forEach(sameSrcLeads => {
+        if (sameSrcLeads.length <= 1) return;
+        // Cùng nguồn, trùng customer/psid → giữ 1, xóa còn lại
+        // Ưu tiên: linked FB > mới nhất > có phone
+        sameSrcLeads.sort((a, b) => {
+          const aFb = fbLeadMap[a.id] ? 1 : 0;
+          const bFb = fbLeadMap[b.id] ? 1 : 0;
+          if (bFb !== aFb) return bFb - aFb; // FB linked first
+          const aPhone = a.phone ? 1 : 0;
+          const bPhone = b.phone ? 1 : 0;
+          if (bPhone !== aPhone) return bPhone - aPhone; // has phone first
+          return new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at); // newest first
+        });
+        // Giữ phần tử đầu (tốt nhất), xóa phần còn lại
+        for (let i = 1; i < sameSrcLeads.length; i++) {
+          const l = sameSrcLeads[i];
+          if (!processedIds.has(l.id)) {
+            processedIds.add(l.id);
+            toDelete.push(l.id);
+            details.push({ id: l.id, title: l.title, type: l.type, source_id: l.source_id, reason: 'Trùng customer/FB, cùng nguồn' });
+          }
+        }
+      });
+    };
+
+    // Xử lý nhóm theo customer_id
+    Object.values(byCustomer).forEach(processGroup);
+    // Xử lý nhóm theo psid (bắt thêm trường hợp khác customer nhưng cùng FB user)
+    Object.values(byPsid).forEach(processGroup);
+
+    // 6. Xóa leads trùng
     if (toDelete.length > 0) {
-      // Xóa từng batch 50 để tránh query quá lớn
       for (let i = 0; i < toDelete.length; i += 50) {
         const batch = toDelete.slice(i, i + 50);
         await supabase.from('crm_leads').delete().in('id', batch);
@@ -1827,11 +1861,12 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
     res.json({
       deleted: toDelete.length,
       scanned: allLeads.length,
-      duplicateGroups: Object.values(byCustomer).filter(g => g.length > 1).length,
-      details: details.slice(0, 50), // Giới hạn 50 chi tiết
+      duplicateGroups: Object.values(byCustomer).filter(g => g.length > 1).length
+        + Object.values(byPsid).filter(g => g.length > 1).length,
+      details: details.slice(0, 100),
       message: toDelete.length > 0
-        ? `Đã xóa ${toDelete.length} lead trùng không liên kết Facebook`
-        : 'Không có lead trùng cần xóa',
+        ? `Đã xóa ${toDelete.length} lead trùng (cùng customer/FB + cùng nguồn)`
+        : 'Không có lead trùng cần xóa (các lead khác nguồn được giữ lại)',
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1938,20 +1973,22 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 
 r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
   try {
-    // Contacts có lead nhưng phone = null
+    // Contacts có lead nhưng thiếu phone (NULL hoặc rỗng)
     const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('*').not('lead_id', 'is', null).is('phone', null);
+      .select('*').not('lead_id', 'is', null);
+    // Lọc thêm: phone null HOẶC rỗng
+    const needPhone = (contacts || []).filter(c => !c.phone || String(c.phone).trim() === '');
     
-    if (!contacts?.length) return res.json({ updated: 0, message: 'Không có contact nào thiếu SĐT' });
+    if (!needPhone.length) return res.json({ updated: 0, message: 'Không có contact nào thiếu SĐT' });
 
     let updated = 0;
     const results = [];
 
-    for (const contact of contacts) {
+    for (const contact of needPhone) {
       // Quét tất cả tin nhắn inbound
       const { data: messages } = await supabase.from('facebook_messages')
         .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
-        .order('created_at', { ascending: false }).limit(50);
+        .order('created_at', { ascending: false }).limit(100);
       
       let extractedPhone = null;
       let extractedAddress = null;
@@ -1965,60 +2002,73 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         }
       }
 
+      const hasNewData = extractedPhone || extractedAddress;
+      if (!hasNewData) {
+        results.push({ contact: contact.fb_name, status: 'no_info_found' });
+        continue;
+      }
+
+      // Update contact phone
       if (extractedPhone) {
-        // Update contact
         await supabase.from('facebook_contacts').update({
           phone: extractedPhone,
           updated_at: new Date().toISOString(),
         }).eq('id', contact.id);
-
-        // Update customer
-        if (contact.customer_id) {
-          await supabase.from('customers').update({
-            phone: extractedPhone,
-            address: extractedAddress || undefined,
-          }).eq('id', contact.customer_id);
-        } else {
-          // Tìm customer qua lead
-          const { data: lead } = await supabase.from('crm_leads')
-            .select('customer_id').eq('id', contact.lead_id).single();
-          if (lead?.customer_id) {
-            await supabase.from('customers').update({
-              phone: extractedPhone,
-              address: extractedAddress || undefined,
-            }).eq('id', lead.customer_id);
-          }
-        }
-
-        // Update lead description
-        if (contact.lead_id) {
-          const { data: lead } = await supabase.from('crm_leads')
-            .select('description').eq('id', contact.lead_id).single();
-          const leadUpd = { updated_at: new Date().toISOString() };
-          if (extractedAddress) leadUpd.install_address = extractedAddress;
-          if (lead?.description) {
-            leadUpd.description = lead.description.replace(/SĐT:.*$/m, `SĐT: ${extractedPhone}`);
-            if (extractedAddress) {
-              leadUpd.description = leadUpd.description.replace(/Địa chỉ:.*$/m, `Địa chỉ: ${extractedAddress}`);
-            }
-          }
-          await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
-        }
-
-        updated++;
-        results.push({
-          contact: contact.fb_name,
-          phone: extractedPhone,
-          address: extractedAddress,
-          status: 'updated',
-        });
-        console.log(`[FB Extract] ✅ ${contact.fb_name}: phone=${extractedPhone}`);
-      } else {
-        results.push({ contact: contact.fb_name, status: 'no_phone_found' });
       }
+
+      // Update customer
+      let custId = contact.customer_id;
+      if (!custId && contact.lead_id) {
+        const { data: lead } = await supabase.from('crm_leads')
+          .select('customer_id').eq('id', contact.lead_id).single();
+        custId = lead?.customer_id;
+      }
+      if (custId) {
+        const custUpd = {};
+        if (extractedPhone) custUpd.phone = extractedPhone;
+        if (extractedAddress) custUpd.address = extractedAddress;
+        await supabase.from('customers').update(custUpd).eq('id', custId);
+      }
+
+      // Update lead: phone, install_address, description
+      if (contact.lead_id) {
+        const { data: lead } = await supabase.from('crm_leads')
+          .select('description, phone, install_address').eq('id', contact.lead_id).single();
+        const leadUpd = { updated_at: new Date().toISOString() };
+        if (extractedPhone && !lead?.phone) leadUpd.phone = extractedPhone;
+        if (extractedAddress && !lead?.install_address) leadUpd.install_address = extractedAddress;
+
+        // Description: replace nếu có dòng cũ, append nếu chưa có
+        let desc = lead?.description || '';
+        if (extractedPhone) {
+          if (/SĐT:.*$/m.test(desc)) {
+            desc = desc.replace(/SĐT:.*$/m, `SĐT: ${extractedPhone}`);
+          } else {
+            desc = desc.trimEnd() + `\nSĐT: ${extractedPhone}`;
+          }
+        }
+        if (extractedAddress) {
+          if (/Địa chỉ:.*$/m.test(desc)) {
+            desc = desc.replace(/Địa chỉ:.*$/m, `Địa chỉ: ${extractedAddress}`);
+          } else {
+            desc = desc.trimEnd() + `\nĐịa chỉ: ${extractedAddress}`;
+          }
+        }
+        leadUpd.description = desc.trim();
+        await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
+      }
+
+      updated++;
+      results.push({
+        contact: contact.fb_name,
+        phone: extractedPhone,
+        address: extractedAddress,
+        status: 'updated',
+      });
+      console.log(`[FB Extract] ✅ ${contact.fb_name}: phone=${extractedPhone || 'N/A'}, addr=${extractedAddress || 'N/A'}`);
     }
 
-    res.json({ total: contacts.length, updated, results });
+    res.json({ total: needPhone.length, updated, results });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2215,8 +2265,8 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
   try {
     const { data: stuckContacts } = await supabase.from('facebook_contacts')
       .select('id, page_id, psid, fb_name, lead_id')
-      .or('fb_name.eq.Facebook User,fb_name.is.null')
-      .limit(50);
+      .or('fb_name.eq.Facebook User,fb_name.eq.User,fb_name.is.null')
+      .limit(100);
     if (!stuckContacts?.length) return res.json({ updated: 0, message: 'Không có contact nào cần cập nhật' });
 
     let updated = 0;
