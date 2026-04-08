@@ -759,11 +759,16 @@ r.get('/leads', async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
 
-    let result = data || [];
+    let result = (data || []).map(l => ({
+      ...l,
+      display_phone: (l.customer?.phone && String(l.customer.phone).trim() !== '')
+        ? l.customer.phone
+        : ((l.phone && String(l.phone).trim() !== '') ? l.phone : null),
+    }));
     if (phone_filter === 'has_phone') {
-      result = result.filter(l => (l.customer?.phone && String(l.customer.phone).trim() !== '') || (l.phone && String(l.phone).trim() !== ''));
+      result = result.filter(l => !!l.display_phone);
     } else if (phone_filter === 'no_phone') {
-      result = result.filter(l => (!l.customer?.phone || String(l.customer.phone).trim() === '') && (!l.phone || String(l.phone).trim() === ''));
+      result = result.filter(l => !l.display_phone);
     }
 
     res.json(phone_filter ? result.slice(0, parsedLimit) : result);
