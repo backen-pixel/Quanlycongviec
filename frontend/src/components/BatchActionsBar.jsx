@@ -235,21 +235,67 @@ export default function BatchActionsBar({ onComplete }) {
 
           {/* Manual result */}
           {manualResult && !manualRunning && (
-            <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-              <div className="flex items-center gap-2 text-sm text-emerald-700">
-                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-                <span className="font-medium">
-                  {manualResult.message ? manualResult.message :
-                   manualResult.created != null ? `Đã tạo ${manualResult.created} Lead` :
-                   manualResult.updated != null ? `Đã cập nhật ${manualResult.updated}/${manualResult.total || '?'} | contact ${manualResult.updatedContactPhone || 0} | customer ${manualResult.updatedCustomerPhone || 0}` :
-                   manualResult.merged != null ? `Đã gộp ${manualResult.merged} lead trùng` :
-                   JSON.stringify(manualResult)}
-                </span>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm text-emerald-700">
+                  <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                  <span className="font-medium">
+                    {manualResult.message ? manualResult.message :
+                     manualResult.created != null ? `Đã tạo ${manualResult.created} Lead` :
+                     manualResult.merged != null ? `Đã gộp ${manualResult.merged} lead trùng` :
+                     manualResult.updated != null ? `Hoàn tất quét ${manualResult.total || '?'} contacts` :
+                     JSON.stringify(manualResult)}
+                  </span>
+                </div>
+                <button onClick={() => { setManualResult(null); if (onComplete) onComplete(); }}
+                  className="text-xs text-emerald-600 hover:text-emerald-800 font-medium px-2 py-1 hover:bg-emerald-100 rounded cursor-pointer transition">
+                  Đóng & Reload ↻
+                </button>
               </div>
-              <button onClick={() => { setManualResult(null); if (onComplete) onComplete(); }}
-                className="text-xs text-emerald-600 hover:text-emerald-800 font-medium px-2 py-1 hover:bg-emerald-100 rounded cursor-pointer transition">
-                Đóng & Reload ↻
-              </button>
+
+              {/* Chi tiết quét SĐT */}
+              {manualResult.updatedContactPhone != null && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    <div className="bg-white rounded-lg p-2 border">Contact cập nhật SĐT: <strong className="text-green-700">{manualResult.updatedContactPhone || 0}</strong></div>
+                    <div className="bg-white rounded-lg p-2 border">Customer cập nhật SĐT: <strong className="text-blue-700">{manualResult.updatedCustomerPhone || 0}</strong></div>
+                    <div className="bg-white rounded-lg p-2 border">Địa chỉ KH: <strong className="text-purple-700">{manualResult.updatedCustomerAddress || 0}</strong></div>
+                    <div className="bg-white rounded-lg p-2 border">Lead mô tả: <strong className="text-amber-700">{manualResult.updatedLeadDescription || 0}</strong></div>
+                  </div>
+                  {manualResult.leadsUpdatedPhone != null && (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                      <div className="bg-green-100 rounded-lg p-2 border border-green-300">Lead được gắn SĐT: <strong className="text-green-800">{manualResult.leadsUpdatedPhone}</strong></div>
+                      <div className="bg-blue-100 rounded-lg p-2 border border-blue-300">Lead có SĐT: <strong className="text-blue-800">{manualResult.leadsWithPhone || 0}/{manualResult.totalLeads || 0}</strong></div>
+                      <div className="bg-red-100 rounded-lg p-2 border border-red-300">Lead còn thiếu SĐT: <strong className="text-red-800">{manualResult.leadsStillMissingPhone || 0}</strong></div>
+                    </div>
+                  )}
+                  {manualResult.leadsUpdatedList?.length > 0 && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-emerald-700 font-medium hover:underline">Danh sách {manualResult.leadsUpdatedList.length} lead đã cập nhật SĐT</summary>
+                      <div className="mt-2 max-h-48 overflow-y-auto border rounded-lg bg-white">
+                        <table className="w-full">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                              <th className="text-left px-2 py-1.5">Mã</th>
+                              <th className="text-left px-2 py-1.5">Tên Lead</th>
+                              <th className="text-left px-2 py-1.5">SĐT</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {manualResult.leadsUpdatedList.map((l, idx) => (
+                              <tr key={idx} className="border-t hover:bg-gray-50">
+                                <td className="px-2 py-1.5 text-blue-600 font-mono">{l.code}</td>
+                                <td className="px-2 py-1.5">{l.title}</td>
+                                <td className="px-2 py-1.5 text-green-700 font-mono">{l.phone}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

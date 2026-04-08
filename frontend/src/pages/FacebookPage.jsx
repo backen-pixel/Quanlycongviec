@@ -971,7 +971,7 @@ function ContactsTab() {
 
       {/* Batch result banner */}
       {batchStatus?.result && !batchStatus.loading && (
-        <div className={`mb-4 p-3 rounded-lg text-sm ${batchStatus.result.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'}`}>
+        <div className={`mb-4 rounded-xl text-sm ${batchStatus.result.error ? 'bg-red-50 text-red-700 border border-red-200 p-3' : 'bg-green-50 text-green-700 border border-green-200 p-3'}`}>
           <div className="flex items-center justify-between">
             <div>
               {batchStatus.result.error ? (
@@ -983,11 +983,53 @@ function ContactsTab() {
               ) : batchStatus.type === 'dedup' ? (
                 <span>✅ {batchStatus.result.message}</span>
               ) : (
-                <span>✅ Đã quét <strong>{batchStatus.result.scanned || batchStatus.result.total || 0}</strong> liên hệ — Tìm thấy: <strong>{batchStatus.result.updated || batchStatus.result.found || 0}</strong> SĐT mới</span>
+                <span>✅ Quét <strong>{batchStatus.result.total || 0}</strong> liên hệ — Tìm thấy: <strong>{batchStatus.result.foundPhones || 0}</strong> SĐT mới</span>
               )}
             </div>
             <button onClick={() => setBatchStatus(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer">✕</button>
           </div>
+
+          {/* Chi tiết kết quả quét SĐT */}
+          {batchStatus.type === 'phones' && !batchStatus.result.error && batchStatus.result.leadsUpdatedPhone != null && (
+            <div className="mt-3 space-y-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div className="bg-white rounded-lg p-2 border">Contact SĐT mới: <strong className="text-green-700">{batchStatus.result.updatedContactPhone || 0}</strong></div>
+                <div className="bg-white rounded-lg p-2 border">Customer SĐT mới: <strong className="text-blue-700">{batchStatus.result.updatedCustomerPhone || 0}</strong></div>
+                <div className="bg-white rounded-lg p-2 border">Địa chỉ KH: <strong className="text-purple-700">{batchStatus.result.updatedCustomerAddress || 0}</strong></div>
+                <div className="bg-white rounded-lg p-2 border">Không tìm thấy: <strong className="text-gray-500">{batchStatus.result.noInfo || 0}</strong></div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="bg-green-100 rounded-lg p-2 border border-green-300">🎯 Lead được gắn SĐT: <strong className="text-green-800">{batchStatus.result.leadsUpdatedPhone}</strong></div>
+                <div className="bg-blue-100 rounded-lg p-2 border border-blue-300">✅ Lead có SĐT: <strong className="text-blue-800">{batchStatus.result.leadsWithPhone || 0}/{batchStatus.result.totalLeads || 0}</strong></div>
+                <div className="bg-red-100 rounded-lg p-2 border border-red-300">❌ Lead còn thiếu: <strong className="text-red-800">{batchStatus.result.leadsStillMissingPhone || 0}</strong></div>
+              </div>
+              {batchStatus.result.leadsUpdatedList?.length > 0 && (
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-green-700 font-medium hover:underline">📋 Danh sách {batchStatus.result.leadsUpdatedList.length} lead đã update SĐT</summary>
+                  <div className="mt-2 max-h-48 overflow-y-auto border rounded-lg bg-white">
+                    <table className="w-full">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="text-left px-2 py-1.5">Mã</th>
+                          <th className="text-left px-2 py-1.5">Tên Lead</th>
+                          <th className="text-left px-2 py-1.5">SĐT</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchStatus.result.leadsUpdatedList.map((l, idx) => (
+                          <tr key={idx} className="border-t hover:bg-gray-50">
+                            <td className="px-2 py-1.5 text-blue-600 font-mono">{l.code}</td>
+                            <td className="px-2 py-1.5">{l.title}</td>
+                            <td className="px-2 py-1.5 text-green-700 font-mono">{l.phone}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
         </div>
       )}
       <div className="flex gap-3 mb-4 flex-wrap">
