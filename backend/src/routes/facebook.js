@@ -2301,6 +2301,11 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     let foundPhones = 0;
     let foundAddresses = 0;
     let noInfo = 0;
+    let updatedContactPhone = 0;
+    let updatedCustomerPhone = 0;
+    let updatedCustomerAddress = 0;
+    let updatedLeadAddress = 0;
+    let updatedLeadDescription = 0;
     const results = [];
 
     contacts.sort((a, b) => {
@@ -2370,6 +2375,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       }
       if (Object.keys(contactUpd).length > 1) {
         await supabase.from('facebook_contacts').update(contactUpd).eq('id', contact.id);
+        if (contactUpd.phone) updatedContactPhone++;
       }
 
       if (lead?.customer_id) {
@@ -2381,6 +2387,8 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         }
         if (Object.keys(custUpd).length) {
           await supabase.from('customers').update(custUpd).eq('id', lead.customer_id);
+          if (custUpd.phone) updatedCustomerPhone++;
+          if (custUpd.address) updatedCustomerAddress++;
         }
       }
 
@@ -2405,6 +2413,8 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
         if (Object.keys(leadUpd).length > 1) {
           await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
+          if (leadUpd.install_address) updatedLeadAddress++;
+          if (leadUpd.description) updatedLeadDescription++;
         }
       }
 
@@ -2427,7 +2437,19 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       });
     }
 
-    const summary = { total, updated, foundPhones, foundAddresses, noInfo, results };
+    const summary = {
+      total,
+      updated,
+      foundPhones,
+      foundAddresses,
+      noInfo,
+      updatedContactPhone,
+      updatedCustomerPhone,
+      updatedCustomerAddress,
+      updatedLeadAddress,
+      updatedLeadDescription,
+      results,
+    };
     console.log(`[ExtractPhones] DONE total=${total} updated=${updated} phones=${foundPhones} addresses=${foundAddresses} noInfo=${noInfo}`);
     if (io) io.emit('batch_done', { type: 'extract_phones', ...summary });
     res.json(summary);
@@ -2746,6 +2768,87 @@ function stopScanTimer() {
 // Auto-start on load
 loadScanConfig();
 if (scanConfig.enabled) startScanTimer();
+
+// GET /facebook/audit-phone-sync — đối soát contact/customer/lead
+r.get('/audit-phone-sync', authMiddleware, async (req, res) => {
+  try {
+    const { data: contacts } = await supabase.from('facebook_contacts')
+      .select('id, fb_name, phone, lead_id, customer_id, page_id, updated_at')
+      .not('psid', 'is', null)
+      .limit(5000);
+
+    const leadIds = [...new Set((contacts || []).map(c => c.lead_id).filter(Boolean))];
+    const { data: leads } = leadIds.length
+      ? await supabase.from('crm_leads').select('id, code, title, customer_id, description, install_address').in('id', leadIds)
+      : { data: [] };
+    const leadMap = {};
+    (leads || []).forEach(l => { leadMap[l.id] = l; });
+
+    const custIds = [...new Set([
+      ...(contacts || []).map(c => c.customer_id).filter(Boolean),
+      ...(leads || []).map(l => l.customer_id).filter(Boolean),
+    ])];
+    const { data: customers } = custIds.length
+      ? await supabase.from('customers').select('id, full_name, phone, address').in('id', custIds)
+      : { data: [] };
+    const custMap = {};
+    (customers || []).forEach(c => { custMap[c.id] = c; });
+
+    const summary = {
+      total_contacts: contacts?.length || 0,
+      contacts_with_phone: 0,
+      contacts_with_lead: 0,
+      leads_with_customer_phone: 0,
+      mismatches_contact_has_phone_customer_missing: 0,
+      mismatches_lead_exists_no_customer_phone: 0,
+      samples: [],
+    };
+
+    for (const c of (contacts || [])) {
+      const lead = c.lead_id ? leadMap[c.lead_id] : null;
+      const cust = custMap[c.customer_id || lead?.customer_id] || null;
+      const contactPhone = c.phone && String(c.phone).trim() ? c.phone : null;
+      const customerPhone = cust?.phone && String(cust.phone).trim() ? cust.phone : null;
+      if (contactPhone) summary.contacts_with_phone++;
+      if (lead) summary.contacts_with_lead++;
+      if (lead && customerPhone) summary.leads_with_customer_phone++;
+
+      if (contactPhone && !customerPhone) {
+        summary.mismatches_contact_has_phone_customer_missing++;
+        if (summary.samples.length < 100) {
+          summary.samples.push({
+            kind: 'contact_has_phone_customer_missing',
+            contact_id: c.id,
+            fb_name: c.fb_name,
+            contact_phone: contactPhone,
+            lead_id: c.lead_id,
+            lead_code: lead?.code || null,
+            customer_id: cust?.id || c.customer_id || lead?.customer_id || null,
+            customer_phone: customerPhone,
+          });
+        }
+      } else if (lead && !customerPhone) {
+        summary.mismatches_lead_exists_no_customer_phone++;
+        if (summary.samples.length < 100) {
+          summary.samples.push({
+            kind: 'lead_exists_no_customer_phone',
+            contact_id: c.id,
+            fb_name: c.fb_name,
+            contact_phone: contactPhone,
+            lead_id: c.lead_id,
+            lead_code: lead?.code || null,
+            customer_id: cust?.id || c.customer_id || lead?.customer_id || null,
+            customer_phone: customerPhone,
+          });
+        }
+      }
+    }
+
+    res.json(summary);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // GET /facebook/lead-scan/config — xem cấu hình
 r.get('/lead-scan/config', authMiddleware, async (req, res) => {
