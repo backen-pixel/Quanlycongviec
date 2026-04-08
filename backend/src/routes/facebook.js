@@ -2371,19 +2371,57 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// BATCH SYNC ALL MESSAGES — Đồng bộ tin nhắn tất cả contacts từ FB Graph API
+// BATCH SYNC MESSAGES — Smart sync: chỉ contacts cần thiết
 // ═══════════════════════════════════════════════════════════════
 r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
+    const mode = req.body?.mode || 'smart'; // 'smart' | 'all'
+
     // Lấy tất cả contacts có PSID
-    const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('id, psid, page_id, fb_name, lead_id, phone')
+    const { data: allContacts } = await supabase.from('facebook_contacts')
+      .select('id, psid, page_id, fb_name, lead_id, phone, last_message_at, last_synced_at, created_at')
       .not('psid', 'is', null)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(5000);
 
-    if (!contacts?.length) return res.json({ synced: 0, total: 0, message: 'Không có contact nào' });
+    if (!allContacts?.length) return res.json({ synced: 0, total: 0, message: 'Không có contact nào' });
+
+    // ── SMART FILTER: chỉ sync contacts cần thiết ──
+    const now = Date.now();
+    const FIVE_MIN = 5 * 60 * 1000;
+    const ONE_HOUR = 60 * 60 * 1000;
+    const ONE_DAY = 24 * ONE_HOUR;
+    const ONE_WEEK = 7 * ONE_DAY;
+
+    let contacts;
+    if (mode === 'all') {
+      contacts = allContacts;
+    } else {
+      contacts = allContacts.filter(c => {
+        const lastSync = c.last_synced_at ? new Date(c.last_synced_at).getTime() : 0;
+        const lastMsg = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+        const createdAt = c.created_at ? new Date(c.created_at).getTime() : 0;
+        const age = now - (lastMsg || createdAt); // tuổi của contact
+
+        // 1. Chưa bao giờ sync → luôn sync
+        if (!lastSync) return true;
+
+        // 2. Tin nhắn mới trong 1h → sync mỗi 5 phút
+        if (age < ONE_HOUR) return (now - lastSync) > FIVE_MIN;
+
+        // 3. Tin nhắn trong 24h → sync mỗi 30 phút
+        if (age < ONE_DAY) return (now - lastSync) > 30 * 60 * 1000;
+
+        // 4. Tin nhắn trong 7 ngày → sync mỗi 2h
+        if (age < ONE_WEEK) return (now - lastSync) > 2 * ONE_HOUR;
+
+        // 5. Cũ hơn 7 ngày → sync mỗi 24h
+        return (now - lastSync) > ONE_DAY;
+      });
+    }
+
+    if (!contacts.length) return res.json({ synced: 0, total: 0, filtered: allContacts.length, message: `Smart: ${allContacts.length} contacts đều đã cập nhật` });
 
     // Group contacts theo page_id để lấy token 1 lần
     const pageTokens = {};
@@ -2459,21 +2497,21 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
           synced++;
         }
 
-        // Update last_message_at
+        // Update last_message_at + last_synced_at
+        const upd = { last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() };
         if (synced > 0 || !contact.last_message_at) {
           const latestTime = msgData.data[0]?.created_time;
-          if (latestTime) {
-            await supabase.from('facebook_contacts')
-              .update({ last_message_at: latestTime, updated_at: new Date().toISOString() })
-              .eq('id', contact.id);
-          }
+          if (latestTime) upd.last_message_at = latestTime;
         }
+        await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
 
         totalSynced += synced;
         if (synced > 0) results.push({ contact: contact.fb_name, synced });
         if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: synced > 0 ? 'synced' : 'up_to_date', synced });
       } catch (err) {
         totalErrors++;
+        // Vẫn đánh dấu đã sync để không retry liên tục
+        try { await supabase.from('facebook_contacts').update({ last_synced_at: new Date().toISOString() }).eq('id', contact.id); } catch (_) {}
         if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: 'error', error: err.message });
       }
 
@@ -2481,7 +2519,7 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
       if (i < contacts.length - 1) await new Promise(r => setTimeout(r, 50));
     }
 
-    const summary = { total, totalSynced, totalErrors, details: results };
+    const summary = { total, totalSynced, totalErrors, allContacts: allContacts.length, filtered: allContacts.length - contacts.length, mode, details: results };
     if (io) io.emit('batch_done', { type: 'sync_messages', ...summary });
     res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
