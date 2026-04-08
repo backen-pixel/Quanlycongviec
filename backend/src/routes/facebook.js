@@ -2277,6 +2277,143 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// SYNC PHONE: Contacts đã có SĐT → cập nhật vào lead/customer ngay
+// POST /facebook/sync-contact-phones
+// ═══════════════════════════════════════════════════════════════
+r.post('/sync-contact-phones', authMiddleware, async (req, res) => {
+  try {
+    const io = r._ioRef;
+    console.log('[SyncPhone] START — contacts có phone → lead/customer');
+
+    // Lấy tất cả contacts có phone (phân trang)
+    let contacts = [];
+    let pageStart = 0;
+    while (true) {
+      const { data: page } = await supabase.from('facebook_contacts')
+        .select('id, fb_name, phone, lead_id, customer_id')
+        .not('psid', 'is', null)
+        .not('phone', 'is', null)
+        .neq('phone', '')
+        .range(pageStart, pageStart + 999);
+      if (!page?.length) break;
+      contacts = contacts.concat(page);
+      if (page.length < 1000) break;
+      pageStart += 1000;
+    }
+
+    const total = contacts.length;
+    console.log(`[SyncPhone] ${total} contacts có SĐT`);
+    if (io) io.emit('batch_progress', { type: 'sync_contact_phones', phase: 'start', total, current: 0, name: `Tìm thấy ${total} contacts có SĐT` });
+
+    if (!total) return res.json({ total: 0, updated: 0, skipped: 0, alreadyHad: 0, noLead: 0, details: [] });
+
+    // Load leads
+    const leadIds = [...new Set(contacts.map(c => c.lead_id).filter(Boolean))];
+    const leadMap = {};
+    for (let b = 0; b < leadIds.length; b += 500) {
+      const { data: ls } = await supabase.from('crm_leads')
+        .select('id, code, title, customer_id, description')
+        .in('id', leadIds.slice(b, b + 500));
+      (ls || []).forEach(l => { leadMap[l.id] = l; });
+    }
+
+    // Load customers
+    const custIds = [...new Set([
+      ...contacts.map(c => c.customer_id).filter(Boolean),
+      ...Object.values(leadMap).map(l => l.customer_id).filter(Boolean),
+    ])];
+    const custMap = {};
+    for (let b = 0; b < custIds.length; b += 500) {
+      const { data: cs } = await supabase.from('customers')
+        .select('id, phone, address')
+        .in('id', custIds.slice(b, b + 500));
+      (cs || []).forEach(c => { custMap[c.id] = c; });
+    }
+
+    let updated = 0, alreadyHad = 0, noLead = 0, skipped = 0;
+    const details = []; // contacts đã được update
+    const stillMissing = []; // contacts có lead nhưng vẫn thiếu (skip)
+
+    for (let i = 0; i < contacts.length; i++) {
+      const c = contacts[i];
+      const phone = String(c.phone).trim();
+      const lead = c.lead_id ? leadMap[c.lead_id] : null;
+      const custId = lead?.customer_id || c.customer_id;
+      let cust = custId ? custMap[custId] : null;
+
+      if (io && i % 50 === 0) {
+        io.emit('batch_progress', { type: 'sync_contact_phones', current: i + 1, total, name: c.fb_name || c.id });
+      }
+
+      if (!lead) { noLead++; continue; }
+
+      // Fetch customer trực tiếp nếu thiếu trong cache
+      if (!cust && custId) {
+        const { data: fc } = await supabase.from('customers').select('id, phone, address').eq('id', custId).single();
+        if (fc) { cust = fc; custMap[custId] = fc; }
+      }
+
+      const customerAlreadyHasPhone = cust?.phone && String(cust.phone).trim();
+      // Description đã có SĐT đúng chưa
+      const descHasPhone = lead.description && new RegExp(`SĐT:\s*${phone.replace(/[+]/g, '\\+')}`).test(lead.description);
+
+      if (customerAlreadyHasPhone && descHasPhone) {
+        alreadyHad++;
+        continue; // Đã đầy đủ, bỏ qua
+      }
+
+      const custUpd = {};
+      const leadUpd = { updated_at: new Date().toISOString() };
+
+      // Update customer phone nếu còn trống
+      if (!customerAlreadyHasPhone && custId) {
+        custUpd.phone = phone;
+        await supabase.from('customers').update(custUpd).eq('id', custId);
+        if (custMap[custId]) custMap[custId].phone = phone;
+        else custMap[custId] = { id: custId, phone };
+      }
+
+      // Update lead description
+      let desc = lead.description || '';
+      if (!descHasPhone) {
+        if (/SĐT:/.test(desc)) {
+          desc = desc.replace(/SĐT:.*$/m, `SĐT: ${phone}`);
+        } else {
+          desc = `${desc.trimEnd()}\nSĐT: ${phone}`.trim();
+        }
+        leadUpd.description = desc;
+      }
+
+      if (Object.keys(leadUpd).length > 1) {
+        await supabase.from('crm_leads').update(leadUpd).eq('id', lead.id);
+      }
+
+      updated++;
+      details.push({
+        contact_id: c.id,
+        fb_name: c.fb_name,
+        phone,
+        lead_id: lead.id,
+        lead_code: lead.code,
+        lead_title: lead.title,
+        updated_customer: !customerAlreadyHasPhone,
+        updated_desc: !!leadUpd.description,
+      });
+
+      if (io) io.emit('batch_progress', { type: 'sync_contact_phones', current: i + 1, total, name: c.fb_name, status: 'updated', phone });
+    }
+
+    const summary = { total, updated, alreadyHad, noLead, skipped, details: details.slice(0, 500) };
+    console.log(`[SyncPhone] DONE total=${total} updated=${updated} alreadyHad=${alreadyHad} noLead=${noLead}`);
+    if (io) io.emit('batch_done', { type: 'sync_contact_phones', ...summary });
+    res.json(summary);
+  } catch (e) {
+    console.error('[SyncPhone] ERROR', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // BATCH: Extract SĐT từ tin nhắn cho contacts ĐÃ CÓ lead nhưng thiếu phone
 // POST /facebook/batch-extract-phones
 // ═══════════════════════════════════════════════════════════════
@@ -2284,27 +2421,39 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
-    console.log('[ExtractPhones] START manual scan');
+    // offset/limit cho phép pipeline gọi theo batch 300
+    const reqOffset = parseInt(req.body?.offset) || 0;
+    const reqLimit  = parseInt(req.body?.limit)  || 0; // 0 = lấy tất cả
+    console.log(`[ExtractPhones] START offset=${reqOffset} limit=${reqLimit || 'all'}`);
 
-    // ── Fix #2: Phân trang contacts để lấy hết (Supabase giới hạn 1000/request) ──
     let contacts = [];
-    let pageStart = 0;
-    const PAGE_SIZE = 1000;
-    while (true) {
+    if (reqLimit > 0) {
+      // Chế độ batch: lấy đúng reqLimit contacts từ offset
       const { data: page } = await supabase.from('facebook_contacts')
         .select('*')
         .not('psid', 'is', null)
         .order('last_message_at', { ascending: false, nullsFirst: false })
-        .range(pageStart, pageStart + PAGE_SIZE - 1);
-      if (!page?.length) break;
-      contacts = contacts.concat(page);
-      if (page.length < PAGE_SIZE) break;
-      pageStart += PAGE_SIZE;
+        .range(reqOffset, reqOffset + reqLimit - 1);
+      contacts = page || [];
+    } else {
+      // Chế độ full scan (manual): phân trang lấy hết
+      let pageStart = 0;
+      const PAGE_SIZE = 1000;
+      while (true) {
+        const { data: page } = await supabase.from('facebook_contacts')
+          .select('*')
+          .not('psid', 'is', null)
+          .order('last_message_at', { ascending: false, nullsFirst: false })
+          .range(pageStart, pageStart + PAGE_SIZE - 1);
+        if (!page?.length) break;
+        contacts = contacts.concat(page);
+        if (page.length < PAGE_SIZE) break;
+        pageStart += PAGE_SIZE;
+      }
     }
-    console.log(`[ExtractPhones] Loaded ${contacts.length} contacts (paged)`);
+    console.log(`[ExtractPhones] Loaded ${contacts.length} contacts`);
 
     if (!contacts?.length) {
-      console.log('[ExtractPhones] No contacts found');
       return res.json({ total: 0, updated: 0, message: 'Không có contact nào để quét' });
     }
 
@@ -2583,6 +2732,7 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
     const io = r._ioRef;
     const mode = req.body?.mode || 'smart'; // 'smart' | 'all'
     const offsetIdx = parseInt(req.body?.offset) || 0;  // bắt đầu từ index nào
+    const batchLimit = parseInt(req.body?.limit) || 0;  // 0 = không giới hạn
     const timeoutMs = Math.min(parseInt(req.body?.timeout) || 0, 300) * 1000; // giới hạn thời gian (s)
     const startTime = Date.now();
 
@@ -2631,8 +2781,11 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
 
     if (!candidates.length) return res.json({ synced: 0, total: 0, filtered: allContacts.length, nextOffset: 0, done: true, message: 'Smart: tất cả đã cập nhật' });
 
-    // Slice từ offset
-    const contacts = candidates.slice(offsetIdx);
+    // Slice từ offset, giới hạn batch nếu có
+    const sliced = candidates.slice(offsetIdx);
+    const contacts = batchLimit > 0 ? sliced.slice(0, batchLimit) : sliced;
+    const nextOffsetAbs = offsetIdx + contacts.length;
+    const batchDone = nextOffsetAbs >= candidates.length;
     if (!contacts.length) return res.json({ synced: 0, total: candidates.length, nextOffset: 0, done: true, message: 'Đã đồng bộ hết' });
 
     // Group contacts theo page_id để lấy token 1 lần
