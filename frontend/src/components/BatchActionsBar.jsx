@@ -19,6 +19,9 @@ const COLOR_MAP = {
   blue:   { bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-200',   hover: 'hover:bg-blue-100',   progressBg: 'bg-blue-500' },
 };
 
+const AUTO_INTERVAL_MS = 5 * 60 * 1000; // 5 phút
+const AUTO_PIPELINE = ['sync_messages', 'create_leads', 'refresh_names', 'dedup', 'extract_phones'];
+
 export default function BatchActionsBar({ onComplete }) {
   const [expanded, setExpanded] = useState(false);
   const [running, setRunning] = useState(null); // key of running action
@@ -26,8 +29,14 @@ export default function BatchActionsBar({ onComplete }) {
   const [logs, setLogs] = useState([]); // recent log entries
   const [result, setResult] = useState(null); // final result
   const [error, setError] = useState(null);
+  const [autoEnabled, setAutoEnabled] = useState(() => localStorage.getItem('batch_auto') !== 'off');
+  const [countdown, setCountdown] = useState(0); // seconds remaining
+  const [pipelineIndex, setPipelineIndex] = useState(-1); // -1 = not running pipeline
   const logsEndRef = useRef(null);
   const startTimeRef = useRef(null);
+  const autoTimerRef = useRef(null);
+  const countdownRef = useRef(null);
+  const lastAutoRunRef = useRef(Date.now());
 
   // Auto-scroll logs
   useEffect(() => {
@@ -111,6 +120,100 @@ export default function BatchActionsBar({ onComplete }) {
     if (onComplete) onComplete();
   }, [onComplete]);
 
+  // Run next step in pipeline
+  const runPipelineStep = useCallback(async (index) => {
+    if (index >= AUTO_PIPELINE.length) {
+      // Pipeline xong
+      setPipelineIndex(-1);
+      lastAutoRunRef.current = Date.now();
+      if (onComplete) onComplete();
+      return;
+    }
+    const actionKey = AUTO_PIPELINE[index];
+    const action = ACTIONS.find(a => a.key === actionKey);
+    if (!action) { runPipelineStep(index + 1); return; }
+
+    setPipelineIndex(index);
+    setRunning(action.key);
+    setProgress(null);
+    setError(null);
+    startTimeRef.current = Date.now();
+
+    try {
+      const { data } = await api.post(`/${action.apiPath}`);
+      setLogs(prev => [...prev.slice(-49), {
+        text: `✅ ${action.icon} ${action.label}: ${data.message || data.created || data.updated || data.merged || data.totalSynced || 'xong'}`,
+        status: 'created',
+      }]);
+      setRunning(null);
+      setResult(null);
+      // Tiếp tục bước sau (delay 1s)
+      setTimeout(() => runPipelineStep(index + 1), 1000);
+    } catch (e) {
+      setLogs(prev => [...prev.slice(-49), {
+        text: `❌ ${action.icon} ${action.label}: ${e.response?.data?.error || e.message}`,
+        status: 'error',
+      }]);
+      setRunning(null);
+      // Vẫn tiếp tục pipeline dù lỗi
+      setTimeout(() => runPipelineStep(index + 1), 1000);
+    }
+  }, [onComplete]);
+
+  // Run full pipeline
+  const runFullPipeline = useCallback(() => {
+    if (running || pipelineIndex >= 0) return;
+    setLogs([{ text: '🚀 Bắt đầu pipeline tự động: Đồng bộ → Tạo Lead → Refresh → Gộp trùng → Quét SĐT', status: 'info' }]);
+    setExpanded(true);
+    setResult(null);
+    setError(null);
+    runPipelineStep(0);
+  }, [running, pipelineIndex, runPipelineStep]);
+
+  // Auto-run timer
+  useEffect(() => {
+    if (!autoEnabled) {
+      if (autoTimerRef.current) clearInterval(autoTimerRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      setCountdown(0);
+      return;
+    }
+
+    // Update countdown every second
+    countdownRef.current = setInterval(() => {
+      const elapsed = Date.now() - lastAutoRunRef.current;
+      const remaining = Math.max(0, Math.ceil((AUTO_INTERVAL_MS - elapsed) / 1000));
+      setCountdown(remaining);
+    }, 1000);
+
+    // Check if should run
+    autoTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - lastAutoRunRef.current;
+      if (elapsed >= AUTO_INTERVAL_MS && !running && pipelineIndex < 0) {
+        runFullPipeline();
+      }
+    }, 5000);
+
+    return () => {
+      if (autoTimerRef.current) clearInterval(autoTimerRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, [autoEnabled, running, pipelineIndex, runFullPipeline]);
+
+  // Toggle auto
+  const toggleAuto = () => {
+    const next = !autoEnabled;
+    setAutoEnabled(next);
+    localStorage.setItem('batch_auto', next ? 'on' : 'off');
+    if (next) lastAutoRunRef.current = Date.now(); // reset timer
+  };
+
+  const formatCountdown = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${String(sec).padStart(2, '0')}`;
+  };
+
   const pct = progress ? Math.round((progress.current / progress.total) * 100) : 0;
   const elapsed = startTimeRef.current ? Math.round((Date.now() - startTimeRef.current) / 1000) : 0;
   const activeAction = ACTIONS.find(a => a.key === running);
@@ -119,22 +222,52 @@ export default function BatchActionsBar({ onComplete }) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
       {/* Header — always visible */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition cursor-pointer"
-      >
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-4 py-3">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-2 hover:bg-gray-50 transition cursor-pointer rounded-lg px-1 py-0.5"
+        >
           <Zap className="h-4 w-4 text-amber-500" />
           <span className="text-sm font-semibold text-gray-800">⚡ Công cụ tự động</span>
           {running && (
             <span className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full animate-pulse">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Đang chạy...
+              {pipelineIndex >= 0 ? `Bước ${pipelineIndex + 1}/${AUTO_PIPELINE.length}` : 'Đang chạy...'}
             </span>
           )}
+          {expanded ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
+        </button>
+
+        <div className="flex items-center gap-3">
+          {/* Countdown */}
+          {autoEnabled && !running && countdown > 0 && (
+            <span className="text-xs text-gray-400 font-mono">⏰ {formatCountdown(countdown)}</span>
+          )}
+
+          {/* Run now button */}
+          <button
+            onClick={runFullPipeline}
+            disabled={!!running || pipelineIndex >= 0}
+            className="px-3 py-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer transition"
+          >
+            🚀 Chạy ngay
+          </button>
+
+          {/* Auto toggle */}
+          <button
+            onClick={toggleAuto}
+            className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${
+              autoEnabled ? 'bg-green-500' : 'bg-gray-300'
+            }`}
+            title={autoEnabled ? 'Tự động: Bật (5 phút/lần)' : 'Tự động: Tắt'}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+              autoEnabled ? 'translate-x-5' : 'translate-x-0'
+            }`} />
+          </button>
+          <span className="text-xs text-gray-500">{autoEnabled ? 'Auto' : 'Off'}</span>
         </div>
-        {expanded ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
-      </button>
+      </div>
 
       {/* Expanded content */}
       {expanded && (
