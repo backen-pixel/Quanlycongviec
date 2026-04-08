@@ -765,6 +765,22 @@ function ContactsTab() {
     }
   };
 
+  };
+
+  // Batch: Đồng bộ tất cả tin nhắn từ Facebook
+  const batchSyncMessages = async () => {
+    if (!confirm('Đồng bộ tin nhắn từ Facebook cho tất cả liên hệ? (có thể mất vài phút)')) return;
+    setBatchStatus({ type: 'sync', loading: true, result: null });
+    try {
+      const res = await fetch(`${API}/api/facebook/batch-sync-messages`, { method: 'POST', headers: hdr() });
+      const data = await res.json();
+      setBatchStatus({ type: 'sync', loading: false, result: data });
+      load();
+    } catch (e) {
+      setBatchStatus({ type: 'sync', loading: false, result: { error: e.message } });
+    }
+  };
+
   // Kiểm tra & xóa lead trùng không liên kết FB
   const dedupLeads = async () => {
     if (!confirm('Kiểm tra và xóa lead trùng không liên kết với Facebook?')) return;
@@ -784,6 +800,11 @@ function ContactsTab() {
       <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length})</h2>
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button onClick={batchSyncMessages} disabled={batchStatus?.loading}
+            className="px-3 py-1.5 text-xs font-medium bg-teal-50 text-teal-700 border border-teal-200 rounded-lg hover:bg-teal-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+            {batchStatus?.type === 'sync' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-teal-600 border-t-transparent rounded-full" /> : '📨'}
+            Đồng bộ tin nhắn
+          </button>
           <button onClick={batchCreateLeads} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
             {batchStatus?.type === 'leads' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" /> : '🆕'}
@@ -815,6 +836,8 @@ function ContactsTab() {
             <div>
               {batchStatus.result.error ? (
                 <span>❌ Lỗi: {batchStatus.result.error}</span>
+              ) : batchStatus.type === 'sync' ? (
+                <span>✅ Đã đồng bộ <strong>{batchStatus.result.totalSynced || 0}</strong> tin nhắn mới từ <strong>{batchStatus.result.total || 0}</strong> liên hệ</span>
               ) : batchStatus.type === 'leads' ? (
                 <span>✅ Đã tạo <strong>{batchStatus.result.created || 0}</strong> Lead mới — Bỏ qua: {batchStatus.result.skipped || 0} (đã có Lead)</span>
               ) : batchStatus.type === 'dedup' ? (

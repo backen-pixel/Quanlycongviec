@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Zap, Plus, RefreshCw, Search, Phone, X, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Zap, Plus, RefreshCw, Search, Phone, X, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, Loader2, MessageCircle } from 'lucide-react';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 
 const ACTIONS = [
+  { key: 'sync_messages', label: 'Đồng bộ tin nhắn', icon: '📨', color: 'teal', apiPath: 'facebook/batch-sync-messages' },
   { key: 'create_leads', label: 'Tạo Lead hàng loạt', icon: '🆕', color: 'green', apiPath: 'facebook/batch-create-leads' },
   { key: 'refresh_names', label: 'Refresh tên', icon: '🔄', color: 'purple', apiPath: 'facebook/refresh-names' },
   { key: 'dedup', label: 'Gộp Lead trùng', icon: '🔍', color: 'orange', apiPath: 'facebook/dedup-leads' },
@@ -11,6 +12,7 @@ const ACTIONS = [
 ];
 
 const COLOR_MAP = {
+  teal:   { bg: 'bg-teal-50',   text: 'text-teal-700',   border: 'border-teal-200',   hover: 'hover:bg-teal-100',   progressBg: 'bg-teal-500' },
   green:  { bg: 'bg-green-50',  text: 'text-green-700',  border: 'border-green-200',  hover: 'hover:bg-green-100',  progressBg: 'bg-green-500' },
   purple: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', hover: 'hover:bg-purple-100', progressBg: 'bg-purple-500' },
   orange: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', hover: 'hover:bg-orange-100', progressBg: 'bg-orange-500' },
