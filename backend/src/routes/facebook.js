@@ -2281,6 +2281,7 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
+    console.log('[ExtractPhones] START manual scan');
 
     // Chỉ quét các contact CHƯA có SĐT ở contact và customer
     const { data: contacts } = await supabase.from('facebook_contacts')
@@ -2290,7 +2291,10 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(5000);
 
-    if (!contacts?.length) return res.json({ total: 0, updated: 0, message: 'Không còn contact nào thiếu SĐT để quét' });
+    if (!contacts?.length) {
+      console.log('[ExtractPhones] No contacts without phone');
+      return res.json({ total: 0, updated: 0, message: 'Không còn contact nào thiếu SĐT để quét' });
+    }
 
     let updated = 0;
     let foundPhones = 0;
@@ -2328,6 +2332,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       }
 
       // Đọc tin nhắn của TỪNG user riêng biệt, ưu tiên inbound
+      console.log(`[ExtractPhones] Scan ${i + 1}/${total}: ${contact.fb_name || contact.id}`);
       const { data: messages } = await supabase.from('facebook_messages')
         .select('content, direction, created_at')
         .eq('contact_id', contact.id)
@@ -2416,9 +2421,13 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     }
 
     const summary = { total, updated, foundPhones, foundAddresses, noInfo, results };
+    console.log(`[ExtractPhones] DONE total=${total} updated=${updated} phones=${foundPhones} addresses=${foundAddresses} noInfo=${noInfo}`);
     if (io) io.emit('batch_done', { type: 'extract_phones', ...summary });
     res.json(summary);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ExtractPhones] ERROR', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════

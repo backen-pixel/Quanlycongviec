@@ -691,6 +691,7 @@ function ContactsTab() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [batchStatus, setBatchStatus] = useState(null); // { type, loading, result }
+  const [batchProgress, setBatchProgress] = useState(null);
 
   const load = useCallback(() => {
     const p = new URLSearchParams();
@@ -712,6 +713,29 @@ function ContactsTab() {
   }, [search, filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const onBatchProgress = (data) => {
+      if (data.type !== 'extract_phones') return;
+      setBatchProgress(data);
+    };
+
+    const onBatchDone = (data) => {
+      if (data.type !== 'extract_phones') return;
+      setBatchProgress(null);
+      setBatchStatus({ type: 'phones', loading: false, result: data });
+      load();
+    };
+
+    socket.on('batch_progress', onBatchProgress);
+    socket.on('batch_done', onBatchDone);
+    return () => {
+      socket.off('batch_progress', onBatchProgress);
+      socket.off('batch_done', onBatchDone);
+    };
+  }, [socket, load]);
 
   const startEdit = (c) => { setEditing(c.id); setForm({ fb_name: c.fb_name || '', phone: c.phone || '', email: c.email || '', notes: c.notes || '' }); };
 
@@ -745,13 +769,15 @@ function ContactsTab() {
 
   // Batch: quét SĐT + thông tin từ tin nhắn
   const batchExtractPhones = async () => {
-    if (!confirm('Quét toàn bộ tin nhắn để tìm SĐT và thông tin khách hàng?')) return;
+    if (!confirm('Đọc tin nhắn của từng user chưa có SĐT để tìm số điện thoại và địa chỉ?')) return;
+    setBatchProgress(null);
     setBatchStatus({ type: 'phones', loading: true, result: null });
     try {
       const res = await fetch(`${API}/api/facebook/batch-extract-phones`, { method: 'POST', headers: hdr() });
       const data = await res.json();
-      setBatchStatus({ type: 'phones', loading: false, result: data });
-      load();
+      if (!data?.total) {
+        setBatchStatus({ type: 'phones', loading: false, result: data });
+      }
     } catch (e) {
       setBatchStatus({ type: 'phones', loading: false, result: { error: e.message } });
     }
@@ -808,7 +834,20 @@ function ContactsTab() {
   return (
     <div className="p-6 overflow-y-auto h-full">
       <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
-        <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length})</h2>
+        <div>
+          <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length})</h2>
+          {batchStatus?.type === 'phones' && batchStatus.loading && batchProgress && (
+            <div className="mt-2 text-xs text-gray-600 space-y-1">
+              <div>Đang quét: <span className="font-medium">{batchProgress.name || '...'}</span> ({batchProgress.current || 0}/{batchProgress.total || 0})</div>
+              <div className="w-72 max-w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 rounded-full transition-all"
+                  style={{ width: `${batchProgress.total ? Math.round(((batchProgress.current || 0) / batchProgress.total) * 100) : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <button onClick={batchSyncMessages} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-teal-50 text-teal-700 border border-teal-200 rounded-lg hover:bg-teal-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
