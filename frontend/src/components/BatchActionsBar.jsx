@@ -6,7 +6,7 @@ import { getSocket } from '../lib/socket';
 const ACTIONS = [
   { key: 'create_leads', label: 'Tạo Lead hàng loạt', icon: '🆕', color: 'green', apiPath: '/facebook/batch-create-leads' },
   { key: 'refresh_names', label: 'Refresh tên', icon: '🔄', color: 'purple', apiPath: '/facebook/refresh-names' },
-  { key: 'dedup', label: 'Xóa Lead trùng', icon: '🔍', color: 'orange', apiPath: '/facebook/dedup-leads' },
+  { key: 'dedup', label: 'Gộp Lead trùng', icon: '🔍', color: 'orange', apiPath: '/facebook/dedup-leads' },
   { key: 'extract_phones', label: 'Quét SĐT & thông tin', icon: '📞', color: 'blue', apiPath: '/facebook/batch-extract-phones' },
 ];
 
@@ -201,7 +201,7 @@ export default function BatchActionsBar({ onComplete }) {
                   {result.message ? result.message : 
                    result.created != null ? `Đã tạo ${result.created} Lead — SĐT: ${result.phone_updated || 0} — Bỏ qua: ${result.skipped || 0}` :
                    result.updated != null ? `Đã cập nhật ${result.updated}/${result.total || '?'}` :
-                   result.merged != null ? `Đã gộp ${result.merged} lead trùng` :
+                   result.merged != null ? `Đã gộp ${result.merged} lead trùng (${result.groups || 0} nhóm)` :
                    JSON.stringify(result)}
                 </span>
               </div>
