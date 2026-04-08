@@ -1858,12 +1858,29 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
 
-    // 1. Lấy tất cả leads + customer phone
-    const { data: allLeads } = await supabase.from('crm_leads')
-      .select('id, code, customer_id, source_id, title, phone, type, estimated_value, created_at, updated_at, stage_id, assigned_to, description, install_address, customer:customers(id, full_name, phone)')
+    // 1. Lấy tất cả leads (không join customer để tránh lỗi FK)
+    const { data: allLeads, error: leadsErr } = await supabase.from('crm_leads')
+      .select('id, code, customer_id, source_id, title, phone, type, estimated_value, created_at, updated_at, stage_id, assigned_to, description, install_address')
       .eq('type', 'lead')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(5000);
+    
+    if (leadsErr) {
+      console.error('[Dedup] Query error:', leadsErr.message);
+      return res.status(500).json({ error: `Query lỗi: ${leadsErr.message}` });
+    }
     if (!allLeads?.length) return res.json({ merged: 0, scanned: 0, message: 'Không có lead nào' });
+
+    // 1b. Lấy customers riêng
+    const custIds = [...new Set(allLeads.map(l => l.customer_id).filter(Boolean))];
+    const custMap = {};
+    if (custIds.length) {
+      const { data: custs } = await supabase.from('customers')
+        .select('id, full_name, phone').in('id', custIds);
+      (custs || []).forEach(c => { custMap[c.id] = c; });
+    }
+    // Attach customer data
+    allLeads.forEach(l => { l.customer = custMap[l.customer_id] || null; });
 
     // 2. Lấy FB contacts map
     const { data: fbContacts } = await supabase.from('facebook_contacts')
@@ -1923,6 +1940,21 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
     Object.values(byPhone).forEach(ids => {
       for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
     });
+
+    // Group by Title chuẩn hóa (loại [FB], lowercase, trim)
+    const byTitle = {};
+    allLeads.forEach(l => {
+      const norm = (l.title || '').replace(/\[.*?\]/g, '').toLowerCase().trim();
+      // Bỏ qua tên chung chung
+      if (!norm || norm === 'kh facebook' || norm === 'user' || norm === 'facebook user' || norm.length < 3) return;
+      if (!byTitle[norm]) byTitle[norm] = [];
+      byTitle[norm].push(l.id);
+    });
+    Object.values(byTitle).forEach(ids => {
+      for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
+    });
+
+    console.log(`[Dedup] Scanned ${allLeads.length} leads | Groups: customer=${Object.values(byCustomer).filter(v=>v.length>1).length}, psid=${Object.values(psidLeadMap).filter(v=>v.size>1).length}, phone=${Object.values(byPhone).filter(v=>v.length>1).length}, title=${Object.values(byTitle).filter(v=>v.length>1).length}`);
 
     // 5. Collect groups
     const groups = {};
@@ -2028,26 +2060,61 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// DEBUG: Scan duplicate leads based on title normalization
+// DEBUG: Scan duplicate leads — hiển thị nhóm trùng theo title + phone + customer
 r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
   try {
-    const { data: allLeads } = await supabase.from('crm_leads')
-      .select('id, title, phone, customer:customers(phone)').eq('type', 'lead');
+    const { data: allLeads, error: err } = await supabase.from('crm_leads')
+      .select('id, code, title, phone, customer_id, source_id, created_at')
+      .eq('type', 'lead')
+      .limit(5000);
     
-    // Group theo title chuẩn hóa (loại bỏ tag [FB] và case-insensitive)
+    if (err) return res.status(500).json({ error: err.message });
+
+    // Lấy customer phone riêng
+    const custIds = [...new Set(allLeads.map(l => l.customer_id).filter(Boolean))];
+    const custMap = {};
+    if (custIds.length) {
+      const { data: custs } = await supabase.from('customers').select('id, full_name, phone').in('id', custIds);
+      (custs || []).forEach(c => { custMap[c.id] = c; });
+    }
+    
+    // Group theo title chuẩn hóa
     const byTitle = {};
     allLeads.forEach(l => {
-      const norm = (l.title || '').replace(/\[.*\]/g, '').toLowerCase().trim();
-      if (!norm || norm === 'kh facebook' || norm === 'user' || norm === 'facebook user') return;
+      const norm = (l.title || '').replace(/\[.*?\]/g, '').toLowerCase().trim();
+      if (!norm || norm === 'kh facebook' || norm === 'user' || norm === 'facebook user' || norm.length < 3) return;
       if (!byTitle[norm]) byTitle[norm] = [];
-      byTitle[norm].push({ id: l.id, title: l.title, phone: l.phone, custPhone: l.customer?.phone });
+      const cust = custMap[l.customer_id];
+      byTitle[norm].push({ id: l.id, code: l.code, title: l.title, phone: l.phone, custPhone: cust?.phone, custName: cust?.full_name, customer_id: l.customer_id });
     });
 
-    const duplicates = Object.entries(byTitle)
-      .filter(([_, leads]) => leads.length > 1)
-      .map(([title, leads]) => ({ title, count: leads.length, leads }));
+    // Group theo phone (last 9 digits)
+    const byPhone = {};
+    allLeads.forEach(l => {
+      const cust = custMap[l.customer_id];
+      const raw = l.phone || cust?.phone;
+      if (!raw) return;
+      const clean = raw.replace(/[^0-9]/g, '');
+      const norm = clean.length >= 9 ? clean.slice(-9) : null;
+      if (!norm) return;
+      if (!byPhone[norm]) byPhone[norm] = [];
+      byPhone[norm].push({ id: l.id, code: l.code, title: l.title, phone: raw, customer_id: l.customer_id });
+    });
 
-    res.json(duplicates);
+    const titleDups = Object.entries(byTitle)
+      .filter(([_, leads]) => leads.length > 1)
+      .map(([title, leads]) => ({ match: 'title', key: title, count: leads.length, leads }));
+
+    const phoneDups = Object.entries(byPhone)
+      .filter(([_, leads]) => leads.length > 1)
+      .map(([phone, leads]) => ({ match: 'phone', key: phone, count: leads.length, leads }));
+
+    res.json({
+      total_leads: allLeads.length,
+      title_groups: titleDups.length,
+      phone_groups: phoneDups.length,
+      duplicates: [...titleDups, ...phoneDups],
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
