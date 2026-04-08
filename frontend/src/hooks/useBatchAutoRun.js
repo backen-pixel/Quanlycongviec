@@ -11,7 +11,7 @@ if (!window.__batchAuto) {
     running: false,
     phase: 'idle',
     step: -1,
-    totalSteps: 2,
+    totalSteps: 3,
     stepLabel: null,
     cycleCount: 0,
     batchIndex: 0,
@@ -39,7 +39,7 @@ async function _runPipeline() {
   G.running = true;
   G.phase = 'loop';
   G.logs = [];
-  _log('🚀 Bắt đầu auto-run liên tục: 300 user → sync → quét SĐT → lặp lại');
+  _log('🚀 Bắt đầu auto-run liên tục: 300 user → sync → quét SĐT → hết DB → quét tay 1 lần → lặp lại');
   _notify();
 
   while (G.enabled) {
@@ -105,6 +105,23 @@ async function _runPipeline() {
       }
 
       _notify();
+    }
+
+    if (!G.enabled) break;
+
+    // Quét full-scan 1 lần theo logic thủ công sau khi hết DB
+    G.phase = 'manual_full_scan';
+    G.step = 2;
+    G.stepLabel = '📞 Quét SĐT toàn bộ (logic thủ công)';
+    _notify();
+    try {
+      const { data } = await api.post('/facebook/batch-extract-phones');
+      _log(
+        `✅ Full scan cuối chu kỳ: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, lead=${data.leadsUpdatedPhone || 0}`,
+        'ok'
+      );
+    } catch (e) {
+      _log(`❌ Full scan cuối chu kỳ: ${e.response?.data?.error || e.message}`, 'error');
     }
 
     if (!G.enabled) break;

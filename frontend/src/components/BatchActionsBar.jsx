@@ -111,11 +111,11 @@ export default function BatchActionsBar({ onComplete }) {
           {auto.running && (
             <span className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full animate-pulse">
               <Loader2 className="h-3 w-3 animate-spin" />
-              {auto.phase === 'finalize'
-                ? `Chu kỳ ${auto.cycleCount} • Finalize`
+              {auto.phase === 'manual_full_scan'
+                ? `Chu kỳ ${auto.cycleCount} • Full scan cuối`
                 : auto.totalBatches > 0
                   ? `Chu kỳ ${auto.cycleCount} • Batch ${auto.batchIndex}/${auto.totalBatches}`
-                  : `Chu kỳ ${auto.cycleCount} • Đểm contacts...`
+                  : `Chu kỳ ${auto.cycleCount} • Đếm contacts...`
               }
             </span>
           )}
@@ -211,7 +211,7 @@ export default function BatchActionsBar({ onComplete }) {
                 <div className="bg-gray-50 rounded-lg px-2 py-1">Chu kỳ: <span className="font-semibold text-gray-700">{auto.cycleCount || 1}</span></div>
                 <div className="bg-gray-50 rounded-lg px-2 py-1">Tổng contacts: <span className="font-semibold text-teal-700">{auto.totalContacts || '...'}</span></div>
                 <div className="bg-gray-50 rounded-lg px-2 py-1">Batch hiện tại: <span className="font-semibold text-gray-700">{auto.batchIndex}/{auto.totalBatches || '?'} × 300</span></div>
-                <div className="bg-gray-50 rounded-lg px-2 py-1">Giai đoạn: <span className="font-semibold text-amber-700">{auto.phase === 'finalize' ? '🏁 Finalize' : auto.phase === 'batch_loop' ? '🔄 Batch loop' : '💤 Idle'}</span></div>
+                <div className="bg-gray-50 rounded-lg px-2 py-1">Giai đoạn: <span className="font-semibold text-amber-700">{auto.phase === 'manual_full_scan' ? '📞 Full scan cuối chu kỳ' : auto.phase === 'loop' ? '🔄 Batch loop' : '💤 Idle'}</span></div>
               </div>
               {auto.totalBatches > 0 && (
                 <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
