@@ -109,7 +109,7 @@ export default function BatchActionsBar({ onComplete }) {
           {auto.running && (
             <span className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full animate-pulse">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Bước {auto.step + 1}/{auto.totalSteps}
+              Chu kỳ {auto.cycleCount || 1} • Bước {auto.step + 1}/{auto.totalSteps}
             </span>
           )}
           {manualRunning && !auto.running && (
@@ -194,18 +194,24 @@ export default function BatchActionsBar({ onComplete }) {
 
           {/* Auto pipeline progress */}
           {auto.running && (
-            <div className="space-y-1">
+            <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span className="font-medium">{auto.stepLabel || 'Đang xử lý...'}</span>
                 {auto.syncTotal > 0 && (
                   <span className="font-mono text-teal-600">
-                    ĐB: {auto.syncOffset}/{auto.syncTotal} ({Math.round(auto.syncOffset/auto.syncTotal*100)}%)
+                    Offset: {auto.syncOffset}/{auto.syncTotal} ({Math.round(auto.syncOffset / auto.syncTotal * 100)}%)
                   </span>
                 )}
               </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-500">
+                <div className="bg-gray-50 rounded-lg px-2 py-1">Chu kỳ: <span className="font-semibold text-gray-700">{auto.cycleCount || 1}</span></div>
+                <div className="bg-gray-50 rounded-lg px-2 py-1">Sync mới: <span className="font-semibold text-teal-700">{auto.lastSyncNewMessages || 0}</span></div>
+                <div className="bg-gray-50 rounded-lg px-2 py-1">Contacts vừa xử lý: <span className="font-semibold text-gray-700">{auto.lastSyncProcessed || 0}</span></div>
+                <div className="bg-gray-50 rounded-lg px-2 py-1">Bước hiện tại: <span className="font-semibold text-amber-700">{auto.step + 1}/{auto.totalSteps}</span></div>
+              </div>
               <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                 <div className="h-full rounded-full transition-all duration-300 bg-amber-500"
-                  style={{ width: auto.syncTotal > 0 ? `${Math.round(auto.syncOffset/auto.syncTotal*100)}%` : '50%' }} />
+                  style={{ width: auto.syncTotal > 0 ? `${Math.round(auto.syncOffset / auto.syncTotal * 100)}%` : '0%' }} />
               </div>
             </div>
           )}
@@ -235,7 +241,7 @@ export default function BatchActionsBar({ onComplete }) {
                 <span className="font-medium">
                   {manualResult.message ? manualResult.message :
                    manualResult.created != null ? `Đã tạo ${manualResult.created} Lead` :
-                   manualResult.updated != null ? `Đã cập nhật ${manualResult.updated}/${manualResult.total || '?'}` :
+                   manualResult.updated != null ? `Đã cập nhật ${manualResult.updated}/${manualResult.total || '?'} | contact ${manualResult.updatedContactPhone || 0} | customer ${manualResult.updatedCustomerPhone || 0}` :
                    manualResult.merged != null ? `Đã gộp ${manualResult.merged} lead trùng` :
                    JSON.stringify(manualResult)}
                 </span>

@@ -714,6 +714,8 @@ function ContactsTab() {
   const [form, setForm] = useState({});
   const [batchStatus, setBatchStatus] = useState(null); // { type, loading, result }
   const [batchProgress, setBatchProgress] = useState(null);
+  const [audit, setAudit] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
 
   const load = useCallback(() => {
     const p = new URLSearchParams();
@@ -803,6 +805,18 @@ function ContactsTab() {
     } catch (e) {
       setBatchStatus({ type: 'phones', loading: false, result: { error: e.message } });
     }
+  };
+
+  const loadAudit = async () => {
+    setAuditLoading(true);
+    try {
+      const res = await fetch(`${API}/api/facebook/audit-phone-sync`, { headers: hdr() });
+      const data = await res.json();
+      setAudit(data);
+    } catch (e) {
+      setAudit({ error: e.message });
+    }
+    setAuditLoading(false);
   };
 
   // Refresh tên các contact bị "Facebook User"
@@ -898,6 +912,61 @@ function ContactsTab() {
           </button>
           <button onClick={load} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 cursor-pointer"><RefreshCw size={14} /> Làm mới</button>
         </div>
+      </div>
+
+      <div className="mb-4 bg-white border rounded-xl p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-sm font-semibold text-gray-800">Đối soát SĐT Contact → Customer → Lead</div>
+            <div className="text-xs text-gray-500">Kiểm tra vì sao contact đã có số nhưng dashboard CRM chưa phản ánh.</div>
+          </div>
+          <button
+            onClick={loadAudit}
+            disabled={auditLoading}
+            className="px-3 py-1.5 text-xs font-medium bg-slate-50 text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
+          >
+            {auditLoading ? 'Đang kiểm tra...' : 'Kiểm tra mismatch'}
+          </button>
+        </div>
+        {audit && !audit.error && (
+          <div className="mt-3 space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+              <div className="bg-gray-50 rounded-lg p-2">Tổng contacts: <strong>{audit.total_contacts || 0}</strong></div>
+              <div className="bg-green-50 rounded-lg p-2">Contacts có SĐT: <strong>{audit.contacts_with_phone || 0}</strong></div>
+              <div className="bg-blue-50 rounded-lg p-2">Contacts có lead: <strong>{audit.contacts_with_lead || 0}</strong></div>
+              <div className="bg-emerald-50 rounded-lg p-2">Lead có `customer.phone`: <strong>{audit.leads_with_customer_phone || 0}</strong></div>
+              <div className="bg-amber-50 rounded-lg p-2">Contact có SĐT nhưng customer thiếu: <strong>{audit.mismatches_contact_has_phone_customer_missing || 0}</strong></div>
+              <div className="bg-red-50 rounded-lg p-2">Lead có nhưng customer chưa có SĐT: <strong>{audit.mismatches_lead_exists_no_customer_phone || 0}</strong></div>
+            </div>
+            {!!audit.samples?.length && (
+              <div className="max-h-48 overflow-y-auto border rounded-lg">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="text-left px-2 py-2">Loại</th>
+                      <th className="text-left px-2 py-2">Tên</th>
+                      <th className="text-left px-2 py-2">Contact phone</th>
+                      <th className="text-left px-2 py-2">Lead</th>
+                      <th className="text-left px-2 py-2">Customer phone</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {audit.samples.map((s, idx) => (
+                      <tr key={idx} className="border-t">
+                        <td className="px-2 py-2 text-gray-500">{s.kind}</td>
+                        <td className="px-2 py-2">{s.fb_name || '—'}</td>
+                        <td className="px-2 py-2 text-green-700">{s.contact_phone || '—'}</td>
+                        <td className="px-2 py-2 text-blue-700">{s.lead_code || '—'}</td>
+                        <td className="px-2 py-2 text-red-700">{s.customer_phone || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+        {audit?.error && <div className="mt-3 text-xs text-red-600">❌ {audit.error}</div>}
       </div>
 
       {/* Batch result banner */}

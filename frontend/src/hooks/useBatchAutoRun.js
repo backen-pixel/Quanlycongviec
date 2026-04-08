@@ -10,11 +10,15 @@ if (!window.__batchAuto) {
     enabled: localStorage.getItem('batch_auto') !== 'off',
     lastCycleEnd: Date.now(),
     running: false,
-    step: -1,           // index bước hiện tại
+    step: -1,
+    totalSteps: 5,
     stepLabel: null,
-    syncOffset: 0,      // vị trí đang sync đến
-    syncTotal: 0,       // tổng contacts cần sync
-    syncDone: false,    // đã sync hết chưa
+    cycleCount: 0,
+    syncOffset: 0,
+    syncTotal: 0,
+    syncDone: false,
+    lastSyncProcessed: 0,
+    lastSyncNewMessages: 0,
     countdown: 0,
     logs: [],
     _subs: new Set(),
@@ -44,7 +48,8 @@ async function _runInterleavedPipeline() {
 
   while (!G.syncDone) {
     cycleCount++;
-    _log(`🔄 Chu kỳ ${cycleCount}: Đồng bộ tin nhắn (offset ${G.syncOffset})...`);
+    G.cycleCount = cycleCount;
+    _log(`🔄 Chu kỳ ${cycleCount}: Đồng bộ tin nhắn từ offset ${G.syncOffset}...`);
 
     // ── Bước 1: Đồng bộ tin nhắn (tối đa 1 phút) ──
     G.step = 0;
@@ -56,10 +61,15 @@ async function _runInterleavedPipeline() {
         offset: G.syncOffset,
         timeout: SYNC_TIMEOUT_SEC,
       });
+      const prevOffset = G.syncOffset;
       G.syncTotal = data.total || G.syncTotal;
       G.syncDone = data.done === true || !data.nextOffset;
+      G.lastSyncProcessed = data.processedCount || 0;
+      G.lastSyncNewMessages = data.totalSynced || 0;
       G.syncOffset = data.done ? 0 : (data.nextOffset || 0);
-      const msg = `✅ Đồng bộ: +${data.totalSynced || 0} tin nhắn (${G.syncOffset}/${G.syncTotal})`;
+      const msg = G.syncDone
+        ? `✅ Sync xong vòng cuối: +${data.totalSynced || 0} tin nhắn | xử lý ${data.processedCount || 0} contacts | hoàn tất ${G.syncTotal}/${G.syncTotal}`
+        : `✅ Sync chu kỳ ${cycleCount}: +${data.totalSynced || 0} tin nhắn | xử lý ${data.processedCount || 0} contacts | offset ${prevOffset} → ${G.syncOffset}/${G.syncTotal}`;
       _log(msg, 'ok');
     } catch (e) {
       _log(`❌ Đồng bộ lỗi: ${e.response?.data?.error || e.message}`, 'error');
@@ -73,7 +83,7 @@ async function _runInterleavedPipeline() {
     _notify();
     try {
       const { data } = await api.post('/facebook/batch-create-leads');
-      _log(`✅ Tạo Lead: +${data.created || 0} mới, bỏ qua ${data.skipped || 0}`, 'ok');
+      _log(`✅ Tạo Lead sau sync: +${data.created || 0} mới, bỏ qua ${data.skipped || 0}`, 'ok');
     } catch (e) {
       _log(`❌ Tạo Lead: ${e.response?.data?.error || e.message}`, 'error');
     }
@@ -85,7 +95,7 @@ async function _runInterleavedPipeline() {
     _notify();
     try {
       const { data } = await api.post('/facebook/refresh-names');
-      _log(`✅ Refresh tên: cập nhật ${data.updated || 0}`, 'ok');
+      _log(`✅ Refresh tên sau sync: cập nhật ${data.updated || 0}`, 'ok');
     } catch (e) {
       _log(`❌ Refresh tên: ${e.response?.data?.error || e.message}`, 'error');
     }
@@ -97,7 +107,7 @@ async function _runInterleavedPipeline() {
     _notify();
     try {
       const { data } = await api.post('/facebook/dedup-leads');
-      _log(`✅ Gộp trùng: ${data.merged || 0} lead`, 'ok');
+      _log(`✅ Gộp trùng sau sync: ${data.merged || 0} lead`, 'ok');
     } catch (e) {
       _log(`❌ Gộp trùng: ${e.response?.data?.error || e.message}`, 'error');
     }
@@ -109,7 +119,7 @@ async function _runInterleavedPipeline() {
     _notify();
     try {
       const { data } = await api.post('/facebook/batch-extract-phones');
-      _log(`✅ Quét SĐT: cập nhật ${data.updated || 0} contacts`, 'ok');
+      _log(`✅ Quét SĐT sau sync: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, địa chỉ KH=${data.updatedCustomerAddress || 0}, lead=${data.updatedLeadDescription || 0}`, 'ok');
     } catch (e) {
       _log(`❌ Quét SĐT: ${e.response?.data?.error || e.message}`, 'error');
     }
@@ -125,6 +135,7 @@ async function _runInterleavedPipeline() {
   G.running = false;
   G.step = -1;
   G.stepLabel = null;
+  G.cycleCount = cycleCount;
   G.lastCycleEnd = Date.now();
   _log(`🏁 Hoàn tất toàn bộ! Nghỉ ${WAIT_BETWEEN_MS / 60000} phút...`, 'ok');
   _notify();
@@ -174,10 +185,14 @@ export function useBatchAuto() {
     enabled: G.enabled,
     running: G.running,
     step: G.step,
+    totalSteps: G.totalSteps,
     stepLabel: G.stepLabel,
+    cycleCount: G.cycleCount,
     syncOffset: G.syncOffset,
     syncTotal: G.syncTotal,
     syncDone: G.syncDone,
+    lastSyncProcessed: G.lastSyncProcessed,
+    lastSyncNewMessages: G.lastSyncNewMessages,
     countdown: G.countdown,
     logs: G.logs,
   };
