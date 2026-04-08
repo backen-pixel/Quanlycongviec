@@ -926,8 +926,8 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
   );
 }
 
-// Kanban Stage Card - MISA Style (with pagination)
-const ITEMS_PER_PAGE = 10;
+// Kanban Stage Card - MISA Style (scroll after 6 items)
+const ITEMS_PER_PAGE = 6;
 
 function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
@@ -1000,8 +1000,8 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
         </p>
       </div>
       
-      {/* Cards Container */}
-      <div className={`bg-gray-50 border border-gray-200 border-t-0 p-3 min-h-96 max-h-96 overflow-y-auto space-y-3 transition-all ${
+      {/* Cards Container — show 6 leads then scroll */}
+      <div className={`bg-gray-50 border border-gray-200 border-t-0 p-3 max-h-[780px] overflow-y-auto space-y-3 transition-all ${
         isOverColumn ? 'bg-blue-50' : ''
       }`}>
         {items.length === 0 ? (
