@@ -765,8 +765,6 @@ function ContactsTab() {
     }
   };
 
-  };
-
   // Batch: Đồng bộ tất cả tin nhắn từ Facebook
   const batchSyncMessages = async () => {
     if (!confirm('Đồng bộ tin nhắn từ Facebook cho tất cả liên hệ? (có thể mất vài phút)')) return;
