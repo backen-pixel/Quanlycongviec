@@ -995,13 +995,19 @@ function UserMultiSelect({ users, value = [], onChange, placeholder = '👥 Ch�
 // ═══════════════════════════════════════════════════════════════
 function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
   const isEdit = !!event;
+  const toLocalDateTimeInput = (value) => {
+    if (!value) return '';
+    const d = new Date(value);
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+  };
   const [form, setForm] = useState({
     title: event?.title || '',
     event_type: event?.event_type || 'site_visit',
     description: event?.description || '',
     location: event?.location || '',
-    start_time: event?.start_time ? new Date(event.start_time).toISOString().slice(0, 16) : '',
-    end_time: event?.end_time ? new Date(event.end_time).toISOString().slice(0, 16) : '',
+    start_time: toLocalDateTimeInput(event?.start_time),
+    end_time: toLocalDateTimeInput(event?.end_time),
     all_day: event?.all_day || false,
     lead_id: event?.lead_id || '',
     customer_id: event?.customer_id || '',
@@ -1034,6 +1040,9 @@ function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
   const save = async () => {
     if (!form.title.trim()) return alert('Nhập tiêu đề sự kiện');
     if (!form.start_time) return alert('Chọn ngày giờ bắt đầu');
+    if (form.end_time && new Date(form.end_time) < new Date(form.start_time)) {
+      return alert('Giờ kết thúc phải lớn hơn hoặc bằng giờ bắt đầu');
+    }
     setSaving(true);
     try {
       const payload = { ...form, participant_ids: participantIds };
