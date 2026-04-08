@@ -2,6 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'rea
 import { lazy, Suspense, Component } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 
+// Khởi tạo global batch auto-run timer (chạy ngay khi app load)
+import './hooks/useBatchAutoRun';
+
 // Error Boundary — hiện lỗi thay vì trang trắng
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
