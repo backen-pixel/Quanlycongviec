@@ -186,7 +186,7 @@ export default function CRMDashboard() {
     loadCompanyEmployees();
   }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo]);
 
   const load = async () => {
     setLoading(true);
@@ -199,8 +199,8 @@ export default function CRMDashboard() {
       const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes] = await Promise.all([
         api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/leads', { params: { type: 'lead', limit: 500, ...dateParams } }).catch(() => ({ data: [] })),
-        api.get('/crm/leads', { params: { type: 'deal', limit: 500, ...dateParams } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: { type: 'lead', limit: 500, phone_filter: filterPhone || undefined, ...dateParams } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: { type: 'deal', limit: 500, phone_filter: filterPhone || undefined, ...dateParams } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
@@ -324,11 +324,7 @@ export default function CRMDashboard() {
     }
 
     // Phone filter
-    if (filterPhone === 'has_phone') {
-      result = result.filter(l => hasPhoneNumber(l));
-    } else if (filterPhone === 'no_phone') {
-      result = result.filter(l => !hasPhoneNumber(l));
-    }
+    // Phone filter đã được ưu tiên xử lý ở backend để không bị phụ thuộc vào 500 bản ghi đầu.
 
     // Text search — tìm trong tên, mã, SĐT, mô tả, tên KH, email
     if (searchText.trim()) {

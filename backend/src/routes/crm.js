@@ -731,12 +731,16 @@ r.get('/leads-by-fb-page', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/leads', async (req, res) => {
   try {
-    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead', company_id, date_from, date_to } = req.query;
+    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead', company_id, date_from, date_to, phone_filter } = req.query;
+    const parsedLimit = Math.max(parseInt(limit) || 100, 1);
     let q = supabase.from('crm_leads')
       .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
       .eq('type', type)
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
+      .order('created_at', { ascending: false });
+
+    // Khi lọc theo số điện thoại, lấy tập rộng hơn từ DB rồi lọc ở server để không bị giới hạn bởi 100/500 bản ghi đầu.
+    if (phone_filter) q = q.limit(5000);
+    else q = q.limit(parsedLimit);
 
     if (stage_id) q = q.eq('stage_id', stage_id);
     if (assigned_to) q = q.eq('assigned_to', assigned_to);
@@ -744,11 +748,19 @@ r.get('/leads', async (req, res) => {
     if (company_id) q = q.eq('company_id', company_id);
     if (date_from) q = q.gte('created_at', date_from);
     if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
-    if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%`);
+    if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
 
     const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+
+    let result = data || [];
+    if (phone_filter === 'has_phone') {
+      result = result.filter(l => (l.customer?.phone && String(l.customer.phone).trim() !== '') || (l.phone && String(l.phone).trim() !== ''));
+    } else if (phone_filter === 'no_phone') {
+      result = result.filter(l => (!l.customer?.phone || String(l.customer.phone).trim() === '') && (!l.phone || String(l.phone).trim() === ''));
+    }
+
+    res.json(phone_filter ? result.slice(0, parsedLimit) : result);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
