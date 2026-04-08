@@ -2286,11 +2286,22 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     const io = r._ioRef;
     console.log('[ExtractPhones] START manual scan');
 
-    const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('*')
-      .not('psid', 'is', null)
-      .order('last_message_at', { ascending: false, nullsFirst: false })
-      .limit(5000);
+    // ── Fix #2: Phân trang contacts để lấy hết (Supabase giới hạn 1000/request) ──
+    let contacts = [];
+    let pageStart = 0;
+    const PAGE_SIZE = 1000;
+    while (true) {
+      const { data: page } = await supabase.from('facebook_contacts')
+        .select('*')
+        .not('psid', 'is', null)
+        .order('last_message_at', { ascending: false, nullsFirst: false })
+        .range(pageStart, pageStart + PAGE_SIZE - 1);
+      if (!page?.length) break;
+      contacts = contacts.concat(page);
+      if (page.length < PAGE_SIZE) break;
+      pageStart += PAGE_SIZE;
+    }
+    console.log(`[ExtractPhones] Loaded ${contacts.length} contacts (paged)`);
 
     if (!contacts?.length) {
       console.log('[ExtractPhones] No contacts found');
@@ -2322,19 +2333,23 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
     if (io) io.emit('batch_progress', { type: 'extract_phones', phase: 'start', total, current: 0 });
 
-    const leadIds = contacts.map(c => c.lead_id).filter(Boolean);
-    const { data: leads } = leadIds.length
-      ? await supabase.from('crm_leads').select('id, customer_id, description, install_address').in('id', leadIds)
-      : { data: [] };
+    // ── Fix #3: Phân trang leadIds/custIds theo batch 500 để tránh Supabase 1000-row limit ──
+    const leadIds = [...new Set(contacts.map(c => c.lead_id).filter(Boolean))];
     const leadMap = {};
-    (leads || []).forEach(l => { leadMap[l.id] = l; });
+    for (let b = 0; b < leadIds.length; b += 500) {
+      const batch = leadIds.slice(b, b + 500);
+      const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, description, install_address').in('id', batch);
+      (leads || []).forEach(l => { leadMap[l.id] = l; });
+    }
 
-    const custIds = [...new Set((leads || []).map(l => l.customer_id).filter(Boolean))];
+    const custIds = [...new Set(Object.values(leadMap).map(l => l.customer_id).filter(Boolean))];
     const custMap = {};
-    if (custIds.length) {
-      const { data: custs } = await supabase.from('customers').select('id, phone, address').in('id', custIds);
+    for (let b = 0; b < custIds.length; b += 500) {
+      const batch = custIds.slice(b, b + 500);
+      const { data: custs } = await supabase.from('customers').select('id, phone, address').in('id', batch);
       (custs || []).forEach(c => { custMap[c.id] = c; });
     }
+    console.log(`[ExtractPhones] Loaded ${Object.keys(leadMap).length} leads, ${Object.keys(custMap).length} customers`);
 
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
@@ -2361,7 +2376,10 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         if (extractedPhone && extractedAddress) break;
       }
 
-      if (!extractedPhone && !extractedAddress && extraPhones.length === 0) {
+      // ── Fix #1 & #4: Fallback sang contact.phone nếu tin nhắn không tìm được số mới ──
+      const effectivePhone = extractedPhone || (contact.phone && String(contact.phone).trim() ? contact.phone : null);
+
+      if (!effectivePhone && !extractedAddress && extraPhones.length === 0) {
         noInfo++;
         results.push({ contact: contact.fb_name, status: 'no_info_found' });
         if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'no_info' });
@@ -2378,16 +2396,21 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         if (contactUpd.phone) updatedContactPhone++;
       }
 
+      // ── Fix #1: Dùng effectivePhone (bao gồm contact.phone sẵn có) để sync sang customer ──
       if (lead?.customer_id) {
         const custUpd = {};
-        if (extractedPhone && !cust?.phone) custUpd.phone = extractedPhone;
+        if (effectivePhone && !cust?.phone) custUpd.phone = effectivePhone;
         if (extractedAddress && extractedAddress !== cust?.address) {
           custUpd.address = extractedAddress;
           foundAddresses++;
         }
         if (Object.keys(custUpd).length) {
           await supabase.from('customers').update(custUpd).eq('id', lead.customer_id);
-          if (custUpd.phone) updatedCustomerPhone++;
+          if (custUpd.phone) {
+            updatedCustomerPhone++;
+            // Update cache để contacts sau cùng customer không update lại
+            if (custMap[lead.customer_id]) custMap[lead.customer_id].phone = effectivePhone;
+          }
           if (custUpd.address) updatedCustomerAddress++;
         }
       }
@@ -2397,9 +2420,9 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         if (extractedAddress && extractedAddress !== lead.install_address) leadUpd.install_address = extractedAddress;
 
         let desc = lead.description || '';
-        if (extractedPhone) {
-          if (/SĐT:/.test(desc)) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${extractedPhone}`);
-          else desc = `${desc.trimEnd()}\nSĐT: ${extractedPhone}`.trim();
+        if (effectivePhone) {
+          if (/SĐT:/.test(desc)) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${effectivePhone}`);
+          else desc = `${desc.trimEnd()}\nSĐT: ${effectivePhone}`.trim();
         }
         if (extractedAddress) {
           if (/Địa chỉ:/.test(desc)) desc = desc.replace(/Địa chỉ:.*$/m, `Địa chỉ: ${extractedAddress}`);
@@ -2421,10 +2444,10 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       updated++;
       results.push({
         contact: contact.fb_name,
-        phone: extractedPhone || contact.phone || cust?.phone || null,
+        phone: effectivePhone || cust?.phone || null,
         address: extractedAddress || cust?.address || lead?.install_address || null,
         extraPhones: extraPhones.length ? extraPhones : undefined,
-        status: extractedPhone ? 'updated_phone' : extractedAddress ? 'updated_address' : 'refreshed',
+        status: extractedPhone ? 'updated_phone' : (effectivePhone && !extractedPhone) ? 'synced_existing' : extractedAddress ? 'updated_address' : 'refreshed',
       });
       if (io) io.emit('batch_progress', {
         type: 'extract_phones',
