@@ -2286,17 +2286,15 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     const io = r._ioRef;
     console.log('[ExtractPhones] START manual scan');
 
-    // Chỉ quét các contact CHƯA có SĐT ở contact và customer
     const { data: contacts } = await supabase.from('facebook_contacts')
       .select('*')
       .not('psid', 'is', null)
-      .is('phone', null)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(5000);
 
     if (!contacts?.length) {
-      console.log('[ExtractPhones] No contacts without phone');
-      return res.json({ total: 0, updated: 0, message: 'Không còn contact nào thiếu SĐT để quét' });
+      console.log('[ExtractPhones] No contacts found');
+      return res.json({ total: 0, updated: 0, message: 'Không có contact nào để quét' });
     }
 
     let updated = 0;
@@ -2304,11 +2302,21 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     let foundAddresses = 0;
     let noInfo = 0;
     const results = [];
+
+    contacts.sort((a, b) => {
+      const score = (c) => {
+        let s = 0;
+        if (!c.phone) s += 2;
+        if (!c.lead_id) s += 0.5;
+        return s;
+      };
+      return score(b) - score(a);
+    });
+
     const total = contacts.length;
 
     if (io) io.emit('batch_progress', { type: 'extract_phones', phase: 'start', total, current: 0 });
 
-    // Preload lead + customer để cập nhật nhanh hơn
     const leadIds = contacts.map(c => c.lead_id).filter(Boolean);
     const { data: leads } = leadIds.length
       ? await supabase.from('crm_leads').select('id, customer_id, description, install_address').in('id', leadIds)
@@ -2327,14 +2335,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       const contact = contacts[i];
       const lead = leadMap[contact.lead_id];
       const cust = lead ? custMap[lead.customer_id] : null;
-      const hasAnyPhone = !!(contact.phone || cust?.phone);
-      if (hasAnyPhone) {
-        results.push({ contact: contact.fb_name, status: 'skip_has_phone' });
-        if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'skip_has_phone' });
-        continue;
-      }
 
-      // Đọc tin nhắn của TỪNG user riêng biệt, ưu tiên inbound
       console.log(`[ExtractPhones] Scan ${i + 1}/${total}: ${contact.fb_name || contact.id}`);
       const { data: messages } = await supabase.from('facebook_messages')
         .select('content, direction, created_at')
@@ -2349,23 +2350,19 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       for (const msg of (messages || [])) {
         if (!msg.content) continue;
         const { phone, address } = extractContactInfo(msg.content);
-        if (phone && !extractedPhone) {
-          extractedPhone = phone;
-        } else if (phone && phone !== extractedPhone && !extraPhones.includes(phone)) {
-          extraPhones.push(phone);
-        }
+        if (phone && !extractedPhone) extractedPhone = phone;
+        else if (phone && phone !== extractedPhone && !extraPhones.includes(phone)) extraPhones.push(phone);
         if (address && !extractedAddress) extractedAddress = address;
         if (extractedPhone && extractedAddress) break;
       }
 
-      if (!extractedPhone && !extractedAddress) {
+      if (!extractedPhone && !extractedAddress && extraPhones.length === 0) {
         noInfo++;
         results.push({ contact: contact.fb_name, status: 'no_info_found' });
         if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'no_info' });
         continue;
       }
 
-      // Update contact
       const contactUpd = { updated_at: new Date().toISOString() };
       if (extractedPhone && !contact.phone) {
         contactUpd.phone = extractedPhone;
@@ -2375,11 +2372,10 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         await supabase.from('facebook_contacts').update(contactUpd).eq('id', contact.id);
       }
 
-      // Update customer nếu có
       if (lead?.customer_id) {
         const custUpd = {};
         if (extractedPhone && !cust?.phone) custUpd.phone = extractedPhone;
-        if (extractedAddress && !cust?.address) {
+        if (extractedAddress && extractedAddress !== cust?.address) {
           custUpd.address = extractedAddress;
           foundAddresses++;
         }
@@ -2388,15 +2384,23 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         }
       }
 
-      // Update lead nếu có
       if (lead && contact.lead_id) {
         const leadUpd = { updated_at: new Date().toISOString() };
-        if (extractedAddress && !lead.install_address) leadUpd.install_address = extractedAddress;
+        if (extractedAddress && extractedAddress !== lead.install_address) leadUpd.install_address = extractedAddress;
 
         let desc = lead.description || '';
-        if (extractedPhone && !/SĐT:/.test(desc)) desc = `${desc.trimEnd()}\nSĐT: ${extractedPhone}`.trim();
-        if (extractedAddress && !/Địa chỉ:/.test(desc)) desc = `${desc.trimEnd()}\nĐịa chỉ: ${extractedAddress}`.trim();
-        if (extraPhones.length && !/SĐT khác:/.test(desc)) desc = `${desc.trimEnd()}\nSĐT khác: ${extraPhones.join(', ')}`.trim();
+        if (extractedPhone) {
+          if (/SĐT:/.test(desc)) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${extractedPhone}`);
+          else desc = `${desc.trimEnd()}\nSĐT: ${extractedPhone}`.trim();
+        }
+        if (extractedAddress) {
+          if (/Địa chỉ:/.test(desc)) desc = desc.replace(/Địa chỉ:.*$/m, `Địa chỉ: ${extractedAddress}`);
+          else desc = `${desc.trimEnd()}\nĐịa chỉ: ${extractedAddress}`.trim();
+        }
+        if (extraPhones.length) {
+          if (/SĐT khác:/.test(desc)) desc = desc.replace(/SĐT khác:.*$/m, `SĐT khác: ${extraPhones.join(', ')}`);
+          else desc = `${desc.trimEnd()}\nSĐT khác: ${extraPhones.join(', ')}`.trim();
+        }
         if (desc !== (lead.description || '')) leadUpd.description = desc;
 
         if (Object.keys(leadUpd).length > 1) {
@@ -2407,10 +2411,10 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       updated++;
       results.push({
         contact: contact.fb_name,
-        phone: extractedPhone,
-        address: extractedAddress,
+        phone: extractedPhone || contact.phone || cust?.phone || null,
+        address: extractedAddress || cust?.address || lead?.install_address || null,
         extraPhones: extraPhones.length ? extraPhones : undefined,
-        status: extractedPhone ? 'updated_phone' : 'updated_address',
+        status: extractedPhone ? 'updated_phone' : extractedAddress ? 'updated_address' : 'refreshed',
       });
       if (io) io.emit('batch_progress', {
         type: 'extract_phones',
@@ -2418,8 +2422,8 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         total,
         name: contact.fb_name,
         status: 'found',
-        phone: extractedPhone,
-        address: extractedAddress,
+        phone: extractedPhone || contact.phone || cust?.phone || null,
+        address: extractedAddress || cust?.address || lead?.install_address || null,
       });
     }
 

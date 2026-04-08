@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../lib/auth';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import {
   MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink,
@@ -18,7 +18,8 @@ const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, '
 
 export default function FacebookPage() {
   const { socket } = useAuth();
-  const [tab, setTab] = useState('inbox');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get('tab') || 'inbox');
   const [stats, setStats] = useState(null);
 
   const loadStats = useCallback(() => {
@@ -27,6 +28,11 @@ export default function FacebookPage() {
   }, []);
 
   useEffect(() => { loadStats(); }, [tab, loadStats]);
+
+  useEffect(() => {
+    const nextTab = searchParams.get('tab');
+    if (nextTab && nextTab !== tab) setTab(nextTab);
+  }, [searchParams, tab]);
 
   useEffect(() => {
     if (!socket) return;
@@ -68,7 +74,7 @@ export default function FacebookPage() {
 
       <div className="border-b bg-white px-6 flex gap-0.5 shrink-0">
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
+          <button key={t.id} onClick={() => { setTab(t.id); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('tab', t.id); if (t.id !== 'inbox') p.delete('contact'); return p; }); }}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all cursor-pointer ${
               tab === t.id ? 'border-blue-600 text-blue-600 bg-blue-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
             }`}>
@@ -135,6 +141,7 @@ function PageSelector({ value, onChange, pages, pageStats }) {
 
 function InboxTab({ pageStats }) {
   const { socket } = useAuth();
+  const [searchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -182,6 +189,19 @@ function InboxTab({ pageStats }) {
   }, [search, pageFilter]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
+
+  useEffect(() => {
+    const contactId = searchParams.get('contact');
+    if (!contactId || !contacts.length) return;
+    const found = contacts.find(c => c.id === contactId);
+    if (found && selected?.id !== found.id) {
+      setSelected(found);
+      fetch(`${API}/api/facebook/contacts/${found.id}`, { headers: hdr() })
+        .then(r => r.ok ? r.json() : null)
+        .then(fresh => { if (fresh) setSelected(fresh); })
+        .catch(() => {});
+    }
+  }, [searchParams, contacts, selected]);
 
   // Realtime
   useEffect(() => {
@@ -946,13 +966,17 @@ function ContactsTab() {
                 ) : (
                   <>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/facebook?tab=inbox&contact=${c.id}`)}
+                        className="flex items-center gap-2 text-left cursor-pointer hover:opacity-80"
+                      >
                         <FBAvatar name={c.fb_name} pic={c.fb_profile_pic} size={8} />
                         <div>
                           <span className="font-medium text-gray-800">{c.fb_name}</span>
                           {c.unread_count > 0 && <span className="ml-1.5 bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">{c.unread_count} mới</span>}
                         </div>
-                      </div>
+                      </button>
                     </td>
                     <td className="px-3 py-3 text-center">
                       {c.message_count > 0 ? (
@@ -972,6 +996,7 @@ function ContactsTab() {
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs max-w-[150px] truncate">{c.notes || ''}</td>
                     <td className="px-4 py-3 text-right">
+                      <button onClick={() => navigate(`/facebook?tab=inbox&contact=${c.id}`)} className="text-gray-400 hover:text-teal-600 p-1 cursor-pointer" title="Mở chat"><MessageCircle size={14} /></button>
                       <button onClick={() => startEdit(c)} className="text-gray-400 hover:text-blue-600 p-1 cursor-pointer" title="Sửa"><Edit3 size={14} /></button>
                       <button onClick={() => deleteContact(c.id, c.fb_name)} className="text-gray-400 hover:text-red-600 p-1 cursor-pointer" title="Xóa"><Trash2 size={14} /></button>
                     </td>
