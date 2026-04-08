@@ -770,7 +770,11 @@ function ContactsTab() {
     if (!confirm('Đồng bộ tin nhắn từ Facebook cho tất cả liên hệ? (có thể mất vài phút)')) return;
     setBatchStatus({ type: 'sync', loading: true, result: null });
     try {
-      const res = await fetch(`${API}/api/facebook/batch-sync-messages`, { method: 'POST', headers: hdr() });
+      const res = await fetch(`${API}/api/facebook/batch-sync-messages`, {
+        method: 'POST',
+        headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'all' }),
+      });
       const data = await res.json();
       setBatchStatus({ type: 'sync', loading: false, result: data });
       load();
