@@ -685,6 +685,7 @@ function CreateLeadButton({ contactId, onCreated }) {
 
 function ContactsTab() {
   const navigate = useNavigate();
+  const { socket } = useAuth();
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
