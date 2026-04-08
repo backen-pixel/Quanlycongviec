@@ -4,10 +4,10 @@ import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 
 const ACTIONS = [
-  { key: 'create_leads', label: 'Tạo Lead hàng loạt', icon: '🆕', color: 'green', apiPath: '/facebook/batch-create-leads' },
-  { key: 'refresh_names', label: 'Refresh tên', icon: '🔄', color: 'purple', apiPath: '/facebook/refresh-names' },
-  { key: 'dedup', label: 'Gộp Lead trùng', icon: '🔍', color: 'orange', apiPath: '/facebook/dedup-leads' },
-  { key: 'extract_phones', label: 'Quét SĐT & thông tin', icon: '📞', color: 'blue', apiPath: '/facebook/batch-extract-phones' },
+  { key: 'create_leads', label: 'Tạo Lead hàng loạt', icon: '🆕', color: 'green', apiPath: 'facebook/batch-create-leads' },
+  { key: 'refresh_names', label: 'Refresh tên', icon: '🔄', color: 'purple', apiPath: 'facebook/refresh-names' },
+  { key: 'dedup', label: 'Gộp Lead trùng', icon: '🔍', color: 'orange', apiPath: 'facebook/dedup-leads' },
+  { key: 'extract_phones', label: 'Quét SĐT & thông tin', icon: '📞', color: 'blue', apiPath: 'facebook/batch-extract-phones' },
 ];
 
 const COLOR_MAP = {
