@@ -60,9 +60,13 @@ function acquireMidLock(mid) {
 
 // ── Helpers ──────────────────────────────────────────────────
 
+const _pageConfigCache = {}; // pageId → { data, ts }
 async function getPageConfig(pageId) {
+  const cached = _pageConfigCache[pageId];
+  if (cached && Date.now() - cached.ts < 60000) return cached.data; // cache 60s
   const { data } = await supabase.from('facebook_pages')
     .select('*').eq('page_id', pageId).eq('is_active', true).single();
+  _pageConfigCache[pageId] = { data, ts: Date.now() };
   return data;
 }
 
@@ -2137,6 +2141,23 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     const results = [];
     const total = contacts.length;
 
+    // Pre-fetch messages cho tất cả contacts 1 lần
+    const contactIds = contacts.map(c => c.id);
+    const { data: allMsgs } = await supabase.from('facebook_messages')
+      .select('contact_id, content')
+      .in('contact_id', contactIds)
+      .eq('direction', 'inbound')
+      .order('created_at', { ascending: false })
+      .limit(50000);
+    const msgsByContact = {};
+    (allMsgs || []).forEach(m => {
+      if (!msgsByContact[m.contact_id]) msgsByContact[m.contact_id] = [];
+      msgsByContact[m.contact_id].push(m);
+    });
+
+    // Cache page configs
+    const pageConfigCache = {};
+
     // Emit start
     if (io) io.emit('batch_progress', { type: 'create_leads', phase: 'start', total, current: 0 });
 
@@ -2146,8 +2167,11 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
         // Verify lead chưa có (double check)
         if (contact.lead_id) { skipped++; continue; }
 
-        // Lấy page config
-        const page = await getPageConfig(contact.page_id);
+        // Lấy page config (cached)
+        if (!pageConfigCache[contact.page_id]) {
+          pageConfigCache[contact.page_id] = await getPageConfig(contact.page_id);
+        }
+        const page = pageConfigCache[contact.page_id];
         if (!page || !page.is_active) {
           results.push({ contact: contact.fb_name, status: 'skipped', reason: 'Page không active' });
           skipped++;
@@ -2155,13 +2179,11 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
           continue;
         }
 
-        // Extract phone/address từ TẤT CẢ tin nhắn inbound
+        // Extract phone/address từ pre-fetched messages
         let extractedPhone = contact.phone || null;
         let extractedAddress = null;
 
-        const { data: messages } = await supabase.from('facebook_messages')
-          .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
-          .order('created_at', { ascending: false }).limit(50);
+        const messages = msgsByContact[contact.id] || [];
         
         for (const msg of (messages || [])) {
           if (msg.content) {
@@ -2242,12 +2264,25 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
     if (io) io.emit('batch_progress', { type: 'extract_phones', phase: 'start', total, current: 0 });
 
+    // Pre-fetch ALL inbound messages cho tất cả contacts 1 lần (thay vì loop query)
+    const contactIds = contacts.map(c => c.id);
+    const { data: allMsgs } = await supabase.from('facebook_messages')
+      .select('contact_id, content')
+      .in('contact_id', contactIds)
+      .eq('direction', 'inbound')
+      .order('created_at', { ascending: false })
+      .limit(50000);
+    // Group messages by contact_id
+    const msgsByContact = {};
+    (allMsgs || []).forEach(m => {
+      if (!msgsByContact[m.contact_id]) msgsByContact[m.contact_id] = [];
+      msgsByContact[m.contact_id].push(m);
+    });
+
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
-      // Quét tất cả tin nhắn inbound
-      const { data: messages } = await supabase.from('facebook_messages')
-        .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
-        .order('created_at', { ascending: false }).limit(100);
+      // Dùng messages đã pre-fetch
+      const messages = msgsByContact[contact.id] || [];
       
       let extractedPhone = null;
       let extractedAddress = null;
@@ -2442,8 +2477,8 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: 'error', error: err.message });
       }
 
-      // Rate limit: 200ms giữa mỗi contact (tránh FB API throttle)
-      if (i < contacts.length - 1) await new Promise(r => setTimeout(r, 200));
+      // Rate limit: 50ms giữa mỗi contact (tránh FB API throttle)
+      if (i < contacts.length - 1) await new Promise(r => setTimeout(r, 50));
     }
 
     const summary = { total, totalSynced, totalErrors, details: results };
