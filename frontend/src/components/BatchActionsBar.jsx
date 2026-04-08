@@ -27,6 +27,7 @@ export default function BatchActionsBar({ onComplete }) {
   const [manualProgress, setManualProgress] = useState(null);
   const [manualResult, setManualResult] = useState(null);
   const [manualError, setManualError] = useState(null);
+  const [manualLogs, setManualLogs] = useState([]);
   const logsEndRef = useRef(null);
 
   // Global auto-run state
@@ -45,9 +46,14 @@ export default function BatchActionsBar({ onComplete }) {
     const handleProgress = (data) => {
       if (data.type !== manualRunning) return;
       setManualProgress({ current: data.current, total: data.total, name: data.name, status: data.status });
+      setManualLogs(prev => [
+        ...prev.slice(-79),
+        `${data.current || 0}/${data.total || 0} ${data.name || ''} ${data.status || ''}`.trim(),
+      ]);
     };
     const handleDone = (data) => {
       if (data.type !== manualRunning) return;
+      setManualLogs(prev => [...prev.slice(-79), `Hoàn tất: ${data.updated || data.created || data.totalSynced || data.merged || 0}`]);
       setManualResult(data);
       setManualRunning(null);
     };
@@ -64,6 +70,7 @@ export default function BatchActionsBar({ onComplete }) {
     setManualProgress(null);
     setManualResult(null);
     setManualError(null);
+    setManualLogs([]);
     setExpanded(true);
 
     try {
@@ -204,11 +211,16 @@ export default function BatchActionsBar({ onComplete }) {
           )}
 
           {/* Logs (auto + manual) */}
-          {auto.logs.length > 0 && (
+          {(auto.logs.length > 0 || manualLogs.length > 0) && (
             <div className="bg-gray-900 rounded-lg p-3 max-h-40 overflow-y-auto font-mono text-[11px] text-gray-300 space-y-0.5">
               {auto.logs.map((log, i) => (
-                <div key={i} className={log.status === 'error' ? 'text-red-400' : log.status === 'ok' || log.status === 'created' ? 'text-green-400' : 'text-gray-400'}>
+                <div key={`a-${i}`} className={log.status === 'error' ? 'text-red-400' : log.status === 'ok' || log.status === 'created' ? 'text-green-400' : 'text-gray-400'}>
                   {log.text}
+                </div>
+              ))}
+              {manualLogs.map((log, i) => (
+                <div key={`m-${i}`} className="text-blue-300">
+                  {log}
                 </div>
               ))}
               <div ref={logsEndRef} />
