@@ -76,7 +76,7 @@ export default function CRMDashboard() {
   const { user } = useAuth();
   const [dataLead, setDataLead] = useState(null);
   const [dataDeal, setDataDeal] = useState(null);
-  // leads & deals are computed via useMemo (client-side filter) — see below
+  // leads & deals are computed via useMemo (client-side filter) - see below
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   const [sources, setSources] = useState([]);
@@ -256,7 +256,7 @@ export default function CRMDashboard() {
     return users;
   }, [companyEmployees, users]);
 
-  // ── Computed: nguồn thông minh — non-FB giữ nguyên, FB → [FB] Tên Page ──
+  // ── Computed: nguồn thông minh - non-FB giữ nguyên, FB → [FB] Tên Page ──
   const smartSources = useMemo(() => {
     // Non-FB sources (chỉ đang dùng)
     const allItems = [...allLeads, ...allDeals];
@@ -299,18 +299,18 @@ export default function CRMDashboard() {
 
   const filterItems = useCallback((items) => {
     let result = items;
-    
+
     // Company filter
     if (filterCompany) {
       result = result.filter(l => l.company_id === filterCompany);
     }
-    
+
     // Assignee filter
     if (filterAssignee) {
       result = result.filter(l => l.assigned_to === filterAssignee || l.lead_owner_id === filterAssignee);
     }
 
-    // Source filter — FB page dùng lead IDs, non-FB dùng source_id
+    // Source filter - FB page dùng lead IDs, non-FB dùng source_id
     if (filterSource) {
       if (filterSource.startsWith('fb:')) {
         result = result.filter(l => fbPageLeadIds.has(l.id));
@@ -327,7 +327,7 @@ export default function CRMDashboard() {
     // Phone filter
     // Phone filter đã được ưu tiên xử lý ở backend để không bị phụ thuộc vào 500 bản ghi đầu.
 
-    // Text search — tìm trong tên, mã, SĐT, mô tả, tên KH, email
+    // Text search - tìm trong tên, mã, SĐT, mô tả, tên KH, email
     if (searchText.trim()) {
       const q = searchText.trim().toLowerCase();
       result = result.filter(l => {
@@ -349,7 +349,7 @@ export default function CRMDashboard() {
         return fields.some(f => f.includes(q));
       });
     }
-    
+
     // Ưu tiên đẩy lead/deal có số điện thoại lên đầu danh sách trước khi render Kanban
     result = [...result].sort((a, b) => Number(hasPhoneNumber(b)) - Number(hasPhoneNumber(a)));
     return result;
@@ -393,7 +393,7 @@ export default function CRMDashboard() {
       if (!lostReason) return;
       extraData.lost_reason = lostReason;
     }
-    
+
     // Optimistic update
     if (pipelineType === 'lead') {
       setAllLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l));
@@ -403,7 +403,7 @@ export default function CRMDashboard() {
 
     try {
       const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId, ...extraData });
-      
+
       if (data.requires_conversion) {
         alert('Để chuyển Lead sang Deal, vui lòng dùng nút "Chuyển sang Deal" trên trang chi tiết.');
         if (pipelineType === 'lead') setAllLeads(prevLeads);
@@ -442,7 +442,7 @@ export default function CRMDashboard() {
           <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full flex-shrink-0" />
           <div>
             <p className="font-bold text-lg">🚀 Đang tự động tạo dự án...</p>
-            <p className="text-sm text-white/80">Deal thắng — hệ thống đang tạo dự án và phân công nhiệm vụ</p>
+            <p className="text-sm text-white/80">Deal thắng - hệ thống đang tạo dự án và phân công nhiệm vụ</p>
           </div>
         </div>
       )}
@@ -530,7 +530,7 @@ export default function CRMDashboard() {
         </div>
         <button
           onClick={() => togglePinTab(pipelineType)}
-          title={pinnedTab === pipelineType ? `Bỏ ghim tab ${pipelineType === 'lead' ? 'Lead' : 'Deal'}` : `Ghim tab ${pipelineType === 'lead' ? 'Lead' : 'Deal'} — mở CRM sẽ vào thẳng`}
+          title={pinnedTab === pipelineType ? `Bỏ ghim tab ${pipelineType === 'lead' ? 'Lead' : 'Deal'}` : `Ghim tab ${pipelineType === 'lead' ? 'Lead' : 'Deal'} - mở CRM sẽ vào thẳng`}
           className={`h-9 px-3 rounded-lg text-sm font-medium transition-all cursor-pointer flex items-center gap-1.5 ${pinnedTab === pipelineType ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700 border border-gray-200'}`}
         >
           <Pin className={`h-4 w-4 ${pinnedTab === pipelineType ? 'rotate-45' : ''}`} />
@@ -693,8 +693,8 @@ export default function CRMDashboard() {
         {showAdvSearch && (
           <div className="flex flex-wrap items-center gap-3 bg-white border border-gray-200 rounded-xl p-3 shadow-sm">
             <span className="text-xs font-bold text-gray-500 uppercase">Lọc nâng cao:</span>
-            
-            {/* Assignee — filtered by company's sales departments */}
+
+            {/* Assignee - filtered by company's sales departments */}
             <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
               className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
               <option value="">👤 Tất cả nhân viên</option>
@@ -724,7 +724,7 @@ export default function CRMDashboard() {
               </select>
             )}
 
-            {/* Source — smart: chỉ nguồn đang dùng, FB → [FB] Tên Page */}
+            {/* Source - smart: chỉ nguồn đang dùng, FB → [FB] Tên Page */}
             {smartSources.length > 0 && (
               <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
                 className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
@@ -856,8 +856,8 @@ export default function CRMDashboard() {
       {/* Kanban View */}
       {viewMode === 'kanban' && (
       <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
-        <KanbanView 
-          pipeline={currentPipeline} 
+        <KanbanView
+          pipeline={currentPipeline}
           onMoveStage={handleMoveStage}
           pipelineType={pipelineType}
           calculateDays={calculateDays}
@@ -930,22 +930,30 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
   );
 }
 
-// Kanban Stage Card - MISA Style (scroll after 6 items)
-const ITEMS_PER_PAGE = 6;
+// Kanban Stage Card - MISA Style (responsive scroll)
 
 function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
-  const [page, setPage] = useState(0);
-  
-  const stageColor = stage.color || '#e5e7eb';
-  const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
-  const pagedItems = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
+  const containerRef = useRef(null);
+  const [columnMaxH, setColumnMaxH] = useState('70vh');
 
-  // Reset page khi items thay đổi
+  // Đo vị trí thực tế của container → tính maxHeight responsive
   useEffect(() => {
-    if (page > 0 && page >= totalPages) setPage(Math.max(0, totalPages - 1));
-  }, [items.length, totalPages, page]);
-  
+    const measure = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        // Chiều cao viewport trừ vị trí top của container, trừ padding bottom (40px)
+        const available = window.innerHeight - rect.top - 40;
+        setColumnMaxH(`${Math.max(300, available)}px`);
+      }
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  const stageColor = stage.color || '#e5e7eb';
+
   const handleColumnDragOver = (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -966,15 +974,15 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
       onMoveStage(leadId, stage.id);
     }
   };
-  
+
   return (
     <div
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
       className={`flex-shrink-0 w-96 rounded-lg overflow-hidden transition-all duration-200 ${
-        isOverColumn 
-          ? 'ring-2 ring-blue-500 ring-dashed' 
+        isOverColumn
+          ? 'ring-2 ring-blue-500 ring-dashed'
           : ''
       }`}
     >
@@ -983,7 +991,7 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
         className="h-1.5 w-full"
         style={{ backgroundColor: stageColor }}
       />
-      
+
       {/* Stage Header */}
       <div className={`bg-white border border-gray-200 border-t-0 p-4 transition-all ${
         isOverColumn ? 'bg-blue-50' : ''
@@ -1003,12 +1011,14 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
           Giá trị: {formatVND(items.reduce((sum, item) => sum + (item.estimated_value || 0), 0))}
         </p>
       </div>
-      
-      {/* Cards Container — show 6 leads then scroll */}
-      <div className={`bg-gray-50 border border-gray-200 border-t-0 p-3 overflow-y-auto space-y-3 transition-all ${
-        isOverColumn ? 'bg-blue-50' : ''
-      }`}
-        style={{ maxHeight: 'calc(100vh - 320px)', minHeight: '400px' }}
+
+      {/* Cards Container - responsive height theo màn hình */}
+      <div
+        ref={containerRef}
+        className={`bg-gray-50 border border-gray-200 border-t-0 p-3 overflow-y-auto space-y-3 transition-all ${
+          isOverColumn ? 'bg-blue-50' : ''
+        }`}
+        style={{ maxHeight: columnMaxH, minHeight: '200px' }}
       >
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
@@ -1017,7 +1027,7 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
             </p>
           </div>
         ) : (
-          pagedItems.map(item => (
+          items.map(item => (
             <KanbanCard
               key={item.id}
               item={item}
@@ -1029,29 +1039,6 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
           ))
         )}
       </div>
-
-      {/* Pagination Footer */}
-      {totalPages > 1 && (
-        <div className="bg-white border border-gray-200 border-t-0 px-3 py-2 flex items-center justify-between">
-          <button
-            onClick={() => setPage(p => Math.max(0, p - 1))}
-            disabled={page === 0}
-            className="h-7 px-2 text-xs font-medium rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition"
-          >
-            ← Trước
-          </button>
-          <span className="text-[11px] text-gray-500 font-medium">
-            {page + 1}/{totalPages} ({items.length})
-          </span>
-          <button
-            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-            disabled={page >= totalPages - 1}
-            className="h-7 px-2 text-xs font-medium rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition"
-          >
-            Sau →
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1227,7 +1214,7 @@ function NewDealModal({ onClose, sources, companies, defaultCompanyId, currentUs
         <div className="flex items-center justify-between mb-5">
           <div>
             <h2 className="text-xl font-bold text-gray-900">🎯 Tạo Deal mới</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Tạo deal trực tiếp — không cần qua Lead</p>
+            <p className="text-xs text-gray-500 mt-0.5">Tạo deal trực tiếp - không cần qua Lead</p>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-500" /></button>
         </div>
@@ -1365,11 +1352,11 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId, cur
     if (!formData.title) return alert('Nhập tên lead');
     if (!formData.company_id) return alert('Vui lòng chọn công ty');
     if (!formData.customer_name) return alert('Nhập tên khách hàng');
-    
+
     if (!formData.customer_phone) {
       if (!confirm('⚠️ Chưa có số điện thoại khách hàng.\nBạn có thể nhập sau ở trang chi tiết Lead.\n\nTiếp tục tạo Lead?')) return;
     }
-    
+
     setSaving(true);
     try {
       // 1. Create customer first
