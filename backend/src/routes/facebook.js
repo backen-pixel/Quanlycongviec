@@ -2354,7 +2354,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
       const lead = leadMap[contact.lead_id];
-      const cust = lead ? custMap[lead.customer_id] : null;
+      let cust = lead ? custMap[lead.customer_id] : null;
 
       console.log(`[ExtractPhones] Scan ${i + 1}/${total}: ${contact.fb_name || contact.id}`);
       const { data: messages } = await supabase.from('facebook_messages')
@@ -2397,19 +2397,25 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       }
 
       // ── Fix #1: Dùng effectivePhone (bao gồm contact.phone sẵn có) để sync sang customer ──
-      if (lead?.customer_id) {
+      const leadCustId = lead?.customer_id || contact.customer_id;
+      // Nếu custMap thiếu (do không được load ban đầu) → fetch trực tiếp
+      if (!cust && leadCustId) {
+        const { data: freshCust } = await supabase.from('customers').select('id, phone, address').eq('id', leadCustId).single();
+        if (freshCust) { cust = freshCust; custMap[leadCustId] = freshCust; }
+      }
+      if (leadCustId) {
         const custUpd = {};
-        if (effectivePhone && !cust?.phone) custUpd.phone = effectivePhone;
+        if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) custUpd.phone = effectivePhone;
         if (extractedAddress && extractedAddress !== cust?.address) {
           custUpd.address = extractedAddress;
           foundAddresses++;
         }
         if (Object.keys(custUpd).length) {
-          await supabase.from('customers').update(custUpd).eq('id', lead.customer_id);
+          await supabase.from('customers').update(custUpd).eq('id', leadCustId);
           if (custUpd.phone) {
             updatedCustomerPhone++;
-            // Update cache để contacts sau cùng customer không update lại
-            if (custMap[lead.customer_id]) custMap[lead.customer_id].phone = effectivePhone;
+            if (custMap[leadCustId]) custMap[leadCustId].phone = effectivePhone;
+            else custMap[leadCustId] = { id: leadCustId, phone: effectivePhone };
           }
           if (custUpd.address) updatedCustomerAddress++;
         }
@@ -2419,10 +2425,25 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         const leadUpd = { updated_at: new Date().toISOString() };
         if (extractedAddress && extractedAddress !== lead.install_address) leadUpd.install_address = extractedAddress;
 
+        // Cập nhật title nếu đang là tên mặc định
+        const defaultNames = ['kh facebook', 'facebook user', 'user', '[fb]'];
+        const currentTitle = (lead.title || '').toLowerCase().trim();
+        if (contact.fb_name && defaultNames.some(d => currentTitle.startsWith(d) || currentTitle === d)) {
+          const newTitle = contact.fb_name;
+          if (newTitle !== lead.title) leadUpd.title = newTitle;
+        }
+
         let desc = lead.description || '';
         if (effectivePhone) {
-          if (/SĐT:/.test(desc)) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${effectivePhone}`);
-          else desc = `${desc.trimEnd()}\nSĐT: ${effectivePhone}`.trim();
+          if (/SĐT:/.test(desc)) {
+            const oldMatch = desc.match(/SĐT:\s*(\S*)/);
+            // Chỉ update nếu SĐT trống hoặc khác
+            if (!oldMatch?.[1] || oldMatch[1] !== effectivePhone) {
+              desc = desc.replace(/SĐT:.*$/m, `SĐT: ${effectivePhone}`);
+            }
+          } else {
+            desc = `${desc.trimEnd()}\nSĐT: ${effectivePhone}`.trim();
+          }
         }
         if (extractedAddress) {
           if (/Địa chỉ:/.test(desc)) desc = desc.replace(/Địa chỉ:.*$/m, `Địa chỉ: ${extractedAddress}`);
@@ -2493,30 +2514,31 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
     for (const lead of allLeads) {
       const cPhone = fullCustMap[lead.customer_id]?.phone;
-      if (!cPhone || !String(cPhone).trim()) {
-        leadsStillMissing++;
-        continue;
-      }
+      const leadUpd = {};
 
-      // Kiểm tra lead description đã có SĐT chưa
-      let desc = lead.description || '';
-      const hasPhoneInDesc = /SĐT:\s*\S/.test(desc);
-      // Nếu đã có SĐT và trùng → bỏ qua
-      if (hasPhoneInDesc) {
-        const match = desc.match(/SĐT:\s*(\S+)/);
-        if (match && match[1] === cPhone) continue; // đã đúng
-      }
-
-      // Cập nhật SĐT vào description
-      if (hasPhoneInDesc) {
-        desc = desc.replace(/SĐT:.*$/m, `SĐT: ${cPhone}`);
+      // SĐT vào description
+      if (cPhone && String(cPhone).trim()) {
+        let desc = lead.description || '';
+        const hasPhoneInDesc = /SĐT:\s*\S/.test(desc);
+        if (hasPhoneInDesc) {
+          const match = desc.match(/SĐT:\s*(\S+)/);
+          if (!match || match[1] !== cPhone) {
+            desc = desc.replace(/SĐT:.*$/m, `SĐT: ${cPhone}`);
+            leadUpd.description = desc;
+          }
+        } else {
+          desc = `${desc.trimEnd()}\nSĐT: ${cPhone}`.trim();
+          leadUpd.description = desc;
+        }
       } else {
-        desc = `${desc.trimEnd()}\nSĐT: ${cPhone}`.trim();
+        leadsStillMissing++;
       }
 
-      const upd = { description: desc, updated_at: new Date().toISOString() };
-      await supabase.from('crm_leads').update(upd).eq('id', lead.id);
-      leadsUpdated.push({ id: lead.id, code: lead.code, title: lead.title, phone: cPhone });
+      if (Object.keys(leadUpd).length) {
+        leadUpd.updated_at = new Date().toISOString();
+        await supabase.from('crm_leads').update(leadUpd).eq('id', lead.id);
+        leadsUpdated.push({ id: lead.id, code: lead.code, title: lead.title, phone: cPhone });
+      }
     }
 
     // Đếm leads vẫn thiếu phone hoàn toàn (customer cũng không có)
