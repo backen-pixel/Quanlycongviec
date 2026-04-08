@@ -188,10 +188,15 @@ export default function BatchActionsBar({ onComplete }) {
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span className="font-medium">{auto.stepLabel || 'Đang xử lý...'}</span>
-                <span className="font-mono">Bước {auto.step + 1}/{auto.totalSteps}</span>
+                {auto.syncTotal > 0 && (
+                  <span className="font-mono text-teal-600">
+                    ĐB: {auto.syncOffset}/{auto.syncTotal} ({Math.round(auto.syncOffset/auto.syncTotal*100)}%)
+                  </span>
+                )}
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-300 bg-amber-500" style={{ width: `${((auto.step + 1) / auto.totalSteps) * 100}%` }} />
+                <div className="h-full rounded-full transition-all duration-300 bg-amber-500"
+                  style={{ width: auto.syncTotal > 0 ? `${Math.round(auto.syncOffset/auto.syncTotal*100)}%` : '50%' }} />
               </div>
             </div>
           )}
