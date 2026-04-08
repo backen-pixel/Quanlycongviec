@@ -199,8 +199,8 @@ export default function CRMDashboard() {
       const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes] = await Promise.all([
         api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/leads', { params: { type: 'lead', ...dateParams } }).catch(() => ({ data: [] })),
-        api.get('/crm/leads', { params: { type: 'deal', ...dateParams } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: { type: 'lead', limit: 500, ...dateParams } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: { type: 'deal', limit: 500, ...dateParams } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
@@ -292,6 +292,10 @@ export default function CRMDashboard() {
   }, [filterSource, pipelineType]);
 
   // ── Client-side search + filter (instant, no API) ──
+  const hasPhoneNumber = useCallback((item) => {
+    return !!((item.customer?.phone && item.customer.phone.trim()) || (item.phone && item.phone.trim()));
+  }, []);
+
   const filterItems = useCallback((items) => {
     let result = items;
     
@@ -321,9 +325,9 @@ export default function CRMDashboard() {
 
     // Phone filter
     if (filterPhone === 'has_phone') {
-      result = result.filter(l => l.customer?.phone && l.customer.phone.trim() !== '');
+      result = result.filter(l => hasPhoneNumber(l));
     } else if (filterPhone === 'no_phone') {
-      result = result.filter(l => !l.customer?.phone || l.customer.phone.trim() === '');
+      result = result.filter(l => !hasPhoneNumber(l));
     }
 
     // Text search — tìm trong tên, mã, SĐT, mô tả, tên KH, email
@@ -337,6 +341,7 @@ export default function CRMDashboard() {
           l.install_address,
           l.customer?.full_name,
           l.customer?.phone,
+          l.phone,
           l.customer?.email,
           l.customer?.address,
           l.customer?.company,
@@ -348,8 +353,10 @@ export default function CRMDashboard() {
       });
     }
     
+    // Ưu tiên đẩy lead/deal có số điện thoại lên đầu danh sách trước khi render Kanban
+    result = [...result].sort((a, b) => Number(hasPhoneNumber(b)) - Number(hasPhoneNumber(a)));
     return result;
-  }, [searchText, filterCompany, filterAssignee, filterSource, filterStage, filterPhone, fbPageLeadIds]);
+  }, [searchText, filterCompany, filterAssignee, filterSource, filterStage, filterPhone, fbPageLeadIds, hasPhoneNumber]);
 
   const leads = useMemo(() => filterItems(allLeads), [allLeads, filterItems]);
   const deals = useMemo(() => filterItems(allDeals), [allDeals, filterItems]);
