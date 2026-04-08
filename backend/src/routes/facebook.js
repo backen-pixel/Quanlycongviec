@@ -2418,11 +2418,11 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
     const ONE_DAY = 24 * ONE_HOUR;
     const ONE_WEEK = 7 * ONE_DAY;
 
-    let contacts;
+    let candidates;
     if (mode === 'all') {
-      contacts = allContacts;
+      candidates = allContacts;
     } else {
-      contacts = allContacts.filter(c => {
+      candidates = allContacts.filter(c => {
         const lastSync = c.last_synced_at ? new Date(c.last_synced_at).getTime() : 0;
         const lastMsg = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
         const createdAt = c.created_at ? new Date(c.created_at).getTime() : 0;
