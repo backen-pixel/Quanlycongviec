@@ -771,9 +771,9 @@ function ContactsTab() {
 
   return (
     <div className="p-6 overflow-y-auto h-full">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length})</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <button onClick={batchCreateLeads} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
             {batchStatus?.type === 'leads' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" /> : '🆕'}
