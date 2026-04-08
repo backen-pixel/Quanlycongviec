@@ -67,7 +67,9 @@ export default function BatchActionsBar({ onComplete }) {
     setExpanded(true);
 
     try {
-      const { data } = await api.post(`/${action.apiPath}`);
+      // Thủ công: luôn chạy mode 'all' (đồng bộ tất cả, không smart filter)
+      const body = action.key === 'sync_messages' ? { mode: 'all' } : {};
+      const { data } = await api.post(`/${action.apiPath}`, body);
       if (action.key === 'dedup' || !data.total) {
         setManualResult(data);
         setManualRunning(null);
