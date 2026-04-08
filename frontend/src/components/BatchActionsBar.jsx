@@ -147,8 +147,8 @@ export default function BatchActionsBar({ onComplete }) {
       }]);
       setRunning(null);
       setResult(null);
-      // Tiếp tục bước sau (delay 1s)
-      setTimeout(() => runPipelineStep(index + 1), 1000);
+      // Tiếp tục bước sau (delay 300ms)
+      setTimeout(() => runPipelineStep(index + 1), 300);
     } catch (e) {
       setLogs(prev => [...prev.slice(-49), {
         text: `❌ ${action.icon} ${action.label}: ${e.response?.data?.error || e.message}`,
@@ -156,7 +156,7 @@ export default function BatchActionsBar({ onComplete }) {
       }]);
       setRunning(null);
       // Vẫn tiếp tục pipeline dù lỗi
-      setTimeout(() => runPipelineStep(index + 1), 1000);
+      setTimeout(() => runPipelineStep(index + 1), 300);
     }
   }, [onComplete]);
 
