@@ -1262,17 +1262,19 @@ r.get('/contacts', authMiddleware, async (req, res) => {
 
     const { data } = await q.limit(maxLimit);
     
-    // Thêm message_count cho mỗi contact (batch query)
+    // Thêm message_count + display_phone cho mỗi contact
     if (data?.length) {
       const contactIds = data.map(c => c.id);
       const { data: counts } = await supabase.from('facebook_messages')
         .select('contact_id')
         .in('contact_id', contactIds)
         .eq('direction', 'inbound');
-      // Count per contact
       const countMap = {};
       (counts || []).forEach(m => { countMap[m.contact_id] = (countMap[m.contact_id] || 0) + 1; });
-      data.forEach(c => { c.message_count = countMap[c.id] || 0; });
+      data.forEach(c => {
+        c.message_count = countMap[c.id] || 0;
+        c.display_phone = c.phone || c.customer?.phone || null;
+      });
     }
 
     res.json(data || []);
@@ -1293,7 +1295,8 @@ r.get('/contacts/:id', authMiddleware, async (req, res) => {
       contact.lead_id = null;
       contact.lead = null;
     }
-    
+    contact.display_phone = contact.phone || contact.customer?.phone || null;
+
     res.json(contact);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

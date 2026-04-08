@@ -341,12 +341,13 @@ function InboxTab({ pageStats }) {
   const formatTime = (d) => new Date(d).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
 
   const filteredContacts = contacts.filter(c => {
-    if (contactFilter === 'has_phone') return !!c.phone;
-    if (contactFilter === 'no_phone') return !c.phone;
+    const phone = c.display_phone || c.phone || c.customer?.phone;
+    if (contactFilter === 'has_phone') return !!phone;
+    if (contactFilter === 'no_phone') return !phone;
     if (contactFilter === 'has_lead') return !!c.lead;
     if (contactFilter === 'no_lead') return !c.lead;
-    if (contactFilter === 'lead_has_phone') return !!c.lead && !!c.phone;
-    if (contactFilter === 'lead_no_phone') return !!c.lead && !c.phone;
+    if (contactFilter === 'lead_has_phone') return !!c.lead && !!phone;
+    if (contactFilter === 'lead_no_phone') return !!c.lead && !phone;
     return true;
   });
 
@@ -386,12 +387,12 @@ function InboxTab({ pageStats }) {
           <div className="flex gap-1 flex-wrap text-[11px]">
             {[
               { key: 'all',           label: 'Tất cả',              count: contacts.length },
-              { key: 'has_phone',     label: '📞 Có SĐT',           count: contacts.filter(c => c.phone).length },
-              { key: 'no_phone',      label: '❌ Chưa có SĐT',       count: contacts.filter(c => !c.phone).length },
+              { key: 'has_phone',     label: '📞 Có SĐT',           count: contacts.filter(c => c.display_phone || c.phone || c.customer?.phone).length },
+              { key: 'no_phone',      label: '❌ Chưa có SĐT',       count: contacts.filter(c => !(c.display_phone || c.phone || c.customer?.phone)).length },
               { key: 'has_lead',      label: '🏷 Có Lead',           count: contacts.filter(c => c.lead).length },
               { key: 'no_lead',       label: '🔔 Chưa có Lead',     count: contacts.filter(c => !c.lead).length },
-              { key: 'lead_has_phone',label: '✅ Lead + SĐT',        count: contacts.filter(c => c.lead && c.phone).length },
-              { key: 'lead_no_phone', label: '⚠️ Lead chưa có SĐT', count: contacts.filter(c => c.lead && !c.phone).length },
+              { key: 'lead_has_phone',label: '✅ Lead + SĐT',        count: contacts.filter(c => c.lead && (c.display_phone || c.phone || c.customer?.phone)).length },
+              { key: 'lead_no_phone', label: '⚠️ Lead chưa có SĐT', count: contacts.filter(c => c.lead && !(c.display_phone || c.phone || c.customer?.phone)).length },
             ].map(f => (
               <button key={f.key} onClick={() => setContactFilter(f.key)}
                 className={`px-2 py-1 rounded-lg cursor-pointer transition whitespace-nowrap ${
@@ -427,9 +428,9 @@ function InboxTab({ pageStats }) {
                   <p className={`text-xs truncate mt-0.5 ${c.unread_count > 0 ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>{c.last_message_preview}</p>
                 ) : (
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  {c.phone && <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded-md">📞 {c.phone}</span>}
+                  {(c.display_phone || c.phone || c.customer?.phone) && <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded-md">📞 {c.display_phone || c.phone || c.customer?.phone}</span>}
                   {c.lead && <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-md">🏷 {c.lead.code}</span>}
-                  {!c.phone && !c.lead && <span className="text-xs text-gray-400">💬 Messenger</span>}
+                  {!(c.display_phone || c.phone || c.customer?.phone) && !c.lead && <span className="text-xs text-gray-400">💬 Messenger</span>}
                 </div>
                 )}
               </div>
@@ -471,8 +472,8 @@ function InboxTab({ pageStats }) {
                 <div>
                   <p className="font-semibold text-sm text-gray-800">{selected.fb_name}</p>
                   <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                    {selected.phone && <span className="text-green-600">📞 {selected.phone}</span>}
-                    {!selected.phone && <span>Facebook Messenger</span>}
+                    {(selected.display_phone || selected.phone || selected.customer?.phone) && <span className="text-green-600">📞 {selected.display_phone || selected.phone || selected.customer?.phone}</span>}
+                    {!(selected.display_phone || selected.phone || selected.customer?.phone) && <span>Facebook Messenger</span>}
                   </div>
                 </div>
               </div>
@@ -961,7 +962,7 @@ function ContactsTab() {
                     <td className="px-3 py-3 text-xs text-gray-500">
                       {c.last_message_at ? new Date(c.last_message_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{c.phone || <span className="text-gray-300">—</span>}</td>
+                    <td className="px-4 py-3 text-gray-600">{c.display_phone || c.phone || c.customer?.phone || <span className="text-gray-300">—</span>}</td>
                     <td className="px-4 py-3">
                       {c.lead ? (
                         <a href={`/crm/leads/${c.lead.id}`} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100">{c.lead.code}</a>
