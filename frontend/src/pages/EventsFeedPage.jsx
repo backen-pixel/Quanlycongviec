@@ -308,8 +308,19 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">Ngày giờ:</span>
             <span className="text-sm text-gray-700">
-              {isToday(ev.start_time) ? 'Hôm nay' : formatDateVN(ev.start_time)}, {formatTime(ev.start_time)}
-              {ev.end_time && ` — ${formatTime(ev.end_time)}`}
+              {(() => {
+                const startLabel = isToday(ev.start_time) ? 'Hôm nay' : formatDateVN(ev.start_time);
+                const startTime = formatTime(ev.start_time);
+                if (!ev.end_time) return `${startLabel}, ${startTime}`;
+                const sameDay = isSameDay(ev.start_time, ev.end_time);
+                const endTime = formatTime(ev.end_time);
+                if (sameDay) {
+                  return `${startLabel}, ${startTime} — ${endTime}`;
+                }
+                // Khác ngày: hiển thị đầy đủ
+                const endLabel = isToday(ev.end_time) ? 'Hôm nay' : formatDateVN(ev.end_time);
+                return `${startLabel}, ${startTime} → ${endLabel}, ${endTime}`;
+              })()}
             </span>
           </div>
           {ev.location && (
