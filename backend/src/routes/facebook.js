@@ -2016,15 +2016,15 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
           // Move related data → keep
           await supabase.from('facebook_contacts').update({ lead_id: keep.id }).eq('lead_id', dupe.id);
           await supabase.from('facebook_messages').update({ lead_id: keep.id }).eq('lead_id', dupe.id);
-          await supabase.from('crm_pipeline_history').update({ lead_id: keep.id }).eq('lead_id', dupe.id).catch(() => {});
-          await supabase.from('crm_tasks').update({ lead_id: keep.id }).eq('lead_id', dupe.id).catch(() => {});
-          await supabase.from('crm_activities').update({ lead_id: keep.id }).eq('lead_id', dupe.id).catch(() => {});
-          await supabase.from('lead_documents').update({ lead_id: keep.id }).eq('lead_id', dupe.id).catch(() => {});
-          await supabase.from('quotations').update({ lead_id: keep.id }).eq('lead_id', dupe.id).catch(() => {});
-          await supabase.from('orders').update({ lead_id: keep.id }).eq('lead_id', dupe.id).catch(() => {});
-          await supabase.from('invoices').update({ lead_id: keep.id }).eq('lead_id', dupe.id).catch(() => {});
-          await supabase.from('lead_members').delete().eq('lead_id', dupe.id).catch(() => {});
-          await supabase.from('lead_messages').delete().eq('lead_id', dupe.id).catch(() => {});
+          try { await supabase.from('crm_pipeline_history').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
+          try { await supabase.from('crm_tasks').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
+          try { await supabase.from('crm_activities').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
+          try { await supabase.from('lead_documents').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
+          try { await supabase.from('quotations').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
+          try { await supabase.from('orders').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
+          try { await supabase.from('invoices').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
+          try { await supabase.from('lead_members').delete().eq('lead_id', dupe.id); } catch (_) {}
+          try { await supabase.from('lead_messages').delete().eq('lead_id', dupe.id); } catch (_) {}
 
           // Xóa duplicate lead
           await supabase.from('crm_leads').delete().eq('id', dupe.id);
@@ -2033,7 +2033,7 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
           if (dupe.customer_id && dupe.customer_id !== keep.customer_id) {
             const { count } = await supabase.from('crm_leads').select('id', { count: 'exact', head: true }).eq('customer_id', dupe.customer_id);
             if (count === 0) {
-              await supabase.from('customers').delete().eq('id', dupe.customer_id).catch(() => {});
+              try { await supabase.from('customers').delete().eq('id', dupe.customer_id); } catch (_) {}
             }
           }
 
