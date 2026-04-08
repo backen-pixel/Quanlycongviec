@@ -1001,9 +1001,11 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
       </div>
       
       {/* Cards Container — show 6 leads then scroll */}
-      <div className={`bg-gray-50 border border-gray-200 border-t-0 p-3 max-h-[780px] overflow-y-auto space-y-3 transition-all ${
+      <div className={`bg-gray-50 border border-gray-200 border-t-0 p-3 overflow-y-auto space-y-3 transition-all ${
         isOverColumn ? 'bg-blue-50' : ''
-      }`}>
+      }`}
+        style={{ maxHeight: 'calc(100vh - 320px)', minHeight: '400px' }}
+      >
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
             <p className="text-sm flex items-center gap-1">
