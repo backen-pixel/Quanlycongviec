@@ -1,25 +1,23 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 
-const SYNC_TIMEOUT_SEC = 60;   // Đồng bộ 1 phút rồi chuyển bước
-const WAIT_BETWEEN_MS = 5 * 60 * 1000; // 5 phút sau khi hết tất cả
+const BATCH_SIZE = 300;
+const SYNC_TIMEOUT_SEC = 90;
+const LOOP_PAUSE_MS = 1500; // nghỉ rất ngắn giữa các vòng để tránh spam API
 
-// ── Global singleton state ──
 if (!window.__batchAuto) {
   window.__batchAuto = {
     enabled: localStorage.getItem('batch_auto') !== 'off',
-    lastCycleEnd: Date.now(),
     running: false,
+    phase: 'idle',
     step: -1,
-    totalSteps: 5,
+    totalSteps: 2,
     stepLabel: null,
     cycleCount: 0,
-    syncOffset: 0,
-    syncTotal: 0,
-    syncDone: false,
-    lastSyncProcessed: 0,
-    lastSyncNewMessages: 0,
-    countdown: 0,
+    batchIndex: 0,
+    totalBatches: 0,
+    totalContacts: 0,
+    batchOffset: 0,
     logs: [],
     _subs: new Set(),
   };
@@ -27,151 +25,117 @@ if (!window.__batchAuto) {
 
 const G = window.__batchAuto;
 
-function _notify() { G._subs.forEach(fn => fn()); }
+function _notify() {
+  G._subs.forEach(fn => fn());
+}
 
 function _log(text, status = 'info') {
-  G.logs = [...G.logs.slice(-99), { text, status, ts: Date.now() }];
+  G.logs = [...G.logs.slice(-199), { text, status, ts: Date.now() }];
   _notify();
 }
 
-// ── Pipeline xen kẽ: sync(1min) → 4 bước → sync(1min) → ... → hết → 5min nghỉ ──
-async function _runInterleavedPipeline() {
+async function _runPipeline() {
   if (G.running) return;
   G.running = true;
-  G.syncOffset = 0;
-  G.syncDone = false;
+  G.phase = 'loop';
   G.logs = [];
-  _log('🚀 Bắt đầu pipeline xen kẽ...');
+  _log('🚀 Bắt đầu auto-run liên tục: 300 user → sync → quét SĐT → lặp lại');
   _notify();
 
-  let cycleCount = 0;
-
-  while (!G.syncDone) {
-    cycleCount++;
-    G.cycleCount = cycleCount;
-    _log(`🔄 Chu kỳ ${cycleCount}: Đồng bộ tin nhắn từ offset ${G.syncOffset}...`);
-
-    // ── Bước 1: Đồng bộ tin nhắn (tối đa 1 phút) ──
-    G.step = 0;
-    G.stepLabel = `📨 Đồng bộ tin nhắn (${G.syncOffset}+)`;
+  while (G.enabled) {
+    G.cycleCount += 1;
+    G.batchOffset = 0;
+    G.batchIndex = 0;
+    G.totalBatches = 0;
+    G.totalContacts = 0;
+    _log(`🔄 Chu kỳ ${G.cycleCount} bắt đầu`);
     _notify();
-    try {
-      const { data } = await api.post('/facebook/batch-sync-messages', {
-        mode: 'smart',
-        offset: G.syncOffset,
-        timeout: SYNC_TIMEOUT_SEC,
-      });
-      const prevOffset = G.syncOffset;
-      G.syncTotal = data.total || G.syncTotal;
-      G.syncDone = data.done === true || !data.nextOffset;
-      G.lastSyncProcessed = data.processedCount || 0;
-      G.lastSyncNewMessages = data.totalSynced || 0;
-      G.syncOffset = data.done ? 0 : (data.nextOffset || 0);
-      const msg = G.syncDone
-        ? `✅ Sync xong vòng cuối: +${data.totalSynced || 0} tin nhắn | xử lý ${data.processedCount || 0} contacts | hoàn tất ${G.syncTotal}/${G.syncTotal}`
-        : `✅ Sync chu kỳ ${cycleCount}: +${data.totalSynced || 0} tin nhắn | xử lý ${data.processedCount || 0} contacts | offset ${prevOffset} → ${G.syncOffset}/${G.syncTotal}`;
-      _log(msg, 'ok');
-    } catch (e) {
-      _log(`❌ Đồng bộ lỗi: ${e.response?.data?.error || e.message}`, 'error');
-      G.syncDone = true; // tránh loop vô tận khi lỗi
-    }
-    await new Promise(r => setTimeout(r, 300));
 
-    // ── Bước 2: Tạo Lead hàng loạt ──
-    G.step = 1;
-    G.stepLabel = '🆕 Tạo Lead hàng loạt';
+    let done = false;
+    while (!done && G.enabled) {
+      G.batchIndex += 1;
+
+      // Bước 1: Sync 300 contacts
+      G.step = 0;
+      G.stepLabel = `📨 Đồng bộ tin nhắn • Batch ${G.batchIndex}`;
+      _notify();
+
+      let syncData = null;
+      try {
+        const { data } = await api.post('/facebook/batch-sync-messages', {
+          mode: 'all',
+          offset: G.batchOffset,
+          limit: BATCH_SIZE,
+          timeout: SYNC_TIMEOUT_SEC,
+        });
+        syncData = data;
+        G.totalContacts = data.total || G.totalContacts;
+        G.totalBatches = G.totalContacts > 0 ? Math.ceil(G.totalContacts / BATCH_SIZE) : 0;
+        _log(`✅ Batch ${G.batchIndex}: sync ${data.processedCount || 0} contacts, +${data.totalSynced || 0} tin nhắn`, 'ok');
+      } catch (e) {
+        _log(`❌ Batch ${G.batchIndex}: lỗi sync — ${e.response?.data?.error || e.message}`, 'error');
+        break;
+      }
+
+      // Bước 2: Quét SĐT đúng batch vừa sync
+      G.step = 1;
+      G.stepLabel = `📞 Quét SĐT & thông tin • Batch ${G.batchIndex}`;
+      _notify();
+      try {
+        const { data } = await api.post('/facebook/batch-extract-phones', {
+          offset: G.batchOffset,
+          limit: BATCH_SIZE,
+        });
+        _log(
+          `✅ Batch ${G.batchIndex}: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, lead=${data.leadsUpdatedPhone || 0}`,
+          'ok'
+        );
+      } catch (e) {
+        _log(`❌ Batch ${G.batchIndex}: lỗi quét SĐT — ${e.response?.data?.error || e.message}`, 'error');
+      }
+
+      done = syncData?.done === true || !syncData?.nextOffset;
+      if (done) {
+        _log(`🏁 Chu kỳ ${G.cycleCount} hoàn tất: đã chạy hết ${G.totalContacts || 0} contacts`, 'ok');
+        G.batchOffset = 0;
+        G.batchIndex = G.totalBatches || G.batchIndex;
+      } else {
+        G.batchOffset = syncData.nextOffset || (G.batchOffset + BATCH_SIZE);
+        _log(`⏭️ Chuyển sang batch tiếp theo: offset ${G.batchOffset}`, 'info');
+      }
+
+      _notify();
+    }
+
+    if (!G.enabled) break;
+    _log(`♻️ Quay lại từ đầu sau chu kỳ ${G.cycleCount}...`, 'info');
     _notify();
-    try {
-      const { data } = await api.post('/facebook/batch-create-leads');
-      _log(`✅ Tạo Lead sau sync: +${data.created || 0} mới, bỏ qua ${data.skipped || 0}`, 'ok');
-    } catch (e) {
-      _log(`❌ Tạo Lead: ${e.response?.data?.error || e.message}`, 'error');
-    }
-    await new Promise(r => setTimeout(r, 300));
-
-    // ── Bước 3: Refresh tên ──
-    G.step = 2;
-    G.stepLabel = '🔄 Refresh tên';
-    _notify();
-    try {
-      const { data } = await api.post('/facebook/refresh-names');
-      _log(`✅ Refresh tên sau sync: cập nhật ${data.updated || 0}`, 'ok');
-    } catch (e) {
-      _log(`❌ Refresh tên: ${e.response?.data?.error || e.message}`, 'error');
-    }
-    await new Promise(r => setTimeout(r, 300));
-
-    // ── Bước 4: Gộp Lead trùng ──
-    G.step = 3;
-    G.stepLabel = '🔍 Gộp Lead trùng';
-    _notify();
-    try {
-      const { data } = await api.post('/facebook/dedup-leads');
-      _log(`✅ Gộp trùng sau sync: ${data.merged || 0} lead`, 'ok');
-    } catch (e) {
-      _log(`❌ Gộp trùng: ${e.response?.data?.error || e.message}`, 'error');
-    }
-    await new Promise(r => setTimeout(r, 300));
-
-    // ── Bước 5: Quét SĐT ──
-    G.step = 4;
-    G.stepLabel = '📞 Quét SĐT & thông tin';
-    _notify();
-    try {
-      const { data } = await api.post('/facebook/batch-extract-phones');
-      _log(`✅ Quét SĐT sau sync: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, địa chỉ KH=${data.updatedCustomerAddress || 0}, lead=${data.updatedLeadDescription || 0}`, 'ok');
-    } catch (e) {
-      _log(`❌ Quét SĐT: ${e.response?.data?.error || e.message}`, 'error');
-    }
-    await new Promise(r => setTimeout(r, 300));
-
-    // Nếu sync chưa xong → tiếp tục chu kỳ tiếp
-    if (!G.syncDone) {
-      _log(`⏩ Tiếp tục chu kỳ ${cycleCount + 1} (còn ${G.syncTotal - G.syncOffset} contacts)...`);
-    }
+    await new Promise(resolve => setTimeout(resolve, LOOP_PAUSE_MS));
   }
 
-  // Hết tất cả
   G.running = false;
+  G.phase = 'idle';
   G.step = -1;
   G.stepLabel = null;
-  G.cycleCount = cycleCount;
-  G.lastCycleEnd = Date.now();
-  _log(`🏁 Hoàn tất toàn bộ! Nghỉ ${WAIT_BETWEEN_MS / 60000} phút...`, 'ok');
+  _log('⏹️ Auto-run đã dừng');
   _notify();
 }
 
-// ── Global countdown timer ──
-if (!window.__batchAutoTimer) {
-  window.__batchAutoTimer = setInterval(() => {
-    if (!G.enabled) return;
-    if (G.running) { _notify(); return; }
-    const elapsed = Date.now() - G.lastCycleEnd;
-    G.countdown = Math.max(0, Math.ceil((WAIT_BETWEEN_MS - elapsed) / 1000));
-    if (elapsed >= WAIT_BETWEEN_MS) {
-      _runInterleavedPipeline();
-    }
-    _notify();
-  }, 1000);
+export function triggerPipelineNow() {
+  _runPipeline();
 }
-
-// ── Public API ──
-export function triggerPipelineNow() { _runInterleavedPipeline(); }
 
 export function toggleBatchAuto() {
   G.enabled = !G.enabled;
   localStorage.setItem('batch_auto', G.enabled ? 'on' : 'off');
-  if (G.enabled) G.lastCycleEnd = Date.now();
+  if (G.enabled) _runPipeline();
   _notify();
 }
 
-export function formatCountdown(s) {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${String(sec).padStart(2, '0')}`;
+export function formatCountdown() {
+  return '∞';
 }
 
-/** React hook — subscribes to global state changes */
 export function useBatchAuto() {
   const [, setTick] = useState(0);
 
@@ -184,16 +148,16 @@ export function useBatchAuto() {
   return {
     enabled: G.enabled,
     running: G.running,
+    phase: G.phase,
     step: G.step,
     totalSteps: G.totalSteps,
     stepLabel: G.stepLabel,
     cycleCount: G.cycleCount,
-    syncOffset: G.syncOffset,
-    syncTotal: G.syncTotal,
-    syncDone: G.syncDone,
-    lastSyncProcessed: G.lastSyncProcessed,
-    lastSyncNewMessages: G.lastSyncNewMessages,
-    countdown: G.countdown,
+    batchIndex: G.batchIndex,
+    totalBatches: G.totalBatches,
+    totalContacts: G.totalContacts,
+    batchOffset: G.batchOffset,
+    countdown: 0,
     logs: G.logs,
   };
 }

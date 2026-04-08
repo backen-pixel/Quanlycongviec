@@ -9,6 +9,7 @@ const ACTIONS = [
   { key: 'create_leads', label: 'Tạo Lead hàng loạt', icon: '🆕', color: 'green', apiPath: 'facebook/batch-create-leads' },
   { key: 'refresh_names', label: 'Refresh tên', icon: '🔄', color: 'purple', apiPath: 'facebook/refresh-names' },
   { key: 'dedup', label: 'Gộp Lead trùng', icon: '🔍', color: 'orange', apiPath: 'facebook/dedup-leads' },
+  { key: 'sync_contact_phones', label: 'Sync SĐT danh bạ → Lead', icon: '🔗', color: 'sky', apiPath: 'facebook/sync-contact-phones' },
   { key: 'extract_phones', label: 'Quét SĐT & thông tin', icon: '📞', color: 'blue', apiPath: 'facebook/batch-extract-phones' },
 ];
 
@@ -17,6 +18,7 @@ const COLOR_MAP = {
   green:  { bg: 'bg-green-50',  text: 'text-green-700',  border: 'border-green-200',  hover: 'hover:bg-green-100',  progressBg: 'bg-green-500' },
   purple: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', hover: 'hover:bg-purple-100', progressBg: 'bg-purple-500' },
   orange: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', hover: 'hover:bg-orange-100', progressBg: 'bg-orange-500' },
+  sky:    { bg: 'bg-sky-50',    text: 'text-sky-700',    border: 'border-sky-200',    hover: 'hover:bg-sky-100',    progressBg: 'bg-sky-500' },
   blue:   { bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-200',   hover: 'hover:bg-blue-100',   progressBg: 'bg-blue-500' },
 };
 
@@ -109,7 +111,12 @@ export default function BatchActionsBar({ onComplete }) {
           {auto.running && (
             <span className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full animate-pulse">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Chu kỳ {auto.cycleCount || 1} • Bước {auto.step + 1}/{auto.totalSteps}
+              {auto.phase === 'finalize'
+                ? `Chu kỳ ${auto.cycleCount} • Finalize`
+                : auto.totalBatches > 0
+                  ? `Chu kỳ ${auto.cycleCount} • Batch ${auto.batchIndex}/${auto.totalBatches}`
+                  : `Chu kỳ ${auto.cycleCount} • Đểm contacts...`
+              }
             </span>
           )}
           {manualRunning && !auto.running && (
@@ -122,10 +129,7 @@ export default function BatchActionsBar({ onComplete }) {
         </button>
 
         <div className="flex items-center gap-3">
-          {/* Countdown (realtime, always visible) */}
-          {auto.enabled && !isAnyRunning && auto.countdown > 0 && (
-            <span className="text-xs text-gray-400 font-mono">⏰ {formatCountdown(auto.countdown)}</span>
-          )}
+          {/* Countdown removed: pipeline runs continuously */}
 
           {/* Run now */}
           <button
@@ -197,22 +201,24 @@ export default function BatchActionsBar({ onComplete }) {
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span className="font-medium">{auto.stepLabel || 'Đang xử lý...'}</span>
-                {auto.syncTotal > 0 && (
+                {auto.totalBatches > 0 && (
                   <span className="font-mono text-teal-600">
-                    Offset: {auto.syncOffset}/{auto.syncTotal} ({Math.round(auto.syncOffset / auto.syncTotal * 100)}%)
+                    Batch {auto.batchIndex}/{auto.totalBatches} ({Math.round(auto.batchIndex / auto.totalBatches * 100)}%)
                   </span>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-500">
                 <div className="bg-gray-50 rounded-lg px-2 py-1">Chu kỳ: <span className="font-semibold text-gray-700">{auto.cycleCount || 1}</span></div>
-                <div className="bg-gray-50 rounded-lg px-2 py-1">Sync mới: <span className="font-semibold text-teal-700">{auto.lastSyncNewMessages || 0}</span></div>
-                <div className="bg-gray-50 rounded-lg px-2 py-1">Contacts vừa xử lý: <span className="font-semibold text-gray-700">{auto.lastSyncProcessed || 0}</span></div>
-                <div className="bg-gray-50 rounded-lg px-2 py-1">Bước hiện tại: <span className="font-semibold text-amber-700">{auto.step + 1}/{auto.totalSteps}</span></div>
+                <div className="bg-gray-50 rounded-lg px-2 py-1">Tổng contacts: <span className="font-semibold text-teal-700">{auto.totalContacts || '...'}</span></div>
+                <div className="bg-gray-50 rounded-lg px-2 py-1">Batch hiện tại: <span className="font-semibold text-gray-700">{auto.batchIndex}/{auto.totalBatches || '?'} × 300</span></div>
+                <div className="bg-gray-50 rounded-lg px-2 py-1">Giai đoạn: <span className="font-semibold text-amber-700">{auto.phase === 'finalize' ? '🏁 Finalize' : auto.phase === 'batch_loop' ? '🔄 Batch loop' : '💤 Idle'}</span></div>
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-300 bg-amber-500"
-                  style={{ width: auto.syncTotal > 0 ? `${Math.round(auto.syncOffset / auto.syncTotal * 100)}%` : '0%' }} />
-              </div>
+              {auto.totalBatches > 0 && (
+                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-300 bg-amber-500"
+                    style={{ width: `${Math.round(auto.batchIndex / auto.totalBatches * 100)}%` }} />
+                </div>
+              )}
             </div>
           )}
 
@@ -243,6 +249,7 @@ export default function BatchActionsBar({ onComplete }) {
                     {manualResult.message ? manualResult.message :
                      manualResult.created != null ? `Đã tạo ${manualResult.created} Lead` :
                      manualResult.merged != null ? `Đã gộp ${manualResult.merged} lead trùng` :
+                     manualResult.alreadyHad != null ? `Sync SĐT: cập nhật ${manualResult.updated}/${manualResult.total} contact` :
                      manualResult.updated != null ? `Hoàn tất quét ${manualResult.total || '?'} contacts` :
                      JSON.stringify(manualResult)}
                   </span>
@@ -253,7 +260,48 @@ export default function BatchActionsBar({ onComplete }) {
                 </button>
               </div>
 
-              {/* Chi tiết quét SĐT */}
+              {/* Chi tiết sync_contact_phones */}
+              {manualResult.alreadyHad != null && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    <div className="bg-white rounded-lg p-2 border">Tổng có SĐT: <strong>{manualResult.total || 0}</strong></div>
+                    <div className="bg-green-100 rounded-lg p-2 border border-green-300">Đã cập nhật: <strong className="text-green-800">{manualResult.updated || 0}</strong></div>
+                    <div className="bg-gray-100 rounded-lg p-2 border">Đã có rồi: <strong>{manualResult.alreadyHad || 0}</strong></div>
+                    <div className="bg-amber-100 rounded-lg p-2 border border-amber-300">Không có lead: <strong className="text-amber-800">{manualResult.noLead || 0}</strong></div>
+                  </div>
+                  {manualResult.details?.length > 0 && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-emerald-700 font-medium hover:underline">📋 {manualResult.details.length} lead được gắn SĐT từ danh bạ</summary>
+                      <div className="mt-2 max-h-48 overflow-y-auto border rounded-lg bg-white">
+                        <table className="w-full">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                              <th className="text-left px-2 py-1.5">Mã</th>
+                              <th className="text-left px-2 py-1.5">Tên Lead / FB</th>
+                              <th className="text-left px-2 py-1.5">SĐT</th>
+                              <th className="text-left px-2 py-1.5">Cập nhật</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {manualResult.details.map((d, idx) => (
+                              <tr key={idx} className="border-t hover:bg-gray-50">
+                                <td className="px-2 py-1.5 text-blue-600 font-mono text-xs">{d.lead_code}</td>
+                                <td className="px-2 py-1.5 truncate max-w-[120px] text-xs">{d.lead_title || d.fb_name}</td>
+                                <td className="px-2 py-1.5 text-green-700 font-mono text-xs">{d.phone}</td>
+                                <td className="px-2 py-1.5 text-gray-400 text-xs">
+                                  {[d.updated_customer && 'KH', d.updated_desc && 'Mô tả'].filter(Boolean).join(', ')}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
+
+              {/* Chi tiết quét SĐT từ tin nhắn */}
               {manualResult.updatedContactPhone != null && (
                 <div className="space-y-2">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
