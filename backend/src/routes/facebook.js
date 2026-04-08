@@ -1876,6 +1876,7 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
 
 r.post('/batch-create-leads', authMiddleware, async (req, res) => {
   try {
+    const io = r._ioRef;
     // Lấy tất cả contacts chưa có lead
     const { data: contacts } = await supabase.from('facebook_contacts')
       .select('*').is('lead_id', null).order('created_at');
@@ -1884,8 +1885,13 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 
     let created = 0, updated = 0, skipped = 0;
     const results = [];
+    const total = contacts.length;
 
-    for (const contact of contacts) {
+    // Emit start
+    if (io) io.emit('batch_progress', { type: 'create_leads', phase: 'start', total, current: 0 });
+
+    for (let i = 0; i < contacts.length; i++) {
+      const contact = contacts[i];
       try {
         // Verify lead chưa có (double check)
         if (contact.lead_id) { skipped++; continue; }
@@ -1895,6 +1901,7 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
         if (!page || !page.is_active) {
           results.push({ contact: contact.fb_name, status: 'skipped', reason: 'Page không active' });
           skipped++;
+          if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'skipped' });
           continue;
         }
 
@@ -1943,26 +1950,25 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
             lead_code: lead.code,
             status: 'created',
           });
+          if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'created', code: lead.code, phone: extractedPhone });
           console.log(`[FB Batch] ✅ Lead ${lead.code} — ${contact.fb_name} (phone: ${extractedPhone || 'N/A'})`);
         } else {
           results.push({ contact: contact.fb_name, status: 'failed', reason: 'createLeadFromFacebook returned null' });
           skipped++;
+          if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'failed' });
         }
       } catch (e) {
         results.push({ contact: contact.fb_name, status: 'error', reason: e.message });
         skipped++;
+        if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'error' });
         console.error(`[FB Batch] ❌ ${contact.fb_name}:`, e.message);
       }
     }
 
+    const summary = { total, created, phone_updated: updated, skipped, results };
+    if (io) io.emit('batch_done', { type: 'create_leads', ...summary });
     console.log(`[FB Batch] Done: created=${created}, updated=${updated}, skipped=${skipped}`);
-    res.json({
-      total: contacts.length,
-      created,
-      phone_updated: updated,
-      skipped,
-      results,
-    });
+    res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1973,6 +1979,7 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 
 r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
   try {
+    const io = r._ioRef;
     // Contacts có lead nhưng thiếu phone (NULL hoặc rỗng)
     const { data: contacts } = await supabase.from('facebook_contacts')
       .select('*').not('lead_id', 'is', null);
@@ -1983,8 +1990,12 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
     let updated = 0;
     const results = [];
+    const total = needPhone.length;
 
-    for (const contact of needPhone) {
+    if (io) io.emit('batch_progress', { type: 'extract_phones', phase: 'start', total, current: 0 });
+
+    for (let i = 0; i < needPhone.length; i++) {
+      const contact = needPhone[i];
       // Quét tất cả tin nhắn inbound
       const { data: messages } = await supabase.from('facebook_messages')
         .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
@@ -2005,6 +2016,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       const hasNewData = extractedPhone || extractedAddress;
       if (!hasNewData) {
         results.push({ contact: contact.fb_name, status: 'no_info_found' });
+        if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'no_info' });
         continue;
       }
 
@@ -2065,10 +2077,13 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         address: extractedAddress,
         status: 'updated',
       });
+      if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'found', phone: extractedPhone, address: extractedAddress });
       console.log(`[FB Extract] ✅ ${contact.fb_name}: phone=${extractedPhone || 'N/A'}, addr=${extractedAddress || 'N/A'}`);
     }
 
-    res.json({ total: needPhone.length, updated, results });
+    const summary = { total, updated, results };
+    if (io) io.emit('batch_done', { type: 'extract_phones', ...summary });
+    res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2263,14 +2278,19 @@ r.get('/lead-scan/preview', authMiddleware, async (req, res) => {
 // ── Refresh tên cho các contact đang bị "Facebook User" ──
 r.post('/refresh-names', authMiddleware, async (req, res) => {
   try {
+    const io = r._ioRef;
     const { data: stuckContacts } = await supabase.from('facebook_contacts')
       .select('id, page_id, psid, fb_name, lead_id')
       .or('fb_name.eq.Facebook User,fb_name.eq.User,fb_name.is.null')
       .limit(100);
     if (!stuckContacts?.length) return res.json({ updated: 0, message: 'Không có contact nào cần cập nhật' });
 
+    const total = stuckContacts.length;
     let updated = 0;
-    for (const c of stuckContacts) {
+    if (io) io.emit('batch_progress', { type: 'refresh_names', phase: 'start', total, current: 0 });
+
+    for (let i = 0; i < stuckContacts.length; i++) {
+      const c = stuckContacts[i];
       const profile = await fetchProfileViaConversations(c.page_id, c.psid);
       if (profile?.name && profile.name !== 'Facebook User') {
         const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
@@ -2290,10 +2310,15 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
           }
         }
         updated++;
+        if (io) io.emit('batch_progress', { type: 'refresh_names', current: i + 1, total, name: profile.name, oldName: c.fb_name, status: 'updated' });
         console.log(`[FB Refresh] ${c.psid}: "${c.fb_name}" → "${profile.name}"`);
+      } else {
+        if (io) io.emit('batch_progress', { type: 'refresh_names', current: i + 1, total, name: c.fb_name, status: 'unchanged' });
       }
     }
-    res.json({ updated, total: stuckContacts.length });
+    const summary = { updated, total };
+    if (io) io.emit('batch_done', { type: 'refresh_names', ...summary });
+    res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

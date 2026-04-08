@@ -11,6 +11,7 @@ import {
   Clock, List, LayoutGrid
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
+import BatchActionsBar from '../components/BatchActionsBar';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -848,6 +849,9 @@ export default function CRMDashboard() {
           </button>
         ))}
       </div>
+
+      {/* Batch Actions Bar */}
+      <BatchActionsBar onComplete={load} />
 
       {/* Kanban View */}
       {viewMode === 'kanban' && (
