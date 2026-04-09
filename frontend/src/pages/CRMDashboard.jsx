@@ -211,8 +211,8 @@ export default function CRMDashboard() {
       ]);
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
-      setAllLeads(leadsRes.data);
-      setAllDeals(dealsRes.data);
+      setAllLeads(Array.isArray(leadsRes.data) ? leadsRes.data : (leadsRes.data?.data || []));
+      setAllDeals(Array.isArray(dealsRes.data) ? dealsRes.data : (dealsRes.data?.data || []));
       setStagesLead(stagesLeadRes.data);
       setStagesDeal(stagesDealRes.data);
       setSources(sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []));
