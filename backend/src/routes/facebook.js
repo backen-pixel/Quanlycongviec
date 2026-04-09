@@ -575,6 +575,34 @@ function extractInboundContactInfo(messages = []) {
   return { phone, address, extraPhones };
 }
 
+async function resolveFacebookSourceId(page) {
+  if (!page?.page_id) return null;
+  if (page.default_source_id) return page.default_source_id;
+
+  const canonicalName = `[FB:${page.page_id}] ${(page.page_name || page.page_id).trim()}`;
+  let { data: exact } = await supabase.from('crm_sources').select('id, name').eq('name', canonicalName).single();
+  if (exact?.id) return exact.id;
+
+  const legacyNames = [
+    `[FB] ${(page.page_name || '').trim()}`,
+    'Facebook',
+  ].filter(Boolean);
+
+  for (const name of legacyNames) {
+    const { data: legacy } = await supabase.from('crm_sources').select('id, name').eq('name', name).single();
+    if (legacy?.id) {
+      await supabase.from('crm_sources').update({ name: canonicalName, is_active: true }).eq('id', legacy.id);
+      return legacy.id;
+    }
+  }
+
+  const { data: created } = await supabase.from('crm_sources')
+    .insert({ name: canonicalName, is_active: true })
+    .select('id')
+    .single();
+  return created?.id || null;
+}
+
 // ── In-memory lock để chống race condition tạo lead trùng ──
 const _createLeadLocks = new Map();
 
@@ -705,28 +733,7 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     }
   }
 
-  // Tìm/tạo source riêng cho page Facebook: "[FB] Page Name"
-  // Nếu page có default_source_id dùng luôn, còn không thì tìm/tạo "[FB] <page_name>"
-  let resolvedSourceId = page.default_source_id || null;
-  if (!resolvedSourceId && page.page_name) {
-    const fbPageSourceName = `[FB] ${page.page_name}`;
-    let { data: fbPageSource } = await supabase.from('crm_sources')
-      .select('id').eq('name', fbPageSourceName).single();
-    if (!fbPageSource) {
-      // Tạo source mới cho page này
-      const { data: created } = await supabase.from('crm_sources')
-        .insert({ name: fbPageSourceName, is_active: true }).select('id').single();
-      fbPageSource = created;
-      console.log(`[FB] ✅ Created CRM source: "${fbPageSourceName}"`);
-    }
-    resolvedSourceId = fbPageSource?.id || null;
-  }
-  // Fallback: source generic "Facebook"
-  if (!resolvedSourceId) {
-    const { data: fbSource } = await supabase.from('crm_sources')
-      .select('id').ilike('name', 'Facebook').single();
-    resolvedSourceId = fbSource?.id || null;
-  }
+  const resolvedSourceId = await resolveFacebookSourceId(page);
 
   // Tạo lead code
   const { count } = await supabase.from('crm_leads')
@@ -1693,9 +1700,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       }
     }
 
-    // Source Facebook
-    const { data: fbSource } = await supabase.from('crm_sources')
-      .select('id').eq('name', 'Facebook').single();
+    const resolvedSourceId = await resolveFacebookSourceId(page);
 
     // Tạo lead code
     const { count } = await supabase.from('crm_leads')
@@ -1709,7 +1714,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       customer_id: customerId,
       stage_id: stageId,
       company_id: companyId,
-      source_id: page?.default_source_id || fbSource?.id || null,
+      source_id: resolvedSourceId,
       install_address: extractedAddress,
       description: `Từ Facebook Messenger\nTên: ${contact.fb_name || ''}\nSĐT: ${extractedPhone || ''}\nĐịa chỉ: ${extractedAddress || ''}`.trim(),
       lead_owner_id: req.user.userId,
@@ -2435,6 +2440,39 @@ r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
 
 // POST /facebook/batch-create-leads
 // ═══════════════════════════════════════════════════════════════
+
+r.post('/sync-source-ids', authMiddleware, async (req, res) => {
+  try {
+    const { data: contacts } = await supabase.from('facebook_contacts')
+      .select('lead_id, page_id')
+      .not('lead_id', 'is', null)
+      .not('page_id', 'is', null);
+
+    const leadPageMap = new Map();
+    for (const row of (contacts || [])) {
+      if (!row.lead_id || !row.page_id || leadPageMap.has(row.lead_id)) continue;
+      leadPageMap.set(row.lead_id, row.page_id);
+    }
+
+    let updated = 0;
+    const details = [];
+    for (const [leadId, pageId] of leadPageMap.entries()) {
+      const page = await getPageConfig(pageId);
+      if (!page) continue;
+      const sourceId = await resolveFacebookSourceId(page);
+      if (!sourceId) continue;
+      const { data: lead } = await supabase.from('crm_leads').select('id, source_id, code').eq('id', leadId).single();
+      if (!lead || lead.source_id === sourceId) continue;
+      await supabase.from('crm_leads').update({ source_id: sourceId, updated_at: new Date().toISOString() }).eq('id', leadId);
+      updated++;
+      details.push({ lead_id: leadId, code: lead.code, page_id: pageId, source_id: sourceId });
+    }
+
+    res.json({ total: leadPageMap.size, updated, details });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 r.post('/batch-create-leads', authMiddleware, async (req, res) => {
   try {

@@ -267,11 +267,11 @@ export default function CRMDashboard() {
     const seenFb = new Set();
     const fb = fbPages
       .filter(p => {
-        if (!p.is_active || seenFb.has(p.source_key)) return false;
-        seenFb.add(p.source_key);
+        if (!p.is_active || seenFb.has(p.page_id)) return false;
+        seenFb.add(p.page_id);
         return true;
       })
-      .map(p => ({ id: `fbg:${p.source_key}`, type: 'fb_group', source_key: p.source_key, label: `[FB] ${p.page_name}` }));
+      .map(p => ({ id: `fbp:${p.page_id}`, type: 'fb_page', page_id: p.page_id, label: `[FB] ${p.page_name}` }));
     return [...fb, ...nonFb];
   }, [sources, allLeads, allDeals, fbPages]);
 
@@ -279,17 +279,17 @@ export default function CRMDashboard() {
   const [fbPageLeadIds, setFbPageLeadIds] = useState(new Set());
   const lastFbFilter = useRef('');
   useEffect(() => {
-    if (!filterSource.startsWith('fbg:')) {
+    if (!filterSource.startsWith('fbp:')) {
       setFbPageLeadIds(new Set());
       lastFbFilter.current = '';
       return;
     }
-    const sourceKey = filterSource.replace('fbg:', '');
-    if (lastFbFilter.current === sourceKey) return;
-    lastFbFilter.current = sourceKey;
+    const pageId = filterSource.replace('fbp:', '');
+    if (lastFbFilter.current === pageId) return;
+    lastFbFilter.current = pageId;
     (async () => {
       try {
-        const { data } = await api.get('/crm/leads-by-fb-page', { params: { source_key: sourceKey, type: pipelineType } });
+        const { data } = await api.get('/crm/leads-by-fb-page', { params: { page_id: pageId, type: pipelineType } });
         setFbPageLeadIds(new Set((data || []).map(l => l.id)));
       } catch { setFbPageLeadIds(new Set()); }
     })();
@@ -315,7 +315,7 @@ export default function CRMDashboard() {
 
     // Source filter - FB page dùng lead IDs, non-FB dùng source_id
     if (filterSource) {
-      if (filterSource.startsWith('fbg:')) {
+      if (filterSource.startsWith('fbp:')) {
         result = result.filter(l => fbPageLeadIds.has(l.id));
       } else {
         result = result.filter(l => l.source_id === filterSource);
