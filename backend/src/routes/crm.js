@@ -1668,8 +1668,9 @@ r.post('/leads/:id/create-project', async (req, res) => {
     // Link deal → project
     await supabase.from('crm_leads').update({ project_id: project.id }).eq('id', dealId);
 
-    // Gen tasks from template
+    // Auto move into workshop module immediately after deal won.
     const CRM_SLUGS = ['consulting', 'design', 'quotation', 'contract'];
+    const WORKSHOP_SLUGS = ['production', 'delivery', 'customer-care'];
     let taskCount = 0, checkCount = 0, doneCount = 0;
 
     if (template_set_id) {
@@ -1720,7 +1721,7 @@ r.post('/leads/:id/create-project', async (req, res) => {
     if (taskCount === 0) {
       const { data: stages } = await supabase.from('workflow_stages')
         .select('id, name, slug')
-        .in('slug', ['consulting','design','quotation','contract','production','shipping','installation','customer-care'])
+        .in('slug', ['consulting','design','quotation','contract','production','delivery','shipping','installation','customer-care'])
         .order('order_index');
       if (stages?.length) {
         const fallback = stages.map(s => ({
@@ -1733,6 +1734,77 @@ r.post('/leads/:id/create-project', async (req, res) => {
         await supabase.from('tasks').insert(fallback);
         taskCount = fallback.length;
         doneCount = fallback.filter(t => t.status === 'done').length;
+      }
+    }
+
+    // Force project into workshop stage so /sx sees it immediately.
+    const { data: workshopStages } = await supabase.from('workflow_stages')
+      .select('id, slug, name')
+      .in('slug', WORKSHOP_SLUGS)
+      .order('order_index');
+    const productionStage = (workshopStages || []).find((s) => s.slug === 'production');
+    if (productionStage) {
+      await supabase.from('projects').update({
+        status: 'producing',
+        current_stage_id: productionStage.id,
+        updated_at: new Date().toISOString(),
+      }).eq('id', project.id);
+
+      // Create default workshop tasks if project still has no production-stage tasks.
+      const workshopStageIds = (workshopStages || []).map((s) => s.id).filter(Boolean);
+      const { data: existingWorkshopTasks } = await supabase.from('tasks')
+        .select('id, stage_id')
+        .eq('project_id', project.id)
+        .in('stage_id', workshopStageIds);
+
+      if (!existingWorkshopTasks?.length) {
+        const workshopBlueprint = {
+          production: [
+            { title: 'Tiếp nhận hồ sơ từ CRM', priority: 'high' },
+            { title: 'Kiểm tra bản vẽ sản xuất', priority: 'high' },
+            { title: 'Lập nhu cầu vật tư', priority: 'high' },
+            { title: 'Gia công sản xuất', priority: 'medium' },
+            { title: 'Kiểm tra chất lượng nội bộ', priority: 'high' },
+          ],
+          delivery: [
+            { title: 'Chuẩn bị giao hàng', priority: 'medium' },
+            { title: 'Lên lịch vận chuyển và lắp đặt', priority: 'medium' },
+          ],
+          'customer-care': [
+            { title: 'Nghiệm thu và bàn giao', priority: 'medium' },
+            { title: 'Theo dõi sau lắp đặt', priority: 'low' },
+          ],
+        };
+
+        const workshopTaskInserts = [];
+        (workshopStages || []).forEach((stage) => {
+          const items = workshopBlueprint[stage.slug] || [];
+          items.forEach((item, index) => {
+            workshopTaskInserts.push({
+              project_id: project.id,
+              stage_id: stage.id,
+              title: item.title,
+              status: stage.slug === 'production' ? 'pending' : 'pending',
+              priority: item.priority,
+              order_index: index + 1,
+              created_by_id: req.user.userId,
+            });
+          });
+        });
+
+        if (workshopTaskInserts.length) {
+          const { data: workshopCreated } = await supabase.from('tasks').insert(workshopTaskInserts).select('id');
+          taskCount += workshopTaskInserts.length;
+          if (workshopCreated?.length) {
+            await supabase.from('crm_activities').insert({
+              lead_id: dealId,
+              type: 'note',
+              title: '🏭 Đã tạo nhiệm vụ xưởng',
+              description: `Tự động tạo ${workshopCreated.length} nhiệm vụ xưởng khi deal chuyển thắng.`,
+              created_by: req.user.userId,
+            });
+          }
+        }
       }
     }
 
