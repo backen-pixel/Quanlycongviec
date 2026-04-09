@@ -1,4 +1,6 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
+const config = require('../config');
 const r = express.Router();
 const { supabase } = require('../config/supabase');
 
@@ -54,6 +56,15 @@ function emitAutoState() {
   if (r._ioRef) r._ioRef.emit('auto_pipeline_state', getAutoState());
 }
 
+function getInternalAutoHeaders() {
+  const token = jwt.sign({ userId: 'auto-pipeline', role: 'system', fullName: 'Auto Pipeline' }, config.jwtSecret, { expiresIn: '1h' });
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+    'x-auto-pipeline-internal': '1',
+  };
+}
+
 async function runAutoPipelineLoop() {
   if (autoPipeline.running) return;
   autoPipeline.running = true;
@@ -81,23 +92,23 @@ async function runAutoPipelineLoop() {
 
       let syncData = null;
       try {
-        const fakeReq = { body: { mode: 'all', offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE, timeout: AUTO_SYNC_TIMEOUT_SEC }, user: { id: 'auto-pipeline' } };
-        let jsonPayload = null;
-        const fakeRes = {
-          json(payload) { jsonPayload = payload; return payload; },
-          status() { return this; },
-        };
-        await new Promise((resolve, reject) => {
-          r.handle({ ...fakeReq, method: 'POST', url: '/batch-sync-messages' }, { ...fakeRes, json(payload) { jsonPayload = payload; resolve(payload); return payload; } }, reject);
-        }).catch(() => {});
-        syncData = jsonPayload;
+        const resp = await fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-sync-messages`, {
+          method: 'POST',
+          headers: getInternalAutoHeaders(),
+          body: JSON.stringify({ mode: 'all', offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE, timeout: AUTO_SYNC_TIMEOUT_SEC }),
+        });
+        syncData = await resp.json();
+        console.log('[AutoPipeline] sync response', { status: resp.status, batch: autoPipeline.batchIndex, total: syncData?.total, processed: syncData?.processedCount, nextOffset: syncData?.nextOffset, done: syncData?.done, error: syncData?.error });
+        if (!resp.ok) throw new Error(syncData?.error || `HTTP ${resp.status}`);
       } catch (e) {
+        console.error('[AutoPipeline] sync error', e);
         pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi sync — ${e.message}`, 'error');
         break;
       }
 
       if (!syncData || syncData.error) {
-        pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: sync không trả dữ liệu hợp lệ`, 'error');
+        console.error('[AutoPipeline] invalid sync payload', syncData);
+        pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: sync payload lỗi — ${syncData?.error || 'empty payload'}`, 'error');
         break;
       }
 
@@ -110,18 +121,17 @@ async function runAutoPipelineLoop() {
       autoPipeline.stepLabel = `📞 Quét SĐT & thông tin • Batch ${autoPipeline.batchIndex}`;
       emitAutoState();
       try {
-        const fakeReq = { body: { offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE }, user: { id: 'auto-pipeline' } };
-        let jsonPayload = null;
-        const fakeRes = {
-          json(payload) { jsonPayload = payload; return payload; },
-          status() { return this; },
-        };
-        await new Promise((resolve, reject) => {
-          r.handle({ ...fakeReq, method: 'POST', url: '/batch-extract-phones' }, { ...fakeRes, json(payload) { jsonPayload = payload; resolve(payload); return payload; } }, reject);
-        }).catch(() => {});
-        const data = jsonPayload || {};
+        const resp = await fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-extract-phones`, {
+          method: 'POST',
+          headers: getInternalAutoHeaders(),
+          body: JSON.stringify({ offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE }),
+        });
+        const data = await resp.json();
+        console.log('[AutoPipeline] extract response', { status: resp.status, batch: autoPipeline.batchIndex, total: data?.total, updated: data?.updated, leadsUpdatedPhone: data?.leadsUpdatedPhone, error: data?.error });
+        if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
         pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, lead=${data.leadsUpdatedPhone || 0}`, 'ok');
       } catch (e) {
+        console.error('[AutoPipeline] extract error', e);
         pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi quét SĐT — ${e.message}`, 'error');
       }
 
@@ -144,18 +154,17 @@ async function runAutoPipelineLoop() {
     autoPipeline.stepLabel = '📞 Quét SĐT toàn bộ (logic thủ công)';
     emitAutoState();
     try {
-      const fakeReq = { body: {}, user: { id: 'auto-pipeline' } };
-      let jsonPayload = null;
-      const fakeRes = {
-        json(payload) { jsonPayload = payload; return payload; },
-        status() { return this; },
-      };
-      await new Promise((resolve, reject) => {
-        r.handle({ ...fakeReq, method: 'POST', url: '/batch-extract-phones' }, { ...fakeRes, json(payload) { jsonPayload = payload; resolve(payload); return payload; } }, reject);
-      }).catch(() => {});
-      const data = jsonPayload || {};
+      const resp = await fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-extract-phones`, {
+        method: 'POST',
+        headers: getInternalAutoHeaders(),
+        body: JSON.stringify({}),
+      });
+      const data = await resp.json();
+      console.log('[AutoPipeline] full scan response', { status: resp.status, total: data?.total, updated: data?.updated, leadsUpdatedPhone: data?.leadsUpdatedPhone, error: data?.error });
+      if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
       pushAutoLog(`✅ Full scan cuối chu kỳ: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, lead=${data.leadsUpdatedPhone || 0}`, 'ok');
     } catch (e) {
+      console.error('[AutoPipeline] full scan error', e);
       pushAutoLog(`❌ Full scan cuối chu kỳ: ${e.message}`, 'error');
     }
 
