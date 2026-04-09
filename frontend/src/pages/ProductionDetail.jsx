@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../lib/api';
-import { formatVND, formatDate } from '../lib/utils';
+import { formatVND, formatDate, formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import {
-  ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
-  Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, CheckCircle2, FileIcon, Paperclip
+  ArrowLeft, Phone, Mail, Calendar, DollarSign, User, Target,
+  CheckCircle2, FileIcon, FolderKanban, Factory, ShieldCheck, MessageSquare,
+  FileText, ArrowRightLeft, Building2, Clock
 } from 'lucide-react';
 
 export default function ProductionDetail() {
@@ -49,11 +49,13 @@ export default function ProductionDetail() {
     );
   }
 
-  const STAGES = [
-    { slug: 'production', name: 'Sản xuất', color: '#EA580C', icon: '🏭' },
-    { slug: 'delivery', name: 'VC & Lắp đặt', color: '#F97316', icon: '🚚' },
-    { slug: 'customer-care', name: 'CSKH', color: '#FDBA74', icon: '🤝' },
-  ];
+  const STAGES = project.workshopPipeline?.length
+    ? project.workshopPipeline
+    : [
+        { slug: 'production', name: 'Sản xuất', color: '#EA580C', icon: '🏭' },
+        { slug: 'delivery', name: 'VC & Lắp đặt', color: '#F97316', icon: '🚚' },
+        { slug: 'customer-care', name: 'CSKH', color: '#FDBA74', icon: '🤝' },
+      ];
 
   const currentStageIdx = STAGES.findIndex(s => s.slug === project.current_stage?.slug);
   const isPipelineComplete = currentStageIdx >= STAGES.length - 1;
@@ -67,21 +69,29 @@ export default function ProductionDetail() {
             <ArrowLeft className="h-5 w-5 text-gray-600" />
           </button>
           <div>
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-xs text-gray-500 font-semibold">SẢN XUẤT / Chi tiết dự án</span>
+            <div className="flex items-center gap-3 mb-2 flex-wrap">
+              <span className="text-xs text-gray-500 font-semibold">XƯỞNG / Chi tiết deal sản xuất</span>
               <span className={`px-2 py-1 text-xs font-bold rounded-lg text-white`} style={{ backgroundColor: project.current_stage?.color || '#94a3b8' }}>
                 {project.current_stage?.name || 'N/A'}
               </span>
+              <span className="px-2 py-1 text-xs font-bold rounded-lg bg-gray-100 text-gray-700">{project.code}</span>
             </div>
             <h1 className="text-3xl font-bold text-gray-900">{project.name}</h1>
-            <p className="text-sm text-gray-600 mt-1">Mã: {project.code}</p>
+            <p className="text-sm text-gray-600 mt-1">
+              Từ deal thắng sang xưởng, giữ thông tin CRM, tài liệu được chia sẻ và nhiệm vụ sản xuất.
+            </p>
           </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link to={`/projects/${project.id}`} className="h-10 px-4 rounded-lg bg-orange-50 text-orange-700 text-sm font-medium hover:bg-orange-100 flex items-center gap-2">
+            <FolderKanban className="h-4 w-4" /> Xem dự án đầy đủ
+          </Link>
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Left Column: Project Info */}
-        <div className="col-span-2 space-y-6">
+        <div className="xl:col-span-2 space-y-6">
           {/* Pipeline Stepper */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
             <h2 className="font-semibold text-gray-900 mb-4">Quy trình Sản Xuất</h2>
@@ -89,7 +99,7 @@ export default function ProductionDetail() {
               {STAGES.map((stage, idx) => (
                 <div key={stage.slug} className="flex items-center gap-2">
                   <button
-                    onClick={() => moveStage(STAGES[idx]?.id)}
+                    onClick={() => STAGES[idx]?.id && moveStage(STAGES[idx]?.id)}
                     className={`relative px-4 py-2 rounded-lg font-medium text-sm transition-all ${
                       currentStageIdx >= idx
                         ? 'bg-orange-100 text-orange-700 border border-orange-300'
@@ -114,8 +124,8 @@ export default function ProductionDetail() {
 
           {/* Project Details */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-            <h2 className="font-semibold text-gray-900 mb-4">Thông tin Dự án</h2>
-            <div className="grid grid-cols-2 gap-4">
+            <h2 className="font-semibold text-gray-900 mb-4">Thông tin xưởng</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex items-start gap-3">
                 <DollarSign className="h-5 w-5 text-orange-600 flex-shrink-0 mt-1" />
                 <div>
@@ -154,6 +164,63 @@ export default function ProductionDetail() {
                   </div>
                 </div>
               </div>
+              <div className="md:col-span-2 rounded-xl bg-orange-50 border border-orange-100 p-4 text-sm text-gray-700">
+                <div className="font-semibold text-orange-700 mb-1">Ghi chú nội bộ</div>
+                {project.notes || 'Chưa có ghi chú nội bộ cho xưởng.'}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+              <div className="flex items-center gap-2 mb-4 text-gray-900 font-semibold">
+                <ShieldCheck className="h-5 w-5 text-orange-600" /> Deal / CRM liên quan
+              </div>
+              {project.crmDeals?.length ? (
+                <div className="space-y-3">
+                  {project.crmDeals.map((deal) => (
+                    <div key={deal.id} className="rounded-xl border border-gray-200 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold text-purple-600">{deal.code}</p>
+                          <p className="text-sm font-semibold text-gray-900">{deal.title}</p>
+                        </div>
+                        <Link to={`/crm/leads/${deal.id}`} className="text-xs font-medium text-orange-600 hover:underline">
+                          Mở CRM
+                        </Link>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                        <span>Loại: {deal.type}</span>
+                        <span>Giá trị: {formatVND(deal.estimated_value)}</span>
+                        <span>Tạo lúc: {formatDate(deal.created_at)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">Chưa tìm thấy bản ghi CRM liên kết.</p>
+              )}
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+              <div className="flex items-center gap-2 mb-4 text-gray-900 font-semibold">
+                <ArrowRightLeft className="h-5 w-5 text-orange-600" /> Trao đổi gần đây
+              </div>
+              {project.recentComments?.length ? (
+                <div className="space-y-3">
+                  {project.recentComments.map((comment) => (
+                    <div key={comment.id} className="rounded-xl bg-gray-50 p-3">
+                      <div className="flex items-center justify-between gap-3 mb-1">
+                        <span className="text-xs font-semibold text-gray-700">{comment.user?.full_name || 'Người dùng'}</span>
+                        <span className="text-[11px] text-gray-400">{formatDateTime(comment.created_at)}</span>
+                      </div>
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{comment.content || 'Không có nội dung'}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">Chưa có trao đổi nội bộ cho dự án này.</p>
+              )}
             </div>
           </div>
 
@@ -179,7 +246,7 @@ export default function ProductionDetail() {
                     : 'border-transparent text-gray-600 hover:text-gray-900'
                 }`}
               >
-                📁 Tài liệu ({project.documents?.length || 0})
+                📁 Tài liệu chia sẻ ({project.sharedDocuments?.length || 0})
               </button>
               <button
                 onClick={() => setActiveTab('timeline')}
@@ -242,54 +309,52 @@ export default function ProductionDetail() {
             </div>
           )}
 
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2"><Building2 className="h-4 w-4 text-orange-600" /> Công ty phụ trách</h3>
+            <div className="text-sm text-gray-700">
+              {project.company ? `${project.company.name}${project.company.short_name ? ` (${project.company.short_name})` : ''}` : 'Chưa gán công ty'}
+            </div>
+          </div>
+
           {/* Team Assignments */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
             <h3 className="font-semibold text-gray-900 mb-4">👨‍💼 Đội ngũ</h3>
             <div className="space-y-3">
+              {project.sales_person && (
+                <PersonCard label="Kinh doanh" person={project.sales_person} />
+              )}
+              {project.project_manager && (
+                <PersonCard label="QL dự án" person={project.project_manager} />
+              )}
+              {project.supervisor && (
+                <PersonCard label="Giám sát" person={project.supervisor} />
+              )}
               {project.production_person && (
-                <div className="flex items-center gap-3">
-                  {project.production_person.avatar && (
-                    <img src={project.production_person.avatar} alt="" className="h-8 w-8 rounded-full" />
-                  )}
-                  <div className="flex-1">
-                    <p className="text-xs text-gray-500">Sản xuất</p>
-                    <p className="text-sm font-medium text-gray-900">{project.production_person.full_name}</p>
-                  </div>
-                </div>
+                <PersonCard label="Sản xuất" person={project.production_person} />
               )}
               {project.shipping_person && (
-                <div className="flex items-center gap-3">
-                  {project.shipping_person.avatar && (
-                    <img src={project.shipping_person.avatar} alt="" className="h-8 w-8 rounded-full" />
-                  )}
-                  <div className="flex-1">
-                    <p className="text-xs text-gray-500">Vận chuyển</p>
-                    <p className="text-sm font-medium text-gray-900">{project.shipping_person.full_name}</p>
-                  </div>
-                </div>
+                <PersonCard label="Vận chuyển" person={project.shipping_person} />
               )}
               {project.installation_person && (
-                <div className="flex items-center gap-3">
-                  {project.installation_person.avatar && (
-                    <img src={project.installation_person.avatar} alt="" className="h-8 w-8 rounded-full" />
-                  )}
-                  <div className="flex-1">
-                    <p className="text-xs text-gray-500">Lắp đặt</p>
-                    <p className="text-sm font-medium text-gray-900">{project.installation_person.full_name}</p>
-                  </div>
-                </div>
+                <PersonCard label="Lắp đặt" person={project.installation_person} />
               )}
               {project.care_person && (
-                <div className="flex items-center gap-3">
-                  {project.care_person.avatar && (
-                    <img src={project.care_person.avatar} alt="" className="h-8 w-8 rounded-full" />
-                  )}
-                  <div className="flex-1">
-                    <p className="text-xs text-gray-500">CSKH</p>
-                    <p className="text-sm font-medium text-gray-900">{project.care_person.full_name}</p>
-                  </div>
-                </div>
+                <PersonCard label="CSKH" person={project.care_person} />
               )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2"><Factory className="h-4 w-4 text-orange-600" /> Trạng thái chia sẻ tài liệu</h3>
+            <div className="space-y-2 text-sm text-gray-600">
+              <div className="flex items-center justify-between">
+                <span>Hiện cho xưởng</span>
+                <span className="font-semibold text-emerald-600">{project.sharedDocuments?.length || 0}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Đang ẩn vì chưa cho phép chia sẻ</span>
+                <span className="font-semibold text-amber-600">{project.hiddenDocumentsCount || 0}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -343,33 +408,64 @@ function TasksTab({ project }) {
 // Documents Tab Component
 function DocumentsTab({ project }) {
   return (
-    <div className="space-y-2">
-      {project.documents && project.documents.length > 0 ? (
-        project.documents.map(doc => (
-          <div key={doc.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
-            <FileIcon className="h-5 w-5 text-orange-600 flex-shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate">{doc.file_path?.split('/').pop()}</p>
-              <p className="text-xs text-gray-500">Tải lên: {formatDate(doc.uploaded_at)}</p>
+    <div className="space-y-3">
+      {project.sharedDocuments && project.sharedDocuments.length > 0 ? (
+        project.sharedDocuments.map((doc) => {
+          const href = doc.file_url || (doc.file_path ? `/uploads/${doc.file_path}` : '#');
+          return (
+            <div key={doc.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+              <FileIcon className="h-5 w-5 text-orange-600 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{doc.file_name || doc.name || doc.file_path?.split('/').pop() || 'Tài liệu'}</p>
+                <p className="text-xs text-gray-500">Tải lên: {formatDate(doc.created_at || doc.uploaded_at)}</p>
+                {doc.notes && <p className="text-xs text-gray-400 mt-1 truncate">{doc.notes}</p>}
+              </div>
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1 text-xs font-medium text-orange-600 hover:bg-orange-50 rounded transition"
+              >
+                Xem
+              </a>
             </div>
-            <a
-              href={`/uploads/${doc.file_path}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1 text-xs font-medium text-orange-600 hover:bg-orange-50 rounded transition"
-            >
-              Xem
-            </a>
-          </div>
-        ))
+          );
+        })
       ) : (
-        <p className="text-gray-500 text-sm text-center py-6">Không có tài liệu</p>
+        <p className="text-gray-500 text-sm text-center py-6">Chưa có tài liệu nào được chia sẻ cho xưởng</p>
+      )}
+      {(project.hiddenDocumentsCount || 0) > 0 && (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-700">
+          Còn {project.hiddenDocumentsCount} tài liệu đang bị ẩn vì chưa có ghi chú hoặc quyền cho phép chia sẻ sang xưởng.
+        </div>
       )}
     </div>
   );
 }
 
 // Timeline Tab Component
+function PersonCard({ label, person }) {
+  if (!person) return null;
+  return (
+    <div className="flex items-center gap-3">
+      {person.avatar ? (
+        <img src={person.avatar} alt="" className="h-8 w-8 rounded-full" />
+      ) : (
+        <div
+          className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
+          style={{ backgroundColor: avatarColor(person.full_name) }}
+        >
+          {getInitials(person.full_name)}
+        </div>
+      )}
+      <div className="flex-1">
+        <p className="text-xs text-gray-500">{label}</p>
+        <p className="text-sm font-medium text-gray-900">{person.full_name}</p>
+      </div>
+    </div>
+  );
+}
+
 function TimelineTab({ project }) {
   return (
     <div className="space-y-4">

@@ -1,11 +1,10 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { formatVND, formatDate } from '../lib/utils';
+import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import {
-  Zap, CheckCircle2, Percent, AlertTriangle, Plus, Search, Filter, X, 
-  ChevronRight, MoreHorizontal, Calendar, FileText, GripVertical, 
-  TrendingUp, Building2, Factory
+  Zap, CheckCircle2, AlertTriangle, Search, X, Calendar, TrendingUp, Factory,
+  FileText, Users, ArrowRightLeft
 } from 'lucide-react';
 
 const PRIORITY_COLORS = {
@@ -21,6 +20,7 @@ export default function ProductionDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
+  const [stageFilter, setStageFilter] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -46,21 +46,22 @@ export default function ProductionDashboard() {
 
   // Build Kanban pipeline from projects
   const kanbanPipeline = useMemo(() => {
-    const stages = [
-      { slug: 'production', name: 'Sản xuất', icon: '🏭', color: '#EA580C' },
-      { slug: 'delivery', name: 'VC & Lắp đặt', icon: '🚚', color: '#F97316' },
-      { slug: 'customer-care', name: 'CSKH', icon: '🤝', color: '#FDBA74' },
-      { slug: 'completed', name: 'Hoàn thành', icon: '✅', color: '#10B981' },
-    ];
-    
-    return stages.map(stage => ({
+    const baseStages = pipeline.length
+      ? pipeline
+      : [
+          { slug: 'production', name: 'Sản xuất', icon: '🏭', color: '#EA580C' },
+          { slug: 'delivery', name: 'VC & Lắp đặt', icon: '🚚', color: '#F97316' },
+          { slug: 'customer-care', name: 'CSKH', icon: '🤝', color: '#FDBA74' },
+        ];
+
+    return baseStages.map((stage) => ({
       ...stage,
-      items: projects.filter(p => p.current_stage?.slug === stage.slug),
+      items: projects.filter((project) => project.current_stage?.slug === stage.slug),
       totalValue: projects
-        .filter(p => p.current_stage?.slug === stage.slug)
-        .reduce((sum, p) => sum + (p.estimated_value || 0), 0),
+        .filter((project) => project.current_stage?.slug === stage.slug)
+        .reduce((sum, project) => sum + (project.estimated_value || 0), 0),
     }));
-  }, [projects]);
+  }, [pipeline, projects]);
 
   const filteredProjects = useMemo(() => {
     return projects.filter(p => {
@@ -71,12 +72,16 @@ export default function ProductionDashboard() {
       if (priorityFilter && p.priority !== priorityFilter) {
         return false;
       }
+      if (stageFilter && p.current_stage?.slug !== stageFilter) {
+        return false;
+      }
       return true;
     });
-  }, [projects, searchQuery, priorityFilter]);
+  }, [projects, searchQuery, priorityFilter, stageFilter]);
 
   const handleMoveStage = useCallback(async (projectId, newStageSlug) => {
     const targetStage = pipeline.find(s => s.slug === newStageSlug);
+     if (!targetStage) return;
     if (!targetStage) return;
     
     // Optimistic update
@@ -120,16 +125,19 @@ export default function ProductionDashboard() {
       <div className="flex items-center justify-between px-0">
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-gray-500 font-semibold">SẢN XUẤT / Quản lý dự án</span>
+            <span className="text-xs text-gray-500 font-semibold">XƯỞNG / Quản lý deal vào sản xuất</span>
           </div>
           <h1 className="text-3xl font-bold text-gray-900">
-            🏭 Quản lý Sản Xuất
+            🏭 Module Xưởng
           </h1>
+          <p className="text-sm text-gray-500 mt-2 max-w-3xl">
+            Hiển thị các deal đã vào khối sản xuất dưới dạng dự án xưởng, kèm thông tin CRM, tiến độ nhiệm vụ và tài liệu đã cho phép chia sẻ.
+          </p>
         </div>
       </div>
 
       {/* KPI Summary Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KPICard
           icon={<Zap className="h-6 w-6" />}
           iconBgColor="bg-orange-100"
@@ -150,6 +158,13 @@ export default function ProductionDashboard() {
           iconColor="text-yellow-600"
           label="CSKH"
           value={kpis.customer_care || 0}
+        />
+        <KPICard
+          icon={<AlertTriangle className="h-6 w-6" />}
+          iconBgColor="bg-red-100"
+          iconColor="text-red-600"
+          label="Quá hạn"
+          value={kpis.overdue || 0}
         />
         <KPICard
           icon={<CheckCircle2 className="h-6 w-6" />}
@@ -182,6 +197,17 @@ export default function ProductionDashboard() {
         </div>
         
         <select
+          value={stageFilter}
+          onChange={(e) => setStageFilter(e.target.value)}
+          className="px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-orange-500"
+        >
+          <option value="">Tất cả công đoạn xưởng</option>
+          {pipeline.map((stage) => (
+            <option key={stage.slug} value={stage.slug}>{stage.icon || '•'} {stage.name}</option>
+          ))}
+        </select>
+
+        <select
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value)}
           className="px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-orange-500"
@@ -193,10 +219,130 @@ export default function ProductionDashboard() {
         </select>
       </div>
 
+      <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.9fr] gap-6">
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Danh sách deal vào xưởng</h2>
+              <p className="text-sm text-gray-500">{filteredProjects.length} dự án đang thuộc khối sản xuất</p>
+            </div>
+            <div className="text-sm font-semibold text-orange-600">Tiến độ TB {kpis.avg_progress || 0}%</div>
+          </div>
+          <div className="space-y-3 max-h-[680px] overflow-y-auto pr-1">
+            {filteredProjects.length === 0 ? (
+              <div className="py-12 text-center text-sm text-gray-400">Không có dự án xưởng phù hợp bộ lọc</div>
+            ) : filteredProjects.map((project) => (
+              <button
+                key={project.id}
+                onClick={() => navigate(`/sx/projects/${project.id}`)}
+                className="w-full text-left rounded-xl border border-gray-200 p-4 hover:border-orange-300 hover:bg-orange-50/40 transition cursor-pointer"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-xs font-bold text-orange-600">{project.code}</span>
+                      {project.current_stage && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: project.current_stage.color || '#ea580c' }}>
+                          {project.current_stage.name}
+                        </span>
+                      )}
+                      {project.is_overdue && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">Quá hạn</span>
+                      )}
+                    </div>
+                    <p className="text-base font-semibold text-gray-900 truncate">{project.name}</p>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                      <span>KH: {project.customer?.full_name || 'Chưa có'}</span>
+                      <span>Công ty: {project.company?.short_name || project.company?.name || 'Chưa gán'}</span>
+                      <span>Deadline: {project.deadline ? formatDate(project.deadline) : 'Chưa có'}</span>
+                    </div>
+                    <div className="mt-3 flex items-center gap-3">
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+                          <span>Nhiệm vụ</span>
+                          <span>{project.done_tasks || 0}/{project.task_total || 0}</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                          <div className="h-full rounded-full bg-orange-500" style={{ width: `${project.progress || 0}%` }} />
+                        </div>
+                      </div>
+                      {project.production_person && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div
+                            className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
+                            style={{ backgroundColor: avatarColor(project.production_person.full_name) }}
+                          >
+                            {getInitials(project.production_person.full_name)}
+                          </div>
+                          <div className="text-xs text-gray-500 max-w-28 truncate">{project.production_person.full_name}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-sm font-bold text-emerald-600">{formatVND(project.estimated_value)}</div>
+                    <div className="text-[11px] text-gray-400 mt-1">Sale: {project.sales_person?.full_name || 'Chưa gán'}</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-4 text-gray-900 font-bold">
+              <ArrowRightLeft className="h-5 w-5 text-orange-600" />
+              Pipeline xưởng
+            </div>
+            <div className="space-y-3">
+              {pipeline.map((stage) => (
+                <div key={stage.slug} className="rounded-xl border border-gray-200 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                      <span>{stage.icon || '•'}</span>
+                      <span>{stage.name}</span>
+                    </div>
+                    <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700">{stage.count || 0}</span>
+                  </div>
+                  <p className="text-xs text-gray-500">Giá trị đang xử lý: {formatVND(stage.total_value || 0)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-4 text-gray-900 font-bold">
+              <Users className="h-5 w-5 text-orange-600" />
+              Gợi ý vận hành
+            </div>
+            <div className="space-y-3 text-sm text-gray-600">
+              <div className="rounded-xl bg-orange-50 border border-orange-100 p-3">
+                Deal thắng sẽ đi vào đây dưới dạng dự án xưởng, giữ đủ thông tin khách hàng, sale và giá trị deal.
+              </div>
+              <div className="rounded-xl bg-blue-50 border border-blue-100 p-3">
+                Tài liệu chỉ hiển thị ở chi tiết xưởng khi có ghi chú hoặc cờ cho phép chia sẻ cho xưởng.
+              </div>
+              <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
+                Màn chi tiết xưởng đang là nền cho bước tiếp theo: gửi duyệt bản vẽ, vật tư hai chiều giữa CRM và xưởng.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Kanban Board */}
       <div className="rounded-xl overflow-hidden">
         <KanbanView 
-          pipeline={kanbanPipeline}
+          pipeline={kanbanPipeline.map((stage) => ({
+            ...stage,
+            items: stage.items.filter((project) => {
+              if (searchQuery && !project.code?.toLowerCase().includes(searchQuery.toLowerCase()) && !project.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+              if (priorityFilter && project.priority !== priorityFilter) return false;
+              if (stageFilter && project.current_stage?.slug !== stageFilter) return false;
+              return true;
+            })
+          }))}
           onMoveStage={handleMoveStage}
           calculateDays={calculateDays}
         />
