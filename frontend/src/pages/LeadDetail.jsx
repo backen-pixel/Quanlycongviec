@@ -11,7 +11,7 @@ import CallLogsTab from '../components/CallLogsTab';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Send, Image, Paperclip, RefreshCw, Users
+  FileUp, FileText, Zap, ChevronDown, Send, Image, Paperclip, RefreshCw, Users, ClipboardCheck
 } from 'lucide-react';
 
 const ACTIVITY_TYPES = [
@@ -52,6 +52,7 @@ export default function LeadDetail() {
   const [editingLeadTitle, setEditingLeadTitle] = useState(false);
   const [leadTitleDraft, setLeadTitleDraft] = useState('');
   const [savingLeadTitle, setSavingLeadTitle] = useState(false);
+  const [approvalForm, setApprovalForm] = useState({ type: 'drawing', title: '', note: '' });
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -154,6 +155,15 @@ export default function LeadDetail() {
     setShowLostModal(false);
     moveStage(pendingLostStageId, { lost_reason: lostReason.trim() });
     setPendingLostStageId(null);
+  };
+
+  const submitDealApproval = () => {
+    if (!approvalForm.title.trim()) {
+      alert('Vui lòng nhập tiêu đề nội dung cần duyệt');
+      return;
+    }
+    alert(`Đã ghi nhận yêu cầu gửi duyệt cho deal này trong CRM:\n- Loại: ${approvalForm.type}\n- Tiêu đề: ${approvalForm.title}\n\nBước tiếp theo mình sẽ nối form này với API duyệt hai chiều CRM <-> xưởng.`);
+    setApprovalForm({ type: 'drawing', title: '', note: '' });
   };
 
   const deleteLead = async () => {
@@ -645,6 +655,18 @@ export default function LeadDetail() {
               >
                 📞 Ghi âm
               </button>
+              {lead?.type === 'deal' && (
+                <button
+                  onClick={() => setActiveTab('approvals')}
+                  className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                    activeTab === 'approvals'
+                      ? 'text-blue-600 border-b-2 border-blue-600'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  ✅ Gửi duyệt deal
+                </button>
+              )}
             </div>
 
             {/* Tab Content */}
@@ -840,6 +862,49 @@ export default function LeadDetail() {
                 <LeadChatTab leadId={id} socket={socket} />
               ) : activeTab === 'calls' ? (
                 <CallLogsTab leadId={id} customerId={lead?.customer_id} />
+              ) : activeTab === 'approvals' ? (
+                <div className="max-w-2xl space-y-4">
+                  <div className="rounded-xl bg-blue-50 border border-blue-100 p-4 text-sm text-blue-800">
+                    `Gửi duyệt deal này` nằm trong chi tiết deal ở CRM. Từ đây sale hoặc quản lý có thể gửi bản vẽ, vật tư hoặc yêu cầu chỉnh sửa sang xưởng theo đúng deal đang mở.
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Loại gửi duyệt</label>
+                    <select
+                      value={approvalForm.type}
+                      onChange={(e) => setApprovalForm((prev) => ({ ...prev, type: e.target.value }))}
+                      className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm"
+                    >
+                      <option value="drawing">Bản vẽ</option>
+                      <option value="material">Vật tư</option>
+                      <option value="change-request">Yêu cầu chỉnh sửa</option>
+                      <option value="handoff">Hồ sơ bàn giao</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Tiêu đề</label>
+                    <input
+                      value={approvalForm.title}
+                      onChange={(e) => setApprovalForm((prev) => ({ ...prev, title: e.target.value }))}
+                      className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm"
+                      placeholder="Ví dụ: Gửi bản vẽ để xưởng xác nhận trước sản xuất"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Ghi chú</label>
+                    <textarea
+                      value={approvalForm.note}
+                      onChange={(e) => setApprovalForm((prev) => ({ ...prev, note: e.target.value }))}
+                      className="w-full min-h-[120px] px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                      placeholder="Mô tả nội dung gửi duyệt cho deal này..."
+                    />
+                  </div>
+                  <button
+                    onClick={submitDealApproval}
+                    className="h-10 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 flex items-center gap-2 cursor-pointer"
+                  >
+                    <ClipboardCheck className="h-4 w-4" /> Gửi duyệt deal này
+                  </button>
+                </div>
               ) : null}
             </div>
           </div>

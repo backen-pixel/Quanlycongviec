@@ -214,7 +214,7 @@ export default function ProductionDetail() {
 
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
               <div className="flex items-center gap-2 mb-4 text-gray-900 font-semibold">
-                <ClipboardCheck className="h-5 w-5 text-orange-600" /> Gửi duyệt theo từng deal
+                <ClipboardCheck className="h-5 w-5 text-orange-600" /> Gửi duyệt deal này
               </div>
               <div className="space-y-3">
                 <div>
@@ -539,7 +539,7 @@ function ApprovalsTab({ approvalForm, setApprovalForm, onSubmit }) {
   return (
     <div className="max-w-2xl space-y-4">
       <div className="rounded-xl bg-orange-50 border border-orange-100 p-4 text-sm text-orange-800">
-        `Gửi duyệt` là chức năng theo từng deal. Xưởng sẽ gửi bản vẽ, vật tư hoặc hồ sơ của deal đang mở sang CRM/quản lý để duyệt.
+        `Gửi duyệt deal này` nằm trong chi tiết deal ở sản xuất. Xưởng sẽ gửi bản vẽ, vật tư hoặc hồ sơ của deal đang mở sang CRM/quản lý để duyệt.
       </div>
       <div>
         <label className="block text-xs font-semibold text-gray-500 mb-1">Loại gửi duyệt</label>
