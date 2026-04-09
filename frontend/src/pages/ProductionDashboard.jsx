@@ -347,6 +347,10 @@ export default function ProductionDashboard() {
           calculateDays={calculateDays}
         />
       </div>
+
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        `Gửi duyệt` không thao tác ở kanban. Hãy mở từng deal trong xưởng để gửi bản vẽ, vật tư hoặc hồ sơ cần duyệt theo từng deal.
+      </div>
     </div>
   );
 }

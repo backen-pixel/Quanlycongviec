@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks,
-  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle
+  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -119,15 +119,17 @@ const SX_MENU_GROUPS = [
     title: '1. Tổng quan',
     emoji: '🏭',
     items: [
-      { to: '/sx', icon: LayoutDashboard, label: 'Dashboard SX', end: true },
+      { to: '/sx', icon: LayoutDashboard, label: 'Dashboard Xưởng', end: true },
     ]
   },
   {
     id: 'sx-projects',
-    title: '2. Dự án',
+    title: '2. Điều hành xưởng',
     emoji: '📦',
     items: [
-      { to: '/sx', icon: FolderKanban, label: 'Dự án SX', end: true },
+      { to: '/sx', icon: FolderKanban, label: 'Deal vào xưởng', end: true },
+      { to: '/sx', icon: ArrowRightLeft, label: 'Pipeline xưởng', end: true },
+      { to: '/sx', icon: ClipboardCheck, label: 'Duyệt theo deal', end: true },
     ]
   },
 ];
@@ -290,8 +292,8 @@ export default function Sidebar() {
                     <Factory className="h-6 w-6 text-white" />
                   </div>
                   <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Sản xuất</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Quản lý sản xuất & vận chuyển</p>
+                    <h3 className="text-sm font-bold text-gray-900">Xưởng</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Quản lý deal, pipeline và duyệt sản xuất</p>
                   </div>
                 </button>
                 <div className="flex flex-col items-center gap-1 ml-auto">
@@ -338,7 +340,7 @@ export default function Sidebar() {
           </div>
           {!collapsed && (
             <div className="flex-1 text-left">
-              <h1 className="text-sm font-bold text-white leading-tight">{isCRM ? 'CRM' : isSX ? 'Sản xuất' : 'Công việc'}</h1>
+              <h1 className="text-sm font-bold text-white leading-tight">{isCRM ? 'CRM' : isSX ? 'Xưởng' : 'Công việc'}</h1>
               <p className="text-[10px] text-white/50 leading-tight">Nhấn để chuyển → {isCRM ? 'Công việc' : isSX ? 'Công việc' : 'CRM'}</p>
             </div>
           )}
