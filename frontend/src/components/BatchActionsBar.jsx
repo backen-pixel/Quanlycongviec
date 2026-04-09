@@ -3,6 +3,7 @@ import { Zap, Loader2, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, X } 
 import api from '../lib/api';
 import { connectSocket, getSocket } from '../lib/socket';
 import { useBatchAuto, toggleBatchAuto, triggerPipelineNow, formatCountdown } from '../hooks/useBatchAutoRun';
+import AutoPipelineMonitor from './AutoPipelineMonitor';
 
 const ACTIONS = [
   { key: 'sync_messages', label: 'Đồng bộ tin nhắn', icon: '📨', color: 'teal', apiPath: 'facebook/batch-sync-messages' },
@@ -200,31 +201,8 @@ export default function BatchActionsBar({ onComplete }) {
             </div>
           )}
 
-          {/* Auto pipeline progress */}
-          {auto.running && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs text-gray-600">
-                <span className="font-medium">{auto.stepLabel || 'Đang xử lý...'}</span>
-                {auto.totalBatches > 0 && (
-                  <span className="font-mono text-teal-600">
-                    Batch {auto.batchIndex}/{auto.totalBatches} ({Math.round(auto.batchIndex / auto.totalBatches * 100)}%)
-                  </span>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-500">
-                <div className="bg-gray-50 rounded-lg px-2 py-1">Chu kỳ: <span className="font-semibold text-gray-700">{auto.cycleCount || 1}</span></div>
-                <div className="bg-gray-50 rounded-lg px-2 py-1">Tổng contacts: <span className="font-semibold text-teal-700">{auto.totalContacts || '...'}</span></div>
-                <div className="bg-gray-50 rounded-lg px-2 py-1">Batch hiện tại: <span className="font-semibold text-gray-700">{auto.batchIndex}/{auto.totalBatches || '?'} × 300</span></div>
-                <div className="bg-gray-50 rounded-lg px-2 py-1">Giai đoạn: <span className="font-semibold text-amber-700">{auto.phase === 'manual_full_scan' ? '📞 Full scan cuối chu kỳ' : auto.phase === 'loop' ? '🔄 Batch loop' : '💤 Idle'}</span></div>
-              </div>
-              {auto.totalBatches > 0 && (
-                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                  <div className="h-full rounded-full transition-all duration-300 bg-amber-500"
-                    style={{ width: `${Math.round(auto.batchIndex / auto.totalBatches * 100)}%` }} />
-                </div>
-              )}
-            </div>
-          )}
+          {/* Auto pipeline progress — KPI + Per-batch table */}
+          <AutoPipelineMonitor auto={auto} />
 
           {/* Logs (auto + manual) */}
           {(auto.logs.length > 0 || manualLogs.length > 0) && (

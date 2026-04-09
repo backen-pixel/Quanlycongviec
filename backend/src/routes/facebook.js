@@ -26,6 +26,10 @@ const autoPipeline = {
   batchOffset: 0,
   lastUpdatedAt: null,
   logs: [],
+  // Per-batch results + accumulated KPIs
+  batchResults: [],
+  kpi: { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 },
+  startedAt: null,
 };
 
 function pushAutoLog(text, status = 'info') {
@@ -49,6 +53,9 @@ function getAutoState() {
     batchOffset: autoPipeline.batchOffset,
     lastUpdatedAt: autoPipeline.lastUpdatedAt,
     logs: autoPipeline.logs,
+    batchResults: autoPipeline.batchResults,
+    kpi: autoPipeline.kpi,
+    startedAt: autoPipeline.startedAt,
   };
 }
 
@@ -71,6 +78,9 @@ async function runAutoPipelineLoop() {
   autoPipeline.stopRequested = false;
   autoPipeline.phase = 'loop';
   autoPipeline.lastUpdatedAt = new Date().toISOString();
+  autoPipeline.startedAt = new Date().toISOString();
+  autoPipeline.batchResults = [];
+  autoPipeline.kpi = { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 };
   pushAutoLog('🚀 Bắt đầu auto pipeline realtime ở backend');
 
   while (autoPipeline.enabled && !autoPipeline.stopRequested) {
@@ -114,8 +124,23 @@ async function runAutoPipelineLoop() {
 
       autoPipeline.totalContacts = syncData.total || autoPipeline.totalContacts;
       autoPipeline.totalBatches = autoPipeline.totalContacts > 0 ? Math.ceil(autoPipeline.totalContacts / AUTO_BATCH_SIZE) : 0;
-      pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: sync ${syncData.processedCount || 0} contacts, +${syncData.totalSynced || 0} tin nhắn`, 'ok');
+      const batchMsgsSynced = syncData.totalSynced || 0;
+      const batchProcessed = syncData.processedCount || 0;
+      pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: sync ${batchProcessed} contacts, +${batchMsgsSynced} tin nhắn`, 'ok');
       emitAutoState();
+
+      // Track per-batch result (sync step)
+      const batchEntry = {
+        batch: autoPipeline.batchIndex,
+        cycle: autoPipeline.cycleCount,
+        ts: Date.now(),
+        contactsProcessed: batchProcessed,
+        messagesSynced: batchMsgsSynced,
+        contactPhones: 0,
+        customerPhones: 0,
+        leadPhones: 0,
+        status: 'synced',
+      };
 
       autoPipeline.step = 1;
       autoPipeline.stepLabel = `📞 Quét SĐT & thông tin • Batch ${autoPipeline.batchIndex}`;
@@ -129,11 +154,26 @@ async function runAutoPipelineLoop() {
         const data = await resp.json();
         console.log('[AutoPipeline] extract response', { status: resp.status, batch: autoPipeline.batchIndex, total: data?.total, updated: data?.updated, leadsUpdatedPhone: data?.leadsUpdatedPhone, error: data?.error });
         if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
-        pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, lead=${data.leadsUpdatedPhone || 0}`, 'ok');
+        batchEntry.contactPhones = data.updatedContactPhone || 0;
+        batchEntry.customerPhones = data.updatedCustomerPhone || 0;
+        batchEntry.leadPhones = data.leadsUpdatedPhone || 0;
+        batchEntry.status = 'done';
+        pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: contact=${batchEntry.contactPhones}, customer=${batchEntry.customerPhones}, lead=${batchEntry.leadPhones}`, 'ok');
       } catch (e) {
         console.error('[AutoPipeline] extract error', e);
+        batchEntry.status = 'error';
+        batchEntry.error = e.message;
+        autoPipeline.kpi.errors += 1;
         pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi quét SĐT — ${e.message}`, 'error');
       }
+
+      // Save batch result + accumulate KPIs
+      autoPipeline.batchResults = [...autoPipeline.batchResults.slice(-99), batchEntry];
+      autoPipeline.kpi.messagesSynced += batchEntry.messagesSynced;
+      autoPipeline.kpi.contactsProcessed += batchEntry.contactsProcessed;
+      autoPipeline.kpi.contactPhones += batchEntry.contactPhones;
+      autoPipeline.kpi.customerPhones += batchEntry.customerPhones;
+      autoPipeline.kpi.leadPhones += batchEntry.leadPhones;
 
       done = syncData.done === true || !syncData.nextOffset;
       if (done) {
@@ -153,6 +193,7 @@ async function runAutoPipelineLoop() {
     autoPipeline.step = 2;
     autoPipeline.stepLabel = '📞 Quét SĐT toàn bộ (logic thủ công)';
     emitAutoState();
+    const fullScanEntry = { batch: 'full', cycle: autoPipeline.cycleCount, ts: Date.now(), contactsProcessed: 0, messagesSynced: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, status: 'running' };
     try {
       const resp = await fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-extract-phones`, {
         method: 'POST',
@@ -162,11 +203,23 @@ async function runAutoPipelineLoop() {
       const data = await resp.json();
       console.log('[AutoPipeline] full scan response', { status: resp.status, total: data?.total, updated: data?.updated, leadsUpdatedPhone: data?.leadsUpdatedPhone, error: data?.error });
       if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
-      pushAutoLog(`✅ Full scan cuối chu kỳ: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, lead=${data.leadsUpdatedPhone || 0}`, 'ok');
+      fullScanEntry.contactPhones = data.updatedContactPhone || 0;
+      fullScanEntry.customerPhones = data.updatedCustomerPhone || 0;
+      fullScanEntry.leadPhones = data.leadsUpdatedPhone || 0;
+      fullScanEntry.contactsProcessed = data.total || 0;
+      fullScanEntry.status = 'done';
+      autoPipeline.kpi.contactPhones += fullScanEntry.contactPhones;
+      autoPipeline.kpi.customerPhones += fullScanEntry.customerPhones;
+      autoPipeline.kpi.leadPhones += fullScanEntry.leadPhones;
+      pushAutoLog(`✅ Full scan cuối chu kỳ: contact=${fullScanEntry.contactPhones}, customer=${fullScanEntry.customerPhones}, lead=${fullScanEntry.leadPhones}`, 'ok');
     } catch (e) {
       console.error('[AutoPipeline] full scan error', e);
+      fullScanEntry.status = 'error';
+      fullScanEntry.error = e.message;
+      autoPipeline.kpi.errors += 1;
       pushAutoLog(`❌ Full scan cuối chu kỳ: ${e.message}`, 'error');
     }
+    autoPipeline.batchResults = [...autoPipeline.batchResults.slice(-99), fullScanEntry];
 
     if (!autoPipeline.enabled || autoPipeline.stopRequested) break;
     pushAutoLog(`♻️ Quay lại từ đầu sau chu kỳ ${autoPipeline.cycleCount}...`);

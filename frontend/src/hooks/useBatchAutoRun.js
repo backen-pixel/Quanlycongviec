@@ -16,6 +16,9 @@ const EMPTY = {
   batchOffset: 0,
   lastUpdatedAt: null,
   logs: [],
+  batchResults: [],
+  kpi: { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 },
+  startedAt: null,
 };
 
 let currentState = { ...EMPTY };
