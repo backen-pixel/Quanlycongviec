@@ -149,6 +149,10 @@ function InboxTab({ pageStats }) {
   const [search, setSearch] = useState('');
   const [pageFilter, setPageFilter] = useState('');
   const [pages, setPages] = useState([]);
+  const [contactLimit, setContactLimit] = useState(1000);
+  const [contactMeta, setContactMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
+  const [leadTitleDraft, setLeadTitleDraft] = useState('');
+  const [leadTitleSaving, setLeadTitleSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
@@ -165,30 +169,36 @@ function InboxTab({ pageStats }) {
       .then(r => r.ok ? r.json() : []).then(setPages).catch(() => {});
   }, []);
 
-  const loadContacts = useCallback(() => {
+  const loadContacts = useCallback((append = false) => {
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (pageFilter) params.set('page_id', pageFilter);
+    params.set('limit', String(contactLimit));
+    params.set('offset', append ? String(contactMeta.nextOffset || 0) : '0');
     const qs = params.toString() ? `?${params}` : '';
     fetch(`${API}/api/facebook/contacts${qs}`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : [])
-      .then(data => {
-        // Sort: unread lên trước, rồi theo tin nhắn mới nhất
-        const sorted = [...(data || [])].sort((a, b) => {
-          // Unread first
+      .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
+      .then(payload => {
+        const rows = payload?.data || [];
+        const merged = append ? [...contacts, ...rows] : rows;
+        const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
+        const sorted = [...deduped].sort((a, b) => {
           const ua = (a.unread_count || 0) > 0 ? 1 : 0;
           const ub = (b.unread_count || 0) > 0 ? 1 : 0;
           if (ub !== ua) return ub - ua;
-          // Then by last_message_at desc
+          const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
+          const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
+          if (bp !== ap) return bp - ap;
           const dateA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
           const dateB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
           return dateB - dateA;
         });
         setContacts(sorted);
+        setContactMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       }).catch(() => {});
-  }, [search, pageFilter]);
+  }, [search, pageFilter, contactLimit, contactMeta.nextOffset, contacts]);
 
-  useEffect(() => { loadContacts(); }, [loadContacts]);
+  useEffect(() => { loadContacts(false); }, [loadContacts]);
 
   useEffect(() => {
     const contactId = searchParams.get('contact');
@@ -232,6 +242,7 @@ function InboxTab({ pageStats }) {
 
   useEffect(() => {
     if (!selected) return;
+    setLeadTitleDraft(selected.lead?.title || selected.fb_name || '');
     
     // Mark as read in local state immediately
     setContacts(prev => prev.map(c => 
@@ -396,7 +407,15 @@ function InboxTab({ pageStats }) {
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm kiếm khách hàng..."
               className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
           </div>
-              {pages.length > 1 && (
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <div className="text-gray-500">Đang xem {contacts.length}/{contactMeta.total || 0}</div>
+            <select value={contactLimit} onChange={e => setContactLimit(Number(e.target.value))} className="border border-gray-200 rounded-lg px-2 py-1 bg-white text-gray-700">
+              <option value={1000}>1000</option>
+              <option value={2000}>2000</option>
+              <option value={5000}>5000</option>
+            </select>
+          </div>
+          {pages.length > 1 && (
             <PageSelector
               value={pageFilter}
               onChange={setPageFilter}
@@ -475,6 +494,13 @@ function InboxTab({ pageStats }) {
               <p className="text-sm text-gray-400">{contacts.length ? 'Không có kết quả lọc' : 'Chưa có cuộc hội thoại'}</p>
             </div>
           )}
+          {contactMeta.hasMore && (
+            <div className="p-3 border-t bg-white sticky bottom-0">
+              <button onClick={() => loadContacts(true)} className="w-full text-xs bg-blue-50 text-blue-700 py-2 rounded-lg hover:bg-blue-100 font-medium">
+                Tải thêm {Math.min(contactLimit, (contactMeta.total || 0) - contacts.length)} contact
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -495,6 +521,40 @@ function InboxTab({ pageStats }) {
                     {(selected.display_phone || selected.phone || selected.customer?.phone) && <span className="text-green-600">📞 {selected.display_phone || selected.phone || selected.customer?.phone}</span>}
                     {!(selected.display_phone || selected.phone || selected.customer?.phone) && <span>Facebook Messenger</span>}
                   </div>
+                  {selected.lead && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        value={leadTitleDraft}
+                        onChange={e => setLeadTitleDraft(e.target.value)}
+                        placeholder="Sửa tên lead"
+                        className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white min-w-[220px]"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!leadTitleDraft.trim() || leadTitleSaving) return;
+                          setLeadTitleSaving(true);
+                          try {
+                            const res = await fetch(`${API}/api/crm/leads/${selected.lead.id}`, {
+                              method: 'PUT',
+                              headers: hdr(),
+                              body: JSON.stringify({ title: leadTitleDraft.trim() }),
+                            });
+                            const data = await res.json();
+                            if (!res.ok) throw new Error(data?.error || 'Lỗi cập nhật lead');
+                            setSelected(prev => ({ ...prev, lead: { ...prev.lead, title: data.title } }));
+                            loadContacts(false);
+                          } catch (e) {
+                            alert(e.message || 'Lỗi cập nhật lead');
+                          }
+                          setLeadTitleSaving(false);
+                        }}
+                        disabled={leadTitleSaving || !leadTitleDraft.trim()}
+                        className="text-xs bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg hover:bg-amber-100 disabled:opacity-40"
+                      >
+                        {leadTitleSaving ? 'Đang lưu...' : 'Lưu tên lead'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -716,27 +776,37 @@ function ContactsTab() {
   const [batchProgress, setBatchProgress] = useState(null);
   const [audit, setAudit] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [limitSize, setLimitSize] = useState(1000);
+  const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
 
-  const load = useCallback(() => {
+  const load = useCallback((append = false) => {
     const p = new URLSearchParams();
     if (search) p.set('search', search);
     if (filter === 'has_lead') p.set('has_lead', 'true');
     if (filter === 'no_lead') p.set('has_lead', 'false');
+    p.set('limit', String(limitSize));
+    p.set('offset', append ? String(meta.nextOffset || 0) : '0');
     fetch(`${API}/api/facebook/contacts?${p}`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : [])
-      .then(data => {
-        // Sort: tin nhắn mới nhất lên đầu
-        const sorted = [...(data || [])].sort((a, b) => {
+      .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
+      .then(payload => {
+        const rows = payload?.data || [];
+        const merged = append ? [...contacts, ...rows] : rows;
+        const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
+        const sorted = [...deduped].sort((a, b) => {
+          const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
+          const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
+          if (bp !== ap) return bp - ap;
           const dateA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
           const dateB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
           return dateB - dateA;
         });
         setContacts(sorted);
+        setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       })
       .catch(() => {});
-  }, [search, filter]);
+  }, [search, filter, limitSize, meta.nextOffset, contacts]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(false); }, [load]);
 
   useEffect(() => {
     if (!socket) return;
@@ -871,7 +941,7 @@ function ContactsTab() {
     <div className="p-6 overflow-y-auto h-full">
       <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length})</h2>
+          <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length}/{meta.total || 0})</h2>
           {batchStatus?.type === 'phones' && batchStatus.loading && batchProgress && (
             <div className="mt-2 text-xs text-gray-600 space-y-1">
               <div>Đang quét: <span className="font-medium">{batchProgress.name || '...'}</span> ({batchProgress.current || 0}/{batchProgress.total || 0})</div>
@@ -910,7 +980,12 @@ function ContactsTab() {
             {batchStatus?.type === 'phones' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full" /> : '📞'}
             Quét SĐT & thông tin
           </button>
-          <button onClick={load} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 cursor-pointer"><RefreshCw size={14} /> Làm mới</button>
+          <select value={limitSize} onChange={e => setLimitSize(Number(e.target.value))} className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700">
+            <option value={1000}>1000</option>
+            <option value={2000}>2000</option>
+            <option value={5000}>5000</option>
+          </select>
+          <button onClick={() => load(false)} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 cursor-pointer"><RefreshCw size={14} /> Làm mới</button>
         </div>
       </div>
 
@@ -1118,6 +1193,13 @@ function ContactsTab() {
           </tbody>
         </table>
         {!contacts.length && <p className="text-center text-gray-400 py-8 text-sm">Chưa có liên hệ nào</p>}
+        {meta.hasMore && (
+          <div className="p-4 border-t bg-gray-50">
+            <button onClick={() => load(true)} className="w-full text-xs bg-blue-50 text-blue-700 py-2 rounded-lg hover:bg-blue-100 font-medium">
+              Tải thêm {Math.min(limitSize, (meta.total || 0) - contacts.length)} contact
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

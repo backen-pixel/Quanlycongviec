@@ -737,16 +737,14 @@ r.get('/leads-by-fb-page', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/leads', async (req, res) => {
   try {
-    const { stage_id, assigned_to, source_id, search, limit = 100, type = 'lead', company_id, date_from, date_to, phone_filter } = req.query;
-    const parsedLimit = Math.max(parseInt(limit) || 100, 1);
+    const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, type = 'lead', company_id, date_from, date_to, phone_filter } = req.query;
+    const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 5000);
+    const parsedOffset = Math.max(parseInt(offset) || 0, 0);
     let q = supabase.from('crm_leads')
       .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
       .eq('type', type)
-      .order('created_at', { ascending: false });
-
-    // Khi lọc theo số điện thoại, lấy tập rộng hơn từ DB rồi lọc ở server để không bị giới hạn bởi 100/500 bản ghi đầu.
-    if (phone_filter) q = q.limit(5000);
-    else q = q.limit(parsedLimit);
+      .order('created_at', { ascending: false })
+      .limit(5000);
 
     if (stage_id) q = q.eq('stage_id', stage_id);
     if (assigned_to) q = q.eq('assigned_to', assigned_to);
@@ -770,8 +768,26 @@ r.get('/leads', async (req, res) => {
     } else if (phone_filter === 'no_phone') {
       result = result.filter(l => !l.display_phone);
     }
+    result.sort((a, b) => {
+      const ap = a.display_phone ? 1 : 0;
+      const bp = b.display_phone ? 1 : 0;
+      if (bp !== ap) return bp - ap;
+      const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return db - da;
+    });
 
-    res.json(phone_filter ? result.slice(0, parsedLimit) : result);
+    const total = result.length;
+    const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
+
+    res.json({
+      data: page,
+      total,
+      offset: parsedOffset,
+      limit: parsedLimit,
+      hasMore: parsedOffset + page.length < total,
+      nextOffset: parsedOffset + page.length,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

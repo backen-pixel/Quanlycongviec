@@ -498,31 +498,33 @@ async function fetchProfileViaConversations(pageId, psid) {
 function extractContactInfo(text) {
   if (!text) return { phone: null, address: null };
   
-  // Phone patterns (VN)
+  // Chỉ chấp nhận số điện thoại VN chuẩn hóa đúng 10 số.
   const phonePatterns = [
-    /(?:0|\+84)(?:\d[\s.\-\/]?){9,10}/g,  // 0912345678, +84912345678, 0912 345 678, 0984/462/000
-    /(?:84)(?:\d[\s.\-\/]?){9,10}/g,       // 84912345678
+    /(?:0|\+84)(?:\d[\s.\-\/]?){9}/g,
+    /(?:84)(?:\d[\s.\-\/]?){9}/g,
   ];
   
   let phone = null;
   for (const pattern of phonePatterns) {
     const matches = text.match(pattern);
     if (matches?.[0]) {
-      phone = matches[0].replace(/[\s.\-\/]/g, ''); // Remove spaces/dashes/slashes
-      // Normalize: +84 → 0
-      if (phone.startsWith('+84')) phone = '0' + phone.slice(3);
-      else if (phone.startsWith('84') && phone.length >= 11) phone = '0' + phone.slice(2);
-      // Validate length: VN phone = 10 digits (0xxx) or 11 digits (01xxx old format)
-      if (phone.length < 10 || phone.length > 11) phone = null;
-      if (phone) break;
+      let normalized = matches[0].replace(/[^\d+]/g, '');
+      if (normalized.startsWith('+84')) normalized = '0' + normalized.slice(3);
+      else if (normalized.startsWith('84')) normalized = '0' + normalized.slice(2);
+      normalized = normalized.replace(/\D/g, '');
+      if (/^0\d{9}$/.test(normalized)) {
+        phone = normalized;
+        break;
+      }
     }
   }
   
-  // Fallback: tìm dãy 9-10 chữ số liên tiếp (không có prefix 0) — có thể user gửi thiếu số 0
+  // Fallback: tìm đúng 9 số đầu 3-9 rồi thêm prefix 0 -> thành 10 số
   if (!phone) {
     const bareMatch = text.match(/(?:^|[^\d])([3-9]\d{8})(?:[^\d]|$)/);
     if (bareMatch?.[1]) {
-      phone = '0' + bareMatch[1]; // Thêm prefix 0
+      const normalized = '0' + bareMatch[1];
+      if (/^0\d{9}$/.test(normalized)) phone = normalized;
     }
   }
   
@@ -1483,35 +1485,57 @@ r.delete('/pages/:id', authMiddleware, async (req, res) => {
 
 r.get('/contacts', authMiddleware, async (req, res) => {
   try {
-    const { page_id, has_lead, search, limit: rawLimit } = req.query;
+    const { page_id, has_lead, search, limit: rawLimit, offset: rawOffset } = req.query;
     const maxLimit = Math.min(parseInt(rawLimit) || 1000, 5000);
+    const offset = Math.max(parseInt(rawOffset) || 0, 0);
     let q = supabase.from('facebook_contacts')
-      .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)')
-      .order('last_message_at', { ascending: false, nullsFirst: false });
+      .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)');
     
     if (page_id) q = q.eq('page_id', page_id);
     if (has_lead === 'true') q = q.not('lead_id', 'is', null);
     if (has_lead === 'false') q = q.is('lead_id', null);
     if (search) q = q.or(`fb_name.ilike.%${search}%,phone.ilike.%${search}%`);
 
-    const { data } = await q.limit(maxLimit);
+    // Lấy rộng hơn để sort ưu tiên record có SĐT rồi mới paginate.
+    const { data } = await q.order('last_message_at', { ascending: false, nullsFirst: false }).limit(5000);
+    let result = data || [];
+    result.forEach(c => {
+      c.display_phone = c.phone || c.customer?.phone || null;
+    });
+    result.sort((a, b) => {
+      const ap = a.display_phone ? 1 : 0;
+      const bp = b.display_phone ? 1 : 0;
+      if (bp !== ap) return bp - ap;
+      const da = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+      const db = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+      return db - da;
+    });
+
+    const total = result.length;
+    const page = result.slice(offset, offset + maxLimit);
     
-    // Thêm message_count + display_phone cho mỗi contact
-    if (data?.length) {
-      const contactIds = data.map(c => c.id);
+    if (page.length) {
+      const contactIds = page.map(c => c.id);
       const { data: counts } = await supabase.from('facebook_messages')
         .select('contact_id')
         .in('contact_id', contactIds)
         .eq('direction', 'inbound');
       const countMap = {};
       (counts || []).forEach(m => { countMap[m.contact_id] = (countMap[m.contact_id] || 0) + 1; });
-      data.forEach(c => {
+      page.forEach(c => {
         c.message_count = countMap[c.id] || 0;
         c.display_phone = c.phone || c.customer?.phone || null;
       });
     }
 
-    res.json(data || []);
+    res.json({
+      data: page,
+      total,
+      offset,
+      limit: maxLimit,
+      hasMore: offset + page.length < total,
+      nextOffset: offset + page.length,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
