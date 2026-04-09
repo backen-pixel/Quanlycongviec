@@ -536,14 +536,24 @@ r.get('/employees-by-company', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/sources', async (req, res) => {
   const { data } = await supabase.from('crm_sources').select('*').eq('is_active', true).order('name');
-  // Fetch FB pages to enrich sources — deduplicate by page_id
   const { data: rawPages } = await supabase.from('facebook_pages').select('id, page_id, page_name, is_active').eq('is_active', true);
-  const seenPageIds = new Set();
+
+  // Dedupe FB pages theo tên hiển thị đã normalize trước, fallback theo page_id.
+  const normalizePageName = (name = '') => String(name)
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+  const seen = new Set();
   const pages = (rawPages || []).filter(p => {
-    if (seenPageIds.has(p.page_id)) return false;
-    seenPageIds.add(p.page_id);
+    const normalizedName = normalizePageName(p.page_name);
+    const key = normalizedName || `page:${p.page_id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
+
   res.json({ sources: data || [], fb_pages: pages });
 });
 
