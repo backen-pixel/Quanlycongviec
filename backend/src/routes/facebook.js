@@ -557,6 +557,24 @@ function extractContactInfo(text) {
   return { phone, address };
 }
 
+function extractInboundContactInfo(messages = []) {
+  let phone = null;
+  let address = null;
+  const extraPhones = [];
+
+  for (const msg of (messages || [])) {
+    if (msg.direction && msg.direction !== 'inbound') continue;
+    if (!msg.content) continue;
+    const extracted = extractContactInfo(msg.content);
+    if (extracted.phone && !phone) phone = extracted.phone;
+    else if (extracted.phone && extracted.phone !== phone && !extraPhones.includes(extracted.phone)) extraPhones.push(extracted.phone);
+    if (extracted.address && !address) address = extracted.address;
+    if (phone && address) break;
+  }
+
+  return { phone, address, extraPhones };
+}
+
 // ── In-memory lock để chống race condition tạo lead trùng ──
 const _createLeadLocks = new Map();
 
@@ -2765,22 +2783,20 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
       console.log(`[ExtractPhones] Scan ${i + 1}/${total}: ${contact.fb_name || contact.id}`);
       const { data: messages } = await supabase.from('facebook_messages')
-        .select('content, direction, created_at')
+        .select('id, content, direction, created_at')
         .eq('contact_id', contact.id)
+        .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
         .limit(300);
 
-      let extractedPhone = null;
-      let extractedAddress = null;
-      const extraPhones = [];
+      const inboundInfo = extractInboundContactInfo(messages || []);
+      let extractedPhone = inboundInfo.phone;
+      let extractedAddress = inboundInfo.address;
+      const extraPhones = inboundInfo.extraPhones;
 
-      for (const msg of (messages || [])) {
-        if (!msg.content) continue;
-        const { phone, address } = extractContactInfo(msg.content);
-        if (phone && !extractedPhone) extractedPhone = phone;
-        else if (phone && phone !== extractedPhone && !extraPhones.includes(phone)) extraPhones.push(phone);
-        if (address && !extractedAddress) extractedAddress = address;
-        if (extractedPhone && extractedAddress) break;
+      if (extractedPhone) {
+        const sourceMsg = (messages || []).find(m => m.content && extractContactInfo(m.content).phone === extractedPhone);
+        if (sourceMsg) console.log(`[ExtractPhones] inbound phone ${extractedPhone} from msg ${sourceMsg.id} contact=${contact.id}`);
       }
 
       // ── Fix #1 & #4: Fallback sang contact.phone nếu tin nhắn không tìm được số mới ──
