@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Zap, Loader2, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import api from '../lib/api';
-import { getSocket } from '../lib/socket';
+import { connectSocket, getSocket } from '../lib/socket';
 import { useBatchAuto, toggleBatchAuto, triggerPipelineNow, formatCountdown } from '../hooks/useBatchAutoRun';
 
 const ACTIONS = [
@@ -34,6 +34,10 @@ export default function BatchActionsBar({ onComplete }) {
 
   // Global auto-run state
   const auto = useBatchAuto();
+
+  useEffect(() => {
+    connectSocket();
+  }, []);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -146,7 +150,7 @@ export default function BatchActionsBar({ onComplete }) {
             className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${
               auto.enabled ? 'bg-green-500' : 'bg-gray-300'
             }`}
-            title={auto.enabled ? 'Tự động: Bật (5 phút/lần)' : 'Tự động: Tắt'}
+            title={auto.enabled ? 'Tự động: Bật (backend realtime)' : 'Tự động: Tắt'}
           >
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
               auto.enabled ? 'translate-x-5' : 'translate-x-0'

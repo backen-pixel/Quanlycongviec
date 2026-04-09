@@ -2,6 +2,178 @@ const express = require('express');
 const r = express.Router();
 const { supabase } = require('../config/supabase');
 
+// ═══════════════════════════════════════════════════════════════
+// AUTO PIPELINE STATE (backend-managed, realtime)
+// ═══════════════════════════════════════════════════════════════
+const AUTO_BATCH_SIZE = 300;
+const AUTO_SYNC_TIMEOUT_SEC = 90;
+const AUTO_LOOP_PAUSE_MS = 1500;
+
+const autoPipeline = {
+  enabled: false,
+  running: false,
+  stopRequested: false,
+  phase: 'idle',
+  step: -1,
+  totalSteps: 3,
+  stepLabel: null,
+  cycleCount: 0,
+  batchIndex: 0,
+  totalBatches: 0,
+  totalContacts: 0,
+  batchOffset: 0,
+  lastUpdatedAt: null,
+  logs: [],
+};
+
+function pushAutoLog(text, status = 'info') {
+  autoPipeline.logs = [...autoPipeline.logs.slice(-199), { text, status, ts: Date.now() }];
+  autoPipeline.lastUpdatedAt = new Date().toISOString();
+  emitAutoState();
+}
+
+function getAutoState() {
+  return {
+    enabled: autoPipeline.enabled,
+    running: autoPipeline.running,
+    phase: autoPipeline.phase,
+    step: autoPipeline.step,
+    totalSteps: autoPipeline.totalSteps,
+    stepLabel: autoPipeline.stepLabel,
+    cycleCount: autoPipeline.cycleCount,
+    batchIndex: autoPipeline.batchIndex,
+    totalBatches: autoPipeline.totalBatches,
+    totalContacts: autoPipeline.totalContacts,
+    batchOffset: autoPipeline.batchOffset,
+    lastUpdatedAt: autoPipeline.lastUpdatedAt,
+    logs: autoPipeline.logs,
+  };
+}
+
+function emitAutoState() {
+  if (r._ioRef) r._ioRef.emit('auto_pipeline_state', getAutoState());
+}
+
+async function runAutoPipelineLoop() {
+  if (autoPipeline.running) return;
+  autoPipeline.running = true;
+  autoPipeline.stopRequested = false;
+  autoPipeline.phase = 'loop';
+  autoPipeline.lastUpdatedAt = new Date().toISOString();
+  pushAutoLog('🚀 Bắt đầu auto pipeline realtime ở backend');
+
+  while (autoPipeline.enabled && !autoPipeline.stopRequested) {
+    autoPipeline.cycleCount += 1;
+    autoPipeline.batchOffset = 0;
+    autoPipeline.batchIndex = 0;
+    autoPipeline.totalBatches = 0;
+    autoPipeline.totalContacts = 0;
+    autoPipeline.phase = 'loop';
+    pushAutoLog(`🔄 Chu kỳ ${autoPipeline.cycleCount} bắt đầu`);
+
+    let done = false;
+    while (!done && autoPipeline.enabled && !autoPipeline.stopRequested) {
+      autoPipeline.batchIndex += 1;
+
+      autoPipeline.step = 0;
+      autoPipeline.stepLabel = `📨 Đồng bộ tin nhắn • Batch ${autoPipeline.batchIndex}`;
+      emitAutoState();
+
+      let syncData = null;
+      try {
+        const fakeReq = { body: { mode: 'all', offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE, timeout: AUTO_SYNC_TIMEOUT_SEC }, user: { id: 'auto-pipeline' } };
+        let jsonPayload = null;
+        const fakeRes = {
+          json(payload) { jsonPayload = payload; return payload; },
+          status() { return this; },
+        };
+        await new Promise((resolve, reject) => {
+          r.handle({ ...fakeReq, method: 'POST', url: '/batch-sync-messages' }, { ...fakeRes, json(payload) { jsonPayload = payload; resolve(payload); return payload; } }, reject);
+        }).catch(() => {});
+        syncData = jsonPayload;
+      } catch (e) {
+        pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi sync — ${e.message}`, 'error');
+        break;
+      }
+
+      if (!syncData || syncData.error) {
+        pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: sync không trả dữ liệu hợp lệ`, 'error');
+        break;
+      }
+
+      autoPipeline.totalContacts = syncData.total || autoPipeline.totalContacts;
+      autoPipeline.totalBatches = autoPipeline.totalContacts > 0 ? Math.ceil(autoPipeline.totalContacts / AUTO_BATCH_SIZE) : 0;
+      pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: sync ${syncData.processedCount || 0} contacts, +${syncData.totalSynced || 0} tin nhắn`, 'ok');
+      emitAutoState();
+
+      autoPipeline.step = 1;
+      autoPipeline.stepLabel = `📞 Quét SĐT & thông tin • Batch ${autoPipeline.batchIndex}`;
+      emitAutoState();
+      try {
+        const fakeReq = { body: { offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE }, user: { id: 'auto-pipeline' } };
+        let jsonPayload = null;
+        const fakeRes = {
+          json(payload) { jsonPayload = payload; return payload; },
+          status() { return this; },
+        };
+        await new Promise((resolve, reject) => {
+          r.handle({ ...fakeReq, method: 'POST', url: '/batch-extract-phones' }, { ...fakeRes, json(payload) { jsonPayload = payload; resolve(payload); return payload; } }, reject);
+        }).catch(() => {});
+        const data = jsonPayload || {};
+        pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, lead=${data.leadsUpdatedPhone || 0}`, 'ok');
+      } catch (e) {
+        pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi quét SĐT — ${e.message}`, 'error');
+      }
+
+      done = syncData.done === true || !syncData.nextOffset;
+      if (done) {
+        autoPipeline.batchOffset = 0;
+        autoPipeline.batchIndex = autoPipeline.totalBatches || autoPipeline.batchIndex;
+        pushAutoLog(`🏁 Chu kỳ ${autoPipeline.cycleCount} hoàn tất batch loop: ${autoPipeline.totalContacts || 0} contacts`, 'ok');
+      } else {
+        autoPipeline.batchOffset = syncData.nextOffset || (autoPipeline.batchOffset + AUTO_BATCH_SIZE);
+        pushAutoLog(`⏭️ Chuyển batch tiếp theo: offset ${autoPipeline.batchOffset}`);
+      }
+      emitAutoState();
+    }
+
+    if (!autoPipeline.enabled || autoPipeline.stopRequested) break;
+
+    autoPipeline.phase = 'manual_full_scan';
+    autoPipeline.step = 2;
+    autoPipeline.stepLabel = '📞 Quét SĐT toàn bộ (logic thủ công)';
+    emitAutoState();
+    try {
+      const fakeReq = { body: {}, user: { id: 'auto-pipeline' } };
+      let jsonPayload = null;
+      const fakeRes = {
+        json(payload) { jsonPayload = payload; return payload; },
+        status() { return this; },
+      };
+      await new Promise((resolve, reject) => {
+        r.handle({ ...fakeReq, method: 'POST', url: '/batch-extract-phones' }, { ...fakeRes, json(payload) { jsonPayload = payload; resolve(payload); return payload; } }, reject);
+      }).catch(() => {});
+      const data = jsonPayload || {};
+      pushAutoLog(`✅ Full scan cuối chu kỳ: contact=${data.updatedContactPhone || 0}, customer=${data.updatedCustomerPhone || 0}, lead=${data.leadsUpdatedPhone || 0}`, 'ok');
+    } catch (e) {
+      pushAutoLog(`❌ Full scan cuối chu kỳ: ${e.message}`, 'error');
+    }
+
+    if (!autoPipeline.enabled || autoPipeline.stopRequested) break;
+    pushAutoLog(`♻️ Quay lại từ đầu sau chu kỳ ${autoPipeline.cycleCount}...`);
+    await new Promise(resolve => setTimeout(resolve, AUTO_LOOP_PAUSE_MS));
+  }
+
+  autoPipeline.running = false;
+  autoPipeline.enabled = false;
+  autoPipeline.stopRequested = false;
+  autoPipeline.phase = 'idle';
+  autoPipeline.step = -1;
+  autoPipeline.stepLabel = null;
+  pushAutoLog('⏹️ Auto pipeline đã dừng');
+  emitAutoState();
+}
+
 // ── Auto-migration: thêm cột mới nếu chưa có ──
 (async () => {
   try {
@@ -3235,6 +3407,40 @@ r.delete('/webhook-logs', authMiddleware, async (req, res) => {
     await supabase.from('facebook_webhook_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// AUTO PIPELINE CONTROL (backend-managed realtime)
+// ═══════════════════════════════════════════════════════════════
+r.get('/auto-pipeline/status', authMiddleware, async (_req, res) => {
+  res.json(getAutoState());
+});
+
+r.post('/auto-pipeline/start', authMiddleware, async (_req, res) => {
+  if (!autoPipeline.running) {
+    autoPipeline.enabled = true;
+    runAutoPipelineLoop().catch(err => {
+      console.error('[AutoPipeline] FATAL', err.message);
+      pushAutoLog(`❌ Auto pipeline lỗi nghiêm trọng: ${err.message}`, 'error');
+      autoPipeline.running = false;
+      autoPipeline.enabled = false;
+      autoPipeline.phase = 'idle';
+      autoPipeline.step = -1;
+      autoPipeline.stepLabel = null;
+      emitAutoState();
+    });
+  } else {
+    autoPipeline.enabled = true;
+    emitAutoState();
+  }
+  res.json({ ok: true, state: getAutoState() });
+});
+
+r.post('/auto-pipeline/stop', authMiddleware, async (_req, res) => {
+  autoPipeline.stopRequested = true;
+  autoPipeline.enabled = false;
+  pushAutoLog('🛑 Đã yêu cầu dừng auto pipeline');
+  res.json({ ok: true, state: getAutoState() });
 });
 
 module.exports = r;
