@@ -534,26 +534,39 @@ r.get('/employees-by-company', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // SOURCES — bao gồm nguồn thông thường + FB pages gộp
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/sources', async (req, res) => {
-  const { data } = await supabase.from('crm_sources').select('*').eq('is_active', true).order('name');
-  const { data: rawPages } = await supabase.from('facebook_pages').select('id, page_id, page_name, is_active').eq('is_active', true);
-
-  // Dedupe FB pages theo tên hiển thị đã normalize trước, fallback theo page_id.
-  const normalizePageName = (name = '') => String(name)
+function normalizeFacebookSourceKey(name = '') {
+  return String(name)
     .normalize('NFKC')
     .trim()
     .replace(/\s+/g, ' ')
     .toLowerCase();
+}
 
-  const seen = new Set();
-  const pages = (rawPages || []).filter(p => {
-    const normalizedName = normalizePageName(p.page_name);
-    const key = normalizedName || `page:${p.page_id}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+r.get('/sources', async (req, res) => {
+  const { data } = await supabase.from('crm_sources').select('*').eq('is_active', true).order('name');
+  const { data: rawPages } = await supabase.from('facebook_pages').select('id, page_id, page_name, is_active').eq('is_active', true);
 
+  const grouped = new Map();
+  for (const page of (rawPages || [])) {
+    const sourceKey = normalizeFacebookSourceKey(page.page_name) || `page:${page.page_id}`;
+    const existing = grouped.get(sourceKey);
+    if (!existing) {
+      grouped.set(sourceKey, {
+        id: page.id,
+        page_id: page.page_id,
+        page_name: (page.page_name || '').trim(),
+        is_active: !!page.is_active,
+        source_key: sourceKey,
+        page_ids: [page.page_id],
+        page_count: 1,
+      });
+      continue;
+    }
+    existing.page_ids.push(page.page_id);
+    existing.page_count += 1;
+  }
+
+  const pages = Array.from(grouped.values()).sort((a, b) => (a.page_name || '').localeCompare(b.page_name || ''));
   res.json({ sources: data || [], fb_pages: pages });
 });
 
@@ -728,10 +741,25 @@ r.post('/leads/cleanup-duplicates', async (req, res) => {
 
 r.get('/leads-by-fb-page', async (req, res) => {
   try {
-    const { page_id, type = 'lead' } = req.query;
-    if (!page_id) return res.status(400).json({ error: 'page_id required' });
+    const { page_id, source_key, type = 'lead' } = req.query;
+    let pageIds = [];
+
+    if (source_key) {
+      const { data: pages } = await supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true);
+      pageIds = (pages || [])
+        .filter(p => normalizeFacebookSourceKey(p.page_name) === source_key)
+        .map(p => p.page_id);
+    } else if (page_id) {
+      pageIds = [page_id];
+    } else {
+      return res.status(400).json({ error: 'page_id or source_key required' });
+    }
+
+    pageIds = [...new Set(pageIds.filter(Boolean))];
+    if (!pageIds.length) return res.json([]);
+
     const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('lead_id').eq('page_id', page_id).not('lead_id', 'is', null);
+      .select('lead_id, page_id').in('page_id', pageIds).not('lead_id', 'is', null);
     const leadIds = [...new Set((contacts || []).map(c => c.lead_id))];
     if (!leadIds.length) return res.json([]);
     const { data } = await supabase.from('crm_leads')
