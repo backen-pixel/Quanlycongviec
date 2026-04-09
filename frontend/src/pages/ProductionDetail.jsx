@@ -5,7 +5,7 @@ import { formatVND, formatDate, formatDateTime, getInitials, avatarColor } from 
 import {
   ArrowLeft, Phone, Mail, Calendar, DollarSign, User, Target,
   CheckCircle2, FileIcon, FolderKanban, Factory, ShieldCheck, MessageSquare,
-  FileText, ArrowRightLeft, Building2, Clock
+  FileText, ArrowRightLeft, Building2, Clock, Send, ClipboardCheck, Package
 } from 'lucide-react';
 
 export default function ProductionDetail() {
@@ -14,6 +14,7 @@ export default function ProductionDetail() {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('tasks');
+  const [approvalForm, setApprovalForm] = useState({ type: 'drawing', title: '', note: '' });
 
   useEffect(() => {
     load();
@@ -39,6 +40,15 @@ export default function ProductionDetail() {
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
     }
+  };
+
+  const submitWorkshopApproval = () => {
+    if (!approvalForm.title.trim()) {
+      alert('Nhập tiêu đề nội dung cần duyệt');
+      return;
+    }
+    alert(`Đã ghi nhận yêu cầu gửi duyệt cho deal này:\n- Loại: ${approvalForm.type}\n- Tiêu đề: ${approvalForm.title}\n\nBước tiếp theo mình sẽ nối form này với API duyệt hai chiều CRM <-> xưởng.`);
+    setApprovalForm({ type: 'drawing', title: '', note: '' });
   };
 
   if (loading || !project) {
@@ -204,24 +214,72 @@ export default function ProductionDetail() {
 
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
               <div className="flex items-center gap-2 mb-4 text-gray-900 font-semibold">
-                <ArrowRightLeft className="h-5 w-5 text-orange-600" /> Trao đổi gần đây
+                <ClipboardCheck className="h-5 w-5 text-orange-600" /> Gửi duyệt theo từng deal
               </div>
-              {project.recentComments?.length ? (
-                <div className="space-y-3">
-                  {project.recentComments.map((comment) => (
-                    <div key={comment.id} className="rounded-xl bg-gray-50 p-3">
-                      <div className="flex items-center justify-between gap-3 mb-1">
-                        <span className="text-xs font-semibold text-gray-700">{comment.user?.full_name || 'Người dùng'}</span>
-                        <span className="text-[11px] text-gray-400">{formatDateTime(comment.created_at)}</span>
-                      </div>
-                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{comment.content || 'Không có nội dung'}</p>
-                    </div>
-                  ))}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Loại gửi duyệt</label>
+                  <select
+                    value={approvalForm.type}
+                    onChange={(e) => setApprovalForm((prev) => ({ ...prev, type: e.target.value }))}
+                    className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm"
+                  >
+                    <option value="drawing">Bản vẽ</option>
+                    <option value="material">Vật tư</option>
+                    <option value="change-request">Yêu cầu chỉnh sửa</option>
+                    <option value="handoff">Hồ sơ bàn giao</option>
+                  </select>
                 </div>
-              ) : (
-                <p className="text-sm text-gray-400">Chưa có trao đổi nội bộ cho dự án này.</p>
-              )}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Tiêu đề</label>
+                  <input
+                    value={approvalForm.title}
+                    onChange={(e) => setApprovalForm((prev) => ({ ...prev, title: e.target.value }))}
+                    className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm"
+                    placeholder="Ví dụ: Bản vẽ bếp tầng 2 cần CRM duyệt"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Ghi chú gửi duyệt</label>
+                  <textarea
+                    value={approvalForm.note}
+                    onChange={(e) => setApprovalForm((prev) => ({ ...prev, note: e.target.value }))}
+                    className="w-full min-h-[96px] px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                    placeholder="Mô tả rõ nội dung cần CRM hoặc quản lý duyệt cho đúng từng deal..."
+                  />
+                </div>
+                <button
+                  onClick={submitWorkshopApproval}
+                  className="h-10 px-4 rounded-lg bg-orange-600 text-white text-sm font-medium hover:bg-orange-700 flex items-center gap-2 cursor-pointer"
+                >
+                  <Send className="h-4 w-4" /> Gửi duyệt deal này
+                </button>
+                <div className="rounded-xl bg-gray-50 p-3 text-xs text-gray-500">
+                  Chức năng này nằm trong chi tiết từng deal xưởng, không nằm ở kanban. Mỗi yêu cầu duyệt sẽ gắn với đúng deal đang mở.
+                </div>
+              </div>
             </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+            <div className="flex items-center gap-2 mb-4 text-gray-900 font-semibold">
+              <ArrowRightLeft className="h-5 w-5 text-orange-600" /> Trao đổi gần đây
+            </div>
+            {project.recentComments?.length ? (
+              <div className="space-y-3">
+                {project.recentComments.map((comment) => (
+                  <div key={comment.id} className="rounded-xl bg-gray-50 p-3">
+                    <div className="flex items-center justify-between gap-3 mb-1">
+                      <span className="text-xs font-semibold text-gray-700">{comment.user?.full_name || 'Người dùng'}</span>
+                      <span className="text-[11px] text-gray-400">{formatDateTime(comment.created_at)}</span>
+                    </div>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{comment.content || 'Không có nội dung'}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">Chưa có trao đổi nội bộ cho dự án này.</p>
+            )}
           </div>
 
           {/* Tabs */}
@@ -258,6 +316,16 @@ export default function ProductionDetail() {
               >
                 📅 Lịch sử
               </button>
+              <button
+                onClick={() => setActiveTab('approvals')}
+                className={`px-6 py-4 font-medium text-sm border-b-2 transition ${
+                  activeTab === 'approvals'
+                    ? 'border-orange-600 text-orange-600'
+                    : 'border-transparent text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                ✅ Gửi duyệt deal
+              </button>
             </div>
 
             {/* Tab Content */}
@@ -265,6 +333,7 @@ export default function ProductionDetail() {
               {activeTab === 'tasks' && <TasksTab project={project} />}
               {activeTab === 'documents' && <DocumentsTab project={project} />}
               {activeTab === 'timeline' && <TimelineTab project={project} />}
+              {activeTab === 'approvals' && <ApprovalsTab approvalForm={approvalForm} setApprovalForm={setApprovalForm} onSubmit={submitWorkshopApproval} />}
             </div>
           </div>
         </div>
@@ -345,7 +414,7 @@ export default function ProductionDetail() {
           </div>
 
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2"><Factory className="h-4 w-4 text-orange-600" /> Trạng thái chia sẻ tài liệu</h3>
+            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2"><Package className="h-4 w-4 text-orange-600" /> Trạng thái chia sẻ tài liệu</h3>
             <div className="space-y-2 text-sm text-gray-600">
               <div className="flex items-center justify-between">
                 <span>Hiện cho xưởng</span>
@@ -462,6 +531,53 @@ function PersonCard({ label, person }) {
         <p className="text-xs text-gray-500">{label}</p>
         <p className="text-sm font-medium text-gray-900">{person.full_name}</p>
       </div>
+    </div>
+  );
+}
+
+function ApprovalsTab({ approvalForm, setApprovalForm, onSubmit }) {
+  return (
+    <div className="max-w-2xl space-y-4">
+      <div className="rounded-xl bg-orange-50 border border-orange-100 p-4 text-sm text-orange-800">
+        `Gửi duyệt` là chức năng theo từng deal. Xưởng sẽ gửi bản vẽ, vật tư hoặc hồ sơ của deal đang mở sang CRM/quản lý để duyệt.
+      </div>
+      <div>
+        <label className="block text-xs font-semibold text-gray-500 mb-1">Loại gửi duyệt</label>
+        <select
+          value={approvalForm.type}
+          onChange={(e) => setApprovalForm((prev) => ({ ...prev, type: e.target.value }))}
+          className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm"
+        >
+          <option value="drawing">Bản vẽ</option>
+          <option value="material">Vật tư</option>
+          <option value="change-request">Yêu cầu chỉnh sửa</option>
+          <option value="handoff">Hồ sơ bàn giao</option>
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs font-semibold text-gray-500 mb-1">Tiêu đề</label>
+        <input
+          value={approvalForm.title}
+          onChange={(e) => setApprovalForm((prev) => ({ ...prev, title: e.target.value }))}
+          className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm"
+          placeholder="Ví dụ: Vật tư deal TB-2026-015 cần duyệt"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-semibold text-gray-500 mb-1">Ghi chú</label>
+        <textarea
+          value={approvalForm.note}
+          onChange={(e) => setApprovalForm((prev) => ({ ...prev, note: e.target.value }))}
+          className="w-full min-h-[120px] px-3 py-2 border border-gray-200 rounded-lg text-sm"
+          placeholder="Nội dung cần duyệt cho riêng deal này..."
+        />
+      </div>
+      <button
+        onClick={onSubmit}
+        className="h-10 px-4 rounded-lg bg-orange-600 text-white text-sm font-medium hover:bg-orange-700 flex items-center gap-2 cursor-pointer"
+      >
+        <Send className="h-4 w-4" /> Gửi duyệt deal này
+      </button>
     </div>
   );
 }
