@@ -536,7 +536,10 @@ r.get('/employees-by-company', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 function normalizeFacebookSourceKey(name = '') {
   return String(name)
-    .normalize('NFKC')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
     .trim()
     .replace(/\s+/g, ' ')
     .toLowerCase();
