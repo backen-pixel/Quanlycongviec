@@ -264,34 +264,32 @@ export default function CRMDashboard() {
     const nonFb = sources
       .filter(s => usedIds.has(s.id) && !(s.name || '').toLowerCase().includes('facebook'))
       .map(s => ({ id: s.id, type: 'source', label: `${s.icon || ''} ${s.name}`.trim() }));
-    // FB pages (đã dedup theo page_id từ backend, nhưng phòng hờ)
     const seenFb = new Set();
     const fb = fbPages
       .filter(p => {
-        if (!p.is_active || seenFb.has(p.page_id)) return false;
-        seenFb.add(p.page_id);
+        if (!p.is_active || seenFb.has(p.source_key)) return false;
+        seenFb.add(p.source_key);
         return true;
       })
-      .map(p => ({ id: `fb:${p.page_id}`, type: 'fb_page', page_id: p.page_id, label: `[FB] ${p.page_name}` }));
+      .map(p => ({ id: `fbg:${p.source_key}`, type: 'fb_group', source_key: p.source_key, label: `[FB] ${p.page_name}` }));
     return [...fb, ...nonFb];
   }, [sources, allLeads, allDeals, fbPages]);
 
-  // ── Map FB page_id → lead_ids (từ allLeads/allDeals join facebook_contacts) ──
-  // Fetch once when filterSource starts with 'fb:'
+  // ── Map grouped FB source → lead_ids ──
   const [fbPageLeadIds, setFbPageLeadIds] = useState(new Set());
   const lastFbFilter = useRef('');
   useEffect(() => {
-    if (!filterSource.startsWith('fb:')) {
+    if (!filterSource.startsWith('fbg:')) {
       setFbPageLeadIds(new Set());
       lastFbFilter.current = '';
       return;
     }
-    const pageId = filterSource.replace('fb:', '');
-    if (lastFbFilter.current === pageId) return;
-    lastFbFilter.current = pageId;
+    const sourceKey = filterSource.replace('fbg:', '');
+    if (lastFbFilter.current === sourceKey) return;
+    lastFbFilter.current = sourceKey;
     (async () => {
       try {
-        const { data } = await api.get('/crm/leads-by-fb-page', { params: { page_id: pageId, type: pipelineType } });
+        const { data } = await api.get('/crm/leads-by-fb-page', { params: { source_key: sourceKey, type: pipelineType } });
         setFbPageLeadIds(new Set((data || []).map(l => l.id)));
       } catch { setFbPageLeadIds(new Set()); }
     })();
@@ -317,7 +315,7 @@ export default function CRMDashboard() {
 
     // Source filter - FB page dùng lead IDs, non-FB dùng source_id
     if (filterSource) {
-      if (filterSource.startsWith('fb:')) {
+      if (filterSource.startsWith('fbg:')) {
         result = result.filter(l => fbPageLeadIds.has(l.id));
       } else {
         result = result.filter(l => l.source_id === filterSource);
