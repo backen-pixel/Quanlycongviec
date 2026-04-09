@@ -534,42 +534,23 @@ r.get('/employees-by-company', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // SOURCES — bao gồm nguồn thông thường + FB pages gộp
 // ═══════════════════════════════════════════════════════════════════════════
-function normalizeFacebookSourceKey(name = '') {
-  return String(name)
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[đĐ]/g, 'd')
-    .replace(/[^a-zA-Z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
-}
-
 r.get('/sources', async (req, res) => {
   const { data } = await supabase.from('crm_sources').select('*').eq('is_active', true).order('name');
   const { data: rawPages } = await supabase.from('facebook_pages').select('id, page_id, page_name, is_active').eq('is_active', true);
 
-  const grouped = new Map();
-  for (const page of (rawPages || [])) {
-    const sourceKey = normalizeFacebookSourceKey(page.page_name) || `page:${page.page_id}`;
-    const existing = grouped.get(sourceKey);
-    if (!existing) {
-      grouped.set(sourceKey, {
-        id: page.id,
-        page_id: page.page_id,
-        page_name: (page.page_name || '').trim(),
-        is_active: !!page.is_active,
-        source_key: sourceKey,
-        page_ids: [page.page_id],
-        page_count: 1,
-      });
-      continue;
-    }
-    existing.page_ids.push(page.page_id);
-    existing.page_count += 1;
-  }
+  const pages = (rawPages || [])
+    .filter(p => p.page_id)
+    .sort((a, b) => (a.page_name || '').localeCompare(b.page_name || ''))
+    .map(p => ({
+      id: p.id,
+      page_id: p.page_id,
+      page_name: (p.page_name || '').trim(),
+      is_active: !!p.is_active,
+      source_key: p.page_id,
+      page_ids: [p.page_id],
+      page_count: 1,
+    }));
 
-  const pages = Array.from(grouped.values()).sort((a, b) => (a.page_name || '').localeCompare(b.page_name || ''));
   res.json({ sources: data || [], fb_pages: pages });
 });
 
@@ -748,10 +729,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
     let pageIds = [];
 
     if (source_key) {
-      const { data: pages } = await supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true);
-      pageIds = (pages || [])
-        .filter(p => normalizeFacebookSourceKey(p.page_name) === source_key)
-        .map(p => p.page_id);
+      pageIds = [source_key];
     } else if (page_id) {
       pageIds = [page_id];
     } else {
