@@ -49,6 +49,9 @@ export default function LeadDetail() {
   const [showLostModal, setShowLostModal] = useState(false);
   const [lostReason, setLostReason] = useState('');
   const [pendingLostStageId, setPendingLostStageId] = useState(null);
+  const [editingLeadTitle, setEditingLeadTitle] = useState(false);
+  const [leadTitleDraft, setLeadTitleDraft] = useState('');
+  const [savingLeadTitle, setSavingLeadTitle] = useState(false);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -95,6 +98,7 @@ export default function LeadDetail() {
         api.get(`/crm/leads/${id}/task-documents`).catch(() => ({ data: [] })),
       ]);
       setLead(leadRes);
+      setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);
       setActivities(actRes.data || []);
       setDocuments(docRes.data || []);
@@ -329,7 +333,54 @@ export default function LeadDetail() {
               </span>
               <span className="text-xs text-gray-500 font-mono">{lead.code}</span>
             </div>
-            <h1 className="text-2xl font-bold text-gray-900">{lead.title}</h1>
+            {editingLeadTitle ? (
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <input
+                  value={leadTitleDraft}
+                  onChange={e => setLeadTitleDraft(e.target.value)}
+                  className="h-10 min-w-[320px] max-w-[560px] px-3 border border-gray-300 rounded-lg text-lg font-semibold text-gray-900 bg-white"
+                  placeholder="Nhập tên lead"
+                  autoFocus
+                />
+                <button
+                  onClick={async () => {
+                    if (!leadTitleDraft.trim() || savingLeadTitle) return;
+                    setSavingLeadTitle(true);
+                    try {
+                      const { data } = await api.put(`/crm/leads/${id}`, { title: leadTitleDraft.trim() });
+                      setLead(prev => ({ ...prev, ...data }));
+                      setLeadTitleDraft(data.title || leadTitleDraft.trim());
+                      setEditingLeadTitle(false);
+                    } catch (e) {
+                      alert(e.response?.data?.error || 'Lỗi cập nhật tên lead');
+                    }
+                    setSavingLeadTitle(false);
+                  }}
+                  disabled={savingLeadTitle || !leadTitleDraft.trim()}
+                  className="h-10 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Save className="h-4 w-4" /> {savingLeadTitle ? 'Đang lưu...' : 'Lưu'}
+                </button>
+                <button
+                  onClick={() => { setLeadTitleDraft(lead.title || ''); setEditingLeadTitle(false); }}
+                  disabled={savingLeadTitle}
+                  className="h-10 px-3 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium cursor-pointer hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <X className="h-4 w-4" /> Hủy
+                </button>
+              </div>
+            ) : (
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-bold text-gray-900">{lead.title}</h1>
+                <button
+                  onClick={() => setEditingLeadTitle(true)}
+                  className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer transition"
+                  title="Sửa tên lead"
+                >
+                  <Edit2 className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
