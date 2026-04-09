@@ -6,54 +6,105 @@ const { requirePermission } = require('../middleware/newPermission');
 const r = Router();
 r.use(auth);
 
+const WORKSHOP_STAGE_SLUGS = ['production', 'delivery', 'customer-care'];
+const WORKSHOP_STATUSES = ['producing', 'delivering', 'warranty', 'completed'];
+
+async function getWorkshopStageMap() {
+  const { data: stages = [] } = await supabase
+    .from('workflow_stages')
+    .select('id, slug, name, color, icon')
+    .in('slug', WORKSHOP_STAGE_SLUGS)
+    .order('order_index');
+
+  const bySlug = {};
+  stages.forEach((stage) => { bySlug[stage.slug] = stage; });
+  return { stages, bySlug, ids: stages.map((stage) => stage.id).filter(Boolean) };
+}
+
+function calcTaskProgress(tasks) {
+  if (!tasks?.length) return 0;
+  return Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100);
+}
+
+function isDocSharedToWorkshop(doc) {
+  const notes = `${doc?.notes || ''} ${doc?.name || ''}`.toLowerCase();
+  const allowedDepartments = Array.isArray(doc?.allowed_departments) ? doc.allowed_departments : [];
+  const allowedCompanies = Array.isArray(doc?.allowed_companies) ? doc.allowed_companies : [];
+  return Boolean(
+    doc?.shared_to_workshop ||
+    doc?.shared_to_production ||
+    doc?.allow_workshop_view ||
+    doc?.allow_production_view ||
+    doc?.is_shared ||
+    doc?.is_public ||
+    allowedDepartments.length ||
+    allowedCompanies.length ||
+    notes.includes('cho phép chia sẻ') ||
+    notes.includes('cho phep chia se') ||
+    notes.includes('chia sẻ xưởng') ||
+    notes.includes('chia se xuong') ||
+    notes.includes('xưởng') ||
+    notes.includes('xuong')
+  );
+}
+
 // ─── GET /production/dashboard ──
 r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { division_id, company_id } = req.query;
-    
-    // Get production stages (actual DB slugs: production, delivery, customer-care)
-    const { data: prodStages } = await supabase
-      .from('workflow_stages')
-      .select('id, slug, name, color, icon')
-      .in('slug', ['production', 'delivery', 'customer-care']);
-    
-    const stageMap = {};
-    (prodStages || []).forEach(s => { stageMap[s.slug] = s.id; });
-    
-    // Build query
+    const { stages, ids: stageIds } = await getWorkshopStageMap();
+
     let query = supabase
       .from('projects')
       .select(`
-        id, code, name, estimated_value, 
-        status,
+        id, code, name, estimated_value, status, deadline, created_at,
         current_stage_id,
-        current_stage:workflow_stages(id, slug, name, color),
+        current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name),
-        production_person_id,
-        shipping_person_id,
-        installation_person_id,
-        care_person_id
+        company:companies(id, name, short_name),
+        tasks(id, status)
       `)
-      .in('current_stage_id', Object.values(stageMap).filter(Boolean));
-    
+      .or(`current_stage_id.in.(${stageIds.join(',')}),status.in.(${WORKSHOP_STATUSES.join(',')})`);
+
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.eq('company_id', company_id);
-    
-    const { data: projects } = await query;
-    
-    // Count by stage
+
+    const { data: projects = [] } = await query.order('created_at', { ascending: false });
+
+    const enhancedProjects = projects.map((project) => ({
+      ...project,
+      progress: calcTaskProgress(project.tasks),
+    }));
+
+    const overdueCount = enhancedProjects.filter((project) => (
+      project.deadline && new Date(project.deadline) < new Date() && project.status !== 'completed'
+    )).length;
+
     const kpis = {
-      total_projects: projects?.length || 0,
-      producing: (projects || []).filter(p => p.current_stage?.slug === 'production').length,
-      delivering: (projects || []).filter(p => p.current_stage?.slug === 'delivery').length,
-      customer_care: (projects || []).filter(p => p.current_stage?.slug === 'customer-care').length,
-      completed: (projects || []).filter(p => p.status === 'completed').length,
-      total_value: (projects || []).reduce((s, p) => s + (p.estimated_value || 0), 0),
+      total_projects: enhancedProjects.length,
+      producing: enhancedProjects.filter((project) => project.current_stage?.slug === 'production' || project.status === 'producing').length,
+      delivering: enhancedProjects.filter((project) => project.current_stage?.slug === 'delivery' || project.status === 'delivering').length,
+      customer_care: enhancedProjects.filter((project) => project.current_stage?.slug === 'customer-care' || project.status === 'warranty').length,
+      completed: enhancedProjects.filter((project) => project.status === 'completed').length,
+      overdue: overdueCount,
+      total_value: enhancedProjects.reduce((sum, project) => sum + (project.estimated_value || 0), 0),
+      avg_progress: enhancedProjects.length
+        ? Math.round(enhancedProjects.reduce((sum, project) => sum + (project.progress || 0), 0) / enhancedProjects.length)
+        : 0,
     };
-    
+
+    const pipeline = stages.map((stage) => ({
+      ...stage,
+      count: enhancedProjects.filter((project) => project.current_stage?.slug === stage.slug).length,
+      total_value: enhancedProjects
+        .filter((project) => project.current_stage?.slug === stage.slug)
+        .reduce((sum, project) => sum + (project.estimated_value || 0), 0),
+    }));
+
     res.json({
       kpis,
-      pipeline: prodStages || [],
+      pipeline,
+      projects: enhancedProjects,
     });
   } catch (e) {
     console.error(e);
@@ -64,60 +115,58 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
 // ─── GET /production/projects ──
 r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
   try {
-    const { search, priority, page = 1, limit = 100, division_id, company_id } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    
-    // Get production stages
-    const { data: prodStages } = await supabase
-      .from('workflow_stages')
-      .select('id, slug')
-      .in('slug', ['production', 'delivery', 'customer-care']);
-    
-    const stageIds = (prodStages || []).map(s => s.id).filter(Boolean);
-    
+    const { search, priority, page = 1, limit = 100, division_id, company_id, stage_slug } = req.query;
+    const parsedPage = Math.max(parseInt(page) || 1, 1);
+    const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
+    const offset = (parsedPage - 1) * parsedLimit;
+    const { ids: stageIds } = await getWorkshopStageMap();
+
     let query = supabase
       .from('projects')
       .select(`
-        id, code, name, estimated_value, priority, deadline,
-        status,
+        id, code, name, estimated_value, priority, deadline, created_at, status, notes,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
-        customer:customers(id, full_name),
+        customer:customers(id, full_name, phone),
+        company:companies(id, name, short_name),
         production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name),
+        supervisor:users!projects_supervisor_id_fkey(id, full_name),
         tasks(id, status)
-      `)
-      .in('current_stage_id', stageIds);
-    
+      `, { count: 'exact' })
+      .or(`current_stage_id.in.(${stageIds.join(',')}),status.in.(${WORKSHOP_STATUSES.join(',')})`);
+
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.eq('company_id', company_id);
-    
+
     if (search) {
       const searchPattern = `%${search}%`;
-      query = query.or(`code.ilike.${searchPattern},name.ilike.${searchPattern}`);
+      query = query.or(`code.ilike.${searchPattern},name.ilike.${searchPattern},notes.ilike.${searchPattern}`);
     }
-    
-    if (priority) {
-      query = query.eq('priority', priority);
-    }
-    
-    query = query.order('deadline', { ascending: true })
-      .range(offset, offset + parseInt(limit) - 1);
-    
-    const { data: projects, error } = await query;
-    
+
+    if (priority) query = query.eq('priority', priority);
+    if (stage_slug) query = query.eq('current_stage.slug', stage_slug);
+
+    query = query.order('deadline', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + parsedLimit - 1);
+
+    const { data: projects, error, count } = await query;
     if (error) throw error;
-    
-    // Enhance with progress
-    const enhanced = (projects || []).map(p => ({
-      ...p,
-      progress: p.tasks?.length > 0 
-        ? Math.round((p.tasks.filter(t => t.status === 'done').length / p.tasks.length) * 100)
-        : 0,
+
+    const enhanced = (projects || []).map((project) => ({
+      ...project,
+      progress: calcTaskProgress(project.tasks),
+      task_total: project.tasks?.length || 0,
+      done_tasks: project.tasks?.filter((task) => task.status === 'done').length || 0,
+      is_overdue: Boolean(project.deadline && new Date(project.deadline) < new Date() && project.status !== 'completed'),
     }));
-    
+
     res.json({
       projects: enhanced,
-      total: enhanced.length,
+      total: count || enhanced.length,
+      page: parsedPage,
+      totalPages: Math.ceil((count || enhanced.length) / parsedLimit),
     });
   } catch (e) {
     console.error(e);
@@ -129,20 +178,25 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { id } = req.params;
-    
+    const { bySlug } = await getWorkshopStageMap();
+
     const { data: project, error } = await supabase
       .from('projects')
       .select(`
-        id, code, name, estimated_value, priority, deadline, status, notes,
+        id, code, name, description, estimated_value, priority, deadline, status, notes, created_at,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
-        customer:customers(id, full_name, phone, email),
+        customer:customers(id, full_name, phone, email, address, city),
+        company:companies(id, name, short_name),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name, avatar, email),
+        project_manager:users!projects_project_manager_id_fkey(id, full_name, avatar, email),
+        supervisor:users!projects_supervisor_id_fkey(id, full_name, avatar, email),
         production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
         shipping_person:users!projects_shipping_person_id_fkey(id, full_name, avatar),
         installation_person:users!projects_installation_person_id_fkey(id, full_name, avatar),
         care_person:users!projects_care_person_id_fkey(id, full_name, avatar),
         tasks(
-          id, title, status, order_index, priority,
+          id, title, description, status, order_index, priority, deadline, metadata,
           assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
           stage:workflow_stages(id, slug, name, color)
         ),
@@ -155,37 +209,57 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       `)
       .eq('id', id)
       .single();
-    
+
     if (error || !project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    
-    // Get documents via project_id (synced from CRM lead_documents)
-    const { data: documents = [] } = await supabase
-      .from('lead_documents')
-      .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
+
+    const [documentsRes, crmRes, commentsRes] = await Promise.all([
+      supabase
+        .from('lead_documents')
+        .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
+        .eq('project_id', id)
+        .order('created_at', { ascending: false }),
+      supabase.rpc ? Promise.resolve({ data: null }) : Promise.resolve({ data: null }),
+      supabase
+        .from('project_comments')
+        .select('id, content, attachments, created_at, user:users(id, full_name, avatar)')
+        .eq('project_id', id)
+        .order('created_at', { ascending: false })
+        .limit(20),
+    ]);
+
+    const documents = documentsRes.data || [];
+    const sharedDocuments = documents.filter(isDocSharedToWorkshop);
+    const hiddenDocuments = documents.filter((doc) => !isDocSharedToWorkshop(doc));
+
+    const { data: crmSummary } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, type, estimated_value, status, lost_reason, created_at')
       .eq('project_id', id)
       .order('created_at', { ascending: false });
-    
-    // Calculate task progress
-    const taskProgress = project.tasks?.length > 0
-      ? Math.round((project.tasks.filter(t => t.status === 'done').length / project.tasks.length) * 100)
-      : 0;
-    
-    // Group tasks by stage
+
+    const taskProgress = calcTaskProgress(project.tasks);
     const tasksByStage = {};
-    (project.tasks || []).forEach(t => {
-      const stageKey = t.stage?.slug || 'unassigned';
+    (project.tasks || []).forEach((task) => {
+      const stageKey = task.stage?.slug || 'unassigned';
       if (!tasksByStage[stageKey]) tasksByStage[stageKey] = [];
-      tasksByStage[stageKey].push(t);
+      tasksByStage[stageKey].push(task);
     });
-    
+
+    const workshopPipeline = WORKSHOP_STAGE_SLUGS.map((slug) => bySlug[slug]).filter(Boolean);
+
     res.json({
       project: {
         ...project,
         taskProgress,
         tasksByStage,
         documents,
+        sharedDocuments,
+        hiddenDocumentsCount: hiddenDocuments.length,
+        crmDeals: crmSummary || [],
+        recentComments: commentsRes.data || [],
+        workshopPipeline,
       },
     });
   } catch (e) {
@@ -200,50 +274,59 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     const { id } = req.params;
     const { stage_id } = req.body;
     const userId = req.user.userId;
-    
+
     if (!stage_id) {
       return res.status(400).json({ error: 'stage_id required' });
     }
-    
-    // Get current project
+
     const { data: project } = await supabase
       .from('projects')
       .select('id, current_stage_id, code, name')
       .eq('id', id)
       .single();
-    
+
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    
-    // Update project stage
+
+    const { data: targetStage } = await supabase
+      .from('workflow_stages')
+      .select('id, slug')
+      .eq('id', stage_id)
+      .single();
+
+    const statusMap = {
+      production: 'producing',
+      delivery: 'delivering',
+      'customer-care': 'warranty',
+    };
+
     const { error: updateError } = await supabase
       .from('projects')
       .update({
         current_stage_id: stage_id,
+        status: statusMap[targetStage?.slug] || undefined,
       })
       .eq('id', id);
-    
+
     if (updateError) throw updateError;
-    
-    // Log transition
+
     await supabase.from('stage_transitions').insert({
       project_id: id,
       from_stage_id: project.current_stage_id,
       to_stage_id: stage_id,
       user_id: userId,
     });
-    
-    // Get updated project
+
     const { data: updated } = await supabase
       .from('projects')
       .select(`
-        id, code, name, current_stage_id,
+        id, code, name, status, current_stage_id,
         current_stage:workflow_stages(id, slug, name, color)
       `)
       .eq('id', id)
       .single();
-    
+
     res.json({ project: updated });
   } catch (e) {
     console.error(e);
