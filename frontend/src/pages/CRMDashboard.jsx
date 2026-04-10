@@ -72,6 +72,8 @@ const TIME_PRESETS = [
   { key: 'custom', label: 'Tùy chỉnh' },
 ];
 
+const KANBAN_LOAD_OPTIONS = ['1000', '2000', '5000', 'all'];
+
 export default function CRMDashboard() {
   const { user } = useAuth();
   const [dataLead, setDataLead] = useState(null);
@@ -86,6 +88,10 @@ export default function CRMDashboard() {
   const [filterCompany, setFilterCompany] = useState('');
   const [searchText, setSearchText] = useState('');
   const [filterAssignee, setFilterAssignee] = useState('');
+  /** Gõ tên để thu hẹp danh sách trong dropdown NV */
+  const [assigneeListSearch, setAssigneeListSearch] = useState('');
+  /** Lọc lead/deal theo tên người phụ trách / chủ lead (không lẫn tên khách hàng) */
+  const [filterAssigneeName, setFilterAssigneeName] = useState('');
   const [filterSource, setFilterSource] = useState('');
   const [filterStage, setFilterStage] = useState('');
   const [filterPhone, setFilterPhone] = useState('has_phone'); // '' | 'has_phone' | 'no_phone'
@@ -98,6 +104,11 @@ export default function CRMDashboard() {
   const [pinnedTab, setPinnedTab] = useState(() => localStorage.getItem('crm_pinned_tab') || '');
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('kanban'); // kanban | list | planner
+  /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
+  const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
+    const s = localStorage.getItem('crm_kanban_load_limit');
+    return KANBAN_LOAD_OPTIONS.includes(s) ? s : '1000';
+  });
 
   // ── TIME FILTER STATE ──
   const [timePreset, setTimePreset] = useState(''); // '' = all time
@@ -187,7 +198,7 @@ export default function CRMDashboard() {
     loadCompanyEmployees();
   }, []);
 
-  useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo]);
+  useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee]);
 
   const load = async () => {
     setLoading(true);
@@ -197,11 +208,36 @@ export default function CRMDashboard() {
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
 
-      const [dashLeadRes, dashDealRes, leadsRes, dealsRes, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes] = await Promise.all([
+      const fetchKanbanRows = async (type) => {
+        const common = { type, phone_filter: filterPhone || undefined, ...dateParams };
+        if (filterAssignee) common.assigned_to = filterAssignee;
+        if (kanbanLoadLimit === 'all') {
+          const chunk = 5000;
+          let offset = 0;
+          const out = [];
+          let guard = 0;
+          while (guard < 200) {
+            guard += 1;
+            const res = await api.get('/crm/leads', { params: { ...common, limit: chunk, offset } }).catch(() => ({ data: {} }));
+            const payload = res.data || {};
+            const page = Array.isArray(payload) ? payload : (payload.data || []);
+            out.push(...page);
+            if (!payload.hasMore || page.length === 0) break;
+            offset = typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
+          }
+          return out;
+        }
+        const limit = parseInt(kanbanLoadLimit, 10) || 1000;
+        const res = await api.get('/crm/leads', { params: { ...common, limit } }).catch(() => ({ data: {} }));
+        const d = res.data;
+        return Array.isArray(d) ? d : (d?.data || []);
+      };
+
+      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes] = await Promise.all([
         api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/leads', { params: { type: 'lead', limit: 500, phone_filter: filterPhone || undefined, ...dateParams } }).catch(() => ({ data: [] })),
-        api.get('/crm/leads', { params: { type: 'deal', limit: 500, phone_filter: filterPhone || undefined, ...dateParams } }).catch(() => ({ data: [] })),
+        fetchKanbanRows('lead'),
+        fetchKanbanRows('deal'),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
@@ -211,8 +247,8 @@ export default function CRMDashboard() {
       ]);
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
-      setAllLeads(Array.isArray(leadsRes.data) ? leadsRes.data : (leadsRes.data?.data || []));
-      setAllDeals(Array.isArray(dealsRes.data) ? dealsRes.data : (dealsRes.data?.data || []));
+      setAllLeads(leadsRows);
+      setAllDeals(dealsRows);
       setStagesLead(stagesLeadRes.data);
       setStagesDeal(stagesDealRes.data);
       setSources(sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []));
@@ -255,6 +291,31 @@ export default function CRMDashboard() {
     if (companyEmployees.length > 0) return companyEmployees;
     return users;
   }, [companyEmployees, users]);
+
+  const employeeOptionsFiltered = useMemo(() => {
+    const q = assigneeListSearch.trim().toLowerCase();
+    if (!q) return employeeFilterList;
+    return employeeFilterList.filter((u) => {
+      const name = (u.full_name || '').toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      const pos = (u.position || '').toLowerCase();
+      return name.includes(q) || email.includes(q) || pos.includes(q);
+    });
+  }, [employeeFilterList, assigneeListSearch]);
+
+  /** Giữ option đang chọn trong select dù đã lọc tên (tránh select trống) */
+  const employeeOptionsForSelect = useMemo(() => {
+    let list = employeeOptionsFiltered;
+    if (filterAssignee) {
+      const fid = String(filterAssignee);
+      const has = list.some((u) => String(u.id) === fid);
+      if (!has) {
+        const found = employeeFilterList.find((u) => String(u.id) === fid) || users.find((u) => String(u.id) === fid);
+        if (found) list = [found, ...list];
+      }
+    }
+    return list;
+  }, [employeeOptionsFiltered, filterAssignee, employeeFilterList, users]);
 
   // ── Computed: nguồn thông minh - non-FB giữ nguyên, FB → [FB] Tên Page ──
   const smartSources = useMemo(() => {
@@ -308,9 +369,25 @@ export default function CRMDashboard() {
       result = result.filter(l => l.company_id === filterCompany);
     }
 
-    // Assignee filter
+    // Assignee filter (UUID — so khớp cả chuỗi normalize + embed id)
     if (filterAssignee) {
-      result = result.filter(l => l.assigned_to === filterAssignee || l.lead_owner_id === filterAssignee);
+      const fid = String(filterAssignee).trim().toLowerCase();
+      result = result.filter((l) => {
+        const ids = [l.assigned_to, l.lead_owner_id, l.assignee?.id, l.lead_owner?.id]
+          .filter(Boolean)
+          .map((x) => String(x).trim().toLowerCase());
+        return ids.includes(fid);
+      });
+    }
+
+    // Lọc theo tên NV (chỉ assignee / lead_owner, tránh trùng với tên KH ở ô tìm nhanh)
+    if (filterAssigneeName.trim()) {
+      const qn = filterAssigneeName.trim().toLowerCase();
+      result = result.filter((l) => {
+        const an = (l.assignee?.full_name || '').toLowerCase();
+        const lo = (l.lead_owner?.full_name || '').toLowerCase();
+        return an.includes(qn) || lo.includes(qn);
+      });
     }
 
     // Source filter - FB page dùng lead IDs, non-FB dùng source_id
@@ -356,7 +433,7 @@ export default function CRMDashboard() {
     // Ưu tiên đẩy lead/deal có số điện thoại lên đầu danh sách trước khi render Kanban
     result = [...result].sort((a, b) => Number(hasPhoneNumber(b)) - Number(hasPhoneNumber(a)));
     return result;
-  }, [searchText, filterCompany, filterAssignee, filterSource, filterStage, filterPhone, fbPageLeadIds, hasPhoneNumber]);
+  }, [searchText, filterCompany, filterAssignee, filterAssigneeName, filterSource, filterStage, filterPhone, fbPageLeadIds, hasPhoneNumber]);
 
   const leads = useMemo(() => filterItems(allLeads), [allLeads, filterItems]);
   const deals = useMemo(() => filterItems(allDeals), [allDeals, filterItems]);
@@ -608,32 +685,62 @@ export default function CRMDashboard() {
             <Clock className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 ${timePreset ? 'text-purple-500' : 'text-gray-400'}`} />
           </div>
 
+          {/* Số bản ghi pipeline (lead + deal) tải từ API */}
+          <div className="relative" title="Giới hạn số lead/deal tải cho Kanban (mỗi loại). Tải tất cả = gọi API lặp theo trang tối đa 5000/trang.">
+            <select
+              value={kanbanLoadLimit}
+              onChange={(e) => {
+                const v = e.target.value;
+                setKanbanLoadLimit(v);
+                localStorage.setItem('crm_kanban_load_limit', v);
+              }}
+              className="h-10 px-3 pl-9 rounded-xl text-sm font-medium cursor-pointer transition-all border appearance-none pr-8 bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+              style={{ minWidth: '158px' }}
+            >
+              <option value="1000">📥 Tải 1.000</option>
+              <option value="2000">📥 Tải 2.000</option>
+              <option value="5000">📥 Tải 5.000</option>
+              <option value="all">📥 Tải tất cả</option>
+            </select>
+            <LayoutGrid className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+          </div>
+
           {/* Toggle advanced filters */}
           <button onClick={() => setShowAdvSearch(!showAdvSearch)}
             className={`h-10 px-4 rounded-xl text-sm font-medium flex items-center gap-2 cursor-pointer transition-all border ${
-              showAdvSearch || filterAssignee || filterCompany || filterSource || filterStage || filterPhone
+              showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone
                 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             }`}>
             <Filter className="h-4 w-4" />
             Bộ lọc
-            {(filterAssignee || filterCompany || filterSource || filterStage || filterPhone) && (
+            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone) && (
               <span className="bg-blue-600 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {[filterAssignee, filterCompany, filterSource, filterStage, filterPhone].filter(Boolean).length}
+                {[filterAssignee, filterAssigneeName, filterCompany, filterSource, filterStage, filterPhone].filter(Boolean).length}
               </span>
             )}
           </button>
 
           {/* Clear all filters */}
-          {(searchText || filterAssignee || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
-            <button onClick={() => { setSearchText(''); setFilterAssignee(''); setFilterCompany(''); setFilterSource(''); setFilterStage(''); setFilterPhone(''); handleTimePresetChange(''); }}
+          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
+            <button onClick={() => {
+              setSearchText('');
+              setFilterAssignee('');
+              setAssigneeListSearch('');
+              setFilterAssigneeName('');
+              setFilterCompany('');
+              setFilterSource('');
+              setFilterStage('');
+              setFilterPhone('');
+              handleTimePresetChange('');
+            }}
               className="h-10 px-4 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-sm font-medium flex items-center gap-1.5 cursor-pointer transition-all border border-red-200">
               <X className="h-3.5 w-3.5" /> Xóa bộ lọc
             </button>
           )}
 
           {/* Result count */}
-          {(searchText || filterAssignee || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
+          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
             <span className="text-xs text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
               {pipelineType === 'lead' ? leads.length : deals.length} / {pipelineType === 'lead' ? allLeads.length : allDeals.length} kết quả
             </span>
@@ -697,26 +804,52 @@ export default function CRMDashboard() {
           <div className="flex flex-wrap items-center gap-3 bg-white border border-gray-200 rounded-xl p-3 shadow-sm">
             <span className="text-xs font-bold text-gray-500 uppercase">Lọc nâng cao:</span>
 
-            {/* Assignee - filtered by company's sales departments */}
-            <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
-              className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
-              <option value="">👤 Tất cả nhân viên</option>
-              {companyDepts.length > 0 ? (
-                // Group by department
-                companyDepts.map(dept => {
-                  const deptUsers = employeeFilterList.filter(u => u.department_id === dept.id);
-                  if (!deptUsers.length) return null;
-                  return (
-                    <optgroup key={dept.id} label={`📁 ${dept.name}`}>
-                      {deptUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}{u.position ? ` (${u.position})` : ''}</option>)}
-                    </optgroup>
-                  );
-                })
-              ) : (
-                // Fallback: flat list
-                employeeFilterList.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)
-              )}
-            </select>
+            {/* NV: tìm trong list + chọn + lọc pipeline theo tên (Lead & Deal) */}
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">Tìm tên trong danh sách NV</label>
+                <input
+                  type="search"
+                  value={assigneeListSearch}
+                  onChange={(e) => setAssigneeListSearch(e.target.value)}
+                  placeholder="Gõ tên, email…"
+                  className="h-9 w-44 max-w-[min(100vw-2rem,11rem)] px-2.5 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">Chọn NV (API + lọc)</label>
+                <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}
+                  className="h-9 min-w-[10rem] px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                  <option value="">👤 Tất cả nhân viên</option>
+                  {companyDepts.length > 0 ? (
+                    companyDepts.map((dept) => {
+                      const deptUsers = employeeOptionsForSelect.filter((u) => u.department_id === dept.id);
+                      if (!deptUsers.length) return null;
+                      return (
+                        <optgroup key={dept.id} label={`📁 ${dept.name}`}>
+                          {deptUsers.map((u) => (
+                            <option key={u.id} value={u.id}>{u.full_name}{u.position ? ` (${u.position})` : ''}</option>
+                          ))}
+                        </optgroup>
+                      );
+                    })
+                  ) : (
+                    employeeOptionsForSelect.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)
+                  )}
+                </select>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">Lọc theo tên NV trên pipeline</label>
+                <input
+                  type="search"
+                  value={filterAssigneeName}
+                  onChange={(e) => setFilterAssigneeName(e.target.value)}
+                  placeholder="Chỉ tên người phụ trách / chủ lead"
+                  title="Không lọc theo tên khách hàng — tránh trùng với ô tìm nhanh phía trên"
+                  className="h-9 w-52 max-w-[min(100vw-2rem,13rem)] px-2.5 bg-amber-50/80 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </div>
+            </div>
 
             {/* Company */}
             {companies.length > 0 && (
@@ -1093,22 +1226,87 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
         </div>
       )}
 
-      {/* Avatar + Assignee + Age tag */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {item.assignee && (
-            <>
-              <div
-                className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                style={{ backgroundColor: stageColor }}
-              >
-                {getInitials(item.assignee.full_name)}
-              </div>
-              <span className="text-xs text-gray-600">{item.assignee.full_name}</span>
-            </>
+      {/* Tab Lead: hiển thị phụ trách lead (chủ lead) + phụ trách deal (NV được giao); tab Deal: chỉ NV được giao */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          {pipelineType === 'lead' ? (
+            (() => {
+              const lo = item.lead_owner;
+              const as = item.assignee;
+              const same = lo && as && String(lo.id) === String(as.id);
+              if (same) {
+                return (
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div
+                      className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                      style={{ backgroundColor: stageColor }}
+                    >
+                      {getInitials(as.full_name)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-gray-400 leading-tight">Phụ trách lead và deal</p>
+                      <p className="text-xs text-gray-700 font-medium truncate">{as.full_name}</p>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {lo ? (
+                      <>
+                        <div
+                          className="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 bg-indigo-500"
+                        >
+                          {getInitials(lo.full_name)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] text-gray-400 leading-tight">Phụ trách lead</p>
+                          <p className="text-xs text-gray-700 truncate">{lo.full_name}</p>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-[10px] text-gray-400"><span className="text-gray-500">Phụ trách lead:</span> —</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    {as ? (
+                      <>
+                        <div
+                          className="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                          style={{ backgroundColor: stageColor }}
+                        >
+                          {getInitials(as.full_name)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] text-gray-400 leading-tight">Phụ trách deal</p>
+                          <p className="text-xs text-gray-600 truncate">{as.full_name}</p>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-[10px] text-gray-400"><span className="text-gray-500">Phụ trách deal:</span> —</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
+            <div className="flex items-center gap-2">
+              {item.assignee && (
+                <>
+                  <div
+                    className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white"
+                    style={{ backgroundColor: stageColor }}
+                  >
+                    {getInitials(item.assignee.full_name)}
+                  </div>
+                  <span className="text-xs text-gray-600">{item.assignee.full_name}</span>
+                </>
+              )}
+            </div>
           )}
         </div>
-        <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded whitespace-nowrap">
+        <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded whitespace-nowrap shrink-0">
           {calculateDays(item.created_at)}
         </span>
       </div>
