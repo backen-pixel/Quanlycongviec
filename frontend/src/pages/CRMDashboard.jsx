@@ -8,7 +8,7 @@ import {
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
-  Clock, List, LayoutGrid
+  Clock, List, LayoutGrid, GitMerge
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
 import BatchActionsBar from '../components/BatchActionsBar';
@@ -104,6 +104,9 @@ export default function CRMDashboard() {
   const [pinnedTab, setPinnedTab] = useState(() => localStorage.getItem('crm_pinned_tab') || '');
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('kanban'); // kanban | list | planner
+  /** Chọn thẻ Kanban để gộp thủ công (không dùng quét trùng) */
+  const [manualMergeIds, setManualMergeIds] = useState([]);
+  const [manualMergeModalOpen, setManualMergeModalOpen] = useState(false);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
     const s = localStorage.getItem('crm_kanban_load_limit');
@@ -125,6 +128,25 @@ export default function CRMDashboard() {
   const switchTab = (tab) => {
     setPipelineType(tab);
   };
+
+  const toggleManualMergeSelect = useCallback((id) => {
+    setManualMergeIds((prev) => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
+      return [...s];
+    });
+  }, []);
+
+  useEffect(() => {
+    setManualMergeIds([]);
+  }, [pipelineType]);
+
+  const itemsByIdForMerge = useMemo(() => {
+    const m = {};
+    [...allLeads, ...allDeals].forEach((x) => { m[x.id] = x; });
+    return m;
+  }, [allLeads, allDeals]);
 
   const togglePinTab = (tab) => {
     if (pinnedTab === tab) {
@@ -989,6 +1011,32 @@ export default function CRMDashboard() {
       {/* Batch Actions Bar */}
       <BatchActionsBar onComplete={load} />
 
+      {viewMode === 'kanban' && manualMergeIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 mb-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+          <GitMerge className="h-4 w-4 text-amber-700 shrink-0" />
+          <span className="text-amber-900">
+            Đã chọn <strong>{manualMergeIds.length}</strong> {pipelineType === 'deal' ? 'deal' : 'lead'}
+            {manualMergeIds.length < 2 && <span className="text-amber-700/80"> — chọn ít nhất 2 để gộp</span>}
+          </span>
+          {manualMergeIds.length >= 2 && (
+            <button
+              type="button"
+              onClick={() => setManualMergeModalOpen(true)}
+              className="h-9 px-4 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 cursor-pointer shadow-sm"
+            >
+              Gộp đã chọn
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setManualMergeIds([])}
+            className="h-9 px-3 rounded-lg border border-amber-300 text-amber-800 text-xs font-medium hover:bg-amber-100 cursor-pointer"
+          >
+            Bỏ chọn
+          </button>
+        </div>
+      )}
+
       {/* Kanban View */}
       {viewMode === 'kanban' && (
       <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
@@ -997,6 +1045,8 @@ export default function CRMDashboard() {
           onMoveStage={handleMoveStage}
           pipelineType={pipelineType}
           calculateDays={calculateDays}
+          mergeSelectedIds={manualMergeIds}
+          onToggleMergeSelect={toggleManualMergeSelect}
         />
       </div>
       )}
@@ -1044,6 +1094,19 @@ export default function CRMDashboard() {
           currentUser={user}
         />
       )}
+
+      <ManualMergeLeadsModal
+        open={manualMergeModalOpen}
+        onClose={() => setManualMergeModalOpen(false)}
+        ids={manualMergeIds}
+        itemsById={itemsByIdForMerge}
+        pipelineType={pipelineType}
+        onMerged={() => {
+          setManualMergeModalOpen(false);
+          setManualMergeIds([]);
+          load();
+        }}
+      />
     </div>
   );
 }
@@ -1066,9 +1129,302 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
   );
 }
 
+/** Gộp thủ công 2+ lead/deal đã chọn trên Kanban (API merge-selected: gộp KH + tài liệu) */
+function ManualMergeLeadsModal({ open, onClose, ids, itemsById, pipelineType, onMerged }) {
+  const sortedIds = useMemo(() => {
+    const v = [...new Set(ids || [])].filter((id) => itemsById[id]);
+    v.sort((a, b) => String(itemsById[a]?.code || '').localeCompare(String(itemsById[b]?.code || '')));
+    return v;
+  }, [ids, itemsById]);
+
+  const [keepId, setKeepId] = useState('');
+  const [titleMode, setTitleMode] = useState('keep'); // keep | pick | custom
+  const [titlePickId, setTitlePickId] = useState('');
+  const [customTitle, setCustomTitle] = useState('');
+  const [docByLead, setDocByLead] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  /** true: gộp KH + chuyển tài liệu/nhiệm vụ/… sang bản giữ; false: chỉ giữ dữ liệu của bản được chọn */
+  const [includeSecondaryData, setIncludeSecondaryData] = useState(true);
+
+  useEffect(() => {
+    if (!open || sortedIds.length < 2) return;
+    const first = sortedIds[0];
+    setKeepId(first);
+    setTitleMode('keep');
+    setTitlePickId(first);
+    setCustomTitle('');
+    setIncludeSecondaryData(true);
+    const init = {};
+    sortedIds.forEach((id) => {
+      init[id] = { loading: true, list: [], error: null };
+    });
+    setDocByLead(init);
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        sortedIds.map(async (id) => {
+          try {
+            const res = await api.get(`/crm/leads/${id}/documents`);
+            const raw = res.data;
+            const list = Array.isArray(raw) ? raw : (raw?.data && Array.isArray(raw.data) ? raw.data : []);
+            return { id, list, error: null };
+          } catch (err) {
+            return {
+              id,
+              list: [],
+              error: err.response?.data?.error || err.message || 'Lỗi tải',
+            };
+          }
+        })
+      );
+      if (cancelled) return;
+      setDocByLead((prev) => {
+        const next = { ...prev };
+        results.forEach(({ id, list, error }) => {
+          next[id] = { loading: false, list: list || [], error };
+        });
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [open, sortedIds]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (sortedIds.length < 2 || !keepId) return;
+    const delete_ids = sortedIds.filter((id) => String(id) !== String(keepId));
+    if (!delete_ids.length) return;
+
+    let title;
+    if (titleMode === 'pick') {
+      title = (itemsById[titlePickId]?.title || '').trim();
+      if (!title) {
+        alert('Chọn bản ghi để lấy tiêu đề');
+        return;
+      }
+    } else if (titleMode === 'custom') {
+      title = customTitle.trim();
+      if (!title) {
+        alert('Nhập tiêu đề mới');
+        return;
+      }
+    }
+
+    const body = { keep_id: keepId, delete_ids, include_secondary_data: includeSecondaryData };
+    if (titleMode !== 'keep' && title) body.title = title;
+
+    setSubmitting(true);
+    try {
+      await api.post('/crm/leads/merge-selected', body);
+      onMerged();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Gộp thất bại');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!open) return null;
+
+  const labelType = pipelineType === 'deal' ? 'Deal' : 'Lead';
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6"
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <GitMerge className="h-5 w-5 text-amber-600" />
+              Gộp {labelType} đã chọn
+            </h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Chọn bản ghi giữ lại, xem khách hàng &amp; tài liệu từng bên, rồi chọn cách gộp dữ liệu và tiêu đề.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 cursor-pointer" aria-label="Đóng">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {sortedIds.length < 2 ? (
+          <p className="text-sm text-amber-700">Không đủ bản ghi hợp lệ để gộp (cần ít nhất 2).</p>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {sortedIds.map((id) => {
+                const item = itemsById[id];
+                const docState = docByLead[id] || { loading: true, list: [], error: null };
+                const cust = item?.customer;
+                return (
+                  <div
+                    key={id}
+                    className={`rounded-xl border p-4 ${String(keepId) === String(id) ? 'border-amber-400 bg-amber-50/50 ring-1 ring-amber-200' : 'border-gray-200'}`}
+                  >
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="merge-keep"
+                        checked={String(keepId) === String(id)}
+                        onChange={() => setKeepId(id)}
+                        className="mt-1 h-4 w-4 text-amber-600 border-gray-300"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold text-blue-600">{item?.code}</p>
+                        <p className="text-sm font-medium text-gray-900 truncate">{item?.title}</p>
+                        <p className="text-xs text-gray-500 mt-2 font-medium">Khách hàng</p>
+                        {cust ? (
+                          <ul className="text-xs text-gray-600 mt-1 space-y-0.5">
+                            {cust.full_name && <li>👤 {cust.full_name}</li>}
+                            {cust.phone && <li>📞 {cust.phone}</li>}
+                            {cust.email && <li>✉️ {cust.email}</li>}
+                          </ul>
+                        ) : (
+                          <p className="text-xs text-gray-400">Chưa gắn khách</p>
+                        )}
+                        <p className="text-xs text-gray-500 mt-3 font-medium">Tài liệu ({docState.loading ? '…' : docState.list.length})</p>
+                        {docState.error && (
+                          <p className="text-xs text-red-600 mt-1">{docState.error}</p>
+                        )}
+                        {!docState.loading && !docState.error && docState.list.length === 0 && (
+                          <p className="text-xs text-gray-400 mt-1">Không có tệp</p>
+                        )}
+                        {!docState.loading && docState.list.length > 0 && (
+                          <ul className="text-xs text-gray-600 mt-1 max-h-28 overflow-y-auto space-y-0.5">
+                            {docState.list.slice(0, 12).map((d) => (
+                              <li key={d.id} className="truncate">{d.file_name || d.name || d.title || 'Tệp'}</li>
+                            ))}
+                            {docState.list.length > 12 && (
+                              <li className="text-gray-400">+{docState.list.length - 12} tệp khác…</li>
+                            )}
+                          </ul>
+                        )}
+                      </div>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+              <p className="text-sm font-semibold text-gray-800">Dữ liệu &amp; tài liệu</p>
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="merge-data-mode"
+                    checked={includeSecondaryData}
+                    onChange={() => setIncludeSecondaryData(true)}
+                    className="mt-0.5 h-4 w-4 text-amber-600"
+                  />
+                  <span>
+                    <span className="font-medium text-gray-900">Gộp từ cả hai bản ghi</span>
+                    <span className="block text-gray-600 text-xs mt-0.5">
+                      Gộp thông tin khách hàng; chuyển tài liệu, nhiệm vụ CRM, hoạt động, báo giá, đơn hàng, hóa đơn, Facebook… sang bản được giữ; cộng thêm giá trị ước tính từ bản xóa.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="merge-data-mode"
+                    checked={!includeSecondaryData}
+                    onChange={() => setIncludeSecondaryData(false)}
+                    className="mt-0.5 h-4 w-4 text-amber-600"
+                  />
+                  <span>
+                    <span className="font-medium text-gray-900">Chỉ giữ bản được chọn</span>
+                    <span className="block text-gray-600 text-xs mt-0.5">
+                      Không gộp khách hàng; không chuyển tài liệu hay dữ liệu từ bản kia. Các bản bị gộp (xóa) sẽ mất tài liệu, nhiệm vụ, báo giá, đơn hàng… gắn với chúng (theo quy tắc xóa trong hệ thống).
+                    </span>
+                  </span>
+                </label>
+                {!includeSecondaryData && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Cảnh báo: tùy chọn này có thể xóa vĩnh viễn dữ liệu riêng của các thẻ bị loại bỏ. Chỉ dùng khi chắc chắn không cần giữ.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+              <p className="text-sm font-semibold text-gray-800">Tiêu đề sau khi gộp</p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="merge-title"
+                    checked={titleMode === 'keep'}
+                    onChange={() => setTitleMode('keep')}
+                    className="h-4 w-4 text-amber-600"
+                  />
+                  Giữ tiêu đề của bản ghi được chọn giữ
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="merge-title"
+                    checked={titleMode === 'pick'}
+                    onChange={() => setTitleMode('pick')}
+                    className="h-4 w-4 text-amber-600"
+                  />
+                  Dùng tiêu đề từ
+                  <select
+                    value={titlePickId}
+                    onChange={(ev) => { setTitlePickId(ev.target.value); setTitleMode('pick'); }}
+                    className="border border-gray-300 rounded-lg px-2 py-1 text-sm max-w-[200px]"
+                  >
+                    {sortedIds.map((id) => (
+                      <option key={id} value={id}>{itemsById[id]?.code} — {(itemsById[id]?.title || '').slice(0, 40)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="merge-title"
+                    checked={titleMode === 'custom'}
+                    onChange={() => setTitleMode('custom')}
+                    className="h-4 w-4 text-amber-600 mt-0.5"
+                  />
+                  <span className="flex-1">
+                    Tùy chỉnh
+                    <input
+                      type="text"
+                      value={customTitle}
+                      onChange={(ev) => { setCustomTitle(ev.target.value); setTitleMode('custom'); }}
+                      placeholder="Nhập tiêu đề mới"
+                      className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 justify-end pt-2">
+              <button type="button" onClick={onClose} className="h-10 px-4 rounded-lg border border-gray-300 text-sm font-medium hover:bg-gray-50 cursor-pointer">
+                Hủy
+              </button>
+              <button
+                type="submit"
+                disabled={submitting || sortedIds.length < 2}
+                className="h-10 px-5 rounded-lg bg-amber-600 text-white text-sm font-bold hover:bg-amber-700 disabled:opacity-50 cursor-pointer"
+              >
+                {submitting ? 'Đang gộp…' : 'Xác nhận gộp'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Kanban Stage Card - MISA Style (responsive scroll)
 
-function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays }) {
+function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
@@ -1171,6 +1527,8 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
               onMoveStage={onMoveStage}
               pipelineType={pipelineType}
               calculateDays={calculateDays}
+              mergeSelectedIds={mergeSelectedIds}
+              onToggleMergeSelect={onToggleMergeSelect}
             />
           ))
         )}
@@ -1180,8 +1538,12 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
 }
 
 // Kanban Item Card - MISA Style
-function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect }) {
   const handleDragStart = (e) => {
+    if (e.target.closest?.('[data-merge-checkbox]')) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('leadId', item.id);
   };
@@ -1193,18 +1555,36 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
 
   const stageColor = stage.color || '#e5e7eb';
 
+  const selectedForMerge = mergeSelectedIds && mergeSelectedIds.some((x) => String(x) === String(item.id));
+
   return (
     <div
       draggable
       onDragStart={handleDragStart}
       onClick={() => { localStorage.setItem('crm_pinned_tab', pipelineType); window.location.href = `/crm/leads/${item.id}`; }}
-      className={`bg-white rounded-lg border border-gray-200 p-3 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg`}
+      className={`relative bg-white rounded-lg border border-gray-200 p-3 pt-9 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{
         borderLeft: `3px solid ${stageColor}`,
       }}
     >
+      {onToggleMergeSelect && (
+        <label
+          data-merge-checkbox
+          className="absolute top-2 right-2 z-20 flex items-center justify-center cursor-pointer rounded-md p-0.5 hover:bg-gray-100"
+          onClick={(ev) => ev.stopPropagation()}
+          onMouseDown={(ev) => ev.stopPropagation()}
+          title="Chọn để gộp thủ công"
+        >
+          <input
+            type="checkbox"
+            checked={!!selectedForMerge}
+            onChange={() => onToggleMergeSelect(item.id)}
+            className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+          />
+        </label>
+      )}
       {/* Header: Code + Value */}
-      <div className="flex items-start justify-between mb-2">
+      <div className="flex items-start justify-between mb-2 pr-7">
         <p className="text-xs font-semibold text-blue-600">{item.code}</p>
         {item.estimated_value > 0 && (
           <p className="text-sm font-bold text-emerald-600">{formatVND(item.estimated_value)}</p>
@@ -1336,7 +1716,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays }) {
 }
 
 // Kanban View Container - MISA Style
-function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays }) {
+function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect }) {
   return (
     <div className="overflow-x-auto pb-4">
       <div className="flex gap-4 min-w-max">
@@ -1348,6 +1728,8 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays }) {
             onMoveStage={onMoveStage}
             pipelineType={pipelineType}
             calculateDays={calculateDays}
+            mergeSelectedIds={mergeSelectedIds}
+            onToggleMergeSelect={onToggleMergeSelect}
           />
         ))}
       </div>

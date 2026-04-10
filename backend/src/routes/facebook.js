@@ -575,31 +575,75 @@ function extractInboundContactInfo(messages = []) {
   return { phone, address, extraPhones };
 }
 
+/** Ghi default_source_id lên facebook_pages để lần sau không tra lại crm_sources */
+async function persistPageDefaultSourceId(page, sourceId) {
+  if (!page?.id || !sourceId) return;
+  if (page.default_source_id) return;
+  await supabase.from('facebook_pages').update({ default_source_id: sourceId }).eq('id', page.id);
+  _pageConfigCache[page.page_id] = {
+    data: { ...page, default_source_id: sourceId },
+    ts: Date.now(),
+  };
+}
+
+/**
+ * Một page Facebook = một dòng crm_sources chuẩn `[FB:page_id] Tên page`.
+ * Trước đây dùng .single() trên tên legacy `[FB] Tên` → khi có NHIỀU dòng trùng tên PostgREST lỗi / không trả row →
+ * code rơi xuống insert và tạo thêm hàng trùng vô hạn. Luôn dùng .limit(1) + ORDER.
+ */
 async function resolveFacebookSourceId(page) {
   if (!page?.page_id) return null;
   if (page.default_source_id) return page.default_source_id;
 
-  const canonicalName = `[FB:${page.page_id}] ${(page.page_name || page.page_id).trim()}`;
-  let { data: exact } = await supabase.from('crm_sources').select('id, name').eq('name', canonicalName).single();
-  if (exact?.id) return exact.id;
+  const pid = String(page.page_id).trim();
+  const pnm = (page.page_name || pid).trim();
+  const canonicalName = `[FB:${pid}] ${pnm}`;
 
-  const legacyNames = [
-    `[FB] ${(page.page_name || '').trim()}`,
-    'Facebook',
-  ].filter(Boolean);
+  const { data: exactRows } = await supabase
+    .from('crm_sources')
+    .select('id')
+    .eq('name', canonicalName)
+    .limit(1);
+  if (exactRows?.[0]?.id) {
+    await persistPageDefaultSourceId(page, exactRows[0].id);
+    return exactRows[0].id;
+  }
 
+  const { data: byPageIdRows } = await supabase
+    .from('crm_sources')
+    .select('id, name')
+    .ilike('name', `%[FB:${pid}]%`)
+    .order('id', { ascending: true })
+    .limit(1);
+  const byPage = byPageIdRows?.[0];
+  if (byPage?.id) {
+    await supabase.from('crm_sources').update({ name: canonicalName, is_active: true }).eq('id', byPage.id);
+    await persistPageDefaultSourceId(page, byPage.id);
+    return byPage.id;
+  }
+
+  const legacyNames = [`[FB] ${pnm}`, 'Facebook'].filter(Boolean);
   for (const name of legacyNames) {
-    const { data: legacy } = await supabase.from('crm_sources').select('id, name').eq('name', name).single();
+    const { data: legacyRows } = await supabase
+      .from('crm_sources')
+      .select('id, name')
+      .eq('name', name)
+      .order('id', { ascending: true })
+      .limit(1);
+    const legacy = legacyRows?.[0];
     if (legacy?.id) {
       await supabase.from('crm_sources').update({ name: canonicalName, is_active: true }).eq('id', legacy.id);
+      await persistPageDefaultSourceId(page, legacy.id);
       return legacy.id;
     }
   }
 
-  const { data: created } = await supabase.from('crm_sources')
+  const { data: created } = await supabase
+    .from('crm_sources')
     .insert({ name: canonicalName, is_active: true })
     .select('id')
     .single();
+  if (created?.id) await persistPageDefaultSourceId(page, created.id);
   return created?.id || null;
 }
 
