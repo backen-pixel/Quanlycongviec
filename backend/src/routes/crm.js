@@ -554,6 +554,200 @@ r.get('/sources', async (req, res) => {
   res.json({ sources: data || [], fb_pages: pages });
 });
 
+// ═══ GỘP LEAD/DEAL — Dùng chung cho merge-duplicates (auto) và merge-selected (thủ công) ═══
+
+/** Gộp bản ghi khách source → target: bổ sung trường trống, gán lại FK, xóa source */
+async function mergeCustomerIntoTarget(sb, targetId, sourceId) {
+  if (!targetId || !sourceId || String(targetId) === String(sourceId)) return;
+  const { data: t } = await sb.from('customers').select('*').eq('id', targetId).single();
+  const { data: s } = await sb.from('customers').select('*').eq('id', sourceId).single();
+  if (!t || !s) return;
+  const pick = (a, b) =>
+    a != null && String(a).trim() !== '' ? a : b != null && String(b).trim() !== '' ? b : a;
+  const merged = {
+    full_name: pick(t.full_name, s.full_name),
+    phone: pick(t.phone, s.phone),
+    email: pick(t.email, s.email),
+    address: pick(t.address, s.address),
+    district: pick(t.district, s.district),
+    city: pick(t.city, s.city),
+    company: pick(t.company, s.company),
+    tax_code: pick(t.tax_code, s.tax_code),
+    notes: [t.notes, s.notes].filter((x) => x && String(x).trim()).join('\n---\n') || null,
+    source: pick(t.source, s.source),
+    updated_at: new Date().toISOString(),
+  };
+  await sb.from('customers').update(merged).eq('id', targetId);
+  const reassign = async (table) => {
+    try {
+      await sb.from(table).update({ customer_id: targetId }).eq('customer_id', sourceId);
+    } catch (e) {
+      console.warn(`[mergeCustomer] ${table}:`, e.message);
+    }
+  };
+  await reassign('crm_leads');
+  await reassign('quotations');
+  await reassign('orders');
+  await reassign('invoices');
+  await reassign('projects');
+  await reassign('facebook_contacts');
+  try {
+    await sb.from('customer_interactions').update({ customer_id: targetId }).eq('customer_id', sourceId);
+  } catch (_) {}
+  const { error: delErr } = await sb.from('customers').delete().eq('id', sourceId);
+  if (delErr) console.warn('[mergeCustomer] delete source customer:', delErr.message);
+}
+
+/**
+ * @param {string} keepId
+ * @param {string[]} deleteIds
+ * @param {{ finalTitle?: string, mergeCustomers?: boolean, includeSecondaryData?: boolean }} options
+ * includeSecondaryData=false: chỉ xóa bản ghi phụ, không chuyển tài liệu/nhiệm vụ/báo giá/… sang bản giữ (dữ liệu gắn lead đó cascade theo DB).
+ */
+async function executeLeadMerge(keepId, deleteIds, options = {}) {
+  const { finalTitle, mergeCustomers = false, includeSecondaryData = true } = options;
+  const idsToDelete = [...new Set((deleteIds || []).filter((id) => id && String(id) !== String(keepId)))];
+  if (!keepId || !idsToDelete.length) {
+    const err = new Error('keep_id và ít nhất một delete_id là bắt buộc');
+    err.status = 400;
+    throw err;
+  }
+
+  const { data: keepLead } = await supabase
+    .from('crm_leads')
+    .select('id, title, customer_id, estimated_value, type')
+    .eq('id', keepId)
+    .single();
+  if (!keepLead) {
+    const err = new Error('Lead/deal giữ lại không tồn tại');
+    err.status = 404;
+    throw err;
+  }
+
+  const { data: delLeads } = await supabase.from('crm_leads').select('id, customer_id, type').in('id', idsToDelete);
+  if (!delLeads?.length || delLeads.length !== idsToDelete.length) {
+    const err = new Error('Một hoặc nhiều bản ghi cần gộp không tồn tại');
+    err.status = 404;
+    throw err;
+  }
+  for (const d of delLeads) {
+    if (d.type !== keepLead.type) {
+      const err = new Error('Chỉ gộp cùng loại: Lead với Lead hoặc Deal với Deal');
+      err.status = 400;
+      throw err;
+    }
+  }
+
+  if (mergeCustomers) {
+    let primaryCustomerId = keepLead.customer_id;
+    if (!primaryCustomerId) {
+      const firstCust = delLeads.find((d) => d.customer_id);
+      if (firstCust?.customer_id) {
+        await supabase
+          .from('crm_leads')
+          .update({ customer_id: firstCust.customer_id, updated_at: new Date().toISOString() })
+          .eq('id', keepId);
+        primaryCustomerId = firstCust.customer_id;
+      }
+    }
+    if (primaryCustomerId) {
+      const secondaryIds = [...new Set(delLeads.map((d) => d.customer_id).filter(Boolean))].filter(
+        (cid) => String(cid) !== String(primaryCustomerId)
+      );
+      for (const sid of secondaryIds) {
+        await mergeCustomerIntoTarget(supabase, primaryCustomerId, sid);
+      }
+    }
+    const { data: k2 } = await supabase.from('crm_leads').select('estimated_value, customer_id').eq('id', keepId).single();
+    if (k2) {
+      keepLead.estimated_value = k2.estimated_value;
+      keepLead.customer_id = k2.customer_id;
+    }
+  }
+
+  if (finalTitle != null && String(finalTitle).trim()) {
+    await supabase
+      .from('crm_leads')
+      .update({ title: String(finalTitle).trim(), updated_at: new Date().toISOString() })
+      .eq('id', keepId);
+  }
+
+  let movedTasks = 0;
+  let movedDocs = 0;
+  let movedActivities = 0;
+  let movedQuotations = 0;
+
+  for (const delId of idsToDelete) {
+    if (String(delId) === String(keepId)) continue;
+
+    if (includeSecondaryData) {
+      const { data: tasks } = await supabase.from('crm_tasks').select('id').eq('lead_id', delId);
+      if (tasks?.length) {
+        await supabase.from('crm_tasks').update({ lead_id: keepId }).eq('lead_id', delId);
+        movedTasks += tasks.length;
+      }
+
+      const { data: docs } = await supabase.from('lead_documents').select('id').eq('lead_id', delId);
+      if (docs?.length) {
+        await supabase.from('lead_documents').update({ lead_id: keepId }).eq('lead_id', delId);
+        movedDocs += docs.length;
+      }
+
+      const { data: acts } = await supabase.from('crm_activities').select('id').eq('lead_id', delId);
+      if (acts?.length) {
+        await supabase.from('crm_activities').update({ lead_id: keepId }).eq('lead_id', delId);
+        movedActivities += acts.length;
+      }
+
+      const { data: quotes } = await supabase.from('quotations').select('id').eq('lead_id', delId);
+      if (quotes?.length) {
+        await supabase.from('quotations').update({ lead_id: keepId }).eq('lead_id', delId);
+        movedQuotations += quotes.length;
+      }
+
+      await supabase.from('orders').update({ lead_id: keepId }).eq('lead_id', delId);
+      await supabase.from('invoices').update({ lead_id: keepId }).eq('lead_id', delId);
+
+      await supabase.from('facebook_contacts').update({ lead_id: keepId }).eq('lead_id', delId);
+      await supabase.from('facebook_messages').update({ lead_id: keepId }).eq('lead_id', delId);
+
+      await supabase.from('lead_members').delete().eq('lead_id', delId);
+      await supabase.from('lead_messages').delete().eq('lead_id', delId);
+
+      await supabase.from('crm_pipeline_history').update({ lead_id: keepId }).eq('lead_id', delId);
+
+      const { data: delLead } = await supabase.from('crm_leads').select('estimated_value').eq('id', delId).single();
+      if (delLead?.estimated_value > 0) {
+        await supabase
+          .from('crm_leads')
+          .update({
+            estimated_value: (keepLead.estimated_value || 0) + delLead.estimated_value,
+          })
+          .eq('id', keepId);
+        keepLead.estimated_value = (keepLead.estimated_value || 0) + delLead.estimated_value;
+      }
+    } else {
+      await supabase.from('lead_members').delete().eq('lead_id', delId);
+      await supabase.from('lead_messages').delete().eq('lead_id', delId);
+      const { error: histErr } = await supabase.from('crm_pipeline_history').update({ lead_id: keepId }).eq('lead_id', delId);
+      if (histErr) console.warn('[merge] pipeline_history (keep-only):', histErr.message);
+    }
+
+    const { error: delErr } = await supabase.from('crm_leads').delete().eq('id', delId);
+    if (delErr) {
+      console.error('Delete lead error:', delId, delErr);
+      throw new Error(`Không xóa được lead/deal ${delId}: ${delErr.message || delErr.details || JSON.stringify(delErr)}`);
+    }
+  }
+
+  return {
+    success: true,
+    kept: keepId,
+    deleted: idsToDelete.length,
+    moved: { tasks: movedTasks, documents: movedDocs, activities: movedActivities, quotations: movedQuotations },
+  };
+}
+
 // ═══ QUÉT TRÙNG LEAD — Scan duplicates by customer_id + Facebook PSID ═══
 r.get('/leads/scan-duplicates', async (req, res) => {
   try {
@@ -605,87 +799,33 @@ r.get('/leads/scan-duplicates', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ═══ GỘP LEAD — Merge duplicates: keep one, delete others ═══
+// ═══ GỘP LEAD — Merge duplicates: keep one, delete others (không gộp bản ghi khách) ═══
 r.post('/leads/merge-duplicates', async (req, res) => {
   try {
     const { keep_id, delete_ids } = req.body;
-    if (!keep_id || !delete_ids?.length) return res.status(400).json({ error: 'keep_id và delete_ids[] là bắt buộc' });
+    const result = await executeLeadMerge(keep_id, delete_ids, { mergeCustomers: false });
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
 
-    const { data: keepLead } = await supabase.from('crm_leads').select('id, title, customer_id, estimated_value').eq('id', keep_id).single();
-    if (!keepLead) return res.status(404).json({ error: 'Lead giữ lại không tồn tại' });
-
-    let movedTasks = 0, movedDocs = 0, movedActivities = 0, movedQuotations = 0;
-
-    for (const delId of delete_ids) {
-      if (delId === keep_id) continue;
-
-      // Move crm_tasks
-      const { data: tasks } = await supabase.from('crm_tasks').select('id').eq('lead_id', delId);
-      if (tasks?.length) {
-        await supabase.from('crm_tasks').update({ lead_id: keep_id }).eq('lead_id', delId);
-        movedTasks += tasks.length;
-      }
-
-      // Move lead_documents
-      const { data: docs } = await supabase.from('lead_documents').select('id').eq('lead_id', delId);
-      if (docs?.length) {
-        await supabase.from('lead_documents').update({ lead_id: keep_id }).eq('lead_id', delId);
-        movedDocs += docs.length;
-      }
-
-      // Move crm_activities
-      const { data: acts } = await supabase.from('crm_activities').select('id').eq('lead_id', delId);
-      if (acts?.length) {
-        await supabase.from('crm_activities').update({ lead_id: keep_id }).eq('lead_id', delId);
-        movedActivities += acts.length;
-      }
-
-      // Move quotations
-      const { data: quotes } = await supabase.from('quotations').select('id').eq('lead_id', delId);
-      if (quotes?.length) {
-        await supabase.from('quotations').update({ lead_id: keep_id }).eq('lead_id', delId);
-        movedQuotations += quotes.length;
-      }
-
-      // Move orders, invoices
-      await supabase.from('orders').update({ lead_id: keep_id }).eq('lead_id', delId);
-      await supabase.from('invoices').update({ lead_id: keep_id }).eq('lead_id', delId);
-
-      // Move facebook_contacts + messages
-      await supabase.from('facebook_contacts').update({ lead_id: keep_id }).eq('lead_id', delId);
-      await supabase.from('facebook_messages').update({ lead_id: keep_id }).eq('lead_id', delId);
-
-      // Delete lead_members + lead_messages (cascade-safe cleanup)
-      await supabase.from('lead_members').delete().eq('lead_id', delId);
-      await supabase.from('lead_messages').delete().eq('lead_id', delId);
-
-      // Move crm_pipeline_history
-      await supabase.from('crm_pipeline_history').update({ lead_id: keep_id }).eq('lead_id', delId);
-
-      // Sum estimated_value
-      const { data: delLead } = await supabase.from('crm_leads').select('estimated_value').eq('id', delId).single();
-      if (delLead?.estimated_value > 0) {
-        await supabase.from('crm_leads').update({
-          estimated_value: (keepLead.estimated_value || 0) + delLead.estimated_value,
-        }).eq('id', keep_id);
-        keepLead.estimated_value = (keepLead.estimated_value || 0) + delLead.estimated_value;
-      }
-
-      // Delete the duplicate lead
-      const { error: delErr } = await supabase.from('crm_leads').delete().eq('id', delId);
-      if (delErr) {
-        console.error('Delete lead error:', delId, delErr);
-        // Try to identify blocking FK
-        throw new Error(`Không xóa được lead ${delId}: ${delErr.message || delErr.details || JSON.stringify(delErr)}`);
-      }
-    }
-
-    res.json({
-      success: true, kept: keep_id,
-      deleted: delete_ids.filter(id => id !== keep_id).length,
-      moved: { tasks: movedTasks, documents: movedDocs, activities: movedActivities, quotations: movedQuotations },
+// ═══ GỘP THỦ CÔNG (Kanban): gộp khách + tài liệu + chọn tiêu đề ═══
+// include_secondary_data: true (mặc định) = gộp KH + chuyển tài liệu/nhiệm vụ/báo giá/… sang bản giữ
+// false = chỉ giữ dữ liệu của bản được chọn; bản xóa kèm tài liệu & liên kết (CASCADE theo DB)
+r.post('/leads/merge-selected', async (req, res) => {
+  try {
+    const { keep_id, delete_ids, title, include_secondary_data } = req.body;
+    const full = include_secondary_data !== false;
+    const result = await executeLeadMerge(keep_id, delete_ids, {
+      mergeCustomers: full,
+      finalTitle: title,
+      includeSecondaryData: full,
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // Dọn dẹp lead trùng theo customer
