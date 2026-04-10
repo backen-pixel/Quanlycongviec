@@ -754,59 +754,142 @@ r.get('/leads-by-fb-page', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // LEADS (CRUD + Pipeline)
 // ═══════════════════════════════════════════════════════════════════════════
+
+const CRM_LEAD_LIST_SELECT =
+  '*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies(id, name, short_name)';
+
+function mapLeadDisplayPhone(rows) {
+  return (rows || []).map((l) => ({
+    ...l,
+    display_phone:
+      l.customer?.phone && String(l.customer.phone).trim() !== ''
+        ? l.customer.phone
+        : l.phone && String(l.phone).trim() !== ''
+          ? l.phone
+          : null,
+  }));
+}
+
+function uuidQueryOrNull(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+async function fetchCrmLeadsByIdsOrdered(ids) {
+  if (!ids || ids.length === 0) return [];
+  const chunkSize = 300;
+  const byId = new Map();
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const { data, error } = await supabase.from('crm_leads').select(CRM_LEAD_LIST_SELECT).in('id', chunk);
+    if (error) throw error;
+    (data || []).forEach((row) => byId.set(row.id, row));
+  }
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+
+/** Fallback: tối đa 5000 bản ghi từ DB rồi lọc/sort trong RAM (trước khi có RPC) */
+async function getCrmLeadsListLegacy(reqQuery) {
+  const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, type = 'lead', company_id, date_from, date_to, phone_filter } = reqQuery;
+  const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 5000);
+  const parsedOffset = Math.max(parseInt(offset) || 0, 0);
+  let q = supabase
+    .from('crm_leads')
+    .select(CRM_LEAD_LIST_SELECT)
+    .eq('type', type)
+    .order('created_at', { ascending: false })
+    .limit(5000);
+
+  if (stage_id) q = q.eq('stage_id', stage_id);
+  if (assigned_to) {
+    q = q.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
+  }
+  if (source_id) q = q.eq('source_id', source_id);
+  if (company_id) q = q.eq('company_id', company_id);
+  if (date_from) q = q.gte('created_at', date_from);
+  if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
+  if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
+
+  const { data, error } = await q;
+  if (error) throw error;
+
+  let result = mapLeadDisplayPhone(data || []);
+  if (phone_filter === 'has_phone') {
+    result = result.filter((l) => !!l.display_phone);
+  } else if (phone_filter === 'no_phone') {
+    result = result.filter((l) => !l.display_phone);
+  }
+  result.sort((a, b) => {
+    const ap = a.display_phone ? 1 : 0;
+    const bp = b.display_phone ? 1 : 0;
+    if (bp !== ap) return bp - ap;
+    const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return db - da;
+  });
+
+  const total = result.length;
+  const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
+  return {
+    data: page,
+    total,
+    offset: parsedOffset,
+    limit: parsedLimit,
+    hasMore: parsedOffset + page.length < total,
+    nextOffset: parsedOffset + page.length,
+  };
+}
+
 r.get('/leads', async (req, res) => {
   try {
     const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, type = 'lead', company_id, date_from, date_to, phone_filter } = req.query;
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 5000);
     const parsedOffset = Math.max(parseInt(offset) || 0, 0);
-    let q = supabase.from('crm_leads')
-      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
-      .eq('type', type)
-      .order('created_at', { ascending: false })
-      .limit(5000);
 
-    if (stage_id) q = q.eq('stage_id', stage_id);
-    if (assigned_to) q = q.eq('assigned_to', assigned_to);
-    if (source_id) q = q.eq('source_id', source_id);
-    if (company_id) q = q.eq('company_id', company_id);
-    if (date_from) q = q.gte('created_at', date_from);
-    if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
-    if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
+    const rpcParams = {
+      p_type: type,
+      p_stage_id: uuidQueryOrNull(stage_id),
+      p_assigned_to: uuidQueryOrNull(assigned_to),
+      p_source_id: uuidQueryOrNull(source_id),
+      p_company_id: uuidQueryOrNull(company_id),
+      p_date_from: date_from || null,
+      p_date_to: date_to || null,
+      p_search: search || null,
+      p_phone_filter: phone_filter || null,
+      p_limit: parsedLimit,
+      p_offset: parsedOffset,
+    };
 
-    const { data, error } = await q;
-    if (error) throw error;
+    const { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
 
-    let result = (data || []).map(l => ({
-      ...l,
-      display_phone: (l.customer?.phone && String(l.customer.phone).trim() !== '')
-        ? l.customer.phone
-        : ((l.phone && String(l.phone).trim() !== '') ? l.phone : null),
-    }));
-    if (phone_filter === 'has_phone') {
-      result = result.filter(l => !!l.display_phone);
-    } else if (phone_filter === 'no_phone') {
-      result = result.filter(l => !l.display_phone);
+    const rpcOk =
+      !rpcError &&
+      rpcData &&
+      rpcData.total !== undefined &&
+      rpcData.total !== null &&
+      Array.isArray(rpcData.ids);
+
+    if (rpcOk) {
+      const total = Number(rpcData.total);
+      const ids = rpcData.ids;
+      const rows = await fetchCrmLeadsByIdsOrdered(ids);
+      const page = mapLeadDisplayPhone(rows);
+      return res.json({
+        data: page,
+        total,
+        offset: parsedOffset,
+        limit: parsedLimit,
+        hasMore: parsedOffset + page.length < total,
+        nextOffset: parsedOffset + page.length,
+      });
     }
-    result.sort((a, b) => {
-      const ap = a.display_phone ? 1 : 0;
-      const bp = b.display_phone ? 1 : 0;
-      if (bp !== ap) return bp - ap;
-      const da = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const db = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return db - da;
-    });
 
-    const total = result.length;
-    const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
-
-    res.json({
-      data: page,
-      total,
-      offset: parsedOffset,
-      limit: parsedLimit,
-      hasMore: parsedOffset + page.length < total,
-      nextOffset: parsedOffset + page.length,
-    });
+    if (rpcError) {
+      console.warn('[crm/leads] crm_leads_page_ids RPC unavailable, using legacy (max 5000 rows):', rpcError.message);
+    }
+    const legacy = await getCrmLeadsListLegacy(req.query);
+    return res.json(legacy);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

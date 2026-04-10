@@ -75,11 +75,13 @@ export function PlannerView({ pipeline, pipelineType }) {
   const groups = useMemo(() => {
     const map = {};
     const unassigned = [];
-    allItems.forEach(item => {
-      if (item.assigned_to && item.assignee) {
-        if (!map[item.assigned_to]) map[item.assigned_to] = { user: item.assignee, items: [], totalValue: 0 };
-        map[item.assigned_to].items.push(item);
-        map[item.assigned_to].totalValue += (item.estimated_value || 0);
+    allItems.forEach((item) => {
+      const ownerId = item.assigned_to || item.lead_owner_id;
+      const ownerUser = item.assignee || item.lead_owner;
+      if (ownerId && ownerUser) {
+        if (!map[ownerId]) map[ownerId] = { user: ownerUser, items: [], totalValue: 0 };
+        map[ownerId].items.push(item);
+        map[ownerId].totalValue += (item.estimated_value || 0);
       } else {
         unassigned.push(item);
       }

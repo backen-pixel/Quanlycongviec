@@ -18,7 +18,10 @@ export default function CRMReports() {
       api.get('/crm/dashboard'), api.get('/crm/leads'),
       api.get('/crm/quotations'), api.get('/crm/orders'), api.get('/crm/invoices'),
     ]);
-    setData(d.data); setLeads(l.data || []); setQuotes(q.data || []);
+    setData(d.data);
+    const leadPayload = l.data;
+    setLeads(Array.isArray(leadPayload) ? leadPayload : (leadPayload?.data ?? []));
+    setQuotes(q.data || []);
     setOrders(o.data || []); setInvoices(i.data || []);
     setLoading(false);
   };
