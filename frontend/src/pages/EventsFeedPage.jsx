@@ -1034,8 +1034,16 @@ function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.get('/crm/leads', { params: { type: 'deal', limit: 200 } }).then(r => setLeads(r.data.leads || r.data || [])).catch(() => {});
-    api.get('/customers', { params: { limit: 500 } }).then(r => setCustomers(r.data.customers || r.data || [])).catch(() => {});
+    api.get('/crm/leads', { params: { type: 'deal', limit: 200 } }).then(r => {
+      const d = r.data;
+      const list = Array.isArray(d) ? d : (d?.leads ?? d?.data ?? []);
+      setLeads(Array.isArray(list) ? list : []);
+    }).catch(() => {});
+    api.get('/customers', { params: { limit: 500 } }).then(r => {
+      const d = r.data;
+      const list = Array.isArray(d) ? d : (d?.customers ?? d?.data ?? []);
+      setCustomers(Array.isArray(list) ? list : []);
+    }).catch(() => {});
   }, []);
 
   const selectLead = (leadId) => {
