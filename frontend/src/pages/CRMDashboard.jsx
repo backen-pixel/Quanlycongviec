@@ -8,7 +8,7 @@ import {
   Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
-  Clock, List, LayoutGrid, GitMerge
+  Clock, List, LayoutGrid, GitMerge, UserCheck
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
 import BatchActionsBar from '../components/BatchActionsBar';
@@ -107,6 +107,7 @@ export default function CRMDashboard() {
   /** Chọn thẻ Kanban để gộp thủ công (không dùng quét trùng) */
   const [manualMergeIds, setManualMergeIds] = useState([]);
   const [manualMergeModalOpen, setManualMergeModalOpen] = useState(false);
+  const [bulkAssignModalOpen, setBulkAssignModalOpen] = useState(false);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
     const s = localStorage.getItem('crm_kanban_load_limit');
@@ -1029,6 +1030,14 @@ export default function CRMDashboard() {
           )}
           <button
             type="button"
+            onClick={() => setBulkAssignModalOpen(true)}
+            className="h-9 px-4 rounded-lg bg-white border border-amber-400 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer shadow-sm flex items-center gap-1.5"
+          >
+            <UserCheck className="h-3.5 w-3.5 shrink-0" />
+            Gán phụ trách
+          </button>
+          <button
+            type="button"
             onClick={() => setManualMergeIds([])}
             className="h-9 px-3 rounded-lg border border-amber-300 text-amber-800 text-xs font-medium hover:bg-amber-100 cursor-pointer"
           >
@@ -1095,6 +1104,17 @@ export default function CRMDashboard() {
         />
       )}
 
+      <BulkAssignLeadsModal
+        open={bulkAssignModalOpen}
+        onClose={() => setBulkAssignModalOpen(false)}
+        ids={manualMergeIds}
+        pipelineType={pipelineType}
+        users={users}
+        onDone={() => {
+          setBulkAssignModalOpen(false);
+          load();
+        }}
+      />
       <ManualMergeLeadsModal
         open={manualMergeModalOpen}
         onClose={() => setManualMergeModalOpen(false)}
@@ -1124,6 +1144,176 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
         <p className="text-xs text-gray-500 font-semibold uppercase mb-1">{label}</p>
         <p className="text-2xl md:text-3xl font-bold text-gray-900">{value}</p>
         {trend && <p className="text-xs text-emerald-600 mt-2">↑ {trend}%</p>}
+      </div>
+    </div>
+  );
+}
+
+/** Gán NV phụ trách hàng loạt — dùng cùng ô chọn Kanban với gộp thủ công */
+function BulkAssignLeadsModal({ open, onClose, ids, pipelineType, users, onDone }) {
+  const [assignDealId, setAssignDealId] = useState('');
+  const [assignLeadOwnerId, setAssignLeadOwnerId] = useState('');
+  const [assigneeSearch, setAssigneeSearch] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setAssignDealId('');
+      setAssignLeadOwnerId('');
+      setAssigneeSearch('');
+    }
+  }, [open, ids]);
+
+  const idList = useMemo(() => [...new Set((ids || []).filter(Boolean))], [ids]);
+  const activeUsers = useMemo(
+    () => (users || []).filter((u) => u && u.is_active !== false && u.id),
+    [users]
+  );
+
+  const filteredBase = useMemo(() => {
+    const q = (assigneeSearch || '').trim().toLowerCase();
+    if (!q) return activeUsers;
+    return activeUsers.filter((u) => {
+      const name = (u.full_name || '').toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      const pos = (u.position || '').toLowerCase();
+      return name.includes(q) || email.includes(q) || pos.includes(q);
+    });
+  }, [activeUsers, assigneeSearch]);
+
+  const pinSelected = (list, selectedId) => {
+    const sel = selectedId ? activeUsers.find((u) => String(u.id) === String(selectedId)) : null;
+    if (sel && !list.some((u) => String(u.id) === String(selectedId))) return [sel, ...list];
+    return list;
+  };
+
+  const filteredDealUsers = useMemo(
+    () => pinSelected(filteredBase, assignDealId),
+    [filteredBase, activeUsers, assignDealId]
+  );
+  const filteredOwnerUsers = useMemo(
+    () => pinSelected(filteredBase, assignLeadOwnerId),
+    [filteredBase, activeUsers, assignLeadOwnerId]
+  );
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!idList.length) return;
+    if (!assignDealId && !assignLeadOwnerId) {
+      alert('Chọn ít nhất phụ trách deal hoặc chủ lead');
+      return;
+    }
+    setSaving(true);
+    try {
+      const body = { ids: idList };
+      if (assignDealId) body.assigned_to = assignDealId;
+      if (assignLeadOwnerId) body.lead_owner_id = assignLeadOwnerId;
+      await api.post('/crm/leads/bulk-assign', body);
+      onDone();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Gán thất bại');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+
+  const kind = pipelineType === 'deal' ? 'deal' : 'lead';
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto"
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <UserCheck className="h-5 w-5 text-amber-600" />
+              Gán phụ trách hàng loạt
+            </h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Áp dụng cho <strong>{idList.length}</strong> {kind} đang chọn trên Kanban.
+            </p>
+            <p className="text-xs text-gray-600 mt-2 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 leading-relaxed">
+              <strong>Phụ trách deal</strong> (NV được giao) và <strong>chủ lead</strong> (người giữ lead gốc) là hai vai trò khác nhau — áp dụng cho cả Lead và Deal. Chọn một hoặc cả hai; dòng nào để trống thì giữ nguyên trên thẻ.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 cursor-pointer" aria-label="Đóng">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {idList.length === 0 ? (
+          <p className="text-sm text-amber-700">Chưa có thẻ nào được chọn.</p>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-800 mb-1.5">Tìm nhân viên (lọc cả hai danh sách)</label>
+              <div className="relative mb-3">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+                <input
+                  type="search"
+                  value={assigneeSearch}
+                  onChange={(ev) => setAssigneeSearch(ev.target.value)}
+                  placeholder="Gõ tên, email, chức danh…"
+                  className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-emerald-800 mb-1">Phụ trách deal</label>
+                  <select
+                    value={assignDealId}
+                    onChange={(ev) => setAssignDealId(ev.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:border-transparent cursor-pointer"
+                  >
+                    <option value="">— Giữ nguyên —</option>
+                    {filteredDealUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name || u.email || u.id}{u.position ? ` — ${u.position}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-indigo-800 mb-1">Chủ lead / phụ trách lead</label>
+                  <select
+                    value={assignLeadOwnerId}
+                    onChange={(ev) => setAssignLeadOwnerId(ev.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:border-transparent cursor-pointer"
+                  >
+                    <option value="">— Giữ nguyên —</option>
+                    {filteredOwnerUsers.map((u) => (
+                      <option key={`lo-${u.id}`} value={u.id}>
+                        {u.full_name || u.email || u.id}{u.position ? ` — ${u.position}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {assigneeSearch.trim() && filteredBase.length === 0 && !assignDealId && !assignLeadOwnerId && (
+                <p className="text-xs text-amber-700 mt-1.5">
+                  {`Không có nhân viên khớp "${assigneeSearch.trim()}".`}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 justify-end pt-2">
+              <button type="button" onClick={onClose} className="h-10 px-4 rounded-lg border border-gray-300 text-sm font-medium hover:bg-gray-50 cursor-pointer">
+                Hủy
+              </button>
+              <button
+                type="submit"
+                disabled={saving || (!assignDealId && !assignLeadOwnerId)}
+                className="h-10 px-5 rounded-lg bg-amber-600 text-white text-sm font-bold hover:bg-amber-700 disabled:opacity-50 cursor-pointer"
+              >
+                {saving ? 'Đang lưu…' : 'Xác nhận gán'}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
