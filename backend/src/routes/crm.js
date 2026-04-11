@@ -828,6 +828,117 @@ r.post('/leads/merge-selected', async (req, res) => {
   }
 });
 
+// ═══ GÁN PHỤ TRÁCH HÀNG LOẠT (cùng checkbox chọn Kanban với gộp thủ công) ═══
+// assigned_to = phụ trách deal; lead_owner_id = chủ lead / phụ trách lead (khác nhau, áp dụng cả lead & deal)
+r.post('/leads/bulk-assign', async (req, res) => {
+  try {
+    const { ids, assigned_to, lead_owner_id } = req.body;
+    const idList = [...new Set((ids || []).filter(Boolean))];
+    if (!idList.length) {
+      const err = new Error('Cần ít nhất một lead/deal');
+      err.status = 400;
+      throw err;
+    }
+
+    const hasA = assigned_to != null && String(assigned_to).trim() !== '';
+    const hasL = lead_owner_id != null && String(lead_owner_id).trim() !== '';
+    if (!hasA && !hasL) {
+      const err = new Error('Chọn ít nhất phụ trách deal hoặc chủ lead');
+      err.status = 400;
+      throw err;
+    }
+
+    const { data: olds, error: fErr } = await supabase
+      .from('crm_leads')
+      .select('id, type, assigned_to, lead_owner_id, title')
+      .in('id', idList);
+    if (fErr) throw fErr;
+    if (!olds?.length) {
+      const err = new Error('Không tìm thấy bản ghi');
+      err.status = 404;
+      throw err;
+    }
+    if (olds.length !== idList.length) {
+      const err = new Error('Một số ID không tồn tại');
+      err.status = 400;
+      throw err;
+    }
+
+    const types = new Set(olds.map((o) => o.type));
+    if (types.size > 1) {
+      const err = new Error('Không gán hàng loạt trộn Lead và Deal trong một lần');
+      err.status = 400;
+      throw err;
+    }
+
+    const updatePayload = { updated_at: new Date().toISOString() };
+    if (hasA) updatePayload.assigned_to = assigned_to;
+    if (hasL) updatePayload.lead_owner_id = lead_owner_id;
+
+    const { error: uErr } = await supabase.from('crm_leads').update(updatePayload).in('id', idList);
+    if (uErr) throw uErr;
+
+    const labelRow = (o) => (o.type === 'deal' ? 'Deal' : 'Lead');
+    const entityType = (o) => (o.type === 'deal' ? 'crm_deal' : 'crm_lead');
+
+    for (const old of olds) {
+      try {
+        const newA = hasA ? assigned_to : old.assigned_to;
+        const newL = hasL ? lead_owner_id : old.lead_owner_id;
+        const aCh = hasA && String(newA || '') !== String(old.assigned_to || '');
+        const lCh = hasL && String(newL || '') !== String(old.lead_owner_id || '');
+        if (!aCh && !lCh) continue;
+
+        const lab = labelRow(old);
+        const ent = entityType(old);
+
+        if (aCh && lCh && String(newA) === String(newL)) {
+          const uid = newA;
+          if (String(uid) === String(req.user.userId)) continue;
+          await createNotification(
+            req,
+            uid,
+            'lead_assigned',
+            `👤 Bạn được gán chủ lead & phụ trách deal (${lab})`,
+            `${lab} "${old.title || ''}" — cả hai vai trò`,
+            ent,
+            old.id
+          );
+        } else {
+          if (aCh && newA && String(newA) !== String(req.user.userId)) {
+            await createNotification(
+              req,
+              newA,
+              'lead_assigned',
+              `👤 ${lab} — phụ trách deal`,
+              `${lab} "${old.title || ''}" được giao cho bạn phụ trách deal`,
+              ent,
+              old.id
+            );
+          }
+          if (lCh && newL && String(newL) !== String(req.user.userId)) {
+            await createNotification(
+              req,
+              newL,
+              'lead_assigned',
+              `👤 ${lab} — chủ lead`,
+              `${lab} "${old.title || ''}" — bạn là chủ lead / phụ trách lead`,
+              ent,
+              old.id
+            );
+          }
+        }
+      } catch (ne) {
+        console.warn('[bulk-assign] notify:', ne.message);
+      }
+    }
+
+    res.json({ success: true, updated: idList.length, type: olds[0].type });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
 // Dọn dẹp lead trùng theo customer
 r.post('/leads/cleanup-duplicates', async (req, res) => {
   try {
