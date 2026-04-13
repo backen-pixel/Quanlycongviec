@@ -1,4 +1,4 @@
--- Hỗ trợ lọc contact: thời điểm tin inbound gần nhất (kết hợp last_message_at ở app cho ngưỡng 24h)
+-- Hỗ trợ lọc contact: thời điểm tin inbound gần nhất (kết hợp last_message_at; ngưỡng giờ ở backend facebook.js)
 CREATE OR REPLACE FUNCTION public.fb_last_inbound_at_for_contacts(contact_ids uuid[])
 RETURNS TABLE (contact_id uuid, last_inbound_at timestamptz)
 LANGUAGE sql

@@ -621,9 +621,13 @@ export default function LeadDetail() {
                 </p>
               )}
               {zaloWonPreview.previous_send?.error_message && !zaloWonPreview.previous_send?.msg_id && (
-                <p className="text-[11px] text-red-800 bg-red-50 border border-red-100 rounded-lg px-2 py-1.5">
-                  Lần trước: {zaloWonPreview.previous_send.error_message}
-                </p>
+                <div className="text-[11px] text-red-800 bg-red-50 border border-red-100 rounded-lg px-2 py-1.5 space-y-1">
+                  <p>Lần trước: {zaloWonPreview.previous_send.error_message}</p>
+                  <p className="text-red-900/90 font-sans">
+                    {zaloWonPreview.hints?.after_failed_send ||
+                      'Sửa template/cấu hình rồi bấm «Gửi thông báo Zalo» lại — không cần xóa dòng trong database.'}
+                  </p>
+                </div>
               )}
 
               {zaloWonPreview.previous_send?.msg_id && (
