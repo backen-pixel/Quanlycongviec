@@ -9,7 +9,7 @@ const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
-const { sendZaloTemplateMessage, buildDealTemplateData } = require('../helpers/zaloOa');
+const { sendZaloTemplateMessage, buildDealTemplateData, normalizeVnPhoneTo84 } = require('../helpers/zaloOa');
 
 const ZALO_APP_SETTING_KEY = 'zalo_oa_notify';
 
@@ -36,14 +36,37 @@ async function upsertZaloNotifySettings(nextVal) {
   if (error) throw error;
 }
 
-/** Gửi Zalo khi deal vào cột có send_zalo_on_enter (chạy nền, không chặn response) */
-async function maybeSendZaloOnDealStageEnter({ leadId, stageId, pipelineType, sendZaloOnEnter }) {
-  if (pipelineType !== 'deal' || !sendZaloOnEnter) return;
+function maskZaloAccessTokenPreview(token) {
+  const s = String(token || '');
+  if (!s) return '';
+  if (s.length <= 12) return '••••••••';
+  return `${s.slice(0, 4)}…${s.slice(-4)} (${s.length} ký tự)`;
+}
+
+function maskCustomerPhoneDisplay(phone) {
+  const d = String(phone || '').replace(/\D/g, '');
+  if (d.length < 5) return phone ? '***' : '—';
+  return `${d.slice(0, 3)}****${d.slice(-2)}`;
+}
+
+/**
+ * Gửi Zalo OA theo cấu hình app_settings + template deal.
+ * @param {object} opts
+ * @param {boolean} [opts.allowWithoutStageFlag] — true: gửi từ nút thủ công (deal Thắng), không cần send_zalo_on_enter
+ * @param {boolean} [opts.force] — bỏ qua chặn đã gửi OK / lỗi (trừ no_phone), gửi lại
+ */
+async function executeZaloDealStageNotify({ leadId, stageId, pipelineType, sendZaloOnEnter, allowWithoutStageFlag = false, force = false }) {
+  if (pipelineType !== 'deal') {
+    return { ok: false, skipped: true, reason: 'not_deal' };
+  }
+  if (!allowWithoutStageFlag && !sendZaloOnEnter) {
+    return { ok: false, skipped: true, reason: 'stage_zalo_disabled' };
+  }
 
   const settings = await getZaloNotifySettings();
   if (!settings.enabled || !settings.access_token || !settings.template_id) {
     console.log('[Zalo OA] Bỏ qua — tắt chức năng hoặc thiếu token/template');
-    return;
+    return { ok: false, skipped: true, reason: 'zalo_not_configured' };
   }
 
   const { data: prevSend } = await supabase.from('crm_zalo_stage_sends')
@@ -51,20 +74,22 @@ async function maybeSendZaloOnDealStageEnter({ leadId, stageId, pipelineType, se
     .eq('lead_id', leadId)
     .eq('stage_id', stageId)
     .maybeSingle();
-  if (prevSend?.msg_id) {
+  if (!force && prevSend?.msg_id) {
     console.log('[Zalo OA] Đã gửi thành công trước đó cho lead+stage này');
-    return;
+    return { ok: true, skipped: true, reason: 'already_sent', msg_id: prevSend.msg_id };
   }
-  if (prevSend?.error_message && prevSend.error_message !== 'no_customer_phone') {
+  if (!force && prevSend?.error_message && prevSend.error_message !== 'no_customer_phone') {
     console.log('[Zalo OA] Bỏ qua — đã có lần gửi lỗi (xóa dòng crm_zalo_stage_sends nếu cần thử lại)');
-    return;
+    return { ok: false, skipped: true, reason: 'previous_error', error_message: prevSend.error_message };
   }
 
   const { data: lead } = await supabase.from('crm_leads')
     .select('id, code, title, type, estimated_value, customer:customers(id, full_name, phone, email, address)')
     .eq('id', leadId)
     .single();
-  if (!lead || lead.type !== 'deal') return;
+  if (!lead || lead.type !== 'deal') {
+    return { ok: false, skipped: true, reason: 'lead_not_found' };
+  }
 
   const phone = lead.customer?.phone;
   if (!phone) {
@@ -77,7 +102,7 @@ async function maybeSendZaloOnDealStageEnter({ leadId, stageId, pipelineType, se
       error_message: 'no_customer_phone',
       updated_at: new Date().toISOString(),
     }, { onConflict: 'lead_id,stage_id' });
-    return;
+    return { ok: false, skipped: true, reason: 'no_customer_phone' };
   }
 
   const trackingId = `deal-${String(leadId).replace(/-/g, '').slice(0, 12)}-${String(stageId).replace(/-/g, '').slice(0, 8)}-${Date.now()}`.slice(0, 48);
@@ -106,6 +131,28 @@ async function maybeSendZaloOnDealStageEnter({ leadId, stageId, pipelineType, se
   } else {
     console.warn('[Zalo OA] Lỗi gửi:', result.message || result.error, result.data);
   }
+
+  return {
+    ok: result.ok,
+    skipped: false,
+    msg_id: result.msg_id,
+    zalo_error: result.zalo_error,
+    message: result.message,
+    hint_vi: result.hint_vi,
+    data: result.data,
+  };
+}
+
+/** Gửi Zalo khi deal vào cột có send_zalo_on_enter (chạy nền, không chặn response) */
+async function maybeSendZaloOnDealStageEnter({ leadId, stageId, pipelineType, sendZaloOnEnter }) {
+  await executeZaloDealStageNotify({
+    leadId,
+    stageId,
+    pipelineType,
+    sendZaloOnEnter,
+    allowWithoutStageFlag: false,
+    force: false,
+  });
 }
 const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [], createProjectFromLead = async () => null } = autoFlowFns;
 
@@ -626,6 +673,116 @@ r.post('/zalo-notify-test', async (req, res) => {
     });
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══ Zalo OA — Xem trước + gửi thủ công từ chi tiết deal (giai đoạn Thắng) ═══
+r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id, code, title, type, stage_id, estimated_value, customer:customers(id, full_name, phone, email, address)')
+      .eq('id', leadId)
+      .single();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy' });
+    if (lead.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
+
+    const { data: stage } = await supabase.from('crm_pipeline_stages')
+      .select('id, name, is_won, send_zalo_on_enter, pipeline_type')
+      .eq('id', lead.stage_id)
+      .single();
+    if (!stage?.is_won) {
+      return res.status(400).json({ error: 'Chỉ hiển thị khi deal đang ở giai đoạn Thắng' });
+    }
+
+    const settings = await getZaloNotifySettings();
+    const templateData = buildDealTemplateData(lead, lead.customer, settings.merge_template_data || {});
+    const normalized = normalizeVnPhoneTo84(lead.customer?.phone);
+    const { data: prevSend } = await supabase.from('crm_zalo_stage_sends')
+      .select('msg_id, error_message, tracking_id, updated_at')
+      .eq('lead_id', leadId)
+      .eq('stage_id', lead.stage_id)
+      .maybeSingle();
+
+    const hasToken = !!(settings.access_token && settings.access_token.length > 8);
+    const eligible = !!(settings.enabled && settings.template_id && hasToken && normalized);
+
+    res.json({
+      eligible,
+      stage: {
+        id: stage.id,
+        name: stage.name,
+        is_won: true,
+        send_zalo_on_enter: !!stage.send_zalo_on_enter,
+      },
+      zalo_app: {
+        enabled: settings.enabled,
+        template_id: settings.template_id || null,
+        sending_mode: settings.sending_mode || '1',
+        has_access_token: hasToken,
+        access_token_preview: hasToken ? maskZaloAccessTokenPreview(settings.access_token) : '',
+        merge_template_data: settings.merge_template_data || {},
+      },
+      customer: {
+        full_name: lead.customer?.full_name || lead.title || '',
+        phone_display: maskCustomerPhoneDisplay(lead.customer?.phone),
+      },
+      destination_phone_e164: normalized || null,
+      destination_phone_ok: !!normalized,
+      template_data: templateData,
+      request_payload_preview: {
+        phone: normalized || null,
+        template_id: settings.template_id || null,
+        template_data: templateData,
+        sending_mode: settings.sending_mode && settings.sending_mode !== '1' ? settings.sending_mode : undefined,
+        tracking_id: '(tự sinh khi gửi)',
+      },
+      previous_send: prevSend
+        ? {
+            msg_id: prevSend.msg_id,
+            error_message: prevSend.error_message,
+            tracking_id: prevSend.tracking_id,
+            updated_at: prevSend.updated_at,
+          }
+        : null,
+      hints: {
+        pipeline_toggle:
+          'Trên Cài đặt Pipeline → Deal: bật nút «Zalo» trên cột Thắng để tự gửi khi kéo deal vào cột (mỗi deal + cột tối đa 1 lần thành công).',
+        settings: 'template_id, access_token và merge_template_data lưu tại Cài đặt Pipeline → khối Zalo OA.',
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/leads/:id/zalo-notify-send', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const force = !!req.body?.force;
+    const { data: lead } = await supabase.from('crm_leads').select('id, type, stage_id').eq('id', leadId).single();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy' });
+    if (lead.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
+
+    const { data: stage } = await supabase.from('crm_pipeline_stages')
+      .select('id, is_won, pipeline_type')
+      .eq('id', lead.stage_id)
+      .single();
+    if (!stage?.is_won) {
+      return res.status(400).json({ error: 'Chỉ gửi được khi deal đang ở giai đoạn Thắng' });
+    }
+
+    const out = await executeZaloDealStageNotify({
+      leadId,
+      stageId: lead.stage_id,
+      pipelineType: stage.pipeline_type,
+      sendZaloOnEnter: true,
+      allowWithoutStageFlag: true,
+      force,
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
