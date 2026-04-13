@@ -249,7 +249,11 @@ export default function CRMDashboard() {
       const fetchKanbanRows = async (type) => {
         const common = { type, phone_filter: filterPhone || undefined, ...dateParams };
         if (filterAssignee) common.assigned_to = filterAssignee;
-        if (kanbanLoadLimit === 'all') {
+        const loadAll =
+          String(kanbanLoadLimit ?? '')
+            .trim()
+            .toLowerCase() === 'all';
+        if (loadAll) {
           const chunk = 5000;
           let offset = 0;
           const out = [];
@@ -260,8 +264,18 @@ export default function CRMDashboard() {
             const payload = res.data || {};
             const page = Array.isArray(payload) ? payload : (payload.data || []);
             out.push(...page);
-            if (!payload.hasMore || page.length === 0) break;
-            offset = typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
+            if (page.length === 0) break;
+            const totalKnown = typeof payload.total === 'number' ? payload.total : null;
+            const nextOffset =
+              typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
+            const hasMore =
+              typeof payload.hasMore === 'boolean'
+                ? payload.hasMore
+                : totalKnown != null
+                  ? nextOffset < totalKnown
+                  : page.length >= chunk;
+            if (!hasMore) break;
+            offset = nextOffset;
           }
           return out;
         }
