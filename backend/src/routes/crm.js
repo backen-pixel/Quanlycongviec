@@ -919,7 +919,7 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
 r.get('/leads/scan-duplicates', async (req, res) => {
   try {
     const { data: leads } = await supabase.from('crm_leads')
-      .select('id, code, title, type, customer_id, estimated_value, created_at, updated_at, stage_id, assigned_to, source_id, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), source:crm_sources(id, name, icon)')
+      .select('id, code, title, type, customer_id, estimated_value, created_at, updated_at, stage_id, assigned_to, source_id, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), source:crm_sources(id, name, icon)')
       .order('created_at', { ascending: false });
 
     const { data: fbContacts } = await supabase.from('facebook_contacts')
@@ -1162,7 +1162,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
     const leadIds = [...new Set((contacts || []).map(c => c.lead_id))];
     if (!leadIds.length) return res.json([]);
     const { data } = await supabase.from('crm_leads')
-      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
+      .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
       .in('id', leadIds).eq('type', type)
       .order('created_at', { ascending: false });
     res.json(data || []);
@@ -1174,7 +1174,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CRM_LEAD_LIST_SELECT =
-  '*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies(id, name, short_name)';
+  '*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies(id, name, short_name)';
 
 function mapLeadDisplayPhone(rows) {
   return (rows || []).map((l) => ({
@@ -1194,17 +1194,56 @@ function uuidQueryOrNull(v) {
   return s || null;
 }
 
+/** Chỉ chấp nhận YYYY-MM-DD — tránh lỗi cast timestamptz trong RPC Postgres */
+function sanitizeIsoDateQueryParam(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  console.warn('[crm/leads] Bỏ qua date_from/date_to không đúng ISO (YYYY-MM-DD):', s);
+  return null;
+}
+
+/**
+ * Chuẩn hoá kết quả rpc('crm_leads_page_ids') — tránh 500 khi ids không phải mảng hoặc payload lạ.
+ */
+function parseCrmLeadsPageRpc(raw) {
+  let v = raw;
+  if (Array.isArray(raw) && raw.length === 1 && raw[0] && typeof raw[0] === 'object' && Array.isArray(raw[0].ids)) {
+    v = raw[0];
+  }
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  if (!v || typeof v !== 'object') return null;
+  if (v.total === undefined || v.total === null) return null;
+  const total = Number(v.total);
+  if (Number.isNaN(total)) return null;
+  let ids = v.ids;
+  if (!Array.isArray(ids)) {
+    if (ids && typeof ids === 'object') ids = Object.values(ids);
+    else ids = [];
+  }
+  ids = ids.map((id) => String(id).trim()).filter(Boolean);
+  return { total, ids };
+}
+
 async function fetchCrmLeadsByIdsOrdered(ids) {
-  if (!ids || ids.length === 0) return [];
+  const list = Array.isArray(ids) ? ids : [];
+  if (list.length === 0) return [];
   const chunkSize = 300;
   const byId = new Map();
-  for (let i = 0; i < ids.length; i += chunkSize) {
-    const chunk = ids.slice(i, i + chunkSize);
+  for (let i = 0; i < list.length; i += chunkSize) {
+    const chunk = list.slice(i, i + chunkSize);
     const { data, error } = await supabase.from('crm_leads').select(CRM_LEAD_LIST_SELECT).in('id', chunk);
     if (error) throw error;
     (data || []).forEach((row) => byId.set(row.id, row));
   }
-  return ids.map((id) => byId.get(id)).filter(Boolean);
+  return list.map((id) => byId.get(id)).filter(Boolean);
 }
 
 /** Fallback: tối đa 5000 bản ghi từ DB rồi lọc/sort trong RAM (trước khi có RPC) */
@@ -1225,8 +1264,10 @@ async function getCrmLeadsListLegacy(reqQuery) {
   }
   if (source_id) q = q.eq('source_id', source_id);
   if (company_id) q = q.eq('company_id', company_id);
-  if (date_from) q = q.gte('created_at', date_from);
-  if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
+  const df = sanitizeIsoDateQueryParam(date_from);
+  const dt = sanitizeIsoDateQueryParam(date_to);
+  if (df) q = q.gte('created_at', df);
+  if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
   if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
 
   const { data, error } = await q;
@@ -1271,8 +1312,8 @@ r.get('/leads', async (req, res) => {
       p_assigned_to: uuidQueryOrNull(assigned_to),
       p_source_id: uuidQueryOrNull(source_id),
       p_company_id: uuidQueryOrNull(company_id),
-      p_date_from: date_from || null,
-      p_date_to: date_to || null,
+      p_date_from: sanitizeIsoDateQueryParam(date_from),
+      p_date_to: sanitizeIsoDateQueryParam(date_to),
       p_search: search || null,
       p_phone_filter: phone_filter || null,
       p_limit: parsedLimit,
@@ -1281,16 +1322,11 @@ r.get('/leads', async (req, res) => {
 
     const { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
 
-    const rpcOk =
-      !rpcError &&
-      rpcData &&
-      rpcData.total !== undefined &&
-      rpcData.total !== null &&
-      Array.isArray(rpcData.ids);
+    const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
+    const rpcOk = !!parsedRpc;
 
     if (rpcOk) {
-      const total = Number(rpcData.total);
-      const ids = rpcData.ids;
+      const { total, ids } = parsedRpc;
       const rows = await fetchCrmLeadsByIdsOrdered(ids);
       const page = mapLeadDisplayPhone(rows);
       return res.json({
@@ -1359,7 +1395,7 @@ r.post('/leads', async (req, res) => {
     if (!body.assigned_to) body.assigned_to = req.user.userId;
     const { data, error } = await supabase.from('crm_leads')
       .insert({ ...body, code, type: 'lead', lead_owner_id: req.user.userId, created_by: req.user.userId })
-      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
+      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
       .single();
     if (error) throw error;
 
@@ -1419,7 +1455,7 @@ r.post('/deals', async (req, res) => {
         lead_owner_id: req.user.userId,
         created_by: req.user.userId,
       })
-      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
+      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
       .single();
     if (error) throw error;
 
@@ -1447,7 +1483,7 @@ r.post('/deals', async (req, res) => {
 r.get('/leads/:id/detail', async (req, res) => {
   try {
     const { data, error } = await supabase.from('crm_leads')
-      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar), creator:users!crm_leads_created_by_fkey(id, full_name)')
+      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar), creator:users!crm_leads_created_by_fkey(id, full_name)')
       .eq('id', req.params.id)
       .single();
     if (error) throw error;
@@ -1464,7 +1500,7 @@ r.put('/leads/:id', async (req, res) => {
     const { data, error } = await supabase.from('crm_leads')
       .update({ ...req.body, updated_at: new Date().toISOString() })
       .eq('id', id)
-      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages(id, name, color, icon)')
+      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
       .single();
     if (error) throw error;
 
@@ -3295,7 +3331,7 @@ r.get('/project/:projectId/lead-documents', async (req, res) => {
 r.get('/customers-overview', async (req, res) => {
   try {
     const { data: customers } = await supabase.from('customers').select('*').order('full_name');
-    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, title, estimated_value, stage_id, code, created_at, stage:crm_pipeline_stages(name, icon, is_won)');
+    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, title, estimated_value, stage_id, code, created_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won)');
     const { data: quotes } = await supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at');
     const { data: orders } = await supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at');
     const { data: invoices } = await supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at');
@@ -3323,7 +3359,7 @@ r.get('/customers-overview/:id', async (req, res) => {
   try {
     const { data: customer } = await supabase.from('customers').select('*').eq('id', req.params.id).single();
     if (!customer) return res.status(404).json({ error: 'KH không tồn tại' });
-    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, title, code, estimated_value, stage_id, created_at, stage:crm_pipeline_stages(name, icon, color, is_won)').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, title, code, estimated_value, stage_id, created_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, color, is_won)').eq('customer_id', req.params.id).order('created_at', { ascending: false });
     const { data: quotes } = await supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
     const { data: orders } = await supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
     const { data: invoices } = await supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
@@ -3428,7 +3464,7 @@ r.post('/leads/:id/sync-stage', async (req, res) => {
     const { stage_slug, direction } = req.body; // direction: 'lead-to-project' | 'project-to-lead'
 
     const { data: lead } = await supabase.from('crm_leads')
-      .select('*, stage:crm_pipeline_stages(id, name, order_index, is_won, is_lost)')
+      .select('*, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, order_index, is_won, is_lost)')
       .eq('id', req.params.id).single();
     if (!lead?.project_id) return res.status(400).json({ error: 'Lead chưa liên kết dự án' });
 

@@ -297,7 +297,7 @@ async function onProjectCompleted(projectId, userId) {
 async function getOverdueFollowUps() {
   const now = new Date().toISOString();
   const { data } = await supabase.from('crm_leads')
-    .select('id, code, title, type, next_follow_up, customer:customers(full_name), assignee:users!crm_leads_assigned_to_fkey(full_name), stage:crm_pipeline_stages(name, icon, is_won, is_lost)')
+    .select('id, code, title, type, next_follow_up, customer:customers(full_name), assignee:users!crm_leads_assigned_to_fkey(full_name), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won, is_lost)')
     .eq('type', 'lead')               // chỉ lead, không deal
     .lt('next_follow_up', now)
     .is('actual_close_date', null);    // chưa chốt
@@ -309,7 +309,7 @@ async function getOverdueFollowUps() {
 async function getStaleLeads(daysSinceActivity = 7) {
   const cutoff = new Date(Date.now() - daysSinceActivity * 86400000).toISOString();
   const { data } = await supabase.from('crm_leads')
-    .select('id, code, title, type, last_activity_at, customer:customers(full_name), assignee:users!crm_leads_assigned_to_fkey(full_name), stage:crm_pipeline_stages(name, icon, is_won, is_lost)')
+    .select('id, code, title, type, last_activity_at, customer:customers(full_name), assignee:users!crm_leads_assigned_to_fkey(full_name), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won, is_lost)')
     .eq('type', 'lead')               // chỉ lead, không deal
     .or(`last_activity_at.lt.${cutoff},last_activity_at.is.null`)
     .is('actual_close_date', null);
@@ -350,7 +350,7 @@ async function generateTasksForProject(projectId, userId) {
 
 async function getProjectCRMSummary(projectId) {
   const [leads, quotes, orders, invoices] = await Promise.all([
-    supabase.from('crm_leads').select('id, code, title, estimated_value, stage_id, stage:crm_pipeline_stages(name, icon, is_won)').eq('project_id', projectId),
+    supabase.from('crm_leads').select('id, code, title, estimated_value, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won)').eq('project_id', projectId),
     supabase.from('quotations').select('id, code, title, total, status').eq('project_id', projectId),
     supabase.from('orders').select('id, code, title, total, status, paid_amount').eq('project_id', projectId),
     supabase.from('invoices').select('id, code, title, total, paid_amount, payment_status').eq('project_id', projectId),
