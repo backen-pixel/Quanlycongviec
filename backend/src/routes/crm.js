@@ -350,6 +350,29 @@ async function nextCode(prefix) {
 // ═══════════════════════════════════════════════════════════════════════════
 // CRM DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════
+
+/** PostgREST mặc định ~1000 dòng/truy vấn — gom đủ bản ghi theo filter để KPI / pipeline không bị trần 1000. */
+async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, date_to }, pageSize = 1000) {
+  const rows = [];
+  let from = 0;
+  for (;;) {
+    let q = supabase
+      .from('crm_leads')
+      .select('id, stage_id, estimated_value, probability, type')
+      .eq('type', type);
+    if (company_id) q = q.eq('company_id', company_id);
+    if (date_from) q = q.gte('created_at', date_from);
+    if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
+    const { data, error } = await q.range(from, from + pageSize - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+  return rows;
+}
+
 r.get('/dashboard', async (req, res) => {
   try {
     const { type = 'lead', company_id, date_from, date_to } = req.query; // 'lead' or 'deal'
@@ -362,15 +385,8 @@ r.get('/dashboard', async (req, res) => {
       .eq('pipeline_type', type)
       .order('order_index');
 
-    // Leads/Deals count per stage (with optional company + date filter)
-    let leadsQuery = supabase
-      .from('crm_leads')
-      .select('id, stage_id, estimated_value, probability, type')
-      .eq('type', type);
-    if (company_id) leadsQuery = leadsQuery.eq('company_id', company_id);
-    if (date_from) leadsQuery = leadsQuery.gte('created_at', date_from);
-    if (date_to) leadsQuery = leadsQuery.lte('created_at', date_to + 'T23:59:59.999Z');
-    const { data: leads } = await leadsQuery;
+    // Leads/Deals theo filter (đủ trang) — tránh trần 1000 dòng của Supabase
+    const leads = await fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, date_to });
 
     const stageStats = (stages || []).map(s => {
       const stageLeads = (leads || []).filter(l => l.stage_id === s.id);
@@ -393,15 +409,21 @@ r.get('/dashboard', async (req, res) => {
 
     let kpis = {};
     if (type === 'lead') {
-      // Lead KPIs
-      const { data: allLeads } = await supabase.from('crm_leads').select('id, type').eq('type', 'lead');
-      const { data: dealsConverted } = await supabase.from('crm_leads').select('id, type').eq('type', 'deal');
-      const conversionRate = (allLeads?.length || 0) > 0 
-        ? Math.round((dealsConverted?.length || 0) / (allLeads.length) * 100)
-        : 0;
+      // Lead KPIs — tỷ lệ chuyển đổi: đếm đúng toàn DB (không trần 1000)
+      const { count: allLeadsCount } = await supabase
+        .from('crm_leads')
+        .select('*', { count: 'exact', head: true })
+        .eq('type', 'lead');
+      const { count: dealsConvertedCount } = await supabase
+        .from('crm_leads')
+        .select('*', { count: 'exact', head: true })
+        .eq('type', 'deal');
+      const nLeads = allLeadsCount ?? 0;
+      const nDeals = dealsConvertedCount ?? 0;
+      const conversionRate = nLeads > 0 ? Math.round((nDeals / nLeads) * 100) : 0;
       kpis = {
         total_leads: totalItems,
-        converted_to_deals: dealsConverted?.length || 0,
+        converted_to_deals: nDeals,
         conversion_rate: conversionRate,
         total_value: totalValue,
         conversion_value: wonValue,
@@ -1486,13 +1508,16 @@ r.get('/leads', async (req, res) => {
       const { total, ids } = parsedRpc;
       const rows = await fetchCrmLeadsByIdsOrdered(ids);
       const page = mapLeadDisplayPhone(rows);
+      // Phân trang theo cửa sổ RPC (ids), không theo page.length — nếu hydrate thiếu dòng,
+      // dùng page.length sẽ lệch nextOffset và vòng "Tải tất cả" dừng sớm / bỏ sót.
+      const windowLen = Array.isArray(ids) ? ids.length : page.length;
       return res.json({
         data: page,
         total,
         offset: parsedOffset,
         limit: parsedLimit,
-        hasMore: parsedOffset + page.length < total,
-        nextOffset: parsedOffset + page.length,
+        hasMore: parsedOffset + windowLen < total,
+        nextOffset: parsedOffset + windowLen,
       });
     }
 
