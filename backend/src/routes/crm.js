@@ -9,6 +9,104 @@ const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
+const { sendZaloTemplateMessage, buildDealTemplateData } = require('../helpers/zaloOa');
+
+const ZALO_APP_SETTING_KEY = 'zalo_oa_notify';
+
+async function getZaloNotifySettings() {
+  const { data } = await supabase.from('app_settings').select('value').eq('key', ZALO_APP_SETTING_KEY).maybeSingle();
+  const v = data?.value;
+  if (!v || typeof v !== 'object') {
+    return { enabled: false, access_token: '', template_id: '', sending_mode: '1', merge_template_data: {} };
+  }
+  return {
+    enabled: !!v.enabled,
+    access_token: String(v.access_token || ''),
+    template_id: String(v.template_id || ''),
+    sending_mode: String(v.sending_mode || '1'),
+    merge_template_data: typeof v.merge_template_data === 'object' && v.merge_template_data ? v.merge_template_data : {},
+  };
+}
+
+async function upsertZaloNotifySettings(nextVal) {
+  const { error } = await supabase.from('app_settings').upsert(
+    { key: ZALO_APP_SETTING_KEY, value: nextVal, updated_at: new Date().toISOString() },
+    { onConflict: 'key' },
+  );
+  if (error) throw error;
+}
+
+/** Gửi Zalo khi deal vào cột có send_zalo_on_enter (chạy nền, không chặn response) */
+async function maybeSendZaloOnDealStageEnter({ leadId, stageId, pipelineType, sendZaloOnEnter }) {
+  if (pipelineType !== 'deal' || !sendZaloOnEnter) return;
+
+  const settings = await getZaloNotifySettings();
+  if (!settings.enabled || !settings.access_token || !settings.template_id) {
+    console.log('[Zalo OA] Bỏ qua — tắt chức năng hoặc thiếu token/template');
+    return;
+  }
+
+  const { data: prevSend } = await supabase.from('crm_zalo_stage_sends')
+    .select('msg_id, error_message')
+    .eq('lead_id', leadId)
+    .eq('stage_id', stageId)
+    .maybeSingle();
+  if (prevSend?.msg_id) {
+    console.log('[Zalo OA] Đã gửi thành công trước đó cho lead+stage này');
+    return;
+  }
+  if (prevSend?.error_message && prevSend.error_message !== 'no_customer_phone') {
+    console.log('[Zalo OA] Bỏ qua — đã có lần gửi lỗi (xóa dòng crm_zalo_stage_sends nếu cần thử lại)');
+    return;
+  }
+
+  const { data: lead } = await supabase.from('crm_leads')
+    .select('id, code, title, type, estimated_value, customer:customers(id, full_name, phone, email, address)')
+    .eq('id', leadId)
+    .single();
+  if (!lead || lead.type !== 'deal') return;
+
+  const phone = lead.customer?.phone;
+  if (!phone) {
+    console.warn('[Zalo OA] Deal không có SĐT khách hàng');
+    await supabase.from('crm_zalo_stage_sends').upsert({
+      lead_id: leadId,
+      stage_id: stageId,
+      tracking_id: `no-phone-${Date.now()}`.slice(0, 48),
+      msg_id: null,
+      error_message: 'no_customer_phone',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'lead_id,stage_id' });
+    return;
+  }
+
+  const trackingId = `deal-${String(leadId).replace(/-/g, '').slice(0, 12)}-${String(stageId).replace(/-/g, '').slice(0, 8)}-${Date.now()}`.slice(0, 48);
+  const templateData = buildDealTemplateData(lead, lead.customer, settings.merge_template_data || {});
+
+  const result = await sendZaloTemplateMessage({
+    accessToken: settings.access_token,
+    phone,
+    templateId: settings.template_id,
+    templateData,
+    trackingId,
+    sendingMode: settings.sending_mode,
+  });
+
+  await supabase.from('crm_zalo_stage_sends').upsert({
+    lead_id: leadId,
+    stage_id: stageId,
+    tracking_id: trackingId,
+    msg_id: result.msg_id || null,
+    error_message: result.ok ? null : (result.message || result.error || JSON.stringify(result.data || {})).slice(0, 2000),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'lead_id,stage_id' });
+
+  if (result.ok) {
+    console.log('[Zalo OA] Đã gửi', result.msg_id, result.quota);
+  } else {
+    console.warn('[Zalo OA] Lỗi gửi:', result.message || result.error, result.data);
+  }
+}
 const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [], createProjectFromLead = async () => null } = autoFlowFns;
 
 const r = Router();
@@ -419,6 +517,7 @@ r.post('/pipeline-stages', async (req, res) => {
       name: b.name, pipeline_type: b.pipeline_type, pipeline_id: b.pipeline_id || null,
       color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
       is_won: b.is_won || false, is_lost: b.is_lost || false, is_active: true,
+      send_zalo_on_enter: !!b.send_zalo_on_enter,
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -429,8 +528,8 @@ r.put('/pipeline-stages/:id', async (req, res) => {
   try {
     const b = req.body;
     const update = {};
-    ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active'].forEach(f => {
-      if (b[f] !== undefined) update[f] = b[f];
+    ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter'].forEach(f => {
+      if (b[f] !== undefined) update[f] = f === 'send_zalo_on_enter' ? !!b[f] : b[f];
     });
     const { data, error } = await supabase.from('crm_pipeline_stages').update(update)
       .eq('id', req.params.id).select().single();
@@ -458,6 +557,74 @@ r.put('/pipeline-stages-reorder', async (req, res) => {
       await supabase.from('crm_pipeline_stages').update({ order_index: s.order_index }).eq('id', s.id);
     }
     res.json({ message: 'Đã sắp xếp lại' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══ ZALO OA — Gửi tin qua SĐT (cấu hình + test) ═══
+r.get('/zalo-notify-settings', async (_req, res) => {
+  try {
+    const s = await getZaloNotifySettings();
+    res.json({
+      enabled: s.enabled,
+      template_id: s.template_id,
+      sending_mode: s.sending_mode,
+      has_token: !!(s.access_token && s.access_token.length > 8),
+      merge_template_data: s.merge_template_data || {},
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/zalo-notify-settings', async (req, res) => {
+  try {
+    const prev = await getZaloNotifySettings();
+    const next = {
+      ...prev,
+      enabled: req.body.enabled !== undefined ? !!req.body.enabled : prev.enabled,
+      template_id: req.body.template_id !== undefined ? String(req.body.template_id || '').trim() : prev.template_id,
+      sending_mode: req.body.sending_mode !== undefined ? String(req.body.sending_mode || '1') : prev.sending_mode,
+      merge_template_data:
+        req.body.merge_template_data !== undefined
+          ? (typeof req.body.merge_template_data === 'object' && req.body.merge_template_data ? req.body.merge_template_data : {})
+          : prev.merge_template_data,
+      access_token: prev.access_token,
+    };
+    if (req.body.access_token !== undefined && String(req.body.access_token).trim() !== '') {
+      next.access_token = String(req.body.access_token).trim();
+    }
+    await upsertZaloNotifySettings(next);
+    res.json({
+      enabled: next.enabled,
+      template_id: next.template_id,
+      sending_mode: next.sending_mode,
+      has_token: !!(next.access_token && next.access_token.length > 8),
+      merge_template_data: next.merge_template_data || {},
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/zalo-notify-test', async (req, res) => {
+  try {
+    const s = await getZaloNotifySettings();
+    const token = (req.body.access_token && String(req.body.access_token).trim()) || s.access_token;
+    const tid = (req.body.template_id && String(req.body.template_id).trim()) || s.template_id;
+    if (!token || !tid) {
+      return res.status(400).json({ error: 'Cần access_token và template_id (lưu trong cấu hình hoặc gửi kèm body)' });
+    }
+    const phone = req.body.phone;
+    const templateData = req.body.template_data && typeof req.body.template_data === 'object' ? { ...req.body.template_data } : {};
+    Object.keys(templateData).forEach((k) => {
+      if (templateData[k] != null && typeof templateData[k] !== 'string') templateData[k] = String(templateData[k]);
+    });
+    const trackingId = (req.body.tracking_id && String(req.body.tracking_id).slice(0, 48).replace(/[^a-zA-Z0-9_-]/g, '')) || `test${Date.now()}`.slice(0, 48);
+    const result = await sendZaloTemplateMessage({
+      accessToken: token,
+      phone,
+      templateId: tid,
+      templateData,
+      trackingId,
+      sendingMode: req.body.sending_mode != null ? String(req.body.sending_mode) : s.sending_mode,
+    });
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1732,7 +1899,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     const { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('is_won, is_lost, pipeline_type')
+      .select('is_won, is_lost, pipeline_type, send_zalo_on_enter')
       .eq('id', stage_id)
       .single();
     
@@ -1870,6 +2037,15 @@ r.patch('/leads/:id/stage', async (req, res) => {
         template_sets: (tplSets || []).filter(s => s.task_count > 0),
       };
     }
+
+    setImmediate(() => {
+      maybeSendZaloOnDealStageEnter({
+        leadId: req.params.id,
+        stageId: stage_id,
+        pipelineType: stage?.pipeline_type,
+        sendZaloOnEnter: !!stage?.send_zalo_on_enter,
+      }).catch((err) => console.error('[Zalo OA] maybeSend:', err.message));
+    });
 
     res.json({ ...data, deal_won: dealWonData });
   } catch (e) {

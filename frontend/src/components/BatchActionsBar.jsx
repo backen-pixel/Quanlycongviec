@@ -187,6 +187,9 @@ export default function BatchActionsBar({ onComplete }) {
               );
             })}
           </div>
+          <p className="text-[10px] text-gray-500 leading-relaxed bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100">
+            Auto &amp; đồng bộ <strong>smart</strong>: bỏ qua hội thoại KH <strong>không có tin inbound</strong> quá <strong>48 giờ</strong> (giảm gọi Facebook API). Chạy tay «Đồng bộ tin nhắn» (full) vẫn quét đủ. Cần chạy SQL <code className="text-[9px]">50_fb_last_inbound_rpc.sql</code> trên DB.
+          </p>
 
           {/* Manual progress bar */}
           {manualRunning && manualProgress && (
