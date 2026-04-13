@@ -1,4 +1,4 @@
--- Hỗ trợ lọc contact: KH không có tin inbound trong X giờ (giảm tải đồng bộ tự động)
+-- Hỗ trợ lọc contact: thời điểm tin inbound gần nhất (kết hợp last_message_at ở app cho ngưỡng 24h)
 CREATE OR REPLACE FUNCTION public.fb_last_inbound_at_for_contacts(contact_ids uuid[])
 RETURNS TABLE (contact_id uuid, last_inbound_at timestamptz)
 LANGUAGE sql
