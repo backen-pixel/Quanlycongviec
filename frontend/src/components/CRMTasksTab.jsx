@@ -34,7 +34,6 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const [expandedStages, setExpandedStages] = useState({});
   const [showAdd, setShowAdd] = useState(null); // stage_slug
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
-  const [editingId, setEditingId] = useState(null);
   const [editingTask, setEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
@@ -397,8 +396,20 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
             <StatusIcon className={`h-4 w-4 ${task.status === 'completed' ? 'text-emerald-500' : task.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`} />
           </button>
-          <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpand(task.id, task.notes)}>
-            <p className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
+          <div
+            className="flex-1 min-w-0 cursor-pointer"
+            onClick={() => toggleExpand(task.id, task.notes)}
+            title="Click: ghi chú & đính kèm · Double-click: chỉnh sửa nhiệm vụ"
+          >
+            <p
+              className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                openEditModal(task);
+              }}
+            >
+              {task.title}
+            </p>
             {hasNotes && !isExpanded && (
               <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1 italic" title={task.notes}>
                 💬 {task.notes.slice(0, 80)}{task.notes.length > 80 ? '...' : ''}
@@ -473,20 +484,20 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
               )}
             </div>
           </div>
-          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
-          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1">
-            <button onClick={() => toggleShare(task.id)}
-              className={`p-1 cursor-pointer ${task.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
+          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
+          <div className="flex items-center gap-0.5 shrink-0 border-l border-gray-100 pl-1.5 ml-0.5">
+            <button type="button" onClick={(e) => { e.stopPropagation(); toggleShare(task.id); }}
+              className={`p-1.5 rounded-md cursor-pointer ${task.shared_to_project ? 'text-green-600 hover:bg-green-50' : 'text-gray-500 hover:bg-gray-100 hover:text-green-600'}`}
               title={task.shared_to_project ? 'Đang chia sẻ — click để tắt' : 'Chia sẻ cho Khối khác xem'}>
-              {task.shared_to_project ? <Share2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+              {task.shared_to_project ? <Share2 className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
             </button>
-            <button onClick={() => toggleExpand(task.id, task.notes)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Ghi chú & file">
-              <Paperclip className="h-3 w-3" />
+            <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(task.id, task.notes); }} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Ghi chú & file">
+              <Paperclip className="h-3.5 w-3.5" />
             </button>
-            <button onClick={() => openEditModal(task)} className="p-1 text-gray-400 hover:text-blue-500 cursor-pointer" title="Sửa nhiệm vụ">
-              <Edit3 className="h-3 w-3" />
+            <button type="button" onClick={(e) => { e.stopPropagation(); openEditModal(task); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Chỉnh sửa nhiệm vụ">
+              <Edit3 className="h-3.5 w-3.5" />
             </button>
-            <button onClick={() => deleteTask(task.id)} className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md cursor-pointer" title="Xóa nhiệm vụ"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>
         </div>
 

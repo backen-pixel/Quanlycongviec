@@ -114,6 +114,9 @@ export default function CRMDashboard() {
     return KANBAN_LOAD_OPTIONS.includes(s) ? s : '1000';
   });
 
+  /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
+  const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
+
   // ── TIME FILTER STATE ──
   const [timePreset, setTimePreset] = useState(''); // '' = all time
   const [customDateFrom, setCustomDateFrom] = useState('');
@@ -231,6 +234,18 @@ export default function CRMDashboard() {
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
 
+      const countListTotal = (payload) => {
+        const t = payload?.total;
+        return typeof t === 'number' ? t : null;
+      };
+
+      const buildCountParams = (type, phone_filter) => {
+        const p = { type, ...dateParams, limit: 1, offset: 0 };
+        if (filterAssignee) p.assigned_to = filterAssignee;
+        if (phone_filter) p.phone_filter = phone_filter;
+        return p;
+      };
+
       const fetchKanbanRows = async (type) => {
         const common = { type, phone_filter: filterPhone || undefined, ...dateParams };
         if (filterAssignee) common.assigned_to = filterAssignee;
@@ -256,7 +271,7 @@ export default function CRMDashboard() {
         return Array.isArray(d) ? d : (d?.data || []);
       };
 
-      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes] = await Promise.all([
+      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
         api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         fetchKanbanRows('lead'),
@@ -267,7 +282,25 @@ export default function CRMDashboard() {
         api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
         api.get('/companies').catch(() => ({ data: { companies: [] } })),
         api.get('/users').catch(() => ({ data: [] })),
+        api.get('/crm/leads', { params: buildCountParams('lead', 'has_phone') }).catch(() => ({ data: {} })),
+        api.get('/crm/leads', { params: buildCountParams('lead', 'no_phone') }).catch(() => ({ data: {} })),
+        api.get('/crm/leads', { params: buildCountParams('lead') }).catch(() => ({ data: {} })),
+        api.get('/crm/leads', { params: buildCountParams('deal', 'has_phone') }).catch(() => ({ data: {} })),
+        api.get('/crm/leads', { params: buildCountParams('deal', 'no_phone') }).catch(() => ({ data: {} })),
+        api.get('/crm/leads', { params: buildCountParams('deal') }).catch(() => ({ data: {} })),
       ]);
+      setPipelinePhoneTotals({
+        lead: {
+          hasPhone: countListTotal(lcHas.data),
+          noPhone: countListTotal(lcNo.data),
+          all: countListTotal(lcAll.data),
+        },
+        deal: {
+          hasPhone: countListTotal(dcHas.data),
+          noPhone: countListTotal(dcNo.data),
+          all: countListTotal(dcAll.data),
+        },
+      });
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
       setAllLeads(leadsRows);
@@ -460,6 +493,11 @@ export default function CRMDashboard() {
 
   const leads = useMemo(() => filterItems(allLeads), [allLeads, filterItems]);
   const deals = useMemo(() => filterItems(allDeals), [allDeals, filterItems]);
+
+  const activePipelinePhoneTotals = useMemo(
+    () => pipelinePhoneTotals[pipelineType === 'lead' ? 'lead' : 'deal'],
+    [pipelinePhoneTotals, pipelineType],
+  );
 
   // Pipeline view: group leads/deals by stage
   const pipelineLead = useMemo(() => {
@@ -728,6 +766,20 @@ export default function CRMDashboard() {
             <LayoutGrid className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
           </div>
 
+          {activePipelinePhoneTotals?.all != null && (
+            <span
+              className="text-[11px] text-emerald-900 bg-emerald-50 border border-emerald-200 px-2.5 py-2 rounded-lg max-w-[min(100vw-2rem,24rem)] leading-snug"
+              title="Đếm từ API (limit=1, chỉ dùng trường total) — không phụ thuộc mức Tải Kanban. Theo lọc NV + khoảng ngày trên server; chưa gồm lọc công ty / nguồn / giai đoạn / tìm nhanh (lọc phía client)."
+            >
+              <span className="font-semibold">{pipelineType === 'lead' ? 'Lead' : 'Deal'} — tổng:</span>{' '}
+              {activePipelinePhoneTotals.all.toLocaleString('vi-VN')}
+              {' · '}
+              <span className="text-emerald-700">📞 có SĐT {typeof activePipelinePhoneTotals.hasPhone === 'number' ? activePipelinePhoneTotals.hasPhone.toLocaleString('vi-VN') : '—'}</span>
+              {' · '}
+              <span className="text-amber-800">chưa SĐT {typeof activePipelinePhoneTotals.noPhone === 'number' ? activePipelinePhoneTotals.noPhone.toLocaleString('vi-VN') : '—'}</span>
+            </span>
+          )}
+
           {/* Toggle advanced filters */}
           <button onClick={() => setShowAdvSearch(!showAdvSearch)}
             className={`h-10 px-4 rounded-xl text-sm font-medium flex items-center gap-2 cursor-pointer transition-all border ${
@@ -765,7 +817,10 @@ export default function CRMDashboard() {
           {/* Result count */}
           {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
             <span className="text-xs text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
-              {pipelineType === 'lead' ? leads.length : deals.length} / {pipelineType === 'lead' ? allLeads.length : allDeals.length} kết quả
+              {pipelineType === 'lead' ? leads.length : deals.length} / {pipelineType === 'lead' ? allLeads.length : allDeals.length} trên Kanban
+              {activePipelinePhoneTotals?.all != null && filterPhone && (
+                <span className="text-gray-600"> · tổng khớp lọc SĐT (API): {(filterPhone === 'has_phone' ? activePipelinePhoneTotals.hasPhone : activePipelinePhoneTotals.noPhone)?.toLocaleString('vi-VN') ?? '—'}</span>
+              )}
             </span>
           )}
         </div>
