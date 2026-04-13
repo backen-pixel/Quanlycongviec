@@ -1,6 +1,8 @@
--- Phân trang /crm/leads đúng trên toàn bộ bảng: sắp xếp giống API cũ
--- (ưu tiên bản ghi có display_phone, sau đó created_at DESC), lọc SĐT trên SQL.
--- Chạy trên Supabase: SQL Editor → New query → dán toàn bộ file → Run.
+-- Hotfix: GET /crm/leads + phone_filter — tránh lỗi RPC khi thiếu cột hoặc phone không phải text.
+-- Chạy trên Supabase SQL Editor nếu gặp 500 với ?phone_filter=has_phone
+
+ALTER TABLE public.crm_leads ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.crm_leads ADD COLUMN IF NOT EXISTS lead_owner_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
 
 CREATE OR REPLACE FUNCTION public.crm_leads_page_ids(
   p_type text,

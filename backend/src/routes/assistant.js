@@ -19,7 +19,7 @@ async function buildContext(userId) {
   
   // CRM tables may not exist yet - safe queries
   let leads = { data: [] }, orders = { data: [] }, invoices = { data: [] };
-  try { leads = await supabase.from('crm_leads').select('id,code,title,estimated_value,stage_id,customer_id,next_follow_up,stage:crm_pipeline_stages(name,is_won,is_lost)').is('actual_close_date',null).order('created_at',{ascending:false}).limit(20); } catch {}
+  try { leads = await supabase.from('crm_leads').select('id,code,title,estimated_value,stage_id,customer_id,next_follow_up,stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name,is_won,is_lost)').is('actual_close_date',null).order('created_at',{ascending:false}).limit(20); } catch {}
   try { orders = await supabase.from('orders').select('id,code,total,status,paid_amount').neq('status','delivered').neq('status','cancelled').limit(20); } catch {}
   try { invoices = await supabase.from('invoices').select('id,code,total,paid_amount,payment_status').neq('payment_status','paid').limit(20); } catch {}
 

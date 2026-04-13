@@ -333,7 +333,7 @@ const ACTIONS = {
       supabase.from('projects').select('id,code,name,status').ilike('name', q).limit(5),
       supabase.from('customers').select('id,full_name,phone').or(`full_name.ilike.${q},phone.ilike.${q}`).limit(5),
       supabase.from('tasks').select('id,title,status,project:projects(code)').ilike('title', q).limit(5),
-      supabase.from('crm_leads').select('id,code,title,stage:crm_pipeline_stages(name)').ilike('title', q).limit(5),
+      supabase.from('crm_leads').select('id,code,title,stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name)').ilike('title', q).limit(5),
     ]);
     const results = [];
     (projects.data||[]).forEach(p => results.push(`🏗️ ${p.code}: ${p.name} (${p.status})`));
