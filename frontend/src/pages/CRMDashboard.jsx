@@ -111,7 +111,7 @@ export default function CRMDashboard() {
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
     const s = localStorage.getItem('crm_kanban_load_limit');
-    return KANBAN_LOAD_OPTIONS.includes(s) ? s : '1000';
+    return KANBAN_LOAD_OPTIONS.includes(s) ? s : 'all';
   });
 
   /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
