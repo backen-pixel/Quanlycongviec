@@ -10,8 +10,8 @@ const { supabase } = require('../config/supabase');
 const AUTO_BATCH_SIZE = 300;
 const AUTO_SYNC_TIMEOUT_SEC = 90;
 const AUTO_LOOP_PAUSE_MS = 1500;
-/** KH không có tin inbound (trả lời) trong khoảng này → loại khỏi đồng bộ tự động / smart để giảm tải */
-const STALE_NO_CUSTOMER_REPLY_MS = 48 * 60 * 60 * 1000;
+/** Không có liên lạc (inbound KH hoặc last_message_at) trong khoảng này → loại khỏi auto pipeline / smart để giảm tải */
+const STALE_NO_CUSTOMER_REPLY_MS = 24 * 60 * 60 * 1000;
 
 async function fetchLastInboundAtByContactIds(contactIds) {
   if (!contactIds?.length) return new Map();
@@ -33,19 +33,25 @@ async function fetchLastInboundAtByContactIds(contactIds) {
   return map;
 }
 
-/** Giữ contact chưa từng inbound hoặc inbound gần đây (< 48h). Bỏ KH im lặm >48h. */
+/**
+ * Giữ contact còn “nóng”: có inbound KH trong vòng STALE, hoặc chưa có inbound trong DB thì xét last_message_at.
+ * Loại thread không liên lạc quá ngưỡng (ưu tiên thời điểm KH nhắn; không có inbound thì dùng mọi hoạt động trên contact).
+ */
 function filterContactsStaleCustomerNoReply(contacts, inboundMap, now = Date.now()) {
   if (!inboundMap) return { contacts, excluded: 0 };
   const cutoff = now - STALE_NO_CUSTOMER_REPLY_MS;
+  const hours = STALE_NO_CUSTOMER_REPLY_MS / 3600000;
   let excluded = 0;
   const out = contacts.filter((c) => {
-    const t = inboundMap.get(c.id);
-    if (t === undefined) return true;
-    if (t >= cutoff) return true;
+    const inboundT = inboundMap.get(c.id);
+    const lastMsgT = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+    const lastActivity = inboundT !== undefined ? inboundT : lastMsgT;
+    if (!lastActivity) return true;
+    if (lastActivity >= cutoff) return true;
     excluded += 1;
     return false;
   });
-  if (excluded > 0) console.log(`[FB] Loại ${excluded} contact: không có inbound KH > ${STALE_NO_CUSTOMER_REPLY_MS / 3600000}h`);
+  if (excluded > 0) console.log(`[FB] Loại ${excluded} contact: không liên lạc > ${hours}h`);
   return { contacts: out, excluded };
 }
 
@@ -2567,7 +2573,9 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     const io = r._ioRef;
     // Lấy tất cả contacts chưa có lead
     const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('*').is('lead_id', null).order('created_at');
+      .select('*').is('lead_id', null)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false });
     
     if (!contacts?.length) return res.json({ created: 0, updated: 0, message: 'Không có contact nào cần xử lý' });
 
@@ -2861,7 +2869,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       if (inboundMap) {
         const fr = filterContactsStaleCustomerNoReply(contacts, inboundMap);
         contacts = fr.contacts;
-        if (fr.excluded) console.log(`[ExtractPhones] Loại ${fr.excluded} contact (KH không inbound >48h)`);
+        if (fr.excluded) console.log(`[ExtractPhones] Loại ${fr.excluded} contact (không liên lạc >24h)`);
       }
     }
 
@@ -2880,7 +2888,11 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     let updatedLeadDescription = 0;
     const results = [];
 
+    const lastMsgTs = (c) => (c.last_message_at ? new Date(c.last_message_at).getTime() : 0);
     contacts.sort((a, b) => {
+      const tb = lastMsgTs(b);
+      const ta = lastMsgTs(a);
+      if (tb !== ta) return tb - ta;
       const score = (c) => {
         let s = 0;
         if (!c.phone) s += 2;
@@ -3160,14 +3172,14 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         ? false
         : (req.body?.skip_stale_customer_reply === true || mode === 'smart');
 
-    let excludedStale48h = 0;
+    let excludedStaleNoContact = 0;
     let workContacts = allContacts;
     if (skipStaleFilter) {
       const inboundMap = await fetchLastInboundAtByContactIds(allContacts.map((c) => c.id));
       if (inboundMap) {
         const fr = filterContactsStaleCustomerNoReply(allContacts, inboundMap);
         workContacts = fr.contacts;
-        excludedStale48h = fr.excluded;
+        excludedStaleNoContact = fr.excluded;
       }
     }
 
@@ -3210,10 +3222,10 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         synced: 0,
         total: 0,
         filtered: workContacts.length,
-        excluded_stale_48h: excludedStale48h,
+        excluded_stale_no_contact_24h: excludedStaleNoContact,
         nextOffset: 0,
         done: true,
-        message: skipStaleFilter && excludedStale48h ? 'Không còn contact sau lọc 48h + smart' : 'Smart: tất cả đã cập nhật',
+        message: skipStaleFilter && excludedStaleNoContact ? 'Không còn contact sau lọc 24h + smart' : 'Smart: tất cả đã cập nhật',
       });
     }
 
@@ -3226,7 +3238,7 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
       return res.json({
         synced: 0,
         total: candidates.length,
-        excluded_stale_48h: excludedStale48h,
+        excluded_stale_no_contact_24h: excludedStaleNoContact,
         nextOffset: 0,
         done: true,
         message: 'Đã đồng bộ hết',
@@ -3351,7 +3363,7 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
       nextOffset: done ? 0 : nextOffset,
       done,
       allContacts: allContacts.length,
-      excluded_stale_48h: excludedStale48h,
+      excluded_stale_no_contact_24h: excludedStaleNoContact,
       skip_stale_filter: skipStaleFilter,
       mode,
       details: results,
