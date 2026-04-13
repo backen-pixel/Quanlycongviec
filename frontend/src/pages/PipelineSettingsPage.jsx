@@ -1,6 +1,41 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2 } from 'lucide-react';
+
+/** Hai mẫu theo tài liệu Zalo / ví dụ template ngắn — ID chỉ để thử form; OA thật cần template_id của bạn */
+const ZALO_TEST_PRESETS = [
+  {
+    key: 'doc',
+    label: 'Mẫu tài liệu Zalo',
+    phone: '84987654321',
+    templateId: '7895417a7d3f9461cd2e',
+    templateJson: `{
+  "ky": "1",
+  "thang": "4/2020",
+  "start_date": "20/03/2020",
+  "end_date": "20/04/2020",
+  "customer": "Nguyễn Thị Hoàng Anh",
+  "cid": "PE010299485",
+  "address": "VNG Campus, TP.HCM",
+  "amount": "100",
+  "total": "100000"
+}`,
+  },
+  {
+    key: 'product',
+    label: 'Mẫu SP (565759)',
+    phone: '84987654321',
+    templateId: '565759',
+    templateJson: `{
+  "ten_san_pham": "Tủ bếp nhôm cánh kính",
+  "order_code": "BG-002",
+  "date": "13/04/2026",
+  "ten_khach_hang": "Tên"
+}`,
+  },
+];
+
+const ZALO_TEST_DEFAULT = ZALO_TEST_PRESETS[0];
 
 const COLORS = ['#94A3B8','#3B82F6','#8B5CF6','#F59E0B','#F97316','#10B981','#EF4444','#EC4899','#06B6D4','#6366F1'];
 const ICONS = ['🆕','📞','💬','📋','📧','⏳','🤝','💰','📝','✅','❌','🎯','🔥','⭐','🏆'];
@@ -11,7 +46,16 @@ export default function PipelineSettingsPage() {
   const [activeType, setActiveType] = useState('lead');
   const [adding, setAdding] = useState(null);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ name: '', color: '#94A3B8', icon: '🆕', is_won: false, is_lost: false });
+  const [form, setForm] = useState({ name: '', color: '#94A3B8', icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false });
+
+  const [zaloSettings, setZaloSettings] = useState(null);
+  const [zaloLoading, setZaloLoading] = useState(false);
+  const [zaloTestPhone, setZaloTestPhone] = useState(ZALO_TEST_DEFAULT.phone);
+  const [zaloTestJson, setZaloTestJson] = useState(ZALO_TEST_DEFAULT.templateJson);
+  const [zaloTestToken, setZaloTestToken] = useState('');
+  const [zaloTestTemplateId, setZaloTestTemplateId] = useState(ZALO_TEST_DEFAULT.templateId);
+  const [zaloTestSending, setZaloTestSending] = useState(false);
+  const [zaloTestResult, setZaloTestResult] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -24,6 +68,86 @@ export default function PipelineSettingsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const loadZalo = async () => {
+    setZaloLoading(true);
+    try {
+      const { data } = await api.get('/crm/zalo-notify-settings');
+      setZaloSettings(data || {});
+    } catch {
+      setZaloSettings({ enabled: false, template_id: '', sending_mode: '1', has_token: false, merge_template_data: {} });
+    }
+    setZaloLoading(false);
+  };
+  useEffect(() => { loadZalo(); }, []);
+
+  const saveZaloMaster = async (patch) => {
+    try {
+      const { data } = await api.put('/crm/zalo-notify-settings', patch);
+      setZaloSettings(data);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu Zalo');
+      loadZalo();
+    }
+  };
+
+  const saveZaloForm = async () => {
+    try {
+      const body = {
+        enabled: !!zaloSettings?.enabled,
+        template_id: zaloSettings?.template_id || '',
+        sending_mode: zaloSettings?.sending_mode || '1',
+        merge_template_data: zaloSettings?.merge_template_data || {},
+      };
+      if (zaloTestToken.trim()) body.access_token = zaloTestToken.trim();
+      const { data } = await api.put('/crm/zalo-notify-settings', body);
+      setZaloSettings(data);
+      setZaloTestToken('');
+      alert('Đã lưu cấu hình Zalo OA');
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
+  const applyZaloTestPreset = (preset) => {
+    setZaloTestPhone(preset.phone);
+    setZaloTestTemplateId(preset.templateId);
+    setZaloTestJson(preset.templateJson);
+    setZaloTestResult(null);
+  };
+
+  const runZaloTest = async () => {
+    let template_data;
+    try {
+      template_data = JSON.parse(zaloTestJson || '{}');
+    } catch {
+      return alert('template_data không phải JSON hợp lệ');
+    }
+    setZaloTestSending(true);
+    setZaloTestResult(null);
+    try {
+      const { data } = await api.post('/crm/zalo-notify-test', {
+        phone: zaloTestPhone.trim(),
+        template_data,
+        ...(zaloTestToken.trim() ? { access_token: zaloTestToken.trim() } : {}),
+        ...(zaloTestTemplateId.trim() ? { template_id: zaloTestTemplateId.trim() } : {}),
+      });
+      setZaloTestResult(data);
+    } catch (e) {
+      setZaloTestResult({ ok: false, error: e.response?.data?.error || e.message });
+    }
+    setZaloTestSending(false);
+  };
+
+  const toggleZaloColumn = async (stage) => {
+    if (stage.pipeline_type !== 'deal') return;
+    try {
+      await api.put(`/crm/pipeline-stages/${stage.id}`, { send_zalo_on_enter: !stage.send_zalo_on_enter });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
   const filtered = stages.filter(s => s.pipeline_type === activeType).sort((a, b) => a.order_index - b.order_index);
   const otherType = activeType === 'lead' ? 'deal' : 'lead';
   const otherFiltered = stages.filter(s => s.pipeline_type === otherType).sort((a, b) => a.order_index - b.order_index);
@@ -31,13 +155,20 @@ export default function PipelineSettingsPage() {
   const startAdd = (type) => {
     setAdding(type);
     setEditId(null);
-    setForm({ name: '', color: COLORS[filtered.length % COLORS.length], icon: '🆕', is_won: false, is_lost: false });
+    setForm({ name: '', color: COLORS[filtered.length % COLORS.length], icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false });
   };
 
   const startEdit = (stage) => {
     setEditId(stage.id);
     setAdding(null);
-    setForm({ name: stage.name, color: stage.color, icon: stage.icon || '', is_won: stage.is_won, is_lost: stage.is_lost });
+    setForm({
+      name: stage.name,
+      color: stage.color,
+      icon: stage.icon || '',
+      is_won: stage.is_won,
+      is_lost: stage.is_lost,
+      send_zalo_on_enter: !!stage.send_zalo_on_enter,
+    });
   };
 
   const saveNew = async () => {
@@ -148,6 +279,21 @@ export default function PipelineSettingsPage() {
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              {s.pipeline_type === 'deal' && (
+                <button
+                  type="button"
+                  onClick={() => toggleZaloColumn(s)}
+                  className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                    s.send_zalo_on_enter
+                      ? 'bg-sky-100 text-sky-800 border-sky-300'
+                      : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-sky-200'
+                  }`}
+                  title="Khi deal kéo vào cột này: gửi tin Zalo OA (cần bật chức năng + token/template)"
+                >
+                  <MessageCircle className="h-3 w-3" />
+                  Zalo
+                </button>
+              )}
               <button onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer" title={s.is_active ? 'Ẩn' : 'Hiện'}>
                 {s.is_active ? <Eye className="h-3.5 w-3.5 text-gray-400" /> : <EyeOff className="h-3.5 w-3.5 text-orange-400" />}
               </button>
@@ -165,7 +311,7 @@ export default function PipelineSettingsPage() {
       {/* Add Form */}
       {adding === type && (
         <div className="p-4 border-t bg-blue-50/50">
-          <StageForm form={form} setForm={setForm} onSave={saveNew} onCancel={() => setAdding(null)} />
+          <StageForm form={form} setForm={setForm} onSave={saveNew} onCancel={() => setAdding(null)} pipelineType={type} />
         </div>
       )}
     </div>
@@ -183,11 +329,140 @@ export default function PipelineSettingsPage() {
         </div>
       </div>
 
+      {/* Zalo OA — bật/tắt + test gửi tin */}
+      <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-bold text-sky-900 flex items-center gap-2">
+            <MessageCircle className="h-4 w-4" /> Zalo OA — tin qua SĐT
+          </h2>
+          {zaloLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
+          ) : (
+            <label className="flex items-center gap-2 text-xs font-medium text-sky-900 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={!!zaloSettings?.enabled}
+                onChange={(e) => {
+                  saveZaloMaster({ enabled: e.target.checked });
+                }}
+                className="rounded border-sky-400"
+              />
+              Bật gửi Zalo khi deal vào cột đã tích «Zalo»
+            </label>
+          )}
+        </div>
+        <p className="text-[11px] text-sky-800 leading-relaxed">
+          Lưu <strong>access_token</strong> và <strong>template_id</strong> từ Zalo Cloud. Ở pipeline <strong>Deal</strong>, bấm nút <strong>Zalo</strong> trên từng cột để bật gửi khi deal được kéo vào cột đó (mỗi deal + cột chỉ gửi tối đa một lần thành công).{' '}
+          <span className="text-sky-900">
+            <strong>template_id</strong> phải là ID template “tin qua SĐT” của đúng OA trong console của bạn — không dùng ID mẫu trong tài liệu Zalo.
+          </span>{' '}
+          Chế độ <strong>3</strong> chỉ dùng khi OA đã được Zalo whitelist vượt hạn mức.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <label className="text-[10px] font-semibold text-sky-800 uppercase">Template ID</label>
+            <input
+              value={zaloSettings?.template_id || ''}
+              onChange={(e) => setZaloSettings((p) => ({ ...(p || {}), template_id: e.target.value }))}
+              className="w-full h-8 px-2 rounded-lg border border-sky-200 text-xs bg-white"
+              placeholder="ID template Zalo cấp"
+            />
+            <label className="text-[10px] font-semibold text-sky-800 uppercase">Chế độ gửi</label>
+            <select
+              value={zaloSettings?.sending_mode || '1'}
+              onChange={(e) => setZaloSettings((p) => ({ ...(p || {}), sending_mode: e.target.value }))}
+              className="w-full h-8 px-2 rounded-lg border border-sky-200 text-xs bg-white"
+            >
+              <option value="1">1 — Gửi thường</option>
+              <option value="3">3 — Vượt hạn mức (OA whitelist)</option>
+            </select>
+            <label className="text-[10px] font-semibold text-sky-800 uppercase">Access token (để trống nếu giữ token đã lưu)</label>
+            <input
+              type="password"
+              value={zaloTestToken}
+              onChange={(e) => setZaloTestToken(e.target.value)}
+              className="w-full h-8 px-2 rounded-lg border border-sky-200 text-xs bg-white"
+              placeholder={zaloSettings?.has_token ? '•••• đã lưu — nhập mới để thay' : 'Dán access_token'}
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={saveZaloForm}
+              className="h-8 px-3 rounded-lg bg-sky-600 text-white text-xs font-medium hover:bg-sky-700 cursor-pointer"
+            >
+              Lưu cấu hình Zalo
+            </button>
+            <p className="text-[10px] text-sky-700">Token đã lưu: {zaloSettings?.has_token ? 'Có' : 'Chưa'}</p>
+          </div>
+          <div className="space-y-2 bg-white/80 rounded-lg p-3 border border-sky-100">
+            <p className="text-[10px] font-bold text-gray-700 uppercase">Gửi thử API</p>
+            <div className="flex flex-wrap gap-1.5">
+              {ZALO_TEST_PRESETS.map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => applyZaloTestPreset(p)}
+                  className="text-[10px] px-2 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 cursor-pointer"
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <input
+              value={zaloTestPhone}
+              onChange={(e) => setZaloTestPhone(e.target.value)}
+              className="w-full h-8 px-2 rounded border text-xs"
+              placeholder="SĐT (VD 0987654321 hoặc 84987654321)"
+            />
+            <input
+              value={zaloTestTemplateId}
+              onChange={(e) => setZaloTestTemplateId(e.target.value)}
+              className="w-full h-8 px-2 rounded border text-xs"
+              placeholder="Template ID (tuỳ chọn, mặc định lấy từ cấu hình)"
+            />
+            <textarea
+              value={zaloTestJson}
+              onChange={(e) => setZaloTestJson(e.target.value)}
+              rows={8}
+              className="w-full px-2 py-1.5 rounded border text-[11px] font-mono leading-snug"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              disabled={zaloTestSending}
+              onClick={runZaloTest}
+              className="h-8 px-3 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 cursor-pointer disabled:opacity-50 flex items-center gap-1"
+            >
+              {zaloTestSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              Gửi thử
+            </button>
+            {zaloTestResult && (
+              <>
+                <pre className="text-[10px] bg-gray-900 text-green-200 p-2 rounded overflow-x-auto max-h-40">
+                  {JSON.stringify(zaloTestResult, null, 2)}
+                </pre>
+                {!zaloTestResult.ok && zaloTestResult.hint_vi && (
+                  <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 leading-snug">
+                    {zaloTestResult.hint_vi}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Edit Form (floating) */}
       {editId && (
         <div className="bg-white rounded-xl border border-blue-200 p-4 shadow-lg">
           <h3 className="text-sm font-bold text-gray-800 mb-3">✏️ Sửa giai đoạn</h3>
-          <StageForm form={form} setForm={setForm} onSave={saveEdit} onCancel={() => setEditId(null)} />
+          <StageForm
+            form={form}
+            setForm={setForm}
+            onSave={saveEdit}
+            onCancel={() => setEditId(null)}
+            pipelineType={stages.find((s) => s.id === editId)?.pipeline_type || 'lead'}
+          />
         </div>
       )}
 
@@ -203,7 +478,7 @@ export default function PipelineSettingsPage() {
   );
 }
 
-function StageForm({ form, setForm, onSave, onCancel }) {
+function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead' }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -236,7 +511,7 @@ function StageForm({ form, setForm, onSave, onCancel }) {
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input type="checkbox" checked={form.is_won} onChange={e => setForm(f => ({ ...f, is_won: e.target.checked, is_lost: false }))}
             className="rounded" />
@@ -247,6 +522,17 @@ function StageForm({ form, setForm, onSave, onCancel }) {
             className="rounded" />
           <XCircle className="h-3.5 w-3.5 text-red-500" /> Giai đoạn Thua/Mất
         </label>
+        {pipelineType === 'deal' && (
+          <label className="flex items-center gap-2 text-xs cursor-pointer text-sky-800 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200">
+            <input
+              type="checkbox"
+              checked={!!form.send_zalo_on_enter}
+              onChange={(e) => setForm((f) => ({ ...f, send_zalo_on_enter: e.target.checked }))}
+              className="rounded border-sky-400"
+            />
+            <MessageCircle className="h-3.5 w-3.5" /> Gửi Zalo OA khi deal vào cột này
+          </label>
+        )}
       </div>
 
       <div className="flex gap-2 justify-end">

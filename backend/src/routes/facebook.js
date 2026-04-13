@@ -10,6 +10,44 @@ const { supabase } = require('../config/supabase');
 const AUTO_BATCH_SIZE = 300;
 const AUTO_SYNC_TIMEOUT_SEC = 90;
 const AUTO_LOOP_PAUSE_MS = 1500;
+/** KH không có tin inbound (trả lời) trong khoảng này → loại khỏi đồng bộ tự động / smart để giảm tải */
+const STALE_NO_CUSTOMER_REPLY_MS = 48 * 60 * 60 * 1000;
+
+async function fetchLastInboundAtByContactIds(contactIds) {
+  if (!contactIds?.length) return new Map();
+  const map = new Map();
+  const CHUNK = 600;
+  for (let i = 0; i < contactIds.length; i += CHUNK) {
+    const chunk = contactIds.slice(i, i + CHUNK);
+    const { data, error } = await supabase.rpc('fb_last_inbound_at_for_contacts', { contact_ids: chunk });
+    if (error) {
+      console.warn('[FB] RPC fb_last_inbound_at_for_contacts:', error.message, '(chạy database/50_fb_last_inbound_rpc.sql)');
+      return null;
+    }
+    (data || []).forEach((row) => {
+      if (row.contact_id && row.last_inbound_at) {
+        map.set(row.contact_id, new Date(row.last_inbound_at).getTime());
+      }
+    });
+  }
+  return map;
+}
+
+/** Giữ contact chưa từng inbound hoặc inbound gần đây (< 48h). Bỏ KH im lặm >48h. */
+function filterContactsStaleCustomerNoReply(contacts, inboundMap, now = Date.now()) {
+  if (!inboundMap) return { contacts, excluded: 0 };
+  const cutoff = now - STALE_NO_CUSTOMER_REPLY_MS;
+  let excluded = 0;
+  const out = contacts.filter((c) => {
+    const t = inboundMap.get(c.id);
+    if (t === undefined) return true;
+    if (t >= cutoff) return true;
+    excluded += 1;
+    return false;
+  });
+  if (excluded > 0) console.log(`[FB] Loại ${excluded} contact: không có inbound KH > ${STALE_NO_CUSTOMER_REPLY_MS / 3600000}h`);
+  return { contacts: out, excluded };
+}
 
 const autoPipeline = {
   enabled: false,
@@ -105,7 +143,13 @@ async function runAutoPipelineLoop() {
         const resp = await fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-sync-messages`, {
           method: 'POST',
           headers: getInternalAutoHeaders(),
-          body: JSON.stringify({ mode: 'all', offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE, timeout: AUTO_SYNC_TIMEOUT_SEC }),
+          body: JSON.stringify({
+            mode: 'all',
+            offset: autoPipeline.batchOffset,
+            limit: AUTO_BATCH_SIZE,
+            timeout: AUTO_SYNC_TIMEOUT_SEC,
+            skip_stale_customer_reply: true,
+          }),
         });
         syncData = await resp.json();
         console.log('[AutoPipeline] sync response', { status: resp.status, batch: autoPipeline.batchIndex, total: syncData?.total, processed: syncData?.processedCount, nextOffset: syncData?.nextOffset, done: syncData?.done, error: syncData?.error });
@@ -149,7 +193,7 @@ async function runAutoPipelineLoop() {
         const resp = await fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-extract-phones`, {
           method: 'POST',
           headers: getInternalAutoHeaders(),
-          body: JSON.stringify({ offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE }),
+          body: JSON.stringify({ offset: autoPipeline.batchOffset, limit: AUTO_BATCH_SIZE, skip_stale_customer_reply: true }),
         });
         const data = await resp.json();
         console.log('[AutoPipeline] extract response', { status: resp.status, batch: autoPipeline.batchIndex, total: data?.total, updated: data?.updated, leadsUpdatedPhone: data?.leadsUpdatedPhone, error: data?.error });
@@ -2811,6 +2855,16 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     }
     console.log(`[ExtractPhones] Loaded ${contacts.length} contacts`);
 
+    const skipStaleExtract = !!req.body?.skip_stale_customer_reply;
+    if (skipStaleExtract && contacts.length) {
+      const inboundMap = await fetchLastInboundAtByContactIds(contacts.map((c) => c.id));
+      if (inboundMap) {
+        const fr = filterContactsStaleCustomerNoReply(contacts, inboundMap);
+        contacts = fr.contacts;
+        if (fr.excluded) console.log(`[ExtractPhones] Loại ${fr.excluded} contact (KH không inbound >48h)`);
+      }
+    }
+
     if (!contacts?.length) {
       return res.json({ total: 0, updated: 0, message: 'Không có contact nào để quét' });
     }
@@ -3101,6 +3155,22 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
 
     if (!allContacts?.length) return res.json({ synced: 0, total: 0, message: 'Không có contact nào' });
 
+    const skipStaleFilter =
+      req.body?.skip_stale_customer_reply === false
+        ? false
+        : (req.body?.skip_stale_customer_reply === true || mode === 'smart');
+
+    let excludedStale48h = 0;
+    let workContacts = allContacts;
+    if (skipStaleFilter) {
+      const inboundMap = await fetchLastInboundAtByContactIds(allContacts.map((c) => c.id));
+      if (inboundMap) {
+        const fr = filterContactsStaleCustomerNoReply(allContacts, inboundMap);
+        workContacts = fr.contacts;
+        excludedStale48h = fr.excluded;
+      }
+    }
+
     // ── SMART FILTER: chỉ sync contacts cần thiết ──
     const now = Date.now();
     const FIVE_MIN = 5 * 60 * 1000;
@@ -3110,9 +3180,9 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
 
     let candidates;
     if (mode === 'all') {
-      candidates = allContacts;
+      candidates = workContacts;
     } else {
-      candidates = allContacts.filter(c => {
+      candidates = workContacts.filter(c => {
         const lastSync = c.last_synced_at ? new Date(c.last_synced_at).getTime() : 0;
         const lastMsg = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
         const createdAt = c.created_at ? new Date(c.created_at).getTime() : 0;
@@ -3135,14 +3205,33 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
       });
     }
 
-    if (!candidates.length) return res.json({ synced: 0, total: 0, filtered: allContacts.length, nextOffset: 0, done: true, message: 'Smart: tất cả đã cập nhật' });
+    if (!candidates.length) {
+      return res.json({
+        synced: 0,
+        total: 0,
+        filtered: workContacts.length,
+        excluded_stale_48h: excludedStale48h,
+        nextOffset: 0,
+        done: true,
+        message: skipStaleFilter && excludedStale48h ? 'Không còn contact sau lọc 48h + smart' : 'Smart: tất cả đã cập nhật',
+      });
+    }
 
     // Slice từ offset, giới hạn batch nếu có
     const sliced = candidates.slice(offsetIdx);
     const contacts = batchLimit > 0 ? sliced.slice(0, batchLimit) : sliced;
     const nextOffsetAbs = offsetIdx + contacts.length;
     const batchDone = nextOffsetAbs >= candidates.length;
-    if (!contacts.length) return res.json({ synced: 0, total: candidates.length, nextOffset: 0, done: true, message: 'Đã đồng bộ hết' });
+    if (!contacts.length) {
+      return res.json({
+        synced: 0,
+        total: candidates.length,
+        excluded_stale_48h: excludedStale48h,
+        nextOffset: 0,
+        done: true,
+        message: 'Đã đồng bộ hết',
+      });
+    }
 
     // Group contacts theo page_id để lấy token 1 lần
     const pageTokens = {};
@@ -3254,7 +3343,19 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
 
     const nextOffset = offsetIdx + contacts.length;
     const done = nextOffset >= total;
-    const summary = { total, totalSynced, totalErrors, processedCount, nextOffset: done ? 0 : nextOffset, done, allContacts: allContacts.length, mode, details: results };
+    const summary = {
+      total,
+      totalSynced,
+      totalErrors,
+      processedCount,
+      nextOffset: done ? 0 : nextOffset,
+      done,
+      allContacts: allContacts.length,
+      excluded_stale_48h: excludedStale48h,
+      skip_stale_filter: skipStaleFilter,
+      mode,
+      details: results,
+    };
     if (io) io.emit('batch_done', { type: 'sync_messages', ...summary });
     res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
