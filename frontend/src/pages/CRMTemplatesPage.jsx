@@ -117,6 +117,16 @@ export default function CRMTemplatesPage() {
     try { await api.delete(`/crm/task-templates/${tplId}/items/${itemId}`); load(); } catch {}
   };
 
+  const updateTemplateItemFields = async (tplId, itemId, body) => {
+    try {
+      await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, body);
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
+      throw e;
+    }
+  };
+
   const toggleDefault = async (tpl) => {
     try { await api.put(`/crm/task-templates/${tpl.id}`, { is_default: !tpl.is_default }); load(); } catch {}
   };
@@ -385,6 +395,7 @@ export default function CRMTemplatesPage() {
                           handleChecklistDragEnd={handleChecklistDragEnd}
                           templates={templates} setTemplates={setTemplates}
                           updateItemChecklist={updateItemChecklist}
+                          updateTemplateItemFields={updateTemplateItemFields}
                           editingVisibility={editingVisibility} setEditingVisibility={setEditingVisibility}
                           companies={companies} departments={departments}
                           toggleItemCompany={toggleItemCompany} toggleItemDept={toggleItemDept}
@@ -422,8 +433,38 @@ function TemplateCard({
   sensors, handleItemDragEnd, handleChecklistDragEnd,
   editingVisibility, setEditingVisibility,
   companies, departments, toggleItemCompany, toggleItemDept,
+  updateTemplateItemFields,
 }) {
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [itemEditForm, setItemEditForm] = useState({ title: '', description: '', priority: 'medium', deadline_days: 0 });
+
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
+
+  const openItemEdit = (item) => {
+    setEditingItemId(item.id);
+    setItemEditForm({
+      title: item.title || '',
+      description: item.description || '',
+      priority: item.priority || 'medium',
+      deadline_days: item.deadline_days ?? 0,
+    });
+  };
+
+  const saveItemEdit = async () => {
+    if (!editingItemId || !itemEditForm.title.trim()) {
+      alert('Nhập tên nhiệm vụ');
+      return;
+    }
+    try {
+      await updateTemplateItemFields(tpl.id, editingItemId, {
+        title: itemEditForm.title.trim(),
+        description: itemEditForm.description?.trim() || null,
+        priority: itemEditForm.priority,
+        deadline_days: Math.max(0, parseInt(String(itemEditForm.deadline_days), 10) || 0),
+      });
+      setEditingItemId(null);
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
 
   return (
     <div className={`border rounded-xl overflow-hidden bg-white ${isDragging ? 'shadow-lg ring-2 ring-blue-300' : ''}`}>
@@ -478,8 +519,8 @@ function TemplateCard({
                         <div {...itemDrag} className="cursor-grab active:cursor-grabbing p-0.5 text-gray-300 hover:text-gray-500 touch-none">
                           <GripVertical className="h-3.5 w-3.5" />
                         </div>
-                        <span className="text-xs text-gray-400 w-5">{i + 1}.</span>
-                        <span className="text-sm flex-1">{item.title}</span>
+                        <span className="text-xs text-gray-400 w-5 shrink-0">{i + 1}.</span>
+                        <span className="text-sm flex-1 min-w-0 truncate" title={item.title}>{item.title}</span>
                         {Array.isArray(item.checklist) && item.checklist.length > 0 && (
                           <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                             <CheckSquare className="h-3 w-3" /> {item.checklist.length}
@@ -494,16 +535,67 @@ function TemplateCard({
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
-                        <button onClick={() => setEditingVisibility(p => ({ ...p, [item.id]: !p[item.id] }))}
-                          className={`p-1 cursor-pointer ${(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) ? 'text-red-500 hover:text-red-700' : 'text-gray-400 hover:text-purple-600'}`} title="Phân quyền xem">
+                        <button type="button" onClick={() => setEditingVisibility(p => ({ ...p, [item.id]: !p[item.id] }))}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) ? 'text-red-500 hover:bg-red-50' : 'text-gray-400 hover:bg-purple-50 hover:text-purple-600'}`} title="Phân quyền xem">
                           <Shield className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => setEditingChecklist(p => ({ ...p, [item.id]: !p[item.id] }))}
-                          className="p-1 text-gray-400 hover:text-emerald-600 cursor-pointer" title="Checklist mẫu">
+                        <button type="button" onClick={() => setEditingChecklist(p => ({ ...p, [item.id]: !p[item.id] }))}
+                          className="p-1 text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer shrink-0" title="Checklist mẫu">
                           <CheckSquare className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => deleteItem(tpl.id, item.id)}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 cursor-pointer">
+                        <button type="button" onClick={(e) => { e.stopPropagation(); if (editingItemId === item.id) setEditingItemId(null); else openItemEdit(item); }}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${editingItemId === item.id ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-blue-600 hover:bg-blue-50'}`} title="Sửa nhiệm vụ mẫu">
+                          <Edit2 className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => deleteItem(tpl.id, item.id)}
+                          className="p-1 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer shrink-0" title="Xóa mục">
                           <Trash2 className="h-3 w-3" /></button>
                       </div>
+                      {editingItemId === item.id && (
+                        <div className="mx-2 mb-2 p-3 bg-sky-50 rounded-lg border border-sky-200 space-y-2" onClick={e => e.stopPropagation()}>
+                          <p className="text-[10px] text-sky-700 font-bold uppercase tracking-wide">✏️ Sửa nhiệm vụ mẫu</p>
+                          <input
+                            value={itemEditForm.title}
+                            onChange={e => setItemEditForm(f => ({ ...f, title: e.target.value }))}
+                            className="w-full h-8 px-2 rounded border text-sm outline-none focus:ring-2 focus:ring-sky-400"
+                            placeholder="Tên nhiệm vụ..."
+                          />
+                          <textarea
+                            value={itemEditForm.description || ''}
+                            onChange={e => setItemEditForm(f => ({ ...f, description: e.target.value }))}
+                            rows={2}
+                            className="w-full px-2 py-1.5 rounded border text-xs outline-none focus:ring-2 focus:ring-sky-400 resize-y min-h-[48px]"
+                            placeholder="Mô tả (tuỳ chọn)..."
+                          />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              value={itemEditForm.priority}
+                              onChange={e => setItemEditForm(f => ({ ...f, priority: e.target.value }))}
+                              className="h-8 px-2 rounded border text-xs bg-white"
+                            >
+                              <option value="low">Thấp</option>
+                              <option value="medium">TB</option>
+                              <option value="high">Cao</option>
+                              <option value="urgent">Gấp</option>
+                            </select>
+                            <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
+                              <span className="whitespace-nowrap">Hạn +N ngày</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={itemEditForm.deadline_days}
+                                onChange={e => setItemEditForm(f => ({ ...f, deadline_days: e.target.value }))}
+                                className="h-8 w-16 px-2 rounded border text-xs text-right"
+                                title="Số ngày từ khi gắn mẫu đến deadline mặc định"
+                              />
+                            </label>
+                            <span className="flex-1" />
+                            <button type="button" onClick={() => setEditingItemId(null)} className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
+                              Hủy
+                            </button>
+                            <button type="button" onClick={saveItemEdit} className="h-8 px-3 rounded-lg text-xs font-medium bg-sky-600 text-white hover:bg-sky-700 cursor-pointer flex items-center gap-1">
+                              <Save className="h-3 w-3" /> Lưu
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       {editingVisibility[item.id] && (
                         <div className="mx-2 mb-2 p-3 bg-purple-50 rounded-lg border border-purple-200 space-y-2">
                           <p className="text-[10px] text-purple-600 font-bold uppercase">🔒 Phân quyền mặc định — tài liệu upload ở nhiệm vụ này</p>
