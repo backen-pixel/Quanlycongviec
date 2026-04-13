@@ -10,8 +10,12 @@ const { supabase } = require('../config/supabase');
 const AUTO_BATCH_SIZE = 300;
 const AUTO_SYNC_TIMEOUT_SEC = 90;
 const AUTO_LOOP_PAUSE_MS = 1500;
-/** Không có liên lạc (inbound KH hoặc last_message_at) trong khoảng này → loại khỏi auto pipeline / smart để giảm tải */
-const STALE_NO_CUSTOMER_REPLY_MS = 24 * 60 * 60 * 1000;
+/**
+ * Một ngưỡng giờ cho cả (1) pool “còn hoạt động” và (2) lọc “KH không liên lạc”.
+ * Trước đây pool 36h nhưng stale 24h → loại gần hết; giờ đồng bộ cùng N giờ.
+ */
+const AUTO_PIPELINE_RECENT_HOURS = 36;
+const STALE_NO_CUSTOMER_REPLY_MS = AUTO_PIPELINE_RECENT_HOURS * 60 * 60 * 1000;
 
 async function fetchLastInboundAtByContactIds(contactIds) {
   if (!contactIds?.length) return new Map();
@@ -55,9 +59,6 @@ function filterContactsStaleCustomerNoReply(contacts, inboundMap, now = Date.now
   return { contacts: out, excluded };
 }
 
-/** Auto pipeline: chỉ xử lý contact có hoạt động (tin hoặc tạo mới) trong N giờ gần đây */
-const AUTO_PIPELINE_RECENT_HOURS = 36;
-
 function activityTimestampMs(c) {
   const msg = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
   const cre = c.created_at ? new Date(c.created_at).getTime() : 0;
@@ -75,7 +76,7 @@ function filterContactsRecentHours(contacts, recentHours) {
 }
 
 /**
- * Pool tối đa 5000 contact, sắp last_message_at mới nhất trước; lọc theo recentHours; optional stale 24h.
+ * Pool tối đa 5000 contact, sắp last_message_at mới nhất trước; lọc theo recentHours; optional stale (cùng ngưỡng giờ với AUTO_PIPELINE_RECENT_HOURS).
  * Dùng chung batch-sync + batch-extract (pipeline_aligned) để offset khớp.
  */
 async function loadFacebookContactsForBatchPipeline({ recentHours = 0, applyStaleFilter = false } = {}) {
@@ -182,7 +183,7 @@ async function runAutoPipelineLoop() {
     autoPipeline.totalBatches = 0;
     autoPipeline.totalContacts = 0;
     autoPipeline.phase = 'loop';
-    pushAutoLog(`🔄 Chu kỳ ${autoPipeline.cycleCount} — pool ≤36h, từ hoạt động mới nhất`);
+    pushAutoLog(`🔄 Chu kỳ ${autoPipeline.cycleCount} — pool ≤${AUTO_PIPELINE_RECENT_HOURS}h, từ hoạt động mới nhất`);
 
     let done = false;
     /** Kết quả sync batch k+1 đã prefetch song song với extract batch k */
@@ -324,7 +325,7 @@ async function runAutoPipelineLoop() {
       if (done) {
         autoPipeline.batchOffset = 0;
         autoPipeline.batchIndex = autoPipeline.totalBatches || autoPipeline.batchIndex;
-        pushAutoLog(`🏁 Chu kỳ ${autoPipeline.cycleCount} xong pool 36h (${autoPipeline.totalContacts || 0} contacts)`, 'ok');
+        pushAutoLog(`🏁 Chu kỳ ${autoPipeline.cycleCount} xong pool ${AUTO_PIPELINE_RECENT_HOURS}h (${autoPipeline.totalContacts || 0} contacts)`, 'ok');
       } else {
         autoPipeline.batchOffset = nextOff;
         pushAutoLog(`⏭️ Offset tiếp: ${autoPipeline.batchOffset} (extract vừa xong, sync k+1 ${pendingSyncData ? 'đã prefetch' : '—'})`);
@@ -2943,7 +2944,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       if (inboundMap) {
         const fr = filterContactsStaleCustomerNoReply(contacts, inboundMap);
         contacts = fr.contacts;
-        if (fr.excluded) console.log(`[ExtractPhones] Loại ${fr.excluded} contact (không liên lạc >24h)`);
+        if (fr.excluded) console.log(`[ExtractPhones] Loại ${fr.excluded} contact (không liên lạc >${AUTO_PIPELINE_RECENT_HOURS}h)`);
       }
     }
 
@@ -3294,10 +3295,15 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         synced: 0,
         total: 0,
         filtered: workContacts.length,
+        excluded_stale_no_contact: excludedStaleNoContact,
+        stale_threshold_hours: AUTO_PIPELINE_RECENT_HOURS,
         excluded_stale_no_contact_24h: excludedStaleNoContact,
         nextOffset: 0,
         done: true,
-        message: skipStaleFilter && excludedStaleNoContact ? 'Không còn contact sau lọc 24h + smart' : 'Smart: tất cả đã cập nhật',
+        message:
+          skipStaleFilter && excludedStaleNoContact
+            ? `Không còn contact sau lọc KH không liên lạc >${AUTO_PIPELINE_RECENT_HOURS}h + smart`
+            : 'Smart: tất cả đã cập nhật',
       });
     }
 
@@ -3310,6 +3316,8 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
       return res.json({
         synced: 0,
         total: candidates.length,
+        excluded_stale_no_contact: excludedStaleNoContact,
+        stale_threshold_hours: AUTO_PIPELINE_RECENT_HOURS,
         excluded_stale_no_contact_24h: excludedStaleNoContact,
         nextOffset: 0,
         done: true,
@@ -3436,6 +3444,8 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
       done,
       pool_fetched: rawFetched,
       recent_hours: recentHours || null,
+      excluded_stale_no_contact: excludedStaleNoContact,
+      stale_threshold_hours: AUTO_PIPELINE_RECENT_HOURS,
       excluded_stale_no_contact_24h: excludedStaleNoContact,
       skip_stale_filter: skipStaleFilter,
       mode,

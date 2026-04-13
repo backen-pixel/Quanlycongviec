@@ -53,7 +53,7 @@ function maskCustomerPhoneDisplay(phone) {
  * Gửi Zalo OA theo cấu hình app_settings + template deal.
  * @param {object} opts
  * @param {boolean} [opts.allowWithoutStageFlag] — true: gửi từ nút thủ công (deal Thắng), không cần send_zalo_on_enter
- * @param {boolean} [opts.force] — bỏ qua chặn đã gửi OK / lỗi (trừ no_phone), gửi lại
+ * @param {boolean} [opts.force] — đã gửi OK trước đó (có msg_id): gửi thêm lần nữa. Lần gửi lỗi (không msg_id) luôn cho thử lại không cần force.
  */
 async function executeZaloDealStageNotify({ leadId, stageId, pipelineType, sendZaloOnEnter, allowWithoutStageFlag = false, force = false }) {
   if (pipelineType !== 'deal') {
@@ -78,10 +78,7 @@ async function executeZaloDealStageNotify({ leadId, stageId, pipelineType, sendZ
     console.log('[Zalo OA] Đã gửi thành công trước đó cho lead+stage này');
     return { ok: true, skipped: true, reason: 'already_sent', msg_id: prevSend.msg_id };
   }
-  if (!force && prevSend?.error_message && prevSend.error_message !== 'no_customer_phone') {
-    console.log('[Zalo OA] Bỏ qua — đã có lần gửi lỗi (xóa dòng crm_zalo_stage_sends nếu cần thử lại)');
-    return { ok: false, skipped: true, reason: 'previous_error', error_message: prevSend.error_message };
-  }
+  /* Có error_message nhưng không msg_id → lần trước thất bại: cho gửi lại (sửa template/SĐT không cần xóa DB). */
 
   const { data: lead } = await supabase.from('crm_leads')
     .select('id, code, title, type, estimated_value, customer:customers(id, full_name, phone, email, address)')
@@ -770,6 +767,8 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
         pipeline_toggle:
           'Trên Cài đặt Pipeline → Deal: bật nút «Zalo» trên cột Thắng để tự gửi khi kéo deal vào cột (mỗi deal + cột tối đa 1 lần thành công).',
         settings: 'template_id, access_token và merge_template_data lưu tại Cài đặt Pipeline → khối Zalo OA.',
+        after_failed_send:
+          'Nếu lần trước Zalo báo lỗi (chưa có msg_id): sửa cấu hình/template rồi bấm «Gửi thông báo Zalo» lại — không cần xóa bản ghi.',
       },
     });
   } catch (e) {

@@ -10,6 +10,8 @@ const ZALO_BUSINESS_ERROR_HINT_VI = {
   '-120':
     'OA chưa được cấp quyền dùng tính năng (Business Message / gửi template qua API). Cần liên kết OA với Zalo Business Solutions (ZBS), bật sản phẩm “tin qua SĐT” (hoặc tương đương) trong Zalo Cloud, và ủy quyền đúng app lấy access_token cho OA đó. Nếu OA chưa whitelist “vượt hạn mức”, thử chế độ gửi 1.',
   '-124': 'access_token không hợp lệ hoặc hết hạn — tạo/lấy token mới trong Zalo Cloud.',
+  '-1122':
+    'template_data thiếu hoặc sai tên tham số so với template trên Zalo Cloud — mở template OA, đối chiếu đúng key (VD ten_san_pham); có thể bổ sung trong Cài đặt Pipeline → merge_template_data.',
 };
 
 function hintForZaloBusinessError(errorCode) {
@@ -31,12 +33,20 @@ function normalizeVnPhoneTo84(raw) {
 function buildDealTemplateData(lead, customer, merge = {}) {
   const now = new Date();
   const amount = String(lead?.estimated_value ?? 0);
+  // `customer` (tài liệu Zalo mẫu) + `ten_khach_hang` / `ten_san_pham` (template OA thường gặp) — merge có thể ghi đè
+  const displayName = customer?.full_name || lead?.title || '';
+  const productName =
+    (lead?.title && String(lead.title).trim()) ||
+    (lead?.code && String(lead.code).trim()) ||
+    'Deal';
   const base = {
     ky: String(now.getMonth() + 1),
     thang: `${now.getMonth() + 1}/${now.getFullYear()}`,
     start_date: '',
     end_date: '',
-    customer: customer?.full_name || lead?.title || '',
+    customer: displayName,
+    ten_khach_hang: displayName,
+    ten_san_pham: productName,
     cid: lead?.code || (lead?.id ? String(lead.id).replace(/-/g, '').slice(0, 12) : ''),
     address: customer?.address || '',
     amount,
