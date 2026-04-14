@@ -17,6 +17,16 @@ import {
   FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2,
 } from 'lucide-react';
 
+/** Khớp backend: chỉ cột deal có tên chứa «Hoàn thành» mới dùng gửi Zalo OA */
+function isCrmDealStageHoanThanhName(name) {
+  const ascii = String(name || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return ascii.includes('hoan thanh');
+}
+
 const ACTIVITY_TYPES = [
   { value: 'call', label: 'Gọi điện', icon: '📞', color: 'bg-blue-100 text-blue-700' },
   { value: 'meeting', label: 'Gặp mặt', icon: '🤝', color: 'bg-purple-100 text-purple-700' },
@@ -56,11 +66,7 @@ export default function LeadDetail() {
   const [leadTitleDraft, setLeadTitleDraft] = useState('');
   const [savingLeadTitle, setSavingLeadTitle] = useState(false);
   const [approvalForm, setApprovalForm] = useState({ type: 'drawing', title: '', note: '' });
-  const [zaloWonPreview, setZaloWonPreview] = useState(null);
-  const [zaloWonPreviewLoading, setZaloWonPreviewLoading] = useState(false);
-  const [zaloWonSendLoading, setZaloWonSendLoading] = useState(false);
-  const [zaloWonForceResend, setZaloWonForceResend] = useState(false);
-  const [zaloWonSendResult, setZaloWonSendResult] = useState(null);
+  const [zaloQuickSendLoading, setZaloQuickSendLoading] = useState(false);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -131,47 +137,46 @@ export default function LeadDetail() {
     setLoading(false);
   };
 
-  const loadZaloWonPreview = useCallback(async () => {
-    if (!id) return;
-    setZaloWonPreviewLoading(true);
-    setZaloWonSendResult(null);
-    try {
-      const { data } = await api.get(`/crm/leads/${id}/zalo-notify-preview`);
-      setZaloWonPreview(data);
-    } catch {
-      setZaloWonPreview(null);
-    } finally {
-      setZaloWonPreviewLoading(false);
-    }
-  }, [id]);
-
-  const isDealWonForZalo = useMemo(() => {
+  const isDealHoanThanhForZalo = useMemo(() => {
     if (!lead || lead.type !== 'deal') return false;
     const st = stagesDeal.find((s) => s.id === lead.stage_id);
-    return !!st?.is_won;
+    return !!(st && isCrmDealStageHoanThanhName(st.name));
   }, [lead, stagesDeal]);
 
-  useEffect(() => {
-    if (!isDealWonForZalo) {
-      setZaloWonPreview(null);
-      return;
-    }
-    loadZaloWonPreview();
-  }, [isDealWonForZalo, lead?.stage_id, loadZaloWonPreview]);
-
-  const sendZaloWonNotify = async () => {
-    setZaloWonSendLoading(true);
-    setZaloWonSendResult(null);
+  /** Một bước: điền template từ deal (cấu trúc lưu trên server / Cài đặt Pipeline) + gửi Zalo */
+  const quickSendZaloOa = useCallback(async () => {
+    if (!id || !isDealHoanThanhForZalo) return;
+    setZaloQuickSendLoading(true);
     try {
-      const { data } = await api.post(`/crm/leads/${id}/zalo-notify-send`, { force: zaloWonForceResend });
-      setZaloWonSendResult(data);
-      await loadZaloWonPreview();
+      const { data: fillRes } = await api.post(`/crm/leads/${id}/zalo-template-fill`, {});
+      const filled = fillRes?.filled;
+      if (!filled || typeof filled !== 'object') {
+        alert('Không điền được dữ liệu từ deal');
+        return;
+      }
+      const postSend = async (force) => {
+        const { data } = await api.post(`/crm/leads/${id}/zalo-notify-send`, { force, template_data: filled });
+        return data;
+      };
+      let sendRes = await postSend(false);
+      if (sendRes?.skipped && sendRes?.reason === 'already_sent') {
+        if (!window.confirm('Đã gửi Zalo thành công cho giai đoạn này. Gửi lại lần nữa?')) return;
+        sendRes = await postSend(true);
+      }
+      if (sendRes?.ok && !sendRes?.skipped) {
+        alert('Đã gửi tin Zalo OA tới khách hàng.');
+        load();
+      } else if (sendRes?.skipped && sendRes?.reason && sendRes?.reason !== 'already_sent') {
+        alert(sendRes.message || sendRes.reason || 'Đã bỏ qua gửi Zalo');
+      } else if (!sendRes?.ok) {
+        alert(sendRes?.hint_vi || sendRes?.message || JSON.stringify(sendRes || {}));
+      }
     } catch (e) {
-      setZaloWonSendResult({ ok: false, error: e.response?.data?.error || e.message });
+      alert(e.response?.data?.error || e.message || 'Lỗi gửi Zalo');
     } finally {
-      setZaloWonSendLoading(false);
+      setZaloQuickSendLoading(false);
     }
-  };
+  }, [id, isDealHoanThanhForZalo, load]);
 
   const moveStage = async (stageId, extraData = {}) => {
     const stages = lead?.type === 'deal' ? stagesDeal : stagesLead;
@@ -464,6 +469,18 @@ export default function LeadDetail() {
           <button onClick={() => setShowExcelImport(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
             📥 Import Excel
           </button>
+          {lead.type === 'deal' && isDealHoanThanhForZalo && (
+            <button
+              type="button"
+              disabled={zaloQuickSendLoading}
+              onClick={() => quickSendZaloOa()}
+              title="Điền mẫu từ deal (cấu trúc trong Cài đặt Pipeline → Zalo OA) và gửi tin Zalo OA"
+              className="h-9 px-3 bg-[#0068FF] hover:bg-[#0056d4] text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              {zaloQuickSendLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+              Gửi Zalo
+            </button>
+          )}
           {lead.project_id && (
             <>
               <Link to={`/sx/projects/${lead.project_id}`} className="h-9 px-3 bg-teal-100 text-teal-800 rounded-lg text-sm font-medium flex items-center gap-1.5">
@@ -539,144 +556,6 @@ export default function LeadDetail() {
           })}
         </div>
       </div>
-
-      {/* Deal Thắng — gửi Zalo OA (cấu hình Pipeline + template) */}
-      {lead.type === 'deal' && isPipelineComplete && (
-        <div className="bg-sky-50 border border-sky-200 rounded-xl p-5 space-y-3 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <MessageCircle className="h-5 w-5 text-sky-600 shrink-0" />
-              <div>
-                <h3 className="text-sm font-bold text-sky-900">Thông báo Zalo (OA)</h3>
-                <p className="text-[11px] text-sky-700 mt-0.5">
-                  <code className="text-[10px] bg-white/80 px-1 rounded">template_id</code> và{' '}
-                  <code className="text-[10px] bg-white/80 px-1 rounded">access_token</code> lưu tại{' '}
-                  <Link to="/crm/pipeline-settings" className="underline font-medium text-sky-800">Cài đặt Pipeline → Zalo OA</Link>.
-                  Cột deal <strong>{zaloWonPreview?.stage?.name || 'Thắng'}</strong>:{' '}
-                  {zaloWonPreview?.stage?.send_zalo_on_enter ? (
-                    <span className="text-emerald-700 font-medium">đã bật tự gửi khi vào cột</span>
-                  ) : (
-                    <span className="text-amber-800 font-medium">chưa bật tự gửi trên cột (chỉ gửi tay bên dưới)</span>
-                  )}.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => loadZaloWonPreview()}
-              className="text-xs flex items-center gap-1 px-2 py-1 rounded-lg border border-sky-300 bg-white text-sky-800 hover:bg-sky-100 cursor-pointer"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${zaloWonPreviewLoading ? 'animate-spin' : ''}`} />
-              Làm mới xem trước
-            </button>
-          </div>
-
-          {zaloWonPreviewLoading && (
-            <div className="flex items-center gap-2 text-sm text-sky-800 py-2">
-              <Loader2 className="h-4 w-4 animate-spin" /> Đang tải cấu hình…
-            </div>
-          )}
-
-          {!zaloWonPreviewLoading && !zaloWonPreview && (
-            <p className="text-xs text-red-700">Không tải được bản xem. Kiểm tra quyền đăng nhập hoặc thử làm mới.</p>
-          )}
-
-          {zaloWonPreview && (
-            <>
-              {!zaloWonPreview.eligible && (
-                <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
-                  <p className="font-semibold">Chưa đủ điều kiện gửi:</p>
-                  <ul className="list-disc pl-4 space-y-0.5">
-                    {!zaloWonPreview.zalo_app?.enabled && <li>Bật «Gửi Zalo» trong cấu hình OA</li>}
-                    {!zaloWonPreview.zalo_app?.template_id && <li>Thiếu template_id</li>}
-                    {!zaloWonPreview.zalo_app?.has_access_token && <li>Thiếu access_token (đã lưu)</li>}
-                    {!zaloWonPreview.destination_phone_ok && <li>SĐT khách không hợp lệ để gửi dạng 84…</li>}
-                  </ul>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
-                <div className="bg-white/90 border border-sky-100 rounded-lg p-3 space-y-1.5 font-mono text-sky-950">
-                  <p className="text-[10px] font-sans font-bold text-sky-800 uppercase tracking-wide">Cấu hình (Pipeline / OA)</p>
-                  <p><span className="text-sky-600">template_id:</span> {zaloWonPreview.zalo_app?.template_id || '—'}</p>
-                  <p><span className="text-sky-600">sending_mode:</span> {zaloWonPreview.zalo_app?.sending_mode || '1'}</p>
-                  <p><span className="text-sky-600">access_token:</span>{' '}
-                    {zaloWonPreview.zalo_app?.has_access_token
-                      ? zaloWonPreview.zalo_app.access_token_preview || '••••'
-                      : <span className="text-red-600">chưa lưu</span>}
-                  </p>
-                  <p className="font-sans text-gray-700"><span className="text-sky-600">KH:</span> {zaloWonPreview.customer?.full_name} — SĐT {zaloWonPreview.customer?.phone_display}</p>
-                </div>
-                <div className="bg-white/90 border border-sky-100 rounded-lg p-3 space-y-1">
-                  <p className="text-[10px] font-bold text-sky-800 uppercase tracking-wide">Nội dung template_data (gửi đi)</p>
-                  <pre className="text-[10px] leading-relaxed overflow-x-auto max-h-36 whitespace-pre-wrap break-all">
-                    {JSON.stringify(zaloWonPreview.template_data || {}, null, 2)}
-                  </pre>
-                </div>
-              </div>
-
-              <details className="text-[11px]">
-                <summary className="cursor-pointer text-sky-800 font-medium">Payload JSON gửi Zalo (xem trước)</summary>
-                <pre className="mt-2 p-3 bg-white border border-sky-100 rounded-lg overflow-x-auto text-[10px] leading-relaxed max-h-48">
-                  {JSON.stringify(zaloWonPreview.request_payload_preview || {}, null, 2)}
-                </pre>
-              </details>
-
-              {zaloWonPreview.previous_send?.msg_id && (
-                <p className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-2 py-1.5">
-                  Đã gửi thành công trước đó — <span className="font-mono">msg_id: {zaloWonPreview.previous_send.msg_id}</span>
-                  {zaloWonPreview.previous_send.updated_at && (
-                    <span className="text-emerald-700"> — {new Date(zaloWonPreview.previous_send.updated_at).toLocaleString('vi-VN')}</span>
-                  )}
-                </p>
-              )}
-              {zaloWonPreview.previous_send?.error_message && !zaloWonPreview.previous_send?.msg_id && (
-                <div className="text-[11px] text-red-800 bg-red-50 border border-red-100 rounded-lg px-2 py-1.5 space-y-1">
-                  <p>Lần trước: {zaloWonPreview.previous_send.error_message}</p>
-                  <p className="text-red-900/90 font-sans">
-                    {zaloWonPreview.hints?.after_failed_send ||
-                      'Sửa template/cấu hình rồi bấm «Gửi thông báo Zalo» lại — không cần xóa dòng trong database.'}
-                  </p>
-                </div>
-              )}
-
-              {zaloWonPreview.previous_send?.msg_id && (
-                <label className="flex items-center gap-2 text-xs text-sky-900 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={zaloWonForceResend}
-                    onChange={(e) => setZaloWonForceResend(e.target.checked)}
-                    className="rounded border-sky-400"
-                  />
-                  Gửi lại (ghi đè lần gửi OK trước — chỉ khi cần)
-                </label>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  disabled={zaloWonSendLoading || !zaloWonPreview.eligible || (zaloWonPreview.previous_send?.msg_id && !zaloWonForceResend)}
-                  onClick={sendZaloWonNotify}
-                  className="h-9 px-4 rounded-lg text-sm font-semibold bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
-                >
-                  {zaloWonSendLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  Gửi thông báo Zalo
-                </button>
-                {zaloWonPreview.previous_send?.msg_id && !zaloWonForceResend && (
-                  <span className="text-[10px] text-sky-700">Tích «Gửi lại» để gửi thêm lần nữa.</span>
-                )}
-              </div>
-
-              {zaloWonSendResult && (
-                <div className={`text-xs rounded-lg p-3 border ${zaloWonSendResult.ok && !zaloWonSendResult.skipped ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : zaloWonSendResult.skipped && zaloWonSendResult.reason === 'already_sent' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-red-50 border-red-200 text-red-900'}`}>
-                  <pre className="whitespace-pre-wrap break-all text-[10px] mt-1">{JSON.stringify(zaloWonSendResult, null, 2)}</pre>
-                  {zaloWonSendResult.hint_vi && <p className="mt-2 font-sans text-[11px]">{zaloWonSendResult.hint_vi}</p>}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Left: Customer Info */}
