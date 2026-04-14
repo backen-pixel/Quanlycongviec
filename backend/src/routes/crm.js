@@ -52,6 +52,31 @@ function maskCustomerPhoneDisplay(phone) {
   return `${d.slice(0, 3)}****${d.slice(-2)}`;
 }
 
+/** Lead/Deal chỉ một người phụ trách: đồng bộ assigned_to ↔ lead_owner_id trên object cập nhật. */
+function unifyCrmLeadResponsibleFields(body) {
+  const hasA = Object.prototype.hasOwnProperty.call(body, 'assigned_to');
+  const hasL = Object.prototype.hasOwnProperty.call(body, 'lead_owner_id');
+  if (!hasA && !hasL) return body;
+  const norm = (v) => {
+    if (v === undefined || v === null || v === '') return null;
+    return v;
+  };
+  let owner;
+  if (hasA && hasL) {
+    const a = norm(body.assigned_to);
+    const l = norm(body.lead_owner_id);
+    if (a != null && l != null && String(a) !== String(l)) owner = a;
+    else owner = a ?? l;
+  } else if (hasA) {
+    owner = norm(body.assigned_to);
+  } else {
+    owner = norm(body.lead_owner_id);
+  }
+  body.assigned_to = owner;
+  body.lead_owner_id = owner;
+  return body;
+}
+
 /**
  * Gửi Zalo OA theo cấu hình app_settings + template deal.
  * @param {object} opts
@@ -1199,7 +1224,7 @@ r.post('/leads/merge-selected', async (req, res) => {
 });
 
 // ═══ GÁN PHỤ TRÁCH HÀNG LOẠT (cùng checkbox chọn Kanban với gộp thủ công) ═══
-// assigned_to = phụ trách deal; lead_owner_id = chủ lead / phụ trách lead (khác nhau, áp dụng cả lead & deal)
+// Một người phụ trách: assigned_to và lead_owner_id luôn cùng giá trị.
 r.post('/leads/bulk-assign', async (req, res) => {
   try {
     const { ids, assigned_to, lead_owner_id } = req.body;
@@ -1213,9 +1238,18 @@ r.post('/leads/bulk-assign', async (req, res) => {
     const hasA = assigned_to != null && String(assigned_to).trim() !== '';
     const hasL = lead_owner_id != null && String(lead_owner_id).trim() !== '';
     if (!hasA && !hasL) {
-      const err = new Error('Chọn ít nhất phụ trách deal hoặc chủ lead');
+      const err = new Error('Chọn người phụ trách');
       err.status = 400;
       throw err;
+    }
+
+    let ownerId = null;
+    if (hasA && hasL && String(assigned_to).trim() !== String(lead_owner_id).trim()) {
+      ownerId = String(assigned_to).trim();
+    } else if (hasA) {
+      ownerId = String(assigned_to).trim();
+    } else {
+      ownerId = String(lead_owner_id).trim();
     }
 
     const { data: olds, error: fErr } = await supabase
@@ -1241,9 +1275,11 @@ r.post('/leads/bulk-assign', async (req, res) => {
       throw err;
     }
 
-    const updatePayload = { updated_at: new Date().toISOString() };
-    if (hasA) updatePayload.assigned_to = assigned_to;
-    if (hasL) updatePayload.lead_owner_id = lead_owner_id;
+    const updatePayload = {
+      updated_at: new Date().toISOString(),
+      assigned_to: ownerId,
+      lead_owner_id: ownerId,
+    };
 
     const { error: uErr } = await supabase.from('crm_leads').update(updatePayload).in('id', idList);
     if (uErr) throw uErr;
@@ -1253,51 +1289,21 @@ r.post('/leads/bulk-assign', async (req, res) => {
 
     for (const old of olds) {
       try {
-        const newA = hasA ? assigned_to : old.assigned_to;
-        const newL = hasL ? lead_owner_id : old.lead_owner_id;
-        const aCh = hasA && String(newA || '') !== String(old.assigned_to || '');
-        const lCh = hasL && String(newL || '') !== String(old.lead_owner_id || '');
-        if (!aCh && !lCh) continue;
-
+        const prev = old.assigned_to || old.lead_owner_id;
+        const changed = String(ownerId || '') !== String(prev || '');
+        if (!changed) continue;
+        if (!ownerId || String(ownerId) === String(req.user.userId)) continue;
         const lab = labelRow(old);
         const ent = entityType(old);
-
-        if (aCh && lCh && String(newA) === String(newL)) {
-          const uid = newA;
-          if (String(uid) === String(req.user.userId)) continue;
-          await createNotification(
-            req,
-            uid,
-            'lead_assigned',
-            `👤 Bạn được gán chủ lead & phụ trách deal (${lab})`,
-            `${lab} "${old.title || ''}" — cả hai vai trò`,
-            ent,
-            old.id
-          );
-        } else {
-          if (aCh && newA && String(newA) !== String(req.user.userId)) {
-            await createNotification(
-              req,
-              newA,
-              'lead_assigned',
-              `👤 ${lab} — phụ trách deal`,
-              `${lab} "${old.title || ''}" được giao cho bạn phụ trách deal`,
-              ent,
-              old.id
-            );
-          }
-          if (lCh && newL && String(newL) !== String(req.user.userId)) {
-            await createNotification(
-              req,
-              newL,
-              'lead_assigned',
-              `👤 ${lab} — chủ lead`,
-              `${lab} "${old.title || ''}" — bạn là chủ lead / phụ trách lead`,
-              ent,
-              old.id
-            );
-          }
-        }
+        await createNotification(
+          req,
+          ownerId,
+          'lead_assigned',
+          `👤 ${lab} được giao cho bạn`,
+          `${lab} "${old.title || ''}" được giao cho bạn phụ trách`,
+          ent,
+          old.id
+        );
       } catch (ne) {
         console.warn('[bulk-assign] notify:', ne.message);
       }
@@ -1663,8 +1669,9 @@ r.post('/leads', async (req, res) => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
     if (!body.assigned_to) body.assigned_to = req.user.userId;
+    body.lead_owner_id = body.assigned_to;
     const { data, error } = await supabase.from('crm_leads')
-      .insert({ ...body, code, type: 'lead', lead_owner_id: req.user.userId, created_by: req.user.userId })
+      .insert({ ...body, code, type: 'lead', lead_owner_id: body.assigned_to, created_by: req.user.userId })
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
       .single();
     if (error) throw error;
@@ -1705,6 +1712,7 @@ r.post('/deals', async (req, res) => {
     if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
     if (!body.assigned_to) body.assigned_to = req.user.userId;
     if (!userSeesAllCrmDeals(req.user.role)) body.assigned_to = req.user.userId;
+    body.lead_owner_id = body.assigned_to;
 
     const { data: firstStage } = await supabase
       .from('crm_pipeline_stages')
@@ -1723,7 +1731,7 @@ r.post('/deals', async (req, res) => {
         code,
         type: 'deal',
         stage_id: body.stage_id || firstStage.id,
-        lead_owner_id: req.user.userId,
+        lead_owner_id: body.assigned_to,
         created_by: req.user.userId,
       })
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
@@ -1780,14 +1788,20 @@ r.put('/leads/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type').eq('id', id).single();
-    if (oldLead?.type === 'deal' && !userSeesAllCrmDeals(req.user.role)) {
-      if (req.body.assigned_to != null && String(req.body.assigned_to) !== String(req.user.userId)) {
-        return res.status(403).json({ error: 'Bạn không thể giao phụ trách deal cho người khác.' });
-      }
-    }
+
     const safeBody = { ...req.body };
     delete safeBody.sx_pipeline_stage_id;
     delete safeBody.lead_seen_by;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'assigned_to') || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id')) {
+      unifyCrmLeadResponsibleFields(safeBody);
+    }
+
+    if (oldLead?.type === 'deal' && !userSeesAllCrmDeals(req.user.role)) {
+      if (safeBody.assigned_to != null && String(safeBody.assigned_to) !== String(req.user.userId)) {
+        return res.status(403).json({ error: 'Bạn không thể giao phụ trách deal cho người khác.' });
+      }
+    }
+
     const { data, error } = await supabase.from('crm_leads')
       .update({ ...safeBody, updated_at: new Date().toISOString() })
       .eq('id', id)
@@ -1796,18 +1810,18 @@ r.put('/leads/:id', async (req, res) => {
     if (error) throw error;
 
     try {
-      if (req.body.assigned_to && req.body.assigned_to !== oldLead?.assigned_to && req.body.assigned_to !== req.user.userId) {
-        const label = oldLead?.type === 'deal' ? 'Deal' : 'Lead';
-        await createNotification(req, req.body.assigned_to, 'lead_assigned',
-          `👤 ${label} được giao cho bạn`,
-          `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
-          oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id);
-      }
-      if (req.body.lead_owner_id && req.body.lead_owner_id !== oldLead?.lead_owner_id && req.body.lead_owner_id !== req.user.userId) {
-        await createNotification(req, req.body.lead_owner_id, 'lead_assigned',
-          '👤 Bạn được giao phụ trách Lead',
-          `Lead "${oldLead?.title || data.title}" được giao cho bạn`,
-          'crm_lead', id);
+      const ownerUpdated = Object.prototype.hasOwnProperty.call(req.body, 'assigned_to')
+        || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id');
+      if (ownerUpdated) {
+        const newOwner = safeBody.assigned_to;
+        const prevOwner = oldLead?.assigned_to || oldLead?.lead_owner_id;
+        if (newOwner && String(newOwner) !== String(prevOwner || '') && String(newOwner) !== String(req.user.userId)) {
+          const label = oldLead?.type === 'deal' ? 'Deal' : 'Lead';
+          await createNotification(req, newOwner, 'lead_assigned',
+            `👤 ${label} được giao cho bạn`,
+            `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
+            oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id);
+        }
       }
     } catch (_) {}
 
@@ -2109,16 +2123,15 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên' });
     }
 
-    // Update lead → deal
-    const dealAssignedTo = req.body.assigned_to || lead.assigned_to || req.user.userId;
-    const leadOwnerId = lead.lead_owner_id || lead.assigned_to || req.user.userId;
+    // Update lead → deal (một người phụ trách)
+    const ownerId = req.body.assigned_to || lead.assigned_to || lead.lead_owner_id || req.user.userId;
     const { data: updatedLead, error: leadError } = await supabase
       .from('crm_leads')
       .update({
         type: 'deal',
         stage_id: firstDealStage.id,
-        assigned_to: dealAssignedTo,
-        lead_owner_id: leadOwnerId,
+        assigned_to: ownerId,
+        lead_owner_id: ownerId,
         company_id: req.body.company_id || lead.company_id || null,
         updated_at: new Date().toISOString(),
       })
@@ -2128,19 +2141,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     if (leadError) throw leadError;
 
-    // ✅ NOTIFICATION: Notify deal assignee about conversion
     try {
-      if (dealAssignedTo && dealAssignedTo !== req.user.userId) {
-        await createNotification(req, dealAssignedTo, 'deal_assigned',
+      if (ownerId && String(ownerId) !== String(req.user.userId)) {
+        await createNotification(req, ownerId, 'deal_assigned',
           '🚀 Deal mới được giao',
           `Lead "${lead.title}" đã chuyển thành Deal và giao cho bạn phụ trách`,
-          'crm_deal', req.params.id);
-      }
-      // Notify lead owner if different from deal assignee and current user
-      if (leadOwnerId && leadOwnerId !== dealAssignedTo && leadOwnerId !== req.user.userId) {
-        await createNotification(req, leadOwnerId, 'lead_converted',
-          '🔄 Lead đã chuyển sang Deal',
-          `Lead "${lead.title}" mà bạn phụ trách đã được chuyển thành Deal`,
           'crm_deal', req.params.id);
       }
     } catch (notifErr) { console.error('Convert notification error:', notifErr.message); }
@@ -2974,8 +2979,8 @@ async function getNotifyTargets(leadId) {
       const { data: lead } = await supabase.from('crm_leads')
         .select('assigned_to, lead_owner_id, customer_id')
         .eq('id', leadId).single();
-      if (lead?.assigned_to) targets.ownerIds.push(lead.assigned_to);
-      if (lead?.lead_owner_id && lead.lead_owner_id !== lead.assigned_to) targets.ownerIds.push(lead.lead_owner_id);
+      const oid = lead?.assigned_to || lead?.lead_owner_id;
+      if (oid) targets.ownerIds.push(oid);
     }
     const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
     targets.adminIds = (admins || []).map(u => u.id);

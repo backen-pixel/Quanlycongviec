@@ -15,8 +15,6 @@ const {
 /** Số contact xử lý mỗi lần gọi batch (50–500). Giảm nếu Graph hay 429. */
 const AUTO_BATCH_SIZE = Math.min(500, Math.max(50, parseInt(process.env.FB_AUTO_BATCH_SIZE || '300', 10) || 300));
 const AUTO_SYNC_TIMEOUT_SEC = Math.min(300, Math.max(30, parseInt(process.env.FB_AUTO_SYNC_TIMEOUT_SEC || '90', 10) || 90));
-/** Nghỉ giữa các chu kỳ quét full pool (ms). Tăng khi ~4000 user/tháng để giảm tải CPU/Graph. */
-const AUTO_LOOP_PAUSE_MS = Math.min(600_000, Math.max(1_000, parseInt(process.env.FB_AUTO_LOOP_PAUSE_MS || '1500', 10) || 1500));
 /** Pool tối đa khi load contact cho pipeline (mặc định 10000). ENV: FB_PIPELINE_POOL_LIMIT */
 const FB_PIPELINE_POOL_LIMIT = Math.min(50_000, Math.max(2_000, parseInt(process.env.FB_PIPELINE_POOL_LIMIT || '10000', 10) || 10_000));
 /** Luôn ưu tiên tối đa N contact chưa có lead (dù cũ) để không bỏ sót. ENV: FB_PIPELINE_NEEDY_NO_LEAD_CAP */
@@ -162,13 +160,13 @@ async function loadFacebookContactsForBatchPipeline({ recentHours = 0, applyStal
 
 const DEFAULT_FB_PIPELINE_CONFIG = {
   /**
-   * full_cycle (mặc định): lô batch-sync-messages + batch-extract-phones (như nút tay) → Tạo Lead → Refresh → Xóa trùng → sync-contact-phones → nghỉ → lặp.
+   * full_cycle (mặc định): lô batch-sync-messages + batch-extract-phones (như nút tay) → Tạo Lead → Refresh → Xóa trùng → sync-contact-phones → lặp ngay (mặc định không nghỉ).
    * chain: Sync→Quét từng user (runSyncThenExtractPhonesJob). legacy: chỉ lô đồng bộ + quét, không CRM sau.
    */
   engine: 'full_cycle',
   /** Tối đa số user mới nhất (đồng bộ+quét) mỗi vòng trước Tạo Lead… Pool đã sort mới→cũ. 0 = không giới hạn (hết pool). */
-  full_cycle_max_users_per_round: 500,
-  chain_chunk_users: 500,
+  full_cycle_max_users_per_round: 100,
+  chain_chunk_users: 100,
   /** newest_first | oldest_first */
   chain_sort: 'newest_first',
   /** 0 = không lọc theo giờ (cả pool). >0 = giờ hoạt động gần đây. */
@@ -178,8 +176,8 @@ const DEFAULT_FB_PIPELINE_CONFIG = {
   chain_final_lead_sync: true,
   chain_run_graph_sync: true,
   chain_run_extract: true,
-  /** Nghỉ giữa mỗi vòng Auto (giây). Mặc định 60 (1 phút). */
-  auto_loop_pause_sec: 60,
+  /** Nghỉ giữa mỗi vòng Auto (giây). 0 = lặp liền (không chờ). */
+  auto_loop_pause_sec: 0,
 };
 
 let fbPipelineConfigCache = { ...DEFAULT_FB_PIPELINE_CONFIG };
@@ -289,11 +287,11 @@ function compactExtractPhoneResultsForAuto(results) {
 }
 
 /** Gọi API Facebook nội bộ (auto pipeline), JSON body. */
-/** Nghỉ giữa các vòng auto (ưu tiên cấu hình DB, fallback ENV). */
+/** Nghỉ giữa các vòng auto (giây → ms). 0 = không nghỉ. */
 function getAutoLoopPauseMsFromConfig(pcfg) {
   const raw = pcfg?.auto_loop_pause_sec;
-  if (raw == null || raw === '') return AUTO_LOOP_PAUSE_MS;
-  const sec = Math.min(3600, Math.max(15, parseInt(raw, 10) || 60));
+  if (raw == null || raw === '') return 0;
+  const sec = Math.min(3600, Math.max(0, parseInt(raw, 10) || 0));
   return sec * 1000;
 }
 
@@ -314,7 +312,7 @@ async function autoPipelineInternalPostJson(apiPath, body = {}) {
  */
 async function runAutoLegacySyncExtractPhase(pipelineBodyBase, maxUsersCap = 0) {
   const cfg = getFbPipelineConfigSync();
-  const lim = Math.min(500, Math.max(50, parseInt(cfg.chain_chunk_users, 10) || AUTO_BATCH_SIZE));
+  const lim = Math.min(500, Math.max(1, parseInt(cfg.chain_chunk_users, 10) || AUTO_BATCH_SIZE));
   let pendingSyncData = null;
   let usersPhase = 0;
   let phaseMsgs = 0;
@@ -510,7 +508,7 @@ async function runAutoPipelineLoop() {
   const pcfgBoot = getFbPipelineConfigSync();
   const bootPauseSec = Math.round(getAutoLoopPauseMsFromConfig(pcfgBoot) / 1000);
   if (pcfgBoot.engine === 'full_cycle') {
-    const bootLim = Math.min(500, Math.max(50, parseInt(pcfgBoot.chain_chunk_users, 10) || AUTO_BATCH_SIZE));
+    const bootLim = Math.min(500, Math.max(1, parseInt(pcfgBoot.chain_chunk_users, 10) || AUTO_BATCH_SIZE));
     const bootCap = Math.min(500_000, Math.max(0, parseInt(pcfgBoot.full_cycle_max_users_per_round, 10) || 0));
     const capLabel = bootCap > 0 ? `tối đa ${bootCap} user mới nhất/vòng` : 'hết pool/vòng';
     pushAutoLog(
@@ -518,11 +516,11 @@ async function runAutoPipelineLoop() {
     );
   } else if (pcfgBoot.engine === 'chain') {
     pushAutoLog(
-      `🚀 Auto pipeline (chuỗi như danh bạ): ≤${pcfgBoot.chain_chunk_users} user/lần • pool ${pcfgBoot.chain_recent_hours === 0 ? 'full' : `${pcfgBoot.chain_recent_hours}h`} • sort=${pcfgBoot.chain_sort} • Graph ${pcfgBoot.chain_graph_pages} trang • nghỉ ${bootPauseSec}s/chu kỳ`,
+      `🚀 Auto pipeline (chuỗi như danh bạ): ≤${pcfgBoot.chain_chunk_users} user/lần • pool ${pcfgBoot.chain_recent_hours === 0 ? 'full' : `${pcfgBoot.chain_recent_hours}h`} • sort=${pcfgBoot.chain_sort} • Graph ${pcfgBoot.chain_graph_pages} trang • ${bootPauseSec > 0 ? `nghỉ ${bootPauseSec}s/chu kỳ` : 'lặp liền (không nghỉ)'}`,
     );
   } else {
     pushAutoLog(
-      `🚀 Auto pipeline (legacy): pool≤${FB_PIPELINE_POOL_LIMIT} (ưu tiên chưa lead≤${FB_PIPELINE_NEEDY_NO_LEAD_CAP}) • ${AUTO_PIPELINE_RECENT_HOURS}h • batch=${AUTO_BATCH_SIZE} • Graph ${FB_SYNC_BATCH_GRAPH_MAX_PAGES} trang/contact • nghỉ chu kỳ ${bootPauseSec}s`,
+      `🚀 Auto pipeline (legacy): pool≤${FB_PIPELINE_POOL_LIMIT} (ưu tiên chưa lead≤${FB_PIPELINE_NEEDY_NO_LEAD_CAP}) • ${AUTO_PIPELINE_RECENT_HOURS}h • batch=${AUTO_BATCH_SIZE} • Graph ${FB_SYNC_BATCH_GRAPH_MAX_PAGES} trang/contact • ${bootPauseSec > 0 ? `nghỉ chu kỳ ${bootPauseSec}s` : 'lặp liền'}`,
     );
   }
 
@@ -760,17 +758,21 @@ async function runAutoPipelineLoop() {
     if (!autoPipeline.enabled || autoPipeline.stopRequested) break;
 
     const pauseMs = getAutoLoopPauseMsFromConfig(pcfg);
-    if (pcfg.engine === 'full_cycle') {
-      pushAutoLog(`⏭️ Full cycle: nghỉ ${pauseMs / 1000}s rồi lặp (từ đầu pool / đủ N user)`);
-    } else if (pcfg.engine !== 'chain') {
-      pushAutoLog(`⏭️ Legacy: nghỉ ${pauseMs / 1000}s rồi lặp (${AUTO_PIPELINE_RECENT_HOURS}h)`);
-    } else {
-      pushAutoLog(`⏭️ Chain: nghỉ ${pauseMs / 1000}s rồi lặp từ offset 0`);
-    }
-
     if (!autoPipeline.enabled || autoPipeline.stopRequested) break;
-    pushAutoLog(`♻️ Nghỉ ${pauseMs / 1000}s rồi lặp chu kỳ ${autoPipeline.cycleCount + 1}...`);
-    await new Promise(resolve => setTimeout(resolve, pauseMs));
+
+    if (pauseMs > 0) {
+      if (pcfg.engine === 'full_cycle') {
+        pushAutoLog(`⏭️ Full cycle: nghỉ ${pauseMs / 1000}s rồi lặp (từ đầu pool / đủ N user)`);
+      } else if (pcfg.engine !== 'chain') {
+        pushAutoLog(`⏭️ Legacy: nghỉ ${pauseMs / 1000}s rồi lặp (${AUTO_PIPELINE_RECENT_HOURS}h)`);
+      } else {
+        pushAutoLog(`⏭️ Chain: nghỉ ${pauseMs / 1000}s rồi lặp từ offset 0`);
+      }
+      pushAutoLog(`♻️ Nghỉ ${pauseMs / 1000}s rồi lặp chu kỳ ${autoPipeline.cycleCount + 1}...`);
+      await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    } else {
+      pushAutoLog(`⏭️ Chu kỳ tiếp theo (${autoPipeline.cycleCount + 1}) — chạy liền, không nghỉ giữa vòng`);
+    }
   }
 
   autoPipeline.running = false;
@@ -4172,7 +4174,7 @@ async function saveFbPipelineConfig(partial) {
   };
   if (!['chain', 'legacy', 'full_cycle'].includes(merged.engine)) merged.engine = 'full_cycle';
   merged.full_cycle_max_users_per_round = Math.min(500_000, Math.max(0, parseInt(merged.full_cycle_max_users_per_round, 10) || 0));
-  merged.chain_chunk_users = Math.min(500, Math.max(1, parseInt(merged.chain_chunk_users, 10) || 500));
+  merged.chain_chunk_users = Math.min(500, Math.max(1, parseInt(merged.chain_chunk_users, 10) || 100));
   merged.chain_sort = merged.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
   merged.chain_recent_hours = Math.min(168, Math.max(0, parseInt(merged.chain_recent_hours, 10) || 0));
   merged.chain_graph_pages = Math.min(30, Math.max(1, parseInt(merged.chain_graph_pages, 10) || FB_SYNC_SINGLE_MAX_PAGES));
@@ -4180,7 +4182,7 @@ async function saveFbPipelineConfig(partial) {
   merged.chain_final_lead_sync = merged.chain_final_lead_sync !== false;
   merged.chain_run_graph_sync = merged.chain_run_graph_sync !== false;
   merged.chain_run_extract = merged.chain_run_extract !== false;
-  merged.auto_loop_pause_sec = Math.min(3600, Math.max(15, parseInt(merged.auto_loop_pause_sec, 10) || 60));
+  merged.auto_loop_pause_sec = Math.min(3600, Math.max(0, parseInt(merged.auto_loop_pause_sec, 10) || 0));
   await supabase.from('app_settings').upsert({
     key: 'fb_auto_pipeline_config',
     value: merged,

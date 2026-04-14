@@ -60,7 +60,7 @@ export function ListView({ pipeline, pipelineType, calculateDays }) {
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-right font-medium text-gray-900 whitespace-nowrap">{item.estimated_value > 0 ? formatVND(item.estimated_value) : '—'}</td>
-                <td className="px-4 py-2.5 text-gray-600 text-xs">{item.assignee?.full_name || '—'}</td>
+                <td className="px-4 py-2.5 text-gray-600 text-xs">{item.assignee?.full_name || item.lead_owner?.full_name || '—'}</td>
                 <td className="px-4 py-2.5 text-gray-500 text-xs">{item.source?.icon} {item.source?.name || '—'}</td>
                 <td className="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">{formatDate(item.created_at)}</td>
                 <td className="px-4 py-2.5 text-xs whitespace-nowrap">

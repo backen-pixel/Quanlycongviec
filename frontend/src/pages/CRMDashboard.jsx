@@ -477,8 +477,8 @@ export default function CRMDashboard() {
     return !!((item.customer?.phone && item.customer.phone.trim()) || (item.phone && item.phone.trim()));
   }, []);
 
-  /** pipelineKind: 'lead' | 'deal' — deal chỉ lọc theo phụ trách deal (assigned_to), không lẫn chủ lead */
-  const filterItemsForPipeline = useCallback((items, pipelineKind) => {
+  /** pipelineKind: 'lead' | 'deal' — một người phụ trách (assigned_to đồng bộ lead_owner) */
+  const filterItemsForPipeline = useCallback((items, _pipelineKind) => {
     let result = items;
 
     // Company filter
@@ -490,12 +490,6 @@ export default function CRMDashboard() {
     if (filterAssignee) {
       const fid = String(filterAssignee).trim().toLowerCase();
       result = result.filter((l) => {
-        if (pipelineKind === 'deal') {
-          const ids = [l.assigned_to, l.assignee?.id]
-            .filter(Boolean)
-            .map((x) => String(x).trim().toLowerCase());
-          return ids.includes(fid);
-        }
         const ids = [l.assigned_to, l.lead_owner_id, l.assignee?.id, l.lead_owner?.id]
           .filter(Boolean)
           .map((x) => String(x).trim().toLowerCase());
@@ -507,12 +501,8 @@ export default function CRMDashboard() {
     if (filterAssigneeName.trim()) {
       const qn = filterAssigneeName.trim().toLowerCase();
       result = result.filter((l) => {
-        if (pipelineKind === 'deal') {
-          return (l.assignee?.full_name || '').toLowerCase().includes(qn);
-        }
-        const an = (l.assignee?.full_name || '').toLowerCase();
-        const lo = (l.lead_owner?.full_name || '').toLowerCase();
-        return an.includes(qn) || lo.includes(qn);
+        const name = (l.assignee?.full_name || l.lead_owner?.full_name || '').toLowerCase();
+        return name.includes(qn);
       });
     }
 
@@ -1365,15 +1355,13 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
 
 /** Gán NV phụ trách hàng loạt — dùng cùng ô chọn Kanban với gộp thủ công */
 function BulkAssignLeadsModal({ open, onClose, ids, pipelineType, users, onDone }) {
-  const [assignDealId, setAssignDealId] = useState('');
-  const [assignLeadOwnerId, setAssignLeadOwnerId] = useState('');
+  const [assignUserId, setAssignUserId] = useState('');
   const [assigneeSearch, setAssigneeSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setAssignDealId('');
-      setAssignLeadOwnerId('');
+      setAssignUserId('');
       setAssigneeSearch('');
     }
   }, [open, ids]);
@@ -1401,27 +1389,21 @@ function BulkAssignLeadsModal({ open, onClose, ids, pipelineType, users, onDone 
     return list;
   };
 
-  const filteredDealUsers = useMemo(
-    () => pinSelected(filteredBase, assignDealId),
-    [filteredBase, activeUsers, assignDealId]
-  );
-  const filteredOwnerUsers = useMemo(
-    () => pinSelected(filteredBase, assignLeadOwnerId),
-    [filteredBase, activeUsers, assignLeadOwnerId]
+  const filteredUsers = useMemo(
+    () => pinSelected(filteredBase, assignUserId),
+    [filteredBase, activeUsers, assignUserId]
   );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!idList.length) return;
-    if (!assignDealId && !assignLeadOwnerId) {
-      alert('Chọn ít nhất phụ trách deal hoặc chủ lead');
+    if (!assignUserId) {
+      alert('Chọn người phụ trách');
       return;
     }
     setSaving(true);
     try {
-      const body = { ids: idList };
-      if (assignDealId) body.assigned_to = assignDealId;
-      if (assignLeadOwnerId) body.lead_owner_id = assignLeadOwnerId;
+      const body = { ids: idList, assigned_to: assignUserId };
       await api.post('/crm/leads/bulk-assign', body);
       onDone();
     } catch (err) {
@@ -1451,7 +1433,7 @@ function BulkAssignLeadsModal({ open, onClose, ids, pipelineType, users, onDone 
               Áp dụng cho <strong>{idList.length}</strong> {kind} đang chọn trên Kanban.
             </p>
             <p className="text-xs text-gray-600 mt-2 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 leading-relaxed">
-              <strong>Phụ trách deal</strong> (NV được giao) và <strong>chủ lead</strong> (người giữ lead gốc) là hai vai trò khác nhau — áp dụng cho cả Lead và Deal. Chọn một hoặc cả hai; dòng nào để trống thì giữ nguyên trên thẻ.
+              Mỗi thẻ chỉ có <strong>một người phụ trách</strong> (áp dụng cho cả Lead và Deal). Gán sẽ cập nhật trên toàn bộ thẻ đã chọn.
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 cursor-pointer" aria-label="Đóng">
@@ -1464,7 +1446,7 @@ function BulkAssignLeadsModal({ open, onClose, ids, pipelineType, users, onDone 
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-800 mb-1.5">Tìm nhân viên (lọc cả hai danh sách)</label>
+              <label className="block text-sm font-medium text-gray-800 mb-1.5">Tìm nhân viên</label>
               <div className="relative mb-3">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
                 <input
@@ -1476,39 +1458,22 @@ function BulkAssignLeadsModal({ open, onClose, ids, pipelineType, users, onDone 
                   autoComplete="off"
                 />
               </div>
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-emerald-800 mb-1">Phụ trách deal</label>
-                  <select
-                    value={assignDealId}
-                    onChange={(ev) => setAssignDealId(ev.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:border-transparent cursor-pointer"
-                  >
-                    <option value="">— Giữ nguyên —</option>
-                    {filteredDealUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.full_name || u.email || u.id}{u.position ? ` — ${u.position}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-indigo-800 mb-1">Chủ lead / phụ trách lead</label>
-                  <select
-                    value={assignLeadOwnerId}
-                    onChange={(ev) => setAssignLeadOwnerId(ev.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:border-transparent cursor-pointer"
-                  >
-                    <option value="">— Giữ nguyên —</option>
-                    {filteredOwnerUsers.map((u) => (
-                      <option key={`lo-${u.id}`} value={u.id}>
-                        {u.full_name || u.email || u.id}{u.position ? ` — ${u.position}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-800 mb-1">Người phụ trách</label>
+                <select
+                  value={assignUserId}
+                  onChange={(ev) => setAssignUserId(ev.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:border-transparent cursor-pointer"
+                >
+                  <option value="">— Chọn —</option>
+                  {filteredUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.full_name || u.email || u.id}{u.position ? ` — ${u.position}` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
-              {assigneeSearch.trim() && filteredBase.length === 0 && !assignDealId && !assignLeadOwnerId && (
+              {assigneeSearch.trim() && filteredBase.length === 0 && !assignUserId && (
                 <p className="text-xs text-amber-700 mt-1.5">
                   {`Không có nhân viên khớp "${assigneeSearch.trim()}".`}
                 </p>
@@ -1520,7 +1485,7 @@ function BulkAssignLeadsModal({ open, onClose, ids, pipelineType, users, onDone 
               </button>
               <button
                 type="submit"
-                disabled={saving || (!assignDealId && !assignLeadOwnerId)}
+                disabled={saving || !assignUserId}
                 className="h-10 px-5 rounded-lg bg-amber-600 text-white text-sm font-bold hover:bg-amber-700 disabled:opacity-50 cursor-pointer"
               >
                 {saving ? 'Đang lưu…' : 'Xác nhận gán'}
@@ -2022,85 +1987,29 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
         </div>
       )}
 
-      {/* Tab Lead: hiển thị phụ trách lead (chủ lead) + phụ trách deal (NV được giao); tab Deal: chỉ NV được giao */}
+      {/* Một người phụ trách (Lead & Deal) */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          {pipelineType === 'lead' ? (
-            (() => {
-              const lo = item.lead_owner;
-              const as = item.assignee;
-              const same = lo && as && String(lo.id) === String(as.id);
-              if (same) {
-                return (
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div
-                      className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
-                      style={{ backgroundColor: stageColor }}
-                    >
-                      {getInitials(as.full_name)}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-gray-400 leading-tight">Phụ trách lead và deal</p>
-                      <p className="text-xs text-gray-700 font-medium truncate">{as.full_name}</p>
-                    </div>
-                  </div>
-                );
-              }
-              return (
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {lo ? (
-                      <>
-                        <div
-                          className="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 bg-indigo-500"
-                        >
-                          {getInitials(lo.full_name)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-[10px] text-gray-400 leading-tight">Phụ trách lead</p>
-                          <p className="text-xs text-gray-700 truncate">{lo.full_name}</p>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="text-[10px] text-gray-400"><span className="text-gray-500">Phụ trách lead:</span> —</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 min-w-0">
-                    {as ? (
-                      <>
-                        <div
-                          className="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
-                          style={{ backgroundColor: stageColor }}
-                        >
-                          {getInitials(as.full_name)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-[10px] text-gray-400 leading-tight">Phụ trách deal</p>
-                          <p className="text-xs text-gray-600 truncate">{as.full_name}</p>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="text-[10px] text-gray-400"><span className="text-gray-500">Phụ trách deal:</span> —</p>
-                    )}
-                  </div>
+          {(() => {
+            const u = item.assignee || item.lead_owner;
+            if (!u) {
+              return <p className="text-[10px] text-gray-400"><span className="text-gray-500">Phụ trách:</span> —</p>;
+            }
+            return (
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                  style={{ backgroundColor: stageColor }}
+                >
+                  {getInitials(u.full_name)}
                 </div>
-              );
-            })()
-          ) : (
-            <div className="flex items-center gap-2">
-              {item.assignee && (
-                <>
-                  <div
-                    className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                    style={{ backgroundColor: stageColor }}
-                  >
-                    {getInitials(item.assignee.full_name)}
-                  </div>
-                  <span className="text-xs text-gray-600">{item.assignee.full_name}</span>
-                </>
-              )}
-            </div>
-          )}
+                <div className="min-w-0">
+                  <p className="text-[10px] text-gray-400 leading-tight">Phụ trách</p>
+                  <p className="text-xs text-gray-700 font-medium truncate">{u.full_name}</p>
+                </div>
+              </div>
+            );
+          })()}
         </div>
         <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded whitespace-nowrap shrink-0">
           {calculateDays(item.created_at)}
