@@ -5,6 +5,29 @@ import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCirc
 /** Hai mẫu theo tài liệu Zalo / ví dụ template ngắn — ID chỉ để thử form; OA thật cần template_id của bạn */
 const ZALO_TEST_PRESETS = [
   {
+    key: 'won566121',
+    label: 'Deal Thắng (566121 — mặc định)',
+    phone: '84987654321',
+    templateId: '566121',
+    templateJson: `{
+  "ten_san_pham": "Tủ bếp nhôm cánh kính",
+  "order_code": "BG-002",
+  "date": "13/04/2026",
+  "ten_khach_hang": "Tên"
+}`,
+  },
+  {
+    key: 'won565773',
+    label: 'Mẫu 3 biến (565773)',
+    phone: '84987654321',
+    templateId: '565773',
+    templateJson: `{
+  "ten_san_pham": "Tủ bếp acrylic",
+  "order_code": "DEAL-0001",
+  "ten_khach_hang": "Nguyễn Văn A"
+}`,
+  },
+  {
     key: 'doc',
     label: 'Mẫu tài liệu Zalo',
     phone: '84987654321',
@@ -21,21 +44,17 @@ const ZALO_TEST_PRESETS = [
   "total": "100000"
 }`,
   },
-  {
-    key: 'product',
-    label: 'Mẫu SP (565759)',
-    phone: '84987654321',
-    templateId: '565759',
-    templateJson: `{
-  "ten_san_pham": "Tủ bếp nhôm cánh kính",
-  "order_code": "BG-002",
-  "date": "13/04/2026",
-  "ten_khach_hang": "Tên"
-}`,
-  },
 ];
 
 const ZALO_TEST_DEFAULT = ZALO_TEST_PRESETS[0];
+
+/** Key gửi lên Zalo — value rỗng; server điền từ deal. Lưu qua API, dùng cho nút «Gửi Zalo» trên chi tiết deal. */
+const DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY = `{
+  "ten_san_pham": "",
+  "order_code": "",
+  "date": "",
+  "ten_khach_hang": ""
+}`;
 
 const COLORS = ['#94A3B8','#3B82F6','#8B5CF6','#F59E0B','#F97316','#10B981','#EF4444','#EC4899','#06B6D4','#6366F1'];
 const ICONS = ['🆕','📞','💬','📋','📧','⏳','🤝','💰','📝','✅','❌','🎯','🔥','⭐','🏆'];
@@ -57,6 +76,16 @@ export default function PipelineSettingsPage() {
   const [zaloTestSending, setZaloTestSending] = useState(false);
   const [zaloTestResult, setZaloTestResult] = useState(null);
 
+  const [pipelines, setPipelines] = useState([]);
+  /** Lỗi tải /crm/pipelines (VD thiếu bảng trên Supabase) */
+  const [pipelinesLoadError, setPipelinesLoadError] = useState(null);
+  const [zaloPlId, setZaloPlId] = useState('');
+  const [zaloPlDetail, setZaloPlDetail] = useState(null);
+  const [zaloPlTemplateId, setZaloPlTemplateId] = useState('');
+  const [zaloPlMergeJson, setZaloPlMergeJson] = useState('{}');
+  const [zaloPlSaving, setZaloPlSaving] = useState(false);
+  const [zaloStructureJson, setZaloStructureJson] = useState(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -73,12 +102,102 @@ export default function PipelineSettingsPage() {
     try {
       const { data } = await api.get('/crm/zalo-notify-settings');
       setZaloSettings(data || {});
+      const ts = data?.template_structure;
+      if (ts && typeof ts === 'object' && !Array.isArray(ts) && Object.keys(ts).length > 0) {
+        setZaloStructureJson(JSON.stringify(ts, null, 2));
+      } else {
+        setZaloStructureJson(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY);
+      }
     } catch {
-      setZaloSettings({ enabled: false, template_id: '', sending_mode: '1', has_token: false, merge_template_data: {} });
+      setZaloSettings({ enabled: false, template_id: '', sending_mode: '1', has_token: false, merge_template_data: {}, template_structure: null });
+      setZaloStructureJson(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY);
     }
     setZaloLoading(false);
   };
   useEffect(() => { loadZalo(); }, []);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const { data } = await api.get('/crm/pipelines');
+        if (cancel) return;
+        const list = Array.isArray(data) ? data : [];
+        setPipelinesLoadError(null);
+        setPipelines(list);
+        setZaloPlId((prev) => {
+          if (prev && list.some((p) => p.id === prev)) return prev;
+          return list[0]?.id || '';
+        });
+      } catch (e) {
+        if (cancel) return;
+        const d = e.response?.data;
+        const code = d?.code;
+        const msg = d?.error || e.message || 'Không tải được danh sách pipeline';
+        setPipelines([]);
+        setPipelinesLoadError(
+          code === 'CRM_PIPELINES_TABLE_MISSING'
+            ? { code, message: msg }
+            : { code: code || 'UNKNOWN', message: msg },
+        );
+      }
+    })();
+    return () => { cancel = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!zaloPlId) {
+      setZaloPlDetail(null);
+      return;
+    }
+    let cancel = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/crm/pipelines/${zaloPlId}`);
+        if (cancel) return;
+        setZaloPlDetail(data || null);
+      } catch {
+        if (!cancel) setZaloPlDetail(null);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [zaloPlId]);
+
+  useEffect(() => {
+    if (!zaloPlDetail) return;
+    setZaloPlTemplateId(zaloPlDetail.zalo_template_id != null ? String(zaloPlDetail.zalo_template_id) : '');
+    const m = zaloPlDetail.zalo_merge_template_data;
+    const obj = m && typeof m === 'object' && !Array.isArray(m) ? m : {};
+    setZaloPlMergeJson(JSON.stringify(obj, null, 2));
+  }, [zaloPlDetail]);
+
+  const savePipelineZalo = async () => {
+    if (!zaloPlId) return;
+    let merge = {};
+    try {
+      merge = zaloPlMergeJson.trim() ? JSON.parse(zaloPlMergeJson) : {};
+      if (typeof merge !== 'object' || merge === null || Array.isArray(merge)) {
+        throw new Error('merge phải là object JSON (không phải mảng)');
+      }
+    } catch (e) {
+      alert(e.message || 'JSON không hợp lệ');
+      return;
+    }
+    setZaloPlSaving(true);
+    try {
+      await api.put(`/crm/pipelines/${zaloPlId}`, {
+        zalo_template_id: zaloPlTemplateId.trim() || null,
+        zalo_merge_template_data: merge,
+      });
+      const { data } = await api.get(`/crm/pipelines/${zaloPlId}`);
+      setZaloPlDetail(data || null);
+      alert('Đã lưu Zalo cho pipeline này');
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu');
+    } finally {
+      setZaloPlSaving(false);
+    }
+  };
 
   const saveZaloMaster = async (patch) => {
     try {
@@ -91,16 +210,39 @@ export default function PipelineSettingsPage() {
   };
 
   const saveZaloForm = async () => {
+    let template_structure;
+    try {
+      const raw = zaloStructureJson.trim();
+      if (!raw) {
+        template_structure = null;
+      } else {
+        const parsed = JSON.parse(raw);
+        if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Cấu trúc template phải là object JSON (không phải mảng)');
+        }
+        template_structure = Object.keys(parsed).length ? parsed : null;
+      }
+    } catch (e) {
+      alert(e.message || 'JSON cấu trúc template không hợp lệ');
+      return;
+    }
     try {
       const body = {
         enabled: !!zaloSettings?.enabled,
         template_id: zaloSettings?.template_id || '',
         sending_mode: zaloSettings?.sending_mode || '1',
         merge_template_data: zaloSettings?.merge_template_data || {},
+        template_structure,
       };
       if (zaloTestToken.trim()) body.access_token = zaloTestToken.trim();
       const { data } = await api.put('/crm/zalo-notify-settings', body);
       setZaloSettings(data);
+      const ts = data?.template_structure;
+      if (ts && typeof ts === 'object' && !Array.isArray(ts) && Object.keys(ts).length > 0) {
+        setZaloStructureJson(JSON.stringify(ts, null, 2));
+      } else {
+        setZaloStructureJson(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY);
+      }
       setZaloTestToken('');
       alert('Đã lưu cấu hình Zalo OA');
     } catch (e) {
@@ -288,7 +430,7 @@ export default function PipelineSettingsPage() {
                       ? 'bg-sky-100 text-sky-800 border-sky-300'
                       : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-sky-200'
                   }`}
-                  title="Khi deal kéo vào cột này: gửi tin Zalo OA (cần bật chức năng + token/template)"
+                  title="Khi deal kéo vào cột này: gửi tin Zalo OA (khuyến nghị chỉ bật trên cột tên «Hoàn thành»; cần bật OA + token/template)"
                 >
                   <MessageCircle className="h-3 w-3" />
                   Zalo
@@ -352,12 +494,34 @@ export default function PipelineSettingsPage() {
           )}
         </div>
         <p className="text-[11px] text-sky-800 leading-relaxed">
-          Lưu <strong>access_token</strong> và <strong>template_id</strong> từ Zalo Cloud. Ở pipeline <strong>Deal</strong>, bấm nút <strong>Zalo</strong> trên từng cột để bật gửi khi deal được kéo vào cột đó (mỗi deal + cột chỉ gửi tối đa một lần thành công).{' '}
-          <span className="text-sky-900">
-            <strong>template_id</strong> phải là ID template “tin qua SĐT” của đúng OA trong console của bạn — không dùng ID mẫu trong tài liệu Zalo.
-          </span>{' '}
-          Chế độ <strong>3</strong> chỉ dùng khi OA đã được Zalo whitelist vượt hạn mức.
+          Lưu <strong>access_token</strong> từ Zalo Cloud. <strong>template_id</strong> là mẫu “tin qua SĐT” của OA bạn — để trống thì hệ thống dùng mặc định <strong>566121</strong> (biến{' '}
+          <code className="text-[10px] bg-white/80 px-0.5 rounded">ten_san_pham</code>,{' '}
+          <code className="text-[10px] bg-white/80 px-0.5 rounded">order_code</code>,{' '}
+          <code className="text-[10px] bg-white/80 px-0.5 rounded">date</code>,{' '}
+          <code className="text-[10px] bg-white/80 px-0.5 rounded">ten_khach_hang</code> — tự lấy từ deal/khách khi deal vào cột <strong>Hoàn thành</strong>). Ở pipeline <strong>Deal</strong>, thêm cột tên «Hoàn thành» (nếu chưa có), rồi bấm <strong>Zalo</strong> trên đúng cột đó để bật tự gửi (mỗi deal + cột tối đa một lần gửi thành công). Chế độ <strong>3</strong> chỉ khi OA được whitelist vượt hạn mức.
         </p>
+        <div className="rounded-lg border border-sky-200 bg-white/90 p-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-[10px] font-semibold text-sky-800 uppercase">Cấu trúc template_data (key = biến OA)</label>
+            <button
+              type="button"
+              onClick={() => setZaloStructureJson(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY)}
+              className="text-[10px] px-2 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 cursor-pointer"
+            >
+              Mặc định 4 biến
+            </button>
+          </div>
+          <p className="text-[10px] text-sky-800 leading-relaxed">
+            Chỉnh các <strong>key</strong> cho khớp template trên Zalo Cloud. Nút <strong>Gửi Zalo</strong> trên chi tiết deal đọc cấu hình này từ server — không cần chỉnh trình duyệt. Xóa hết nội dung ô rồi lưu = dùng lại mặc định 4 biến phía server.
+          </p>
+          <textarea
+            value={zaloStructureJson}
+            onChange={(e) => setZaloStructureJson(e.target.value)}
+            rows={8}
+            spellCheck={false}
+            className="w-full font-mono text-[11px] border border-sky-200 rounded-lg px-2 py-1.5 bg-white"
+          />
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="space-y-2">
             <label className="text-[10px] font-semibold text-sky-800 uppercase">Template ID</label>
@@ -365,7 +529,7 @@ export default function PipelineSettingsPage() {
               value={zaloSettings?.template_id || ''}
               onChange={(e) => setZaloSettings((p) => ({ ...(p || {}), template_id: e.target.value }))}
               className="w-full h-8 px-2 rounded-lg border border-sky-200 text-xs bg-white"
-              placeholder="ID template Zalo cấp"
+              placeholder="566121 hoặc ID mẫu OA — để trống = 566121"
             />
             <label className="text-[10px] font-semibold text-sky-800 uppercase">Chế độ gửi</label>
             <select
@@ -452,6 +616,82 @@ export default function PipelineSettingsPage() {
         </div>
       </div>
 
+      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-sm">
+        <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+          <MessageCircle className="h-4 w-4 text-violet-600" />
+          Zalo OA theo từng pipeline CRM
+        </h2>
+        {pipelinesLoadError && (
+          <div
+            className={`rounded-lg border px-3 py-2 text-[11px] leading-relaxed ${
+              pipelinesLoadError.code === 'CRM_PIPELINES_TABLE_MISSING'
+                ? 'bg-amber-50 border-amber-200 text-amber-950'
+                : 'bg-red-50 border-red-200 text-red-900'
+            }`}
+          >
+            <p className="font-semibold mb-1">
+              {pipelinesLoadError.code === 'CRM_PIPELINES_TABLE_MISSING'
+                ? 'Chưa có bảng crm_pipelines trên database'
+                : 'Không tải pipeline'}
+            </p>
+            <p className="whitespace-pre-wrap">{pipelinesLoadError.message}</p>
+          </div>
+        )}
+        <p className="text-[11px] text-gray-600 leading-relaxed">
+          Deal có trường <strong>pipeline</strong>: khi gửi Zalo (deal ở cột «Hoàn thành»), hệ thống lấy{' '}
+          <strong>template_id</strong> và <strong>merge_template_data</strong> của pipeline đó; nếu để trống thì dùng cấu hình chung ở khối «Zalo OA — tin qua SĐT» phía trên. Merge của pipeline <strong>ghi đè</strong> key trùng với merge chung.
+        </p>
+        <div className="flex flex-wrap gap-3 items-end">
+          <label className="flex flex-col gap-1 text-[11px] text-gray-700 min-w-[220px] flex-1">
+            <span className="font-semibold">Chọn pipeline</span>
+            <select
+              className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
+              value={zaloPlId}
+              onChange={(e) => setZaloPlId(e.target.value)}
+            >
+              {pipelines.length === 0 && <option value="">— Chưa có pipeline —</option>}
+              {pipelines.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.company?.name ? ` — ${p.company.name}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {zaloPlId && (
+          <div className="space-y-2 border-t border-gray-100 pt-3">
+            <label className="flex flex-col gap-1 text-[11px]">
+              <span className="text-gray-700 font-semibold">Template ID (riêng pipeline)</span>
+              <input
+                value={zaloPlTemplateId}
+                onChange={(e) => setZaloPlTemplateId(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm"
+                placeholder="VD 566121 — để trống: dùng template chung / mặc định"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[11px]">
+              <span className="text-gray-700 font-semibold">merge_template_data (JSON object, tùy chọn)</span>
+              <textarea
+                value={zaloPlMergeJson}
+                onChange={(e) => setZaloPlMergeJson(e.target.value)}
+                rows={6}
+                className="w-full font-mono text-[11px] border border-gray-200 rounded-lg px-2 py-1.5"
+                spellCheck={false}
+              />
+            </label>
+            <button
+              type="button"
+              disabled={zaloPlSaving}
+              onClick={savePipelineZalo}
+              className="h-9 px-4 rounded-lg bg-violet-700 text-white text-sm font-medium hover:bg-violet-800 disabled:opacity-50 cursor-pointer"
+            >
+              {zaloPlSaving ? 'Đang lưu…' : 'Lưu Zalo cho pipeline này'}
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Edit Form (floating) */}
       {editId && (
         <div className="bg-white rounded-xl border border-blue-200 p-4 shadow-lg">
@@ -530,7 +770,7 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead' }) {
               onChange={(e) => setForm((f) => ({ ...f, send_zalo_on_enter: e.target.checked }))}
               className="rounded border-sky-400"
             />
-            <MessageCircle className="h-3.5 w-3.5" /> Gửi Zalo OA khi deal vào cột này
+            <MessageCircle className="h-3.5 w-3.5" /> Tự gửi Zalo OA khi deal vào cột này (nên dùng cho cột «Hoàn thành»)
           </label>
         )}
       </div>

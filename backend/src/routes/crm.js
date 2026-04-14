@@ -12,7 +12,17 @@ const { syncCrmLeadSxPipelineFromProject } = require('../helpers/workshopKanban'
 const { applyDefaultWorkshopTemplatesForNewProject } = require('../helpers/workshopApplyTemplates');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
-const { sendZaloTemplateMessage, buildDealTemplateData, normalizeVnPhoneTo84 } = require('../helpers/zaloOa');
+const {
+  sendZaloTemplateMessage,
+  buildDealTemplateData,
+  fillTemplateDataFromStructure,
+  getDefaultDealZaloTemplateStructure,
+  isValidDealZaloTemplateStructure,
+  pickDealZaloTemplatePayload,
+  resolveZaloDealTemplateId,
+  normalizeVnPhoneTo84,
+  formatVnPhoneLocal0From84,
+} = require('../helpers/zaloOa');
 
 const ZALO_APP_SETTING_KEY = 'zalo_oa_notify';
 
@@ -20,14 +30,25 @@ async function getZaloNotifySettings() {
   const { data } = await supabase.from('app_settings').select('value').eq('key', ZALO_APP_SETTING_KEY).maybeSingle();
   const v = data?.value;
   if (!v || typeof v !== 'object') {
-    return { enabled: false, access_token: '', template_id: '', sending_mode: '1', merge_template_data: {} };
+    return {
+      enabled: false,
+      access_token: '',
+      template_id: '',
+      sending_mode: '1',
+      merge_template_data: {},
+      template_structure: null,
+    };
   }
+  const ts = v.template_structure;
+  const template_structure =
+    ts != null && typeof ts === 'object' && !Array.isArray(ts) && Object.keys(ts).length ? ts : null;
   return {
     enabled: !!v.enabled,
     access_token: String(v.access_token || ''),
     template_id: String(v.template_id || ''),
     sending_mode: String(v.sending_mode || '1'),
     merge_template_data: typeof v.merge_template_data === 'object' && v.merge_template_data ? v.merge_template_data : {},
+    template_structure,
   };
 }
 
@@ -50,6 +71,18 @@ function maskCustomerPhoneDisplay(phone) {
   const d = String(phone || '').replace(/\D/g, '');
   if (d.length < 5) return phone ? '***' : '—';
   return `${d.slice(0, 3)}****${d.slice(-2)}`;
+}
+
+/** Zalo OA (deal): chỉ cột tên chứa «Hoàn thành» (không phân biệt hoa thường / dấu). Thêm cột này trong pipeline Deal nếu chưa có. */
+function isDealStageHoanThanhForZalo(stage) {
+  if (!stage) return false;
+  if (stage.pipeline_type != null && stage.pipeline_type !== 'deal') return false;
+  const ascii = String(stage.name || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return ascii.includes('hoan thanh');
 }
 
 /** Lead/Deal chỉ một người phụ trách: đồng bộ assigned_to ↔ lead_owner_id trên object cập nhật. */
@@ -77,13 +110,86 @@ function unifyCrmLeadResponsibleFields(body) {
   return body;
 }
 
+function shallowMergeTemplateData(globalObj, pipelineObj) {
+  const g = globalObj && typeof globalObj === 'object' && !Array.isArray(globalObj) ? globalObj : {};
+  const p = pipelineObj && typeof pipelineObj === 'object' && !Array.isArray(pipelineObj) ? pipelineObj : {};
+  return { ...g, ...p };
+}
+
+function crmRouteErrorText(err) {
+  if (err == null) return '';
+  if (typeof err === 'string') return err;
+  return String(err.message || err.error || err.details || '');
+}
+
+/** PostgREST: bảng chưa tạo / chưa vào schema cache của Supabase */
+function isCrmPipelinesTableMissingError(err) {
+  const t = crmRouteErrorText(err).toLowerCase();
+  if (!t.includes('crm_pipelines')) return false;
+  return (
+    t.includes('schema cache') ||
+    t.includes('could not find the table') ||
+    t.includes('does not exist') ||
+    (t.includes('relation') && t.includes('does not exist'))
+  );
+}
+
+function respondIfCrmPipelinesTableMissing(res, err) {
+  if (!isCrmPipelinesTableMissingError(err)) return false;
+  res.status(503).json({
+    code: 'CRM_PIPELINES_TABLE_MISSING',
+    error:
+      'Database chưa có bảng public.crm_pipelines (Supabase: Could not find the table in the schema cache). Mở Supabase → SQL Editor, chạy nội dung file database/21_crm_pipelines.sql trong repo. Sau đó chạy database/60_crm_pipelines_zalo_template.sql nếu cần cột Zalo theo pipeline. Trên Supabase: Settings → API → bấm Reload schema (hoặc đợi vài phút) rồi tải lại trang.',
+  });
+  return true;
+}
+
+/** Zalo: template/merge riêng theo crm_pipelines (deal có pipeline_id). */
+async function fetchCrmPipelineZaloSlice(pipelineId) {
+  if (!pipelineId) return { pipeline: null, zalo_template_id: null, zalo_merge_template_data: {} };
+  const { data, error } = await supabase
+    .from('crm_pipelines')
+    .select('id, name, zalo_template_id, zalo_merge_template_data')
+    .eq('id', pipelineId)
+    .maybeSingle();
+  if (error) {
+    console.warn('[Zalo pipeline] fetchCrmPipelineZaloSlice:', error.message);
+    return { pipeline: null, zalo_template_id: null, zalo_merge_template_data: {} };
+  }
+  if (!data) return { pipeline: null, zalo_template_id: null, zalo_merge_template_data: {} };
+  const tid =
+    data.zalo_template_id != null && String(data.zalo_template_id).trim() !== ''
+      ? String(data.zalo_template_id).trim()
+      : null;
+  const merge =
+    data.zalo_merge_template_data != null &&
+    typeof data.zalo_merge_template_data === 'object' &&
+    !Array.isArray(data.zalo_merge_template_data)
+      ? data.zalo_merge_template_data
+      : {};
+  return {
+    pipeline: { id: data.id, name: data.name },
+    zalo_template_id: tid,
+    zalo_merge_template_data: merge,
+  };
+}
+
 /**
  * Gửi Zalo OA theo cấu hình app_settings + template deal.
  * @param {object} opts
- * @param {boolean} [opts.allowWithoutStageFlag] — true: gửi từ nút thủ công (deal Thắng), không cần send_zalo_on_enter
+ * @param {boolean} [opts.allowWithoutStageFlag] — true: gửi từ nút thủ công (deal ở cột Hoàn thành), không cần send_zalo_on_enter
  * @param {boolean} [opts.force] — đã gửi OK trước đó (có msg_id): gửi thêm lần nữa. Lần gửi lỗi (không msg_id) luôn cho thử lại không cần force.
+ * @param {Record<string,string>|null} [opts.templateDataOverride] — gửi đúng object này làm template_data (đã điền từ deal / sửa tay); bỏ qua pickDealZaloTemplatePayload.
  */
-async function executeZaloDealStageNotify({ leadId, stageId, pipelineType, sendZaloOnEnter, allowWithoutStageFlag = false, force = false }) {
+async function executeZaloDealStageNotify({
+  leadId,
+  stageId,
+  pipelineType,
+  sendZaloOnEnter,
+  allowWithoutStageFlag = false,
+  force = false,
+  templateDataOverride = null,
+}) {
   if (pipelineType !== 'deal') {
     return { ok: false, skipped: true, reason: 'not_deal' };
   }
@@ -92,8 +198,8 @@ async function executeZaloDealStageNotify({ leadId, stageId, pipelineType, sendZ
   }
 
   const settings = await getZaloNotifySettings();
-  if (!settings.enabled || !settings.access_token || !settings.template_id) {
-    console.log('[Zalo OA] Bỏ qua — tắt chức năng hoặc thiếu token/template');
+  if (!settings.enabled || !settings.access_token) {
+    console.log('[Zalo OA] Bỏ qua — tắt chức năng hoặc thiếu token');
     return { ok: false, skipped: true, reason: 'zalo_not_configured' };
   }
 
@@ -109,16 +215,27 @@ async function executeZaloDealStageNotify({ leadId, stageId, pipelineType, sendZ
   /* Có error_message nhưng không msg_id → lần trước thất bại: cho gửi lại (sửa template/SĐT không cần xóa DB). */
 
   const { data: lead } = await supabase.from('crm_leads')
-    .select('id, code, title, type, estimated_value, customer:customers(id, full_name, phone, email, address)')
+    .select('id, code, title, type, estimated_value, pipeline_id, customer:customers(id, full_name, phone, email, address)')
     .eq('id', leadId)
     .single();
   if (!lead || lead.type !== 'deal') {
     return { ok: false, skipped: true, reason: 'lead_not_found' };
   }
 
-  const phone = lead.customer?.phone;
-  if (!phone) {
-    console.warn('[Zalo OA] Deal không có SĐT khách hàng');
+  const { data: zaloStageMeta } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id, name, pipeline_type')
+    .eq('id', stageId)
+    .maybeSingle();
+  if (!isDealStageHoanThanhForZalo(zaloStageMeta)) {
+    console.log('[Zalo OA] Bỏ qua — không phải cột Hoàn thành');
+    return { ok: false, skipped: true, reason: 'not_hoan_thanh_stage' };
+  }
+
+  const rawPhone = String(lead.customer?.phone || '').trim();
+  const normalizedForSend = normalizeVnPhoneTo84(rawPhone);
+  if (!normalizedForSend) {
+    console.warn('[Zalo OA] Deal không có SĐT khách hợp lệ (không chuẩn hóa được 84…)');
     await supabase.from('crm_zalo_stage_sends').upsert({
       lead_id: leadId,
       stage_id: stageId,
@@ -130,13 +247,28 @@ async function executeZaloDealStageNotify({ leadId, stageId, pipelineType, sendZ
     return { ok: false, skipped: true, reason: 'no_customer_phone' };
   }
 
+  const plZalo = await fetchCrmPipelineZaloSlice(lead.pipeline_id);
+  const templateId = resolveZaloDealTemplateId(plZalo.zalo_template_id || settings.template_id);
+  const mergedMerge = shallowMergeTemplateData(settings.merge_template_data, plZalo.zalo_merge_template_data);
   const trackingId = `deal-${String(leadId).replace(/-/g, '').slice(0, 12)}-${String(stageId).replace(/-/g, '').slice(0, 8)}-${Date.now()}`.slice(0, 48);
-  const templateData = buildDealTemplateData(lead, lead.customer, settings.merge_template_data || {});
+
+  const ov = templateDataOverride;
+  let templateData;
+  if (ov && typeof ov === 'object' && !Array.isArray(ov) && Object.keys(ov).length > 0) {
+    templateData = { ...ov };
+    Object.keys(templateData).forEach((k) => {
+      if (templateData[k] == null) templateData[k] = '';
+      else if (typeof templateData[k] !== 'string') templateData[k] = String(templateData[k]);
+    });
+  } else {
+    const fullTemplateData = buildDealTemplateData(lead, lead.customer, mergedMerge);
+    templateData = pickDealZaloTemplatePayload(fullTemplateData, templateId);
+  }
 
   const result = await sendZaloTemplateMessage({
     accessToken: settings.access_token,
-    phone,
-    templateId: settings.template_id,
+    phone: normalizedForSend,
+    templateId,
     templateData,
     trackingId,
     sendingMode: settings.sending_mode,
@@ -150,6 +282,16 @@ async function executeZaloDealStageNotify({ leadId, stageId, pipelineType, sendZ
     error_message: result.ok ? null : (result.message || result.error || JSON.stringify(result.data || {})).slice(0, 2000),
     updated_at: new Date().toISOString(),
   }, { onConflict: 'lead_id,stage_id' });
+
+  if (result.ok && lead.customer?.id) {
+    const canonicalLocal = formatVnPhoneLocal0From84(normalizedForSend);
+    if (canonicalLocal && rawPhone !== canonicalLocal) {
+      await supabase
+        .from('customers')
+        .update({ phone: canonicalLocal, updated_at: new Date().toISOString() })
+        .eq('id', lead.customer.id);
+    }
+  }
 
   if (result.ok) {
     console.log('[Zalo OA] Đã gửi', result.msg_id, result.quota);
@@ -529,7 +671,10 @@ r.get('/pipelines', async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (respondIfCrmPipelinesTableMissing(res, e)) return;
+    res.status(500).json({ error: crmRouteErrorText(e) || 'Lỗi server' });
+  }
 });
 
 r.get('/pipelines/:id', async (req, res) => {
@@ -539,7 +684,10 @@ r.get('/pipelines/:id', async (req, res) => {
     if (error) throw error;
     if (data?.stages) data.stages.sort((a, b) => a.order_index - b.order_index);
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (respondIfCrmPipelinesTableMissing(res, e)) return;
+    res.status(500).json({ error: crmRouteErrorText(e) || 'Lỗi server' });
+  }
 });
 
 r.post('/pipelines', async (req, res) => {
@@ -576,7 +724,10 @@ r.post('/pipelines', async (req, res) => {
     await supabase.from('crm_pipeline_stages').insert(stages);
 
     res.status(201).json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (respondIfCrmPipelinesTableMissing(res, e)) return;
+    res.status(500).json({ error: crmRouteErrorText(e) || 'Lỗi server' });
+  }
 });
 
 r.put('/pipelines/:id', async (req, res) => {
@@ -585,12 +736,24 @@ r.put('/pipelines/:id', async (req, res) => {
     ['name', 'company_id', 'description', 'is_default', 'is_active'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    if (req.body.zalo_template_id !== undefined) {
+      const zt = req.body.zalo_template_id;
+      update.zalo_template_id = zt == null || String(zt).trim() === '' ? null : String(zt).trim();
+    }
+    if (req.body.zalo_merge_template_data !== undefined) {
+      const m = req.body.zalo_merge_template_data;
+      update.zalo_merge_template_data =
+        m && typeof m === 'object' && !Array.isArray(m) ? m : {};
+    }
     update.updated_at = new Date().toISOString();
     const { data, error } = await supabase.from('crm_pipelines').update(update)
       .eq('id', req.params.id).select('*, company:companies(id, name)').single();
     if (error) throw error;
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (respondIfCrmPipelinesTableMissing(res, e)) return;
+    res.status(500).json({ error: crmRouteErrorText(e) || 'Lỗi server' });
+  }
 });
 
 r.delete('/pipelines/:id', async (req, res) => {
@@ -603,7 +766,10 @@ r.delete('/pipelines/:id', async (req, res) => {
     await supabase.from('crm_pipeline_stages').delete().eq('pipeline_id', req.params.id);
     await supabase.from('crm_pipelines').delete().eq('id', req.params.id);
     res.json({ message: 'Đã xóa pipeline' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (respondIfCrmPipelinesTableMissing(res, e)) return;
+    res.status(500).json({ error: crmRouteErrorText(e) || 'Lỗi server' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -686,6 +852,7 @@ r.get('/zalo-notify-settings', async (_req, res) => {
       sending_mode: s.sending_mode,
       has_token: !!(s.access_token && s.access_token.length > 8),
       merge_template_data: s.merge_template_data || {},
+      template_structure: s.template_structure,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -693,6 +860,14 @@ r.get('/zalo-notify-settings', async (_req, res) => {
 r.put('/zalo-notify-settings', async (req, res) => {
   try {
     const prev = await getZaloNotifySettings();
+    let nextTemplateStructure = prev.template_structure;
+    if (req.body.template_structure !== undefined) {
+      if (req.body.template_structure === null) {
+        nextTemplateStructure = null;
+      } else if (typeof req.body.template_structure === 'object' && !Array.isArray(req.body.template_structure)) {
+        nextTemplateStructure = Object.keys(req.body.template_structure).length ? req.body.template_structure : null;
+      }
+    }
     const next = {
       ...prev,
       enabled: req.body.enabled !== undefined ? !!req.body.enabled : prev.enabled,
@@ -702,6 +877,7 @@ r.put('/zalo-notify-settings', async (req, res) => {
         req.body.merge_template_data !== undefined
           ? (typeof req.body.merge_template_data === 'object' && req.body.merge_template_data ? req.body.merge_template_data : {})
           : prev.merge_template_data,
+      template_structure: nextTemplateStructure,
       access_token: prev.access_token,
     };
     if (req.body.access_token !== undefined && String(req.body.access_token).trim() !== '') {
@@ -714,6 +890,7 @@ r.put('/zalo-notify-settings', async (req, res) => {
       sending_mode: next.sending_mode,
       has_token: !!(next.access_token && next.access_token.length > 8),
       merge_template_data: next.merge_template_data || {},
+      template_structure: next.template_structure,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -744,12 +921,12 @@ r.post('/zalo-notify-test', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ═══ Zalo OA — Xem trước + gửi thủ công từ chi tiết deal (giai đoạn Thắng) ═══
+// ═══ Zalo OA — Xem trước + gửi thủ công khi deal ở cột «Hoàn thành» ═══
 r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
   try {
     const leadId = req.params.id;
     const { data: lead } = await supabase.from('crm_leads')
-      .select('id, code, title, type, stage_id, estimated_value, customer:customers(id, full_name, phone, email, address)')
+      .select('id, code, title, type, stage_id, estimated_value, pipeline_id, customer:customers(id, full_name, phone, email, address)')
       .eq('id', leadId)
       .single();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy' });
@@ -759,13 +936,22 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
       .select('id, name, is_won, send_zalo_on_enter, pipeline_type')
       .eq('id', lead.stage_id)
       .single();
-    if (!stage?.is_won) {
-      return res.status(400).json({ error: 'Chỉ hiển thị khi deal đang ở giai đoạn Thắng' });
+    if (!isDealStageHoanThanhForZalo(stage)) {
+      return res.status(400).json({
+        error:
+          'Chỉ hiển thị khi deal đang ở cột «Hoàn thành» (tên giai đoạn deal chứa «Hoàn thành»). Thêm cột này trong Cài đặt Pipeline → Deal và kéo deal vào đó.',
+      });
     }
 
     const settings = await getZaloNotifySettings();
-    const templateData = buildDealTemplateData(lead, lead.customer, settings.merge_template_data || {});
-    const normalized = normalizeVnPhoneTo84(lead.customer?.phone);
+    const plZalo = await fetchCrmPipelineZaloSlice(lead.pipeline_id);
+    const effectiveTemplateId = resolveZaloDealTemplateId(plZalo.zalo_template_id || settings.template_id);
+    const mergedMerge = shallowMergeTemplateData(settings.merge_template_data, plZalo.zalo_merge_template_data);
+    const fullTemplateData = buildDealTemplateData(lead, lead.customer, mergedMerge);
+    const templateData = pickDealZaloTemplatePayload(fullTemplateData, effectiveTemplateId);
+    const rawPhone = String(lead.customer?.phone || '').trim();
+    const normalized = normalizeVnPhoneTo84(rawPhone);
+    const phoneCanonicalLocal = formatVnPhoneLocal0From84(normalized);
     const { data: prevSend } = await supabase.from('crm_zalo_stage_sends')
       .select('msg_id, error_message, tracking_id, updated_at')
       .eq('lead_id', leadId)
@@ -773,23 +959,31 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
       .maybeSingle();
 
     const hasToken = !!(settings.access_token && settings.access_token.length > 8);
-    const eligible = !!(settings.enabled && settings.template_id && hasToken && normalized);
+    const eligible = !!(settings.enabled && hasToken && normalized);
 
     res.json({
       eligible,
       stage: {
         id: stage.id,
         name: stage.name,
-        is_won: true,
+        is_won: !!stage.is_won,
         send_zalo_on_enter: !!stage.send_zalo_on_enter,
       },
       zalo_app: {
         enabled: settings.enabled,
         template_id: settings.template_id || null,
+        effective_template_id: effectiveTemplateId,
         sending_mode: settings.sending_mode || '1',
         has_access_token: hasToken,
         access_token_preview: hasToken ? maskZaloAccessTokenPreview(settings.access_token) : '',
         merge_template_data: settings.merge_template_data || {},
+      },
+      pipeline_zalo: {
+        pipeline_id: lead.pipeline_id || null,
+        pipeline_name: plZalo.pipeline?.name || null,
+        zalo_template_id: plZalo.zalo_template_id,
+        zalo_merge_template_data: plZalo.zalo_merge_template_data || {},
+        merged_preview: mergedMerge,
       },
       customer: {
         full_name: lead.customer?.full_name || lead.title || '',
@@ -797,10 +991,12 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
       },
       destination_phone_e164: normalized || null,
       destination_phone_ok: !!normalized,
+      phone_for_zalo_84: normalized || null,
+      phone_canonical_local: phoneCanonicalLocal || null,
       template_data: templateData,
       request_payload_preview: {
         phone: normalized || null,
-        template_id: settings.template_id || null,
+        template_id: effectiveTemplateId,
         template_data: templateData,
         sending_mode: settings.sending_mode && settings.sending_mode !== '1' ? settings.sending_mode : undefined,
         tracking_id: '(tự sinh khi gửi)',
@@ -815,12 +1011,55 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
         : null,
       hints: {
         pipeline_toggle:
-          'Trên Cài đặt Pipeline → Deal: bật nút «Zalo» trên cột Thắng để tự gửi khi kéo deal vào cột (mỗi deal + cột tối đa 1 lần thành công).',
-        settings: 'template_id, access_token và merge_template_data lưu tại Cài đặt Pipeline → khối Zalo OA.',
+          'Trên Cài đặt Pipeline → Deal: bật nút «Zalo» trên cột «Hoàn thành» để tự gửi khi kéo deal vào cột đó (mỗi deal + cột tối đa 1 lần thành công).',
+        settings:
+          'access_token (bắt buộc) + Zalo OA chung. Theo từng pipeline CRM: chỉnh template_id / merge JSON — ghi đè chung cho deal thuộc pipeline đó (Cài đặt Pipeline → «Zalo theo pipeline»).',
         after_failed_send:
           'Nếu lần trước Zalo báo lỗi (chưa có msg_id): sửa cấu hình/template rồi bấm «Gửi thông báo Zalo» lại — không cần xóa bản ghi.',
+        phone_normalize:
+          'SĐT lưu dạng 09…, +84…, 0084… hoặc có khoảng trắng vẫn được — hệ thống tự chuẩn hóa 84… khi gọi Zalo. Sau khi gửi thành công, SĐT khách có thể được cập nhật dạng 0xxxxxxxxx trên thẻ Khách hàng.',
       },
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Điền template_data theo object mẫu (key) + dữ liệu deal — dùng trước khi gửi Zalo thủ công */
+r.post('/leads/:id/zalo-template-fill', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id, code, title, type, stage_id, estimated_value, pipeline_id, customer:customers(id, full_name, phone, email, address)')
+      .eq('id', leadId)
+      .single();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy' });
+    if (lead.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
+
+    const { data: stage } = await supabase.from('crm_pipeline_stages')
+      .select('id, name, pipeline_type')
+      .eq('id', lead.stage_id)
+      .single();
+    if (!isDealStageHoanThanhForZalo(stage)) {
+      return res.status(400).json({ error: 'Chỉ dùng khi deal đang ở cột «Hoàn thành»' });
+    }
+
+    const settings = await getZaloNotifySettings();
+    const plZalo = await fetchCrmPipelineZaloSlice(lead.pipeline_id);
+    const mergedMerge = shallowMergeTemplateData(settings.merge_template_data, plZalo.zalo_merge_template_data);
+
+    const bodyStruct = req.body?.structure;
+    let structure;
+    if (isValidDealZaloTemplateStructure(bodyStruct)) {
+      structure = bodyStruct;
+    } else if (isValidDealZaloTemplateStructure(settings.template_structure)) {
+      structure = settings.template_structure;
+    } else {
+      structure = getDefaultDealZaloTemplateStructure();
+    }
+
+    const filled = fillTemplateDataFromStructure(structure, lead, lead.customer, mergedMerge);
+    res.json({ filled });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -830,16 +1069,20 @@ r.post('/leads/:id/zalo-notify-send', async (req, res) => {
   try {
     const leadId = req.params.id;
     const force = !!req.body?.force;
+    const rawTd = req.body?.template_data;
+    const templateDataOverride =
+      rawTd && typeof rawTd === 'object' && !Array.isArray(rawTd) && Object.keys(rawTd).length > 0 ? rawTd : null;
+
     const { data: lead } = await supabase.from('crm_leads').select('id, type, stage_id').eq('id', leadId).single();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy' });
     if (lead.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
 
     const { data: stage } = await supabase.from('crm_pipeline_stages')
-      .select('id, is_won, pipeline_type')
+      .select('id, name, is_won, pipeline_type')
       .eq('id', lead.stage_id)
       .single();
-    if (!stage?.is_won) {
-      return res.status(400).json({ error: 'Chỉ gửi được khi deal đang ở giai đoạn Thắng' });
+    if (!isDealStageHoanThanhForZalo(stage)) {
+      return res.status(400).json({ error: 'Chỉ gửi được khi deal đang ở cột «Hoàn thành»' });
     }
 
     const out = await executeZaloDealStageNotify({
@@ -849,6 +1092,7 @@ r.post('/leads/:id/zalo-notify-send', async (req, res) => {
       sendZaloOnEnter: true,
       allowWithoutStageFlag: true,
       force,
+      templateDataOverride,
     });
     res.json(out);
   } catch (e) {
@@ -1511,36 +1755,46 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
   return list.map((id) => byId.get(id)).filter(Boolean);
 }
 
-/** Fallback: tối đa 5000 bản ghi từ DB rồi lọc/sort trong RAM (trước khi có RPC) */
+/** Fallback: gom nhiều trang .range() — PostgREST vẫn trần ~1000 dòng/lần dù .limit(5000). */
 async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const { dealAssigneeStrict = false, viewerUserId = null } = opts;
   const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, type = 'lead', company_id, date_from, date_to, phone_filter } = reqQuery;
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 5000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
-  let q = supabase
-    .from('crm_leads')
-    .select(CRM_LEAD_LIST_SELECT)
-    .eq('type', type)
-    .order('created_at', { ascending: false })
-    .limit(5000);
 
-  if (stage_id) q = q.eq('stage_id', stage_id);
-  if (assigned_to) {
-    if (dealAssigneeStrict) q = q.eq('assigned_to', assigned_to);
-    else q = q.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
+  const buildBaseQuery = () => {
+    let q = supabase
+      .from('crm_leads')
+      .select(CRM_LEAD_LIST_SELECT)
+      .eq('type', type)
+      .order('created_at', { ascending: false });
+    if (stage_id) q = q.eq('stage_id', stage_id);
+    if (assigned_to) {
+      if (dealAssigneeStrict) q = q.eq('assigned_to', assigned_to);
+      else q = q.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
+    }
+    if (source_id) q = q.eq('source_id', source_id);
+    if (company_id) q = q.eq('company_id', company_id);
+    const df = sanitizeIsoDateQueryParam(date_from);
+    const dt = sanitizeIsoDateQueryParam(date_to);
+    if (df) q = q.gte('created_at', df);
+    if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
+    if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
+    return q;
+  };
+
+  const PAGE = 1000;
+  const rows = [];
+  for (let from = 0, guard = 0; guard < 500; guard += 1) {
+    const { data, error } = await buildBaseQuery().range(from, from + PAGE - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < PAGE) break;
+    from += PAGE;
   }
-  if (source_id) q = q.eq('source_id', source_id);
-  if (company_id) q = q.eq('company_id', company_id);
-  const df = sanitizeIsoDateQueryParam(date_from);
-  const dt = sanitizeIsoDateQueryParam(date_to);
-  if (df) q = q.gte('created_at', df);
-  if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
-  if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
 
-  const { data, error } = await q;
-  if (error) throw error;
-
-  let result = mapLeadDisplayPhone(data || []);
+  let result = mapLeadDisplayPhone(rows);
   if (phone_filter === 'has_phone') {
     result = result.filter((l) => !!l.display_phone);
   } else if (phone_filter === 'no_phone') {
