@@ -113,7 +113,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
 
     // Filter by stage slug
     if (stage_slug) {
-      const stMap = { consulting:'consulting', design:'designing', quotation:'quoting', contract:'contract_signed', production:'producing', delivery:'delivering', shipping:'delivering', installation:'delivering', 'customer-care':'warranty' };
+      const stMap = { consulting:'consulting', design:'designing', quotation:'quoting', contract:'contract_signed', production:'producing', delivery:'shipping', shipping:'shipping', installation:'installing', 'customer-care':'warranty' };
       const mappedStatus = stMap[stage_slug];
       if (mappedStatus) q = q.eq('status', mappedStatus);
     }

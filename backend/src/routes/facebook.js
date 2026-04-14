@@ -3,6 +3,11 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const r = express.Router();
 const { supabase } = require('../config/supabase');
+const {
+  activityTimestampMs,
+  sortFacebookContactsNewestFirst,
+  enrichContactActivityFields,
+} = require('../helpers/facebookContactActivity');
 
 // ═══════════════════════════════════════════════════════════════
 // AUTO PIPELINE STATE (backend-managed, realtime)
@@ -12,9 +17,9 @@ const AUTO_SYNC_TIMEOUT_SEC = 90;
 const AUTO_LOOP_PAUSE_MS = 1500;
 /**
  * Một ngưỡng giờ cho cả (1) pool “còn hoạt động” và (2) lọc “KH không liên lạc”.
- * Trước đây pool 36h nhưng stale 24h → loại gần hết; giờ đồng bộ cùng N giờ.
+ * Pool “còn hoạt động” + lọc “KH không liên lạc” dùng chung N giờ (đổi giá trị ở đây).
  */
-const AUTO_PIPELINE_RECENT_HOURS = 36;
+const AUTO_PIPELINE_RECENT_HOURS = 48;
 const STALE_NO_CUSTOMER_REPLY_MS = AUTO_PIPELINE_RECENT_HOURS * 60 * 60 * 1000;
 
 async function fetchLastInboundAtByContactIds(contactIds) {
@@ -59,12 +64,6 @@ function filterContactsStaleCustomerNoReply(contacts, inboundMap, now = Date.now
   return { contacts: out, excluded };
 }
 
-function activityTimestampMs(c) {
-  const msg = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
-  const cre = c.created_at ? new Date(c.created_at).getTime() : 0;
-  return Math.max(msg, cre);
-}
-
 function filterContactsRecentHours(contacts, recentHours) {
   if (!recentHours || recentHours <= 0) return contacts || [];
   const cutoff = Date.now() - recentHours * 3600000;
@@ -77,7 +76,7 @@ function filterContactsRecentHours(contacts, recentHours) {
 
 /**
  * Pool tối đa 5000 contact, sắp last_message_at mới nhất trước; lọc theo recentHours; optional stale (cùng ngưỡng giờ với AUTO_PIPELINE_RECENT_HOURS).
- * Dùng chung batch-sync + batch-extract (pipeline_aligned) để offset khớp.
+ * Dùng chung batch-sync + batch-extract (pipeline_aligned) để offset khớp — auto pipeline và chạy tay đều dùng pool này (mới→cũ).
  */
 async function loadFacebookContactsForBatchPipeline({ recentHours = 0, applyStaleFilter = false } = {}) {
   const { data: raw } = await supabase.from('facebook_contacts')
@@ -96,6 +95,7 @@ async function loadFacebookContactsForBatchPipeline({ recentHours = 0, applyStal
       excludedStaleNoContact = fr.excluded;
     }
   }
+  list = sortFacebookContactsNewestFirst(list);
   return { contacts: list, excludedStaleNoContact, rawFetched };
 }
 
@@ -169,7 +169,9 @@ async function runAutoPipelineLoop() {
   autoPipeline.startedAt = new Date().toISOString();
   autoPipeline.batchResults = [];
   autoPipeline.kpi = { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 };
-  pushAutoLog(`🚀 Auto pipeline: ${AUTO_PIPELINE_RECENT_HOURS}h gần nhất • sync song song extract (batch chồng)`);
+  pushAutoLog(
+    `🚀 Auto pipeline: ${AUTO_PIPELINE_RECENT_HOURS}h • thứ tự mới→cũ (hoạt động mới nhất trước) • sync + extract chồng batch`,
+  );
 
   const pipelineBodyBase = () => ({
     recent_hours: AUTO_PIPELINE_RECENT_HOURS,
@@ -1687,13 +1689,17 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     result.forEach(c => {
       c.display_phone = c.phone || c.customer?.phone || null;
     });
+    // Chưa đọc + hoạt động mới nhất (tin hoặc lúc tạo contact) lên trước — tránh “kẹt” ở user cũ có SĐT
     result.sort((a, b) => {
+      const ua = (a.unread_count || 0) > 0 ? 1 : 0;
+      const ub = (b.unread_count || 0) > 0 ? 1 : 0;
+      if (ub !== ua) return ub - ua;
+      const act = activityTimestampMs(b) - activityTimestampMs(a);
+      if (act !== 0) return act;
       const ap = a.display_phone ? 1 : 0;
       const bp = b.display_phone ? 1 : 0;
       if (bp !== ap) return bp - ap;
-      const da = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
-      const db = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
-      return db - da;
+      return 0;
     });
 
     const total = result.length;
@@ -1710,6 +1716,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       page.forEach(c => {
         c.message_count = countMap[c.id] || 0;
         c.display_phone = c.phone || c.customer?.phone || null;
+        Object.assign(c, enrichContactActivityFields(c));
       });
     }
 
@@ -1739,6 +1746,7 @@ r.get('/contacts/:id', authMiddleware, async (req, res) => {
       contact.lead = null;
     }
     contact.display_phone = contact.phone || contact.customer?.phone || null;
+    Object.assign(contact, enrichContactActivityFields(contact));
 
     res.json(contact);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2638,11 +2646,12 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
     // Lấy tất cả contacts chưa có lead
-    const { data: contacts } = await supabase.from('facebook_contacts')
+    const { data: contactsRaw } = await supabase.from('facebook_contacts')
       .select('*').is('lead_id', null)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
-    
+    const contacts = sortFacebookContactsNewestFirst(contactsRaw);
+
     if (!contacts?.length) return res.json({ created: 0, updated: 0, message: 'Không có contact nào cần xử lý' });
 
     let created = 0, updated = 0, skipped = 0;
@@ -2766,10 +2775,12 @@ r.post('/sync-contact-phones', authMiddleware, async (req, res) => {
     let pageStart = 0;
     while (true) {
       const { data: page } = await supabase.from('facebook_contacts')
-        .select('id, fb_name, phone, lead_id, customer_id')
+        .select('id, fb_name, phone, lead_id, customer_id, last_message_at, created_at')
         .not('psid', 'is', null)
         .not('phone', 'is', null)
         .neq('phone', '')
+        .order('last_message_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
         .range(pageStart, pageStart + 999);
       if (!page?.length) break;
       contacts = contacts.concat(page);
@@ -2952,6 +2963,19 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       return res.json({ total: 0, updated: 0, message: 'Không có contact nào để quét' });
     }
 
+    // Chạy tay + auto pipeline: cùng thứ tự mới→cũ (kể cả batch pipeline_aligned).
+    contacts.sort((a, b) => {
+      const act = activityTimestampMs(b) - activityTimestampMs(a);
+      if (act !== 0) return act;
+      const score = (c) => {
+        let s = 0;
+        if (!c.phone) s += 2;
+        if (!c.lead_id) s += 0.5;
+        return s;
+      };
+      return score(b) - score(a);
+    });
+
     let updated = 0;
     let foundPhones = 0;
     let foundAddresses = 0;
@@ -2962,22 +2986,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     let updatedLeadAddress = 0;
     let updatedLeadDescription = 0;
     const results = [];
-
-    if (!usedPipelineWindow) {
-      const lastMsgTs = (c) => (c.last_message_at ? new Date(c.last_message_at).getTime() : 0);
-      contacts.sort((a, b) => {
-        const tb = lastMsgTs(b);
-        const ta = lastMsgTs(a);
-        if (tb !== ta) return tb - ta;
-        const score = (c) => {
-          let s = 0;
-          if (!c.phone) s += 2;
-          if (!c.lead_id) s += 0.5;
-          return s;
-        };
-        return score(b) - score(a);
-      });
-    }
 
     const total = contacts.length;
 
@@ -3289,6 +3297,7 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         return (now - lastSync) > ONE_DAY;
       });
     }
+    candidates = sortFacebookContactsNewestFirst(candidates);
 
     if (!candidates.length) {
       return res.json({
@@ -3527,13 +3536,15 @@ async function scanAndCreateLeads() {
     const autoLeadCfg = getAutoLeadConfig();
 
     // Lấy tất cả contacts có phone, chưa có lead
-    const { data: contacts, error } = await supabase.from('facebook_contacts')
+    const { data: contactsRaw, error } = await supabase.from('facebook_contacts')
       .select('*')
       .not('phone', 'is', null).neq('phone', '')
       .is('lead_id', null)
-      .order('updated_at', { ascending: false });
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false });
 
     if (error) { results.errors.push(error.message); return results; }
+    const contacts = sortFacebookContactsNewestFirst(contactsRaw);
     results.scanned = (contacts || []).length;
     console.log(`[LeadScan] Found ${results.scanned} contacts with phone, no lead`);
 
@@ -3569,7 +3580,8 @@ async function scanAndCreateLeads() {
     results.errors.push(e.message);
   }
 
-  console.log(`[LeadScan] ✅ Done — Scanned: ${results.scanned}, Created: ${results.created}, Skipped: ${results.skipped}`);
+  console.log(`[LeadScan] ✅ Done — Scanned: ${results.scanned}, Created: ${results.created}, Skipped: ${results.skipped} (thứ tự: hoạt động mới nhất trước)`);
+  results.sort_note = 'Ưu tiên contact có hoạt động gần nhất (tin nhắn hoặc tạo hồ sơ)';
   return results;
 }
 
@@ -3703,23 +3715,39 @@ r.post('/lead-scan/run', authMiddleware, async (req, res) => {
 // GET /facebook/lead-scan/preview — xem trước contacts sẽ được tạo lead
 r.get('/lead-scan/preview', authMiddleware, async (req, res) => {
   try {
-    const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('id, fb_name, phone, page_id, updated_at, message_count')
+    const { data: contactsRaw } = await supabase.from('facebook_contacts')
+      .select('id, fb_name, phone, page_id, updated_at, created_at, last_message_at')
       .not('phone', 'is', null).neq('phone', '')
-      .is('lead_id', null)
-      .order('updated_at', { ascending: false });
+      .is('lead_id', null);
 
-    // Enrich with page names
-    const pageIds = [...new Set((contacts || []).map(c => c.page_id))];
-    const { data: pages } = await supabase.from('facebook_pages')
-      .select('page_id, page_name').in('page_id', pageIds);
-    const pageMap = Object.fromEntries((pages || []).map(p => [p.page_id, p.page_name]));
+    const contacts = sortFacebookContactsNewestFirst(contactsRaw || []);
+    const pageIds = [...new Set(contacts.map(c => c.page_id).filter(Boolean))];
+    let pageMap = {};
+    if (pageIds.length) {
+      const { data: pages } = await supabase.from('facebook_pages')
+        .select('page_id, page_name').in('page_id', pageIds);
+      pageMap = Object.fromEntries((pages || []).map(p => [p.page_id, p.page_name]));
+    }
+
+    let countMap = {};
+    if (contacts.length) {
+      const { data: counts } = await supabase.from('facebook_messages')
+        .select('contact_id')
+        .in('contact_id', contacts.map(c => c.id))
+        .eq('direction', 'inbound');
+      (counts || []).forEach(m => {
+        countMap[m.contact_id] = (countMap[m.contact_id] || 0) + 1;
+      });
+    }
 
     res.json({
-      count: (contacts || []).length,
-      contacts: (contacts || []).map(c => ({
+      count: contacts.length,
+      sort_note: 'Mới nhất theo hoạt động (tin nhắn hoặc tạo hồ sơ) — trùng thứ tự khi quét / chạy ngay',
+      contacts: contacts.map((c) => ({
         ...c,
         page_name: pageMap[c.page_id] || c.page_id,
+        message_count: countMap[c.id] || 0,
+        ...enrichContactActivityFields(c),
       })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -3730,8 +3758,10 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
     const { data: stuckContacts } = await supabase.from('facebook_contacts')
-      .select('id, page_id, psid, fb_name, lead_id')
+      .select('id, page_id, psid, fb_name, lead_id, last_message_at, created_at')
       .or('fb_name.eq.Facebook User,fb_name.eq.User,fb_name.is.null')
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
       .limit(100);
     if (!stuckContacts?.length) return res.json({ updated: 0, message: 'Không có contact nào cần cập nhật' });
 

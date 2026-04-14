@@ -317,12 +317,15 @@ server.listen(config.port, () => {
       const cfg = getConfig();
       if (cfg.trigger === 'manual') return; // Không tự động
 
-      // Contacts chưa có lead_id, có ít nhất 1 inbound message
-      const { data: contacts } = await supabase.from('facebook_contacts')
-        .select('id, fb_name, phone, page_id, psid, lead_id, customer_id')
+      const { sortFacebookContactsNewestFirst } = require('./helpers/facebookContactActivity');
+
+      // Contacts chưa có lead_id — xử lý từ hoạt động mới nhất (tin / tạo hồ sơ) để user mới không bị “xếp sau” hàng cũ
+      const { data: contactsRaw } = await supabase.from('facebook_contacts')
+        .select('id, fb_name, phone, page_id, psid, lead_id, customer_id, last_message_at, created_at')
         .is('lead_id', null);
 
-      if (!contacts?.length) return;
+      const contacts = sortFacebookContactsNewestFirst(contactsRaw || []);
+      if (!contacts.length) return;
 
       let created = 0;
       for (const contact of contacts) {

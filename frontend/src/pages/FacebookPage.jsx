@@ -12,6 +12,37 @@ import {
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
 
+/** Mới nhất = max(tin cuối, lúc tạo contact) — khớp backend facebookContactActivity */
+function fbActivityTs(c) {
+  const msg = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+  const cre = c.created_at ? new Date(c.created_at).getTime() : 0;
+  return Math.max(msg, cre);
+}
+
+function formatFbActivityTime(c) {
+  const ts = fbActivityTs(c);
+  if (!ts) return null;
+  const d = new Date(ts);
+  const today = new Date();
+  const isToday = d.toDateString() === today.toDateString();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const time = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  if (isToday) return time;
+  if (isYesterday) return `H.qua ${time}`;
+  return `${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+function fbActivitySourceLabel(c) {
+  if (c.fb_activity_source === 'message') return 'Tin nhắn';
+  if (c.fb_activity_source === 'created') return 'Hồ sơ mới';
+  const lastMsg = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+  const created = c.created_at ? new Date(c.created_at).getTime() : 0;
+  if (lastMsg >= created && lastMsg > 0) return 'Tin nhắn';
+  return 'Hồ sơ mới';
+}
+
 // ═══════════════════════════════════════════════════════════════
 // FACEBOOK INTEGRATION PAGE
 // ═══════════════════════════════════════════════════════════════
@@ -186,12 +217,11 @@ function InboxTab({ pageStats }) {
           const ua = (a.unread_count || 0) > 0 ? 1 : 0;
           const ub = (b.unread_count || 0) > 0 ? 1 : 0;
           if (ub !== ua) return ub - ua;
+          const act = fbActivityTs(b) - fbActivityTs(a);
+          if (act !== 0) return act;
           const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
           const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
-          if (bp !== ap) return bp - ap;
-          const dateA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
-          const dateB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
-          return dateB - dateA;
+          return bp - ap;
         });
         setContacts(sorted);
         setContactMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
@@ -473,18 +503,18 @@ function InboxTab({ pageStats }) {
                 </div>
                 )}
               </div>
-              <div className="text-[10px] text-gray-400 shrink-0">
-                {c.last_message_at && (() => {
-                  const d = new Date(c.last_message_at);
-                  const today = new Date();
-                  const isToday = d.toDateString() === today.toDateString();
-                  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-                  const isYesterday = d.toDateString() === yesterday.toDateString();
-                  const time = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-                  if (isToday) return time;
-                  if (isYesterday) return `H.qua ${time}`;
-                  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) + ' ' + time;
-                })()}
+              <div className="text-[10px] text-gray-400 shrink-0 text-right max-w-[76px]">
+                {c.fb_is_recent_activity && (
+                  <span className="block text-[9px] font-semibold text-emerald-600 mb-0.5">Mới</span>
+                )}
+                {formatFbActivityTime(c) && (
+                  <span className="block text-gray-500" title={`Hoạt động cuối: ${fbActivitySourceLabel(c)}`}>
+                    {formatFbActivityTime(c)}
+                  </span>
+                )}
+                <span className="block text-[9px] text-gray-400 truncate max-w-[76px]" title={fbActivitySourceLabel(c)}>
+                  {fbActivitySourceLabel(c)}
+                </span>
               </div>
             </div>
           ))}
@@ -793,12 +823,14 @@ function ContactsTab() {
         const merged = append ? [...contacts, ...rows] : rows;
         const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
         const sorted = [...deduped].sort((a, b) => {
+          const ua = (a.unread_count || 0) > 0 ? 1 : 0;
+          const ub = (b.unread_count || 0) > 0 ? 1 : 0;
+          if (ub !== ua) return ub - ua;
+          const act = fbActivityTs(b) - fbActivityTs(a);
+          if (act !== 0) return act;
           const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
           const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
-          if (bp !== ap) return bp - ap;
-          const dateA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
-          const dateB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
-          return dateB - dateA;
+          return bp - ap;
         });
         setContacts(sorted);
         setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
@@ -1126,7 +1158,7 @@ function ContactsTab() {
             <tr>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">Tên</th>
               <th className="text-center px-3 py-3 font-semibold text-gray-600">💬</th>
-              <th className="text-left px-3 py-3 font-semibold text-gray-600">Lần cuối</th>
+              <th className="text-left px-3 py-3 font-semibold text-gray-600">Hoạt động</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">SĐT</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">Lead</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">Ghi chú</th>
@@ -1170,7 +1202,13 @@ function ContactsTab() {
                       ) : <span className="text-gray-300 text-xs">0</span>}
                     </td>
                     <td className="px-3 py-3 text-xs text-gray-500">
-                      {c.last_message_at ? new Date(c.last_message_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : <span className="text-gray-300">—</span>}
+                      <div className="flex flex-col gap-0.5">
+                        {c.fb_is_recent_activity && (
+                          <span className="text-[10px] font-semibold text-emerald-600 w-fit">Mới (48h)</span>
+                        )}
+                        <span>{formatFbActivityTime(c) || <span className="text-gray-300">—</span>}</span>
+                        <span className="text-[10px] text-gray-400">{fbActivitySourceLabel(c)}</span>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-gray-600">{c.display_phone || c.phone || c.customer?.phone || <span className="text-gray-300">—</span>}</td>
                     <td className="px-4 py-3">
@@ -1685,16 +1723,19 @@ function AutoLeadTab() {
             </div>
           )}
           <div className="ml-2.5 border-l-2 border-blue-200 h-3" />
-          <div className="flex items-center gap-2">
-            <span className="w-5 h-5 bg-blue-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold">3</span>
-            <span className="text-gray-600">
+          <div className="flex items-start gap-2">
+            <span className="w-5 h-5 bg-blue-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">3</span>
+            <div className="text-gray-600">
               {config.auto_update_name && '👤 Cập nhật tên'}
               {config.auto_update_name && config.auto_update_phone && ' → '}
               {config.auto_update_phone && '📞 Cập nhật SĐT'}
               {(config.auto_update_name || config.auto_update_phone) && config.auto_update_address && ' → '}
               {config.auto_update_address && '📍 Cập nhật địa chỉ'}
               {!config.auto_update_name && !config.auto_update_phone && !config.auto_update_address && 'Không tự cập nhật'}
-            </span>
+              <p className="text-[10px] text-blue-700 mt-1 font-normal leading-snug">
+                Thứ tự quét trên server và quét SĐT định kỳ: ưu tiên khách hoạt động mới nhất (tin nhắn hoặc hồ sơ mới tạo).
+              </p>
+            </div>
           </div>
           {config.notify_on_new_lead && (
             <>
@@ -1771,8 +1812,9 @@ function LeadScanPanel() {
             📶 Quét contact có SĐT → Tạo Lead tự động
           </h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Hệ thống sẽ quét tất cả contact Facebook có số điện thoại nhưng chưa có Lead → tự động tạo Lead theo lịch.
-            Nguồn Lead sẽ được đặt theo tên Page Facebook tương ứng.
+            Hệ thống sẽ quét contact Facebook có số điện thoại nhưng chưa có Lead → tự động tạo Lead theo lịch.
+            Danh sách và thứ tự xử lý: <strong className="text-gray-700">mới nhất trước</strong> (theo tin cuối hoặc lúc tạo hồ sơ), không xử lý từ đầu danh sách cũ.
+            Nguồn Lead theo tên Page Facebook tương ứng.
           </p>
         </div>
         {/* Toggle enabled */}
@@ -1817,19 +1859,35 @@ function LeadScanPanel() {
           <table className="w-full text-xs">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-3 py-2 text-left text-gray-500 w-8">#</th>
                 <th className="px-3 py-2 text-left text-gray-500">Tên</th>
                 <th className="px-3 py-2 text-left text-gray-500">SĐT</th>
                 <th className="px-3 py-2 text-left text-gray-500">Page Facebook</th>
-                <th className="px-3 py-2 text-left text-gray-500">Tin nhắn</th>
+                <th className="px-3 py-2 text-left text-gray-500">Tin inbound</th>
+                <th className="px-3 py-2 text-left text-gray-500">Hoạt động cuối</th>
+                <th className="px-3 py-2 text-left text-gray-500">Nguồn</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {preview.contacts.map(c => (
+              {preview.contacts.map((c, idx) => (
                 <tr key={c.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2">{c.fb_name || 'Facebook User'}</td>
+                  <td className="px-3 py-2 text-gray-400 font-mono text-[10px]">{idx + 1}</td>
+                  <td className="px-3 py-2">
+                    {idx === 0 && (
+                      <span className="mr-1 text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded">Tiếp theo</span>
+                    )}
+                    {c.fb_name || 'Facebook User'}
+                  </td>
                   <td className="px-3 py-2 font-mono text-green-700">{c.phone}</td>
                   <td className="px-3 py-2 text-blue-700">{c.page_name}</td>
-                  <td className="px-3 py-2 text-gray-500">{c.message_count || 0} tin</td>
+                  <td className="px-3 py-2 text-gray-500">{c.message_count ?? 0} tin</td>
+                  <td className="px-3 py-2 text-gray-600 text-[11px]">
+                    {c.fb_last_activity_at
+                      ? new Date(c.fb_last_activity_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                      : '—'}
+                    {c.fb_is_recent_activity && <span className="ml-1 text-emerald-600 font-medium">· Mới</span>}
+                  </td>
+                  <td className="px-3 py-2 text-gray-500 text-[11px]">{c.fb_activity_source === 'message' ? 'Tin nhắn' : 'Hồ sơ'}</td>
                 </tr>
               ))}
             </tbody>
@@ -1861,6 +1919,7 @@ function LeadScanPanel() {
           result.errors?.length ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'
         }`}>
           <div className="font-semibold mb-1">📊 Kết quả quét:</div>
+          {result.sort_note && <p className="text-[11px] text-gray-600 mb-1">{result.sort_note}</p>}
           <div className="flex gap-4 text-xs">
             <span>🔍 Quét: <b>{result.scanned}</b></span>
             <span className="text-green-700">✅ Tạo: <b>{result.created}</b></span>

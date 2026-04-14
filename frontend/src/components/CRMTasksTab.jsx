@@ -8,6 +8,7 @@ import {
   FileSpreadsheet, Edit3
 } from 'lucide-react';
 import ExcelQuotationImport from './ExcelQuotationImport';
+import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 
 const LEAD_STAGES = [
   { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
@@ -488,7 +489,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
           <div className="flex items-center gap-0.5 shrink-0 border-l border-gray-100 pl-1.5 ml-0.5">
             <button type="button" onClick={(e) => { e.stopPropagation(); toggleShare(task.id); }}
               className={`p-1.5 rounded-md cursor-pointer ${task.shared_to_project ? 'text-green-600 hover:bg-green-50' : 'text-gray-500 hover:bg-gray-100 hover:text-green-600'}`}
-              title={task.shared_to_project ? 'Đang chia sẻ — click để tắt' : 'Chia sẻ cho Khối khác xem'}>
+              title={task.shared_to_project ? 'Đang hiển thị trên Dự án / Khối khác — click để tắt' : 'Bật hiển thị ghi chú & file trên Dự án / Khối khác (team CRM vẫn xem đủ tại đây)'}>
               {task.shared_to_project ? <Share2 className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
             </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(task.id, task.notes); }} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Ghi chú & file">
@@ -515,7 +516,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                         ? 'text-green-700 bg-green-50 hover:bg-green-100 border border-green-300'
                         : 'text-gray-500 hover:text-green-600 hover:bg-green-50'
                     }`}
-                    title={task.shared_to_project ? 'Ghi chú đang chia sẻ — click để tắt' : 'Bật chia sẻ ghi chú cho Khối khác xem'}>
+                    title={task.shared_to_project ? 'Đang đồng bộ lên Dự án — click để tắt' : 'Đồng bộ ghi chú lên tab Dự án / Khối khác (CRM luôn xem đủ)'}>
                     {task.shared_to_project ? <Share2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
                     {task.shared_to_project ? ' Ghi chú đang chia sẻ' : ' Chia sẻ ghi chú'}
                   </button>
@@ -576,6 +577,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                 <div className="space-y-1">
                   {atts.map(att => {
                     const AttIcon = ATT_ICONS[att.doc_type] || FileText;
+                    const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
                     return (
                       <div key={att.id} className="py-1.5 px-2 rounded bg-white border group/att">
                         <div className="flex items-start gap-2">
@@ -588,8 +590,8 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                               )}
                             </div>
                             {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
-                            {att.file_url && !att.mime_type?.startsWith('image/') && (
-                              <a href={att.file_url} target="_blank" rel="noopener noreferrer"
+                            {att.file_url && !att.mime_type?.startsWith('image/') && attOpen && (
+                              <a {...attOpen}
                                 className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
                             )}
                             <span className="text-[9px] text-gray-400 ml-1">{att.creator?.full_name}</span>
@@ -597,7 +599,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                           <div className="opacity-0 group-hover/att:opacity-100 flex items-center gap-0.5 shrink-0">
                             <button onClick={() => toggleShareAttachment(task.id, att.id)}
                               className={`p-0.5 cursor-pointer ${att.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
-                              title={att.shared_to_project ? 'Đang chia sẻ — click để tắt' : 'Chia sẻ file này cho Khối khác'}>
+                              title={att.shared_to_project ? 'File đang hiện trên Dự án — click để tắt' : 'Cho file hiện trên Dự án / Khối khác (CRM vẫn mở được)'}>
                               {att.shared_to_project ? <Share2 className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
                             </button>
                             <button onClick={() => deleteAttachment(task.id, att.id)}
@@ -607,15 +609,15 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                           </div>
                         </div>
                         {/* Image preview */}
-                        {att.file_url && att.mime_type?.startsWith('image/') && (
-                          <a href={att.file_url} target="_blank" rel="noopener noreferrer" className="block mt-1.5 ml-5">
-                            <img src={att.file_url} alt={att.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
+                        {att.file_url && att.mime_type?.startsWith('image/') && attOpen && (
+                          <a {...attOpen} className="block mt-1.5 ml-5">
+                            <img src={publicFileUrl(att.file_url)} alt={att.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
                           </a>
                         )}
                         {/* Video preview */}
                         {att.file_url && (att.mime_type?.startsWith('video/') || att.doc_type === 'video') && (
                           <div className="mt-1.5 ml-5">
-                            <video src={att.file_url} controls preload="metadata"
+                            <video src={publicFileUrl(att.file_url)} controls preload="metadata"
                               className="max-h-52 max-w-full rounded-lg border border-gray-200 bg-black" />
                           </div>
                         )}

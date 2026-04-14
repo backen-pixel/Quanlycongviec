@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
+import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { Share2, FileText, Image, MessageSquare, ChevronDown, ChevronRight, Paperclip } from 'lucide-react';
 
 const STAGE_LABELS = {
@@ -66,25 +67,30 @@ export default function SharedCRMNotes({ projectId }) {
                   <div className="space-y-1">
                     {task.attachments.map(att => {
                       const Icon = ATT_ICONS[att.doc_type] || FileText;
+                      const open = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
                       return (
                         <div key={att.id} className="flex items-start gap-2 py-1 px-2 rounded bg-gray-50">
                           <Icon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
                           <div className="flex-1 min-w-0">
                             <p className="text-[11px] font-medium text-gray-700 truncate">{att.name}</p>
                             {att.notes && <p className="text-[10px] text-gray-500 line-clamp-2">{att.notes}</p>}
-                            {att.file_url && !att.mime_type?.startsWith('image/') && (
-                              <a href={att.file_url} target="_blank" rel="noopener noreferrer"
+                            {att.file_url && !att.mime_type?.startsWith('image/') && open && (
+                              <a {...open}
                                 className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
                             )}
                           </div>
                         </div>
                       );
                     })}
-                    {task.attachments.filter(a => a.mime_type?.startsWith('image/')).map(att => (
-                      <a key={att.id} href={att.file_url} target="_blank" rel="noopener noreferrer" className="block">
-                        <img src={att.file_url} alt={att.name} className="max-h-40 rounded-lg border border-gray-200 object-contain hover:opacity-90" />
-                      </a>
-                    ))}
+                    {task.attachments.filter(a => a.mime_type?.startsWith('image/') && a.file_url).map(att => {
+                      const open = getFileOpenAnchorProps(att.file_url, { fileName: att.file_name });
+                      if (!open) return null;
+                      return (
+                        <a key={att.id} {...open} className="block">
+                          <img src={publicFileUrl(att.file_url)} alt={att.name} className="max-h-40 rounded-lg border border-gray-200 object-contain hover:opacity-90" />
+                        </a>
+                      );
+                    })}
                   </div>
                 )}
 
