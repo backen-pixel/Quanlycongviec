@@ -680,8 +680,7 @@ export default function ProductionDetail() {
             {primaryCrmDeal && (
               <div className="space-y-2 pb-3 mb-3 border-b border-gray-100">
                 <p className="text-[10px] font-bold text-violet-600 uppercase tracking-wide">CRM</p>
-                <PersonCard label="Phụ trách lead" person={primaryCrmDeal.lead_owner} showPlaceholder />
-                <PersonCard label="Phụ trách deal" person={primaryCrmDeal.assignee} showPlaceholder />
+                <PersonCard label="Phụ trách CRM" person={primaryCrmDeal.assignee || primaryCrmDeal.lead_owner} showPlaceholder />
                 {primaryCrmDeal.sx_pipeline_stage?.name && (
                   <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
                     <p className="text-[10px] text-violet-600 font-semibold uppercase">Deal trên Kanban SX</p>

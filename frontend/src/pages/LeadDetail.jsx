@@ -1450,8 +1450,13 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
       if (field === 'estimated_value') payload.estimated_value = parseFloat(value) || 0;
       else if (field === 'probability') payload.probability = Math.min(100, Math.max(0, parseInt(value) || 0));
       else if (field === 'source_id') payload.source_id = value || null;
-      else if (field === 'assigned_to') payload.assigned_to = value || null;
-      else if (field === 'lead_owner_id') payload.lead_owner_id = value || null;
+      else if (field === 'assigned_to') {
+        payload.assigned_to = value || null;
+        payload.lead_owner_id = value || null;
+      } else if (field === 'lead_owner_id') {
+        payload.lead_owner_id = value || null;
+        payload.assigned_to = value || null;
+      }
       else if (field === 'expected_close_date') payload.expected_close_date = value || null;
       else if (field === 'description') payload.description = value || null;
       else if (field === 'next_follow_up') payload.next_follow_up = value || null;
@@ -1597,45 +1602,22 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
         type="select"
         options={companies.map(c => ({ value: c.id, label: c.name }))} />
 
-      {/* Phụ trách Lead (lead_owner) */}
+      {/* Một người phụ trách cho cả Lead và Deal */}
       <div className="group">
         <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
           <span className="text-sm mt-0.5 shrink-0">👤</span>
           <div className="flex-1 min-w-0">
             <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1">
-              Phụ trách Lead
+              Người phụ trách
             </p>
             {!lead?.company_id ? (
               <p className="text-xs text-amber-500 italic">⚠️ Chọn công ty trước</p>
             ) : (
               <EmployeePicker
                 companyId={lead?.company_id}
-                value={lead?.lead_owner_id || ''}
-                onChange={(userId) => saveField('lead_owner_id', userId || '')}
-                placeholder="👤 Người phụ trách lead..."
-                size="sm"
-              />
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Phụ trách Deal (assigned_to) */}
-      <div className="group">
-        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
-          <span className="text-sm mt-0.5 shrink-0">🤝</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1">
-              Phụ trách Deal
-            </p>
-            {!lead?.company_id ? (
-              <p className="text-xs text-amber-500 italic">⚠️ Chọn công ty trước</p>
-            ) : (
-              <EmployeePicker
-                companyId={lead?.company_id}
-                value={lead?.assigned_to || ''}
+                value={lead?.assigned_to || lead?.lead_owner_id || ''}
                 onChange={(userId) => saveField('assigned_to', userId || '')}
-                placeholder="👤 Người phụ trách deal..."
+                placeholder="👤 Chọn nhân viên phụ trách..."
                 size="sm"
               />
             )}
@@ -1739,7 +1721,7 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
   const [converting, setConverting] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState('');
-  const [selectedSales, setSelectedSales] = useState(lead?.assigned_to || '');
+  const [selectedSales, setSelectedSales] = useState(lead?.assigned_to || lead?.lead_owner_id || '');
 
   const canConvert = customer?.full_name && customer?.phone;
 
@@ -1805,17 +1787,15 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
             )}
           </div>
 
-          {/* Lead owner info (read-only) */}
           {(lead?.lead_owner || lead?.assignee) && (
             <div className="bg-purple-50 rounded-xl p-3 border border-purple-200">
-              <p className="text-xs font-bold text-purple-700 mb-1">👤 Phụ trách Lead hiện tại</p>
-              <p className="text-sm text-purple-900">{lead?.lead_owner?.full_name || lead?.assignee?.full_name || '—'}</p>
+              <p className="text-xs font-bold text-purple-700 mb-1">👤 Người phụ trách hiện tại</p>
+              <p className="text-sm text-purple-900">{lead?.assignee?.full_name || lead?.lead_owner?.full_name || '—'}</p>
             </div>
           )}
 
-          {/* Chọn Sales phụ trách Deal — dùng EmployeePicker */}
           <div>
-            <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Nhân viên phụ trách Deal</label>
+            <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Người phụ trách sau khi chuyển Deal</label>
             <EmployeePicker
               companyId={selectedCompany}
               value={selectedSales}

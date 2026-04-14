@@ -7,9 +7,9 @@ import AutoPipelineMonitor from './AutoPipelineMonitor';
 
 const PIPELINE_FORM_EMPTY = {
   engine: 'full_cycle',
-  full_cycle_max_users_per_round: 500,
-  auto_loop_pause_sec: 60,
-  chain_chunk_users: 500,
+  full_cycle_max_users_per_round: 100,
+  auto_loop_pause_sec: 0,
+  chain_chunk_users: 100,
   chain_sort: 'newest_first',
   chain_recent_hours: 48,
   chain_skip_stale: false,
@@ -55,11 +55,16 @@ export default function BatchActionsBar({ onComplete = null }) {
         showAdvancedEngines && ['chain', 'legacy', 'full_cycle'].includes(plForm.engine)
           ? plForm.engine
           : 'full_cycle';
+      const parseIntBounded = (raw, { min, max, fallback }) => {
+        const v = parseInt(String(raw ?? '').trim(), 10);
+        if (!Number.isFinite(v)) return fallback;
+        return Math.min(max, Math.max(min, v));
+      };
       await saveFbAutoPipelineConfig({
         engine,
-        full_cycle_max_users_per_round: Math.min(500000, Math.max(0, Number(plForm.full_cycle_max_users_per_round) || 0)),
-        auto_loop_pause_sec: Math.min(3600, Math.max(15, Number(plForm.auto_loop_pause_sec) || 60)),
-        chain_chunk_users: Math.min(500, Math.max(1, Number(plForm.chain_chunk_users) || 500)),
+        full_cycle_max_users_per_round: parseIntBounded(plForm.full_cycle_max_users_per_round, { min: 0, max: 500000, fallback: 100 }),
+        auto_loop_pause_sec: parseIntBounded(plForm.auto_loop_pause_sec, { min: 0, max: 3600, fallback: 0 }),
+        chain_chunk_users: parseIntBounded(plForm.chain_chunk_users, { min: 1, max: 500, fallback: 100 }),
         chain_sort: plForm.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first',
         chain_recent_hours: Math.min(168, Math.max(0, Number(plForm.chain_recent_hours) || 0)),
         chain_skip_stale: !!plForm.chain_skip_stale,
@@ -181,7 +186,7 @@ export default function BatchActionsBar({ onComplete = null }) {
             {pipelineCfgOpen && (
               <div className="px-3 pb-3 pt-0 space-y-2 border-t border-amber-100/80 bg-white/60">
                 <p className="text-[10px] text-gray-600 pt-2 leading-relaxed">
-                  Mỗi vòng: đồng bộ + quét <strong>tối đa N user mới nhất</strong> (pool đã xếp mới→cũ), chunk từng lô, rồi Tạo Lead → Refresh → Xóa trùng → Sync SĐT. <strong>0 user/vòng</strong> = không giới hạn (chạy hết pool). Sau vòng nghỉ <strong>số giây</strong> cấu hình rồi lặp lại.
+                  Mỗi vòng: đồng bộ + quét <strong>tối đa N user mới nhất</strong> (pool mới→cũ), theo chunk, rồi Tạo Lead → Refresh → Xóa trùng → Sync SĐT. <strong>0 user/vòng</strong> = không giới hạn (chạy hết pool). Mặc định <strong>100 user/vòng</strong>, lặp vòng tiếp ngay; đặt <strong>Nghỉ &gt; 0</strong> nếu cần chờ giữa các vòng.
                 </p>
                 <label className="inline-flex items-center gap-2 text-[10px] text-gray-700 cursor-pointer select-none">
                   <input
@@ -215,7 +220,7 @@ export default function BatchActionsBar({ onComplete = null }) {
                     </p>
                   )}
                   <label className="flex flex-col gap-0.5">
-                    <span className="text-gray-600">User mỗi lần Sync→Quét (chunk, 1–500, mặc định 500)</span>
+                    <span className="text-gray-600">User mỗi lần Sync→Quét (chunk, 1–500, mặc định 100)</span>
                     <input
                       type="number"
                       min={1}
@@ -232,18 +237,18 @@ export default function BatchActionsBar({ onComplete = null }) {
                       min={0}
                       max={500000}
                       className="border rounded-md px-2 py-1"
-                      value={plForm.full_cycle_max_users_per_round ?? 500}
+                      value={plForm.full_cycle_max_users_per_round ?? 100}
                       onChange={(e) => setPlForm((f) => ({ ...f, full_cycle_max_users_per_round: e.target.value }))}
                     />
                   </label>
                   <label className="flex flex-col gap-0.5">
-                    <span className="text-gray-600">Nghỉ giữa các vòng (giây, 15–3600, mặc định 60)</span>
+                    <span className="text-gray-600">Nghỉ giữa các vòng (giây, 0–3600; 0 = lặp liền)</span>
                     <input
                       type="number"
-                      min={15}
+                      min={0}
                       max={3600}
                       className="border rounded-md px-2 py-1"
-                      value={plForm.auto_loop_pause_sec ?? 60}
+                      value={plForm.auto_loop_pause_sec ?? 0}
                       onChange={(e) => setPlForm((f) => ({ ...f, auto_loop_pause_sec: e.target.value }))}
                     />
                   </label>
