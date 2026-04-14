@@ -11,14 +11,16 @@ import {
   Clock, List, LayoutGrid, GitMerge, UserCheck
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
-import BatchActionsBar from '../components/BatchActionsBar';
 import {
   loadCrmPipelineSnapshot,
   saveCrmPipelineSnapshot,
   markCrmPipelineCardFocus,
   peekCrmPipelineCardFocus,
   clearCrmPipelineCardFocus,
+  getLocallyViewedLeadIdSet,
+  getCurrentUserKeyForLeadSeen,
 } from '../lib/crmPipelineStorage';
+import { userSeesAllCrmDeals } from '../lib/crmDealAccess';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -81,11 +83,9 @@ const TIME_PRESETS = [
 
 const KANBAN_LOAD_OPTIONS = ['1000', '2000', '5000', 'all'];
 
-const CRM_DEAL_VIEW_ALL_ROLES = ['admin', 'manager', 'director'];
-
 export default function CRMDashboard() {
   const { user } = useAuth();
-  const seesAllCrmDeals = CRM_DEAL_VIEW_ALL_ROLES.includes(user?.role);
+  const seesAllCrmDeals = userSeesAllCrmDeals(user?.role);
 
   const persistedUiRef = useRef(undefined);
   if (persistedUiRef.current === undefined) {
@@ -255,6 +255,17 @@ export default function CRMDashboard() {
 
   useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee]);
 
+  useEffect(() => {
+    const onSeen = (e) => {
+      const seenId = e.detail?.id;
+      if (!seenId) return;
+      setAllLeads((prev) => prev.map((l) => (String(l.id) === String(seenId) ? { ...l, is_new_for_current_user: false } : l)));
+      setAllDeals((prev) => prev.map((l) => (String(l.id) === String(seenId) ? { ...l, is_new_for_current_user: false } : l)));
+    };
+    window.addEventListener('crm-lead-seen', onSeen);
+    return () => window.removeEventListener('crm-lead-seen', onSeen);
+  }, []);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -346,8 +357,14 @@ export default function CRMDashboard() {
       });
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
-      setAllLeads(leadsRows);
-      setAllDeals(dealsRows);
+      const userKey = getCurrentUserKeyForLeadSeen(user);
+      const viewedLocal = getLocallyViewedLeadIdSet(userKey);
+      const mergeLeadSeenLocal = (rows) =>
+        (rows || []).map((l) =>
+          viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
+        );
+      setAllLeads(mergeLeadSeenLocal(leadsRows));
+      setAllDeals(mergeLeadSeenLocal(dealsRows));
       setStagesLead(stagesLeadRes.data);
       setStagesDeal(stagesDealRes.data);
       setSources(sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []));
@@ -849,6 +866,9 @@ export default function CRMDashboard() {
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono text-gray-400">{item.code}</span>
                         <p className="text-sm font-medium text-gray-900 truncate">{item.title}</p>
+                        {item.is_new_for_current_user && (
+                          <span className="shrink-0 text-[9px] font-bold uppercase text-white bg-rose-500 px-1.5 py-0.5 rounded">Mới</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
                         {item.customer?.phone && <span className="text-[10px] text-green-600">📞 {item.customer.phone}</span>}
@@ -1205,9 +1225,6 @@ export default function CRMDashboard() {
           </button>
         ))}
       </div>
-
-      {/* Batch Actions Bar */}
-      <BatchActionsBar onComplete={load} />
 
       {viewMode === 'kanban' && manualMergeIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 mb-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm">
@@ -1986,7 +2003,12 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
       </div>
 
       {/* Title */}
-      <p className="text-sm font-medium text-gray-900 truncate mb-2">{item.title}</p>
+      <div className="flex items-start gap-2 mb-2 min-w-0">
+        <p className="text-sm font-medium text-gray-900 truncate flex-1 min-w-0">{item.title}</p>
+        {item.is_new_for_current_user && (
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-white bg-rose-500 px-1.5 py-0.5 rounded leading-tight">Mới</span>
+        )}
+      </div>
 
       {/* Customer name + Phone */}
       {(item.customer?.full_name || item.customer?.phone) && (

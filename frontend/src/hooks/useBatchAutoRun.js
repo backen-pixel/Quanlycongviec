@@ -19,6 +19,7 @@ const EMPTY = {
   batchResults: [],
   kpi: { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 },
   startedAt: null,
+  pipelineConfig: null,
 };
 
 let currentState = { ...EMPTY };
@@ -66,6 +67,12 @@ export async function toggleBatchAuto() {
   } else {
     await api.post('/facebook/auto-pipeline/start');
   }
+  await loadStatus();
+}
+
+/** Lưu cấu hình auto pipeline (full_cycle: danh bạ → Lead → Refresh → Gộp; chunk + giới hạn user/vòng). */
+export async function saveFbAutoPipelineConfig(body) {
+  await api.put('/facebook/auto-pipeline/config', body);
   await loadStatus();
 }
 
