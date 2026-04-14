@@ -571,7 +571,7 @@ export default function ProjectWorkflowPage() {
             const STATUS_COLUMNS = [
               { id: 'pending', label: 'Đang chờ', color: '#6b7280', statuses: ['consulting', 'designing', 'quoting'] },
               { id: 'processing', label: 'Chờ xử lý', color: '#f59e0b', statuses: ['contract_signed'] },
-              { id: 'working', label: 'Đang làm', color: '#3b82f6', statuses: ['producing', 'delivering', 'shipping', 'installing'] },
+              { id: 'working', label: 'Đang làm', color: '#3b82f6', statuses: ['producing', 'shipping', 'installing'] },
               { id: 'review', label: 'Chờ kiểm tra', color: '#8b5cf6', statuses: [] }, // Custom logic
               { id: 'done', label: 'Hoàn thành', color: '#10b981', statuses: ['completed'] },
               { id: 'blocked', label: 'Bị chặn', color: '#ef4444', statuses: [] }, // Custom logic

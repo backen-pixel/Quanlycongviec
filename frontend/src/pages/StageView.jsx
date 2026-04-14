@@ -21,10 +21,10 @@ const STAGE_NAMES = {
   shipping: 'Vận chuyển & Lắp đặt', installation: 'Vận chuyển & Lắp đặt', // backward compat
 };
 
-const NEXT_STATUS = { consulting:'designing', design:'quoting', quotation:'contract_signed', contract:'producing', production:'delivering', delivery:'warranty' };
+const NEXT_STATUS = { consulting:'designing', design:'quoting', quotation:'contract_signed', contract:'producing', production:'shipping', delivery:'warranty' };
 const NEXT_SLUG = { consulting:'design', design:'quotation', quotation:'contract', contract:'production', production:'delivery', delivery:'customer-care' };
-// slug → project status khi đang ở giai đoạn đó
-const SLUG_TO_STATUS = { consulting:'consulting', design:'designing', quotation:'quoting', contract:'contract_signed', production:'producing', delivery:'delivering', 'customer-care':'warranty' };
+// slug → project status khi đang ở giai đoạn đó (enum DB: không có delivering)
+const SLUG_TO_STATUS = { consulting:'consulting', design:'designing', quotation:'quoting', contract:'contract_signed', production:'producing', delivery:'shipping', 'customer-care':'warranty' };
 
 const QT = [{id:'all',label:'Tất cả'},{id:'today',label:'Hôm nay'},{id:'week',label:'Tuần này'},{id:'month',label:'Tháng này'},{id:'custom',label:'Tùy chọn'}];
 function fmtD(d){return d.toISOString().slice(0,10)}

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { markCrmPipelineCardFocus } from '../lib/crmPipelineStorage';
+import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
@@ -8,10 +10,11 @@ import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CallLogsTab from '../components/CallLogsTab';
+import FacebookChatTab from '../components/FacebookChatTab';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Send, Image, Paperclip, RefreshCw, Users, ClipboardCheck, Loader2,
+  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2,
 } from 'lucide-react';
 
 const ACTIVITY_TYPES = [
@@ -382,7 +385,7 @@ export default function LeadDetail() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => { if (lead?.type === 'deal') localStorage.setItem('crm_pinned_tab', 'deal'); navigate('/crm'); }} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
+          <button onClick={() => { if (lead?.type === 'deal') localStorage.setItem('crm_pinned_tab', 'deal'); markCrmPipelineCardFocus(id); navigate('/crm'); }} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
             <div className="flex items-center gap-2">
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${lead.type === 'deal' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
@@ -460,9 +463,14 @@ export default function LeadDetail() {
             📥 Import Excel
           </button>
           {lead.project_id && (
-            <Link to={`/projects/${lead.project_id}`} className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
-              <FolderKanban className="h-4 w-4" /> Xem dự án
-            </Link>
+            <>
+              <Link to={`/sx/projects/${lead.project_id}`} className="h-9 px-3 bg-teal-100 text-teal-800 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                <FolderKanban className="h-4 w-4" /> Xưởng / SX
+              </Link>
+              <Link to={`/projects/${lead.project_id}`} className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                <FolderKanban className="h-4 w-4" /> Dự án đầy đủ
+              </Link>
+            </>
           )}
           <button onClick={deleteLead} className="h-9 px-3 text-red-500 border border-red-200 rounded-lg text-sm flex items-center gap-1.5 cursor-pointer hover:bg-red-50">
             <Trash2 className="h-4 w-4" />
@@ -930,6 +938,7 @@ export default function LeadDetail() {
                                           {files.map(f => {
                                             const isVideo = f.doc_type === 'video' || f.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi)$/i.test(f.file_name || '');
                                             const isImage = f.doc_type === 'image' || f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_name || '');
+                                            const taskFileOpen = f.file_url ? getFileOpenAnchorProps(f.file_url, { fileName: f.file_name }) : null;
                                             return (
                                               <div key={f.id} className="px-4 py-2 hover:bg-blue-50 transition">
                                                 <div className="flex items-center gap-3">
@@ -940,22 +949,22 @@ export default function LeadDetail() {
                                                     <div className="flex items-center gap-2 mt-0.5">
                                                       {f.file_size && <span className="text-[10px] text-gray-400">{f.file_size > 1024 * 1024 ? `${(f.file_size / 1024 / 1024).toFixed(1)} MB` : `${(f.file_size / 1024).toFixed(1)} KB`}</span>}
                                                       {f.created_at && <span className="text-[10px] text-gray-400">{new Date(f.created_at).toLocaleDateString('vi-VN')}</span>}
-                                                      {f.file_url && <a href={f.file_url} target="_blank" rel="noreferrer" className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>}
+                                                      {taskFileOpen && <a {...taskFileOpen} className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>}
                                                     </div>
                                                   </div>
                                                 </div>
                                                 {/* Video player */}
                                                 {isVideo && f.file_url && (
                                                   <div className="mt-2 ml-8">
-                                                    <video src={f.file_url} controls preload="metadata"
+                                                    <video src={publicFileUrl(f.file_url)} controls preload="metadata"
                                                       className="max-w-full max-h-64 rounded-lg border border-gray-200 bg-black shadow-sm" />
                                                   </div>
                                                 )}
                                                 {/* Image preview */}
-                                                {isImage && f.file_url && (
+                                                {isImage && f.file_url && taskFileOpen && (
                                                   <div className="mt-2 ml-8">
-                                                    <a href={f.file_url} target="_blank" rel="noreferrer">
-                                                      <img src={f.file_url} alt={f.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain hover:opacity-90 cursor-pointer" />
+                                                    <a {...taskFileOpen}>
+                                                      <img src={publicFileUrl(f.file_url)} alt={f.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain hover:opacity-90 cursor-pointer" />
                                                     </a>
                                                   </div>
                                                 )}
@@ -1175,7 +1184,9 @@ function getFileIcon(name) {
 function DocumentRow({ doc, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const typeInfo = DOC_TYPES.find(t => t.value === doc.doc_type) || DOC_TYPES[5];
-  const isFile = !!doc.file_url;
+  const fileHref = doc.file_url ? publicFileUrl(doc.file_url) : '';
+  const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: doc.file_name }) : null;
+  const isFile = !!fileHref;
   const isImage = isFile && (doc.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_name || doc.file_url || ''));
   const isVideo = isFile && (doc.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(doc.file_name || doc.file_url || ''));
   const hasExtra = doc.notes || isImage || isVideo;
@@ -1194,12 +1205,12 @@ function DocumentRow({ doc, onDelete }) {
                 <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full font-medium">📌 Từ nhiệm vụ</span>
               )}
               {(doc.allowed_departments?.length > 0 || doc.allowed_companies?.length > 0) && (
-                <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded-full font-medium">🔒 Giới hạn</span>
+                <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full font-medium" title="Nhãn phòng/công ty — không ẩn với team CRM trên trang này">🏷️ Nhãn PB/Cty</span>
               )}
             </div>
           </div>
-          {isFile && !isImage && !isVideo && (
-            <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>
+          {isFile && !isImage && !isVideo && fileOpenProps && (
+            <a {...fileOpenProps} className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>
               Mở
             </a>
           )}
@@ -1212,23 +1223,23 @@ function DocumentRow({ doc, onDelete }) {
       {/* Video preview — always show player */}
       {isVideo && (
         <div className={`px-3 ${expanded ? 'pb-3' : 'pb-2'}`}>
-          <video src={doc.file_url} controls preload="metadata"
+          <video src={fileHref} controls preload="metadata"
             className={`w-full rounded-lg border border-gray-200 bg-black shadow-sm ${expanded ? 'max-h-96' : 'max-h-40'}`} />
         </div>
       )}
       {/* Image preview — show thumbnail even when collapsed */}
-      {isImage && !expanded && (
+      {isImage && !expanded && fileOpenProps && (
         <div className="px-3 pb-2">
-          <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="block">
-            <img src={doc.file_url} alt={doc.name} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
+          <a {...fileOpenProps} className="block">
+            <img src={fileHref} alt={doc.name} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
           </a>
         </div>
       )}
       {expanded && (
         <div className="px-3 pb-3 pt-0 space-y-2">
-          {isImage && (
-            <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="block">
-              <img src={doc.file_url} alt={doc.name} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
+          {isImage && fileOpenProps && (
+            <a {...fileOpenProps} className="block">
+              <img src={fileHref} alt={doc.name} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
             </a>
           )}
           {doc.notes && (
@@ -1349,9 +1360,10 @@ function AddDocumentModal({ onClose, onSave }) {
             />
           </div>
 
-          {/* Phân quyền xem */}
+          {/* Ghi nhận phòng/công ty (tuân thủ nội bộ — không ẩn tài liệu với đồng nghiệp trên CRM) */}
           <div className="bg-gray-50 rounded-xl p-3 space-y-3">
-            <label className="text-xs font-bold text-gray-700 flex items-center gap-1">🔒 Phân quyền xem <span className="text-gray-400 font-normal">(không chọn = tất cả)</span></label>
+            <label className="text-xs font-bold text-gray-700 flex items-center gap-1">🏷️ Gắn nhãn phòng / công ty <span className="text-gray-400 font-normal font-medium">(không chọn = không gắn)</span></label>
+            <p className="text-[10px] text-gray-500 leading-snug">Mọi người xem được lead/deal đều thấy tài liệu trên CRM. Chia sẻ sang <strong>Dự án / Xưởng</strong> dùng cờ riêng trên nhiệm vụ hoặc cột «Chia sẻ xưởng» trên tài liệu.</p>
             
             {/* Công ty */}
             <div>
@@ -1390,7 +1402,7 @@ function AddDocumentModal({ onClose, onSave }) {
 
             {hasRestriction && (
               <p className="text-[10px] text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                ✓ Chỉ {allowedCompanies.length > 0 ? `${allowedCompanies.length} công ty` : ''}{allowedCompanies.length > 0 && allowedDepts.length > 0 ? ' + ' : ''}{allowedDepts.length > 0 ? `${allowedDepts.length} phòng ban` : ''} + Admin được xem
+                Đã gắn: {allowedCompanies.length > 0 ? `${allowedCompanies.length} công ty` : ''}{allowedCompanies.length > 0 && allowedDepts.length > 0 ? ' · ' : ''}{allowedDepts.length > 0 ? `${allowedDepts.length} phòng` : ''} — không giới hạn xem trên CRM; chỉ mang tính phân loại / báo cáo.
               </p>
             )}
           </div>
@@ -1643,6 +1655,23 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
         value={lead?.description || ''}
         displayValue={lead?.description || null}
         type="textarea" />
+
+      {lead?.type === 'deal' && lead?.project_id && (
+        <div className="flex items-start gap-2 py-2 px-1 rounded-lg bg-teal-50/60 border border-teal-100">
+          <span className="text-sm mt-0.5 shrink-0">🏭</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-teal-800 uppercase tracking-wider font-medium mb-0.5">Cột sản xuất (Kanban xưởng)</p>
+            <p className="text-sm font-medium text-gray-900">
+              {lead.sx_pipeline_stage?.name
+                ? `${lead.sx_pipeline_stage.icon || '📌'} ${lead.sx_pipeline_stage.name}`
+                : 'Chưa gán cột — chạy migration sx_pipeline_stage_id hoặc tạo cột «Chờ vào xưởng» trong Pipeline xưởng'}
+            </p>
+            {lead.sx_pipeline_stage?.bucket_slug === 'won_pending' && (
+              <p className="text-xs text-teal-700 mt-0.5">Hàng chờ vào xưởng (deal thắng)</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1819,244 +1848,3 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
   );
 }
 
-
-// ═══════════════════════════════════════
-// Facebook Chat Tab — embedded in LeadDetail (full tính năng)
-// ═══════════════════════════════════════
-const API = import.meta.env.VITE_API_URL || '';
-const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
-
-function FacebookChatTab({ leadId }) {
-  const [messages, setMessages] = useState([]);
-  const [reply, setReply] = useState('');
-  const [contact, setContact] = useState(null);
-  const [sending, setSending] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const messagesEndRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const imageInputRef = useRef(null);
-
-  const loadMessages = useCallback(() => {
-    if (!leadId) return;
-    fetch(`${API}/api/facebook/leads/${leadId}/messages`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-    })
-      .then(r => r.ok ? r.json() : [])
-      .then(d => {
-        setMessages(d);
-        if (d.length > 0 && d[0].contact) setContact(d[0].contact);
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      })
-      .catch(() => {});
-  }, [leadId]);
-
-  // Dedup messages
-  const uniqueMessages = useMemo(() => {
-    const seen = new Set();
-    return messages.filter(m => {
-      const key = m.fb_message_id || m.id;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [messages]);
-
-  useEffect(() => { loadMessages(); }, [loadMessages]);
-
-  // Auto-refresh mỗi 15s
-  useEffect(() => {
-    const timer = setInterval(loadMessages, 15000);
-    return () => clearInterval(timer);
-  }, [loadMessages]);
-
-  const sendReply = async () => {
-    if (!reply.trim() || !contact || sending) return;
-    setSending(true);
-    try {
-      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/reply`, {
-        method: 'POST', headers: hdr(),
-        body: JSON.stringify({ message: reply }),
-      });
-      if (res.ok) {
-        const msg = await res.json();
-        setMessages(prev => [...prev, { ...msg, contact }]);
-        setReply('');
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      }
-    } catch (e) { console.error(e); }
-    setSending(false);
-  };
-
-  const handleFileUpload = async (e, type) => {
-    const file = e.target.files?.[0];
-    if (!file || !contact) return;
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const upRes = await fetch(`${API}/api/upload/single`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: formData,
-      });
-      if (!upRes.ok) throw new Error('Upload failed');
-      const upData = await upRes.json();
-
-      let attType = type || 'file';
-      if (file.type.startsWith('image/')) attType = 'image';
-      else if (file.type.startsWith('video/')) attType = 'video';
-      else if (file.type.startsWith('audio/')) attType = 'audio';
-
-      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/reply`, {
-        method: 'POST', headers: hdr(),
-        body: JSON.stringify({ message: '', attachment_url: upData.file_url, attachment_type: attType }),
-      });
-      if (res.ok) {
-        const msg = await res.json();
-        setMessages(prev => [...prev, { ...msg, contact }]);
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      }
-    } catch (e) { alert('Lỗi gửi file: ' + e.message); }
-    setUploading(false);
-    e.target.value = '';
-  };
-
-  const syncHistory = async () => {
-    if (!contact) return;
-    setSyncing(true);
-    try {
-      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/sync-history`, { method: 'POST', headers: hdr() });
-      const data = await res.json();
-      if (data.synced > 0) loadMessages();
-    } catch (e) { /* ignore */ }
-    setSyncing(false);
-  };
-
-  const formatTime = (d) => new Date(d).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-
-  if (!messages.length && !contact) {
-    return (
-      <div className="text-center text-gray-400 py-8">
-        <p className="text-3xl mb-2">📘</p>
-        <p className="text-sm">Chưa có tin nhắn Facebook nào liên kết với {leadId ? 'lead' : 'deal'} này.</p>
-        <p className="text-xs mt-1">Khi KH nhắn tin qua Messenger, tin nhắn sẽ hiện ở đây.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col" style={{ height: 'calc(100vh - 420px)', minHeight: '400px' }}>
-      {/* Header */}
-      {contact && (
-        <div className="flex items-center justify-between pb-3 border-b mb-3 shrink-0">
-          <div className="flex items-center gap-2">
-            {contact.fb_profile_pic
-              ? <img src={contact.fb_profile_pic} className="w-9 h-9 rounded-full shadow-sm" alt="" />
-              : <div className="w-9 h-9 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm">{(contact.fb_name || 'FB')[0]}</div>}
-            <div>
-              <p className="font-semibold text-sm text-gray-800">{contact.fb_name}</p>
-              <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                {contact.phone && <span className="text-green-600">📞 {contact.phone}</span>}
-                <span>Messenger</span>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={syncHistory} disabled={syncing}
-              className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1.5 rounded-lg hover:bg-gray-100 flex items-center gap-1 cursor-pointer disabled:opacity-50 transition">
-              <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} /> Sync
-            </button>
-            <span className="text-[10px] text-gray-400">{uniqueMessages.length} tin nhắn</span>
-          </div>
-        </div>
-      )}
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-        {uniqueMessages.map((m, i) => {
-          const isOut = m.direction === 'outbound';
-          const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(uniqueMessages[i-1]?.created_at).toDateString();
-          return (
-            <div key={m.id || i}>
-              {showDate && (
-                <div className="flex justify-center my-2">
-                  <span className="text-[10px] text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
-                    {new Date(m.created_at).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}
-                  </span>
-                </div>
-              )}
-              <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 shadow-sm ${
-                  isOut ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-gray-100 text-gray-800 rounded-bl-md'
-                }`}>
-                  {/* Image */}
-                  {m.attachment_url && (m.message_type === 'image' || m.attachment_type === 'image') && (
-                    <img src={m.attachment_url} className="max-w-[240px] rounded-xl mb-1 cursor-pointer hover:opacity-90" alt=""
-                      onClick={() => window.open(m.attachment_url, '_blank')} />
-                  )}
-                  {/* Audio */}
-                  {m.attachment_url && (m.message_type === 'audio' || m.attachment_type === 'audio') && (
-                    <audio src={m.attachment_url} controls className="max-w-[240px] h-9 mb-1"
-                      style={{ filter: isOut ? 'invert(1) hue-rotate(180deg)' : 'none' }} />
-                  )}
-                  {/* Video */}
-                  {m.attachment_url && (m.message_type === 'video' || m.attachment_type === 'video') && (
-                    <video src={m.attachment_url} controls className="max-w-[240px] rounded-xl mb-1" preload="metadata" />
-                  )}
-                  {/* File */}
-                  {m.attachment_url && (m.message_type === 'file' || m.attachment_type === 'file') && (
-                    <a href={m.attachment_url} target="_blank" rel="noreferrer"
-                      className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg mb-1 ${isOut ? 'bg-blue-400/30 hover:bg-blue-400/50' : 'bg-white hover:bg-gray-50'}`}>
-                      📎 Tệp đính kèm
-                    </a>
-                  )}
-                  {/* Text */}
-                  {m.content && !['[image]','[audio]','[video]','[file]'].includes(m.content) && (
-                    <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
-                  )}
-                  <p className={`text-[9px] mt-0.5 ${isOut ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input bar */}
-      <div className="pt-3 border-t mt-3 shrink-0">
-        {uploading && (
-          <div className="flex items-center gap-2 text-xs text-blue-600 mb-2">
-            <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            Đang tải lên...
-          </div>
-        )}
-        <div className="flex items-center gap-2">
-          <button onClick={() => imageInputRef.current?.click()} disabled={uploading || !contact}
-            className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg cursor-pointer transition disabled:opacity-40" title="Gửi hình ảnh">
-            <Image size={18} />
-          </button>
-          <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'image')} />
-
-          <button onClick={() => fileInputRef.current?.click()} disabled={uploading || !contact}
-            className="p-2 text-gray-400 hover:text-purple-500 hover:bg-purple-50 rounded-lg cursor-pointer transition disabled:opacity-40" title="Gửi file">
-            <Paperclip size={18} />
-          </button>
-          <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'file')} />
-
-          <input value={reply} onChange={e => setReply(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendReply()}
-            placeholder="Trả lời qua Messenger..."
-            disabled={!contact}
-            className="flex-1 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 disabled:opacity-40" />
-
-          <button onClick={sendReply} disabled={sending || !reply.trim() || !contact}
-            className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl w-10 h-10 flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm">
-            <Send size={16} />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

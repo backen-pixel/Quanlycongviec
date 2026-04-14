@@ -1,11 +1,25 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import {
-  Zap, CheckCircle2, AlertTriangle, Search, X, Calendar, TrendingUp, Factory,
-  FileText, Users, ArrowRightLeft
+  Zap, CheckCircle2, AlertTriangle, Search, X, Calendar, TrendingUp,
+  FileText, Users, LayoutGrid, List,
 } from 'lucide-react';
+import { ProductionListView, ProductionPlannerView } from '../components/ProductionViews';
+
+const INTAKE_BUCKET = 'won_pending';
+const LOGISTICS_SLUGS = new Set(['delivery', 'shipping', 'installing', 'installation']);
+
+function columnMatchesWorkArea(stage, workArea) {
+  const slug = (stage.slug || stage.workflow_stage?.slug || '').toLowerCase();
+  const isIntake = stage.bucket_slug === INTAKE_BUCKET;
+  const isLogistics = LOGISTICS_SLUGS.has(slug);
+  if (workArea === 'logistics') {
+    return isLogistics;
+  }
+  return !isLogistics || isIntake;
+}
 
 const PRIORITY_COLORS = {
   high: 'bg-red-100 text-red-700',
@@ -13,7 +27,8 @@ const PRIORITY_COLORS = {
   low: 'bg-gray-100 text-gray-600'
 };
 
-export default function ProductionDashboard() {
+export default function ProductionDashboard({ variant = 'dashboard' } = {}) {
+  const isPipeline = variant === 'pipeline';
   const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);
   const [pipeline, setPipeline] = useState([]);
@@ -21,20 +36,28 @@ export default function ProductionDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
   const [stageFilter, setStageFilter] = useState('');
+  const [viewMode, setViewMode] = useState('kanban'); // kanban | list | planner | calendar
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const workArea = searchParams.get('area') === 'logistics' ? 'logistics' : 'production';
 
-  useEffect(() => {
-    load();
-  }, []);
+  const setWorkAreaParam = useCallback((area) => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (area === 'production') p.delete('area');
+      else p.set('area', 'logistics');
+      return p;
+    }, { replace: true });
+  }, [setSearchParams]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [dashRes, projectsRes] = await Promise.all([
         api.get('/production/dashboard').catch(() => ({ data: { kpis: {}, pipeline: [] } })),
         api.get('/production/projects', { params: { limit: 500 } }).catch(() => ({ data: { projects: [] } })),
       ]);
-      
+
       setKpis(dashRes.data?.kpis || {});
       setPipeline(dashRes.data?.pipeline || []);
       setProjects(projectsRes.data?.projects || []);
@@ -42,64 +65,112 @@ export default function ProductionDashboard() {
       console.error(e);
     }
     setLoading(false);
-  };
+  }, []);
 
-  // Build Kanban pipeline from projects
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Kanban columns từ API (pipeline) + gán thẻ theo sx_kanban_column_id
   const kanbanPipeline = useMemo(() => {
     const baseStages = pipeline.length
       ? pipeline
       : [
-          { slug: 'production', name: 'Sản xuất', icon: '🏭', color: '#EA580C' },
-          { slug: 'delivery', name: 'VC & Lắp đặt', icon: '🚚', color: '#F97316' },
-          { slug: 'customer-care', name: 'CSKH', icon: '🤝', color: '#FDBA74' },
+          { id: 'ph', name: 'Sản xuất', slug: 'production', icon: '🏭', color: '#0f766e', workflow_stage_id: null },
+          { id: 'dl', name: 'VC & Lắp đặt', slug: 'delivery', icon: '🚚', color: '#14b8a6', workflow_stage_id: null },
+          { id: 'cc', name: 'CSKH', slug: 'customer-care', icon: '🤝', color: '#5eead4', workflow_stage_id: null },
         ];
 
     return baseStages.map((stage) => ({
       ...stage,
-      items: projects.filter((project) => project.current_stage?.slug === stage.slug),
-      totalValue: projects
-        .filter((project) => project.current_stage?.slug === stage.slug)
-        .reduce((sum, project) => sum + (project.estimated_value || 0), 0),
+      items: projects.filter((project) => project.sx_kanban_column_id === stage.id),
+      totalValue: stage.total_value ?? projects
+        .filter((project) => project.sx_kanban_column_id === stage.id)
+        .reduce((sum, project) => sum + (Number(project.estimated_value) || 0), 0),
     }));
   }, [pipeline, projects]);
 
-  const filteredProjects = useMemo(() => {
-    return projects.filter(p => {
-      if (searchQuery && !p.code?.toLowerCase().includes(searchQuery.toLowerCase()) && 
-          !p.name?.toLowerCase().includes(searchQuery.toLowerCase())) {
-        return false;
-      }
-      if (priorityFilter && p.priority !== priorityFilter) {
-        return false;
-      }
-      if (stageFilter && p.current_stage?.slug !== stageFilter) {
-        return false;
-      }
-      return true;
-    });
-  }, [projects, searchQuery, priorityFilter, stageFilter]);
+  const filteredKanbanPipeline = useMemo(() => {
+    return kanbanPipeline.map((stage) => ({
+      ...stage,
+      items: stage.items.filter((project) => {
+        if (
+          searchQuery &&
+          !project.code?.toLowerCase().includes(searchQuery.toLowerCase()) &&
+          !project.name?.toLowerCase().includes(searchQuery.toLowerCase())
+        ) {
+          return false;
+        }
+        if (priorityFilter && project.priority !== priorityFilter) return false;
+        if (stageFilter && project.sx_kanban_column_id !== stageFilter) return false;
+        return true;
+      }),
+    }));
+  }, [kanbanPipeline, searchQuery, priorityFilter, stageFilter]);
 
-  const handleMoveStage = useCallback(async (projectId, newStageSlug) => {
-    const targetStage = pipeline.find(s => s.slug === newStageSlug);
-     if (!targetStage) return;
-    if (!targetStage) return;
-    
-    // Optimistic update
-    setProjects(prev => prev.map(p => 
-      p.id === projectId 
-        ? { ...p, current_stage: targetStage }
-        : p
-    ));
+  const dashboardKanbanPipeline = useMemo(
+    () => filteredKanbanPipeline.filter((stage) => columnMatchesWorkArea(stage, workArea)),
+    [filteredKanbanPipeline, workArea],
+  );
+
+  const filteredProjectCount = useMemo(
+    () => dashboardKanbanPipeline.reduce((n, s) => n + s.items.length, 0),
+    [dashboardKanbanPipeline],
+  );
+
+  const handleMoveStage = useCallback(async (projectId, targetCol) => {
+    const wid = targetCol?.workflow_stage_id;
+    const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET
+      || String(targetCol?.id || '').startsWith('__fb_');
+
+    if (isIntake) {
+      setProjects((prev) => prev.map((p) => (p.id === projectId
+        ? {
+          ...p,
+          current_stage: null,
+          sx_kanban_column_id: targetCol.id,
+          sx_intake: true,
+          sx_won_deal: p.sx_won_deal,
+        }
+        : p)));
+
+      try {
+        await api.patch(`/production/projects/${projectId}/stage`, { move_to_intake: true });
+      } catch (e) {
+        console.error(e);
+        load();
+      }
+      return;
+    }
+
+    if (!wid) return;
+
+    const slug = targetCol.slug;
+    const optimisticStage = {
+      id: wid,
+      slug,
+      name: targetCol.name,
+      color: targetCol.color,
+      icon: targetCol.icon,
+    };
+
+    setProjects((prev) => prev.map((p) => (p.id === projectId
+      ? {
+        ...p,
+        current_stage: optimisticStage,
+        sx_kanban_column_id: targetCol.id,
+        sx_intake: false,
+        sx_won_deal: p.sx_won_deal,
+      }
+      : p)));
 
     try {
-      await api.patch(`/production/projects/${projectId}/stage`, { 
-        stage_id: targetStage.id 
-      });
+      await api.patch(`/production/projects/${projectId}/stage`, { stage_id: wid });
     } catch (e) {
       console.error(e);
       load();
     }
-  }, [pipeline]);
+  }, [load]);
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
@@ -114,34 +185,62 @@ export default function ProductionDashboard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin h-10 w-10 border-4 border-orange-600 border-t-transparent rounded-full" />
+        <div className="animate-spin h-10 w-10 border-4 border-teal-600 border-t-transparent rounded-full" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between px-0">
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-gray-500 font-semibold">XƯỞNG / Quản lý deal vào sản xuất</span>
+            <span className="text-xs text-teal-800/80 font-semibold uppercase tracking-wide">Xưởng / Deal sản xuất</span>
+            {isPipeline && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-medium">Pipeline</span>
+            )}
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">
-            🏭 Module Xưởng
+          <h1 className="text-3xl font-bold text-slate-900">
+            {isPipeline ? '📌 Pipeline xưởng (Kanban)' : '🏭 Dashboard deal xưởng'}
           </h1>
-          <p className="text-sm text-gray-500 mt-2 max-w-3xl">
-            Hiển thị các deal đã vào khối sản xuất dưới dạng dự án xưởng, kèm thông tin CRM, tiến độ nhiệm vụ và tài liệu đã cho phép chia sẻ.
+          <p className="text-sm text-slate-600 mt-2 max-w-3xl">
+            {isPipeline
+              ? 'Kéo thả giữa các cột theo pipeline xưởng (cấu hình tại Pipeline xưởng). Deal CRM ở giai đoạn thắng có dự án đều hiện ở đây — thường ở cột chờ cho đến khi vào giai đoạn sản xuất.'
+              : 'KPI, danh sách và Kanban — tông teal. Deal thắng gắn dự án luôn nằm trong phạm vi xưởng (cột chờ hoặc cột workflow tương ứng).'}
           </p>
+        </div>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          {isPipeline ? (
+            <Link to="/sx/dashboard" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-teal-200 bg-white text-teal-800 text-sm font-medium hover:bg-teal-50">
+              ← Dashboard đầy đủ
+            </Link>
+          ) : (
+            <Link to="/sx/pipeline" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700">
+              Pipeline Kanban →
+            </Link>
+          )}
+          <Link to="/sx/approvals" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-medium hover:bg-slate-50">
+            Duyệt theo deal
+          </Link>
+          <Link to="/sx/pipeline-settings" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-teal-200 bg-teal-50 text-teal-900 text-sm font-medium hover:bg-teal-100">
+            Pipeline xưởng
+          </Link>
         </div>
       </div>
 
       {/* KPI Summary Row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+        <KPICard
+          icon={<Calendar className="h-6 w-6" />}
+          iconBgColor="bg-slate-100"
+          iconColor="text-slate-700"
+          label="Chờ vào xưởng"
+          value={kpis.intake_pending ?? 0}
+        />
         <KPICard
           icon={<Zap className="h-6 w-6" />}
-          iconBgColor="bg-orange-100"
-          iconColor="text-orange-600"
+          iconBgColor="bg-teal-100"
+          iconColor="text-teal-600"
           label="Đang SX"
           value={kpis.producing || 0}
         />
@@ -184,7 +283,7 @@ export default function ProductionDashboard() {
             placeholder="Tìm mã, tên dự án..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
           />
           {searchQuery && (
             <button
@@ -199,18 +298,18 @@ export default function ProductionDashboard() {
         <select
           value={stageFilter}
           onChange={(e) => setStageFilter(e.target.value)}
-          className="px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-orange-500"
+          className="px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-teal-500"
         >
-          <option value="">Tất cả công đoạn xưởng</option>
+          <option value="">Tất cả cột pipeline</option>
           {pipeline.map((stage) => (
-            <option key={stage.slug} value={stage.slug}>{stage.icon || '•'} {stage.name}</option>
+            <option key={stage.id} value={stage.id}>{stage.icon || '•'} {stage.name}</option>
           ))}
         </select>
 
         <select
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value)}
-          className="px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-orange-500"
+          className="px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-teal-500"
         >
           <option value="">Tất cả mức độ ưu tiên</option>
           <option value="high">🔴 Cao</option>
@@ -219,138 +318,85 @@ export default function ProductionDashboard() {
         </select>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.9fr] gap-6">
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">Danh sách deal vào xưởng</h2>
-              <p className="text-sm text-gray-500">{filteredProjects.length} dự án đang thuộc khối sản xuất</p>
-            </div>
-            <div className="text-sm font-semibold text-orange-600">Tiến độ TB {kpis.avg_progress || 0}%</div>
-          </div>
-          <div className="space-y-3 max-h-[680px] overflow-y-auto pr-1">
-            {filteredProjects.length === 0 ? (
-              <div className="py-12 text-center text-sm text-gray-400">Không có dự án xưởng phù hợp bộ lọc</div>
-            ) : filteredProjects.map((project) => (
-              <button
-                key={project.id}
-                onClick={() => navigate(`/sx/projects/${project.id}`)}
-                className="w-full text-left rounded-xl border border-gray-200 p-4 hover:border-orange-300 hover:bg-orange-50/40 transition cursor-pointer"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="text-xs font-bold text-orange-600">{project.code}</span>
-                      {project.current_stage && (
-                        <span className="text-[11px] px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: project.current_stage.color || '#ea580c' }}>
-                          {project.current_stage.name}
-                        </span>
-                      )}
-                      {project.is_overdue && (
-                        <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">Quá hạn</span>
-                      )}
-                    </div>
-                    <p className="text-base font-semibold text-gray-900 truncate">{project.name}</p>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-                      <span>KH: {project.customer?.full_name || 'Chưa có'}</span>
-                      <span>Công ty: {project.company?.short_name || project.company?.name || 'Chưa gán'}</span>
-                      <span>Deadline: {project.deadline ? formatDate(project.deadline) : 'Chưa có'}</span>
-                    </div>
-                    <div className="mt-3 flex items-center gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
-                          <span>Nhiệm vụ</span>
-                          <span>{project.done_tasks || 0}/{project.task_total || 0}</span>
-                        </div>
-                        <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-                          <div className="h-full rounded-full bg-orange-500" style={{ width: `${project.progress || 0}%` }} />
-                        </div>
-                      </div>
-                      {project.production_person && (
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div
-                            className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
-                            style={{ backgroundColor: avatarColor(project.production_person.full_name) }}
-                          >
-                            {getInitials(project.production_person.full_name)}
-                          </div>
-                          <div className="text-xs text-gray-500 max-w-28 truncate">{project.production_person.full_name}</div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-sm font-bold text-emerald-600">{formatVND(project.estimated_value)}</div>
-                    <div className="text-[11px] text-gray-400 mt-1">Sale: {project.sales_person?.full_name || 'Chưa gán'}</div>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4 text-gray-900 font-bold">
-              <ArrowRightLeft className="h-5 w-5 text-orange-600" />
-              Pipeline xưởng
-            </div>
-            <div className="space-y-3">
-              {pipeline.map((stage) => (
-                <div key={stage.slug} className="rounded-xl border border-gray-200 p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-                      <span>{stage.icon || '•'}</span>
-                      <span>{stage.name}</span>
-                    </div>
-                    <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700">{stage.count || 0}</span>
-                  </div>
-                  <p className="text-xs text-gray-500">Giá trị đang xử lý: {formatVND(stage.total_value || 0)}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4 text-gray-900 font-bold">
-              <Users className="h-5 w-5 text-orange-600" />
-              Gợi ý vận hành
-            </div>
-            <div className="space-y-3 text-sm text-gray-600">
-              <div className="rounded-xl bg-orange-50 border border-orange-100 p-3">
-                Deal thắng sẽ đi vào đây dưới dạng dự án xưởng, giữ đủ thông tin khách hàng, sale và giá trị deal.
-              </div>
-              <div className="rounded-xl bg-blue-50 border border-blue-100 p-3">
-                Tài liệu chỉ hiển thị ở chi tiết xưởng khi có ghi chú hoặc cờ cho phép chia sẻ cho xưởng.
-              </div>
-              <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
-                Màn chi tiết xưởng đang là nền cho bước tiếp theo: gửi duyệt bản vẽ, vật tư hai chiều giữa CRM và xưởng.
-              </div>
-            </div>
-          </div>
+      {/* Tab khu vực — Dashboard deal xưởng (URL ?area=logistics) */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex border-b border-gray-200">
+          <button
+            type="button"
+            onClick={() => setWorkAreaParam('production')}
+            className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+              workArea === 'production'
+                ? 'text-teal-700 border-b-2 border-teal-600 bg-teal-50/40'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            🏭 Sản xuất & chờ xưởng
+          </button>
+          <button
+            type="button"
+            onClick={() => setWorkAreaParam('logistics')}
+            className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+              workArea === 'logistics'
+                ? 'text-teal-700 border-b-2 border-teal-600 bg-teal-50/40'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            🚚 Vận chuyển & Lắp đặt
+          </button>
         </div>
       </div>
 
-      {/* Kanban Board */}
-      <div className="rounded-xl overflow-hidden">
-        <KanbanView 
-          pipeline={kanbanPipeline.map((stage) => ({
-            ...stage,
-            items: stage.items.filter((project) => {
-              if (searchQuery && !project.code?.toLowerCase().includes(searchQuery.toLowerCase()) && !project.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-              if (priorityFilter && project.priority !== priorityFilter) return false;
-              if (stageFilter && project.current_stage?.slug !== stageFilter) return false;
-              return true;
-            })
-          }))}
-          onMoveStage={handleMoveStage}
-          calculateDays={calculateDays}
-        />
+      {/* Chế độ xem — giống CRM Dashboard (Kanban / Danh sách / Planner / Lịch) */}
+      <div className="flex flex-wrap items-center gap-1 mb-1">
+        {[
+          { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
+          { id: 'list', icon: List, label: 'Danh sách' },
+          { id: 'planner', icon: Users, label: 'Planner' },
+          { id: 'calendar', icon: Calendar, label: 'Lịch' },
+        ].map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => setViewMode(v.id)}
+            className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${
+              viewMode === v.id ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <v.icon className="h-3.5 w-3.5" />
+            {v.label}
+          </button>
+        ))}
+        {!isPipeline && (
+          <span className="text-[11px] text-gray-500 ml-2">
+            Tiến độ TB <strong className="text-teal-700">{kpis.avg_progress || 0}%</strong>
+            {' · '}
+            <strong>{filteredProjectCount}</strong> dự án sau lọc
+          </span>
+        )}
       </div>
 
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-        `Gửi duyệt` không thao tác ở kanban. Hãy mở từng deal trong xưởng để gửi bản vẽ, vật tư hoặc hồ sơ cần duyệt theo từng deal.
-      </div>
+      {viewMode === 'kanban' && (
+        <>
+          <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm">
+            <KanbanView pipeline={dashboardKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays} />
+          </div>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            Gửi duyệt không thao tác ở kanban. Mở chi tiết deal (hoặc mục Duyệt theo deal) để gửi file và xử lý yêu cầu — cùng luồng duyệt với dự án/CRM.
+          </div>
+        </>
+      )}
+
+      {viewMode === 'list' && <ProductionListView pipeline={dashboardKanbanPipeline} calculateDays={calculateDays} />}
+
+      {viewMode === 'planner' && <ProductionPlannerView pipeline={dashboardKanbanPipeline} />}
+
+      {viewMode === 'calendar' && (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-500 shadow-sm">
+          <Calendar className="h-12 w-12 mx-auto mb-3 opacity-30 text-teal-600" />
+          <p className="font-medium text-gray-700">Lịch xưởng</p>
+          <p className="text-sm mt-1">Chức năng Lịch đang được phát triển (tương tự CRM).</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -393,7 +439,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
     setIsOverColumn(false);
     const projectId = e.dataTransfer.getData('projectId');
     if (projectId) {
-      onMoveStage(projectId, stage.slug);
+      onMoveStage(projectId, stage);
     }
   };
   
@@ -403,7 +449,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
       className={`flex-shrink-0 w-96 rounded-lg overflow-hidden transition-all duration-200 ${
-        isOverColumn ? 'ring-2 ring-orange-500 ring-dashed' : ''
+        isOverColumn ? 'ring-2 ring-teal-500 ring-dashed' : ''
       }`}
     >
       {/* Colored Header Bar */}
@@ -414,7 +460,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
       
       {/* Stage Header */}
       <div className={`bg-white border border-gray-200 border-t-0 p-4 transition-all ${
-        isOverColumn ? 'bg-orange-50' : ''
+        isOverColumn ? 'bg-teal-50' : ''
       }`}>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
@@ -434,7 +480,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
       
       {/* Cards Container */}
       <div className={`bg-gray-50 border border-gray-200 border-t-0 p-3 min-h-96 max-h-96 overflow-y-auto space-y-3 transition-all ${
-        isOverColumn ? 'bg-orange-50' : ''
+        isOverColumn ? 'bg-teal-50' : ''
       }`}>
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
@@ -460,6 +506,8 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
 
 // Kanban Item Card
 function KanbanCard({ item, stage, onMoveStage, calculateDays }) {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const handleDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('projectId', item.id);
@@ -476,7 +524,10 @@ function KanbanCard({ item, stage, onMoveStage, calculateDays }) {
     <div
       draggable
       onDragStart={handleDragStart}
-      onClick={() => window.location.href = `/sx/projects/${item.id}`}
+      onClick={() => {
+        const a = searchParams.get('area');
+        navigate(`/sx/projects/${item.id}${a === 'logistics' ? '?area=logistics' : ''}`);
+      }}
       className={`bg-white rounded-lg border border-gray-200 p-3 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg`}
       style={{
         borderLeft: `3px solid ${stage.color}`,
@@ -484,7 +535,7 @@ function KanbanCard({ item, stage, onMoveStage, calculateDays }) {
     >
       {/* Header: Code + Priority */}
       <div className="flex items-start justify-between mb-2">
-        <p className="text-xs font-semibold text-orange-600">{item.code}</p>
+        <p className="text-xs font-semibold text-teal-600">{item.code}</p>
         {item.priority && (
           <span className={`text-xs font-medium px-2 py-0.5 rounded ${PRIORITY_COLORS[item.priority] || 'bg-gray-100 text-gray-600'}`}>
             {item.priority === 'high' ? '🔴' : item.priority === 'medium' ? '🟡' : '🟢'} {item.priority}
@@ -515,11 +566,11 @@ function KanbanCard({ item, stage, onMoveStage, calculateDays }) {
         <div className="mb-3">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs text-gray-600">Tiến độ</span>
-            <span className="text-xs font-bold text-orange-600">{progressPercent}%</span>
+            <span className="text-xs font-bold text-teal-600">{progressPercent}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
             <div
-              className="bg-orange-600 h-full transition-all duration-300 rounded-full"
+              className="bg-teal-600 h-full transition-all duration-300 rounded-full"
               style={{ width: `${progressPercent}%` }}
             />
           </div>
@@ -556,7 +607,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays }) {
       <div className="flex gap-4 min-w-max">
         {pipeline.map(stage => (
           <KanbanStageCard
-            key={stage.slug}
+            key={stage.id || stage.slug}
             stage={stage}
             items={stage.items}
             onMoveStage={onMoveStage}

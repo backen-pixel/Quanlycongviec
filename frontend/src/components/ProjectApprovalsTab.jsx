@@ -8,7 +8,31 @@ import {
 } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 
-export default function ProjectApprovalsTab({ projectId, project, onUpdated, autoShowRequest, onRequestShown }) {
+/** Màu nhấn: default = xanh CRM; workshop = teal (module xưởng) */
+const ACCENT = {
+  blue: {
+    icon: 'text-blue-600',
+    btn: 'bg-blue-600 hover:bg-blue-700',
+    formWrap: 'bg-blue-50 border border-blue-200',
+    formTitle: 'text-blue-900',
+    link: 'text-blue-600',
+    rePanel: 'bg-blue-50 border border-blue-200',
+    reTitle: 'text-blue-900',
+  },
+  teal: {
+    icon: 'text-teal-600',
+    btn: 'bg-teal-600 hover:bg-teal-700',
+    formWrap: 'bg-teal-50 border border-teal-200',
+    formTitle: 'text-teal-900',
+    link: 'text-teal-600',
+    rePanel: 'bg-teal-50 border border-teal-200',
+    reTitle: 'text-teal-900',
+  },
+};
+
+export default function ProjectApprovalsTab({ projectId, project, onUpdated, autoShowRequest, onRequestShown, variant = 'default' }) {
+  const accentKey = variant === 'workshop' ? 'teal' : 'blue';
+  const ax = ACCENT[accentKey];
   const { user } = useAuth();
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -49,7 +73,7 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
       {/* Header actions */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Shield className="h-4 w-4 text-blue-600" />
+          <Shield className={`h-4 w-4 ${ax.icon}`} />
           <span className="text-sm font-medium text-gray-700">
             {approvals.length > 0 ? `${approvals.length} yêu cầu duyệt` : 'Chưa có yêu cầu duyệt'}
           </span>
@@ -61,7 +85,7 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
         </div>
         {!showRequest && (
           <button onClick={() => setShowRequest(true)}
-            className="h-8 px-3 bg-blue-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
+            className={`h-8 px-3 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${ax.btn}`}>
             <Send className="h-3.5 w-3.5" /> Gửi yêu cầu duyệt
           </button>
         )}
@@ -70,6 +94,7 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
       {/* Create request form */}
       {showRequest && (
         <RequestApprovalForm
+          accentKey={accentKey}
           projectId={projectId}
           project={project}
           onCreated={() => { load(); setShowRequest(false); onUpdated?.(); }}
@@ -81,6 +106,7 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
       {approvals.map(approval => (
         <ApprovalCard
           key={approval.id}
+          accentKey={accentKey}
           approval={approval}
           isAdmin={isAdmin}
           currentUserId={user?.userId}
@@ -103,7 +129,8 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
 }
 
 // ═══ Request Approval Form ═══
-function RequestApprovalForm({ projectId, project, onCreated, onCancel }) {
+function RequestApprovalForm({ projectId, project, onCreated, onCancel, accentKey = 'blue' }) {
+  const ax = ACCENT[accentKey] || ACCENT.blue;
   const [notes, setNotes] = useState('');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -126,7 +153,7 @@ function RequestApprovalForm({ projectId, project, onCreated, onCancel }) {
         { slug: 'quotation', status: 'quoting' },
         { slug: 'contract', status: 'contract_signed' },
         { slug: 'production', status: 'producing' },
-        { slug: 'delivery', status: 'delivering' },
+        { slug: 'delivery', status: 'shipping' },
         { slug: 'customer-care', status: 'warranty' },
       ];
       const curIdx = STAGE_FLOW.findIndex(s => s.status === project?.status);
@@ -150,8 +177,8 @@ function RequestApprovalForm({ projectId, project, onCreated, onCancel }) {
   };
 
   return (
-    <div className="bg-blue-50 rounded-xl border border-blue-200 p-4 space-y-3">
-      <h3 className="text-sm font-bold text-blue-900 flex items-center gap-2">
+    <div className={`rounded-xl p-4 space-y-3 ${ax.formWrap}`}>
+      <h3 className={`text-sm font-bold flex items-center gap-2 ${ax.formTitle}`}>
         <Send className="h-4 w-4" /> Gửi yêu cầu duyệt giai đoạn hiện tại
       </h3>
 
@@ -189,7 +216,7 @@ function RequestApprovalForm({ projectId, project, onCreated, onCancel }) {
       <div className="flex justify-end gap-2 pt-1">
         <button onClick={onCancel} className="h-8 px-3 border rounded-lg text-xs text-gray-600 cursor-pointer hover:bg-gray-50">Hủy</button>
         <button onClick={submit} disabled={loading}
-          className="h-8 px-4 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5">
+          className={`h-8 px-4 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1.5 ${ax.btn}`}>
           {loading ? 'Đang gửi...' : <><Send className="h-3.5 w-3.5" /> Gửi yêu cầu</>}
         </button>
       </div>
@@ -198,7 +225,8 @@ function RequestApprovalForm({ projectId, project, onCreated, onCancel }) {
 }
 
 // ═══ Approval Card ═══
-function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, onDecided, onReRequested }) {
+function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, onDecided, onReRequested, accentKey = 'blue' }) {
+  const ax = ACCENT[accentKey] || ACCENT.blue;
   const [action, setAction] = useState(null); // 'approve' | 'reject'
   const [reason, setReason] = useState('');
   const [approveNotes, setApproveNotes] = useState('');
@@ -313,7 +341,7 @@ function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, on
                     ) : (
                       <FileText className="h-4 w-4 text-gray-400 shrink-0" />
                     )}
-                    <span className="text-xs text-blue-600 truncate flex-1">{f.file_name || `File ${i + 1}`}</span>
+                    <span className={`text-xs truncate flex-1 ${ax.link}`}>{f.file_name || `File ${i + 1}`}</span>
                     {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(0)} KB</span>}
                   </a>
                 ))}
@@ -396,15 +424,15 @@ function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, on
           {/* Re-request button (for rejected items, shown to requester) */}
           {isRejected && isMyRequest && !showReRequest && (
             <button onClick={() => setShowReRequest(true)}
-              className="h-8 px-4 bg-blue-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer">
+              className={`h-8 px-4 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${ax.btn}`}>
               <RotateCcw className="h-3.5 w-3.5" /> Gửi lại yêu cầu duyệt
             </button>
           )}
 
           {/* Re-request form */}
           {isRejected && isMyRequest && showReRequest && (
-            <div className="bg-blue-50 rounded-lg p-3 space-y-2 border border-blue-200">
-              <h4 className="text-sm font-medium text-blue-900">Gửi lại yêu cầu duyệt</h4>
+            <div className={`rounded-lg p-3 space-y-2 ${ax.rePanel}`}>
+              <h4 className={`text-sm font-medium ${ax.reTitle}`}>Gửi lại yêu cầu duyệt</h4>
               <div>
                 <label className="text-[11px] font-medium text-gray-600 block mb-1">Ghi chú cập nhật</label>
                 <textarea value={reRequestNotes} onChange={e => setReRequestNotes(e.target.value)}
@@ -418,7 +446,7 @@ function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, on
               <div className="flex gap-2 justify-end">
                 <button onClick={() => setShowReRequest(false)} className="h-7 px-3 border rounded-lg text-xs text-gray-600 cursor-pointer">Hủy</button>
                 <button onClick={reRequest} disabled={loading}
-                  className="h-7 px-3 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50">
+                  className={`h-7 px-3 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50 ${ax.btn}`}>
                   {loading ? 'Đang gửi...' : '🔄 Gửi lại'}
                 </button>
               </div>

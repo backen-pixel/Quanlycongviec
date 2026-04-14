@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { markCrmPipelineCardFocus } from '../lib/crmPipelineStorage';
 
 function formatVND(v) {
   if (!v) return '0đ';
@@ -37,7 +38,11 @@ export function ListView({ pipeline, pipelineType, calculateDays }) {
             const days = calculateDays(item.created_at);
             return (
               <tr key={item.id}
-                onClick={() => navigate(`/crm/${pipelineType === 'deal' ? 'deals' : 'leads'}/${item.id}`)}
+                data-crm-pipeline-card={item.id}
+                onClick={() => {
+                  markCrmPipelineCardFocus(item.id);
+                  navigate(`/crm/leads/${item.id}`);
+                }}
                 className="hover:bg-blue-50/50 cursor-pointer transition-colors">
                 <td className="px-4 py-2.5 text-blue-600 font-medium whitespace-nowrap">{item.code}</td>
                 <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[200px] truncate">{item.title}</td>
@@ -93,7 +98,11 @@ export function PlannerView({ pipeline, pipelineType }) {
 
   const renderCard = (item) => (
     <div key={item.id}
-      onClick={() => navigate(`/crm/${pipelineType === 'deal' ? 'deals' : 'leads'}/${item.id}`)}
+      data-crm-pipeline-card={item.id}
+      onClick={() => {
+        markCrmPipelineCardFocus(item.id);
+        navigate(`/crm/leads/${item.id}`);
+      }}
       className="bg-white rounded-lg border p-3 hover:shadow-md transition-all cursor-pointer group">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">

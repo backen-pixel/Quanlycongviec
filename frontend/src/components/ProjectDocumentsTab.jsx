@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
+import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import {
   FileText, Paperclip, ChevronDown, ChevronRight, CheckCircle2, ShieldCheck,
   FolderOpen, ClipboardList, StickyNote, Image, FileSearch, ExternalLink, Download
@@ -63,7 +64,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
     { slug: 'quotation', status: 'quoting', label: 'Báo giá' },
     { slug: 'contract', status: 'contract_signed', label: 'Hợp đồng' },
     { slug: 'production', status: 'producing', label: 'Sản xuất' },
-    { slug: 'delivery', status: 'delivering', label: 'Vận chuyển & Lắp đặt' },
+    { slug: 'delivery', status: 'shipping', label: 'Vận chuyển & Lắp đặt' },
     { slug: 'customer-care', status: 'warranty', label: 'CSKH' },
   ];
 
@@ -309,7 +310,9 @@ const DOC_TYPE_MAP = {
 function LeadDocumentCard({ doc }) {
   const [expanded, setExpanded] = useState(false);
   const typeInfo = DOC_TYPE_MAP[doc.doc_type] || DOC_TYPE_MAP.other;
-  const isFile = !!doc.file_url;
+  const fileHref = doc.file_url ? publicFileUrl(doc.file_url) : '';
+  const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: doc.file_name }) : null;
+  const isFile = !!fileHref;
   const isImage = doc.doc_type === 'image' || doc.mime_type?.startsWith('image/') ||
     /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_url || doc.file_name || '');
   const hasNotes = doc.notes?.trim();
@@ -345,8 +348,8 @@ function LeadDocumentCard({ doc }) {
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 shrink-0">
-          {isFile && (
-            <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+          {isFile && fileOpenProps && (
+            <a {...fileOpenProps}
               className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
               onClick={e => e.stopPropagation()} title="Mở file">
               <ExternalLink className="h-3.5 w-3.5" />
@@ -381,12 +384,14 @@ function LeadDocumentCard({ doc }) {
               </div>
 
               {isImage ? (
-                <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="block">
-                  <img src={doc.file_url} alt={doc.name} loading="lazy"
-                    className="max-h-64 rounded-lg border object-contain hover:opacity-90 transition-opacity" />
-                </a>
-              ) : (
-                <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                fileOpenProps ? (
+                  <a {...fileOpenProps} className="block">
+                    <img src={fileHref} alt={doc.name} loading="lazy"
+                      className="max-h-64 rounded-lg border object-contain hover:opacity-90 transition-opacity" />
+                  </a>
+                ) : null
+              ) : fileOpenProps ? (
+                <a {...fileOpenProps}
                   className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
                   <FileText className="h-8 w-8 text-gray-400" />
                   <div className="flex-1 min-w-0">
@@ -398,7 +403,7 @@ function LeadDocumentCard({ doc }) {
                   </div>
                   <Download className="h-4 w-4 text-gray-400" />
                 </a>
-              )}
+              ) : null}
             </div>
           )}
         </div>
@@ -409,17 +414,33 @@ function LeadDocumentCard({ doc }) {
 
 function FileItem({ file: f, index, small }) {
   const isImage = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(f.file_url || f.file_name || '');
+  const href = f.file_url ? publicFileUrl(f.file_url) : '';
+  const openProps = f.file_url ? getFileOpenAnchorProps(f.file_url, { fileName: f.file_name }) : null;
 
-  return (
-    <a href={f.file_url} target="_blank" rel="noopener noreferrer"
-      className={`flex items-center gap-2 bg-white rounded-lg hover:bg-gray-50 transition-colors ${small ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
+  const inner = (
+    <>
       {isImage ? (
-        <img src={f.file_url} alt="" className={`${small ? 'h-6 w-6' : 'h-8 w-8'} rounded object-cover shrink-0`} loading="lazy" />
+        <img src={href || undefined} alt="" className={`${small ? 'h-6 w-6' : 'h-8 w-8'} rounded object-cover shrink-0`} loading="lazy" />
       ) : (
         <FileText className={`${small ? 'h-3 w-3' : 'h-4 w-4'} text-gray-400 shrink-0`} />
       )}
       <span className={`${small ? 'text-[10px]' : 'text-xs'} text-blue-600 truncate flex-1`}>{f.file_name || `File ${index + 1}`}</span>
       {f.file_size && <span className="text-[9px] text-gray-400 shrink-0">{(f.file_size / 1024).toFixed(0)} KB</span>}
+    </>
+  );
+
+  if (!openProps) {
+    return (
+      <div className={`flex items-center gap-2 bg-gray-50 rounded-lg text-gray-400 ${small ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <a {...openProps}
+      className={`flex items-center gap-2 bg-white rounded-lg hover:bg-gray-50 transition-colors ${small ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
+      {inner}
     </a>
   );
 }

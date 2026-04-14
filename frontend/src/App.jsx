@@ -70,8 +70,12 @@ import ApprovalRulesPage from './pages/ApprovalRulesPage';
 import EcosystemPage from './pages/EcosystemPage';
 import EcosystemLevelsPage from './pages/EcosystemLevelsPage';
 import CRMDashboard from './pages/CRMDashboard';
+import ProductionLayout from './layouts/ProductionLayout';
 import ProductionDashboard from './pages/ProductionDashboard';
 import ProductionDetail from './pages/ProductionDetail';
+import ProductionApprovalsPage from './pages/ProductionApprovalsPage';
+import ProductionPipelineSettingsPage from './pages/ProductionPipelineSettingsPage';
+const WorkshopTaskTemplatesPage = lazy(() => import('./pages/WorkshopTaskTemplatesPage'));
 import QuotationsPage from './pages/QuotationsPage';
 import QuotationForm from './pages/QuotationForm';
 import OrdersPage from './pages/OrdersPage';
@@ -168,6 +172,7 @@ function ProtectedLayout() {
 // Redirect to pinned module on login/root
 function DefaultRedirect() {
   const pinned = localStorage.getItem('pinned_module') || '/crm';
+  if (pinned === '/sx') return <Navigate to="/sx/dashboard" replace />;
   return <Navigate to={pinned} replace />;
 }
 
@@ -239,8 +244,22 @@ export default function App() {
             <Route path="/crm/task-templates" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><CRMTemplatesPage /></Suspense>} />
             <Route path="/crm/auto-project-config" element={<AutoProjectConfigPage />} />
             <Route path="/crm/products" element={<ProductsPage />} />
-            <Route path="/sx" element={<ProductionDashboard />} />
-            <Route path="/sx/projects/:id" element={<ProductionDetail />} />
+            <Route path="/sx" element={<ProductionLayout />}>
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<ProductionDashboard />} />
+              <Route path="pipeline" element={<ProductionDashboard variant="pipeline" />} />
+              <Route path="approvals" element={<ProductionApprovalsPage />} />
+              <Route path="pipeline-settings" element={<ProductionPipelineSettingsPage />} />
+              <Route
+                path="task-templates"
+                element={(
+                  <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-teal-600 border-t-transparent rounded-full" /></div>}>
+                    <WorkshopTaskTemplatesPage />
+                  </Suspense>
+                )}
+              />
+              <Route path="projects/:id" element={<ProductionDetail />} />
+            </Route>
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />
             <Route path="/updates" element={<ReleaseNotesPage />} />

@@ -12,6 +12,13 @@ import {
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
 import BatchActionsBar from '../components/BatchActionsBar';
+import {
+  loadCrmPipelineSnapshot,
+  saveCrmPipelineSnapshot,
+  markCrmPipelineCardFocus,
+  peekCrmPipelineCardFocus,
+  clearCrmPipelineCardFocus,
+} from '../lib/crmPipelineStorage';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -74,8 +81,18 @@ const TIME_PRESETS = [
 
 const KANBAN_LOAD_OPTIONS = ['1000', '2000', '5000', 'all'];
 
+const CRM_DEAL_VIEW_ALL_ROLES = ['admin', 'manager', 'director'];
+
 export default function CRMDashboard() {
   const { user } = useAuth();
+  const seesAllCrmDeals = CRM_DEAL_VIEW_ALL_ROLES.includes(user?.role);
+
+  const persistedUiRef = useRef(undefined);
+  if (persistedUiRef.current === undefined) {
+    persistedUiRef.current = typeof window !== 'undefined' ? loadCrmPipelineSnapshot() : null;
+  }
+  const P = persistedUiRef.current;
+
   const [dataLead, setDataLead] = useState(null);
   const [dataDeal, setDataDeal] = useState(null);
   // leads & deals are computed via useMemo (client-side filter) - see below
@@ -85,31 +102,43 @@ export default function CRMDashboard() {
   const [companies, setCompanies] = useState([]);
   const [allLeads, setAllLeads] = useState([]);
   const [allDeals, setAllDeals] = useState([]);
-  const [filterCompany, setFilterCompany] = useState('');
-  const [searchText, setSearchText] = useState('');
-  const [filterAssignee, setFilterAssignee] = useState('');
+  const [filterCompany, setFilterCompany] = useState(() => P?.filterCompany ?? '');
+  const [searchText, setSearchText] = useState(() => P?.searchText ?? '');
+  const [filterAssignee, setFilterAssignee] = useState(() => P?.filterAssignee ?? '');
   /** Gõ tên để thu hẹp danh sách trong dropdown NV */
-  const [assigneeListSearch, setAssigneeListSearch] = useState('');
+  const [assigneeListSearch, setAssigneeListSearch] = useState(() => P?.assigneeListSearch ?? '');
   /** Lọc lead/deal theo tên người phụ trách / chủ lead (không lẫn tên khách hàng) */
-  const [filterAssigneeName, setFilterAssigneeName] = useState('');
-  const [filterSource, setFilterSource] = useState('');
-  const [filterStage, setFilterStage] = useState('');
-  const [filterPhone, setFilterPhone] = useState('has_phone'); // '' | 'has_phone' | 'no_phone'
-  const [showAdvSearch, setShowAdvSearch] = useState(false);
+  const [filterAssigneeName, setFilterAssigneeName] = useState(() => P?.filterAssigneeName ?? '');
+  const [filterSource, setFilterSource] = useState(() => P?.filterSource ?? '');
+  const [filterStage, setFilterStage] = useState(() => P?.filterStage ?? '');
+  const [filterPhone, setFilterPhone] = useState(() => {
+    const v = P?.filterPhone;
+    return v === '' || v === 'has_phone' || v === 'no_phone' ? v : 'has_phone';
+  });
+  const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [users, setUsers] = useState([]);
   const [alerts, setAlerts] = useState(null);
-  const [pipelineType, setPipelineType] = useState(() => localStorage.getItem('crm_pinned_tab') || 'lead'); // lead | deal
+  const [pipelineType, setPipelineType] = useState(() => {
+    const t = P?.pipelineType;
+    if (t === 'lead' || t === 'deal') return t;
+    return localStorage.getItem('crm_pinned_tab') || 'lead';
+  });
   const [showNewLead, setShowNewLead] = useState(false);
   const [showNewDeal, setShowNewDeal] = useState(false);
-  const [pinnedTab, setPinnedTab] = useState(() => localStorage.getItem('crm_pinned_tab') || '');
+  const [pinnedTab, setPinnedTab] = useState(() => P?.pinnedTab ?? (localStorage.getItem('crm_pinned_tab') || ''));
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState('kanban'); // kanban | list | planner
+  const [viewMode, setViewMode] = useState(() => {
+    const v = P?.viewMode;
+    return ['kanban', 'list', 'planner', 'calendar'].includes(v) ? v : 'kanban';
+  });
   /** Chọn thẻ Kanban để gộp thủ công (không dùng quét trùng) */
   const [manualMergeIds, setManualMergeIds] = useState([]);
   const [manualMergeModalOpen, setManualMergeModalOpen] = useState(false);
   const [bulkAssignModalOpen, setBulkAssignModalOpen] = useState(false);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
+    const fromP = P?.kanbanLoadLimit != null ? String(P.kanbanLoadLimit) : null;
+    if (fromP && KANBAN_LOAD_OPTIONS.includes(fromP)) return fromP;
     const s = localStorage.getItem('crm_kanban_load_limit');
     return KANBAN_LOAD_OPTIONS.includes(s) ? s : 'all';
   });
@@ -118,10 +147,10 @@ export default function CRMDashboard() {
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
 
   // ── TIME FILTER STATE ──
-  const [timePreset, setTimePreset] = useState(''); // '' = all time
-  const [customDateFrom, setCustomDateFrom] = useState('');
-  const [customDateTo, setCustomDateTo] = useState('');
-  const [showCustomDate, setShowCustomDate] = useState(false);
+  const [timePreset, setTimePreset] = useState(() => (typeof P?.timePreset === 'string' ? P.timePreset : ''));
+  const [customDateFrom, setCustomDateFrom] = useState(() => P?.customDateFrom ?? '');
+  const [customDateTo, setCustomDateTo] = useState(() => P?.customDateTo ?? '');
+  const [showCustomDate, setShowCustomDate] = useState(() => !!P?.showCustomDate);
 
   // ── COMPANY-BASED EMPLOYEE FILTER ──
   const [companyEmployees, setCompanyEmployees] = useState([]);
@@ -431,7 +460,8 @@ export default function CRMDashboard() {
     return !!((item.customer?.phone && item.customer.phone.trim()) || (item.phone && item.phone.trim()));
   }, []);
 
-  const filterItems = useCallback((items) => {
+  /** pipelineKind: 'lead' | 'deal' — deal chỉ lọc theo phụ trách deal (assigned_to), không lẫn chủ lead */
+  const filterItemsForPipeline = useCallback((items, pipelineKind) => {
     let result = items;
 
     // Company filter
@@ -443,6 +473,12 @@ export default function CRMDashboard() {
     if (filterAssignee) {
       const fid = String(filterAssignee).trim().toLowerCase();
       result = result.filter((l) => {
+        if (pipelineKind === 'deal') {
+          const ids = [l.assigned_to, l.assignee?.id]
+            .filter(Boolean)
+            .map((x) => String(x).trim().toLowerCase());
+          return ids.includes(fid);
+        }
         const ids = [l.assigned_to, l.lead_owner_id, l.assignee?.id, l.lead_owner?.id]
           .filter(Boolean)
           .map((x) => String(x).trim().toLowerCase());
@@ -454,6 +490,9 @@ export default function CRMDashboard() {
     if (filterAssigneeName.trim()) {
       const qn = filterAssigneeName.trim().toLowerCase();
       result = result.filter((l) => {
+        if (pipelineKind === 'deal') {
+          return (l.assignee?.full_name || '').toLowerCase().includes(qn);
+        }
         const an = (l.assignee?.full_name || '').toLowerCase();
         const lo = (l.lead_owner?.full_name || '').toLowerCase();
         return an.includes(qn) || lo.includes(qn);
@@ -505,8 +544,8 @@ export default function CRMDashboard() {
     return result;
   }, [searchText, filterCompany, filterAssignee, filterAssigneeName, filterSource, filterStage, filterPhone, fbPageLeadIds, hasPhoneNumber]);
 
-  const leads = useMemo(() => filterItems(allLeads), [allLeads, filterItems]);
-  const deals = useMemo(() => filterItems(allDeals), [allDeals, filterItems]);
+  const leads = useMemo(() => filterItemsForPipeline(allLeads, 'lead'), [allLeads, filterItemsForPipeline]);
+  const deals = useMemo(() => filterItemsForPipeline(allDeals, 'deal'), [allDeals, filterItemsForPipeline]);
 
   const activePipelinePhoneTotals = useMemo(
     () => pipelinePhoneTotals[pipelineType === 'lead' ? 'lead' : 'deal'],
@@ -535,6 +574,73 @@ export default function CRMDashboard() {
   const currentData = pipelineType === 'lead' ? dataLead : dataDeal;
   const currentPipeline = pipelineType === 'lead' ? pipelineLead : pipelineDeal;
   const kpis = currentData?.kpis || {};
+
+  useEffect(() => {
+    saveCrmPipelineSnapshot({
+      filterCompany,
+      searchText,
+      filterAssignee,
+      assigneeListSearch,
+      filterAssigneeName,
+      filterSource,
+      filterStage,
+      filterPhone,
+      showAdvSearch,
+      pipelineType,
+      pinnedTab,
+      timePreset,
+      customDateFrom,
+      customDateTo,
+      showCustomDate,
+      viewMode,
+      kanbanLoadLimit,
+    });
+  }, [
+    filterCompany,
+    searchText,
+    filterAssignee,
+    assigneeListSearch,
+    filterAssigneeName,
+    filterSource,
+    filterStage,
+    filterPhone,
+    showAdvSearch,
+    pipelineType,
+    pinnedTab,
+    timePreset,
+    customDateFrom,
+    customDateTo,
+    showCustomDate,
+    viewMode,
+    kanbanLoadLimit,
+  ]);
+
+  useEffect(() => {
+    if (loading) return;
+    const id = peekCrmPipelineCardFocus();
+    if (!id) return;
+    const pulse = (el) => {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
+      window.setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
+      }, 2200);
+      clearCrmPipelineCardFocus();
+    };
+    const tryOnce = () => {
+      const el = document.querySelector(`[data-crm-pipeline-card="${id}"]`);
+      if (el) {
+        pulse(el);
+        return true;
+      }
+      return false;
+    };
+    if (tryOnce()) return undefined;
+    const t = window.setTimeout(() => {
+      if (!tryOnce()) clearCrmPipelineCardFocus();
+    }, 500);
+    return () => clearTimeout(t);
+  }, [loading, viewMode, pipelineType, currentPipeline]);
 
   const handleMoveStage = useCallback(async (leadId, newStageId) => {
     const prevLeads = allLeads;
@@ -567,6 +673,14 @@ export default function CRMDashboard() {
 
       if (data.deal_won) {
         autoCreateProject(leadId);
+      } else if (data.project_auto_created?.project_id) {
+        setAutoCreateResult({
+          project_id: data.project_auto_created.project_id,
+          project_code: data.project_auto_created.project_code,
+          tasks_created: data.project_auto_created.tasks_created,
+        });
+        setAutoCreateStatus('success');
+        load();
       }
     } catch (e) {
       console.error(e);
@@ -615,9 +729,13 @@ export default function CRMDashboard() {
               className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition">
               Đóng
             </button>
-            <button onClick={() => navigate(`/projects/${autoCreateResult.project_id}`)}
+            <button onClick={() => navigate(`/sx/projects/${autoCreateResult.project_id}`)}
               className="h-9 px-4 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer transition">
-              Xem dự án →
+              Xem xưởng →
+            </button>
+            <button onClick={() => navigate(`/projects/${autoCreateResult.project_id}`)}
+              className="h-9 px-4 bg-white/90 text-gray-800 hover:bg-white rounded-lg text-sm font-medium cursor-pointer transition">
+              Dự án đầy đủ
             </button>
           </div>
         </div>
@@ -722,7 +840,11 @@ export default function CRMDashboard() {
                 {(pipelineType === 'lead' ? leads : deals).map(item => (
                   <Link key={item.id} to={`/crm/leads/${item.id}`}
                     className="flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50 transition cursor-pointer border-b border-gray-50 last:border-0"
-                    onClick={() => setSearchText('')}>
+                    data-crm-pipeline-card={item.id}
+                    onClick={() => {
+                      markCrmPipelineCardFocus(item.id);
+                      setSearchText('');
+                    }}>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono text-gray-400">{item.code}</span>
@@ -910,8 +1032,13 @@ export default function CRMDashboard() {
               </div>
               <div className="flex flex-col gap-0.5">
                 <label className="text-[10px] text-gray-500 font-medium">Chọn NV (API + lọc)</label>
-                <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}
-                  className="h-9 min-w-[10rem] px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                <select
+                  value={filterAssignee}
+                  onChange={(e) => setFilterAssignee(e.target.value)}
+                  disabled={!seesAllCrmDeals && pipelineType === 'deal'}
+                  title={!seesAllCrmDeals && pipelineType === 'deal' ? 'Deal: chỉ hiển thị deal do bạn phụ trách (theo tài khoản đăng nhập).' : undefined}
+                  className={`h-9 min-w-[10rem] px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${!seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
                   <option value="">👤 Tất cả nhân viên</option>
                   {companyDepts.length > 0 ? (
                     companyDepts.map((dept) => {
@@ -936,9 +1063,10 @@ export default function CRMDashboard() {
                   type="search"
                   value={filterAssigneeName}
                   onChange={(e) => setFilterAssigneeName(e.target.value)}
+                  disabled={!seesAllCrmDeals && pipelineType === 'deal'}
                   placeholder="Chỉ tên người phụ trách / chủ lead"
-                  title="Không lọc theo tên khách hàng — tránh trùng với ô tìm nhanh phía trên"
-                  className="h-9 w-52 max-w-[min(100vw-2rem,13rem)] px-2.5 bg-amber-50/80 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  title={!seesAllCrmDeals && pipelineType === 'deal' ? 'Deal: lọc NV đã cố định theo tài khoản của bạn.' : 'Không lọc theo tên khách hàng — tránh trùng với ô tìm nhanh phía trên'}
+                  className={`h-9 w-52 max-w-[min(100vw-2rem,13rem)] px-2.5 bg-amber-50/80 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 ${!seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : ''}`}
                 />
               </div>
             </div>
@@ -1798,6 +1926,7 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
 
 // Kanban Item Card - MISA Style
 function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect }) {
+  const navigate = useNavigate();
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-merge-checkbox]')) {
       e.preventDefault();
@@ -1818,9 +1947,15 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
 
   return (
     <div
+      data-crm-pipeline-card={item.id}
       draggable
       onDragStart={handleDragStart}
-      onClick={() => { localStorage.setItem('crm_pinned_tab', pipelineType); window.location.href = `/crm/leads/${item.id}`; }}
+      onClick={(e) => {
+        if (e.target.closest?.('[data-merge-checkbox]')) return;
+        localStorage.setItem('crm_pinned_tab', pipelineType);
+        markCrmPipelineCardFocus(item.id);
+        navigate(`/crm/leads/${item.id}`);
+      }}
       className={`relative bg-white rounded-lg border border-gray-200 p-3 pt-9 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{
         borderLeft: `3px solid ${stageColor}`,

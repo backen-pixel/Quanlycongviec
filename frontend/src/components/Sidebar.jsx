@@ -119,7 +119,7 @@ const SX_MENU_GROUPS = [
     title: '1. Tổng quan',
     emoji: '🏭',
     items: [
-      { to: '/sx', icon: LayoutDashboard, label: 'Dashboard Xưởng', end: true },
+      { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
     ]
   },
   {
@@ -127,9 +127,11 @@ const SX_MENU_GROUPS = [
     title: '2. Điều hành xưởng',
     emoji: '📦',
     items: [
-      { to: '/sx', icon: FolderKanban, label: 'Deal vào xưởng', end: true },
-      { to: '/sx', icon: ArrowRightLeft, label: 'Pipeline xưởng', end: true },
-      { to: '/sx', icon: ClipboardCheck, label: 'Duyệt theo deal', end: true },
+      { to: '/sx/dashboard', icon: FolderKanban, label: 'Deal vào xưởng' },
+      { to: '/sx/pipeline', icon: ArrowRightLeft, label: 'Pipeline Kanban' },
+      { to: '/sx/approvals', icon: ClipboardCheck, label: 'Duyệt theo deal' },
+      { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
+      { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
     ]
   },
 ];
@@ -182,7 +184,7 @@ function MenuGroup({ group, collapsed, isAdmin }) {
       {open && (
         <nav className="space-y-0.5 px-2 mt-1">
           {items.map(item => (
-            <SideLink key={item.to} {...item} collapsed={collapsed} />
+            <SideLink key={`${group.id}-${item.to}-${item.label}`} {...item} collapsed={collapsed} />
           ))}
         </nav>
       )}
