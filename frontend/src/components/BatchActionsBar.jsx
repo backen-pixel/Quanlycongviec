@@ -8,6 +8,7 @@ import AutoPipelineMonitor from './AutoPipelineMonitor';
 const PIPELINE_FORM_EMPTY = {
   engine: 'full_cycle',
   full_cycle_max_users_per_round: 500,
+  auto_loop_pause_sec: 60,
   chain_chunk_users: 500,
   chain_sort: 'newest_first',
   chain_recent_hours: 48,
@@ -57,6 +58,7 @@ export default function BatchActionsBar({ onComplete = null }) {
       await saveFbAutoPipelineConfig({
         engine,
         full_cycle_max_users_per_round: Math.min(500000, Math.max(0, Number(plForm.full_cycle_max_users_per_round) || 0)),
+        auto_loop_pause_sec: Math.min(3600, Math.max(15, Number(plForm.auto_loop_pause_sec) || 60)),
         chain_chunk_users: Math.min(500, Math.max(1, Number(plForm.chain_chunk_users) || 500)),
         chain_sort: plForm.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first',
         chain_recent_hours: Math.min(168, Math.max(0, Number(plForm.chain_recent_hours) || 0)),
@@ -179,7 +181,7 @@ export default function BatchActionsBar({ onComplete = null }) {
             {pipelineCfgOpen && (
               <div className="px-3 pb-3 pt-0 space-y-2 border-t border-amber-100/80 bg-white/60">
                 <p className="text-[10px] text-gray-600 pt-2 leading-relaxed">
-                  <strong>Sync→Quét</strong>: số user mỗi lần chunk (tối đa 500) × số vòng lặp trong bước 1 cho tới <strong>giới hạn user/vòng</strong> (0 = xử lý hết pool một lượt), rồi <strong>Tạo Lead → Refresh → Xóa lead trùng</strong>.
+                  Mỗi vòng: đồng bộ + quét <strong>tối đa N user mới nhất</strong> (pool đã xếp mới→cũ), chunk từng lô, rồi Tạo Lead → Refresh → Xóa trùng → Sync SĐT. <strong>0 user/vòng</strong> = không giới hạn (chạy hết pool). Sau vòng nghỉ <strong>số giây</strong> cấu hình rồi lặp lại.
                 </p>
                 <label className="inline-flex items-center gap-2 text-[10px] text-gray-700 cursor-pointer select-none">
                   <input
@@ -224,7 +226,7 @@ export default function BatchActionsBar({ onComplete = null }) {
                     />
                   </label>
                   <label className="flex flex-col gap-0.5">
-                    <span className="text-gray-600">Tối đa user Sync→Quét / vòng (0 = hết pool)</span>
+                    <span className="text-gray-600">Tối đa user mới nhất / vòng (0 = hết pool)</span>
                     <input
                       type="number"
                       min={0}
@@ -232,6 +234,17 @@ export default function BatchActionsBar({ onComplete = null }) {
                       className="border rounded-md px-2 py-1"
                       value={plForm.full_cycle_max_users_per_round ?? 500}
                       onChange={(e) => setPlForm((f) => ({ ...f, full_cycle_max_users_per_round: e.target.value }))}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5">
+                    <span className="text-gray-600">Nghỉ giữa các vòng (giây, 15–3600, mặc định 60)</span>
+                    <input
+                      type="number"
+                      min={15}
+                      max={3600}
+                      className="border rounded-md px-2 py-1"
+                      value={plForm.auto_loop_pause_sec ?? 60}
+                      onChange={(e) => setPlForm((f) => ({ ...f, auto_loop_pause_sec: e.target.value }))}
                     />
                   </label>
                   <label className="flex flex-col gap-0.5">
