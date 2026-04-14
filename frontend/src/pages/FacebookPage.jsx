@@ -8,6 +8,7 @@ import {
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
   Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3
 } from 'lucide-react';
+import BatchActionsBar from '../components/BatchActionsBar';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -807,6 +808,10 @@ function ContactsTab() {
   const [audit, setAudit] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [limitSize, setLimitSize] = useState(1000);
+  /** Số user xử lý (mới→cũ): đồng bộ Graph → quét SĐT từng user một */
+  const [chainUserLimit, setChainUserLimit] = useState(50);
+  /** Vị trí trong pool server (0, 50, 100, …) — khớp API offset */
+  const [chainPoolOffset, setChainPoolOffset] = useState(0);
   const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
 
   const load = useCallback((append = false) => {
@@ -844,8 +849,9 @@ function ContactsTab() {
     if (!socket) return;
 
     const onBatchProgress = (data) => {
-      if (data.type !== 'extract_phones') return;
-      setBatchProgress(data);
+      if (data.type === 'extract_phones' || data.type === 'sync_then_extract_phones') {
+        setBatchProgress(data);
+      }
     };
 
     const onBatchDone = (data) => {
@@ -893,9 +899,9 @@ function ContactsTab() {
     }
   };
 
-  // Batch: quét SĐT + thông tin từ tin nhắn
+  // Batch: quét SĐT + thông tin từ tin nhắn (chỉ DB, không gọi Graph)
   const batchExtractPhones = async () => {
-    if (!confirm('Đọc tin nhắn của từng user chưa có SĐT để tìm số điện thoại và địa chỉ?')) return;
+    if (!confirm('Đọc tin nhắn đã lưu trong hệ thống để tìm SĐT/địa chỉ (không đồng bộ mới từ Facebook). Tiếp tục?')) return;
     setBatchProgress(null);
     setBatchStatus({ type: 'phones', loading: true, result: null });
     try {
@@ -906,6 +912,37 @@ function ContactsTab() {
       }
     } catch (e) {
       setBatchStatus({ type: 'phones', loading: false, result: { error: e.message } });
+    }
+  };
+
+  /** Đồng bộ tin nhắn từ Facebook rồi quét SĐT ngay cho từng user (mới → cũ, giới hạn N user). */
+  const batchSyncThenExtractPhones = async () => {
+    const n = Math.min(500, Math.max(1, Number(chainUserLimit) || 50));
+    const off = Math.max(0, Number(chainPoolOffset) || 0);
+    if (!confirm(`Từ offset pool ${off}: tối đa ${n} liên hệ (mỗi người (1) đồng bộ tin Facebook (2) quét SĐT). Tiếp tục?`)) return;
+    setBatchProgress(null);
+    setBatchStatus({ type: 'sync_then_phones', loading: true, result: null });
+    try {
+      const res = await fetch(`${API}/api/facebook/batch-sync-then-extract-phones`, {
+        method: 'POST',
+        headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          limit: n,
+          offset: off,
+          recent_hours: 0,
+          skip_stale_customer_reply: false,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || res.statusText);
+      if (data.done_pool) setChainPoolOffset(0);
+      else if (typeof data.next_offset === 'number') setChainPoolOffset(data.next_offset);
+      setBatchProgress(null);
+      setBatchStatus({ type: 'sync_then_phones', loading: false, result: data });
+      load();
+    } catch (e) {
+      setBatchProgress(null);
+      setBatchStatus({ type: 'sync_then_phones', loading: false, result: { error: e.message } });
     }
   };
 
@@ -971,15 +1008,28 @@ function ContactsTab() {
 
   return (
     <div className="p-6 overflow-y-auto h-full">
+      <div className="mb-4 shrink-0" data-tour="fb-contacts-auto-tools">
+        <BatchActionsBar onComplete={() => load(false)} />
+      </div>
       <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <div>
           <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length}/{meta.total || 0})</h2>
-          {batchStatus?.type === 'phones' && batchStatus.loading && batchProgress && (
+          {batchStatus?.loading && batchProgress && (batchStatus?.type === 'phones' || batchStatus?.type === 'sync_then_phones') && (
             <div className="mt-2 text-xs text-gray-600 space-y-1">
-              <div>Đang quét: <span className="font-medium">{batchProgress.name || '...'}</span> ({batchProgress.current || 0}/{batchProgress.total || 0})</div>
+              <div>
+                {batchStatus?.type === 'sync_then_phones' && batchProgress.phase === 'sync' && '📨 Đồng bộ '}
+                {batchStatus?.type === 'sync_then_phones' && batchProgress.phase === 'extract' && '📞 Quét '}
+                {batchStatus?.type === 'sync_then_phones' && batchProgress.phase === 'lead_sync' && '📝 '}
+                {batchStatus?.type === 'phones' && 'Đang quét: '}
+                <span className="font-medium">{batchProgress.name || '...'}</span>
+                {' '}({batchProgress.current || 0}/{batchProgress.total || 0})
+                {batchStatus?.type === 'sync_then_phones' && batchProgress.phase === 'extract' && batchProgress.synced != null && (
+                  <span className="text-indigo-600"> · +{batchProgress.synced} tin mới</span>
+                )}
+              </div>
               <div className="w-72 max-w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                 <div
-                  className="h-full bg-blue-500 rounded-full transition-all"
+                  className={`h-full rounded-full transition-all ${batchStatus?.type === 'sync_then_phones' ? 'bg-indigo-500' : 'bg-blue-500'}`}
                   style={{ width: `${batchProgress.total ? Math.round(((batchProgress.current || 0) / batchProgress.total) * 100) : 0}%` }}
                 />
               </div>
@@ -992,6 +1042,43 @@ function ContactsTab() {
             {batchStatus?.type === 'sync' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-teal-600 border-t-transparent rounded-full" /> : '📨'}
             Đồng bộ tin nhắn
           </button>
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50/80 flex-wrap">
+            <label className="text-[10px] text-indigo-900 font-medium whitespace-nowrap" title="Thứ tự: hoạt động mới nhất trước (theo server)">Sync→Quét</label>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={chainUserLimit}
+              onChange={(e) => setChainUserLimit(Math.min(500, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+              className="w-12 px-1 py-0.5 text-xs border border-indigo-200 rounded text-center bg-white"
+              title="Số user tối đa mỗi lần"
+            />
+            <span className="text-[9px] text-indigo-700">off</span>
+            <input
+              type="number"
+              min={0}
+              value={chainPoolOffset}
+              onChange={(e) => setChainPoolOffset(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              className="w-14 px-1 py-0.5 text-xs border border-indigo-200 rounded text-center bg-white"
+              title="Offset trong pool (tự tăng sau mỗi lần chạy nếu chưa hết pool)"
+            />
+            <button
+              type="button"
+              onClick={() => setChainPoolOffset(0)}
+              className="text-[9px] px-1 py-0.5 text-indigo-700 hover:bg-indigo-100 rounded cursor-pointer"
+              title="Đặt offset về 0"
+            >
+              ↺0
+            </button>
+            <button
+              onClick={batchSyncThenExtractPhones}
+              disabled={batchStatus?.loading}
+              className="px-2 py-1 text-[10px] font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 cursor-pointer whitespace-nowrap"
+            >
+              {batchStatus?.type === 'sync_then_phones' && batchStatus.loading ? <span className="inline-block animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full align-middle mr-0.5" /> : null}
+              Chạy
+            </button>
+          </div>
           <button onClick={batchCreateLeads} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
             {batchStatus?.type === 'leads' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" /> : '🆕'}
@@ -1008,9 +1095,10 @@ function ContactsTab() {
             Xóa Lead trùng
           </button>
           <button onClick={batchExtractPhones} disabled={batchStatus?.loading}
-            className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+            className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+            title="Chỉ đọc tin đã lưu DB — không kéo tin mới từ Facebook">
             {batchStatus?.type === 'phones' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full" /> : '📞'}
-            Quét SĐT & thông tin
+            Quét SĐT (DB)
           </button>
           <select value={limitSize} onChange={e => setLimitSize(Number(e.target.value))} className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700">
             <option value={1000}>1000</option>
@@ -1089,6 +1177,20 @@ function ContactsTab() {
                 <span>✅ Đã tạo <strong>{batchStatus.result.created || 0}</strong> Lead mới — Bỏ qua: {batchStatus.result.skipped || 0} (đã có Lead)</span>
               ) : batchStatus.type === 'dedup' ? (
                 <span>✅ {batchStatus.result.message}</span>
+              ) : batchStatus.type === 'sync_then_phones' ? (
+                <span>
+                  ✅ Đã xử lý <strong>{batchStatus.result.processed || 0}</strong> user (sync→quét) — <strong>{batchStatus.result.total_messages_synced || 0}</strong> tin mới từ Facebook,
+                  cập nhật quét: <strong>{batchStatus.result.extract_updated || 0}</strong>, bỏ qua đã có SĐT: <strong>{batchStatus.result.extract_skipped_has_phone || 0}</strong>
+                  {batchStatus.result.pool_total != null && (
+                    <span className="block text-xs mt-1 text-green-900/80 font-normal">
+                      Pool server: <strong>{batchStatus.result.pool_total}</strong>
+                      {typeof batchStatus.result.next_offset === 'number' && (
+                        <> · Offset tiếp (đã gán vào ô «off»): <strong>{batchStatus.result.next_offset}</strong></>
+                      )}
+                      {batchStatus.result.done_pool ? ' · Đã hết pool lần này' : ''}
+                    </span>
+                  )}
+                </span>
               ) : (
                 <span>✅ Quét <strong>{batchStatus.result.total || 0}</strong> liên hệ — Tìm thấy: <strong>{batchStatus.result.foundPhones || 0}</strong> SĐT mới</span>
               )}

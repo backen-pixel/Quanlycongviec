@@ -12,15 +12,49 @@ const {
 // ═══════════════════════════════════════════════════════════════
 // AUTO PIPELINE STATE (backend-managed, realtime)
 // ═══════════════════════════════════════════════════════════════
-const AUTO_BATCH_SIZE = 300;
-const AUTO_SYNC_TIMEOUT_SEC = 90;
-const AUTO_LOOP_PAUSE_MS = 1500;
+/** Số contact xử lý mỗi lần gọi batch (50–500). Giảm nếu Graph hay 429. */
+const AUTO_BATCH_SIZE = Math.min(500, Math.max(50, parseInt(process.env.FB_AUTO_BATCH_SIZE || '300', 10) || 300));
+const AUTO_SYNC_TIMEOUT_SEC = Math.min(300, Math.max(30, parseInt(process.env.FB_AUTO_SYNC_TIMEOUT_SEC || '90', 10) || 90));
+/** Nghỉ giữa các chu kỳ quét full pool (ms). Tăng khi ~4000 user/tháng để giảm tải CPU/Graph. */
+const AUTO_LOOP_PAUSE_MS = Math.min(600_000, Math.max(1_000, parseInt(process.env.FB_AUTO_LOOP_PAUSE_MS || '1500', 10) || 1500));
+/** Pool tối đa khi load contact cho pipeline (mặc định 10000). ENV: FB_PIPELINE_POOL_LIMIT */
+const FB_PIPELINE_POOL_LIMIT = Math.min(50_000, Math.max(2_000, parseInt(process.env.FB_PIPELINE_POOL_LIMIT || '10000', 10) || 10_000));
+/** Luôn ưu tiên tối đa N contact chưa có lead (dù cũ) để không bỏ sót. ENV: FB_PIPELINE_NEEDY_NO_LEAD_CAP */
+const FB_PIPELINE_NEEDY_NO_LEAD_CAP = Math.min(5_000, Math.max(0, parseInt(process.env.FB_PIPELINE_NEEDY_NO_LEAD_CAP || '1000', 10) || 1000));
+/**
+ * Batch đồng bộ: số trang Graph/contact (mỗi trang ~100 tin). Mặc định 3 → nhẹ; tăng ENV FB_SYNC_BATCH_GRAPH_MAX_PAGES khi cần kéo sâu hơn.
+ * Đồng bộ 1 contact tay vẫn dùng FB_SYNC_SINGLE_MAX_PAGES (25).
+ */
+const FB_SYNC_BATCH_GRAPH_MAX_PAGES = Math.min(25, Math.max(1, parseInt(process.env.FB_SYNC_BATCH_GRAPH_MAX_PAGES || '3', 10) || 3));
 /**
  * Một ngưỡng giờ cho cả (1) pool “còn hoạt động” và (2) lọc “KH không liên lạc”.
  * Pool “còn hoạt động” + lọc “KH không liên lạc” dùng chung N giờ (đổi giá trị ở đây).
  */
 const AUTO_PIPELINE_RECENT_HOURS = 48;
 const STALE_NO_CUSTOMER_REPLY_MS = AUTO_PIPELINE_RECENT_HOURS * 60 * 60 * 1000;
+
+/** Graph: lấy nhiều trang tin (mặc định FB chỉ trả ~100/trang). SĐT nằm trong text ở tin cũ vẫn cần kéo đủ. */
+const FB_GRAPH_MESSAGES_FIELDS = 'message,from,created_time,attachments';
+const FB_SYNC_SINGLE_MAX_PAGES = 25; // đồng bộ 1 contact (bấm tay): tới ~2500 tin
+
+async function graphFetchConversationMessages(convId, token, { maxPages = 5, limitPerPage = 100 } = {}) {
+  const out = [];
+  let url = `https://graph.facebook.com/v22.0/${convId}/messages?fields=${encodeURIComponent(FB_GRAPH_MESSAGES_FIELDS)}&limit=${limitPerPage}`;
+  let page = 0;
+  while (url && page < maxPages) {
+    const msgResp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const msgData = await msgResp.json();
+    page += 1;
+    if (msgData.error) {
+      console.warn('[FB] graphFetchConversationMessages:', msgData.error?.message || JSON.stringify(msgData.error));
+      break;
+    }
+    if (!msgData.data?.length) break;
+    out.push(...msgData.data);
+    url = msgData.paging?.next || null;
+  }
+  return out;
+}
 
 async function fetchLastInboundAtByContactIds(contactIds) {
   if (!contactIds?.length) return new Map();
@@ -67,36 +101,101 @@ function filterContactsStaleCustomerNoReply(contacts, inboundMap, now = Date.now
 function filterContactsRecentHours(contacts, recentHours) {
   if (!recentHours || recentHours <= 0) return contacts || [];
   const cutoff = Date.now() - recentHours * 3600000;
-  const out = (contacts || []).filter((c) => activityTimestampMs(c) >= cutoff);
+  const out = (contacts || []).filter((c) => {
+    if (!c.lead_id) return true;
+    return activityTimestampMs(c) >= cutoff;
+  });
   if ((contacts || []).length && out.length < contacts.length) {
-    console.log(`[FB] recent_hours=${recentHours}: ${contacts.length} → ${out.length} contacts (hoạt động gần đây)`);
+    console.log(`[FB] recent_hours=${recentHours}: ${contacts.length} → ${out.length} contacts (giữ hết chưa có lead; còn lại theo hoạt động)`);
   }
   return out;
 }
 
 /**
- * Pool tối đa 5000 contact, sắp last_message_at mới nhất trước; lọc theo recentHours; optional stale (cùng ngưỡng giờ với AUTO_PIPELINE_RECENT_HOURS).
- * Dùng chung batch-sync + batch-extract (pipeline_aligned) để offset khớp — auto pipeline và chạy tay đều dùng pool này (mới→cũ).
+ * Pool: ưu tiên contact chưa có lead (tránh bỏ sót khi ~hàng nghìn user/tháng),
+ * bù thêm contact “nóng” theo last_message_at tới FB_PIPELINE_POOL_LIMIT.
+ * Lọc recentHours: contact chưa có lead luôn giữ (xem filterContactsRecentHours).
  */
 async function loadFacebookContactsForBatchPipeline({ recentHours = 0, applyStaleFilter = false } = {}) {
+  const pool = FB_PIPELINE_POOL_LIMIT;
+  const needyCap = FB_PIPELINE_NEEDY_NO_LEAD_CAP;
+
+  const { data: needyRaw } = needyCap > 0
+    ? await supabase.from('facebook_contacts')
+      .select('id, psid, page_id, fb_name, lead_id, phone, last_message_at, last_synced_at, created_at')
+      .not('psid', 'is', null)
+      .is('lead_id', null)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(needyCap)
+    : { data: [] };
+
   const { data: raw } = await supabase.from('facebook_contacts')
     .select('id, psid, page_id, fb_name, lead_id, phone, last_message_at, last_synced_at, created_at')
     .not('psid', 'is', null)
     .order('last_message_at', { ascending: false, nullsFirst: false })
-    .limit(5000);
+    .limit(pool);
+
+  const needySorted = sortFacebookContactsNewestFirst(needyRaw || []);
+  const needyFront = needySorted.slice(0, needyCap);
+  const needyIds = new Set(needyFront.map((c) => c.id));
+  const rest = (raw || []).filter((c) => !needyIds.has(c.id));
+  const restSorted = sortFacebookContactsNewestFirst(rest);
+  const slots = Math.max(0, pool - needyFront.length);
+  let list = [...needyFront, ...restSorted.slice(0, slots)];
+
   const rawFetched = (raw || []).length;
-  let list = filterContactsRecentHours(raw || [], recentHours);
+  list = filterContactsRecentHours(list, recentHours);
   let excludedStaleNoContact = 0;
   if (applyStaleFilter && list.length) {
-    const inboundMap = await fetchLastInboundAtByContactIds(list.map((c) => c.id));
+    const noLead = list.filter((c) => !c.lead_id);
+    const withLead = list.filter((c) => c.lead_id);
+    const inboundMap = await fetchLastInboundAtByContactIds(withLead.map((c) => c.id));
     if (inboundMap) {
-      const fr = filterContactsStaleCustomerNoReply(list, inboundMap);
-      list = fr.contacts;
+      const fr = filterContactsStaleCustomerNoReply(withLead, inboundMap);
       excludedStaleNoContact = fr.excluded;
+      list = sortFacebookContactsNewestFirst([...noLead, ...fr.contacts]);
     }
   }
   list = sortFacebookContactsNewestFirst(list);
   return { contacts: list, excludedStaleNoContact, rawFetched };
+}
+
+const DEFAULT_FB_PIPELINE_CONFIG = {
+  /**
+   * full_cycle (mặc định): lô batch-sync-messages + batch-extract-phones (như nút tay) → Tạo Lead → Refresh → Xóa trùng → sync-contact-phones → nghỉ → lặp.
+   * chain: Sync→Quét từng user (runSyncThenExtractPhonesJob). legacy: chỉ lô đồng bộ + quét, không CRM sau.
+   */
+  engine: 'full_cycle',
+  /** Tối đa số user (đồng bộ+quét) mỗi vòng trước Tạo Lead… (0 = xử lý hết pool một lượt). Chunk mỗi lần = chain_chunk_users (mặc định 500). */
+  full_cycle_max_users_per_round: 500,
+  chain_chunk_users: 500,
+  /** newest_first | oldest_first */
+  chain_sort: 'newest_first',
+  /** 0 = không lọc theo giờ (cả pool). >0 = giờ hoạt động gần đây. */
+  chain_recent_hours: 48,
+  chain_skip_stale: false,
+  chain_graph_pages: 15,
+  chain_final_lead_sync: true,
+  chain_run_graph_sync: true,
+  chain_run_extract: true,
+};
+
+let fbPipelineConfigCache = { ...DEFAULT_FB_PIPELINE_CONFIG };
+
+async function loadFbPipelineConfigFromDb() {
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'fb_auto_pipeline_config').maybeSingle();
+    if (data?.value && typeof data.value === 'object') {
+      fbPipelineConfigCache = { ...DEFAULT_FB_PIPELINE_CONFIG, ...data.value };
+    }
+  } catch (e) {
+    console.warn('[FB pipeline config] load:', e.message);
+  }
+  return fbPipelineConfigCache;
+}
+
+function getFbPipelineConfigSync() {
+  return { ...fbPipelineConfigCache };
 }
 
 const autoPipeline = {
@@ -144,6 +243,7 @@ function getAutoState() {
     batchResults: autoPipeline.batchResults,
     kpi: autoPipeline.kpi,
     startedAt: autoPipeline.startedAt,
+    pipelineConfig: getFbPipelineConfigSync(),
   };
 }
 
@@ -160,6 +260,214 @@ function getInternalAutoHeaders() {
   };
 }
 
+/** Giới hạn dòng chi tiết gửi qua socket (mỗi batch). */
+const AUTO_PIPELINE_SCAN_DETAILS_CAP = 120;
+
+function compactSyncExtractStepsForAuto(steps) {
+  if (!Array.isArray(steps)) return [];
+  return steps.slice(0, AUTO_PIPELINE_SCAN_DETAILS_CAP).map((s) => ({
+    contact_id: s.contact_id,
+    name: s.name || '',
+    synced: s.synced,
+    sync_status: s.sync_status,
+    extract: s.extract,
+    phone: s.phone || null,
+  }));
+}
+
+function compactExtractPhoneResultsForAuto(results) {
+  if (!Array.isArray(results)) return [];
+  return results.slice(0, AUTO_PIPELINE_SCAN_DETAILS_CAP).map((r) => ({
+    name: r.contact,
+    phone: r.phone || null,
+    address: r.address || null,
+    extract: r.status,
+    extraPhones: r.extraPhones,
+  }));
+}
+
+/** Gọi API Facebook nội bộ (auto pipeline), JSON body. */
+async function autoPipelineInternalPostJson(apiPath, body = {}) {
+  const resp = await fetch(`http://127.0.0.1:${config.port}/api${apiPath}`, {
+    method: 'POST',
+    headers: getInternalAutoHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+  return data;
+}
+
+/**
+ * Giống chạy tay: lô POST batch-sync-messages (mode all + offset/limit) rồi batch-extract-phones
+ * (pipeline_aligned) — khớp nhánh legacy, không dùng runSyncThenExtractPhonesJob.
+ */
+async function runAutoLegacySyncExtractPhase(pipelineBodyBase) {
+  const cfg = getFbPipelineConfigSync();
+  const lim = Math.min(500, Math.max(50, parseInt(cfg.chain_chunk_users, 10) || AUTO_BATCH_SIZE));
+  let pendingSyncData = null;
+  let usersPhase = 0;
+  let phaseMsgs = 0;
+  let phaseExtract = 0;
+  let ok = true;
+  let done = false;
+
+  while (!done && autoPipeline.enabled && !autoPipeline.stopRequested) {
+    autoPipeline.batchIndex += 1;
+    const batchOffset = autoPipeline.batchOffset;
+
+    autoPipeline.step = 0;
+    autoPipeline.totalSteps = 2;
+    autoPipeline.stepLabel = `📨 Đồng bộ (lô) • Batch ${autoPipeline.batchIndex} (offset ${batchOffset})`;
+    emitAutoState();
+
+    let syncData = pendingSyncData;
+    pendingSyncData = null;
+    if (!syncData) {
+      try {
+        const resp = await fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-sync-messages`, {
+          method: 'POST',
+          headers: getInternalAutoHeaders(),
+          body: JSON.stringify({
+            mode: 'all',
+            offset: batchOffset,
+            limit: lim,
+            timeout: AUTO_SYNC_TIMEOUT_SEC,
+            ...pipelineBodyBase(),
+          }),
+        });
+        syncData = await resp.json();
+        if (!resp.ok) throw new Error(syncData?.error || `HTTP ${resp.status}`);
+      } catch (e) {
+        console.error('[AutoPipeline] sync error', e);
+        pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi sync — ${e.message}`, 'error');
+        ok = false;
+        break;
+      }
+    }
+
+    if (!syncData || syncData.error) {
+      console.error('[AutoPipeline] invalid sync payload', syncData);
+      pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: sync payload lỗi — ${syncData?.error || 'empty payload'}`, 'error');
+      ok = false;
+      break;
+    }
+
+    autoPipeline.totalContacts = syncData.total || autoPipeline.totalContacts;
+    autoPipeline.totalBatches = autoPipeline.totalContacts > 0 ? Math.ceil(autoPipeline.totalContacts / lim) : 0;
+    const batchMsgsSynced = syncData.totalSynced || 0;
+    const batchProcessed = syncData.processedCount || 0;
+    usersPhase += batchProcessed;
+    phaseMsgs += batchMsgsSynced;
+    pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: sync ${batchProcessed} contacts, +${batchMsgsSynced} tin`, 'ok');
+    emitAutoState();
+
+    const batchEntry = {
+      batch: autoPipeline.batchIndex,
+      cycle: autoPipeline.cycleCount,
+      ts: Date.now(),
+      contactsProcessed: batchProcessed,
+      messagesSynced: batchMsgsSynced,
+      contactPhones: 0,
+      customerPhones: 0,
+      leadPhones: 0,
+      status: 'synced',
+      mode: 'manual_batch',
+    };
+
+    autoPipeline.step = 1;
+    autoPipeline.stepLabel = `📞 Quét SĐT (lô) • Batch ${autoPipeline.batchIndex}`;
+    emitAutoState();
+
+    const nextOff = syncData.nextOffset;
+    const willPrefetch = !syncData.done && nextOff != null && autoPipeline.enabled && !autoPipeline.stopRequested;
+
+    const extractPromise = fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-extract-phones`, {
+      method: 'POST',
+      headers: getInternalAutoHeaders(),
+      body: JSON.stringify({
+        offset: batchOffset,
+        limit: lim,
+        pipeline_aligned: true,
+        ...pipelineBodyBase(),
+      }),
+    }).then(async (resp) => {
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+      return data;
+    });
+
+    const prefetchPromise = willPrefetch
+      ? fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-sync-messages`, {
+          method: 'POST',
+          headers: getInternalAutoHeaders(),
+          body: JSON.stringify({
+            mode: 'all',
+            offset: nextOff,
+            limit: lim,
+            timeout: AUTO_SYNC_TIMEOUT_SEC,
+            ...pipelineBodyBase(),
+          }),
+        }).then(async (resp) => {
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+          return data;
+        })
+      : null;
+
+    try {
+      const data = await extractPromise;
+      batchEntry.contactPhones = data.updatedContactPhone || 0;
+      batchEntry.customerPhones = data.updatedCustomerPhone || 0;
+      batchEntry.leadPhones = data.leadsUpdatedPhone || 0;
+      batchEntry.status = 'done';
+      batchEntry.scan_details = compactExtractPhoneResultsForAuto(data.results);
+      phaseExtract += batchEntry.contactPhones;
+      pushAutoLog(
+        `✅ Batch ${autoPipeline.batchIndex}: SĐT contact=${batchEntry.contactPhones}, KH=${batchEntry.customerPhones}, lead=${batchEntry.leadPhones}`,
+        'ok',
+      );
+    } catch (e) {
+      console.error('[AutoPipeline] extract error', e);
+      batchEntry.status = 'error';
+      batchEntry.error = e.message;
+      autoPipeline.kpi.errors += 1;
+      ok = false;
+      pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi quét SĐT — ${e.message}`, 'error');
+    }
+
+    if (prefetchPromise) {
+      try {
+        pendingSyncData = await prefetchPromise;
+      } catch (e) {
+        console.error('[AutoPipeline] prefetch sync error', e);
+        pushAutoLog(`❌ Prefetch sync batch sau: ${e.message}`, 'error');
+        pendingSyncData = null;
+      }
+    }
+
+    autoPipeline.batchResults = [...autoPipeline.batchResults.slice(-99), batchEntry];
+    autoPipeline.kpi.messagesSynced += batchEntry.messagesSynced;
+    autoPipeline.kpi.contactsProcessed += batchEntry.contactsProcessed;
+    autoPipeline.kpi.contactPhones += batchEntry.contactPhones;
+    autoPipeline.kpi.customerPhones += batchEntry.customerPhones;
+    autoPipeline.kpi.leadPhones += batchEntry.leadPhones;
+
+    done = syncData.done === true || syncData.nextOffset == null;
+    if (done) {
+      autoPipeline.batchOffset = 0;
+      autoPipeline.batchIndex = autoPipeline.totalBatches || autoPipeline.batchIndex;
+      pushAutoLog(`🏁 Xong pool đồng bộ/quét (${AUTO_PIPELINE_RECENT_HOURS}h, ${autoPipeline.totalContacts || 0} contacts)`, 'ok');
+    } else {
+      autoPipeline.batchOffset = nextOff;
+      pushAutoLog(`⏭️ Offset tiếp: ${autoPipeline.batchOffset}`);
+    }
+    emitAutoState();
+  }
+
+  return { ok, usersPhase, phaseMsgs, phaseExtract };
+}
+
 async function runAutoPipelineLoop() {
   if (autoPipeline.running) return;
   autoPipeline.running = true;
@@ -169,9 +477,22 @@ async function runAutoPipelineLoop() {
   autoPipeline.startedAt = new Date().toISOString();
   autoPipeline.batchResults = [];
   autoPipeline.kpi = { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 };
-  pushAutoLog(
-    `🚀 Auto pipeline: ${AUTO_PIPELINE_RECENT_HOURS}h • thứ tự mới→cũ (hoạt động mới nhất trước) • sync + extract chồng batch`,
-  );
+  await loadFbPipelineConfigFromDb();
+  const pcfgBoot = getFbPipelineConfigSync();
+  if (pcfgBoot.engine === 'full_cycle') {
+    const bootLim = Math.min(500, Math.max(50, parseInt(pcfgBoot.chain_chunk_users, 10) || AUTO_BATCH_SIZE));
+    pushAutoLog(
+      `🚀 Auto (giống nút tay): lô đồng bộ + lô quét (${bootLim}/batch, pool ${AUTO_PIPELINE_RECENT_HOURS}h) → Tạo Lead → Refresh → Xóa trùng → Sync SĐT danh bạ→Lead • nghỉ ${AUTO_LOOP_PAUSE_MS / 1000}s/vòng`,
+    );
+  } else if (pcfgBoot.engine === 'chain') {
+    pushAutoLog(
+      `🚀 Auto pipeline (chuỗi như danh bạ): ≤${pcfgBoot.chain_chunk_users} user/lần • pool ${pcfgBoot.chain_recent_hours === 0 ? 'full' : `${pcfgBoot.chain_recent_hours}h`} • sort=${pcfgBoot.chain_sort} • Graph ${pcfgBoot.chain_graph_pages} trang • nghỉ ${AUTO_LOOP_PAUSE_MS / 1000}s/chu kỳ`,
+    );
+  } else {
+    pushAutoLog(
+      `🚀 Auto pipeline (legacy): pool≤${FB_PIPELINE_POOL_LIMIT} (ưu tiên chưa lead≤${FB_PIPELINE_NEEDY_NO_LEAD_CAP}) • ${AUTO_PIPELINE_RECENT_HOURS}h • batch=${AUTO_BATCH_SIZE} • Graph ${FB_SYNC_BATCH_GRAPH_MAX_PAGES} trang/contact • nghỉ chu kỳ ${AUTO_LOOP_PAUSE_MS / 1000}s`,
+    );
+  }
 
   const pipelineBodyBase = () => ({
     recent_hours: AUTO_PIPELINE_RECENT_HOURS,
@@ -179,165 +500,238 @@ async function runAutoPipelineLoop() {
   });
 
   while (autoPipeline.enabled && !autoPipeline.stopRequested) {
+    await loadFbPipelineConfigFromDb();
+    const pcfg = getFbPipelineConfigSync();
     autoPipeline.cycleCount += 1;
     autoPipeline.batchOffset = 0;
     autoPipeline.batchIndex = 0;
     autoPipeline.totalBatches = 0;
     autoPipeline.totalContacts = 0;
     autoPipeline.phase = 'loop';
-    pushAutoLog(`🔄 Chu kỳ ${autoPipeline.cycleCount} — pool ≤${AUTO_PIPELINE_RECENT_HOURS}h, từ hoạt động mới nhất`);
+    if (pcfg.engine === 'full_cycle') {
+      pushAutoLog(`🔄 Vòng ${autoPipeline.cycleCount} — Đồng bộ+quét (lô) → Tạo Lead → Refresh → Xóa trùng → Sync SĐT danh bạ→Lead`);
+    } else if (pcfg.engine === 'chain') {
+      pushAutoLog(`🔄 Chu kỳ ${autoPipeline.cycleCount} — Sync→Quét từng user (pool ${pcfg.chain_recent_hours === 0 ? 'full' : `${pcfg.chain_recent_hours}h`})`);
+    } else {
+      pushAutoLog(`🔄 Chu kỳ ${autoPipeline.cycleCount} — pool ≤${AUTO_PIPELINE_RECENT_HOURS}h, từ hoạt động mới nhất`);
+    }
 
     let done = false;
-    /** Kết quả sync batch k+1 đã prefetch song song với extract batch k */
-    let pendingSyncData = null;
 
-    while (!done && autoPipeline.enabled && !autoPipeline.stopRequested) {
-      autoPipeline.batchIndex += 1;
-      const batchOffset = autoPipeline.batchOffset;
+    if (pcfg.engine === 'full_cycle') {
+      const phase = await runAutoLegacySyncExtractPhase(pipelineBodyBase);
+      const usersPhase = phase.usersPhase;
+      const phaseMsgs = phase.phaseMsgs;
+      const phaseExtract = phase.phaseExtract;
+      if (!phase.ok) {
+        pushAutoLog('⚠️ Đồng bộ/quét lỗi một phần — vẫn chạy các bước CRM sau.', 'error');
+      }
+      pushAutoLog(
+        `📊 Vòng ${autoPipeline.cycleCount}: đã xử lý ${usersPhase} contact, +${phaseMsgs} tin (batch-sync + batch-extract như nút tay)`,
+        'ok',
+      );
 
-      autoPipeline.step = 0;
-      autoPipeline.stepLabel = `📨 Đồng bộ • Batch ${autoPipeline.batchIndex} (offset ${batchOffset})`;
+      autoPipeline.totalSteps = 5;
+      autoPipeline.step = 1;
+      autoPipeline.stepLabel = '🆕 Tạo Lead hàng loạt';
+      emitAutoState();
+      let created = 0;
+      let createSkipped = 0;
+      try {
+        const cr = await autoPipelineInternalPostJson('/facebook/batch-create-leads', {});
+        created = cr.created || 0;
+        createSkipped = cr.skipped || 0;
+        pushAutoLog(`✅ Tạo Lead: ${created} mới (bỏ qua ${createSkipped})`, 'ok');
+      } catch (e) {
+        console.error('[AutoPipeline] batch-create-leads', e);
+        pushAutoLog(`❌ Tạo Lead: ${e.message}`, 'error');
+        autoPipeline.kpi.errors += 1;
+      }
       emitAutoState();
 
-      let syncData = pendingSyncData;
-      pendingSyncData = null;
-      if (!syncData) {
+      autoPipeline.step = 2;
+      autoPipeline.stepLabel = '🔄 Refresh tên';
+      emitAutoState();
+      let refreshUpdated = 0;
+      let refreshTotal = 0;
+      try {
+        const rn = await autoPipelineInternalPostJson('/facebook/refresh-names', {});
+        refreshUpdated = rn.updated || 0;
+        refreshTotal = rn.total || 0;
+        pushAutoLog(`✅ Refresh tên: ${refreshUpdated}/${refreshTotal}`, 'ok');
+      } catch (e) {
+        console.error('[AutoPipeline] refresh-names', e);
+        pushAutoLog(`❌ Refresh tên: ${e.message}`, 'error');
+        autoPipeline.kpi.errors += 1;
+      }
+      emitAutoState();
+
+      autoPipeline.step = 3;
+      autoPipeline.stepLabel = '🔍 Xóa Lead trùng';
+      emitAutoState();
+      let dedupMerged = 0;
+      let dedupMessage = '';
+      try {
+        const dd = await autoPipelineInternalPostJson('/facebook/dedup-leads', {});
+        dedupMerged = dd.merged || 0;
+        dedupMessage = dd.message || '';
+        pushAutoLog(`✅ Xóa lead trùng: ${dedupMerged} lead (${dedupMessage})`, 'ok');
+      } catch (e) {
+        console.error('[AutoPipeline] dedup-leads', e);
+        pushAutoLog(`❌ Xóa lead trùng: ${e.message}`, 'error');
+        autoPipeline.kpi.errors += 1;
+      }
+      emitAutoState();
+
+      autoPipeline.step = 4;
+      autoPipeline.stepLabel = '🔗 Sync SĐT danh bạ → Lead';
+      emitAutoState();
+      let syncPhonesUpdated = 0;
+      let syncPhonesTotal = 0;
+      try {
+        const sp = await autoPipelineInternalPostJson('/facebook/sync-contact-phones', {});
+        syncPhonesUpdated = sp.updated ?? 0;
+        syncPhonesTotal = sp.total ?? 0;
+        pushAutoLog(`✅ Sync SĐT danh bạ → Lead: ${syncPhonesUpdated}/${syncPhonesTotal || 0}`, 'ok');
+      } catch (e) {
+        console.error('[AutoPipeline] sync-contact-phones', e);
+        pushAutoLog(`❌ Sync SĐT danh bạ → Lead: ${e.message}`, 'error');
+        autoPipeline.kpi.errors += 1;
+      }
+      emitAutoState();
+
+      autoPipeline.batchResults = [
+        ...autoPipeline.batchResults.slice(-98),
+        {
+          batch: 'full',
+          cycle: autoPipeline.cycleCount,
+          ts: Date.now(),
+          mode: 'full_cycle_summary',
+          contactsProcessed: usersPhase,
+          messagesSynced: phaseMsgs,
+          contactPhones: phaseExtract,
+          customerPhones: 0,
+          leadPhones: created,
+          status: 'done',
+          post_steps: {
+            create_leads: { created, skipped: createSkipped },
+            refresh_names: { updated: refreshUpdated, total: refreshTotal },
+            dedup: { merged: dedupMerged, message: dedupMessage },
+            sync_phones: { updated: syncPhonesUpdated, total: syncPhonesTotal },
+          },
+        },
+      ];
+
+      pushAutoLog(`🏁 Vòng ${autoPipeline.cycleCount} xong (lô đồng bộ/quét + CRM như nút tay)`, 'ok');
+      done = true;
+      emitAutoState();
+    } else if (pcfg.engine === 'chain') {
+      let chainOff = 0;
+      let poolLen = 0;
+      const chunk = Math.min(500, Math.max(1, parseInt(pcfg.chain_chunk_users, 10) || 500));
+      const rh = Math.min(168, Math.max(0, parseInt(pcfg.chain_recent_hours, 10) || 0));
+      const skipStale = !!pcfg.chain_skip_stale;
+      const graphPages = Math.min(30, Math.max(1, parseInt(pcfg.chain_graph_pages, 10) || FB_SYNC_SINGLE_MAX_PAGES));
+      const sortOrder = pcfg.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
+      const skipFinal = !pcfg.chain_final_lead_sync;
+      const runGraph = pcfg.chain_run_graph_sync !== false;
+      const runExtract = pcfg.chain_run_extract !== false;
+
+      while (!done && autoPipeline.enabled && !autoPipeline.stopRequested) {
+        autoPipeline.batchIndex += 1;
+        autoPipeline.batchOffset = chainOff;
+        autoPipeline.step = 0;
+        autoPipeline.totalSteps = 1;
+        autoPipeline.stepLabel = `📲 Sync→Quét${!runGraph ? ' (bỏ Graph)' : ''}${!runExtract ? ' (bỏ quét)' : ''} • offset ${chainOff} (≤${chunk} user)`;
+        emitAutoState();
+
+        let summary;
         try {
-          const resp = await fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-sync-messages`, {
-            method: 'POST',
-            headers: getInternalAutoHeaders(),
-            body: JSON.stringify({
-              mode: 'all',
-              offset: batchOffset,
-              limit: AUTO_BATCH_SIZE,
-              timeout: AUTO_SYNC_TIMEOUT_SEC,
-              ...pipelineBodyBase(),
-            }),
+          summary = await runSyncThenExtractPhonesJob({
+            io: null,
+            limit: chunk,
+            offset: chainOff,
+            recentHours: rh,
+            applyStaleFilter: skipStale,
+            graphPages,
+            forceRescanPhones: false,
+            sortOrder,
+            skipFinalRound: skipFinal,
+            runGraphSync: runGraph,
+            runExtract,
+            emitBatchSocketEvents: false,
           });
-          syncData = await resp.json();
-          console.log('[AutoPipeline] sync response', { status: resp.status, batch: autoPipeline.batchIndex, total: syncData?.total, processed: syncData?.processedCount, nextOffset: syncData?.nextOffset, done: syncData?.done, error: syncData?.error });
-          if (!resp.ok) throw new Error(syncData?.error || `HTTP ${resp.status}`);
         } catch (e) {
-          console.error('[AutoPipeline] sync error', e);
-          pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi sync — ${e.message}`, 'error');
+          console.error('[AutoPipeline chain]', e);
+          pushAutoLog(`❌ Chain batch ${autoPipeline.batchIndex}: ${e.message}`, 'error');
+          autoPipeline.kpi.errors += 1;
           break;
         }
-      }
 
-      if (!syncData || syncData.error) {
-        console.error('[AutoPipeline] invalid sync payload', syncData);
-        pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: sync payload lỗi — ${syncData?.error || 'empty payload'}`, 'error');
-        break;
-      }
-
-      autoPipeline.totalContacts = syncData.total || autoPipeline.totalContacts;
-      autoPipeline.totalBatches = autoPipeline.totalContacts > 0 ? Math.ceil(autoPipeline.totalContacts / AUTO_BATCH_SIZE) : 0;
-      const batchMsgsSynced = syncData.totalSynced || 0;
-      const batchProcessed = syncData.processedCount || 0;
-      pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: sync ${batchProcessed} contacts, +${batchMsgsSynced} tin`, 'ok');
-      emitAutoState();
-
-      const batchEntry = {
-        batch: autoPipeline.batchIndex,
-        cycle: autoPipeline.cycleCount,
-        ts: Date.now(),
-        contactsProcessed: batchProcessed,
-        messagesSynced: batchMsgsSynced,
-        contactPhones: 0,
-        customerPhones: 0,
-        leadPhones: 0,
-        status: 'synced',
-      };
-
-      autoPipeline.step = 1;
-      autoPipeline.stepLabel = `📞 Quét SĐT • Batch ${autoPipeline.batchIndex} (+ sync batch kế song song)`;
-      emitAutoState();
-
-      const nextOff = syncData.nextOffset;
-      const willPrefetch = !syncData.done && nextOff != null && autoPipeline.enabled && !autoPipeline.stopRequested;
-
-      const extractPromise = fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-extract-phones`, {
-        method: 'POST',
-        headers: getInternalAutoHeaders(),
-        body: JSON.stringify({
-          offset: batchOffset,
-          limit: AUTO_BATCH_SIZE,
-          pipeline_aligned: true,
-          ...pipelineBodyBase(),
-        }),
-      }).then(async (resp) => {
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
-        return data;
-      });
-
-      const prefetchPromise = willPrefetch
-        ? fetch(`http://127.0.0.1:${config.port}/api/facebook/batch-sync-messages`, {
-            method: 'POST',
-            headers: getInternalAutoHeaders(),
-            body: JSON.stringify({
-              mode: 'all',
-              offset: nextOff,
-              limit: AUTO_BATCH_SIZE,
-              timeout: AUTO_SYNC_TIMEOUT_SEC,
-              ...pipelineBodyBase(),
-            }),
-          }).then(async (resp) => {
-            const data = await resp.json();
-            if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
-            return data;
-          })
-        : null;
-
-      try {
-        const data = await extractPromise;
-        console.log('[AutoPipeline] extract response', { status: 200, batch: autoPipeline.batchIndex, total: data?.total, updated: data?.updated, leadsUpdatedPhone: data?.leadsUpdatedPhone });
-        batchEntry.contactPhones = data.updatedContactPhone || 0;
-        batchEntry.customerPhones = data.updatedCustomerPhone || 0;
-        batchEntry.leadPhones = data.leadsUpdatedPhone || 0;
-        batchEntry.status = 'done';
-        pushAutoLog(`✅ Batch ${autoPipeline.batchIndex}: SĐT contact=${batchEntry.contactPhones}, KH=${batchEntry.customerPhones}, lead=${batchEntry.leadPhones}`, 'ok');
-      } catch (e) {
-        console.error('[AutoPipeline] extract error', e);
-        batchEntry.status = 'error';
-        batchEntry.error = e.message;
-        autoPipeline.kpi.errors += 1;
-        pushAutoLog(`❌ Batch ${autoPipeline.batchIndex}: lỗi quét SĐT — ${e.message}`, 'error');
-      }
-
-      if (prefetchPromise) {
-        try {
-          pendingSyncData = await prefetchPromise;
-          console.log('[AutoPipeline] prefetch sync ok', { nextBatch: pendingSyncData?.processedCount, done: pendingSyncData?.done });
-        } catch (e) {
-          console.error('[AutoPipeline] prefetch sync error', e);
-          pushAutoLog(`❌ Prefetch sync batch sau: ${e.message}`, 'error');
-          pendingSyncData = null;
+        if (summary.ok === false) {
+          pushAutoLog(`❌ Chain batch ${autoPipeline.batchIndex}: ${summary.error || 'Lỗi'}`, 'error');
+          autoPipeline.kpi.errors += 1;
+          break;
         }
-      }
 
-      autoPipeline.batchResults = [...autoPipeline.batchResults.slice(-99), batchEntry];
-      autoPipeline.kpi.messagesSynced += batchEntry.messagesSynced;
-      autoPipeline.kpi.contactsProcessed += batchEntry.contactsProcessed;
-      autoPipeline.kpi.contactPhones += batchEntry.contactPhones;
-      autoPipeline.kpi.customerPhones += batchEntry.customerPhones;
-      autoPipeline.kpi.leadPhones += batchEntry.leadPhones;
+        poolLen = summary.pool_total != null ? summary.pool_total : poolLen;
+        if (poolLen > 0) {
+          autoPipeline.totalContacts = poolLen;
+          autoPipeline.totalBatches = Math.ceil(poolLen / chunk) || 1;
+        }
 
-      done = syncData.done === true || syncData.nextOffset == null;
-      if (done) {
-        autoPipeline.batchOffset = 0;
-        autoPipeline.batchIndex = autoPipeline.totalBatches || autoPipeline.batchIndex;
-        pushAutoLog(`🏁 Chu kỳ ${autoPipeline.cycleCount} xong pool ${AUTO_PIPELINE_RECENT_HOURS}h (${autoPipeline.totalContacts || 0} contacts)`, 'ok');
-      } else {
-        autoPipeline.batchOffset = nextOff;
-        pushAutoLog(`⏭️ Offset tiếp: ${autoPipeline.batchOffset} (extract vừa xong, sync k+1 ${pendingSyncData ? 'đã prefetch' : '—'})`);
+        const processed = summary.processed || 0;
+        const batchEntry = {
+          batch: autoPipeline.batchIndex,
+          cycle: autoPipeline.cycleCount,
+          ts: Date.now(),
+          mode: 'chain',
+          chainOffset: chainOff,
+          contactsProcessed: processed,
+          messagesSynced: summary.total_messages_synced || 0,
+          contactPhones: summary.extract_updated || 0,
+          customerPhones: 0,
+          leadPhones: summary.leadsUpdatedPhone || 0,
+          status: summary.ok !== false ? 'done' : 'error',
+          scan_details: compactSyncExtractStepsForAuto(summary.steps),
+        };
+        if (summary.error) batchEntry.error = summary.error;
+
+        autoPipeline.batchResults = [...autoPipeline.batchResults.slice(-99), batchEntry];
+        autoPipeline.kpi.messagesSynced += batchEntry.messagesSynced;
+        autoPipeline.kpi.contactsProcessed += batchEntry.contactsProcessed;
+        autoPipeline.kpi.contactPhones += batchEntry.contactPhones;
+        autoPipeline.kpi.leadPhones += batchEntry.leadPhones;
+
+        pushAutoLog(
+          `✅ Chain #${autoPipeline.batchIndex}: ${processed} user, +${batchEntry.messagesSynced} tin, quét +${batchEntry.contactPhones}, lead mô tả +${batchEntry.leadPhones}`,
+          'ok',
+        );
+
+        chainOff = summary.next_offset != null ? summary.next_offset : chainOff + processed;
+        done = !!summary.done_pool;
+        if (summary.done_pool) {
+          pushAutoLog(`🏁 Chu kỳ ${autoPipeline.cycleCount} xong pool chain (${poolLen} contacts)`, 'ok');
+        } else {
+          pushAutoLog(`⏭️ Chain offset tiếp: ${chainOff}`);
+        }
+        emitAutoState();
       }
-      emitAutoState();
+    } else {
+      /** Legacy engine: chỉ lô đồng bộ + lô quét (cùng hàm với bước đầu full_cycle). */
+      await runAutoLegacySyncExtractPhase(pipelineBodyBase);
+      done = true;
     }
 
     if (!autoPipeline.enabled || autoPipeline.stopRequested) break;
 
-    pushAutoLog(`⏭️ Bỏ full-scan toàn DB (chỉ xử lý ${AUTO_PIPELINE_RECENT_HOURS}h trong auto pipeline)`);
+    if (pcfg.engine === 'full_cycle') {
+      pushAutoLog(`⏭️ Full cycle: nghỉ ${AUTO_LOOP_PAUSE_MS / 1000}s rồi lặp (đồng bộ/quét lô từ đầu pool)`);
+    } else if (pcfg.engine !== 'chain') {
+      pushAutoLog(`⏭️ Bỏ full-scan toàn DB (chỉ xử lý ${AUTO_PIPELINE_RECENT_HOURS}h trong auto pipeline)`);
+    } else {
+      pushAutoLog('⏭️ Chu kỳ chain: sau nghỉ sẽ lặp lại từ offset 0 trên pool mới');
+    }
 
     if (!autoPipeline.enabled || autoPipeline.stopRequested) break;
     pushAutoLog(`♻️ Nghỉ ${AUTO_LOOP_PAUSE_MS / 1000}s rồi lặp chu kỳ ${autoPipeline.cycleCount + 1}...`);
@@ -612,19 +1006,23 @@ async function fetchProfileViaConversations(pageId, psid) {
   }
 }
 
-// ── Helper: Extract phone & address từ text ──
+// ── Helper: Extract phone & address từ text (chỉ text — không OCR ảnh) ──
 function extractContactInfo(text) {
   if (!text) return { phone: null, address: null };
-  
+  const raw = String(text)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .trim();
+
   // Chỉ chấp nhận số điện thoại VN chuẩn hóa đúng 10 số.
   const phonePatterns = [
     /(?:0|\+84)(?:\d[\s.\-\/]?){9}/g,
     /(?:84)(?:\d[\s.\-\/]?){9}/g,
   ];
-  
+
   let phone = null;
   for (const pattern of phonePatterns) {
-    const matches = text.match(pattern);
+    const matches = raw.match(pattern);
     if (matches?.[0]) {
       let normalized = matches[0].replace(/[^\d+]/g, '');
       if (normalized.startsWith('+84')) normalized = '0' + normalized.slice(3);
@@ -636,42 +1034,56 @@ function extractContactInfo(text) {
       }
     }
   }
-  
+
   // Fallback: tìm đúng 9 số đầu 3-9 rồi thêm prefix 0 -> thành 10 số
   if (!phone) {
-    const bareMatch = text.match(/(?:^|[^\d])([3-9]\d{8})(?:[^\d]|$)/);
+    const bareMatch = raw.match(/(?:^|[^\d])([3-9]\d{8})(?:[^\d]|$)/);
     if (bareMatch?.[1]) {
       const normalized = '0' + bareMatch[1];
       if (/^0\d{9}$/.test(normalized)) phone = normalized;
     }
   }
-  
+
+  // Fallback 2: gom toàn bộ chữ số — xử lý “dính” số khác (lấy 0xxxxxxxxx đầu tiên hợp lệ)
+  if (!phone) {
+    let digits = raw.replace(/\D/g, '');
+    if (digits.startsWith('0084')) digits = '0' + digits.slice(4);
+    else if (digits.startsWith('84') && digits.length >= 11) digits = '0' + digits.slice(2);
+    const candidates = digits.match(/0\d{9}/g);
+    if (candidates?.length) {
+      for (const c of candidates) {
+        if (/^0[3-9]\d{8}$/.test(c)) {
+          phone = c;
+          break;
+        }
+      }
+      if (!phone && /^0\d{9}$/.test(candidates[0])) phone = candidates[0];
+    }
+  }
+
   // Address patterns (keywords)
   const addressKeywords = ['địa chỉ', 'đ/c', 'dc:', 'address:', 'ship:', 'giao:', 'giao hàng', 'nhận hàng'];
   let address = null;
-  
-  const lines = text.split('\n');
+
+  const lines = raw.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].toLowerCase();
     if (addressKeywords.some(kw => line.includes(kw))) {
-      // Lấy dòng này + dòng sau (nếu có)
       address = lines[i];
       if (lines[i + 1]) address += ' ' + lines[i + 1];
-      // Clean up keyword
-      addressKeywords.forEach(kw => {
+      addressKeywords.forEach((kw) => {
         address = address.replace(new RegExp(kw, 'gi'), '').trim();
       });
       address = address.replace(/^[:：\s]+/, '').trim();
       break;
     }
   }
-  
-  // Fallback: nếu có số nhà + đường/phường/quận
-  if (!address && /\d+.*(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)/i.test(text)) {
-    const match = text.match(/\d+[^.!?\n]{10,100}(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)[^.!?\n]{0,50}/i);
+
+  if (!address && /\d+.*(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)/i.test(raw)) {
+    const match = raw.match(/\d+[^.!?\n]{10,100}(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)[^.!?\n]{0,50}/i);
     if (match) address = match[0].trim();
   }
-  
+
   return { phone, address };
 }
 
@@ -691,6 +1103,22 @@ function extractInboundContactInfo(messages = []) {
   }
 
   return { phone, address, extraPhones };
+}
+
+function _phoneDigitsLen(s) {
+  if (s == null || s === '') return 0;
+  return String(s).replace(/\D/g, '').length;
+}
+
+/** Lead đã gắn contact và đã có SĐT lưu (KH / contact FB / dòng SĐT trong mô tả) → không quét lại tin nhắn. */
+function leadLinkedPhoneAlreadyStored(contact, lead, cust) {
+  if (!contact?.lead_id || !lead) return false;
+  if (_phoneDigitsLen(cust?.phone) >= 9) return true;
+  if (_phoneDigitsLen(contact.phone) >= 9) return true;
+  const desc = lead.description || '';
+  const m = desc.match(/SĐT:\s*(\S+)/i);
+  if (m?.[1] && _phoneDigitsLen(m[1]) >= 9) return true;
+  return false;
 }
 
 /** Ghi default_source_id lên facebook_pages để lần sau không tra lại crm_sources */
@@ -1365,7 +1793,7 @@ async function handleMessaging(pageId, event, io) {
       if (!extractedPhone && contact.lead_id && !contact.phone) {
         const { data: oldMsgs } = await supabase.from('facebook_messages')
           .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
-          .order('created_at', { ascending: false }).limit(50);
+          .order('created_at', { ascending: false }).limit(500);
         for (const m of (oldMsgs || [])) {
           if (m.content) {
             const ex = extractContactInfo(m.content);
@@ -1829,8 +2257,8 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     let extractedAddress = null;
     const { data: messages } = await supabase.from('facebook_messages')
       .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
-      .order('created_at', { ascending: false }).limit(50);
-    
+      .order('created_at', { ascending: false }).limit(500);
+
     for (const msg of (messages || [])) {
       if (msg.content) {
         const { phone, address } = extractContactInfo(msg.content);
@@ -1917,16 +2345,16 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
     const convData = await convResp.json();
     if (!convData.data?.[0]?.id) return res.json({ synced: 0, message: 'Không tìm thấy hội thoại' });
 
-    // Step 2: Get messages (limit 50)
+    // Step 2: Get messages (nhiều trang — SĐT hay nằm trong text ở tin cũ hơn 50)
     const convId = convData.data[0].id;
-    const msgResp = await fetch(`https://graph.facebook.com/v22.0/${convId}/messages?fields=message,from,created_time,attachments&limit=50`, {
-      headers: { Authorization: `Bearer ${page.access_token}` },
+    const msgList = await graphFetchConversationMessages(convId, page.access_token, {
+      maxPages: FB_SYNC_SINGLE_MAX_PAGES,
+      limitPerPage: 100,
     });
-    const msgData = await msgResp.json();
-    if (!msgData.data?.length) return res.json({ synced: 0, message: 'Không có tin nhắn' });
+    if (!msgList.length) return res.json({ synced: 0, message: 'Không có tin nhắn' });
 
     let synced = 0;
-    for (const msg of msgData.data) {
+    for (const msg of msgList) {
       // Check duplicate (memory lock + DB check)
       const fbMsgId = msg.id;
       if (!acquireMidLock(fbMsgId)) continue;
@@ -1964,7 +2392,7 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
       let extractedAddress = null;
       const { data: allMsgs } = await supabase.from('facebook_messages')
         .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
-        .order('created_at', { ascending: false }).limit(50);
+        .order('created_at', { ascending: false }).limit(500);
       
       for (const m of (allMsgs || [])) {
         if (m.content) {
@@ -1995,7 +2423,7 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
 
     res.json({
       synced,
-      total: msgData.data.length,
+      total: msgList.length,
       message: `Đã đồng bộ ${synced} tin nhắn mới` + (leadCreated ? ` + tạo Lead ${leadCreated.code}` : ''),
       lead: leadCreated ? { id: leadCreated.id, code: leadCreated.code, title: leadCreated.title } : null,
     });
@@ -2987,10 +3415,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     let updatedLeadDescription = 0;
     const results = [];
 
-    const total = contacts.length;
-
-    if (io) io.emit('batch_progress', { type: 'extract_phones', phase: 'start', total, current: 0 });
-
     // ── Fix #3: Phân trang leadIds/custIds theo batch 500 để tránh Supabase 1000-row limit ──
     const leadIds = [...new Set(contacts.map(c => c.lead_id).filter(Boolean))];
     const leadMap = {};
@@ -3000,7 +3424,10 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       (leads || []).forEach(l => { leadMap[l.id] = l; });
     }
 
-    const custIds = [...new Set(Object.values(leadMap).map(l => l.customer_id).filter(Boolean))];
+    const custIds = [...new Set([
+      ...Object.values(leadMap).map((l) => l.customer_id).filter(Boolean),
+      ...contacts.map((c) => c.customer_id).filter(Boolean),
+    ])];
     const custMap = {};
     for (let b = 0; b < custIds.length; b += 500) {
       const batch = custIds.slice(b, b + 500);
@@ -3009,8 +3436,42 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     }
     console.log(`[ExtractPhones] Loaded ${Object.keys(leadMap).length} leads, ${Object.keys(custMap).length} customers`);
 
-    for (let i = 0; i < contacts.length; i++) {
-      const contact = contacts[i];
+    const forceRescanPhones = !!req.body?.force_rescan_phones;
+    let skippedHasPhone = 0;
+    let contactsToProcess = contacts;
+    if (!forceRescanPhones) {
+      const kept = [];
+      for (const c of contacts) {
+        if (!c.lead_id) {
+          kept.push(c);
+          continue;
+        }
+        const ld = leadMap[c.lead_id];
+        const custFromLead = ld?.customer_id ? custMap[ld.customer_id] : null;
+        const custFromContact = c.customer_id ? custMap[c.customer_id] : null;
+        const custForSkip = custFromLead || custFromContact;
+        if (leadLinkedPhoneAlreadyStored(c, ld, custForSkip)) skippedHasPhone += 1;
+        else kept.push(c);
+      }
+      contactsToProcess = kept;
+      if (skippedHasPhone) console.log(`[ExtractPhones] Bỏ qua ${skippedHasPhone} contact (lead đã có SĐT), quét ${contactsToProcess.length}`);
+    }
+
+    const total = contactsToProcess.length;
+
+    if (io) {
+      io.emit('batch_progress', {
+        type: 'extract_phones',
+        phase: 'start',
+        total,
+        pool_contacts: contacts.length,
+        skipped_has_phone: skippedHasPhone,
+        current: 0,
+      });
+    }
+
+    for (let i = 0; i < contactsToProcess.length; i++) {
+      const contact = contactsToProcess[i];
       const lead = leadMap[contact.lead_id];
       let cust = lead ? custMap[lead.customer_id] : null;
 
@@ -3020,7 +3481,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         .eq('contact_id', contact.id)
         .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
-        .limit(300);
+        .limit(800);
 
       const inboundInfo = extractInboundContactInfo(messages || []);
       let extractedPhone = inboundInfo.phone;
@@ -3205,6 +3666,9 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
     const summary = {
       total,
+      pool_contacts: contacts.length,
+      skipped_has_phone: skippedHasPhone,
+      force_rescan_phones: forceRescanPhones,
       updated,
       foundPhones,
       foundAddresses,
@@ -3222,11 +3686,511 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       leadsUpdatedList: leadsUpdated.slice(0, 200), // giới hạn 200 mẫu
       results,
     };
-    console.log(`[ExtractPhones] DONE total=${total} updated=${updated} phones=${foundPhones} addresses=${foundAddresses} noInfo=${noInfo} leadsUpdatedPhone=${leadsUpdated.length}`);
+    console.log(`[ExtractPhones] DONE pool=${contacts.length} quét=${total} bỏ_qua_đã_SĐT=${skippedHasPhone} updated=${updated} phones=${foundPhones} addresses=${foundAddresses} noInfo=${noInfo} leadsUpdatedPhone=${leadsUpdated.length}`);
     if (io) io.emit('batch_done', { type: 'extract_phones', ...summary });
     res.json(summary);
   } catch (e) {
     console.error('[ExtractPhones] ERROR', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Đồng bộ tin nhắn Graph → DB cho 1 contact (dùng chung batch-sync & chuỗi sync→quét).
+ * @returns {{ synced: number, status: string, error?: string }}
+ */
+async function graphSyncMessagesForContactRow(contact, pageTokens, { maxGraphPages } = {}) {
+  const pages = maxGraphPages ?? FB_SYNC_BATCH_GRAPH_MAX_PAGES;
+  try {
+    if (!pageTokens[contact.page_id]) {
+      const page = await getPageConfig(contact.page_id);
+      pageTokens[contact.page_id] = page?.access_token || null;
+    }
+    const token = pageTokens[contact.page_id];
+    if (!token) return { synced: 0, status: 'no_token' };
+
+    const convResp = await fetch(`https://graph.facebook.com/v22.0/me/conversations?user_id=${contact.psid}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const convData = await convResp.json();
+    if (!convData.data?.[0]?.id) return { synced: 0, status: 'no_conv' };
+
+    const convId = convData.data[0].id;
+    const msgList = await graphFetchConversationMessages(convId, token, {
+      maxPages: pages,
+      limitPerPage: 100,
+    });
+    if (!msgList.length) return { synced: 0, status: 'no_msg' };
+
+    let synced = 0;
+    for (const msg of msgList) {
+      const fbMsgId = msg.id;
+      if (!acquireMidLock(fbMsgId)) continue;
+      const { data: existing } = await supabase.from('facebook_messages')
+        .select('id').eq('fb_message_id', fbMsgId).limit(1);
+      if (existing?.length) continue;
+
+      const isFromPage = msg.from?.id === contact.page_id;
+      let attachmentUrl = null;
+      let messageType = 'text';
+      if (msg.attachments?.data?.[0]) {
+        const att = msg.attachments.data[0];
+        attachmentUrl = att.image_data?.url || att.file_url || att.url || null;
+        messageType = att.mime_type?.startsWith('image') ? 'image' : att.mime_type?.startsWith('video') ? 'video' : att.mime_type?.startsWith('audio') ? 'audio' : 'file';
+      }
+
+      await supabase.from('facebook_messages').insert({
+        contact_id: contact.id,
+        lead_id: contact.lead_id,
+        fb_message_id: fbMsgId,
+        direction: isFromPage ? 'outbound' : 'inbound',
+        message_type: messageType,
+        content: msg.message || (attachmentUrl ? `[${messageType}]` : ''),
+        attachment_url: attachmentUrl,
+        created_at: msg.created_time || new Date().toISOString(),
+      });
+      synced += 1;
+    }
+
+    const upd = { last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    if (synced > 0 || !contact.last_message_at) {
+      const latestTime = msgList[0]?.created_time;
+      if (latestTime) upd.last_message_at = latestTime;
+    }
+    await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
+
+    return { synced, status: synced > 0 ? 'synced' : 'up_to_date' };
+  } catch (err) {
+    try {
+      await supabase.from('facebook_contacts').update({ last_synced_at: new Date().toISOString() }).eq('id', contact.id);
+    } catch (_) {}
+    return { synced: 0, status: 'error', error: err.message };
+  }
+}
+
+/**
+ * Quét SĐT/địa chỉ từ DB cho 1 contact (không chạy vòng cuối sync toàn lead).
+ */
+async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones = false } = {}) {
+  const { data: fresh } = await supabase.from('facebook_contacts')
+    .select('id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, last_synced_at, created_at')
+    .eq('id', contact.id)
+    .single();
+  if (!fresh) return { outcome: 'error', detail: 'no_contact' };
+
+  let lead = null;
+  let cust = null;
+  if (fresh.lead_id) {
+    const { data: ld } = await supabase.from('crm_leads')
+      .select('id, customer_id, description, install_address, title')
+      .eq('id', fresh.lead_id)
+      .single();
+    lead = ld || null;
+    if (lead?.customer_id) {
+      const { data: c } = await supabase.from('customers').select('id, phone, address').eq('id', lead.customer_id).single();
+      cust = c || null;
+    }
+  }
+  if (!cust && fresh.customer_id) {
+    const { data: c2 } = await supabase.from('customers').select('id, phone, address').eq('id', fresh.customer_id).single();
+    cust = c2 || null;
+  }
+
+  if (!forceRescanPhones && leadLinkedPhoneAlreadyStored(fresh, lead, cust)) {
+    return { outcome: 'skipped_has_phone' };
+  }
+
+  const { data: messages } = await supabase.from('facebook_messages')
+    .select('id, content, direction, created_at')
+    .eq('contact_id', fresh.id)
+    .eq('direction', 'inbound')
+    .order('created_at', { ascending: false })
+    .limit(800);
+
+  const inboundInfo = extractInboundContactInfo(messages || []);
+  let extractedPhone = inboundInfo.phone;
+  let extractedAddress = inboundInfo.address;
+  const extraPhones = inboundInfo.extraPhones;
+  const effectivePhone = extractedPhone || (fresh.phone && String(fresh.phone).trim() ? fresh.phone : null);
+
+  if (!effectivePhone && !extractedAddress && extraPhones.length === 0) {
+    return { outcome: 'no_info' };
+  }
+
+  const contactUpd = { updated_at: new Date().toISOString() };
+  if (extractedPhone && !fresh.phone) contactUpd.phone = extractedPhone;
+  if (Object.keys(contactUpd).length > 1) {
+    await supabase.from('facebook_contacts').update(contactUpd).eq('id', fresh.id);
+  }
+
+  const leadCustId = lead?.customer_id || fresh.customer_id;
+  if (leadCustId) {
+    if (!cust && leadCustId) {
+      const { data: freshCust } = await supabase.from('customers').select('id, phone, address').eq('id', leadCustId).single();
+      if (freshCust) cust = freshCust;
+    }
+    const custUpd = {};
+    if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) custUpd.phone = effectivePhone;
+    if (extractedAddress && extractedAddress !== cust?.address) custUpd.address = extractedAddress;
+    if (Object.keys(custUpd).length) {
+      await supabase.from('customers').update(custUpd).eq('id', leadCustId);
+    }
+  }
+
+  if (lead && fresh.lead_id) {
+    const leadUpd = { updated_at: new Date().toISOString() };
+    if (extractedAddress && extractedAddress !== lead.install_address) leadUpd.install_address = extractedAddress;
+    const defaultNames = ['kh facebook', 'facebook user', 'user', '[fb]'];
+    const currentTitle = (lead.title || '').toLowerCase().trim();
+    if (fresh.fb_name && defaultNames.some((d) => currentTitle.startsWith(d) || currentTitle === d)) {
+      const newTitle = fresh.fb_name;
+      if (newTitle !== lead.title) leadUpd.title = newTitle;
+    }
+    let desc = lead.description || '';
+    if (effectivePhone) {
+      if (/SĐT:/.test(desc)) {
+        const oldMatch = desc.match(/SĐT:\s*(\S*)/);
+        if (!oldMatch?.[1] || oldMatch[1] !== effectivePhone) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${effectivePhone}`);
+      } else {
+        desc = `${desc.trimEnd()}\nSĐT: ${effectivePhone}`.trim();
+      }
+    }
+    if (extractedAddress) {
+      if (/Địa chỉ:/.test(desc)) desc = desc.replace(/Địa chỉ:.*$/m, `Địa chỉ: ${extractedAddress}`);
+      else desc = `${desc.trimEnd()}\nĐịa chỉ: ${extractedAddress}`.trim();
+    }
+    if (extraPhones.length) {
+      if (/SĐT khác:/.test(desc)) desc = desc.replace(/SĐT khác:.*$/m, `SĐT khác: ${extraPhones.join(', ')}`);
+      else desc = `${desc.trimEnd()}\nSĐT khác: ${extraPhones.join(', ')}`.trim();
+    }
+    if (desc !== (lead.description || '')) leadUpd.description = desc;
+    if (Object.keys(leadUpd).length > 1) {
+      await supabase.from('crm_leads').update(leadUpd).eq('id', fresh.lead_id);
+    }
+  }
+
+  return {
+    outcome: 'updated',
+    phone: effectivePhone || cust?.phone || null,
+    address: extractedAddress || cust?.address || lead?.install_address || null,
+    extractedPhone: !!extractedPhone,
+  };
+}
+
+/** Vòng cuối: customer.phone → mô tả lead (giống batch-extract-phones). */
+async function runExtractPhonesFinalLeadDescriptionSync() {
+  let allLeads = [];
+  let lp = 0;
+  while (true) {
+    const { data: lpage } = await supabase.from('crm_leads')
+      .select('id, code, title, customer_id, description')
+      .eq('type', 'lead')
+      .not('customer_id', 'is', null)
+      .range(lp, lp + 999);
+    if (!lpage?.length) break;
+    allLeads = allLeads.concat(lpage);
+    if (lpage.length < 1000) break;
+    lp += 1000;
+  }
+  const allCustIds = [...new Set(allLeads.map((l) => l.customer_id))];
+  const fullCustMap = {};
+  for (let b = 0; b < allCustIds.length; b += 500) {
+    const batch = allCustIds.slice(b, b + 500);
+    const { data: custs } = await supabase.from('customers').select('id, phone').in('id', batch);
+    (custs || []).forEach((c) => { fullCustMap[c.id] = c; });
+  }
+  const leadsUpdated = [];
+  let leadsStillMissing = 0;
+  for (const lead of allLeads) {
+    const cPhone = fullCustMap[lead.customer_id]?.phone;
+    const leadUpd = {};
+    if (cPhone && String(cPhone).trim()) {
+      let desc = lead.description || '';
+      const hasPhoneInDesc = /SĐT:\s*\S/.test(desc);
+      if (hasPhoneInDesc) {
+        const match = desc.match(/SĐT:\s*(\S+)/);
+        if (!match || match[1] !== cPhone) {
+          desc = desc.replace(/SĐT:.*$/m, `SĐT: ${cPhone}`);
+          leadUpd.description = desc;
+        }
+      } else {
+        desc = `${desc.trimEnd()}\nSĐT: ${cPhone}`.trim();
+        leadUpd.description = desc;
+      }
+    } else {
+      leadsStillMissing += 1;
+    }
+    if (Object.keys(leadUpd).length) {
+      leadUpd.updated_at = new Date().toISOString();
+      await supabase.from('crm_leads').update(leadUpd).eq('id', lead.id);
+      leadsUpdated.push({ id: lead.id, code: lead.code, title: lead.title, phone: cPhone });
+    }
+  }
+  const totalLeads = allLeads.length;
+  return {
+    leadsUpdatedPhone: leadsUpdated.length,
+    leadsWithPhone: totalLeads - leadsStillMissing,
+    leadsStillMissingPhone: leadsStillMissing,
+    totalLeads,
+    leadsUpdatedList: leadsUpdated.slice(0, 200),
+  };
+}
+
+/**
+ * Một job: đồng bộ Graph (tùy chọn) → quét DB (tùy chọn) → vòng lead mô tả (tùy chọn).
+ * Dùng cho API danh bạ và auto pipeline (chain).
+ */
+async function runSyncThenExtractPhonesJob({
+  io = null,
+  limit = 50,
+  offset = 0,
+  recentHours = 0,
+  applyStaleFilter = false,
+  graphPages = FB_SYNC_SINGLE_MAX_PAGES,
+  forceRescanPhones = false,
+  sortOrder = 'newest_first',
+  skipFinalRound = false,
+  runGraphSync = true,
+  runExtract = true,
+  emitBatchSocketEvents = true,
+} = {}) {
+  if (!runGraphSync && !runExtract) {
+    return {
+      ok: false,
+      error: 'Cần bật ít nhất một trong: đồng bộ Graph hoặc quét SĐT (DB)',
+      processed: 0,
+      pool_total: 0,
+      done_pool: true,
+    };
+  }
+  const lim = Math.min(500, Math.max(1, parseInt(limit, 10) || 50));
+  const off = Math.max(0, parseInt(offset, 10) || 0);
+  const rh = Math.min(168, Math.max(0, parseInt(recentHours, 10) || 0));
+  const gp = Math.min(30, Math.max(1, parseInt(graphPages, 10) || FB_SYNC_SINGLE_MAX_PAGES));
+  const sock = emitBatchSocketEvents ? io : null;
+
+  const { contacts: pool, excludedStaleNoContact, rawFetched } = await loadFacebookContactsForBatchPipeline({
+    recentHours: rh,
+    applyStaleFilter: applyStaleFilter,
+  });
+  let sorted = sortFacebookContactsNewestFirst(pool || []);
+  if (sortOrder === 'oldest_first') sorted = [...sorted].reverse();
+  const poolLen = sorted.length;
+  const targets = sorted.slice(off, off + lim);
+  const nextOffset = off + targets.length;
+  const donePool = targets.length === 0 || nextOffset >= poolLen;
+
+  if (!targets.length) {
+    return {
+      ok: true,
+      message: rh ? `Không có contact trong pool (offset ${off}, ${rh}h)` : `Không có contact (offset ${off})`,
+      mode: 'sync_then_extract_per_contact',
+      order: sortOrder === 'oldest_first' ? 'oldest_first' : 'newest_first',
+      limit: lim,
+      offset_start: off,
+      next_offset: poolLen > 0 ? Math.min(off, poolLen) : 0,
+      pool_total: poolLen,
+      done_pool: true,
+      processed: 0,
+      pool_fetched: rawFetched,
+      excluded_stale_no_contact: excludedStaleNoContact,
+      total_messages_synced: 0,
+      extract_updated: 0,
+      extract_no_info: 0,
+      extract_skipped_has_phone: 0,
+      sync_errors: 0,
+      steps: [],
+      leadsUpdatedPhone: 0,
+      leadsWithPhone: 0,
+      leadsStillMissingPhone: 0,
+      totalLeads: 0,
+      leadsUpdatedList: [],
+      graph_pages_per_user: gp,
+      recent_hours: rh || null,
+    };
+  }
+
+  const pageTokens = {};
+  let totalMsgsSynced = 0;
+  let extractUpdated = 0;
+  let extractNoInfo = 0;
+  let extractSkipped = 0;
+  let syncErrors = 0;
+  const steps = [];
+  const total = targets.length;
+
+  if (sock) {
+    sock.emit('batch_progress', {
+      type: 'sync_then_extract_phones',
+      phase: 'start',
+      total,
+      current: 0,
+      name: '',
+      offset: off,
+      pool_total: poolLen,
+    });
+  }
+
+  for (let i = 0; i < targets.length; i++) {
+    const c = targets[i];
+    if (sock) {
+      sock.emit('batch_progress', {
+        type: 'sync_then_extract_phones',
+        phase: 'sync',
+        total,
+        current: i + 1,
+        name: c.fb_name || c.id,
+        contact_id: c.id,
+        offset: off,
+        pool_total: poolLen,
+      });
+    }
+    let syncRes = { synced: 0, status: 'skipped' };
+    if (runGraphSync) {
+      syncRes = await graphSyncMessagesForContactRow(c, pageTokens, { maxGraphPages: gp });
+      totalMsgsSynced += syncRes.synced || 0;
+      if (syncRes.status === 'error') syncErrors += 1;
+    }
+
+    if (sock) {
+      sock.emit('batch_progress', {
+        type: 'sync_then_extract_phones',
+        phase: 'extract',
+        total,
+        current: i + 1,
+        name: c.fb_name || c.id,
+        contact_id: c.id,
+        synced: syncRes.synced,
+        sync_status: syncRes.status,
+      });
+    }
+    let ex = { outcome: runExtract ? 'no_info' : 'skipped_no_extract', phone: null };
+    if (runExtract) {
+      ex = await applyExtractFromDbMessagesForContact(c, { forceRescanPhones });
+      if (ex.outcome === 'skipped_has_phone') extractSkipped += 1;
+      else if (ex.outcome === 'no_info') extractNoInfo += 1;
+      else if (ex.outcome === 'updated') extractUpdated += 1;
+    }
+    steps.push({
+      contact_id: c.id,
+      name: c.fb_name,
+      synced: syncRes.synced,
+      sync_status: syncRes.status,
+      extract: ex.outcome,
+      phone: ex.phone,
+    });
+    if (i < targets.length - 1) await new Promise((r2) => setTimeout(r2, 40));
+  }
+
+  let finalRound = {
+    leadsUpdatedPhone: 0,
+    leadsWithPhone: 0,
+    leadsStillMissingPhone: 0,
+    totalLeads: 0,
+    leadsUpdatedList: [],
+  };
+  if (!skipFinalRound && runExtract) {
+    if (sock) {
+      sock.emit('batch_progress', {
+        type: 'sync_then_extract_phones',
+        phase: 'lead_sync',
+        total,
+        current: total,
+        name: 'Đồng bộ mô tả lead...',
+      });
+    }
+    finalRound = await runExtractPhonesFinalLeadDescriptionSync();
+  }
+
+  const summary = {
+    ok: true,
+    mode: 'sync_then_extract_per_contact',
+    order: sortOrder === 'oldest_first' ? 'oldest_first' : 'newest_first',
+    limit: lim,
+    offset_start: off,
+    next_offset: nextOffset,
+    pool_total: poolLen,
+    done_pool: donePool,
+    graph_pages_per_user: gp,
+    recent_hours: rh || null,
+    pool_fetched: rawFetched,
+    excluded_stale_no_contact: excludedStaleNoContact,
+    processed: total,
+    total_messages_synced: totalMsgsSynced,
+    extract_updated: extractUpdated,
+    extract_no_info: extractNoInfo,
+    extract_skipped_has_phone: extractSkipped,
+    sync_errors: syncErrors,
+    steps: steps.slice(0, 300),
+    ...finalRound,
+  };
+  console.log(`[FB sync→extract] off=${off} users=${total} pool=${poolLen} msgs=${totalMsgsSynced} extractUpd=${extractUpdated} skip=${extractSkipped} donePool=${donePool}`);
+  if (sock) sock.emit('batch_done', { type: 'sync_then_extract_phones', ...summary });
+  return summary;
+}
+
+async function saveFbPipelineConfig(partial) {
+  const merged = {
+    ...DEFAULT_FB_PIPELINE_CONFIG,
+    ...fbPipelineConfigCache,
+    ...(partial && typeof partial === 'object' ? partial : {}),
+  };
+  if (!['chain', 'legacy', 'full_cycle'].includes(merged.engine)) merged.engine = 'full_cycle';
+  merged.full_cycle_max_users_per_round = Math.min(500_000, Math.max(0, parseInt(merged.full_cycle_max_users_per_round, 10) || 0));
+  merged.chain_chunk_users = Math.min(500, Math.max(1, parseInt(merged.chain_chunk_users, 10) || 500));
+  merged.chain_sort = merged.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
+  merged.chain_recent_hours = Math.min(168, Math.max(0, parseInt(merged.chain_recent_hours, 10) || 0));
+  merged.chain_graph_pages = Math.min(30, Math.max(1, parseInt(merged.chain_graph_pages, 10) || FB_SYNC_SINGLE_MAX_PAGES));
+  merged.chain_skip_stale = !!merged.chain_skip_stale;
+  merged.chain_final_lead_sync = merged.chain_final_lead_sync !== false;
+  merged.chain_run_graph_sync = merged.chain_run_graph_sync !== false;
+  merged.chain_run_extract = merged.chain_run_extract !== false;
+  await supabase.from('app_settings').upsert({
+    key: 'fb_auto_pipeline_config',
+    value: merged,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'key' });
+  fbPipelineConfigCache = merged;
+  return merged;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BATCH: đồng bộ tin nhắn từng contact → quét SĐT ngay (mới → cũ, giới hạn N user)
+// POST /facebook/batch-sync-then-extract-phones
+// Body: { limit, offset?, recent_hours?, skip_stale_customer_reply?, graph_pages_per_user?, force_rescan_phones?,
+//         sort?, skip_final_lead_sync?, run_graph_sync?, run_extract? }
+// ═══════════════════════════════════════════════════════════════
+r.post('/batch-sync-then-extract-phones', authMiddleware, async (req, res) => {
+  const io = r._ioRef;
+  try {
+    const limit = Math.min(500, Math.max(1, parseInt(req.body?.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
+    const recentHours = Math.min(168, Math.max(0, parseInt(req.body?.recent_hours, 10) || 0));
+    const applyStale = !!req.body?.skip_stale_customer_reply;
+    const graphPages = Math.min(30, Math.max(1, parseInt(req.body?.graph_pages_per_user, 10) || FB_SYNC_SINGLE_MAX_PAGES));
+    const forceRescanPhones = !!req.body?.force_rescan_phones;
+    const sortOrder = req.body?.sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
+    const skipFinalRound = !!req.body?.skip_final_lead_sync;
+    const runGraphSync = req.body?.run_graph_sync !== false;
+    const runExtract = req.body?.run_extract !== false;
+
+    const summary = await runSyncThenExtractPhonesJob({
+      io,
+      limit,
+      offset,
+      recentHours,
+      applyStaleFilter: applyStale,
+      graphPages,
+      forceRescanPhones,
+      sortOrder,
+      skipFinalRound,
+      runGraphSync,
+      runExtract,
+      emitBatchSocketEvents: true,
+    });
+    res.json(summary);
+  } catch (e) {
+    console.error('[FB sync→extract]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -3378,19 +4342,19 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
           continue;
         }
 
-        // Get messages (limit 100)
+        // Get messages (nhiều trang — đồng bộ đủ text cũ có SĐT)
         const convId = convData.data[0].id;
-        const msgResp = await fetch(`https://graph.facebook.com/v22.0/${convId}/messages?fields=message,from,created_time,attachments&limit=100`, {
-          headers: { Authorization: `Bearer ${token}` },
+        const msgList = await graphFetchConversationMessages(convId, token, {
+          maxPages: FB_SYNC_BATCH_GRAPH_MAX_PAGES,
+          limitPerPage: 100,
         });
-        const msgData = await msgResp.json();
-        if (!msgData.data?.length) {
+        if (!msgList.length) {
           if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: 'no_msg' });
           continue;
         }
 
         let synced = 0;
-        for (const msg of msgData.data) {
+        for (const msg of msgList) {
           const fbMsgId = msg.id;
           if (!acquireMidLock(fbMsgId)) continue;
           const { data: existing } = await supabase.from('facebook_messages')
@@ -3422,7 +4386,7 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         // Update last_message_at + last_synced_at
         const upd = { last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() };
         if (synced > 0 || !contact.last_message_at) {
-          const latestTime = msgData.data[0]?.created_time;
+          const latestTime = msgList[0]?.created_time;
           if (latestTime) upd.last_message_at = latestTime;
         }
         await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
@@ -3523,6 +4487,7 @@ async function saveScanConfig(cfg) {
 
 // Preload
 loadScanConfig().then(() => console.log('[LeadScan] ✅ Config loaded'));
+loadFbPipelineConfigFromDb().then(() => console.log('[FB] ✅ Auto pipeline config loaded'));
 
 /**
  * scanAndCreateLeads — Quét facebook_contacts có SĐT nhưng chưa có lead → tạo lead
@@ -3826,7 +4791,23 @@ r.get('/auto-pipeline/status', authMiddleware, async (_req, res) => {
   res.json(getAutoState());
 });
 
+r.get('/auto-pipeline/config', authMiddleware, async (_req, res) => {
+  await loadFbPipelineConfigFromDb();
+  res.json({ config: getFbPipelineConfigSync(), defaults: DEFAULT_FB_PIPELINE_CONFIG });
+});
+
+r.put('/auto-pipeline/config', authMiddleware, async (req, res) => {
+  try {
+    const saved = await saveFbPipelineConfig(req.body || {});
+    emitAutoState();
+    res.json({ ok: true, config: saved });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/auto-pipeline/start', authMiddleware, async (_req, res) => {
+  await loadFbPipelineConfigFromDb();
   if (!autoPipeline.running) {
     autoPipeline.enabled = true;
     runAutoPipelineLoop().catch(err => {

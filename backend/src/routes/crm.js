@@ -159,10 +159,20 @@ const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuo
 const r = Router();
 r.use(auth);
 
-/** CRM Deal: admin/manager/director xem mọi deal; các role khác chỉ deal mình phụ trách (assigned_to). */
-const CRM_DEAL_VIEW_ALL_ROLES = ['admin', 'manager', 'director'];
+/** CRM Deal: admin / lãnh đạo xem mọi deal; role khác chỉ deal mình phụ trách (assigned_to). So khớp không phân biệt hoa thường. */
+const CRM_DEAL_VIEW_ALL_ROLES = new Set([
+  'admin',
+  'manager',
+  'director',
+  'superadmin',
+  'super_admin',
+  'administrator',
+]);
+function normalizeCrmUserRole(role) {
+  return String(role ?? '').trim().toLowerCase();
+}
 function userSeesAllCrmDeals(role) {
-  return CRM_DEAL_VIEW_ALL_ROLES.includes(role);
+  return CRM_DEAL_VIEW_ALL_ROLES.has(normalizeCrmUserRole(role));
 }
 
 const CRM_LEAD_ID_IN_PATH = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1372,6 +1382,59 @@ r.get('/leads-by-fb-page', async (req, res) => {
 const CRM_LEAD_LIST_SELECT =
   '*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies(id, name, short_name), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)';
 
+/** Lead/deal tạo trong N ngày và user chưa mở chi tiết → badge "Mới" */
+const CRM_NEW_LEAD_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** JSONB đôi khi trả về object hoặc chuỗi JSON — chuẩn hóa thành object phẳng. */
+function parseLeadSeenByRaw(raw) {
+  if (raw == null || raw === '') return {};
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw);
+      return p && typeof p === 'object' && !Array.isArray(p) ? p : {};
+    } catch {
+      return {};
+    }
+  }
+  if (typeof raw === 'object' && !Array.isArray(raw)) return { ...raw };
+  return {};
+}
+
+/** Khóa user_id trong JSONB luôn lowercase để tránh lệch UUID (JWT vs DB). */
+function normalizeLeadSeenByKeys(raw) {
+  const src = parseLeadSeenByRaw(raw);
+  const out = {};
+  for (const [k, v] of Object.entries(src)) {
+    const kk = String(k).trim().toLowerCase();
+    if (kk) out[kk] = v;
+  }
+  return out;
+}
+
+function userHasSeenLeadInSeenBy(rawSeen, userId) {
+  const uid = String(userId || '').trim().toLowerCase();
+  if (!uid) return false;
+  const norm = normalizeLeadSeenByKeys(rawSeen);
+  return !!norm[uid];
+}
+
+function computeIsNewLeadForUser(lead, userId) {
+  if (!userId || !lead?.created_at) return false;
+  if (userHasSeenLeadInSeenBy(lead.lead_seen_by, userId)) return false;
+  const age = Date.now() - new Date(lead.created_at).getTime();
+  if (age < 0 || age > CRM_NEW_LEAD_MAX_AGE_MS) return false;
+  return true;
+}
+
+/** Trả về object list: bỏ lead_seen_by khỏi JSON, thêm is_new_for_current_user */
+function attachLeadNewFlagForList(rows, userId) {
+  return mapLeadDisplayPhone(rows).map((l) => {
+    const is_new_for_current_user = computeIsNewLeadForUser(l, userId);
+    const { lead_seen_by, ...rest } = l;
+    return { ...rest, is_new_for_current_user };
+  });
+}
+
 function mapLeadDisplayPhone(rows) {
   return (rows || []).map((l) => ({
     ...l,
@@ -1444,7 +1507,7 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
 
 /** Fallback: tối đa 5000 bản ghi từ DB rồi lọc/sort trong RAM (trước khi có RPC) */
 async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
-  const { dealAssigneeStrict = false } = opts;
+  const { dealAssigneeStrict = false, viewerUserId = null } = opts;
   const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, type = 'lead', company_id, date_from, date_to, phone_filter } = reqQuery;
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 5000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
@@ -1489,7 +1552,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const total = result.length;
   const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
   return {
-    data: page,
+    data: attachLeadNewFlagForList(page, viewerUserId),
     total,
     offset: parsedOffset,
     limit: parsedLimit,
@@ -1532,7 +1595,7 @@ r.get('/leads', async (req, res) => {
     if (rpcOk) {
       const { total, ids } = parsedRpc;
       const rows = await fetchCrmLeadsByIdsOrdered(ids);
-      const page = mapLeadDisplayPhone(rows);
+      const page = attachLeadNewFlagForList(rows, req.user?.userId);
       // Phân trang theo cửa sổ RPC (ids), không theo page.length — nếu hydrate thiếu dòng,
       // dùng page.length sẽ lệch nextOffset và vòng "Tải tất cả" dừng sớm / bỏ sót.
       const windowLen = Array.isArray(ids) ? ids.length : page.length;
@@ -1549,7 +1612,7 @@ r.get('/leads', async (req, res) => {
     if (rpcError) {
       console.warn('[crm/leads] crm_leads_page_ids RPC unavailable, using legacy (max 5000 rows):', rpcError.message);
     }
-    const legacy = await getCrmLeadsListLegacy(mergedQuery, { dealAssigneeStrict });
+    const legacy = await getCrmLeadsListLegacy(mergedQuery, { dealAssigneeStrict, viewerUserId: req.user?.userId });
     return res.json(legacy);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1695,6 +1758,18 @@ r.get('/leads/:id/detail', async (req, res) => {
       .eq('id', req.params.id)
       .single();
     if (error) throw error;
+    const uid = req.user?.userId;
+    if (uid) {
+      const key = String(uid).trim().toLowerCase();
+      const curNorm = normalizeLeadSeenByKeys(data.lead_seen_by);
+      if (!curNorm[key]) {
+        const next = { ...curNorm, [key]: new Date().toISOString() };
+        const { error: uerr } = await supabase.from('crm_leads').update({ lead_seen_by: next }).eq('id', req.params.id);
+        if (uerr) console.warn('[crm/leads/:id/detail] lead_seen_by update:', uerr.message);
+        if (!uerr) data.lead_seen_by = next;
+      }
+    }
+    delete data.lead_seen_by;
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1712,6 +1787,7 @@ r.put('/leads/:id', async (req, res) => {
     }
     const safeBody = { ...req.body };
     delete safeBody.sx_pipeline_stage_id;
+    delete safeBody.lead_seen_by;
     const { data, error } = await supabase.from('crm_leads')
       .update({ ...safeBody, updated_at: new Date().toISOString() })
       .eq('id', id)

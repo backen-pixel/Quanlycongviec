@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { markCrmPipelineCardFocus } from '../lib/crmPipelineStorage';
+import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser } from '../lib/crmPipelineStorage';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { useAuth } from '../lib/auth';
 import api from '../lib/api';
@@ -28,7 +28,7 @@ const ACTIVITY_TYPES = [
 
 export default function LeadDetail() {
   const { id } = useParams();
-  const { socket } = useAuth();
+  const { socket, user } = useAuth();
   const navigate = useNavigate();
   const [lead, setLead] = useState(null);
   const [customer, setCustomer] = useState(null);
@@ -116,6 +116,8 @@ export default function LeadDetail() {
       setStagesDeal(stagesDealRes.data || []);
       setFlows(flowsRes || []);
       setAllUsers(usersRes || []);
+
+      notifyCrmLeadSeenByCurrentUser(id, user?.id || user?.userId);
 
       // Deal thắng + chưa có project → tự động tạo dự án ngầm
       if (leadRes?.type === 'deal' && !leadRes?.project_id) {

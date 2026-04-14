@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Activity, MessageCircle, Phone, Users, Building2, AlertTriangle, Clock, ChevronDown, ChevronUp, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { useState, Fragment } from 'react';
+import { Activity, MessageCircle, Phone, Users, AlertTriangle, Clock, ChevronDown, ChevronUp, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════
 // AUTO PIPELINE MONITOR — Realtime KPI + Per-batch Results
@@ -21,6 +21,104 @@ function StatusIcon({ status }) {
   if (status === 'error') return <XCircle size={13} className="text-red-500 shrink-0" />;
   if (status === 'synced') return <Loader2 size={13} className="text-blue-500 animate-spin shrink-0" />;
   return <Loader2 size={13} className="text-gray-400 animate-spin shrink-0" />;
+}
+
+function isSyncStyleScanDetail(row) {
+  return row && typeof row === 'object' && ('sync_status' in row || 'synced' in row);
+}
+
+function BatchScanDetails({ batch }) {
+  const rows = batch.scan_details;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const syncCols = isSyncStyleScanDetail(rows[0]);
+
+  return (
+    <details className="group text-[11px]">
+      <summary className="cursor-pointer select-none text-violet-700 font-medium hover:text-violet-900 list-none flex items-center gap-1 [&::-webkit-details-marker]:hidden">
+        <ChevronDown size={12} className="shrink-0 transition group-open:rotate-180" />
+        Chi tiết quét ({rows.length} contact)
+      </summary>
+      <div className="mt-1.5 max-h-52 overflow-auto rounded border border-gray-200 bg-white shadow-sm">
+        <table className="w-full text-[10px]">
+          <thead className="bg-gray-100 sticky top-0 text-gray-600">
+            <tr>
+              <th className="text-left px-2 py-1 font-semibold">Tên / ID</th>
+              {syncCols ? (
+                <>
+                  <th className="text-right px-2 py-1 font-semibold">+Tin</th>
+                  <th className="text-left px-2 py-1 font-semibold">Sync</th>
+                </>
+              ) : null}
+              <th className="text-left px-2 py-1 font-semibold">Quét</th>
+              <th className="text-left px-2 py-1 font-semibold">SĐT</th>
+              {!syncCols ? <th className="text-left px-2 py-1 font-semibold">Địa chỉ</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, j) => (
+              <tr key={j} className="border-t border-gray-100 odd:bg-white even:bg-gray-50/80">
+                <td className="px-2 py-1 text-gray-800 max-w-[140px] truncate" title={r.name || r.contact_id}>
+                  {r.name || '—'}
+                  {r.contact_id ? <span className="text-gray-400 font-mono ml-0.5">#{String(r.contact_id).slice(0, 8)}</span> : null}
+                </td>
+                {syncCols ? (
+                  <>
+                    <td className="px-2 py-1 text-right font-mono text-blue-700">{r.synced ?? '—'}</td>
+                    <td className="px-2 py-1 font-mono text-gray-600">{r.sync_status ?? '—'}</td>
+                  </>
+                ) : null}
+                <td className="px-2 py-1 font-mono text-gray-700">
+                  {r.extract ?? r.status ?? '—'}
+                  {r.extraPhones?.length ? (
+                    <span className="text-gray-500 block truncate max-w-[200px]" title={r.extraPhones.join(', ')}>
+                      +{r.extraPhones.length} SĐT phụ
+                    </span>
+                  ) : null}
+                </td>
+                <td className="px-2 py-1 font-mono text-green-800">{r.phone || '—'}</td>
+                {!syncCols ? (
+                  <td className="px-2 py-1 text-gray-600 max-w-[100px] truncate" title={r.address}>{r.address || '—'}</td>
+                ) : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
+function FullCyclePostSteps({ post }) {
+  if (!post || typeof post !== 'object') return null;
+  return (
+    <div className="mt-2 text-[10px] text-gray-700 space-y-1 border-t border-gray-200 pt-2">
+      <div className="font-semibold text-sky-800">Sau đồng bộ + quét lô (mỗi vòng)</div>
+      {post.create_leads && (
+        <div>
+          Tạo lead: <span className="font-mono text-green-700">{post.create_leads.created ?? 0}</span> mới, bỏ qua{' '}
+          <span className="font-mono">{post.create_leads.skipped ?? 0}</span>
+        </div>
+      )}
+      {post.refresh_names && (
+        <div>
+          Refresh tên: <span className="font-mono">{post.refresh_names.updated ?? 0}</span> /{' '}
+          <span className="font-mono">{post.refresh_names.total ?? 0}</span>
+        </div>
+      )}
+      {post.dedup && (
+        <div>
+          Xóa lead trùng: <span className="font-mono text-amber-800">{post.dedup.merged ?? 0}</span> lead
+          {post.dedup.message ? <span className="text-gray-500 ml-1">({post.dedup.message})</span> : null}
+        </div>
+      )}
+      {post.sync_phones && (
+        <div>
+          Sync SĐT danh bạ → Lead: <span className="font-mono text-sky-800">{post.sync_phones.updated ?? 0}</span> /{' '}
+          <span className="font-mono">{post.sync_phones.total ?? 0}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function AutoPipelineMonitor({ auto }) {
@@ -113,31 +211,64 @@ export default function AutoPipelineMonitor({ auto }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {[...batchResults].reverse().map((b, i) => (
-                      <tr key={i} className={`border-t border-gray-100 ${b.status === 'error' ? 'bg-red-50' : i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} hover:bg-blue-50/50 transition`}>
-                        <td className="px-3 py-2 font-mono font-medium text-gray-700">
-                          {b.batch === 'full' ? (
-                            <span className="text-amber-600">Full scan</span>
-                          ) : (
-                            <span>#{b.batch}</span>
-                          )}
-                          <span className="text-gray-400 ml-1 text-[10px]">CK{b.cycle}</span>
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-teal-700">{b.contactsProcessed || 0}</td>
-                        <td className="px-3 py-2 text-right font-mono text-blue-700">+{b.messagesSynced || 0}</td>
-                        <td className="px-3 py-2 text-right font-mono">{b.contactPhones > 0 ? <span className="text-green-600 font-semibold">+{b.contactPhones}</span> : <span className="text-gray-300">0</span>}</td>
-                        <td className="px-3 py-2 text-right font-mono">{b.customerPhones > 0 ? <span className="text-green-600 font-semibold">+{b.customerPhones}</span> : <span className="text-gray-300">0</span>}</td>
-                        <td className="px-3 py-2 text-right font-mono">{b.leadPhones > 0 ? <span className="text-green-700 font-bold">+{b.leadPhones}</span> : <span className="text-gray-300">0</span>}</td>
-                        <td className="px-3 py-2 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <StatusIcon status={b.status} />
-                            {b.status === 'error' && (
-                              <span className="text-red-500 text-[10px] truncate max-w-[80px]" title={b.error}>{b.error}</span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {[...batchResults].reverse().map((b, i) => {
+                      const hasDetails = Array.isArray(b.scan_details) && b.scan_details.length > 0;
+                      const hasPost = b.post_steps && typeof b.post_steps === 'object';
+                      const showExpand = hasDetails || hasPost;
+                      return (
+                        <Fragment key={`${b.ts}-${b.batch}-${b.mode || 'legacy'}-${i}`}>
+                          <tr className={`border-t border-gray-100 ${b.status === 'error' ? 'bg-red-50' : i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} hover:bg-blue-50/50 transition`}>
+                            <td className="px-3 py-2 font-mono font-medium text-gray-700">
+                              {b.mode === 'full_cycle_summary' ? (
+                                <span className="text-sky-700 font-medium">Tổng vòng</span>
+                              ) : b.batch === 'full' ? (
+                                <span className="text-amber-600">Full scan</span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1">
+                                  #{b.batch}
+                                  {b.mode === 'chain' && (
+                                    <span className="text-[9px] font-normal px-1 py-0 rounded bg-violet-100 text-violet-700">chain</span>
+                                  )}
+                                  {(b.mode === 'full_cycle_sync' || b.mode === 'manual_batch') && (
+                                    <span className="text-[9px] font-normal px-1 py-0 rounded bg-emerald-100 text-emerald-800">
+                                      {b.mode === 'manual_batch' ? 'lô' : 'sync'}
+                                    </span>
+                                  )}
+                                  {b.mode === 'full_cycle_summary' && (
+                                    <span className="text-[9px] font-normal px-1 py-0 rounded bg-sky-100 text-sky-800">full</span>
+                                  )}
+                                </span>
+                              )}
+                              <span className="text-gray-400 ml-1 text-[10px]">CK{b.cycle}</span>
+                              {showExpand ? (
+                                <span className="block text-[9px] font-normal text-violet-600 mt-0.5">Mở rộng bên dưới</span>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-teal-700">{b.contactsProcessed || 0}</td>
+                            <td className="px-3 py-2 text-right font-mono text-blue-700">+{b.messagesSynced || 0}</td>
+                            <td className="px-3 py-2 text-right font-mono">{b.contactPhones > 0 ? <span className="text-green-600 font-semibold">+{b.contactPhones}</span> : <span className="text-gray-300">0</span>}</td>
+                            <td className="px-3 py-2 text-right font-mono">{b.customerPhones > 0 ? <span className="text-green-600 font-semibold">+{b.customerPhones}</span> : <span className="text-gray-300">0</span>}</td>
+                            <td className="px-3 py-2 text-right font-mono">{b.leadPhones > 0 ? <span className="text-green-700 font-bold">+{b.leadPhones}</span> : <span className="text-gray-300">0</span>}</td>
+                            <td className="px-3 py-2 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <StatusIcon status={b.status} />
+                                {b.status === 'error' && (
+                                  <span className="text-red-500 text-[10px] truncate max-w-[80px]" title={b.error}>{b.error}</span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                          {showExpand ? (
+                            <tr className={`${b.status === 'error' ? 'bg-red-50/80' : 'bg-slate-50/90'} border-t border-gray-100`}>
+                              <td colSpan={7} className="px-3 py-2 align-top">
+                                <BatchScanDetails batch={b} />
+                                <FullCyclePostSteps post={b.post_steps} />
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                   {/* Footer: totals */}
                   <tfoot className="bg-gray-100 border-t-2 border-gray-300 sticky bottom-0">
