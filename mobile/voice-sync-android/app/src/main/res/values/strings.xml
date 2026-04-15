@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TuBep Voice Sync</string>
+    <string name="perm_title">Quyền ghi âm &amp; cuộc gọi</string>
+    <string name="perm_message">Ứng dụng cần:\n• Micro — ghi thử hoặc ghi khi có cuộc gọi (nền).\n• Trạng thái điện thoại — biết khi nào đang gọi.\n• Nhật ký cuộc gọi — gắn số &amp; hướng gọi khi upload (cùng API với web).\n• Đọc file âm thanh — chọn file ghi sẵn trên máy.\n• Thông báo — hiện dịch vụ nền (Android 13+).\n\nGhi âm “đầu dây” phụ thuộc máy; app dùng micro + đồng bộ lên server.</string>
+    <string name="btn_grant">Cấp quyền</string>
+    <string name="base_url_hint">Ví dụ: http://10.0.2.2:4000 (máy ảo) hoặc http://192.168.1.5:4000 (LAN)</string>
+</resources>

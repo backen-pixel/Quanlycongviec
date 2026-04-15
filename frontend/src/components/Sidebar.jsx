@@ -6,7 +6,7 @@ import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
-  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks,
+  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
@@ -22,6 +22,7 @@ const MENU_GROUPS = [
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
+      { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
       { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
     ]
   },
