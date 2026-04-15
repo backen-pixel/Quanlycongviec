@@ -63,6 +63,7 @@ export default function NotificationToast({ notification, onDismiss, onNavigate 
 
   return (
     <div
+      aria-hidden="true"
       onClick={handleClick}
       style={{
         transform: `translateX(${translateX})`,

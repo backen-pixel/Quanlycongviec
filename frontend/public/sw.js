@@ -14,6 +14,8 @@ self.addEventListener('push', function(event) {
     },
     tag: data.tag || 'notification',
     requireInteraction: false, // Auto-close after 5 seconds
+    /** Không phát âm thanh hệ thống kèm push (chuông trong app xử lý riêng). */
+    silent: true,
   };
 
   event.waitUntil(
