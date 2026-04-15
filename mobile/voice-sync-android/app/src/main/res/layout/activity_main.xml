@@ -46,6 +46,19 @@
                         android:text="Ghi âm cuộc gọi → đồng bộ web"
                         android:textColor="#EDE9FE"
                         android:textSize="14sp" />
+
+                    <TextView
+                        android:id="@+id/textLoggedUser"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="#5B21B6"
+                        android:padding="10dp"
+                        android:textColor="#F5F3FF"
+                        android:textSize="13sp"
+                        android:visibility="gone"
+                        tools:text="Đăng nhập: Nguyễn Văn A (a@co.com)"
+                        tools:visibility="visible" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -223,14 +236,39 @@
                 android:textSize="12sp"
                 tools:text="Sẵn sàng" />
 
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="Đã đồng bộ"
-                android:textColor="#111827"
-                android:textSize="15sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Danh sách ghi âm"
+                    android:textColor="#111827"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRelinkCrm"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Ghép CRM"
+                    android:textColor="#7C3AED"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchLinkedOnly"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Chỉ hiện đã gắn Deal / Lead"
+                android:textSize="14sp" />
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/recyclerRecordings"

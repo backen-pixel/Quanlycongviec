@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { Mic, Upload, Trash2, RefreshCw, Square, Circle, Smartphone } from 'lucide-react';
+import { Mic, Upload, Trash2, RefreshCw, Square, Circle, UserRound, Link2, UserPlus, Inbox } from 'lucide-react';
 import { formatDateTime } from '../lib/utils';
 
-function recordingAudioUrl(storage_path) {
+function recordingAudioUrl(rec) {
+  if (rec?.audio_url) return rec.audio_url;
+  const storage_path = rec?.storage_path || rec;
+  if (typeof storage_path !== 'string') return '';
   const path = storage_path.startsWith('/') ? storage_path : `/${storage_path}`;
   const base = import.meta.env.VITE_API_URL;
   if (base) return `${String(base).replace(/\/$/, '')}${path}`;
@@ -17,9 +21,12 @@ function dirLabel(d) {
   return d || '';
 }
 
-/**
- * Web và app Android dùng chung API (Bearer): POST multipart field `audio` + metadata cuộc gọi (tuỳ chọn).
- */
+function leadTypeLabel(type) {
+  if (type === 'deal') return 'Deal';
+  if (type === 'lead') return 'Lead';
+  return type || 'CRM';
+}
+
 export default function VoiceRecordingsPage() {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -38,11 +45,37 @@ export default function VoiceRecordingsPage() {
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
 
+  const [listPhoneFilter, setListPhoneFilter] = useState('');
+  const [attachRecording, setAttachRecording] = useState(null);
+  const [custQuery, setCustQuery] = useState('');
+  const [custRows, setCustRows] = useState([]);
+  const [pickCustomerId, setPickCustomerId] = useState('');
+  const [leadRows, setLeadRows] = useState([]);
+  const [pickLeadId, setPickLeadId] = useState('');
+  const [savingLink, setSavingLink] = useState(false);
+
+  /** all | unassigned | linked — linked = đã gắn lead/deal */
+  const [listTab, setListTab] = useState('all');
+  const [relinking, setRelinking] = useState(false);
+  const [scanMessage, setScanMessage] = useState('');
+
+  const [bootstrapRecording, setBootstrapRecording] = useState(null);
+  const [bootFullName, setBootFullName] = useState('');
+  const [bootTitle, setBootTitle] = useState('');
+  const [bootType, setBootType] = useState('lead');
+  const [bootCompanyId, setBootCompanyId] = useState('');
+  const [companies, setCompanies] = useState([]);
+  const [savingBootstrap, setSavingBootstrap] = useState(false);
+
   const load = async () => {
     setLoading(true);
     setErr('');
     try {
-      const { data } = await api.get('/voice-recordings');
+      const params = {};
+      if (listPhoneFilter.trim()) params.phone = listPhoneFilter.trim();
+      if (listTab === 'unassigned') params.unassigned = '1';
+      if (listTab === 'linked') params.linked_only = '1';
+      const { data } = await api.get('/voice-recordings', { params });
       setList(data.recordings || []);
     } catch (e) {
       setErr(e.response?.data?.error || e.message || 'Lỗi tải danh sách');
@@ -52,7 +85,144 @@ export default function VoiceRecordingsPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [listTab]);
+
+  useEffect(() => {
+    if (!attachRecording) return;
+    const q = custQuery.trim();
+    if (q.length < 2) {
+      setCustRows([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      void api
+        .get('/crm/customers', { params: { search: q } })
+        .then(({ data }) => setCustRows(Array.isArray(data) ? data : []))
+        .catch(() => setCustRows([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [custQuery, attachRecording]);
+
+  useEffect(() => {
+    if (!attachRecording || !pickCustomerId) {
+      setLeadRows([]);
+      return;
+    }
+    void api
+      .get('/voice-recordings/crm-lead-options', { params: { customer_id: pickCustomerId } })
+      .then(({ data }) => setLeadRows(data.leads || []))
+      .catch(() => setLeadRows([]));
+  }, [pickCustomerId, attachRecording]);
+
+  const openAttach = (row) => {
+    setAttachRecording(row);
+    setCustQuery('');
+    setCustRows([]);
+    setPickCustomerId(row.customer?.id || '');
+    setPickLeadId(row.lead?.id || '');
+  };
+
+  const closeAttach = () => {
+    setAttachRecording(null);
+    setSavingLink(false);
+  };
+
+  const saveAttach = async () => {
+    if (!attachRecording) return;
+    setSavingLink(true);
+    setErr('');
+    try {
+      const customer_id = pickCustomerId || null;
+      const lead_id = customer_id ? pickLeadId || null : null;
+      await api.patch(`/voice-recordings/${attachRecording.id}`, {
+        customer_id,
+        lead_id,
+      });
+      closeAttach();
+      await load();
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Lỗi lưu liên kết');
+    }
+    setSavingLink(false);
+  };
+
+  const relinkFromPhone = async (id) => {
+    setErr('');
+    try {
+      await api.patch(`/voice-recordings/${id}`, { action: 'relink_from_phone' });
+      await load();
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Ghép lại thất bại');
+    }
+  };
+
+  const openBootstrap = (row) => {
+    setBootstrapRecording(row);
+    setBootFullName('');
+    setBootTitle(row.phone_number ? `Cuộc gọi ${row.phone_number}` : '');
+    setBootType('lead');
+    setBootCompanyId('');
+  };
+
+  const closeBootstrap = () => {
+    setBootstrapRecording(null);
+    setSavingBootstrap(false);
+  };
+
+  useEffect(() => {
+    if (!bootstrapRecording || bootType !== 'deal') {
+      setCompanies([]);
+      return;
+    }
+    void api
+      .get('/ecosystem/available-companies')
+      .then(({ data }) => setCompanies(data.companies || []))
+      .catch(() => setCompanies([]));
+  }, [bootstrapRecording, bootType]);
+
+  const runAutoRelinkScan = async () => {
+    setRelinking(true);
+    setErr('');
+    setScanMessage('');
+    try {
+      const { data } = await api.post('/voice-recordings/relink-unassigned');
+      await load();
+      if (data?.updated != null) {
+        setScanMessage(`Đã quét ${data.scanned} bản ghi — cập nhật ghép CRM: ${data.updated} bản.`);
+      }
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Quét ghép thất bại');
+    }
+    setRelinking(false);
+  };
+
+  const saveBootstrap = async () => {
+    if (!bootstrapRecording) return;
+    const name = bootFullName.trim();
+    if (!name) {
+      setErr('Nhập tên khách hàng');
+      return;
+    }
+    if (bootType === 'deal' && !bootCompanyId) {
+      setErr('Chọn công ty cho Deal');
+      return;
+    }
+    setSavingBootstrap(true);
+    setErr('');
+    try {
+      await api.post(`/voice-recordings/${bootstrapRecording.id}/bootstrap-crm`, {
+        full_name: name,
+        title: bootTitle.trim() || undefined,
+        type: bootType,
+        company_id: bootType === 'deal' ? bootCompanyId : undefined,
+      });
+      closeBootstrap();
+      await load();
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Tạo CRM thất bại');
+    }
+    setSavingBootstrap(false);
+  };
 
   const appendMeta = (fd) => {
     if (deviceLabel.trim()) fd.append('device_label', deviceLabel.trim());
@@ -138,136 +308,39 @@ export default function VoiceRecordingsPage() {
           <Mic className="h-7 w-7 text-violet-600 shrink-0" />
           Cuộc gọi &amp; đồng bộ ghi âm
         </h1>
-        <p className="text-sm text-gray-600 mt-2 leading-relaxed">
-          Trang này là nơi web hiển thị file do bạn upload hoặc do{' '}
-          <span className="font-medium text-gray-800">app mobile</span> đẩy lên cùng một tài khoản. App chạy nền (foreground
-          service), khi có cuộc gọi có thể ghi micro và gửi kèm số / hướng cuộc gọi qua API dưới đây.
+        <p className="text-sm text-gray-600 mt-2">
+          Ghi âm từ mobile hoặc upload web; có số thì tự ghép khách và Deal/Lead bạn phụ trách. Dùng tab và «Quét ghép CRM» khi cần.
         </p>
       </div>
+
+      {scanMessage && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-900 text-sm px-4 py-3">
+          {scanMessage}
+        </div>
+      )}
 
       {err && (
         <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-4 py-3">
           {err}
-          {String(err).includes('voice_recordings') || String(err).includes('relation') ? (
+          {String(err).includes('voice_recordings') || String(err).includes('relation') || String(err).includes('customer_id') ? (
             <p className="mt-2 text-xs leading-relaxed">
               Chạy migration SQL trên Supabase:{' '}
               <code className="bg-white/80 px-1 rounded">database/61_voice_recordings.sql</code>
               {String(err).includes('phone_number') || String(err).includes('column') ? (
                 <>
                   {' '}
-                  và nếu thiếu cột cuộc gọi:{' '}
-                  <code className="bg-white/80 px-1 rounded">database/62_voice_recordings_call_fields.sql</code>
+                  · <code className="bg-white/80 px-1 rounded">database/62_voice_recordings_call_fields.sql</code>
                 </>
               ) : null}
+              {' '}
+              · <code className="bg-white/80 px-1 rounded">database/63_voice_recordings_crm_link.sql</code> (liên kết KH / lead)
             </p>
           ) : null}
         </div>
       )}
 
-      <div className="rounded-xl border border-violet-100 bg-gradient-to-br from-violet-50/80 to-white p-4 sm:p-5 space-y-3 shadow-sm">
-        <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-          <Smartphone className="h-5 w-5 text-violet-600" />
-          API cho mobile (cùng backend với web)
-        </h2>
-        <ul className="text-xs sm:text-sm text-gray-700 space-y-2 list-disc pl-5 leading-relaxed">
-          <li>
-            <code className="bg-white/90 px-1 rounded border border-violet-100">POST {`{BASE}/api/auth/login`}</code> — JSON{' '}
-            <code className="bg-white/90 px-1 rounded">email</code>, <code className="bg-white/90 px-1 rounded">password</code>{' '}
-            → lấy <code className="bg-white/90 px-1 rounded">token</code>.
-          </li>
-          <li>
-            <code className="bg-white/90 px-1 rounded border border-violet-100">POST {`{BASE}/api/voice-recordings`}</code> —{' '}
-            <code className="bg-white/90 px-1 rounded">multipart/form-data</code>, header{' '}
-            <code className="bg-white/90 px-1 rounded">Authorization: Bearer …</code>.
-          </li>
-          <li>
-            Field bắt buộc: <code className="bg-white/90 px-1 rounded">audio</code> (file). Tuỳ chọn:{' '}
-            <code className="bg-white/90 px-1 rounded">source</code>, <code className="bg-white/90 px-1 rounded">device_label</code>,{' '}
-            <code className="bg-white/90 px-1 rounded">notes</code>, <code className="bg-white/90 px-1 rounded">phone_number</code>,{' '}
-            <code className="bg-white/90 px-1 rounded">direction</code> (inbound | outbound | unknown),{' '}
-            <code className="bg-white/90 px-1 rounded">call_started_at</code>, <code className="bg-white/90 px-1 rounded">call_ended_at</code> (ISO
-            8601), <code className="bg-white/90 px-1 rounded">external_call_id</code> (tránh trùng khi upload lại).
-          </li>
-          <li>
-            <code className="bg-white/90 px-1 rounded">GET {`{BASE}/api/voice-recordings`}</code> — danh sách; dùng chung với trang này.
-          </li>
-        </ul>
-      </div>
-
       <div className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5 space-y-4 shadow-sm">
-        <h2 className="font-semibold text-gray-900">Tải lên / ghi mới (web)</h2>
-        <p className="text-xs text-gray-500">
-          Các ô dưới đây được gửi kèm file giống app — để thử metadata cuộc gọi từ trình duyệt.
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="text-xs font-medium text-gray-500 uppercase">Số điện thoại (tuỳ chọn)</label>
-            <input
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="+84…"
-              className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-500 uppercase">Hướng cuộc gọi</label>
-            <select
-              value={direction}
-              onChange={(e) => setDirection(e.target.value)}
-              className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
-            >
-              <option value="">— Không gửi —</option>
-              <option value="inbound">Gọi đến</option>
-              <option value="outbound">Gọi đi</option>
-              <option value="unknown">Không rõ</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-500 uppercase">Bắt đầu cuộc gọi (ISO, tuỳ chọn)</label>
-            <input
-              value={callStartedAt}
-              onChange={(e) => setCallStartedAt(e.target.value)}
-              placeholder="2026-04-15T10:00:00.000Z"
-              className="mt-1 w-full h-9 px-3 border rounded-lg text-sm font-mono text-xs"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-500 uppercase">Kết thúc cuộc gọi (ISO, tuỳ chọn)</label>
-            <input
-              value={callEndedAt}
-              onChange={(e) => setCallEndedAt(e.target.value)}
-              placeholder="2026-04-15T10:05:00.000Z"
-              className="mt-1 w-full h-9 px-3 border rounded-lg text-sm font-mono text-xs"
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="text-xs font-medium text-gray-500 uppercase">ID cuộc gọi phía thiết bị (tuỳ chọn, chống trùng)</label>
-            <input
-              value={externalCallId}
-              onChange={(e) => setExternalCallId(e.target.value)}
-              placeholder="VD: calllog_12345"
-              className="mt-1 w-full h-9 px-3 border rounded-lg text-sm font-mono text-xs"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-500 uppercase">Nhãn thiết bị (tuỳ chọn)</label>
-            <input
-              value={deviceLabel}
-              onChange={(e) => setDeviceLabel(e.target.value)}
-              placeholder="VD: Samsung A54…"
-              className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-500 uppercase">Ghi chú (tuỳ chọn)</label>
-            <input
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Tóm tắt cuộc gọi…"
-              className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
-            />
-          </div>
-        </div>
+        <h2 className="font-semibold text-gray-900">Tải lên / ghi từ web</h2>
         <div className="flex flex-wrap gap-2">
           <input ref={fileRef} type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.amr" className="hidden" onChange={onPickFile} />
           <button
@@ -309,14 +382,158 @@ export default function VoiceRecordingsPage() {
             Làm mới
           </button>
         </div>
+        <details className="group rounded-lg border border-gray-100 bg-gray-50/50">
+          <summary className="cursor-pointer list-none px-3 py-2 text-sm text-violet-800 hover:bg-violet-50/80 rounded-lg [&::-webkit-details-marker]:hidden flex items-center gap-2">
+            <span className="text-gray-400 group-open:rotate-90 transition-transform">▸</span>
+            Tuỳ chọn kèm file (SĐT, thời gian cuộc gọi, …)
+          </summary>
+          <div className="px-3 pb-3 pt-1 grid gap-3 sm:grid-cols-2 border-t border-gray-100">
+            <div>
+              <label className="text-xs font-medium text-gray-500">Số điện thoại</label>
+              <input
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                placeholder="+84…"
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500">Hướng</label>
+              <select
+                value={direction}
+                onChange={(e) => setDirection(e.target.value)}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
+              >
+                <option value="">—</option>
+                <option value="inbound">Gọi đến</option>
+                <option value="outbound">Gọi đi</option>
+                <option value="unknown">Không rõ</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500">Bắt đầu (ISO)</label>
+              <input
+                value={callStartedAt}
+                onChange={(e) => setCallStartedAt(e.target.value)}
+                placeholder="2026-04-15T10:00:00.000Z"
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white font-mono text-xs"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500">Kết thúc (ISO)</label>
+              <input
+                value={callEndedAt}
+                onChange={(e) => setCallEndedAt(e.target.value)}
+                placeholder="2026-04-15T10:05:00.000Z"
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white font-mono text-xs"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs font-medium text-gray-500">ID thiết bị (chống trùng)</label>
+              <input
+                value={externalCallId}
+                onChange={(e) => setExternalCallId(e.target.value)}
+                placeholder="calllog_…"
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white font-mono text-xs"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500">Nhãn thiết bị</label>
+              <input
+                value={deviceLabel}
+                onChange={(e) => setDeviceLabel(e.target.value)}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500">Ghi chú</label>
+              <input
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
+              />
+            </div>
+          </div>
+        </details>
       </div>
 
       <div className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
-        <h2 className="font-semibold text-gray-900 mb-3">Đã đồng bộ ({list.length})</h2>
+        <div className="flex flex-wrap gap-2 mb-4 border-b border-gray-100 pb-3">
+          <button
+            type="button"
+            onClick={() => setListTab('all')}
+            className={`h-9 px-3 rounded-lg text-sm font-medium ${
+              listTab === 'all' ? 'bg-violet-600 text-white' : 'border border-gray-200 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Tất cả
+          </button>
+          <button
+            type="button"
+            onClick={() => setListTab('unassigned')}
+            className={`h-9 px-3 rounded-lg text-sm font-medium inline-flex items-center gap-2 ${
+              listTab === 'unassigned'
+                ? 'bg-amber-600 text-white'
+                : 'border border-amber-200 text-amber-900 hover:bg-amber-50'
+            }`}
+          >
+            <Inbox className="h-4 w-4" />
+            Chưa có KH / lead
+          </button>
+          <button
+            type="button"
+            onClick={() => setListTab('linked')}
+            className={`h-9 px-3 rounded-lg text-sm font-medium ${
+              listTab === 'linked' ? 'bg-emerald-600 text-white' : 'border border-emerald-200 text-emerald-900 hover:bg-emerald-50'
+            }`}
+          >
+            Đã gắn Deal/Lead
+          </button>
+        </div>
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-3">
+          <h2 className="font-semibold text-gray-900">
+            {listTab === 'unassigned'
+              ? 'Ghi âm chưa gắn khách'
+              : listTab === 'linked'
+                ? 'Đã gắn Deal / Lead'
+                : 'Đã đồng bộ'}{' '}
+            ({list.length})
+          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={listPhoneFilter}
+              onChange={(e) => setListPhoneFilter(e.target.value)}
+              placeholder="Lọc theo số điện thoại…"
+              className="h-9 px-3 border rounded-lg text-sm w-full sm:w-48"
+            />
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              className="h-9 px-3 rounded-lg border text-gray-700 text-sm hover:bg-gray-50"
+            >
+              Áp dụng lọc
+            </button>
+            <button
+              type="button"
+              onClick={() => void runAutoRelinkScan()}
+              disabled={loading || relinking}
+              className="h-9 px-3 rounded-lg border border-violet-300 text-violet-800 text-sm hover:bg-violet-50"
+            >
+              {relinking ? 'Đang quét…' : 'Quét ghép CRM'}
+            </button>
+          </div>
+        </div>
         {loading ? (
           <p className="text-sm text-gray-500">Đang tải…</p>
         ) : list.length === 0 ? (
-          <p className="text-sm text-gray-500">Chưa có bản ghi. App mobile sau khi đăng nhập sẽ hiện ở đây.</p>
+          <p className="text-sm text-gray-500">
+            {listTab === 'unassigned'
+              ? 'Không có ghi âm nào đang “mồ côi”. Các bản có số điện thoại nhưng hệ thống chưa tìm được khách (hoặc chưa tạo KH) sẽ nằm ở đây — bạn có thể tạo Lead/Deal và liên kết.'
+              : listTab === 'linked'
+                ? 'Chưa có bản ghi nào đã ghép lead/deal. Dùng «Quét ghép CRM» sau khi có SĐT trùng khách & cơ hội do bạn phụ trách.'
+                : 'Chưa có bản ghi. App mobile sau khi đăng nhập sẽ hiện ở đây.'}
+          </p>
         ) : (
           <ul className="space-y-4">
             {list.map((r) => (
@@ -336,31 +553,229 @@ export default function VoiceRecordingsPage() {
                     {r.device_label ? <span>{r.device_label}</span> : null}
                   </div>
                   {(r.call_started_at || r.call_ended_at) && (
-                    <p className="text-xs text-gray-500">
-                      {r.call_started_at ? `Bắt đầu: ${formatDateTime(r.call_started_at)}` : null}
+                    <p className="text-xs text-gray-800 mt-1 rounded-md bg-slate-50 border border-slate-100 px-2 py-1.5">
+                      <span className="font-medium text-slate-700">Thời điểm cuộc gọi: </span>
+                      {r.call_started_at ? `bắt đầu ${formatDateTime(r.call_started_at)}` : null}
                       {r.call_started_at && r.call_ended_at ? ' · ' : null}
-                      {r.call_ended_at ? `Kết thúc: ${formatDateTime(r.call_ended_at)}` : null}
+                      {r.call_ended_at ? `kết thúc ${formatDateTime(r.call_ended_at)}` : null}
                     </p>
                   )}
                   {r.external_call_id ? (
                     <p className="text-xs font-mono text-gray-500 break-all">ID: {r.external_call_id}</p>
                   ) : null}
                   {r.notes ? <p className="text-xs text-gray-600 mt-1 line-clamp-3">{r.notes}</p> : null}
-                  <audio controls className="mt-2 w-full max-w-md h-9" src={recordingAudioUrl(r.storage_path)} preload="none" />
+                  {!r.customer && !r.lead && r.phone_number ? (
+                    <p className="text-xs text-amber-800 mt-1 rounded border border-amber-100 bg-amber-50/80 px-2 py-1 inline-block">
+                      Chưa ghép CRM — thử «Ghép lại theo SĐT» hoặc «Gắn KH / Lead».
+                    </p>
+                  ) : null}
+                  {(r.customer || r.lead) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs rounded-lg bg-violet-50/80 border border-violet-100 px-3 py-2">
+                      <span className="font-medium text-violet-900 flex items-center gap-1">
+                        <Link2 className="h-3.5 w-3.5" />
+                        CRM
+                      </span>
+                      {r.customer ? (
+                        <Link className="text-violet-700 hover:underline font-medium" to={`/customers/${r.customer.id}`}>
+                          <UserRound className="inline h-3.5 w-3.5 mr-0.5 align-text-bottom" />
+                          {r.customer.full_name}
+                        </Link>
+                      ) : (
+                        <span className="text-gray-500">Chưa gắn khách hàng</span>
+                      )}
+                      {r.lead ? (
+                        <Link className="text-violet-700 hover:underline" to={`/crm/leads/${r.lead.id}`}>
+                          {leadTypeLabel(r.lead.type)}: {r.lead.code || r.lead.title}
+                        </Link>
+                      ) : r.customer ? (
+                        <span className="text-gray-500">Chưa gắn lead/deal</span>
+                      ) : null}
+                    </div>
+                  )}
+                  <audio controls className="mt-2 w-full max-w-md h-9" src={recordingAudioUrl(r)} preload="none" />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void remove(r.id)}
-                  className="shrink-0 h-9 px-3 rounded-lg border border-red-200 text-red-600 text-sm hover:bg-red-50 flex items-center gap-1 cursor-pointer self-start"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Xóa
-                </button>
+                <div className="flex flex-col gap-2 shrink-0 self-start sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => openAttach(r)}
+                    className="h-9 px-3 rounded-lg border border-violet-200 text-violet-800 text-sm hover:bg-violet-50 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Link2 className="h-4 w-4" />
+                    Gắn KH / Lead
+                  </button>
+                  {r.phone_number ? (
+                    <button
+                      type="button"
+                      onClick={() => void relinkFromPhone(r.id)}
+                      className="h-9 px-3 rounded-lg border border-gray-200 text-gray-700 text-sm hover:bg-gray-50 cursor-pointer"
+                    >
+                      Ghép lại theo SĐT
+                    </button>
+                  ) : null}
+                  {!r.customer_id && r.phone_number ? (
+                    <button
+                      type="button"
+                      onClick={() => openBootstrap(r)}
+                      className="h-9 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm hover:bg-amber-100 flex items-center gap-1 cursor-pointer"
+                    >
+                      <UserPlus className="h-4 w-4" />
+                      Tạo KH + Lead/Deal
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void remove(r.id)}
+                    className="h-9 px-3 rounded-lg border border-red-200 text-red-600 text-sm hover:bg-red-50 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Xóa
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
         )}
       </div>
+
+      {bootstrapRecording && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" role="dialog">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 space-y-4">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-amber-600" />
+              Tạo khách &amp; Lead/Deal rồi liên kết
+            </h3>
+            <p className="text-xs text-gray-600">
+              Số trên ghi âm: <span className="font-mono font-medium">{bootstrapRecording.phone_number}</span>. Nếu SĐT đã
+              có trong CRM, hệ thống dùng khách đó và chỉ tạo thêm cơ hội.
+            </p>
+            <div>
+              <label className="text-xs font-medium text-gray-500 uppercase">Tên khách hàng *</label>
+              <input
+                value={bootFullName}
+                onChange={(e) => setBootFullName(e.target.value)}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
+                placeholder="Họ tên hiển thị trên CRM"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 uppercase">Tên Lead / Deal</label>
+              <input
+                value={bootTitle}
+                onChange={(e) => setBootTitle(e.target.value)}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
+                placeholder="Mặc định theo số điện thoại"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 uppercase">Loại</label>
+              <select
+                value={bootType}
+                onChange={(e) => setBootType(e.target.value)}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
+              >
+                <option value="lead">Lead</option>
+                <option value="deal">Deal</option>
+              </select>
+            </div>
+            {bootType === 'deal' && (
+              <div>
+                <label className="text-xs font-medium text-gray-500 uppercase">Công ty *</label>
+                <select
+                  value={bootCompanyId}
+                  onChange={(e) => setBootCompanyId(e.target.value)}
+                  className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
+                >
+                  <option value="">— Chọn —</option>
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.short_name || c.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2 justify-end pt-2">
+              <button type="button" onClick={closeBootstrap} className="h-9 px-4 rounded-lg border text-gray-700 text-sm">
+                Huỷ
+              </button>
+              <button
+                type="button"
+                disabled={savingBootstrap}
+                onClick={() => void saveBootstrap()}
+                className="h-9 px-4 rounded-lg bg-amber-600 text-white text-sm font-medium disabled:opacity-50"
+              >
+                {savingBootstrap ? 'Đang tạo…' : 'Tạo &amp; liên kết'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {attachRecording && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" role="dialog">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 space-y-4">
+            <h3 className="font-semibold text-gray-900">Gắn ghi âm với CRM</h3>
+            <p className="text-xs text-gray-600">File: {attachRecording.file_name}</p>
+            <div>
+              <label className="text-xs font-medium text-gray-500 uppercase">Tìm khách hàng (gõ tên hoặc SĐT)</label>
+              <input
+                value={custQuery}
+                onChange={(e) => setCustQuery(e.target.value)}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
+                placeholder="ít nhất 2 ký tự"
+              />
+              {custRows.length > 0 && (
+                <ul className="mt-2 max-h-40 overflow-y-auto border rounded-lg divide-y text-sm">
+                  {custRows.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        className={`w-full text-left px-3 py-2 hover:bg-violet-50 ${pickCustomerId === c.id ? 'bg-violet-50 font-medium' : ''}`}
+                        onClick={() => {
+                          setPickCustomerId(c.id);
+                          setPickLeadId('');
+                        }}
+                      >
+                        {c.full_name} · {c.phone || '—'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 uppercase">Lead / Deal (tuỳ chọn)</label>
+              <select
+                value={pickLeadId}
+                onChange={(e) => setPickLeadId(e.target.value)}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
+                disabled={!pickCustomerId}
+              >
+                <option value="">— Không chọn —</option>
+                {leadRows.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {leadTypeLabel(l.type)} {l.code ? `${l.code} · ` : ''}
+                    {l.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-wrap gap-2 justify-end pt-2">
+              <button type="button" onClick={closeAttach} className="h-9 px-4 rounded-lg border text-gray-700 text-sm">
+                Huỷ
+              </button>
+              <button
+                type="button"
+                disabled={savingLink}
+                onClick={() => void saveAttach()}
+                className="h-9 px-4 rounded-lg bg-violet-600 text-white text-sm font-medium disabled:opacity-50"
+              >
+                {savingLink ? 'Đang lưu…' : 'Lưu'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

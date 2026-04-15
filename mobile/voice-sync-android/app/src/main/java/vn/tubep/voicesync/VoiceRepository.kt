@@ -41,11 +41,16 @@ object VoiceRepository {
             val json = JSONObject(text)
             val token = json.optString("token", "")
             if (token.isEmpty()) return@withContext Result.failure(IllegalStateException("Không có token"))
+            val u = json.optJSONObject("user")
+            val display = u?.optString("full_name", "")?.takeIf { it.isNotBlank() }
+                ?: u?.optString("fullName", "")?.takeIf { it.isNotBlank() }
+                ?: email
             prefs(ctx).edit()
                 .putString("base_url", base.trim().trimEnd('/'))
                 .putString("email", email)
                 .putString("password", pass)
                 .putString("token", token)
+                .putString("user_display", display)
                 .apply()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -53,11 +58,60 @@ object VoiceRepository {
         }
     }
 
-    suspend fun listRecordingsJson(ctx: Context): Result<String> = withContext(Dispatchers.IO) {
+    fun userDisplayName(ctx: Context): String =
+        prefs(ctx).getString("user_display", "").orEmpty().trim()
+
+    suspend fun fetchMeJson(ctx: Context): Result<String> = withContext(Dispatchers.IO) {
         try {
             val base = baseUrl(ctx)
             val req = Request.Builder()
-                .url("$base/api/voice-recordings")
+                .url("$base/api/auth/me")
+                .headers(authHeaders(ctx))
+                .get()
+                .build()
+            val res = client.newCall(req).execute()
+            val text = res.body?.string().orEmpty()
+            if (!res.isSuccessful) return@withContext Result.failure(IllegalStateException("HTTP ${res.code}: $text"))
+            try {
+                val jo = JSONObject(text)
+                val u = jo.optJSONObject("user")
+                val name = u?.optString("full_name", "")?.takeIf { it.isNotBlank() }
+                    ?: u?.optString("fullName", "")?.takeIf { it.isNotBlank() }
+                    ?: u?.optString("email", "").orEmpty()
+                if (name.isNotBlank()) {
+                    prefs(ctx).edit().putString("user_display", name).apply()
+                }
+            } catch (_: Exception) { }
+            Result.success(text)
+        } catch (e: Exception) {
+            return@withContext Result.failure(e)
+        }
+    }
+
+    suspend fun relinkUnassigned(ctx: Context): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val base = baseUrl(ctx)
+            val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+            val req = Request.Builder()
+                .url("$base/api/voice-recordings/relink-unassigned")
+                .headers(authHeaders(ctx))
+                .post(body)
+                .build()
+            val res = client.newCall(req).execute()
+            val text = res.body?.string().orEmpty()
+            if (!res.isSuccessful) return@withContext Result.failure(IllegalStateException("HTTP ${res.code}: $text"))
+            Result.success(text)
+        } catch (e: Exception) {
+            return@withContext Result.failure(e)
+        }
+    }
+
+    suspend fun listRecordingsJson(ctx: Context, linkedOnly: Boolean = false): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val base = baseUrl(ctx)
+            val url = if (linkedOnly) "$base/api/voice-recordings?linked_only=1" else "$base/api/voice-recordings"
+            val req = Request.Builder()
+                .url(url)
                 .headers(authHeaders(ctx))
                 .get()
                 .build()

@@ -65,6 +65,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 temp.delete()
                 if (res.isSuccess) {
+                    VoiceRepository.relinkUnassigned(this@MainActivity)
                     toast("Đã tải lên")
                     loadList()
                 } else toast(res.exceptionOrNull()?.message ?: "Lỗi upload")
@@ -144,6 +145,7 @@ class MainActivity : AppCompatActivity() {
                 val r = VoiceRepository.login(this@MainActivity, base, email, pass)
                 if (r.isSuccess) {
                     toast("Đăng nhập OK")
+                    VoiceRepository.fetchMeJson(this@MainActivity)
                     updateUiAuth()
                     loadList()
                 } else toast(r.exceptionOrNull()?.message ?: "Lỗi đăng nhập")
@@ -157,7 +159,36 @@ class MainActivity : AppCompatActivity() {
 
         binding.swipeRefresh.setOnRefreshListener { loadList() }
 
+        binding.switchLinkedOnly.setOnCheckedChangeListener { _, _ ->
+            loadList()
+        }
+
+        binding.btnRelinkCrm.setOnClickListener {
+            lifecycleScope.launch {
+                toast("Đang ghép CRM…")
+                val rel = VoiceRepository.relinkUnassigned(this@MainActivity)
+                if (rel.isSuccess) {
+                    try {
+                        val jo = org.json.JSONObject(rel.getOrNull().orEmpty())
+                        val u = jo.optInt("updated", 0)
+                        toast("Ghép xong: cập nhật $u bản")
+                    } catch (_: Exception) {
+                        toast("Ghép CRM xong")
+                    }
+                } else {
+                    toast(rel.exceptionOrNull()?.message ?: "Lỗi ghép CRM")
+                }
+                loadList()
+            }
+        }
+
         updateUiAuth()
+        if (getSharedPreferences("voice_sync", MODE_PRIVATE).getString("token", "")?.isNotBlank() == true) {
+            lifecycleScope.launch {
+                VoiceRepository.fetchMeJson(this@MainActivity)
+                updateUiAuth()
+            }
+        }
         loadList()
     }
 
@@ -191,10 +222,25 @@ class MainActivity : AppCompatActivity() {
         }
 
     private fun updateUiAuth() {
-        val ok = getSharedPreferences("voice_sync", MODE_PRIVATE).getString("token", "")?.isNotBlank() == true
+        val prefs = getSharedPreferences("voice_sync", MODE_PRIVATE)
+        val ok = prefs.getString("token", "")?.isNotBlank() == true
         binding.btnPickAudio.isEnabled = ok
         binding.btnRecord.isEnabled = ok
         binding.switchBgMonitor.isEnabled = ok
+        binding.btnRelinkCrm.isEnabled = ok
+        binding.switchLinkedOnly.isEnabled = ok
+        if (ok) {
+            val disp = VoiceRepository.userDisplayName(this)
+            val em = prefs.getString("email", "").orEmpty()
+            binding.textLoggedUser.text = if (disp.isNotBlank()) {
+                "Đăng nhập: $disp ($em)"
+            } else {
+                "Đăng nhập: $em"
+            }
+            binding.textLoggedUser.visibility = android.view.View.VISIBLE
+        } else {
+            binding.textLoggedUser.visibility = android.view.View.GONE
+        }
     }
 
     private fun loadList() {
@@ -207,15 +253,47 @@ class MainActivity : AppCompatActivity() {
         }
         binding.swipeRefresh.isRefreshing = true
         lifecycleScope.launch {
-            val res = VoiceRepository.listRecordingsJson(this@MainActivity)
+            val linkedOnly = binding.switchLinkedOnly.isChecked
+            val res = VoiceRepository.listRecordingsJson(this@MainActivity, linkedOnly)
             binding.swipeRefresh.isRefreshing = false
             if (res.isSuccess) {
                 adapter.setData(parseRecordings(res.getOrNull().orEmpty()))
-                binding.textStatus.text = "Đã tải ${adapter.itemCount} bản ghi."
+                binding.textStatus.text = if (linkedOnly) {
+                    "Đã tải ${adapter.itemCount} bản đã gắn Deal/Lead."
+                } else {
+                    "Đã tải ${adapter.itemCount} bản ghi."
+                }
             } else {
                 binding.textStatus.text = res.exceptionOrNull()?.message ?: "Lỗi tải danh sách"
             }
         }
+    }
+
+    private fun buildCallTimeLabel(o: JSONObject): String? {
+        val s = o.optString("call_started_at").takeIf { it.isNotBlank() }
+        val e = o.optString("call_ended_at").takeIf { it.isNotBlank() }
+        if (s == null && e == null) return null
+        fun short(x: String) = if (x.length >= 16) x.substring(0, 10) + " " + x.substring(11, 16) else x
+        return when {
+            s != null && e != null -> "Cuộc gọi: ${short(s)} → ${short(e)}"
+            s != null -> "Bắt đầu: ${short(s)}"
+            e != null -> "Kết thúc: ${short(e)}"
+            else -> null
+        }
+    }
+
+    private fun buildCrmSummary(o: JSONObject): String? {
+        val c = if (o.isNull("customer")) null else o.getJSONObject("customer")
+        val l = if (o.isNull("lead")) null else o.getJSONObject("lead")
+        if (c == null && l == null) return null
+        val parts = mutableListOf<String>()
+        c?.optString("full_name")?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        l?.let { lead ->
+            val typ = if (lead.optString("type") == "deal") "Deal" else "Lead"
+            val code = lead.optString("code").ifBlank { lead.optString("title") }
+            parts.add("$typ ${code.ifBlank { "—" }}")
+        }
+        return parts.joinToString(" · ").ifBlank { null }
     }
 
     private fun parseRecordings(json: String): List<RecordingRow> {
@@ -228,6 +306,7 @@ class MainActivity : AppCompatActivity() {
                     id = o.optString("id"),
                     fileName = o.optString("file_name"),
                     storagePath = o.optString("storage_path"),
+                    audioUrl = o.optString("audio_url").ifBlank { null },
                     mimeType = o.optString("mime_type").ifBlank { null },
                     createdAt = o.optString("created_at"),
                     phoneNumber = o.optString("phone_number").ifBlank { null },
@@ -235,6 +314,8 @@ class MainActivity : AppCompatActivity() {
                     durationSec = if (o.has("duration_sec") && !o.isNull("duration_sec")) o.optDouble("duration_sec") else null,
                     source = o.optString("source").ifBlank { null },
                     notes = o.optString("notes").ifBlank { null },
+                    callTimeLabel = buildCallTimeLabel(o),
+                    crmSummary = buildCrmSummary(o),
                 )
             }
         } catch (_: Exception) {
@@ -294,6 +375,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 f.delete()
                 if (res.isSuccess) {
+                    VoiceRepository.relinkUnassigned(this@MainActivity)
                     toast("Đã upload ghi micro")
                     loadList()
                 } else binding.textStatus.text = res.exceptionOrNull()?.message ?: "Lỗi upload"

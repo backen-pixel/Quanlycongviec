@@ -80,6 +80,7 @@ const CRM_MENU_GROUPS = [
     items: [
       { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM' },
       { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
+      { to: '/tools/voice-recordings', icon: Mic, label: 'Ghi âm' },
     ]
   },
   {
@@ -209,7 +210,9 @@ export default function Sidebar() {
   }, [location.pathname]);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
-  const isCRM = location.pathname.startsWith('/crm');
+  /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó */
+  const isCRM =
+    location.pathname.startsWith('/crm') || location.pathname.startsWith('/tools/voice-recordings');
   const isSX = location.pathname.startsWith('/sx');
   const activeMenuGroups = isSX ? SX_MENU_GROUPS : isCRM ? CRM_MENU_GROUPS : MENU_GROUPS;
 
