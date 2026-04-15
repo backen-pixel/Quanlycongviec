@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
+import { alertIncomingNotification } from '../lib/notificationAlert';
+import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
@@ -111,20 +113,32 @@ export default function NotificationCenter({ socket }) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get('/push/preferences');
+        if (!cancelled && data) setNotificationPrefsCache(data);
+      } catch {
+        if (!cancelled) setNotificationPrefsCache({ sound: true });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!socket) return;
     const handler = (notif) => {
       setUnreadCount(c => c + 1);
       setNotifications(prev => [notif, ...prev]);
-      
-      // Show toast notification
+
       setToastNotification(notif);
-      
-      // Play sound if enabled (optional)
-      try {
-        const audio = new Audio('/notification.wav');
-        audio.volume = 0.3;
-        audio.play().catch(() => {});
-      } catch {}
+
+      const p = getNotificationPrefsCache();
+      if (p.sound !== false && isNotificationTypeEnabled(notif.type)) {
+        void alertIncomingNotification({ title: notif.title, message: notif.message });
+      }
     };
     socket.on('notification', handler);
     return () => socket.off('notification', handler);

@@ -2958,6 +2958,55 @@ r.post('/leads/:id/activities', async (req, res) => {
   }
 });
 
+/** Sửa ghi chú (crm_activities type = note) — tác giả hoặc admin */
+r.patch('/leads/:id/activities/:activityId', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const activityId = req.params.activityId;
+    const uid = req.user?.userId;
+    const { title, description } = req.body || {};
+
+    const { data: act, error: fe } = await supabase.from('crm_activities')
+      .select('id, lead_id, type, created_by, title')
+      .eq('id', activityId)
+      .single();
+    if (fe || !act) return res.status(404).json({ error: 'Không tìm thấy hoạt động' });
+    if (act.lead_id !== leadId) return res.status(400).json({ error: 'Hoạt động không thuộc lead/deal này' });
+    if (act.type !== 'note') return res.status(400).json({ error: 'Chỉ sửa được loại ghi chú' });
+
+    const r = normalizeCrmUserRole(req.user?.role);
+    const canModerate = r === 'admin' || r === 'manager';
+    if (!canModerate && String(act.created_by) !== String(uid)) {
+      return res.status(403).json({ error: 'Chỉ tác giả hoặc quản lý/admin mới sửa được ghi chú này' });
+    }
+
+    const desc = description != null ? String(description).trim() : '';
+    if (!desc) return res.status(400).json({ error: 'Nội dung ghi chú không được để trống' });
+
+    let nextTitle = act.title;
+    if (title != null && String(title).trim()) {
+      nextTitle = String(title).trim().slice(0, 200);
+    } else {
+      nextTitle = desc.split('\n')[0].slice(0, 120) || 'Ghi chú';
+    }
+
+    const { data, error } = await supabase.from('crm_activities')
+      .update({
+        title: nextTitle,
+        description: desc,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', activityId)
+      .select('*, creator:users!crm_activities_created_by_fkey(id, full_name)')
+      .single();
+    if (error) throw error;
+    await supabase.from('crm_leads').update({ last_activity_at: new Date().toISOString() }).eq('id', leadId);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // QUOTATIONS (Báo giá)
 // ═══════════════════════════════════════════════════════════════════════════

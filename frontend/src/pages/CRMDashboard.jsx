@@ -83,6 +83,12 @@ const TIME_PRESETS = [
 
 const KANBAN_LOAD_OPTIONS = ['1000', '2000', '5000', 'all'];
 
+/** Lead/Deal đang trên pipeline (chưa cột Thắng / Thua) — dùng stage từ API, không dùng is_won ở root. */
+function isActiveCrmPipelineItem(item) {
+  const st = item?.stage;
+  return !st?.is_won && !st?.is_lost;
+}
+
 export default function CRMDashboard() {
   const { user } = useAuth();
   const seesAllCrmDeals = userSeesAllCrmDeals(user?.role);
@@ -559,6 +565,9 @@ export default function CRMDashboard() {
     [pipelinePhoneTotals, pipelineType],
   );
 
+  const leadActiveCount = useMemo(() => leads.filter(isActiveCrmPipelineItem).length, [leads]);
+  const dealNegotiatingCount = useMemo(() => deals.filter(isActiveCrmPipelineItem).length, [deals]);
+
   // Pipeline view: group leads/deals by stage
   const pipelineLead = useMemo(() => {
     if (!stagesLead.length) return [];
@@ -710,8 +719,12 @@ export default function CRMDashboard() {
 
   const followUpAlert = alerts?.total > 0;
 
+  const compactLeadUi = pipelineType === 'lead';
+  const ctrlH = compactLeadUi ? 'h-9' : 'h-10';
+  const ctrlTxt = compactLeadUi ? 'text-xs' : 'text-sm';
+
   return (
-    <div className="min-h-screen bg-gray-50 space-y-6">
+    <div className={`min-h-screen bg-gray-50 ${compactLeadUi ? 'space-y-3' : 'space-y-6'}`}>
       {/* Auto-create project banner */}
       {autoCreateStatus === 'loading' && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
@@ -775,35 +788,35 @@ export default function CRMDashboard() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-0">
+      {/* Header — tab Lead: gọn hơn để nhường chỗ Kanban */}
+      <div className={`flex items-center justify-between px-0 ${compactLeadUi ? 'gap-2' : ''}`}>
         <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-gray-500 font-semibold">CRM / Quản lý khách hàng</span>
+          <div className={`flex items-center gap-2 ${compactLeadUi ? 'mb-0.5' : 'mb-2'}`}>
+            <span className={`text-gray-500 font-semibold ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}>CRM / Quản lý khách hàng</span>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">
+          <h1 className={`font-bold text-gray-900 ${compactLeadUi ? 'text-xl sm:text-2xl' : 'text-3xl'}`}>
             {pipelineType === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}
           </h1>
         </div>
         <div className="flex items-center gap-3">
-          <button data-tour="add-lead" onClick={() => pipelineType === 'lead' ? setShowNewLead(true) : setShowNewDeal(true)} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer transition-all duration-200">
-            <Plus className="h-4 w-4" /> + Thêm {pipelineType === 'lead' ? 'Lead' : 'Deal'}
+          <button data-tour="add-lead" onClick={() => pipelineType === 'lead' ? setShowNewLead(true) : setShowNewDeal(true)} className={`bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 cursor-pointer transition-all duration-200 ${compactLeadUi ? 'h-8 px-3 text-xs' : 'h-9 px-4 text-sm'}`}>
+            <Plus className={compactLeadUi ? 'h-3.5 w-3.5' : 'h-4 w-4'} /> + Thêm {pipelineType === 'lead' ? 'Lead' : 'Deal'}
           </button>
         </div>
       </div>
 
       {/* Pill-style Tab Switcher + Pin */}
-      <div className="flex items-center gap-3">
-        <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-gray-200 rounded-full p-1">
+      <div className={`flex items-center ${compactLeadUi ? 'gap-2' : 'gap-3'}`}>
+        <div data-tour="pipeline-tabs" className={`inline-flex gap-1 bg-gray-200 rounded-full ${compactLeadUi ? 'p-0.5' : 'p-1'}`}>
           <button
             onClick={() => switchTab('lead')}
-            className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 flex items-center gap-1.5 ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`rounded-full font-medium transition-all duration-200 flex items-center gap-1.5 ${compactLeadUi ? 'px-3 py-1.5 text-xs' : 'px-6 py-2 text-sm'} ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
             💼 Leads ({leads.length}) {pinnedTab === 'lead' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
           <button
             onClick={() => switchTab('deal')}
-            className={`px-6 py-2 rounded-full font-medium text-sm transition-all duration-200 flex items-center gap-1.5 ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`rounded-full font-medium transition-all duration-200 flex items-center gap-1.5 ${compactLeadUi ? 'px-3 py-1.5 text-xs' : 'px-6 py-2 text-sm'} ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
             🎯 Deals ({deals.length}) {pinnedTab === 'deal' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
@@ -811,16 +824,16 @@ export default function CRMDashboard() {
         <button
           onClick={() => togglePinTab(pipelineType)}
           title={pinnedTab === pipelineType ? `Bỏ ghim tab ${pipelineType === 'lead' ? 'Lead' : 'Deal'}` : `Ghim tab ${pipelineType === 'lead' ? 'Lead' : 'Deal'} - mở CRM sẽ vào thẳng`}
-          className={`h-9 px-3 rounded-lg text-sm font-medium transition-all cursor-pointer flex items-center gap-1.5 ${pinnedTab === pipelineType ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700 border border-gray-200'}`}
+          className={`rounded-lg font-medium transition-all cursor-pointer flex items-center gap-1.5 ${compactLeadUi ? 'h-8 px-2.5 text-xs' : 'h-9 px-3 text-sm'} ${pinnedTab === pipelineType ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700 border border-gray-200'}`}
         >
-          <Pin className={`h-4 w-4 ${pinnedTab === pipelineType ? 'rotate-45' : ''}`} />
+          <Pin className={`${compactLeadUi ? 'h-3.5 w-3.5' : 'h-4 w-4'} ${pinnedTab === pipelineType ? 'rotate-45' : ''}`} />
           {pinnedTab === pipelineType ? 'Đã ghim' : 'Ghim'}
         </button>
       </div>
 
       {/* Search & Filters */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className={compactLeadUi ? 'space-y-2' : 'space-y-3'}>
+        <div className={`flex flex-wrap items-center ${compactLeadUi ? 'gap-2' : 'gap-3'}`}>
           {/* Search with instant results dropdown */}
           <div className="relative flex-1 min-w-[200px] max-w-lg">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -829,7 +842,7 @@ export default function CRMDashboard() {
               value={searchText}
               onChange={e => setSearchText(e.target.value)}
               placeholder={`🔍 Tìm nhanh: tên, SĐT, mã, mô tả, người phụ trách...`}
-              className="w-full h-10 pl-9 pr-8 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
+              className={`w-full ${ctrlH} pl-9 pr-8 bg-white border border-gray-200 rounded-xl ${ctrlTxt} focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm`}
             />
             {searchText && (
               <button onClick={() => setSearchText('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
@@ -878,12 +891,12 @@ export default function CRMDashboard() {
             <select
               value={timePreset}
               onChange={e => handleTimePresetChange(e.target.value)}
-              className={`h-10 px-3 pl-9 rounded-xl text-sm font-medium cursor-pointer transition-all border appearance-none pr-8 ${
+              className={`${ctrlH} px-3 pl-9 rounded-xl ${ctrlTxt} font-medium cursor-pointer transition-all border appearance-none pr-8 ${
                 timePreset
                   ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
               }`}
-              style={{ minWidth: '160px' }}
+              style={{ minWidth: compactLeadUi ? '140px' : '160px' }}
             >
               {TIME_PRESETS.map(p => (
                 <option key={p.key} value={p.key}>{p.label}</option>
@@ -901,8 +914,8 @@ export default function CRMDashboard() {
                 setKanbanLoadLimit(v);
                 localStorage.setItem('crm_kanban_load_limit', v);
               }}
-              className="h-10 px-3 pl-9 rounded-xl text-sm font-medium cursor-pointer transition-all border appearance-none pr-8 bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-              style={{ minWidth: '158px' }}
+              className={`${ctrlH} px-3 pl-9 rounded-xl ${ctrlTxt} font-medium cursor-pointer transition-all border appearance-none pr-8 bg-white text-gray-700 border-gray-200 hover:bg-gray-50`}
+              style={{ minWidth: compactLeadUi ? '142px' : '158px' }}
             >
               <option value="1000">📥 Tải 1.000</option>
               <option value="2000">📥 Tải 2.000</option>
@@ -1126,12 +1139,16 @@ export default function CRMDashboard() {
         )}
       </div>
 
-      {/* KPI Summary Row - MISA Style */}
-      <div data-tour="crm-kpis" className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* KPI — hàng ngang trong từng ô, min-w-0 để 4 cột chia đều không chừa khoảng trống */}
+      <div
+        data-tour="crm-kpis"
+        className="grid grid-cols-2 md:grid-cols-4 gap-1 md:gap-1.5"
+      >
         {pipelineType === 'lead' ? (
           <>
             <KPICard
-              icon={<Target className="h-6 w-6" />}
+              compact
+              icon={<Target className="h-3 w-3" />}
               iconBgColor="bg-blue-100"
               iconColor="text-blue-600"
               label="Tổng Lead"
@@ -1139,15 +1156,17 @@ export default function CRMDashboard() {
               trend={null}
             />
             <KPICard
-              icon={<Zap className="h-6 w-6" />}
+              compact
+              icon={<Zap className="h-3 w-3" />}
               iconBgColor="bg-emerald-100"
               iconColor="text-emerald-600"
               label="Đang xử lý"
-              value={leads.filter(l => !l.is_won).length}
+              value={leadActiveCount}
               trend={null}
             />
             <KPICard
-              icon={<CheckCircle2 className="h-6 w-6" />}
+              compact
+              icon={<CheckCircle2 className="h-3 w-3" />}
               iconBgColor="bg-purple-100"
               iconColor="text-purple-600"
               label="Chuyển Deal"
@@ -1155,7 +1174,8 @@ export default function CRMDashboard() {
               trend={null}
             />
             <KPICard
-              icon={<Percent className="h-6 w-6" />}
+              compact
+              icon={<Percent className="h-3 w-3" />}
               iconBgColor="bg-amber-100"
               iconColor="text-amber-600"
               label="Tỷ lệ chuyển đổi"
@@ -1166,7 +1186,7 @@ export default function CRMDashboard() {
         ) : (
           <>
             <KPICard
-              icon={<Zap className="h-6 w-6" />}
+              icon={<Zap className="h-3.5 w-3.5" />}
               iconBgColor="bg-cyan-100"
               iconColor="text-cyan-600"
               label="Tổng Deal"
@@ -1174,15 +1194,15 @@ export default function CRMDashboard() {
               trend={null}
             />
             <KPICard
-              icon={<FileText className="h-6 w-6" />}
+              icon={<FileText className="h-3.5 w-3.5" />}
               iconBgColor="bg-blue-100"
               iconColor="text-blue-600"
               label="Đang đàm phán"
-              value={deals.filter(d => !d.is_won).length}
+              value={dealNegotiatingCount}
               trend={null}
             />
             <KPICard
-              icon={<CheckCircle2 className="h-6 w-6" />}
+              icon={<CheckCircle2 className="h-3.5 w-3.5" />}
               iconBgColor="bg-green-100"
               iconColor="text-green-600"
               label="Thắng"
@@ -1190,11 +1210,11 @@ export default function CRMDashboard() {
               trend={null}
             />
             <KPICard
-              icon={<DollarSign className="h-6 w-6" />}
+              icon={<DollarSign className="h-3.5 w-3.5" />}
               iconBgColor="bg-amber-100"
               iconColor="text-amber-600"
               label="Doanh thu thắng"
-              value={formatVND(kpis.won_value || 0)}
+              value={formatVND(kpis.won_value)}
               trend={null}
             />
           </>
@@ -1202,7 +1222,7 @@ export default function CRMDashboard() {
       </div>
 
       {/* View Mode Toggle */}
-      <div className="flex items-center gap-1 mb-3">
+      <div className={`flex items-center gap-1 ${compactLeadUi ? 'mb-2' : 'mb-3'}`}>
         {[
           { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
           { id: 'list', icon: List, label: 'Danh sách' },
@@ -1260,6 +1280,7 @@ export default function CRMDashboard() {
           calculateDays={calculateDays}
           mergeSelectedIds={manualMergeIds}
           onToggleMergeSelect={toggleManualMergeSelect}
+          compact={pipelineType === 'lead'}
         />
       </div>
       )}
@@ -1335,19 +1356,38 @@ export default function CRMDashboard() {
   );
 }
 
-// KPI Card Component - MISA Style
-function KPICard({ icon, iconBgColor, iconColor, label, value, trend }) {
+// KPI — layout ngang, kích thước ~một nửa bản trước (Lead + Deal)
+function KPICard({ icon, iconBgColor, iconColor, label, value, trend, compact }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:shadow-md transition-shadow duration-200">
-      <div className="flex items-start justify-between mb-4">
-        <div className={`p-3 rounded-lg ${iconBgColor}`}>
-          <div className={iconColor}>{icon}</div>
-        </div>
+    <div
+      className={`min-w-0 flex items-center rounded-lg border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow duration-200 ${
+        compact ? 'gap-1.5 p-1.5' : 'gap-1.5 p-2 md:gap-2 md:p-2'
+      }`}
+    >
+      <div
+        className={`shrink-0 rounded-md ${iconBgColor} ${iconColor} p-1`}
+      >
+        {icon}
       </div>
-      <div>
-        <p className="text-xs text-gray-500 font-semibold uppercase mb-1">{label}</p>
-        <p className="text-2xl md:text-3xl font-bold text-gray-900">{value}</p>
-        {trend && <p className="text-xs text-emerald-600 mt-2">↑ {trend}%</p>}
+      <div className="min-w-0 flex-1 flex flex-col justify-center gap-0">
+        <p
+          className={`text-gray-500 font-semibold uppercase tracking-wide truncate leading-none ${
+            compact ? 'text-[9px]' : 'text-[10px] md:text-[11px]'
+          }`}
+          title={label}
+        >
+          {label}
+        </p>
+        <p
+          className={`font-bold text-gray-900 tabular-nums leading-tight break-words ${
+            compact ? 'text-xs md:text-sm' : 'text-sm md:text-base'
+          }`}
+        >
+          {value}
+        </p>
+        {trend != null && trend !== '' && (
+          <p className={`text-emerald-600 leading-none ${compact ? 'text-[9px]' : 'text-[10px]'}`}>↑ {trend}%</p>
+        )}
       </div>
     </div>
   );
@@ -1793,7 +1833,7 @@ function ManualMergeLeadsModal({ open, onClose, ids, itemsById, pipelineType, on
 
 // Kanban Stage Card - MISA Style (responsive scroll)
 
-function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect }) {
+function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect, compact }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
@@ -1841,11 +1881,9 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex-shrink-0 w-96 rounded-lg overflow-hidden transition-all duration-200 ${
-        isOverColumn
-          ? 'ring-2 ring-blue-500 ring-dashed'
-          : ''
-      }`}
+      className={`flex-shrink-0 rounded-lg overflow-hidden transition-all duration-200 ${
+        compact ? 'w-80' : 'w-96'
+      } ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
     >
       {/* Colored Header Bar */}
       <div
@@ -1854,21 +1892,21 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
       />
 
       {/* Stage Header */}
-      <div className={`bg-white border border-gray-200 border-t-0 p-4 transition-all ${
-        isOverColumn ? 'bg-blue-50' : ''
-      }`}>
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">{stage.icon || '📌'}</span>
-            <h3 className="font-semibold text-gray-900">{stage.name}</h3>
+      <div className={`bg-white border border-gray-200 border-t-0 transition-all ${
+        compact ? 'p-2.5' : 'p-4'
+      } ${isOverColumn ? 'bg-blue-50' : ''}`}>
+        <div className={`flex items-center justify-between ${compact ? 'mb-1' : 'mb-2'}`}>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className={compact ? 'text-base shrink-0' : 'text-lg shrink-0'}>{stage.icon || '📌'}</span>
+            <h3 className={`font-semibold text-gray-900 truncate ${compact ? 'text-sm' : ''}`}>{stage.name}</h3>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs font-bold rounded">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`px-2 py-1 bg-gray-100 text-gray-700 font-bold rounded ${compact ? 'text-[10px]' : 'text-xs'}`}>
               {items.length}
             </span>
           </div>
         </div>
-        <p className="text-xs text-gray-500">
+        <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
           Giá trị: {formatVND(items.reduce((sum, item) => sum + (item.estimated_value || 0), 0))}
         </p>
       </div>
@@ -1876,9 +1914,9 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
       {/* Cards Container - responsive height theo màn hình */}
       <div
         ref={containerRef}
-        className={`bg-gray-50 border border-gray-200 border-t-0 p-3 overflow-y-auto space-y-3 transition-all ${
-          isOverColumn ? 'bg-blue-50' : ''
-        }`}
+        className={`bg-gray-50 border border-gray-200 border-t-0 overflow-y-auto transition-all ${
+          compact ? 'p-2 space-y-2' : 'p-3 space-y-3'
+        } ${isOverColumn ? 'bg-blue-50' : ''}`}
         style={{ maxHeight: columnMaxH, minHeight: '200px' }}
       >
         {items.length === 0 ? (
@@ -1898,6 +1936,7 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
               calculateDays={calculateDays}
               mergeSelectedIds={mergeSelectedIds}
               onToggleMergeSelect={onToggleMergeSelect}
+              compact={compact}
             />
           ))
         )}
@@ -1907,7 +1946,7 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
 }
 
 // Kanban Item Card - MISA Style
-function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect, compact }) {
   const navigate = useNavigate();
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-merge-checkbox]')) {
@@ -1938,7 +1977,9 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
         markCrmPipelineCardFocus(item.id);
         navigate(`/crm/leads/${item.id}`);
       }}
-      className={`relative bg-white rounded-lg border border-gray-200 p-3 pt-9 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
+      className={`relative bg-white rounded-lg border border-gray-200 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg ${
+        compact ? 'p-2 pt-7' : 'p-3 pt-9'
+      } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{
         borderLeft: `3px solid ${stageColor}`,
       }}
@@ -1946,7 +1987,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
       {onToggleMergeSelect && (
         <label
           data-merge-checkbox
-          className="absolute top-2 right-2 z-20 flex items-center justify-center cursor-pointer rounded-md p-0.5 hover:bg-gray-100"
+          className={`absolute z-20 flex items-center justify-center cursor-pointer rounded-md p-0.5 hover:bg-gray-100 ${compact ? 'top-1.5 right-1.5' : 'top-2 right-2'}`}
           onClick={(ev) => ev.stopPropagation()}
           onMouseDown={(ev) => ev.stopPropagation()}
           title="Chọn để gộp thủ công"
@@ -1955,21 +1996,21 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
             type="checkbox"
             checked={!!selectedForMerge}
             onChange={() => onToggleMergeSelect(item.id)}
-            className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+            className={`rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer ${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'}`}
           />
         </label>
       )}
       {/* Header: Code + Value */}
-      <div className="flex items-start justify-between mb-2 pr-7">
-        <p className="text-xs font-semibold text-blue-600">{item.code}</p>
+      <div className={`flex items-start justify-between pr-7 ${compact ? 'mb-1' : 'mb-2'}`}>
+        <p className={`font-semibold text-blue-600 ${compact ? 'text-[10px]' : 'text-xs'}`}>{item.code}</p>
         {item.estimated_value > 0 && (
-          <p className="text-sm font-bold text-emerald-600">{formatVND(item.estimated_value)}</p>
+          <p className={`font-bold text-emerald-600 ${compact ? 'text-[10px] leading-tight text-right max-w-[52%]' : 'text-sm'}`}>{formatVND(item.estimated_value)}</p>
         )}
       </div>
 
       {/* Title */}
-      <div className="flex items-start gap-2 mb-2 min-w-0">
-        <p className="text-sm font-medium text-gray-900 truncate flex-1 min-w-0">{item.title}</p>
+      <div className={`flex items-start gap-1.5 min-w-0 ${compact ? 'mb-1' : 'mb-2'}`}>
+        <p className={`font-medium text-gray-900 truncate flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'}`}>{item.title}</p>
         {item.is_new_for_current_user && (
           <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-white bg-rose-500 px-1.5 py-0.5 rounded leading-tight">Mới</span>
         )}
@@ -1977,12 +2018,12 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
 
       {/* Customer name + Phone */}
       {(item.customer?.full_name || item.customer?.phone) && (
-        <div className="mb-2 space-y-0.5">
+        <div className={`space-y-0.5 ${compact ? 'mb-1' : 'mb-2'}`}>
           {item.customer?.full_name && (
-            <p className="text-xs text-gray-600 truncate">👤 {item.customer.full_name}</p>
+            <p className={`text-gray-600 truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>👤 {item.customer.full_name}</p>
           )}
           {item.customer?.phone && (
-            <p className="text-xs text-green-600 font-medium truncate">📞 {item.customer.phone}</p>
+            <p className={`text-green-600 font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>📞 {item.customer.phone}</p>
           )}
         </div>
       )}
@@ -1998,27 +2039,29 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
             return (
               <div className="flex items-center gap-2 min-w-0">
                 <div
-                  className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                  className={`rounded-full flex items-center justify-center font-bold text-white shrink-0 ${
+                    compact ? 'h-5 w-5 text-[10px]' : 'h-6 w-6 text-xs'
+                  }`}
                   style={{ backgroundColor: stageColor }}
                 >
                   {getInitials(u.full_name)}
                 </div>
                 <div className="min-w-0">
                   <p className="text-[10px] text-gray-400 leading-tight">Phụ trách</p>
-                  <p className="text-xs text-gray-700 font-medium truncate">{u.full_name}</p>
+                  <p className={`text-gray-700 font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>{u.full_name}</p>
                 </div>
               </div>
             );
           })()}
         </div>
-        <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded whitespace-nowrap shrink-0">
+        <span className={`text-gray-500 bg-gray-100 rounded whitespace-nowrap shrink-0 ${compact ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'}`}>
           {calculateDays(item.created_at)}
         </span>
       </div>
 
       {/* Deadline */}
       {item.expected_close_date && (
-        <div className={`mt-2 text-[10px] px-2 py-1 rounded-lg font-medium ${
+        <div className={`${compact ? 'mt-1' : 'mt-2'} text-[10px] px-2 py-1 rounded-lg font-medium ${
           new Date(item.expected_close_date) < new Date()
             ? 'bg-red-100 text-red-600'
             : new Date(item.expected_close_date) < new Date(Date.now() + 3 * 86400000)
@@ -2041,10 +2084,10 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
 }
 
 // Kanban View Container - MISA Style
-function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect }) {
+function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect, compact }) {
   return (
     <div className="overflow-x-auto pb-4">
-      <div className="flex gap-4 min-w-max">
+      <div className={`flex min-w-max ${compact ? 'gap-2.5' : 'gap-4'}`}>
         {pipeline.map(stage => (
           <KanbanStageCard
             key={stage.id}
@@ -2055,6 +2098,7 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeS
             calculateDays={calculateDays}
             mergeSelectedIds={mergeSelectedIds}
             onToggleMergeSelect={onToggleMergeSelect}
+            compact={compact}
           />
         ))}
       </div>
