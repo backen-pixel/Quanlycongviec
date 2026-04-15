@@ -113,14 +113,15 @@ import GuidePage from './pages/GuidePage';
 import CategoriesPage from './pages/CategoriesPage';
 import PrivacyPage from './pages/PrivacyPage';
 import VoiceRecordingsPage from './pages/VoiceRecordingsPage';
+import MessengerHubPage from './pages/MessengerHubPage';
 
 import { Settings } from 'lucide-react';
 
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
-import AIAssistantChat from './components/AIAssistantChat';
 import { ThemeProvider } from './components/ThemeProvider';
 import ThemeSettingsPage from './pages/ThemeSettingsPage';
-import { CrmNotesFabProvider, GlobalCrmChatNotesFab } from './context/CrmNotesFabContext';
+import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
+import { MessengerDockProvider } from './context/MessengerDockContext';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
@@ -148,28 +149,26 @@ function ProtectedLayout() {
 
   return (
     <CrmNotesFabProvider>
-      <div className="flex h-screen bg-[var(--color-page-bg)] relative">
-        {/* Background image layer */}
-        <div className="absolute inset-0 pointer-events-none z-0"
-          style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }} />
-        <div className="absolute inset-0 pointer-events-none z-0"
-          style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
-        <Sidebar />
-        <div className="flex-1 flex flex-col min-w-0 relative z-10">
-          <main className="flex-1 overflow-y-auto w-full">
-            {isFullscreen ? (
-              <Outlet />
-            ) : (
-              <div className="p-6 w-full max-w-full">
+        <div className="flex h-screen bg-[var(--color-page-bg)] relative">
+          {/* Background image layer */}
+          <div className="absolute inset-0 pointer-events-none z-0"
+            style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }} />
+          <div className="absolute inset-0 pointer-events-none z-0"
+            style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
+          <Sidebar />
+          <div className="flex-1 flex flex-col min-w-0 relative z-10 pr-12">
+            <main className="flex-1 overflow-y-auto w-full">
+              {isFullscreen ? (
                 <Outlet />
-              </div>
-            )}
-          </main>
+              ) : (
+                <div className="p-6 w-full max-w-full">
+                  <Outlet />
+                </div>
+              )}
+            </main>
+          </div>
+          <PinnedProjectsWidget />
         </div>
-        <PinnedProjectsWidget />
-        <AIAssistantChat />
-        <GlobalCrmChatNotesFab />
-      </div>
     </CrmNotesFabProvider>
   );
 }
@@ -186,6 +185,7 @@ export default function App() {
     <ErrorBoundary>
     <AuthProvider>
       <BrowserRouter>
+        <MessengerDockProvider>
         <ThemeProvider>
         
         <Routes>
@@ -226,6 +226,7 @@ export default function App() {
             <Route path="/permissions" element={<PermissionsPage />} />
             <Route path="/crm" element={<Navigate to="/crm/dashboard" replace />} />
             <Route path="/crm/events" element={<EventsFeedPage />} />
+            <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
             <Route path="/crm/pipeline" element={<CRMDashboard />} />
             <Route path="/crm/leads/:id" element={<LeadDetail />} />
@@ -281,6 +282,7 @@ export default function App() {
         </Routes>
         
         </ThemeProvider>
+        </MessengerDockProvider>
       </BrowserRouter>
     </AuthProvider>
     </ErrorBoundary>

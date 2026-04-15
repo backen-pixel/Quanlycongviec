@@ -1,0 +1,95 @@
+export type CrmStage = {
+  id: string;
+  name: string;
+  color?: string;
+  icon?: string | null;
+  pipeline_type?: string;
+  order_index?: number;
+  is_won?: boolean;
+  is_lost?: boolean;
+};
+
+export type CrmLeadListItem = {
+  id: string;
+  code?: string | null;
+  title?: string | null;
+  type?: string | null;
+  stage_id?: string | null;
+  stage?: CrmStage | null;
+  customer?: { id?: string; full_name?: string | null; phone?: string | null } | null;
+  estimated_value?: number | null;
+  created_at?: string | null;
+  is_new_for_current_user?: boolean;
+  assignee?: { id?: string; full_name?: string | null } | null;
+  lead_owner?: { id?: string; full_name?: string | null } | null;
+  source?: { id?: string; name?: string | null; icon?: string | null } | null;
+};
+
+export type CrmLeadDetail = CrmLeadListItem & {
+  company_id?: string | null;
+  customer?: {
+    id?: string;
+    full_name?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    company?: string | null;
+    address?: string | null;
+    tax_code?: string | null;
+  } | null;
+  assignee?: { id?: string; full_name?: string | null } | null;
+  lead_owner?: { id?: string; full_name?: string | null } | null;
+  source?: { id?: string; name?: string | null; icon?: string | null } | null;
+  lost_reason?: string | null;
+  lost_at?: string | null;
+  project_id?: string | null;
+};
+
+export type CrmActivity = {
+  id: string;
+  type?: string;
+  title?: string | null;
+  description?: string | null;
+  activity_date?: string | null;
+  creator?: { id?: string; full_name?: string | null } | null;
+};
+
+export type CrmLeadMember = {
+  id?: string;
+  user_id: string;
+  role?: string | null;
+  user?: { id?: string; full_name?: string | null; email?: string | null } | null;
+};
+
+export type CrmLeadMessage = {
+  id: string;
+  content?: string | null;
+  created_at?: string | null;
+  message_type?: string | null;
+  is_system?: boolean;
+  user?: { id?: string; full_name?: string | null } | null;
+  attachment_url?: string | null;
+  attachment_name?: string | null;
+};
+
+export type CrmDocument = {
+  id: string;
+  name?: string | null;
+  doc_type?: string | null;
+  file_url?: string | null;
+};
+
+export type CrmTask = {
+  id: string;
+  title?: string | null;
+  description?: string | null;
+  deadline?: string | null;
+  priority?: string | null;
+  stage_slug?: string | null;
+  status?: string | null;
+  assignee_id?: string | null;
+  supervisor_id?: string | null;
+  assignee?: { full_name?: string | null } | null;
+};
+
+export type CrmCompany = { id: string; name?: string; short_name?: string | null };
+export type CrmSource = { id: string; name?: string };

@@ -1,0 +1,68 @@
+import { Alert } from 'react-native';
+import { navigationRef } from '../navigation/navigationRef';
+import { openWebPath } from './openWeb';
+import type { AppNotification } from '../types/notifications';
+
+function meta(n: AppNotification): Record<string, unknown> {
+  const m = n.metadata;
+  return m && typeof m === 'object' ? (m as Record<string, unknown>) : {};
+}
+
+/** Điều hướng từ một thông báo (giố logic NotificationsScreen). */
+export function navigateFromAppNotification(n: AppNotification): void {
+  if (!navigationRef.isReady()) return;
+  const m = meta(n);
+  const pid =
+    (typeof m.project_id === 'string' && m.project_id) ||
+    (n.entity_type === 'project' && n.entity_id ? n.entity_id : null);
+  const navTab = typeof m.nav_tab === 'string' ? m.nav_tab : undefined;
+  if (pid) {
+    const q = navTab ? `?tab=${encodeURIComponent(navTab)}` : '';
+    openWebPath(`/projects/${pid}${q}`);
+    return;
+  }
+  if (n.entity_type === 'task' && n.entity_id) {
+    openWebPath(`/tasks?task=${encodeURIComponent(n.entity_id)}`);
+    return;
+  }
+  if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal' || n.entity_type === 'lead') {
+    const id = n.entity_id;
+    if (id) {
+      navigationRef.navigate('Main', {
+        screen: 'CrmTab',
+        params: { screen: 'LeadDetail', params: { id } },
+      });
+    }
+    return;
+  }
+  if (n.entity_type === 'quotation' && n.entity_id) {
+    openWebPath(`/crm/quotations/${n.entity_id}`);
+    return;
+  }
+  if (n.entity_type === 'order' && n.entity_id) {
+    openWebPath(`/crm/orders/${n.entity_id}`);
+    return;
+  }
+  if (n.entity_type === 'invoice' && n.entity_id) {
+    openWebPath(`/crm/invoices/${n.entity_id}`);
+    return;
+  }
+  if (n.entity_type === 'crm_task') {
+    openWebPath('/crm/tasks');
+    return;
+  }
+  if (n.entity_type === 'event') {
+    openWebPath('/crm/events');
+    return;
+  }
+  if (n.entity_type === 'release_note') {
+    openWebPath('/updates');
+    return;
+  }
+  Alert.alert('Thông báo', 'Không có liên kết mở cho loại thông báo này.');
+}
+
+export function navigateToNotificationsTab(): void {
+  if (!navigationRef.isReady()) return;
+  navigationRef.navigate('Main', { screen: 'NotificationsTab' });
+}

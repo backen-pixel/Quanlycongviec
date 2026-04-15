@@ -121,6 +121,54 @@ r.get('/departments', async (req, res) => {
   } catch { res.status(500).json({ error: 'Lỗi' }); }
 });
 
+/** Client gọi định kỳ (~2 phút) để báo còn hoạt động; quá 2 phút không ping → coi offline */
+r.post('/ping', async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    const { error } = await supabase.from('user_last_activity').upsert(
+      { user_id: uid, last_ping_at: new Date().toISOString() },
+      { onConflict: 'user_id' },
+    );
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Trạng thái online theo last ping (ngưỡng 2 phút) */
+r.post('/presence', async (req, res) => {
+  try {
+    const raw = req.body?.user_ids;
+    const ids = Array.isArray(raw) ? raw : [];
+    const seen = new Set();
+    const filtered = [];
+    for (const id of ids) {
+      const s = String(id || '');
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      filtered.push(s);
+      if (filtered.length >= 200) break;
+    }
+    if (!filtered.length) return res.json({ presence: {} });
+    const { data, error } = await supabase.from('user_last_activity').select('user_id, last_ping_at').in('user_id', filtered);
+    if (error) throw error;
+    const threshold = Date.now() - 2 * 60 * 1000;
+    const presence = {};
+    for (const id of filtered) presence[id] = { online: false, last_ping_at: null };
+    for (const row of data || []) {
+      const ts = row.last_ping_at ? new Date(row.last_ping_at).getTime() : 0;
+      presence[row.user_id] = {
+        online: ts > threshold,
+        last_ping_at: row.last_ping_at,
+      };
+    }
+    res.json({ presence });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ════════════════════════════════════════════════════
 // PARAM ROUTES (/:id comes after static routes)
 // ════════════════════════════════════════════════════
