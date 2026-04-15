@@ -14,31 +14,74 @@ let prefs = {
   invoice_overdue: true,
 };
 
-export function getNotificationPrefsCache() {
-  let readTitleAloud = true;
-  try {
-    if (localStorage.getItem('notification_read_title_aloud') === '0') readTitleAloud = false;
-  } catch {
-    /* ignore */
-  }
+/**
+ * `notifications.type` từ server → cột preferences (đồng bộ backend `notificationPrefTypes.js`).
+ */
+const NOTIFICATION_TYPE_PREF_MAP = {
+  task_assigned: 'task_assigned',
+  task_updated: 'task_completed',
+  task_completed: 'task_completed',
+  project_assigned: 'task_assigned',
+  crm_task_assigned: 'task_assigned',
+  crm_task_completed: 'task_completed',
 
+  deadline_warning: 'deadline_warning',
+  deadline_reminder: 'deadline_warning',
+  deadline_overdue: 'deadline_warning',
+  crm_deadline_warning: 'deadline_warning',
+  crm_deadline_1h: 'deadline_warning',
+  crm_deadline_overdue: 'deadline_warning',
+  crm_deadline_set: 'deadline_warning',
+
+  comment_added: 'comment_added',
+
+  stage_changed: 'stage_changed',
+  project_stage_changed: 'stage_changed',
+  lead_stage_changed: 'stage_changed',
+
+  deal_won: 'deal_won',
+
+  approval_request: 'approval_request',
+
+  checklist_completed: 'checklist_completed',
+
+  lead_assigned: 'lead_assigned',
+
+  order_confirmed: 'order_confirmed',
+  order_created: 'order_confirmed',
+  order_updated: 'order_confirmed',
+
+  invoice_overdue: 'invoice_overdue',
+};
+
+const PREF_KEYS = new Set([
+  'task_assigned',
+  'task_completed',
+  'deadline_warning',
+  'comment_added',
+  'stage_changed',
+  'deal_won',
+  'approval_request',
+  'checklist_completed',
+  'lead_assigned',
+  'order_confirmed',
+  'invoice_overdue',
+]);
+
+export function preferenceKeyForNotificationType(type) {
+  if (!type || typeof type !== 'string') return null;
+  if (NOTIFICATION_TYPE_PREF_MAP[type]) return NOTIFICATION_TYPE_PREF_MAP[type];
+  if (PREF_KEYS.has(type)) return type;
+  return null;
+}
+
+export function getNotificationPrefsCache() {
   let sound_volume_percent = 100;
   try {
     const raw = localStorage.getItem('notification_volume_percent');
     if (raw != null && raw !== '') {
       const n = parseInt(raw, 10);
       if (Number.isFinite(n)) sound_volume_percent = Math.min(150, Math.max(0, n));
-    }
-  } catch {
-    /* ignore */
-  }
-
-  let speech_volume_percent = 100;
-  try {
-    const raw = localStorage.getItem('notification_speech_volume_percent');
-    if (raw != null && raw !== '') {
-      const n = parseInt(raw, 10);
-      if (Number.isFinite(n)) speech_volume_percent = Math.min(100, Math.max(0, n));
     }
   } catch {
     /* ignore */
@@ -72,9 +115,7 @@ export function getNotificationPrefsCache() {
 
   return {
     ...prefs,
-    read_title_aloud: readTitleAloud,
     sound_volume_percent,
-    speech_volume_percent,
     use_custom_sound,
     custom_sound_start_sec,
     custom_sound_play_sec,
@@ -84,31 +125,13 @@ export function getNotificationPrefsCache() {
 
 export function setNotificationPrefsCache(next) {
   if (next && typeof next === 'object') {
-    const { read_title_aloud: _r, ...rest } = next;
-    prefs = { ...prefs, ...rest };
-  }
-}
-
-/** Bật/tắt đọc to tiêu đề (lưu máy, không cần cột DB). */
-export function setReadTitleAloudEnabled(enabled) {
-  try {
-    localStorage.setItem('notification_read_title_aloud', enabled ? '1' : '0');
-  } catch {
-    /* ignore */
+    prefs = { ...prefs, ...next };
   }
 }
 
 export function setNotificationVolumePercent(percent) {
   try {
     localStorage.setItem('notification_volume_percent', String(Math.min(150, Math.max(0, Math.round(percent)))));
-  } catch {
-    /* ignore */
-  }
-}
-
-export function setNotificationSpeechVolumePercent(percent) {
-  try {
-    localStorage.setItem('notification_speech_volume_percent', String(Math.min(100, Math.max(0, Math.round(percent)))));
   } catch {
     /* ignore */
   }
@@ -156,9 +179,9 @@ export function clearNotificationCustomSoundMeta() {
   }
 }
 
-/** Nếu không có cột loại trên server → coi như bật. */
+/** Loại không map được → coi như bật (thông báo hệ thống / loại mới). */
 export function isNotificationTypeEnabled(type) {
-  if (!type) return true;
-  const v = prefs[type];
-  return v !== false;
+  const key = preferenceKeyForNotificationType(type);
+  if (!key) return true;
+  return prefs[key] !== false;
 }

@@ -119,7 +119,23 @@ export default function NotificationCenter({ socket }) {
         const { data } = await api.get('/push/preferences');
         if (!cancelled && data) setNotificationPrefsCache(data);
       } catch {
-        if (!cancelled) setNotificationPrefsCache({ sound: true });
+        if (!cancelled) {
+          setNotificationPrefsCache({
+            browser_push: true,
+            sound: true,
+            task_assigned: true,
+            task_completed: true,
+            deadline_warning: true,
+            comment_added: true,
+            stage_changed: true,
+            deal_won: true,
+            approval_request: true,
+            checklist_completed: true,
+            lead_assigned: true,
+            order_confirmed: true,
+            invoice_overdue: true,
+          });
+        }
       }
     })();
     return () => {
@@ -130,14 +146,15 @@ export default function NotificationCenter({ socket }) {
   useEffect(() => {
     if (!socket) return;
     const handler = (notif) => {
+      if (!isNotificationTypeEnabled(notif?.type)) return;
+
       setUnreadCount(c => c + 1);
       setNotifications(prev => [notif, ...prev]);
-
       setToastNotification(notif);
 
       const p = getNotificationPrefsCache();
-      if (p.sound !== false && isNotificationTypeEnabled(notif.type)) {
-        void alertIncomingNotification({ title: notif.title, message: notif.message });
+      if (p.sound !== false) {
+        void alertIncomingNotification({ type: notif.type });
       }
     };
     socket.on('notification', handler);

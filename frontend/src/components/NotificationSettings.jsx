@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../lib/api';
 import {
   setNotificationPrefsCache,
-  setReadTitleAloudEnabled,
   setNotificationVolumePercent,
-  setNotificationSpeechVolumePercent,
   setUseCustomNotificationSound,
   setNotificationCustomSoundTrim,
   setNotificationCustomSoundFileDurationSec,
@@ -26,9 +24,7 @@ export default function NotificationSettings({ isOpen, onClose }) {
   const [saveStatus, setSaveStatus] = useState('');
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
-  const [readTitleAloud, setReadTitleAloud] = useState(true);
   const [soundVolume, setSoundVolume] = useState(100);
-  const [speechVolume, setSpeechVolume] = useState(100);
   const [customSoundHint, setCustomSoundHint] = useState('');
   const [fileDurationSec, setFileDurationSec] = useState(0);
   const [trimStartSec, setTrimStartSec] = useState(0);
@@ -53,11 +49,8 @@ export default function NotificationSettings({ isOpen, onClose }) {
       checkPushSupport();
       fetchPreferences();
       try {
-        setReadTitleAloud(localStorage.getItem('notification_read_title_aloud') !== '0');
         const v = parseInt(localStorage.getItem('notification_volume_percent') || '100', 10);
         setSoundVolume(Number.isFinite(v) ? Math.min(150, Math.max(0, v)) : 100);
-        const sv = parseInt(localStorage.getItem('notification_speech_volume_percent') || '100', 10);
-        setSpeechVolume(Number.isFinite(sv) ? Math.min(100, Math.max(0, sv)) : 100);
         const useC = localStorage.getItem('notification_use_custom_sound') === '1';
         setHasCustomBell(useC);
         const d = parseFloat(localStorage.getItem('notification_custom_sound_file_duration_sec') || '0');
@@ -72,7 +65,7 @@ export default function NotificationSettings({ isOpen, onClose }) {
           setCustomSoundHint('');
         }
       } catch {
-        setReadTitleAloud(true);
+        /* ignore */
       }
     }
   }, [isOpen]);
@@ -178,12 +171,6 @@ export default function NotificationSettings({ isOpen, onClose }) {
     const x = Math.min(150, Math.max(0, Math.round(n)));
     setSoundVolume(x);
     setNotificationVolumePercent(x);
-  };
-
-  const applySpeechVolume = (n) => {
-    const x = Math.min(100, Math.max(0, Math.round(n)));
-    setSpeechVolume(x);
-    setNotificationSpeechVolumePercent(x);
   };
 
   const handleTrimStart = (value) => {
@@ -322,31 +309,8 @@ export default function NotificationSettings({ isOpen, onClose }) {
                     onChange={(ev) => applySoundVolume(Number(ev.target.value))}
                     className="w-full accent-blue-600 cursor-pointer"
                   />
-                  <p className="text-[10px] text-gray-500">0% = tắt chuông (vẫn có thể đọc thông báo nếu bật bên dưới).</p>
+                  <p className="text-[10px] text-gray-500">0% = tắt chuông.</p>
                 </div>
-                <div className="px-3 py-2 rounded-lg bg-gray-50 space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="text-sm text-gray-700">Âm lượng giọng đọc</label>
-                    <span className="text-xs font-mono text-gray-500">{speechVolume}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={speechVolume}
-                    onChange={(ev) => applySpeechVolume(Number(ev.target.value))}
-                    className="w-full accent-violet-600 cursor-pointer"
-                  />
-                </div>
-                <Toggle
-                  label="🗣 Đọc thông báo bằng giọng nói (TTS)"
-                  checked={readTitleAloud}
-                  onChange={() => {
-                    const next = !readTitleAloud;
-                    setReadTitleAloud(next);
-                    setReadTitleAloudEnabled(next);
-                  }}
-                />
                 <div className="px-3 py-2 rounded-lg border border-gray-100 space-y-3">
                   <p className="text-xs font-medium text-gray-800">Chuông tùy chỉnh (MP3, WAV, OGG…)</p>
                   <p className="text-[10px] text-gray-500">
@@ -408,7 +372,7 @@ export default function NotificationSettings({ isOpen, onClose }) {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => void playLoudNotificationSound()}
+                      onClick={() => void playLoudNotificationSound({ skipThrottle: true })}
                       className="h-8 px-3 rounded-lg bg-slate-100 text-slate-800 text-xs font-medium hover:bg-slate-200 cursor-pointer"
                     >
                       Nghe thử chuông
@@ -423,7 +387,7 @@ export default function NotificationSettings({ isOpen, onClose }) {
                   </div>
                 </div>
                 <p className="text-[10px] text-gray-400 px-1">
-                  Chuông mặc định phát tối đa 15 giây từ đầu file. Tắt đọc: gạt «Đọc thông báo bằng giọng nói» hoặc âm lượng giọng về 0%.
+                  Thông báo trong app chỉ kèm chuông, không đọc giọng. Chuông mặc định phát tối đa 15 giây từ đầu file (hoặc đoạn bạn chọn nếu dùng file tùy chỉnh).
                 </p>
               </div>
 

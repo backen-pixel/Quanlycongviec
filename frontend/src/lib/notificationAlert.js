@@ -1,10 +1,15 @@
-import { getNotificationPrefsCache } from './notificationPrefsCache';
+import { getNotificationPrefsCache, isNotificationTypeEnabled } from './notificationPrefsCache';
 import { getCustomNotificationSoundBuffer } from './notificationSoundIdb';
 
 const MAX_PLAY_SEC = 15;
 const DEFAULT_URL = '/notification.wav';
 /** Hệ số khuếch đại gốc; nhân thêm `sound_volume_percent` / 100 */
 const GAIN_BASE = 3.2;
+
+/** Nhiều thông báo cùng lúc: chỉ phát chuông tối đa một lần trong khoảng này (tránh chồng âm). */
+const BELL_MIN_INTERVAL_MS = 1400;
+
+let lastBellAt = 0;
 
 let audioContext = null;
 let defaultDecoded = null;
@@ -80,11 +85,19 @@ async function getBufferForPlay() {
 
 /**
  * Phát chuông (tối đa 15 giây), âm lượng theo cài đặt.
+ * @param {{ skipThrottle?: boolean }} [opts] — `skipThrottle: true` khi «Nghe thử» trong cài đặt (luôn phát).
  */
-export async function playLoudNotificationSound() {
+export async function playLoudNotificationSound(opts = {}) {
   const p = getNotificationPrefsCache();
   const volPct = Number(p.sound_volume_percent);
   const vol = Number.isFinite(volPct) ? Math.min(1.5, Math.max(0, volPct / 100)) : 1;
+  if (vol <= 0) return;
+
+  if (!opts.skipThrottle) {
+    const now = Date.now();
+    if (now - lastBellAt < BELL_MIN_INTERVAL_MS) return;
+    lastBellAt = now;
+  }
 
   try {
     const ready = await getBufferForPlay();
@@ -134,90 +147,17 @@ export async function playLoudNotificationSound() {
   }
 }
 
-function stripForSpeech(s) {
-  if (!s) return '';
-  return String(s)
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 /**
- * Đọc to tiêu đề (và phần đầu nội dung).
+ * Chỉ phát chuông (không đọc giọng).
+ * @param {{ type?: string }} [opts] — nếu có `type`, tôn trọng công tắc «Loại thông báo».
  */
-export function speakNotificationSummary(title, message) {
-  const p = getNotificationPrefsCache();
-  if (p.read_title_aloud === false) return;
-  const speechVol = Number(p.speech_volume_percent);
-  const utterVol = Number.isFinite(speechVol) ? Math.min(1, Math.max(0, speechVol / 100)) : 1;
-  if (utterVol <= 0) return;
-  if (!window.speechSynthesis) return;
-
-  const t = stripForSpeech(title);
-  const m = stripForSpeech(message);
-  let text = t;
-  if (m && m !== t) {
-    const short = m.length > 220 ? `${m.slice(0, 220)}…` : m;
-    text = `${t}. ${short}`;
-  }
-  if (!text) return;
-
-  try {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'vi-VN';
-    u.volume = utterVol;
-    u.rate = 0.9;
-    u.pitch = 1;
-
-    const applyVoice = () => {
-      const voices = window.speechSynthesis.getVoices();
-      const vi =
-        voices.find((v) => /^vi/i.test(v.lang)) ||
-        voices.find((v) => /vietnamese/i.test(v.name || ''));
-      if (vi) u.voice = vi;
-    };
-
-    let spoken = false;
-    const speakOnce = () => {
-      if (spoken) return;
-      spoken = true;
-      applyVoice();
-      window.speechSynthesis.speak(u);
-    };
-
-    if (window.speechSynthesis.getVoices().length) {
-      speakOnce();
-    } else {
-      const fallback = window.setTimeout(() => speakOnce(), 700);
-      const onVoices = () => {
-        window.clearTimeout(fallback);
-        window.speechSynthesis.removeEventListener('voiceschanged', onVoices);
-        speakOnce();
-      };
-      window.speechSynthesis.addEventListener('voiceschanged', onVoices);
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-/**
- * Chuông + (tuỳ cài đặt) đọc tóm tắt.
- */
-export async function alertIncomingNotification({ title, message }) {
+export async function alertIncomingNotification(opts = {}) {
   const p = getNotificationPrefsCache();
   if (p.sound === false) return;
+  if (opts.type && !isNotificationTypeEnabled(opts.type)) return;
 
   const volPct = Number(p.sound_volume_percent);
   if (!Number.isFinite(volPct) || volPct > 0) {
     await playLoudNotificationSound();
-  }
-
-  const speechVol = Number(p.speech_volume_percent);
-  const canSpeak = p.read_title_aloud !== false && (!Number.isFinite(speechVol) || speechVol > 0);
-  if (canSpeak) {
-    window.setTimeout(() => speakNotificationSummary(title, message), 380);
   }
 }
