@@ -119,6 +119,7 @@ import PinnedProjectsWidget from './components/PinnedProjectsWidget';
 import AIAssistantChat from './components/AIAssistantChat';
 import { ThemeProvider } from './components/ThemeProvider';
 import ThemeSettingsPage from './pages/ThemeSettingsPage';
+import { CrmNotesFabProvider, GlobalCrmChatNotesFab } from './context/CrmNotesFabContext';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
@@ -145,27 +146,30 @@ function ProtectedLayout() {
   const isFullscreen = fullscreenPages.some(p => location.pathname.startsWith(p));
 
   return (
-    <div className="flex h-screen bg-[var(--color-page-bg)] relative">
-      {/* Background image layer */}
-      <div className="absolute inset-0 pointer-events-none z-0"
-        style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }} />
-      <div className="absolute inset-0 pointer-events-none z-0"
-        style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0 relative z-10">
-        <main className="flex-1 overflow-y-auto w-full">
-          {isFullscreen ? (
-            <Outlet />
-          ) : (
-            <div className="p-6 w-full max-w-full">
+    <CrmNotesFabProvider>
+      <div className="flex h-screen bg-[var(--color-page-bg)] relative">
+        {/* Background image layer */}
+        <div className="absolute inset-0 pointer-events-none z-0"
+          style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }} />
+        <div className="absolute inset-0 pointer-events-none z-0"
+          style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
+        <Sidebar />
+        <div className="flex-1 flex flex-col min-w-0 relative z-10">
+          <main className="flex-1 overflow-y-auto w-full">
+            {isFullscreen ? (
               <Outlet />
-            </div>
-          )}
-        </main>
+            ) : (
+              <div className="p-6 w-full max-w-full">
+                <Outlet />
+              </div>
+            )}
+          </main>
+        </div>
+        <PinnedProjectsWidget />
+        <AIAssistantChat />
+        <GlobalCrmChatNotesFab />
       </div>
-      <PinnedProjectsWidget />
-      <AIAssistantChat />
-    </div>
+    </CrmNotesFabProvider>
   );
 }
 

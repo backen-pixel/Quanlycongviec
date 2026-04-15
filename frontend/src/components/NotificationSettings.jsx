@@ -1,5 +1,21 @@
 import { useEffect, useState } from 'react';
 import api from '../lib/api';
+import {
+  setNotificationPrefsCache,
+  setReadTitleAloudEnabled,
+  setNotificationVolumePercent,
+  setNotificationSpeechVolumePercent,
+  setUseCustomNotificationSound,
+  setNotificationCustomSoundTrim,
+  setNotificationCustomSoundFileDurationSec,
+  clearNotificationCustomSoundMeta,
+} from '../lib/notificationPrefsCache';
+import {
+  saveCustomNotificationSoundBuffer,
+  clearCustomNotificationSoundBuffer,
+  getCustomNotificationSoundBuffer,
+} from '../lib/notificationSoundIdb';
+import { playLoudNotificationSound, invalidateNotificationSoundCache } from '../lib/notificationAlert';
 
 /**
  * NotificationSettings — UI for notification preferences and web push
@@ -10,13 +26,85 @@ export default function NotificationSettings({ isOpen, onClose }) {
   const [saveStatus, setSaveStatus] = useState('');
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [readTitleAloud, setReadTitleAloud] = useState(true);
+  const [soundVolume, setSoundVolume] = useState(100);
+  const [speechVolume, setSpeechVolume] = useState(100);
+  const [customSoundHint, setCustomSoundHint] = useState('');
+  const [fileDurationSec, setFileDurationSec] = useState(0);
+  const [trimStartSec, setTrimStartSec] = useState(0);
+  const [trimPlaySec, setTrimPlaySec] = useState(15);
+  const [hasCustomBell, setHasCustomBell] = useState(false);
+
+  const syncTrimFromStorage = (duration) => {
+    const dur = Number(duration) || 0;
+    const st = parseFloat(localStorage.getItem('notification_custom_sound_start_sec') || '0');
+    const ln = parseFloat(localStorage.getItem('notification_custom_sound_play_sec') || '15');
+    const maxStart = Math.max(0, dur - 0.05);
+    const start = Number.isFinite(st) ? Math.min(Math.max(0, st), maxStart) : 0;
+    const maxLen = Math.min(15, Math.max(0.05, dur - start));
+    const play = Number.isFinite(ln) ? Math.min(Math.max(0.05, ln), maxLen) : Math.min(15, dur);
+    setTrimStartSec(start);
+    setTrimPlaySec(play);
+    setNotificationCustomSoundTrim(start, play);
+  };
 
   useEffect(() => {
     if (isOpen) {
       checkPushSupport();
       fetchPreferences();
+      try {
+        setReadTitleAloud(localStorage.getItem('notification_read_title_aloud') !== '0');
+        const v = parseInt(localStorage.getItem('notification_volume_percent') || '100', 10);
+        setSoundVolume(Number.isFinite(v) ? Math.min(150, Math.max(0, v)) : 100);
+        const sv = parseInt(localStorage.getItem('notification_speech_volume_percent') || '100', 10);
+        setSpeechVolume(Number.isFinite(sv) ? Math.min(100, Math.max(0, sv)) : 100);
+        const useC = localStorage.getItem('notification_use_custom_sound') === '1';
+        setHasCustomBell(useC);
+        const d = parseFloat(localStorage.getItem('notification_custom_sound_file_duration_sec') || '0');
+        if (useC && Number.isFinite(d) && d > 0) {
+          setFileDurationSec(d);
+          syncTrimFromStorage(d);
+          setCustomSoundHint(`Đang dùng file tùy chỉnh — tổng ${d.toFixed(1)}s (phát tối đa 15s / lần).`);
+        } else if (useC) {
+          setCustomSoundHint('Đang dùng file tùy chỉnh — đang đọc thời lượng…');
+        } else {
+          setFileDurationSec(0);
+          setCustomSoundHint('');
+        }
+      } catch {
+        setReadTitleAloud(true);
+      }
     }
   }, [isOpen]);
+
+  /** Bản cài cũ: có file trong IDB nhưng chưa lưu độ dài — giải mã một lần khi mở cài đặt. */
+  useEffect(() => {
+    if (!isOpen || !hasCustomBell) return;
+    if (fileDurationSec > 0) return;
+    let cancelled = false;
+    (async () => {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      try {
+        const raw = await getCustomNotificationSoundBuffer();
+        if (!raw || cancelled) return;
+        const buf = await ctx.decodeAudioData(raw.slice(0));
+        if (cancelled) return;
+        setFileDurationSec(buf.duration);
+        setNotificationCustomSoundFileDurationSec(buf.duration);
+        syncTrimFromStorage(buf.duration);
+        setCustomSoundHint(`Đang dùng file tùy chỉnh — tổng ${buf.duration.toFixed(1)}s (phát tối đa 15s / lần).`);
+      } catch {
+        if (!cancelled) setCustomSoundHint('Không đọc được file chuông — chọn lại (MP3/WAV…).');
+      } finally {
+        await ctx.close().catch(() => {});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, hasCustomBell, fileDurationSec]);
 
   const checkPushSupport = async () => {
     if ('serviceWorker' in navigator && 'PushManager' in window) {
@@ -33,15 +121,18 @@ export default function NotificationSettings({ isOpen, onClose }) {
     try {
       const { data } = await api.get('/push/preferences');
       setPreferences(data);
+      setNotificationPrefsCache(data);
     } catch (e) {
       // If table doesn't exist yet, use defaults
-      setPreferences({
+      const fallback = {
         browser_push: true, sound: true,
         task_assigned: true, task_completed: true, deadline_warning: true,
         comment_added: true, stage_changed: true, deal_won: true,
         approval_request: true, checklist_completed: true,
         lead_assigned: true, order_confirmed: true, invoice_overdue: true,
-      });
+      };
+      setPreferences(fallback);
+      setNotificationPrefsCache(fallback);
     }
   };
 
@@ -83,10 +174,94 @@ export default function NotificationSettings({ isOpen, onClose }) {
 
   const toggle = (key) => setPreferences(prev => ({ ...prev, [key]: !prev[key] }));
 
+  const applySoundVolume = (n) => {
+    const x = Math.min(150, Math.max(0, Math.round(n)));
+    setSoundVolume(x);
+    setNotificationVolumePercent(x);
+  };
+
+  const applySpeechVolume = (n) => {
+    const x = Math.min(100, Math.max(0, Math.round(n)));
+    setSpeechVolume(x);
+    setNotificationSpeechVolumePercent(x);
+  };
+
+  const handleTrimStart = (value) => {
+    const dur = fileDurationSec;
+    if (!(dur > 0)) return;
+    const maxStart = Math.max(0, dur - 0.05);
+    const st = Math.min(Math.max(0, value), maxStart);
+    const maxLen = Math.min(15, Math.max(0.05, dur - st));
+    const ln = Math.min(trimPlaySec, maxLen);
+    setTrimStartSec(st);
+    setTrimPlaySec(ln);
+    setNotificationCustomSoundTrim(st, ln);
+  };
+
+  const handleTrimPlay = (value) => {
+    const dur = fileDurationSec;
+    if (!(dur > 0)) return;
+    const maxStart = Math.max(0, dur - 0.05);
+    const st = Math.min(trimStartSec, maxStart);
+    const maxLen = Math.min(15, Math.max(0.05, dur - st));
+    const ln = Math.min(Math.max(0.05, value), maxLen);
+    setTrimStartSec(st);
+    setTrimPlaySec(ln);
+    setNotificationCustomSoundTrim(st, ln);
+  };
+
+  const handleCustomSoundFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) {
+      alert('Trình duyệt không hỗ trợ Web Audio.');
+      return;
+    }
+    const ctx = new Ctx();
+    try {
+      const raw = await file.arrayBuffer();
+      const copy = raw.slice(0);
+      const audioBuf = await ctx.decodeAudioData(copy);
+      await saveCustomNotificationSoundBuffer(raw.slice(0));
+      setUseCustomNotificationSound(true);
+      setHasCustomBell(true);
+      setFileDurationSec(audioBuf.duration);
+      setNotificationCustomSoundFileDurationSec(audioBuf.duration);
+      const defaultLen = Math.min(15, Math.max(0.05, audioBuf.duration));
+      setTrimStartSec(0);
+      setTrimPlaySec(defaultLen);
+      setNotificationCustomSoundTrim(0, defaultLen);
+      invalidateNotificationSoundCache();
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
+      setCustomSoundHint(
+        `Đã lưu ${ext === 'mp3' || file.type === 'audio/mpeg' ? 'MP3' : 'âm thanh'}: ${file.name} — dài ${audioBuf.duration.toFixed(1)}s (chọn đoạn phát bên dưới, tối đa 15s).`,
+      );
+    } catch (err) {
+      alert('Không đọc được file âm thanh (thử MP3/WAV). ' + (err?.message || String(err)));
+    } finally {
+      await ctx.close().catch(() => {});
+    }
+  };
+
+  const clearCustomSound = async () => {
+    await clearCustomNotificationSoundBuffer();
+    clearNotificationCustomSoundMeta();
+    setUseCustomNotificationSound(false);
+    invalidateNotificationSoundCache();
+    setCustomSoundHint('');
+    setFileDurationSec(0);
+    setHasCustomBell(false);
+    setTrimStartSec(0);
+    setTrimPlaySec(15);
+  };
+
   const save = async () => {
     setLoading(true);
     try {
       await api.put('/push/preferences', preferences);
+      setNotificationPrefsCache(preferences);
       setSaveStatus('✓ Đã lưu cài đặt');
       setTimeout(() => setSaveStatus(''), 3000);
     } catch { setSaveStatus('✗ Lỗi lưu cài đặt'); }
@@ -131,9 +306,125 @@ export default function NotificationSettings({ isOpen, onClose }) {
           ) : (
             <>
               {/* Global */}
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <h3 className="font-semibold text-xs text-gray-500 uppercase tracking-wide">Chung</h3>
-                <Toggle label="🔊 Âm thanh thông báo" checked={preferences.sound} onChange={() => toggle('sound')} />
+                <Toggle label="🔊 Bật chuông thông báo" checked={preferences.sound} onChange={() => toggle('sound')} />
+                <div className="px-3 py-2 rounded-lg bg-gray-50 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-sm text-gray-700">Âm lượng chuông</label>
+                    <span className="text-xs font-mono text-gray-500">{soundVolume}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={150}
+                    value={soundVolume}
+                    onChange={(ev) => applySoundVolume(Number(ev.target.value))}
+                    className="w-full accent-blue-600 cursor-pointer"
+                  />
+                  <p className="text-[10px] text-gray-500">0% = tắt chuông (vẫn có thể đọc thông báo nếu bật bên dưới).</p>
+                </div>
+                <div className="px-3 py-2 rounded-lg bg-gray-50 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-sm text-gray-700">Âm lượng giọng đọc</label>
+                    <span className="text-xs font-mono text-gray-500">{speechVolume}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={speechVolume}
+                    onChange={(ev) => applySpeechVolume(Number(ev.target.value))}
+                    className="w-full accent-violet-600 cursor-pointer"
+                  />
+                </div>
+                <Toggle
+                  label="🗣 Đọc thông báo bằng giọng nói (TTS)"
+                  checked={readTitleAloud}
+                  onChange={() => {
+                    const next = !readTitleAloud;
+                    setReadTitleAloud(next);
+                    setReadTitleAloudEnabled(next);
+                  }}
+                />
+                <div className="px-3 py-2 rounded-lg border border-gray-100 space-y-3">
+                  <p className="text-xs font-medium text-gray-800">Chuông tùy chỉnh (MP3, WAV, OGG…)</p>
+                  <p className="text-[10px] text-gray-500">
+                    File có thể dài bất kỳ; mỗi thông báo chỉ phát <strong>tối đa 15 giây</strong> — chọn đoạn bên dưới.
+                  </p>
+                  <input
+                    type="file"
+                    accept="audio/mpeg,audio/mp3,.mp3,audio/*,.wav,.ogg,.m4a,.webm"
+                    onChange={handleCustomSoundFile}
+                    className="block w-full text-xs text-gray-600 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-blue-50 file:text-blue-700 cursor-pointer"
+                  />
+                  {customSoundHint ? <p className="text-[10px] text-emerald-700 leading-snug">{customSoundHint}</p> : null}
+                  {hasCustomBell && fileDurationSec > 0 ? (
+                    (() => {
+                      const maxStart = Math.max(0, fileDurationSec - 0.05);
+                      const startClamped = Math.min(trimStartSec, maxStart);
+                      const maxPlay = Math.max(0.05, Math.min(15, fileDurationSec - startClamped));
+                      const playClamped = Math.min(trimPlaySec, maxPlay);
+                      return (
+                        <div className="space-y-3 rounded-lg bg-slate-50 p-2.5 border border-slate-100">
+                          <p className="text-[11px] font-semibold text-slate-800">Đoạn phát trong file</p>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[11px] text-slate-600">
+                              <span>Bắt đầu (giây)</span>
+                              <span className="font-mono">{startClamped.toFixed(1)}s / {fileDurationSec.toFixed(1)}s</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={maxStart || 0}
+                              step={0.1}
+                              value={startClamped}
+                              onChange={(ev) => handleTrimStart(Number(ev.target.value))}
+                              className="w-full accent-indigo-600 cursor-pointer"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[11px] text-slate-600">
+                              <span>Độ dài phát (tối đa 15s)</span>
+                              <span className="font-mono">{playClamped.toFixed(1)}s</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0.05}
+                              max={maxPlay}
+                              step={0.05}
+                              value={playClamped}
+                              onChange={(ev) => handleTrimPlay(Number(ev.target.value))}
+                              className="w-full accent-indigo-600 cursor-pointer"
+                            />
+                          </div>
+                          <p className="text-[10px] text-slate-500">
+                            Kết thúc đoạn ≈ {Math.min(fileDurationSec, startClamped + playClamped).toFixed(1)}s trong file.
+                          </p>
+                        </div>
+                      );
+                    })()
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void playLoudNotificationSound()}
+                      className="h-8 px-3 rounded-lg bg-slate-100 text-slate-800 text-xs font-medium hover:bg-slate-200 cursor-pointer"
+                    >
+                      Nghe thử chuông
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void clearCustomSound()}
+                      className="h-8 px-3 rounded-lg border border-gray-200 text-gray-700 text-xs hover:bg-gray-50 cursor-pointer"
+                    >
+                      Xóa chuông tùy chỉnh
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-400 px-1">
+                  Chuông mặc định phát tối đa 15 giây từ đầu file. Tắt đọc: gạt «Đọc thông báo bằng giọng nói» hoặc âm lượng giọng về 0%.
+                </p>
               </div>
 
               {/* By Type */}

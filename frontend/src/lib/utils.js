@@ -58,8 +58,10 @@ export const TASK_COLORS = {
 };
 
 export const formatVND = (n) => {
-  if (!n) return '—';
-  return new Intl.NumberFormat('vi-VN').format(n) + 'đ';
+  if (n === null || n === undefined || n === '') return '—';
+  const num = Number(n);
+  if (Number.isNaN(num)) return '—';
+  return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Math.round(num))}đ`;
 };
 
 export const formatDate = (d) => {

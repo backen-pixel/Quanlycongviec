@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -12,12 +13,13 @@ import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CallLogsTab from '../components/CallLogsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
+import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) */
-const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'facebook', 'team', 'chat', 'calls', 'approvals']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'facebook', 'team', 'chat', 'calls', 'approvals']);
 const LEGACY_TAB_MAP = {
   timeline: 'activities',
-  'crm-notes': 'activities',
+  'crm-notes': 'notes',
   'crm-tasks': 'tasks',
   'crm-chat': 'chat',
   'crm-activities': 'activities',
@@ -230,7 +232,8 @@ function ProductionActivitiesDealLayout({
 export default function ProductionDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { socket } = useAuth();
+  const { socket, user } = useAuth();
+  const { setCrmNotesAnchor } = useCrmNotesFab();
   const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -256,6 +259,45 @@ export default function ProductionDetail() {
     () => filterProjectTasksByWorkArea(project?.tasks, workArea),
     [project?.tasks, workArea],
   );
+
+  const noteActivities = useMemo(
+    () => (crmActivities || []).filter((a) => a.type === 'note'),
+    [crmActivities],
+  );
+
+  const refreshCrmActivities = useCallback(async () => {
+    const dealId = project?.crmDeals?.[0]?.id;
+    if (!dealId) return;
+    try {
+      const { data } = await api.get(`/crm/leads/${dealId}/activities`);
+      setCrmActivities(Array.isArray(data) ? data : []);
+    } catch (_) {
+      /* giữ danh sách cũ */
+    }
+  }, [project?.crmDeals?.[0]?.id]);
+
+  const crmFabDealId = project?.crmDeals?.[0]?.id;
+
+  useEffect(() => {
+    if (loadError || loading || !project || !crmFabDealId) return;
+    const deal = project.crmDeals?.[0];
+    if (!deal || String(deal.id) !== String(crmFabDealId)) return;
+    setCrmNotesAnchor({
+      leadId: crmFabDealId,
+      notes: noteActivities,
+      contextLine: `🎯 Deal ${[deal.code, deal.title].filter(Boolean).join(' — ')}`,
+      contextBadge: deal?.code || project?.code || '',
+      onPosted: refreshCrmActivities,
+    });
+  }, [
+    loadError,
+    loading,
+    project,
+    crmFabDealId,
+    noteActivities,
+    refreshCrmActivities,
+    setCrmNotesAnchor,
+  ]);
 
   const setTab = useCallback((tab) => {
     setActiveTab(tab);
@@ -717,6 +759,7 @@ export default function ProductionDetail() {
               {tabBtn('tasks', '✅ Công việc')}
               {tabBtn('documents', `📋 Tài liệu (${ownDocCount})`)}
               {tabBtn('activities', `💬 Hoạt động (${crmActivities.length})`)}
+              {tabBtn('notes', `📝 Ghi chú (${noteActivities.length})`)}
               {tabBtn('facebook', '📘 Facebook')}
               {tabBtn('team', '👥 Thành viên')}
               {tabBtn('chat', '💬 Trao đổi')}
@@ -753,6 +796,29 @@ export default function ProductionDetail() {
                   setShowAddCrmActivity={setShowAddCrmActivity}
                   project={project}
                 />
+              )}
+
+              {activeTab === 'notes' && (
+                crmLeadId ? (
+                  <CrmChatNotesPanel
+                    variant="embedded"
+                    leadId={crmLeadId}
+                    notes={noteActivities}
+                    onPosted={refreshCrmActivities}
+                    currentUserId={user?.id || user?.userId}
+                    canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
+                    contextLine={
+                      primaryCrmDeal
+                        ? `🎯 Deal ${[primaryCrmDeal.code, primaryCrmDeal.title].filter(Boolean).join(' — ')}`
+                        : project?.code
+                          ? `📋 Dự án ${project.code}`
+                          : ''
+                    }
+                    contextBadge={primaryCrmDeal?.code || project?.code || ''}
+                  />
+                ) : (
+                  <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để dùng ghi chú.</p>
+                )
               )}
 
               {activeTab === 'facebook' && (

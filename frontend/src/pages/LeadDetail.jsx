@@ -11,6 +11,8 @@ import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CallLogsTab from '../components/CallLogsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
+import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
+import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -39,6 +41,8 @@ const ACTIVITY_TYPES = [
 export default function LeadDetail() {
   const { id } = useParams();
   const { socket, user } = useAuth();
+  const { setCrmNotesAnchor } = useCrmNotesFab();
+  const loadRef = useRef(null);
   const navigate = useNavigate();
   const [lead, setLead] = useState(null);
   const [customer, setCustomer] = useState(null);
@@ -137,11 +141,31 @@ export default function LeadDetail() {
     setLoading(false);
   };
 
+  loadRef.current = load;
+
   const isDealHoanThanhForZalo = useMemo(() => {
     if (!lead || lead.type !== 'deal') return false;
     const st = stagesDeal.find((s) => s.id === lead.stage_id);
     return !!(st && isCrmDealStageHoanThanhName(st.name));
   }, [lead, stagesDeal]);
+
+  const noteActivities = useMemo(
+    () => (activities || []).filter((a) => a.type === 'note'),
+    [activities],
+  );
+
+  useEffect(() => {
+    if (loading || !lead || !id || String(lead.id) !== String(id)) return;
+    setCrmNotesAnchor({
+      leadId: id,
+      notes: noteActivities,
+      contextLine: lead
+        ? `${lead.type === 'deal' ? '🎯 Deal' : '💼 Lead'} ${[lead.code, lead.title].filter(Boolean).join(' — ')}`
+        : '',
+      contextBadge: lead?.code || '',
+      onPosted: () => loadRef.current?.(),
+    });
+  }, [loading, id, lead, noteActivities, setCrmNotesAnchor]);
 
   /** Một bước: điền template từ deal (cấu trúc lưu trên server / Cài đặt Pipeline) + gửi Zalo */
   const quickSendZaloOa = useCallback(async () => {
@@ -690,6 +714,16 @@ export default function LeadDetail() {
                 💬 Hoạt động ({activities.length})
               </button>
               <button
+                onClick={() => setActiveTab('notes')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'notes'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                📝 Ghi chú ({noteActivities.length})
+              </button>
+              <button
                 onClick={() => setActiveTab('facebook')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'facebook'
@@ -929,6 +963,21 @@ export default function LeadDetail() {
                     </div>
                   )}
                 </>
+              ) : activeTab === 'notes' ? (
+                <CrmChatNotesPanel
+                  variant="embedded"
+                  leadId={id}
+                  notes={noteActivities}
+                  onPosted={load}
+                  currentUserId={user?.id || user?.userId}
+                  canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
+                  contextLine={
+                    lead
+                      ? `${lead.type === 'deal' ? '🎯 Deal' : '💼 Lead'} ${[lead.code, lead.title].filter(Boolean).join(' — ')}`
+                      : ''
+                  }
+                  contextBadge={lead?.code || ''}
+                />
               ) : activeTab === 'facebook' ? (
                 <FacebookChatTab leadId={id} />
               ) : activeTab === 'team' ? (
