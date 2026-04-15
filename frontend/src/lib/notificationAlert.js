@@ -2,7 +2,14 @@ import { getNotificationPrefsCache, isNotificationTypeEnabled } from './notifica
 import { getCustomNotificationSoundBuffer } from './notificationSoundIdb';
 
 const MAX_PLAY_SEC = 15;
-const DEFAULT_URL = '/notification.wav';
+
+/** `public/notification.wav` — tôn trọng `base` khi deploy thư mục con. */
+function resolvedDefaultWavUrl() {
+  let base = import.meta.env.BASE_URL || '/';
+  if (!base.endsWith('/')) base += '/';
+  return `${base}notification.wav`;
+}
+
 /** Hệ số khuếch đại gốc; nhân thêm `sound_volume_percent` / 100 */
 const GAIN_BASE = 3.2;
 
@@ -24,6 +31,17 @@ export function invalidateNotificationSoundCache() {
   customDecodePromise = null;
 }
 
+/** Dừng Web Speech API nếu đang phát (tránh «giọng đọc» chồng với thông báo). */
+export function cancelNotificationSpeech() {
+  try {
+    if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) {
+      window.speechSynthesis.cancel();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function getAudioContext() {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   if (!Ctx) return null;
@@ -36,8 +54,10 @@ async function ensureDefaultDecoded(ctx) {
   if (!defaultDecodePromise) {
     defaultDecodePromise = (async () => {
       try {
-        const res = await fetch(DEFAULT_URL);
+        const res = await fetch(resolvedDefaultWavUrl());
+        if (!res.ok) return null;
         const raw = await res.arrayBuffer();
+        if (!raw?.byteLength) return null;
         defaultDecoded = await ctx.decodeAudioData(raw.slice(0));
         return defaultDecoded;
       } catch {
@@ -45,7 +65,38 @@ async function ensureDefaultDecoded(ctx) {
       }
     })();
   }
-  return defaultDecodePromise;
+  const out = await defaultDecodePromise;
+  if (!out) defaultDecodePromise = null;
+  return out;
+}
+
+/** Chuông mặc định tổng hợp khi không có / không đọc được `notification.wav`. */
+function playSyntheticDefaultBell(vol) {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
+
+  const peak = Math.min(0.35, Math.max(0.02, GAIN_BASE * vol * 0.06));
+  const now = ctx.currentTime;
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0, now);
+  master.gain.linearRampToValueAtTime(peak, now + 0.025);
+  master.gain.exponentialRampToValueAtTime(0.0008, now + 0.38);
+  master.connect(ctx.destination);
+
+  const o1 = ctx.createOscillator();
+  o1.type = 'sine';
+  o1.frequency.setValueAtTime(880, now);
+  o1.connect(master);
+  o1.start(now);
+  o1.stop(now + 0.18);
+
+  const o2 = ctx.createOscillator();
+  o2.type = 'sine';
+  o2.frequency.setValueAtTime(660, now + 0.11);
+  o2.connect(master);
+  o2.start(now + 0.11);
+  o2.stop(now + 0.3);
 }
 
 async function ensureCustomDecoded(ctx) {
@@ -93,6 +144,8 @@ export async function playLoudNotificationSound(opts = {}) {
   const vol = Number.isFinite(volPct) ? Math.min(1.5, Math.max(0, volPct / 100)) : 1;
   if (vol <= 0) return;
 
+  cancelNotificationSpeech();
+
   if (!opts.skipThrottle) {
     const now = Date.now();
     if (now - lastBellAt < BELL_MIN_INTERVAL_MS) return;
@@ -132,7 +185,7 @@ export async function playLoudNotificationSound(opts = {}) {
   }
 
   try {
-    const audio = new Audio(DEFAULT_URL);
+    const audio = new Audio(resolvedDefaultWavUrl());
     audio.volume = Math.min(1, vol);
     const cap = () => {
       if (audio.currentTime >= MAX_PLAY_SEC) {
@@ -143,7 +196,7 @@ export async function playLoudNotificationSound(opts = {}) {
     audio.addEventListener('timeupdate', cap);
     await audio.play();
   } catch {
-    /* ignore */
+    playSyntheticDefaultBell(vol);
   }
 }
 
@@ -155,6 +208,8 @@ export async function alertIncomingNotification(opts = {}) {
   const p = getNotificationPrefsCache();
   if (p.sound === false) return;
   if (opts.type && !isNotificationTypeEnabled(opts.type)) return;
+
+  cancelNotificationSpeech();
 
   const volPct = Number(p.sound_volume_percent);
   if (!Number.isFinite(volPct) || volPct > 0) {

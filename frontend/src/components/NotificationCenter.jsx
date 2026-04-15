@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { alertIncomingNotification } from '../lib/notificationAlert';
+import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
@@ -147,6 +147,8 @@ export default function NotificationCenter({ socket }) {
     if (!socket) return;
     const handler = (notif) => {
       if (!isNotificationTypeEnabled(notif?.type)) return;
+
+      cancelNotificationSpeech();
 
       setUnreadCount(c => c + 1);
       setNotifications(prev => [notif, ...prev]);
