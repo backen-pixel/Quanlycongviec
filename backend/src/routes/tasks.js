@@ -261,18 +261,18 @@ r.put('/:id', async (req, res) => {
     if (old && update.status && update.status !== old.status) {
       // Nếu chuyển sang review → thông báo cho người tạo
       if (update.status === 'review' && data.created_by_id) {
-        await createNotification(req, data.created_by_id, 'task_updated', 'Chờ nghiệm thu', `Task "${old.title}" đã hoàn thành, chờ bạn kiểm tra`, 'task', data.id);
+        await createNotification(req, data.created_by_id, 'task_updated', 'Chờ nghiệm thu', `Công việc "${old.title}" đã hoàn thành, chờ bạn kiểm tra`, 'task', data.id);
       }
       // Nếu người giao duyệt xong → thông báo cho người thực hiện
       if (update.status === 'done' && data.assignee_id) {
-        await createNotification(req, data.assignee_id, 'task_updated', 'Task đã duyệt', `Task "${old.title}" đã được nghiệm thu`, 'task', data.id);
+        await createNotification(req, data.assignee_id, 'task_updated', 'Công việc đã duyệt', `Công việc "${old.title}" đã được nghiệm thu`, 'task', data.id);
       }
       await logActivity(req.user.userId, 'status_changed', 'task', data.id, `Chuyển trạng thái: ${old.status} → ${update.status}`, { status: old.status }, { status: update.status });
     }
 
     // Notification on reassign
     if (update.assignee_id && update.assignee_id !== old?.assignee_id) {
-      await createNotification(req, update.assignee_id, 'task_assigned', 'Được giao task', `Bạn được giao: ${data.title}`, 'task', data.id);
+      await createNotification(req, update.assignee_id, 'task_assigned', 'Được giao công việc', `Bạn được giao: ${data.title}`, 'task', data.id);
     }
 
     const io = req.app.get('io');
@@ -298,10 +298,10 @@ r.patch('/:id/status', async (req, res) => {
     // Auto notifications
     if (old && update.status !== old.status) {
       if (update.status === 'review' && old.created_by_id) {
-        await createNotification(req, old.created_by_id, 'task_updated', '📋 Chờ nghiệm thu', `Task "${old.title}" chờ kiểm tra`, 'task', data.id);
+        await createNotification(req, old.created_by_id, 'task_updated', '📋 Chờ nghiệm thu', `Công việc "${old.title}" chờ kiểm tra`, 'task', data.id);
       }
       if (update.status === 'done' && old.assignee_id) {
-        await createNotification(req, old.assignee_id, 'task_updated', '✅ Task hoàn thành', `Task "${old.title}" đã duyệt`, 'task', data.id);
+        await createNotification(req, old.assignee_id, 'task_updated', '✅ Công việc hoàn thành', `Công việc "${old.title}" đã duyệt`, 'task', data.id);
       }
       await logActivity(req.user.userId, 'status_changed', 'task', data.id, `${old.status} → ${update.status}`);
 
@@ -399,7 +399,7 @@ r.patch('/:taskId/checklists/:clId', async (req, res) => {
         if (task?.assignee_id) {
           await createNotification(req, task.assignee_id, 'checklist_completed',
             '📋 Tất cả checklist hoàn tất',
-            `Tất cả mục checklist của task "${task.title}" đã hoàn tất${task.projects?.code ? ` — DA ${task.projects.code}` : ''}`,
+            `Tất cả mục checklist của công việc "${task.title}" đã hoàn tất${task.projects?.code ? ` — DA ${task.projects.code}` : ''}`,
             'task', req.params.taskId);
         }
       }
@@ -445,7 +445,7 @@ r.put('/checklists/:clId', async (req, res) => {
             const { data: task } = await supabase.from('tasks').select('title, project_id, projects(code)').eq('id', cl.task_id).single();
             await createNotification(req, parsed.assignee_id, 'task_assigned',
               '📋 Được gán mục checklist',
-              `Bạn được gán: "${data.title}" trong task "${task?.title || ''}"${task?.projects?.code ? ` — DA ${task.projects.code}` : ''}`,
+              `Bạn được gán: "${data.title}" trong công việc "${task?.title || ''}"${task?.projects?.code ? ` — DA ${task.projects.code}` : ''}`,
               'task', cl.task_id);
           }
         }
@@ -565,7 +565,7 @@ r.post('/:id/participants', async (req, res) => {
 
     if (req.body.user_id !== req.user.userId) {
       const role = req.body.role === 'observer' ? 'quan sát' : 'hỗ trợ';
-      await createNotification(req, req.body.user_id, 'task_assigned', `Bạn được thêm vào task`, `Vai trò: ${role}`, 'task', req.params.id);
+      await createNotification(req, req.body.user_id, 'task_assigned', `Bạn được thêm vào công việc`, `Vai trò: ${role}`, 'task', req.params.id);
     }
 
     res.status(201).json({ participant: data });

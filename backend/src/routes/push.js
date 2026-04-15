@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { isNotificationTypeAllowed } = require('../helpers/notificationPrefTypes');
 let webpush;
 try { webpush = require('web-push'); } catch { webpush = null; }
 
@@ -173,22 +174,7 @@ async function sendWebPush(userId, notification) {
 
     if (!prefs?.browser_push) return; // User disabled browser push
 
-    // Check notification type preference
-    const typePrefs = {
-      'task_assigned': prefs.task_assigned,
-      'task_completed': prefs.task_completed,
-      'deadline_warning': prefs.deadline_warning,
-      'comment_added': prefs.comment_added,
-      'stage_changed': prefs.stage_changed,
-      'deal_won': prefs.deal_won,
-      'approval_request': prefs.approval_request,
-      'checklist_completed': prefs.checklist_completed,
-      'lead_assigned': prefs.lead_assigned,
-      'order_confirmed': prefs.order_confirmed,
-      'invoice_overdue': prefs.invoice_overdue,
-    };
-
-    if (typePrefs[notification.type] === false) return;
+    if (!isNotificationTypeAllowed(prefs, notification.type)) return;
 
     // Send to each subscription
     const payload = JSON.stringify({

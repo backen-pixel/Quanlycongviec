@@ -17,7 +17,7 @@ self.addEventListener('push', function(event) {
   };
 
   event.waitUntil(
-    self.registration.showNotification(data.title || 'TuBep Pro', options)
+    self.registration.showNotification(data.title || 'Thông báo', options)
   );
 });
 

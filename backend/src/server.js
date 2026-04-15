@@ -301,7 +301,7 @@ server.listen(config.port, () => {
 
       // Batch insert (ignore dupes via unique constraint or just let it be)
       if (notifs.length) {
-        const { data: inserted } = await supabase.from('notifications').insert(notifs).select('id,user_id');
+        const { data: inserted } = await supabase.from('notifications').insert(notifs).select('*');
         (inserted || []).forEach(n => io.to(`user:${n.user_id}`).emit('notification', n));
       }
 
