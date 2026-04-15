@@ -9,6 +9,7 @@ const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
 const { syncCrmLeadSxPipelineFromProject } = require('../helpers/workshopKanban');
+const { userSeesAllCrmDeals, userSeesAllCrmLeads, normalizeCrmUserRole } = require('../helpers/crmAccessRoles');
 const { applyDefaultWorkshopTemplatesForNewProject } = require('../helpers/workshopApplyTemplates');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
@@ -326,25 +327,9 @@ const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuo
 const r = Router();
 r.use(auth);
 
-/** CRM Deal: admin / lãnh đạo xem mọi deal; role khác chỉ deal mình phụ trách (assigned_to). So khớp không phân biệt hoa thường. */
-const CRM_DEAL_VIEW_ALL_ROLES = new Set([
-  'admin',
-  'manager',
-  'director',
-  'superadmin',
-  'super_admin',
-  'administrator',
-]);
-function normalizeCrmUserRole(role) {
-  return String(role ?? '').trim().toLowerCase();
-}
-function userSeesAllCrmDeals(role) {
-  return CRM_DEAL_VIEW_ALL_ROLES.has(normalizeCrmUserRole(role));
-}
-
 const CRM_LEAD_ID_IN_PATH = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Chặn NV truy cập deal của người khác (GET/PUT/...) — path /leads/:uuid/... hoặc /deals/:uuid/... */
+/** Chặn NV truy cập lead/deal của người khác (GET/PUT/...) — path /leads/:uuid/... hoặc /deals/:uuid/... */
 async function enforceCrmDealAssigneeAccess(req, res, next) {
   try {
     const p = req.path || '';
@@ -352,12 +337,25 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
     const head = parts[0];
     if ((head !== 'leads' && head !== 'deals') || !parts[1] || !CRM_LEAD_ID_IN_PATH.test(parts[1])) return next();
     const leadId = parts[1];
-    const { data: lead, error } = await supabase.from('crm_leads').select('id, type, assigned_to').eq('id', leadId).maybeSingle();
+    const { data: lead, error } = await supabase.from('crm_leads').select('id, type, assigned_to, lead_owner_id').eq('id', leadId).maybeSingle();
     if (error || !lead) return next();
-    if (lead.type !== 'deal' || userSeesAllCrmDeals(req.user?.role)) return next();
     const uid = req.user?.userId;
-    if (!uid || String(lead.assigned_to || '') !== String(uid)) {
-      return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
+    if (lead.type === 'deal') {
+      if (userSeesAllCrmDeals(req.user?.role)) return next();
+      if (!uid || String(lead.assigned_to || '') !== String(uid)) {
+        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
+      }
+      return next();
+    }
+    if (lead.type === 'lead') {
+      if (userSeesAllCrmLeads(req.user?.role)) return next();
+      const owns =
+        uid &&
+        (String(lead.assigned_to || '') === String(uid) || String(lead.lead_owner_id || '') === String(uid));
+      if (!owns) {
+        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa lead mà bạn phụ trách.' });
+      }
+      return next();
     }
     return next();
   } catch (e) {
@@ -546,7 +544,13 @@ async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, d
       .select('id, stage_id, estimated_value, probability, type')
       .eq('type', type);
     if (company_id) q = q.eq('company_id', company_id);
-    if (assigned_to_only) q = q.eq('assigned_to', assigned_to_only);
+    if (assigned_to_only) {
+      if (type === 'lead') {
+        q = q.or(`assigned_to.eq.${assigned_to_only},lead_owner_id.eq.${assigned_to_only}`);
+      } else {
+        q = q.eq('assigned_to', assigned_to_only);
+      }
+    }
     if (date_from) q = q.gte('created_at', date_from);
     if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
     const { data, error } = await q.range(from, from + pageSize - 1);
@@ -573,9 +577,12 @@ r.get('/dashboard', async (req, res) => {
 
     const dealAssigneeOnly =
       type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role) ? req.user.userId : null;
+    const leadAssigneeOnly =
+      type === 'lead' && req.user?.userId && !userSeesAllCrmLeads(req.user.role) ? req.user.userId : null;
+    const assigneeOnly = dealAssigneeOnly || leadAssigneeOnly;
 
     // Leads/Deals theo filter (đủ trang) — tránh trần 1000 dòng của Supabase
-    const leads = await fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, date_to, assigned_to_only: dealAssigneeOnly });
+    const leads = await fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, date_to, assigned_to_only: assigneeOnly });
 
     const stageStats = (stages || []).map(s => {
       const stageLeads = (leads || []).filter(l => l.stage_id === s.id);
@@ -598,15 +605,18 @@ r.get('/dashboard', async (req, res) => {
 
     let kpis = {};
     if (type === 'lead') {
-      // Lead KPIs — tỷ lệ chuyển đổi: đếm đúng toàn DB (không trần 1000)
-      const { count: allLeadsCount } = await supabase
-        .from('crm_leads')
-        .select('*', { count: 'exact', head: true })
-        .eq('type', 'lead');
-      const { count: dealsConvertedCount } = await supabase
-        .from('crm_leads')
-        .select('*', { count: 'exact', head: true })
-        .eq('type', 'deal');
+      // Lead KPIs — tỷ lệ chuyển đổi: admin xem toàn DB; NV chỉ lead/deal của mình
+      const uid = req.user?.userId;
+      let allLeadsQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead');
+      let dealsConvertedQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal');
+      if (uid && !userSeesAllCrmLeads(req.user.role)) {
+        allLeadsQ = allLeadsQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
+      }
+      if (uid && !userSeesAllCrmDeals(req.user.role)) {
+        dealsConvertedQ = dealsConvertedQ.eq('assigned_to', uid);
+      }
+      const { count: allLeadsCount } = await allLeadsQ;
+      const { count: dealsConvertedCount } = await dealsConvertedQ;
       const nLeads = allLeadsCount ?? 0;
       const nDeals = dealsConvertedCount ?? 0;
       const conversionRate = nLeads > 0 ? Math.round((nDeals / nLeads) * 100) : 0;
@@ -1390,9 +1400,25 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
 // ═══ QUÉT TRÙNG LEAD — Scan duplicates by customer_id + Facebook PSID ═══
 r.get('/leads/scan-duplicates', async (req, res) => {
   try {
-    const { data: leads } = await supabase.from('crm_leads')
-      .select('id, code, title, type, customer_id, estimated_value, created_at, updated_at, stage_id, assigned_to, source_id, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), source:crm_sources(id, name, icon)')
-      .order('created_at', { ascending: false });
+    const uid = req.user?.userId;
+    const scanSelect =
+      'id, code, title, type, customer_id, estimated_value, created_at, updated_at, stage_id, assigned_to, lead_owner_id, source_id, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), source:crm_sources(id, name, icon)';
+    const seeAllLeads = !uid || userSeesAllCrmLeads(req.user.role);
+    const seeAllDeals = !uid || userSeesAllCrmDeals(req.user.role);
+    let leads = [];
+    if (seeAllLeads && seeAllDeals) {
+      const { data } = await supabase.from('crm_leads').select(scanSelect).order('created_at', { ascending: false });
+      leads = data || [];
+    } else {
+      let leadQ = supabase.from('crm_leads').select(scanSelect).eq('type', 'lead').order('created_at', { ascending: false });
+      if (!seeAllLeads) leadQ = leadQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
+      let dealQ = supabase.from('crm_leads').select(scanSelect).eq('type', 'deal').order('created_at', { ascending: false });
+      if (!seeAllDeals) dealQ = dealQ.eq('assigned_to', uid);
+      const [{ data: leadRows }, { data: dealRows }] = await Promise.all([leadQ, dealQ]);
+      leads = [...(leadRows || []), ...(dealRows || [])].sort(
+        (a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at),
+      );
+    }
 
     const { data: fbContacts } = await supabase.from('facebook_contacts')
       .select('id, psid, lead_id, fb_name, fb_profile_pic, page_id')
@@ -1512,6 +1538,32 @@ r.post('/leads/bulk-assign', async (req, res) => {
       throw err;
     }
 
+    const uid = req.user?.userId;
+    for (const o of olds) {
+      if (o.type === 'deal' && uid && !userSeesAllCrmDeals(req.user.role)) {
+        if (String(o.assigned_to || '') !== String(uid)) {
+          const err = new Error('Bạn không được gán deal của người khác.');
+          err.status = 403;
+          throw err;
+        }
+      }
+      if (o.type === 'lead' && uid && !userSeesAllCrmLeads(req.user.role)) {
+        const owns =
+          String(o.assigned_to || '') === String(uid) || String(o.lead_owner_id || '') === String(uid);
+        if (!owns) {
+          const err = new Error('Bạn không được gán lead của người khác.');
+          err.status = 403;
+          throw err;
+        }
+      }
+    }
+    if (olds[0].type === 'deal' && uid && !userSeesAllCrmDeals(req.user.role) && String(ownerId) !== String(uid)) {
+      return res.status(403).json({ error: 'Bạn chỉ có thể giao deal cho chính mình.' });
+    }
+    if (olds[0].type === 'lead' && uid && !userSeesAllCrmLeads(req.user.role) && String(ownerId) !== String(uid)) {
+      return res.status(403).json({ error: 'Chỉ admin mới giao lead cho người khác.' });
+    }
+
     const types = new Set(olds.map((o) => o.type));
     if (types.size > 1) {
       const err = new Error('Không gán hàng loạt trộn Lead và Deal trong một lần');
@@ -1619,6 +1671,9 @@ r.get('/leads-by-fb-page', async (req, res) => {
       .in('id', leadIds).eq('type', type);
     if (type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role)) {
       q = q.eq('assigned_to', req.user.userId);
+    }
+    if (type === 'lead' && req.user?.userId && !userSeesAllCrmLeads(req.user.role)) {
+      q = q.or(`assigned_to.eq.${req.user.userId},lead_owner_id.eq.${req.user.userId}`);
     }
     const { data } = await q.order('created_at', { ascending: false });
     res.json(data || []);
@@ -1757,7 +1812,7 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
 
 /** Fallback: gom nhiều trang .range() — PostgREST vẫn trần ~1000 dòng/lần dù .limit(5000). */
 async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
-  const { dealAssigneeStrict = false, viewerUserId = null } = opts;
+  const { assigneeStrict = false, viewerUserId = null } = opts;
   const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, type = 'lead', company_id, date_from, date_to, phone_filter } = reqQuery;
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 5000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
@@ -1770,7 +1825,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
       .order('created_at', { ascending: false });
     if (stage_id) q = q.eq('stage_id', stage_id);
     if (assigned_to) {
-      if (dealAssigneeStrict) q = q.eq('assigned_to', assigned_to);
+      if (assigneeStrict) q = q.eq('assigned_to', assigned_to);
       else q = q.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
     }
     if (source_id) q = q.eq('source_id', source_id);
@@ -1825,12 +1880,16 @@ r.get('/leads', async (req, res) => {
   try {
     const type = req.query.type || 'lead';
     const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role);
-    const mergedQuery = forcedDealSelf ? { ...req.query, assigned_to: req.user.userId } : { ...req.query };
+    const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeads(req.user.role);
+    const mergedQuery =
+      forcedDealSelf || forcedLeadSelf ? { ...req.query, assigned_to: req.user.userId } : { ...req.query };
     const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, company_id, date_from, date_to, phone_filter } = mergedQuery;
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 5000);
     const parsedOffset = Math.max(parseInt(offset) || 0, 0);
 
     const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(assigned_to) || forcedDealSelf);
+    const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(assigned_to) || forcedLeadSelf);
+    const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
 
     const rpcParams = {
       p_type: type,
@@ -1844,7 +1903,7 @@ r.get('/leads', async (req, res) => {
       p_phone_filter: phone_filter || null,
       p_limit: parsedLimit,
       p_offset: parsedOffset,
-      p_assigned_strict: dealAssigneeStrict,
+      p_assigned_strict: rpcAssigneeStrict,
     };
 
     const { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
@@ -1872,7 +1931,7 @@ r.get('/leads', async (req, res) => {
     if (rpcError) {
       console.warn('[crm/leads] crm_leads_page_ids RPC unavailable, using legacy (max 5000 rows):', rpcError.message);
     }
-    const legacy = await getCrmLeadsListLegacy(mergedQuery, { dealAssigneeStrict, viewerUserId: req.user?.userId });
+    const legacy = await getCrmLeadsListLegacy(mergedQuery, { assigneeStrict: rpcAssigneeStrict, viewerUserId: req.user?.userId });
     return res.json(legacy);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1923,6 +1982,7 @@ r.post('/leads', async (req, res) => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
     if (!body.assigned_to) body.assigned_to = req.user.userId;
+    if (!userSeesAllCrmLeads(req.user.role)) body.assigned_to = req.user.userId;
     body.lead_owner_id = body.assigned_to;
     const { data, error } = await supabase.from('crm_leads')
       .insert({ ...body, code, type: 'lead', lead_owner_id: body.assigned_to, created_by: req.user.userId })
@@ -2053,6 +2113,11 @@ r.put('/leads/:id', async (req, res) => {
     if (oldLead?.type === 'deal' && !userSeesAllCrmDeals(req.user.role)) {
       if (safeBody.assigned_to != null && String(safeBody.assigned_to) !== String(req.user.userId)) {
         return res.status(403).json({ error: 'Bạn không thể giao phụ trách deal cho người khác.' });
+      }
+    }
+    if (oldLead?.type === 'lead' && !userSeesAllCrmLeads(req.user.role)) {
+      if (safeBody.assigned_to != null && String(safeBody.assigned_to) !== String(req.user.userId)) {
+        return res.status(403).json({ error: 'Chỉ admin mới giao phụ trách lead cho người khác.' });
       }
     }
 
@@ -3943,10 +4008,30 @@ r.get('/project/:projectId/lead-documents', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // CRM CUSTOMERS - Aggregated customer view
 // ═══════════════════════════════════════════════════════════════════════════
+function crmLeadRowVisibleToRequestUser(row, userId, role) {
+  if (!userId) return true;
+  const t = row?.type || 'lead';
+  if (t === 'deal') {
+    return userSeesAllCrmDeals(role) || String(row.assigned_to || '') === String(userId);
+  }
+  return (
+    userSeesAllCrmLeads(role) ||
+    String(row.assigned_to || '') === String(userId) ||
+    String(row.lead_owner_id || '') === String(userId)
+  );
+}
+
 r.get('/customers-overview', async (req, res) => {
   try {
     const { data: customers } = await supabase.from('customers').select('*').order('full_name');
-    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, title, estimated_value, stage_id, code, created_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won)');
+    const { data: leadsRaw } = await supabase
+      .from('crm_leads')
+      .select(
+        'id, customer_id, title, estimated_value, stage_id, code, created_at, type, assigned_to, lead_owner_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won)',
+      );
+    const uid = req.user?.userId;
+    const role = req.user?.role;
+    const leads = (leadsRaw || []).filter((l) => crmLeadRowVisibleToRequestUser(l, uid, role));
     const { data: quotes } = await supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at');
     const { data: orders } = await supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at');
     const { data: invoices } = await supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at');
@@ -3974,7 +4059,16 @@ r.get('/customers-overview/:id', async (req, res) => {
   try {
     const { data: customer } = await supabase.from('customers').select('*').eq('id', req.params.id).single();
     if (!customer) return res.status(404).json({ error: 'KH không tồn tại' });
-    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id, title, code, estimated_value, stage_id, created_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, color, is_won)').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    const { data: leadsRaw } = await supabase
+      .from('crm_leads')
+      .select(
+        'id, customer_id, title, code, estimated_value, stage_id, created_at, type, assigned_to, lead_owner_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, color, is_won)',
+      )
+      .eq('customer_id', req.params.id)
+      .order('created_at', { ascending: false });
+    const uid = req.user?.userId;
+    const role = req.user?.role;
+    const leads = (leadsRaw || []).filter((l) => crmLeadRowVisibleToRequestUser(l, uid, role));
     const { data: quotes } = await supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
     const { data: orders } = await supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
     const { data: invoices } = await supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });

@@ -221,6 +221,11 @@ class CallMonitorService : Service() {
                 "android_call_bg",
             )
             file.delete()
+            if (res.isSuccess) {
+                try {
+                    VoiceRepository.relinkUnassigned(this@CallMonitorService)
+                } catch (_: Exception) { }
+            }
             val msg = if (res.isSuccess) "Đã đồng bộ: ${phone ?: "—"}" else "Lỗi upload: ${res.exceptionOrNull()?.message}"
             runOnMain { updateNotif(msg) }
             runOnMain {
