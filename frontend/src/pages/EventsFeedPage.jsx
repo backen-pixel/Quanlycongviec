@@ -60,6 +60,7 @@ export default function EventsFeedPage() {
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [calEvents, setCalEvents] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
+  const [createPresetDay, setCreatePresetDay] = useState(null);
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
 
   useEffect(() => {
@@ -142,7 +143,7 @@ export default function EventsFeedPage() {
               <Settings className="h-4 w-4" /> Loại
             </button>
           </div>
-          <button onClick={() => { setEditEvent(null); setShowCreate(true); }}
+          <button onClick={() => { setEditEvent(null); setCreatePresetDay(null); setShowCreate(true); }}
             className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
             <Plus className="h-4 w-4" /> Tạo sự kiện
           </button>
@@ -202,7 +203,13 @@ export default function EventsFeedPage() {
           onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
           onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
           onSelectDay={setSelectedDay}
-          onEdit={(ev) => { setEditEvent(ev); setShowCreate(true); }}
+          onOpenCreateForDay={(day) => {
+            setEditEvent(null);
+            setCreatePresetDay({ year: calYear, month: calMonth, day });
+            setSelectedDay(day);
+            setShowCreate(true);
+          }}
+          onEdit={(ev) => { setEditEvent(ev); setCreatePresetDay(null); setShowCreate(true); }}
         />
       )}
 
@@ -214,9 +221,12 @@ export default function EventsFeedPage() {
       {/* Create/Edit Modal */}
       {showCreate && (
         <EventCreateModal
-          event={editEvent} eventTypes={eventTypes} users={users}
-          onClose={() => { setShowCreate(false); setEditEvent(null); }}
-          onSaved={() => { setShowCreate(false); setEditEvent(null); if (view === 'feed') loadFeed(); else loadCalendar(); }}
+          event={editEvent}
+          presetDay={editEvent ? null : createPresetDay}
+          eventTypes={eventTypes}
+          users={users}
+          onClose={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); }}
+          onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); if (view === 'feed') loadFeed(); else loadCalendar(); }}
         />
       )}
     </div>
@@ -454,7 +464,7 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
 // ═══════════════════════════════════════════════════════════════
 // CALENDAR VIEW — Monthly grid
 // ═══════════════════════════════════════════════════════════════
-function CalendarView({ month, year, events, eventTypes, loading, selectedDay, onPrevMonth, onNextMonth, onSelectDay, onEdit }) {
+function CalendarView({ month, year, events, eventTypes, loading, selectedDay, onPrevMonth, onNextMonth, onSelectDay, onOpenCreateForDay, onEdit }) {
   const monthNames = ['', 'Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
     'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
   const dayNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
@@ -509,11 +519,20 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
               const isTodayCell = isCurrentMonth && day === today.getDate();
               const isSelected = day === selectedDay;
               return (
-                <div key={i} onClick={() => day && onSelectDay(day === selectedDay ? null : day)}
+                <div
+                  key={i}
+                  role="presentation"
+                  onClick={(e) => {
+                    if (!day) return;
+                    if (e.target.closest?.('[data-cal-event-chip]')) return;
+                    onSelectDay(day);
+                    onOpenCreateForDay(day);
+                  }}
                   className={`min-h-[90px] border-r border-b p-1 cursor-pointer transition
                     ${day ? 'hover:bg-blue-50/50' : 'bg-gray-50'}
                     ${isSelected ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : ''}
-                  `}>
+                  `}
+                >
                   {day && (
                     <>
                       <div className={`text-sm font-medium mb-0.5 w-7 h-7 flex items-center justify-center rounded-full
@@ -523,9 +542,18 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
                         {dayEvents.slice(0, 3).map(ev => {
                           const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || {};
                           return (
-                            <div key={ev.id} className="text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium"
+                            <div
+                              key={ev.id}
+                              data-cal-event-chip
+                              className="text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium"
                               style={{ backgroundColor: (typeInfo.color || '#3B82F6') + '20', color: typeInfo.color || '#3B82F6' }}
-                              title={`${ev.title} — ${formatTime(ev.start_time)}`}>
+                              title={`${ev.title} — ${formatTime(ev.start_time)} — Nhấn để sửa`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectDay(day);
+                                onEdit(ev);
+                              }}
+                            >
                               {typeInfo.icon} {ev.title}
                             </div>
                           );
@@ -1004,11 +1032,17 @@ function UserMultiSelect({ users, value = [], onChange, placeholder = '👥 Ch�
 // ═══════════════════════════════════════════════════════════════
 // EVENT CREATE/EDIT MODAL
 // ═══════════════════════════════════════════════════════════════
-function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
+function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSaved }) {
   const isEdit = !!event;
   const toLocalDateTimeInput = (value) => {
     if (!value) return '';
     const d = new Date(value);
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+  };
+  const startFromPreset = () => {
+    if (!presetDay || event) return '';
+    const d = new Date(presetDay.year, presetDay.month - 1, presetDay.day, 9, 0, 0, 0);
     const tzOffset = d.getTimezoneOffset() * 60000;
     return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
   };
@@ -1017,7 +1051,7 @@ function EventCreateModal({ event, eventTypes, users, onClose, onSaved }) {
     event_type: event?.event_type || 'site_visit',
     description: event?.description || '',
     location: event?.location || '',
-    start_time: toLocalDateTimeInput(event?.start_time),
+    start_time: toLocalDateTimeInput(event?.start_time) || startFromPreset(),
     end_time: toLocalDateTimeInput(event?.end_time),
     all_day: event?.all_day || false,
     lead_id: event?.lead_id || '',

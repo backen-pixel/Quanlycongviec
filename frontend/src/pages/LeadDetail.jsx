@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser } from '../lib/crmPipelineStorage';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { useAuth } from '../lib/auth';
@@ -10,13 +10,14 @@ import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CallLogsTab from '../components/CallLogsTab';
+import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2,
+  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic,
 } from 'lucide-react';
 
 /** Khớp backend: chỉ cột deal có tên chứa «Hoàn thành» mới dùng gửi Zalo OA */
@@ -40,6 +41,7 @@ const ACTIVITY_TYPES = [
 
 export default function LeadDetail() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { socket, user } = useAuth();
   const { setCrmNotesAnchor } = useCrmNotesFab();
   const loadRef = useRef(null);
@@ -102,6 +104,15 @@ export default function LeadDetail() {
   };
 
   useEffect(() => { load(); }, [id]);
+
+  useEffect(() => {
+    const t = searchParams.get('tab');
+    if (t !== 'chat') return;
+    setActiveTab('chat');
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    setSearchParams(next, { replace: true });
+  }, [id, searchParams, setSearchParams]);
 
   const load = async () => {
     setLoading(true);
@@ -761,7 +772,18 @@ export default function LeadDetail() {
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                📞 Ghi âm
+                📞 Tổng đài
+              </button>
+              <button
+                onClick={() => setActiveTab('voice_crm')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
+                  activeTab === 'voice_crm'
+                    ? 'text-violet-600 border-b-2 border-violet-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Mic className="h-3.5 w-3.5 shrink-0" />
+                Ghi âm
               </button>
               {lead?.type === 'deal' && (
                 <button
@@ -986,6 +1008,8 @@ export default function LeadDetail() {
                 <LeadChatTab leadId={id} socket={socket} />
               ) : activeTab === 'calls' ? (
                 <CallLogsTab leadId={id} customerId={lead?.customer_id} />
+              ) : activeTab === 'voice_crm' ? (
+                <LeadVoiceRecordingsTab leadId={id} />
               ) : activeTab === 'approvals' ? (
                 <div className="max-w-2xl space-y-4">
                   <div className="rounded-xl bg-blue-50 border border-blue-100 p-4 text-sm text-blue-800">

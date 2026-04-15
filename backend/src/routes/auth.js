@@ -20,7 +20,8 @@ r.post('/login', async (req, res) => {
     if (!(await bcrypt.compare(password, user.password))) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
 
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
-    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role, fullName: user.full_name }, config.jwtSecret, { expiresIn: '12h' });
+    // Không đặt expiresIn — JWT không có `exp`, phiên chỉ hết khi đăng xuất hoặc đổi JWT_SECRET.
+    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role, fullName: user.full_name }, config.jwtSecret);
 
     // Resolve company_id from department
     let company_id = user.company_id || null;

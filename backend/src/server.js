@@ -64,6 +64,7 @@ app.use('/api/flows', require('./routes/flows'));
 app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/crm', require('./routes/crm'));
+app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/release-notes', require('./routes/releaseNotes'));
 const facebookRouter = require('./routes/facebook');
@@ -109,6 +110,8 @@ io.on('connection', (socket) => {
   socket.on('join:project', (id) => socket.join(`project:${id}`));
   socket.on('join:lead', (id) => socket.join(`lead:${id}`));
   socket.on('leave:lead', (id) => socket.leave(`lead:${id}`));
+  socket.on('join:messenger_group', (id) => id && socket.join(`messenger_group:${id}`));
+  socket.on('leave:messenger_group', (id) => id && socket.leave(`messenger_group:${id}`));
   socket.on('join:dept', (id) => socket.join(`dept:${id}`));
   socket.on('leave:dept', (id) => socket.leave(`dept:${id}`));
 

@@ -1,0 +1,363 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import MessengerDock from '../components/MessengerDock';
+import { useAuth } from '../lib/auth';
+import { messengerThreadKey, messengerUnreadKey, messengerUnreadGroupKey } from '../lib/messengerHubStorage';
+
+const MessengerDockContext = createContext(null);
+
+function winKeyLead(leadId) {
+  return `l:${leadId}`;
+}
+function winKeyGroup(groupId) {
+  return `g:${groupId}`;
+}
+
+export function MessengerDockProvider({ children }) {
+  const { user, socket } = useAuth();
+  const uid = user?.userId || user?.id;
+
+  const [windows, setWindows] = useState([]);
+  const [hubThreadLeadIds, setHubThreadLeadIds] = useState([]);
+  const [hubMessengerGroupIds, setHubMessengerGroupIds] = useState([]);
+  const [unreadByLeadId, setUnreadByLeadId] = useState({});
+  const [unreadByGroupId, setUnreadByGroupId] = useState({});
+  const unreadLeadHydratedRef = useRef(false);
+  const unreadGroupHydratedRef = useRef(false);
+
+  const presenceLeadRef = useRef(new Map());
+  const presenceGroupRef = useRef(new Map());
+  const windowsRef = useRef(windows);
+  windowsRef.current = windows;
+
+  useEffect(() => {
+    unreadLeadHydratedRef.current = false;
+    if (!uid) {
+      setUnreadByLeadId({});
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(messengerUnreadKey(uid));
+      if (!raw) {
+        setUnreadByLeadId({});
+        unreadLeadHydratedRef.current = true;
+        return;
+      }
+      const p = JSON.parse(raw);
+      const next = {};
+      if (p && typeof p === 'object') {
+        Object.entries(p).forEach(([k, v]) => {
+          const n = Number(v);
+          if (!Number.isNaN(n) && n > 0) next[k] = n;
+        });
+      }
+      setUnreadByLeadId(next);
+    } catch {
+      setUnreadByLeadId({});
+    }
+    unreadLeadHydratedRef.current = true;
+  }, [uid]);
+
+  useEffect(() => {
+    if (!uid || !unreadLeadHydratedRef.current) return;
+    try {
+      const toSave = Object.fromEntries(Object.entries(unreadByLeadId).filter(([, v]) => Number(v) > 0));
+      localStorage.setItem(messengerUnreadKey(uid), JSON.stringify(toSave));
+    } catch {
+      /* ignore */
+    }
+  }, [unreadByLeadId, uid]);
+
+  useEffect(() => {
+    unreadGroupHydratedRef.current = false;
+    if (!uid) {
+      setUnreadByGroupId({});
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(messengerUnreadGroupKey(uid));
+      if (!raw) {
+        setUnreadByGroupId({});
+        unreadGroupHydratedRef.current = true;
+        return;
+      }
+      const p = JSON.parse(raw);
+      const next = {};
+      if (p && typeof p === 'object') {
+        Object.entries(p).forEach(([k, v]) => {
+          const n = Number(v);
+          if (!Number.isNaN(n) && n > 0) next[k] = n;
+        });
+      }
+      setUnreadByGroupId(next);
+    } catch {
+      setUnreadByGroupId({});
+    }
+    unreadGroupHydratedRef.current = true;
+  }, [uid]);
+
+  useEffect(() => {
+    if (!uid || !unreadGroupHydratedRef.current) return;
+    try {
+      const toSave = Object.fromEntries(Object.entries(unreadByGroupId).filter(([, v]) => Number(v) > 0));
+      localStorage.setItem(messengerUnreadGroupKey(uid), JSON.stringify(toSave));
+    } catch {
+      /* ignore */
+    }
+  }, [unreadByGroupId, uid]);
+
+  const markLeadRead = useCallback((leadId) => {
+    if (!leadId) return;
+    setUnreadByLeadId((prev) => ({ ...prev, [leadId]: 0 }));
+  }, []);
+
+  const markGroupRead = useCallback((groupId) => {
+    if (!groupId) return;
+    setUnreadByGroupId((prev) => ({ ...prev, [groupId]: 0 }));
+  }, []);
+
+  const registerLeadChatPresence = useCallback((leadId) => {
+    if (!leadId) return () => {};
+    const m = presenceLeadRef.current;
+    m.set(leadId, (m.get(leadId) || 0) + 1);
+    return () => {
+      const c = (m.get(leadId) || 1) - 1;
+      if (c <= 0) m.delete(leadId);
+      else m.set(leadId, c);
+    };
+  }, []);
+
+  const registerMessengerGroupPresence = useCallback((groupId) => {
+    if (!groupId) return () => {};
+    const m = presenceGroupRef.current;
+    m.set(groupId, (m.get(groupId) || 0) + 1);
+    return () => {
+      const c = (m.get(groupId) || 1) - 1;
+      if (c <= 0) m.delete(groupId);
+      else m.set(groupId, c);
+    };
+  }, []);
+
+  const syncHubThreadLeadIds = useCallback((ids) => {
+    setHubThreadLeadIds(Array.from(new Set((ids || []).filter(Boolean))));
+  }, []);
+
+  const syncHubMessengerGroupIds = useCallback((ids) => {
+    setHubMessengerGroupIds(Array.from(new Set((ids || []).filter(Boolean))));
+  }, []);
+
+  useEffect(() => {
+    if (!uid) return;
+    try {
+      const raw = localStorage.getItem(messengerThreadKey(uid));
+      const threads = raw ? JSON.parse(raw) : [];
+      syncHubThreadLeadIds((threads || []).map((t) => t.leadId).filter(Boolean));
+      syncHubMessengerGroupIds((threads || []).map((t) => t.groupId).filter(Boolean));
+    } catch {
+      syncHubThreadLeadIds([]);
+      syncHubMessengerGroupIds([]);
+    }
+  }, [uid, syncHubThreadLeadIds, syncHubMessengerGroupIds]);
+
+  const openLeadChat = useCallback(
+    (lead) => {
+      if (!lead?.id) return;
+      const id = lead.id;
+      markLeadRead(id);
+      const wk = winKeyLead(id);
+      setWindows((w) => {
+        const exists = w.some((x) => x.windowKey === wk);
+        if (exists) {
+          return w.map((x) =>
+            x.windowKey === wk
+              ? {
+                  ...x,
+                  minimized: false,
+                  title: lead.title || x.title,
+                  code: lead.code || x.code,
+                  type: lead.type || x.type || 'lead',
+                }
+              : x,
+          );
+        }
+        return [
+          ...w,
+          {
+            windowKey: wk,
+            chatType: 'lead',
+            leadId: id,
+            groupId: null,
+            title: lead.title || 'Chat',
+            code: lead.code || '',
+            type: lead.type || 'lead',
+            minimized: false,
+          },
+        ];
+      });
+    },
+    [markLeadRead],
+  );
+
+  const openMessengerGroupChat = useCallback(
+    (g) => {
+      if (!g?.id) return;
+      markGroupRead(g.id);
+      const wk = winKeyGroup(g.id);
+      setWindows((w) => {
+        const exists = w.some((x) => x.windowKey === wk);
+        if (exists) {
+          return w.map((x) =>
+            x.windowKey === wk ? { ...x, minimized: false, title: g.name || g.title || x.title } : x,
+          );
+        }
+        return [
+          ...w,
+          {
+            windowKey: wk,
+            chatType: 'messenger_group',
+            leadId: null,
+            groupId: g.id,
+            title: g.name || g.title || 'Nhóm',
+            code: '',
+            type: 'group',
+            minimized: false,
+          },
+        ];
+      });
+    },
+    [markGroupRead],
+  );
+
+  const closeWindow = useCallback((windowKey) => {
+    setWindows((w) => w.filter((x) => x.windowKey !== windowKey));
+  }, []);
+
+  const toggleMinimize = useCallback(
+    (windowKey) => {
+      setWindows((w) => {
+        const hit = w.find((x) => x.windowKey === windowKey);
+        const nextMin = hit ? !hit.minimized : false;
+        const next = w.map((x) => (x.windowKey === windowKey ? { ...x, minimized: nextMin } : x));
+        if (hit && !nextMin) {
+          if (hit.chatType === 'messenger_group' && hit.groupId) markGroupRead(hit.groupId);
+          else if (hit.leadId) markLeadRead(hit.leadId);
+        }
+        return next;
+      });
+    },
+    [markLeadRead, markGroupRead],
+  );
+
+  useEffect(() => {
+    if (!socket || !uid) return;
+    const leadJoin = [...new Set([...windows.filter((w) => w.chatType === 'lead').map((w) => w.leadId), ...hubThreadLeadIds])].filter(Boolean);
+    const grpJoin = [...new Set([...windows.filter((w) => w.chatType === 'messenger_group').map((w) => w.groupId), ...hubMessengerGroupIds])].filter(Boolean);
+    leadJoin.forEach((id) => socket.emit('join:lead', id));
+    grpJoin.forEach((id) => socket.emit('join:messenger_group', id));
+    return () => {
+      leadJoin.forEach((id) => socket.emit('leave:lead', id));
+      grpJoin.forEach((id) => socket.emit('leave:messenger_group', id));
+    };
+  }, [socket, uid, windows, hubThreadLeadIds, hubMessengerGroupIds]);
+
+  useEffect(() => {
+    if (!socket || !uid) return;
+    const onLeadChat = (msg) => {
+      const leadId = msg.lead_id;
+      if (!leadId) return;
+      window.dispatchEvent(
+        new CustomEvent('messenger:chat-activity', { detail: { leadId, created_at: msg.created_at } }),
+      );
+      const isSelf = String(msg.user_id) === String(uid);
+      if (isSelf) {
+        markLeadRead(leadId);
+        return;
+      }
+      if ((presenceLeadRef.current.get(leadId) || 0) > 0) {
+        markLeadRead(leadId);
+        return;
+      }
+      const expandedDock = windowsRef.current.some((w) => w.chatType === 'lead' && w.leadId === leadId && !w.minimized);
+      if (expandedDock) {
+        markLeadRead(leadId);
+        return;
+      }
+      setUnreadByLeadId((u) => ({ ...u, [leadId]: (u[leadId] || 0) + 1 }));
+    };
+    const onGroupChat = (msg) => {
+      const gid = msg.group_id;
+      if (!gid) return;
+      window.dispatchEvent(
+        new CustomEvent('messenger:group-chat-activity', { detail: { groupId: gid, created_at: msg.created_at } }),
+      );
+      const isSelf = String(msg.user_id) === String(uid);
+      if (isSelf) {
+        markGroupRead(gid);
+        return;
+      }
+      if ((presenceGroupRef.current.get(gid) || 0) > 0) {
+        markGroupRead(gid);
+        return;
+      }
+      const expandedDock = windowsRef.current.some(
+        (w) => w.chatType === 'messenger_group' && w.groupId === gid && !w.minimized,
+      );
+      if (expandedDock) {
+        markGroupRead(gid);
+        return;
+      }
+      setUnreadByGroupId((u) => ({ ...u, [gid]: (u[gid] || 0) + 1 }));
+    };
+    socket.on('lead:chat', onLeadChat);
+    socket.on('messenger_group:chat', onGroupChat);
+    return () => {
+      socket.off('lead:chat', onLeadChat);
+      socket.off('messenger_group:chat', onGroupChat);
+    };
+  }, [socket, uid, markLeadRead, markGroupRead]);
+
+  const value = useMemo(
+    () => ({
+      windows,
+      unreadByLeadId,
+      unreadByGroupId,
+      openLeadChat,
+      openMessengerGroupChat,
+      closeWindow,
+      toggleMinimize,
+      markLeadRead,
+      markGroupRead,
+      registerLeadChatPresence,
+      registerMessengerGroupPresence,
+      syncHubThreadLeadIds,
+      syncHubMessengerGroupIds,
+    }),
+    [
+      windows,
+      unreadByLeadId,
+      unreadByGroupId,
+      openLeadChat,
+      openMessengerGroupChat,
+      closeWindow,
+      toggleMinimize,
+      markLeadRead,
+      markGroupRead,
+      registerLeadChatPresence,
+      registerMessengerGroupPresence,
+      syncHubThreadLeadIds,
+      syncHubMessengerGroupIds,
+    ],
+  );
+
+  return (
+    <MessengerDockContext.Provider value={value}>
+      {children}
+      <MessengerDock />
+    </MessengerDockContext.Provider>
+  );
+}
+
+export function useMessengerDock() {
+  const ctx = useContext(MessengerDockContext);
+  if (!ctx) throw new Error('useMessengerDock must be used within MessengerDockProvider');
+  return ctx;
+}

@@ -12,7 +12,7 @@ const {
   removeVoiceObject,
   publicUrlForVoiceObject,
 } = require('../helpers/voiceStorageUpload');
-const { fetchCrmLeadsForCustomerScoped } = require('../helpers/crmAccessRoles');
+const { fetchCrmLeadsForCustomerScoped, userSeesAllCrmDeals, userSeesAllCrmLeads } = require('../helpers/crmAccessRoles');
 
 const r = Router();
 r.use(auth);
@@ -34,6 +34,46 @@ function uuidOrNull(v) {
   const s = String(v).trim();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)) return false;
   return s;
+}
+
+/** Giống quyền xem chi tiết CRM — mọi ghi âm đã ghép lead_id cho NV có quyền xem lead/deal. */
+async function assertUserCanViewCrmLeadForVoiceList(req, leadId) {
+  const { data: lead, error } = await supabase
+    .from('crm_leads')
+    .select('id, type, assigned_to, lead_owner_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!lead) {
+    const e = new Error('Không tìm thấy lead/deal');
+    e.status = 404;
+    throw e;
+  }
+  const uid = req.user?.userId;
+  if (lead.type === 'deal') {
+    if (!userSeesAllCrmDeals(req.user?.role)) {
+      if (!uid || String(lead.assigned_to || '') !== String(uid)) {
+        const e = new Error('Không có quyền xem ghi âm của deal này');
+        e.status = 403;
+        throw e;
+      }
+    }
+    return lead;
+  }
+  if (lead.type === 'lead') {
+    if (!userSeesAllCrmLeads(req.user?.role)) {
+      const owns =
+        uid &&
+        (String(lead.assigned_to || '') === String(uid) || String(lead.lead_owner_id || '') === String(uid));
+      if (!owns) {
+        const e = new Error('Không có quyền xem ghi âm của lead này');
+        e.status = 403;
+        throw e;
+      }
+    }
+    return lead;
+  }
+  return lead;
 }
 
 function ensureUserDir(userId) {
@@ -89,9 +129,30 @@ r.get('/phone-preview', async (req, res) => {
   }
 });
 
-/** GET /voice-recordings — danh sách của user đang đăng nhập */
+/** GET /voice-recordings — mặc định: của user; `?lead_id=` = mọi bản đã ghép lead/deal (nếu có quyền xem CRM). */
 r.get('/', async (req, res) => {
   try {
+    const leadIdFilter = uuidOrNull(req.query.lead_id);
+    if (leadIdFilter === false) {
+      return res.status(400).json({ error: 'lead_id không hợp lệ' });
+    }
+    if (leadIdFilter) {
+      try {
+        await assertUserCanViewCrmLeadForVoiceList(req, leadIdFilter);
+      } catch (e) {
+        const st = e.status || 500;
+        return res.status(st).json({ error: e.message || 'Lỗi' });
+      }
+      const { data, error } = await supabase
+        .from('voice_recordings')
+        .select(RECORDING_SELECT)
+        .eq('lead_id', leadIdFilter)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      return res.json({ recordings: (data || []).map(attachPlayableUrl) });
+    }
+
     const phoneQ = req.query.phone ? String(req.query.phone).replace(/\s+/g, '').trim() : '';
     const unassigned =
       req.query.unassigned === '1' || req.query.unassigned === 'true' || req.query.unassigned === 'yes';

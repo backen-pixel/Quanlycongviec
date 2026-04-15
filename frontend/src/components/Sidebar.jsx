@@ -80,6 +80,7 @@ const CRM_MENU_GROUPS = [
     items: [
       { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM' },
       { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
+      { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
       { to: '/tools/voice-recordings', icon: Mic, label: 'Ghi âm' },
     ]
   },
