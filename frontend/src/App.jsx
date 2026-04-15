@@ -112,6 +112,7 @@ import DivisionDashboardPage from './pages/DivisionDashboardPage';
 import GuidePage from './pages/GuidePage';
 import CategoriesPage from './pages/CategoriesPage';
 import PrivacyPage from './pages/PrivacyPage';
+import VoiceRecordingsPage from './pages/VoiceRecordingsPage';
 
 import { Settings } from 'lucide-react';
 
@@ -211,6 +212,7 @@ export default function App() {
             <Route path="/departments/:id/chat" element={<DepartmentChat />} />
             <Route path="/teams" element={<TeamsPage />} />
             <Route path="/personal-tasks" element={<PersonalTasks />} />
+            <Route path="/tools/voice-recordings" element={<VoiceRecordingsPage />} />
             <Route path="/workflow-settings" element={<WorkflowSettings />} />
             <Route path="/approval-rules" element={<ApprovalRulesPage />} />
             <Route path="/ecosystem" element={<EcosystemPage />} />

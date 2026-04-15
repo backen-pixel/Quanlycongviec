@@ -51,6 +51,7 @@ app.use('/api/dashboard', require('./routes/dashboardDivisions')); // Must be be
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/divisions', require('./routes/divisions'));
 app.use('/api/upload', require('./routes/upload'));
+app.use('/api/voice-recordings', require('./routes/voiceRecordings'));
 app.use('/api/templates', require('./routes/templates'));
 app.use('/api/companies', require('./routes/companies'));
 app.use('/api/departments', require('./routes/departments'));
