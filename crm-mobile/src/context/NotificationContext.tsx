@@ -7,12 +7,13 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, DeviceEventEmitter, type AppStateStatus } from 'react-native';
 import { io, type Socket } from 'socket.io-client';
 import { api } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from './AuthContext';
 import { isNotificationTypeEnabled } from '../lib/notificationPrefs';
+import { CRM_MOBILE_PREFS_CHANGED, loadCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
 import type { AppNotification, NotificationPrefs } from '../types/notifications';
 
 type Listener = (n: AppNotification) => void;
@@ -48,6 +49,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const prefsRef = useRef<NotificationPrefs | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const listenersRef = useRef<Set<Listener>>(new Set());
+  /** Giữ socket khi app nền — mặc định true; tắt trong Cài đặt CRM mobile. */
+  const backgroundRealtimeRef = useRef(true);
 
   useEffect(() => {
     prefsRef.current = prefs;
@@ -95,9 +98,30 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, [authLoading, token, uid, refreshUnread, loadPrefs]);
 
   useEffect(() => {
+    const syncBg = () => {
+      void loadCrmMobilePrefs().then((p) => {
+        backgroundRealtimeRef.current = p.backgroundRealtimeEnabled !== false;
+      });
+    };
+    syncBg();
+    const subPrefs = DeviceEventEmitter.addListener(CRM_MOBILE_PREFS_CHANGED, (p: CrmMobilePrefs) => {
+      backgroundRealtimeRef.current = p.backgroundRealtimeEnabled !== false;
+      if (!backgroundRealtimeRef.current && AppState.currentState !== 'active') {
+        socketRef.current?.disconnect();
+      }
+    });
+    return () => subPrefs.remove();
+  }, []);
+
+  useEffect(() => {
     if (authLoading || !token) return;
     const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
-      if (s === 'active') void refreshUnread();
+      if (s === 'active') {
+        void loadCrmMobilePrefs().then((p) => {
+          backgroundRealtimeRef.current = p.backgroundRealtimeEnabled !== false;
+        });
+        void refreshUnread();
+      }
     });
     return () => sub.remove();
   }, [authLoading, token, refreshUnread]);
@@ -141,7 +165,20 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     s.on('notification', onNotif);
 
+    const onAppState = (next: AppStateStatus) => {
+      if (next === 'active') {
+        if (!s.connected) s.connect();
+        return;
+      }
+      if (!backgroundRealtimeRef.current) {
+        s.disconnect();
+      }
+    };
+
+    const appSub = AppState.addEventListener('change', onAppState);
+
     return () => {
+      appSub.remove();
       s.off('notification', onNotif);
       s.disconnect();
       if (socketRef.current === s) socketRef.current = null;

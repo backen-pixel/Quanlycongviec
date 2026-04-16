@@ -9,6 +9,7 @@ import {
   Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3
 } from 'lucide-react';
 import BatchActionsBar from '../components/BatchActionsBar';
+import CrmAppChannelPrefsBanner from '../components/CrmAppChannelPrefsBanner';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -103,6 +104,8 @@ export default function FacebookPage() {
           </div>
         )}
       </div>
+
+      <CrmAppChannelPrefsBanner />
 
       <div className="border-b bg-white px-6 flex gap-0.5 shrink-0">
         {tabs.map(t => (

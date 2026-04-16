@@ -15,8 +15,23 @@ export type CrmLeadListItem = {
   title?: string | null;
   type?: string | null;
   stage_id?: string | null;
+  company_id?: string | null;
+  source_id?: string | null;
+  description?: string | null;
+  install_address?: string | null;
+  phone?: string | null;
+  assigned_to?: string | null;
+  lead_owner_id?: string | null;
   stage?: CrmStage | null;
-  customer?: { id?: string; full_name?: string | null; phone?: string | null } | null;
+  customer?: {
+    id?: string;
+    full_name?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+    company?: string | null;
+  } | null;
+  company?: { id?: string; name?: string | null; short_name?: string | null } | null;
   estimated_value?: number | null;
   created_at?: string | null;
   is_new_for_current_user?: boolean;
@@ -93,3 +108,26 @@ export type CrmTask = {
 
 export type CrmCompany = { id: string; name?: string; short_name?: string | null };
 export type CrmSource = { id: string; name?: string };
+
+/** Bản ghi âm CRM (API `/voice-recordings`) */
+export type CrmVoiceRecording = {
+  id: string;
+  user_id?: string | null;
+  file_name?: string | null;
+  storage_path?: string | null;
+  mime_type?: string | null;
+  file_size?: number | null;
+  duration_sec?: number | null;
+  source?: string | null;
+  device_label?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+  phone_number?: string | null;
+  direction?: string | null;
+  audio_url?: string | null;
+  customer_id?: string | null;
+  lead_id?: string | null;
+  customer?: { id?: string; full_name?: string | null; phone?: string | null } | null;
+  lead?: { id?: string; code?: string | null; title?: string | null; type?: string | null } | null;
+  uploader?: { id?: string; full_name?: string | null; email?: string | null } | null;
+};

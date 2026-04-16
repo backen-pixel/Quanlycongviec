@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,18 +8,87 @@ import {
   TextInput,
   RefreshControl,
   ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
 } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { canAssigneeFilterDeals, canAssigneeFilterLeads } from '../lib/crmMobilePrefs';
 import type { CrmLeadListItem } from '../types/crm';
 import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatVND, formatDate, calculateDays, stageTintBg } from '../lib/formatUtils';
 import CreateCrmEntityModal from '../components/CreateCrmEntityModal';
+import {
+  loadCrmMobilePipelineSnapshot,
+  saveCrmMobilePipelineSnapshot,
+  type CrmMobilePipelineSnapshot,
+} from '../lib/crmPipelineStorageMobile';
+import {
+  buildSmartSourceOptions,
+  filterPipelineItemsWebLike,
+  type CrmPipelineClientFilters,
+  type FbPageRow,
+} from '../lib/crmPipelineFiltersWeb';
+import CrmLeadListAdvancedFiltersModal from '../components/CrmLeadListAdvancedFiltersModal';
+import { openMoreTab } from '../navigation/openMoreTab';
+import {
+  CrmPipelineKanbanView,
+  CrmPipelinePlannerView,
+  CrmPipelineCalendarView,
+} from '../components/CrmPipelineViewModes';
 
 type Nav = NativeStackNavigationProp<CrmStackParamList, 'LeadList'>;
 
 type Props = { navigation: Nav };
+
+type PickerUser = { id: string; full_name?: string | null; email?: string | null };
+
+type CompanyRow = { id: string; name?: string | null };
+type StageRow = { id: string; name?: string | null; icon?: string | null };
+type SourceRow = { id: string; name?: string | null; icon?: string | null };
+
+async function fetchAllCrmLeadsChunked(
+  type: 'lead' | 'deal',
+  snapshot: CrmMobilePipelineSnapshot,
+  sendAssignedTo: boolean,
+): Promise<CrmLeadListItem[]> {
+  const dateParams: Record<string, string> = {};
+  if (snapshot.customDateFrom) dateParams.date_from = snapshot.customDateFrom;
+  if (snapshot.customDateTo) dateParams.date_to = snapshot.customDateTo;
+
+  const common: Record<string, string | number> = { type, ...dateParams };
+  if (snapshot.filterPhone) common.phone_filter = snapshot.filterPhone;
+  if (sendAssignedTo && snapshot.filterAssignee) common.assigned_to = snapshot.filterAssignee;
+  const stageId =
+    type === 'lead' ? String(snapshot.filterStageLead || '').trim() : String(snapshot.filterStageDeal || '').trim();
+  if (stageId) common.stage_id = stageId;
+
+  const chunk = 500;
+  let offset = 0;
+  const out: CrmLeadListItem[] = [];
+  for (let guard = 0; guard < 200; guard++) {
+    const { data } = await api.get('/crm/leads', { params: { ...common, limit: chunk, offset } });
+    const payload = data ?? {};
+    const page = (Array.isArray(payload) ? payload : payload.data || []) as CrmLeadListItem[];
+    out.push(...page);
+    if (page.length === 0) break;
+    const totalKnown = typeof payload.total === 'number' ? payload.total : null;
+    const nextOffset =
+      typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
+    const hasMore =
+      typeof payload.hasMore === 'boolean'
+        ? payload.hasMore
+        : totalKnown != null
+          ? nextOffset < totalKnown
+          : page.length >= chunk;
+    if (!hasMore) break;
+    offset = nextOffset;
+  }
+  return out;
+}
 
 function LeadCard({
   item,
@@ -92,90 +161,260 @@ function LeadCard({
 }
 
 export default function LeadListScreen({ navigation }: Props) {
+  const { user } = useAuth();
   const [createMode, setCreateMode] = useState<'lead' | 'deal' | null>(null);
   const [tab, setTab] = useState<'lead' | 'deal'>('lead');
+  const [snapshot, setSnapshot] = useState<CrmMobilePipelineSnapshot | null>(null);
   const [draftQ, setDraftQ] = useState('');
-  const [appliedSearch, setAppliedSearch] = useState('');
-  const appliedSearchRef = useRef('');
-  appliedSearchRef.current = appliedSearch;
-  const [items, setItems] = useState<CrmLeadListItem[]>([]);
-  const [totalServer, setTotalServer] = useState(0);
-  const [counts, setCounts] = useState<{ lead: number; deal: number }>({ lead: 0, deal: 0 });
+  const [rawLead, setRawLead] = useState<CrmLeadListItem[]>([]);
+  const [rawDeal, setRawDeal] = useState<CrmLeadListItem[]>([]);
+  const [fbLead, setFbLead] = useState<Set<string>>(() => new Set());
+  const [fbDeal, setFbDeal] = useState<Set<string>>(() => new Set());
+  const [companies, setCompanies] = useState<CompanyRow[]>([]);
+  const [stagesLead, setStagesLead] = useState<StageRow[]>([]);
+  const [stagesDeal, setStagesDeal] = useState<StageRow[]>([]);
+  const [sources, setSources] = useState<SourceRow[]>([]);
+  const [fbPages, setFbPages] = useState<FbPageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const nextOffsetRef = useRef(0);
-  const hasMoreRef = useRef(true);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [advOpen, setAdvOpen] = useState(false);
+  const [assigneeModal, setAssigneeModal] = useState(false);
+  const [pickerUsers, setPickerUsers] = useState<PickerUser[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
 
-  const fetchLeads = useCallback(
-    async (startOffset: number, append: boolean, search: string) => {
-      const { data } = await api.get('/crm/leads', {
-        params: {
-          type: tab,
-          limit: 30,
-          offset: startOffset,
-          ...(search ? { search } : {}),
-        },
-      });
-      const list = (data.data || []) as CrmLeadListItem[];
-      const total = typeof data.total === 'number' ? data.total : list.length;
-      if (append) setItems((prev) => [...prev, ...list]);
-      else {
-        setItems(list);
-        setTotalServer(total);
-        setCounts((c) => ({ ...c, [tab]: total }));
-      }
-      const hm = Boolean(data.hasMore);
-      const next = (data.nextOffset as number) ?? startOffset + list.length;
-      hasMoreRef.current = hm;
-      nextOffsetRef.current = next;
-    },
-    [tab],
-  );
+  const canPickLead = canAssigneeFilterLeads(user?.role);
+  const canPickDeal = canAssigneeFilterDeals(user?.role);
+  const canPickAssignee = tab === 'lead' ? canPickLead : canPickDeal;
 
-  const loadInitial = useCallback(async () => {
-    const search = appliedSearchRef.current;
-    setLoading(true);
-    nextOffsetRef.current = 0;
-    hasMoreRef.current = true;
-    try {
-      await fetchLeads(0, false, search);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchLeads]);
+  const snapshotRef = useRef<CrmMobilePipelineSnapshot | null>(null);
+  snapshotRef.current = snapshot;
+
+  const apiKey =
+    snapshot != null
+      ? [
+          snapshot.customDateFrom,
+          snapshot.customDateTo,
+          snapshot.filterPhone,
+          snapshot.filterAssignee,
+          snapshot.filterStageLead,
+          snapshot.filterStageDeal,
+          user?.role ?? '',
+          refreshNonce,
+        ].join('|')
+      : '';
 
   useEffect(() => {
-    loadInitial();
-  }, [loadInitial]);
+    let cancelled = false;
+    (async () => {
+      const s = await loadCrmMobilePipelineSnapshot();
+      if (cancelled) return;
+      setSnapshot(s);
+      setDraftQ(s.searchText || '');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const commitSnapshot = useCallback(async (next: CrmMobilePipelineSnapshot) => {
+    setSnapshot(next);
+    await saveCrmMobilePipelineSnapshot(next);
+  }, []);
+
+  const loadMeta = useCallback(async () => {
+    try {
+      const [co, sl, sd, src] = await Promise.all([
+        api.get('/companies').catch(() => ({ data: {} })),
+        api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
+        api.get('/crm/sources').catch(() => ({ data: {} })),
+      ]);
+      const companiesPayload = (co.data as { companies?: CompanyRow[] })?.companies;
+      setCompanies(Array.isArray(companiesPayload) ? companiesPayload : []);
+      setStagesLead(Array.isArray(sl.data) ? sl.data : []);
+      setStagesDeal(Array.isArray(sd.data) ? sd.data : []);
+      const d = src.data as { sources?: SourceRow[]; fb_pages?: FbPageRow[] };
+      setSources(Array.isArray(d?.sources) ? d.sources : []);
+      setFbPages(Array.isArray(d?.fb_pages) ? d.fb_pages : []);
+    } catch {
+      setCompanies([]);
+      setStagesLead([]);
+      setStagesDeal([]);
+      setSources([]);
+      setFbPages([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMeta();
+  }, [loadMeta]);
+
+  useEffect(() => {
+    if (snapshot == null) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const snap = snapshotRef.current!;
+        const assignParam =
+          (canAssigneeFilterLeads(user?.role) || canAssigneeFilterDeals(user?.role)) && !!snap.filterAssignee;
+        const [leads, deals] = await Promise.all([
+          fetchAllCrmLeadsChunked('lead', snap, assignParam),
+          fetchAllCrmLeadsChunked('deal', snap, assignParam),
+        ]);
+        if (!cancelled) {
+          setRawLead(leads);
+          setRawDeal(deals);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiKey, user?.role]);
+
+  const fbKey = snapshot?.filterSource ?? '';
+  useEffect(() => {
+    const src = snapshotRef.current?.filterSource || '';
+    if (!src.startsWith('fbp:')) {
+      setFbLead(new Set());
+      setFbDeal(new Set());
+      return;
+    }
+    let cancelled = false;
+    const pageId = src.replace(/^fbp:/, '');
+    (async () => {
+      const [rL, rD] = await Promise.all([
+        api.get('/crm/leads-by-fb-page', { params: { page_id: pageId, type: 'lead' } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads-by-fb-page', { params: { page_id: pageId, type: 'deal' } }).catch(() => ({ data: [] })),
+      ]);
+      if (cancelled) return;
+      const lrows = (rL.data || []) as { id: string }[];
+      const drows = (rD.data || []) as { id: string }[];
+      setFbLead(new Set(lrows.map((x) => String(x.id))));
+      setFbDeal(new Set(drows.map((x) => String(x.id))));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fbKey]);
+
+  const clientBase: Omit<CrmPipelineClientFilters, 'filterStage'> | null = useMemo(() => {
+    if (!snapshot) return null;
+    return {
+      searchText: snapshot.searchText || '',
+      filterCompany: snapshot.filterCompany || '',
+      filterAssignee: canPickLead || canPickDeal ? snapshot.filterAssignee || '' : '',
+      filterAssigneeName: snapshot.filterAssigneeName || '',
+      filterSource: snapshot.filterSource || '',
+      filterPhone: snapshot.filterPhone || '',
+    };
+  }, [snapshot, canPickLead, canPickDeal]);
+
+  const filteredLead = useMemo(() => {
+    if (!clientBase) return [];
+    const f: CrmPipelineClientFilters = { ...clientBase, filterStage: snapshot?.filterStageLead || '' };
+    return filterPipelineItemsWebLike(rawLead, f, fbLead);
+  }, [rawLead, clientBase, fbLead, snapshot?.filterStageLead]);
+
+  const filteredDeal = useMemo(() => {
+    if (!clientBase) return [];
+    const f: CrmPipelineClientFilters = { ...clientBase, filterStage: snapshot?.filterStageDeal || '' };
+    return filterPipelineItemsWebLike(rawDeal, f, fbDeal);
+  }, [rawDeal, clientBase, fbDeal, snapshot?.filterStageDeal]);
+
+  const items = tab === 'lead' ? filteredLead : filteredDeal;
+
+  const sourceOptions = useMemo(
+    () => buildSmartSourceOptions(sources, fbPages, rawLead, rawDeal),
+    [sources, fbPages, rawLead, rawDeal],
+  );
+
+  const advFilterCount = useMemo(() => {
+    if (!snapshot) return 0;
+    return [
+      snapshot.timePreset,
+      snapshot.filterAssignee,
+      snapshot.filterAssigneeName,
+      snapshot.filterCompany,
+      snapshot.filterSource,
+      snapshot.filterStageLead,
+      snapshot.filterStageDeal,
+      snapshot.filterPhone,
+    ].filter(Boolean).length;
+  }, [snapshot]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await loadInitial();
+      await loadMeta();
+      setRefreshNonce((n) => n + 1);
     } finally {
       setRefreshing(false);
     }
-  }, [loadInitial]);
-
-  const onEnd = useCallback(async () => {
-    if (!hasMoreRef.current || loadingMore || loading) return;
-    setLoadingMore(true);
-    try {
-      await fetchLeads(nextOffsetRef.current, true, appliedSearchRef.current);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [fetchLeads, loadingMore, loading]);
+  }, [loadMeta]);
 
   const searchSubmit = useCallback(() => {
+    if (!snapshot) return;
     const s = draftQ.trim();
-    appliedSearchRef.current = s;
-    setAppliedSearch(s);
-    void loadInitial();
-  }, [draftQ, loadInitial]);
+    const next = { ...snapshot, searchText: s };
+    void commitSnapshot(next);
+  }, [draftQ, snapshot, commitSnapshot]);
+
+  const ensurePickerUsers = useCallback(async () => {
+    if (pickerUsers.length) return;
+    setPickerLoading(true);
+    try {
+      const { data } = await api.get<{ users?: PickerUser[] }>('/users');
+      setPickerUsers(Array.isArray(data?.users) ? data.users : []);
+    } catch {
+      setPickerUsers([]);
+    } finally {
+      setPickerLoading(false);
+    }
+  }, [pickerUsers.length]);
+
+  const openAssigneeModal = async () => {
+    setAssigneeModal(true);
+    await ensurePickerUsers();
+  };
+
+  useEffect(() => {
+    if (advOpen) void ensurePickerUsers();
+  }, [advOpen, ensurePickerUsers]);
+
+  const setPhoneQuick = (mode: '' | 'has_phone' | 'no_phone') => {
+    if (!snapshot) return;
+    void commitSnapshot({ ...snapshot, filterPhone: mode });
+  };
 
   const sumLoadedValue = items.reduce((s, i) => s + (Number(i.estimated_value) || 0), 0);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={styles.headerIcons}>
+          <TouchableOpacity onPress={() => openMoreTab(navigation, 'CrmEvents', {})} hitSlop={12}>
+            <Text style={styles.headerIconTxt}>📅</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => openMoreTab(navigation, 'FacebookInbox')} hitSlop={12}>
+            <Text style={styles.headerIconTxt}>📘</Text>
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [navigation]);
+
+  if (!snapshot) {
+    return (
+      <View style={[styles.screen, styles.loadingOverlay]}>
+        <ActivityIndicator size="large" color={CrmColors.blue600} />
+      </View>
+    );
+  }
 
   const listHeader = (
     <View style={styles.headerBlock}>
@@ -199,7 +438,7 @@ export default function LeadListScreen({ navigation }: Props) {
             activeOpacity={0.85}
           >
             <Text style={[styles.pillTxt, tab === 'lead' && styles.pillTxtOnLead]}>
-              💼 Leads ({counts.lead || 0})
+              💼 Leads ({filteredLead.length})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -208,11 +447,112 @@ export default function LeadListScreen({ navigation }: Props) {
             activeOpacity={0.85}
           >
             <Text style={[styles.pillTxt, tab === 'deal' && styles.pillTxtOnDeal]}>
-              🎯 Deals ({counts.deal || 0})
+              🎯 Deals ({filteredDeal.length})
             </Text>
           </TouchableOpacity>
         </View>
       </View>
+
+      <Text style={styles.filterLabel}>Hiển thị (giống web CRM)</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScrollPad}>
+        {(['list', 'kanban', 'planner', 'calendar'] as const).map((m) => (
+          <TouchableOpacity
+            key={m}
+            style={[styles.vmChip, snapshot.viewMode === m && styles.vmChipOn]}
+            onPress={() => void commitSnapshot({ ...snapshot, viewMode: m })}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.vmChipTxt, snapshot.viewMode === m && styles.vmChipTxtOn]}>
+              {m === 'list' ? 'Danh sách' : m === 'kanban' ? 'Kanban' : m === 'planner' ? 'Planner' : 'Lịch'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      <Text style={styles.filterLabel}>Giai đoạn ({tab === 'lead' ? 'Lead' : 'Deal'} — lọc API + danh sách)</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScrollPad}>
+        <TouchableOpacity
+          style={[styles.chip, (tab === 'lead' ? !snapshot.filterStageLead : !snapshot.filterStageDeal) && styles.chipOn]}
+          onPress={() =>
+            void commitSnapshot(
+              tab === 'lead' ? { ...snapshot, filterStageLead: '' } : { ...snapshot, filterStageDeal: '' },
+            )
+          }
+        >
+          <Text
+            style={[
+              styles.chipTxt,
+              (tab === 'lead' ? !snapshot.filterStageLead : !snapshot.filterStageDeal) && styles.chipTxtOn,
+            ]}
+          >
+            Tất cả
+          </Text>
+        </TouchableOpacity>
+        {(tab === 'lead' ? stagesLead : stagesDeal).map((s) => {
+          const active = tab === 'lead' ? snapshot.filterStageLead === s.id : snapshot.filterStageDeal === s.id;
+          return (
+            <TouchableOpacity
+              key={s.id}
+              style={[styles.chip, active && styles.chipOn]}
+              onPress={() =>
+                void commitSnapshot(
+                  tab === 'lead' ? { ...snapshot, filterStageLead: s.id } : { ...snapshot, filterStageDeal: s.id },
+                )
+              }
+            >
+              <Text style={[styles.chipTxt, active && styles.chipTxtOn]} numberOfLines={1}>
+                {(s.icon ? `${s.icon} ` : '') + (s.name || '—')}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      <TouchableOpacity style={styles.filterAdvBtn} onPress={() => setAdvOpen(true)} activeOpacity={0.85}>
+        <Text style={styles.filterAdvBtnTxt}>Bộ lọc (giống web)</Text>
+        {advFilterCount > 0 ? (
+          <View style={styles.filterBadge}>
+            <Text style={styles.filterBadgeTxt}>{advFilterCount}</Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
+
+      <Text style={styles.filterLabel}>Số điện thoại (API)</Text>
+      <View style={styles.chipRow}>
+        {(
+          [
+            ['has_phone', 'Có SĐT'],
+            ['', 'Tất cả'],
+            ['no_phone', 'Chưa có SĐT'],
+          ] as const
+        ).map(([key, label]) => (
+          <TouchableOpacity
+            key={key || 'all'}
+            style={[styles.chip, snapshot.filterPhone === key && styles.chipOn]}
+            onPress={() => setPhoneQuick(key)}
+          >
+            <Text style={[styles.chipTxt, snapshot.filterPhone === key && styles.chipTxtOn]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {canPickAssignee ? (
+        <>
+          <Text style={styles.filterLabel}>Nhân viên phụ trách (chỉ quản trị / lãnh đạo)</Text>
+          <TouchableOpacity style={styles.assigneeBtn} onPress={() => void openAssigneeModal()} activeOpacity={0.85}>
+            <Text style={styles.assigneeBtnTxt}>
+              {snapshot.filterAssignee
+                ? pickerUsers.find((u) => u.id === snapshot.filterAssignee)?.full_name ||
+                  pickerUsers.find((u) => u.id === snapshot.filterAssignee)?.email ||
+                  'Đã chọn'
+                : 'Tất cả nhân viên'}
+            </Text>
+            <Text style={styles.assigneeBtnChev}>▾</Text>
+          </TouchableOpacity>
+        </>
+      ) : (
+        <Text style={styles.filterHint}>Bạn chỉ thấy {tab === 'deal' ? 'deal' : 'lead'} được giao cho mình.</Text>
+      )}
 
       <View style={styles.searchWrap}>
         <Text style={styles.searchIcon}>🔍</Text>
@@ -237,16 +577,8 @@ export default function LeadListScreen({ navigation }: Props) {
     </View>
   );
 
-  return (
-    <View style={styles.screen}>
-      <CreateCrmEntityModal
-        visible={createMode !== null}
-        mode={(createMode === 'deal' ? 'deal' : 'lead') as 'lead' | 'deal'}
-        onClose={() => setCreateMode(null)}
-        onCreated={() => {
-          void loadInitial();
-        }}
-      />
+  const listBody =
+    snapshot.viewMode === 'list' ? (
       <FlatList
         data={items}
         keyExtractor={(it) => it.id}
@@ -257,37 +589,136 @@ export default function LeadListScreen({ navigation }: Props) {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={CrmColors.blue600} />
         }
-        onEndReached={onEnd}
-        onEndReachedThreshold={0.35}
         contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          loading ? null : (
-            <Text style={styles.empty}>Không có dữ liệu</Text>
-          )
-        }
+        ListEmptyComponent={loading ? null : <Text style={styles.empty}>Không có dữ liệu</Text>}
         ListFooterComponent={
-          <View>
-            {loadingMore ? (
-              <ActivityIndicator style={{ marginVertical: 16 }} color={CrmColors.blue600} />
-            ) : null}
-            {!loading && items.length > 0 ? (
-              <View style={styles.tableFooter}>
-                <Text style={styles.tableFooterTxt}>
-                  Tổng: {totalServer} {tab === 'deal' ? 'deal' : 'lead'}
-                </Text>
-                <Text style={styles.tableFooterTxt}>
-                  GT: {sumLoadedValue > 0 ? formatVND(sumLoadedValue) : '0đ'}
-                </Text>
-              </View>
-            ) : null}
-          </View>
+          !loading && items.length > 0 ? (
+            <View style={styles.tableFooter}>
+              <Text style={styles.tableFooterTxt}>
+                Hiển thị: {items.length} {tab === 'deal' ? 'deal' : 'lead'} (sau lọc giống web)
+              </Text>
+              <Text style={styles.tableFooterTxt}>
+                GT: {sumLoadedValue > 0 ? formatVND(sumLoadedValue) : '0đ'}
+              </Text>
+            </View>
+          ) : null
         }
       />
-      {loading && items.length === 0 ? (
+    ) : (
+      <ScrollView
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={CrmColors.blue600} />
+        }
+        contentContainerStyle={styles.listContent}
+        nestedScrollEnabled
+      >
+        {listHeader}
+        {snapshot.viewMode === 'kanban' ? (
+          <CrmPipelineKanbanView
+            items={items}
+            stages={tab === 'lead' ? stagesLead : stagesDeal}
+            navigation={navigation}
+            tabLabel={tab === 'lead' ? 'Lead' : 'Deal'}
+          />
+        ) : snapshot.viewMode === 'planner' ? (
+          <CrmPipelinePlannerView items={items} navigation={navigation} />
+        ) : (
+          <CrmPipelineCalendarView
+            items={items}
+            navigation={navigation}
+            onPickDay={(dateKey) => openMoreTab(navigation, 'CrmEvents', { initialDate: dateKey })}
+          />
+        )}
+        {!loading && items.length === 0 ? <Text style={styles.empty}>Không có dữ liệu</Text> : null}
+        {!loading && items.length > 0 ? (
+          <View style={styles.tableFooter}>
+            <Text style={styles.tableFooterTxt}>
+              Hiển thị: {items.length} {tab === 'deal' ? 'deal' : 'lead'}
+            </Text>
+            <Text style={styles.tableFooterTxt}>
+              GT: {sumLoadedValue > 0 ? formatVND(sumLoadedValue) : '0đ'}
+            </Text>
+          </View>
+        ) : null}
+        {loading && items.length === 0 ? (
+          <View style={styles.altLoading}>
+            <ActivityIndicator size="large" color={CrmColors.blue600} />
+          </View>
+        ) : null}
+      </ScrollView>
+    );
+
+  return (
+    <View style={styles.screen}>
+      <CreateCrmEntityModal
+        visible={createMode !== null}
+        mode={(createMode === 'deal' ? 'deal' : 'lead') as 'lead' | 'deal'}
+        onClose={() => setCreateMode(null)}
+        onCreated={() => {
+          setRefreshNonce((n) => n + 1);
+        }}
+      />
+      <CrmLeadListAdvancedFiltersModal
+        visible={advOpen}
+        onClose={() => setAdvOpen(false)}
+        tab={tab}
+        initial={snapshot}
+        companies={companies}
+        stages={tab === 'lead' ? stagesLead : stagesDeal}
+        sourceOptions={sourceOptions}
+        canPickAssignee={canPickAssignee}
+        users={pickerUsers}
+        usersLoading={pickerLoading && pickerUsers.length === 0}
+        onApply={(next) => {
+          void commitSnapshot({ ...next, searchText: snapshot.searchText });
+          setDraftQ(next.searchText || '');
+        }}
+      />
+      {listBody}
+      {snapshot.viewMode === 'list' && loading && items.length === 0 ? (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color={CrmColors.blue600} />
         </View>
       ) : null}
+
+      <Modal visible={assigneeModal} animationType="slide" transparent onRequestClose={() => setAssigneeModal(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setAssigneeModal(false)}>
+          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Lọc theo nhân viên</Text>
+            <Text style={styles.modalSub}>Chỉ tài khoản có quyền xem toàn bộ CRM mới dùng được.</Text>
+            <TouchableOpacity
+              style={styles.modalRow}
+              onPress={() => {
+                void commitSnapshot({ ...snapshot, filterAssignee: '' });
+                setAssigneeModal(false);
+              }}
+            >
+              <Text style={styles.modalRowTxt}>Tất cả nhân viên</Text>
+            </TouchableOpacity>
+            {pickerLoading ? <ActivityIndicator style={{ marginVertical: 16 }} color={CrmColors.blue600} /> : null}
+            <FlatList
+              data={pickerUsers}
+              keyExtractor={(u) => u.id}
+              style={{ maxHeight: 360 }}
+              renderItem={({ item: u }) => (
+                <TouchableOpacity
+                  style={styles.modalRow}
+                  onPress={() => {
+                    void commitSnapshot({ ...snapshot, filterAssignee: u.id });
+                    setAssigneeModal(false);
+                  }}
+                >
+                  <Text style={styles.modalRowTxt}>{u.full_name || u.email || u.id}</Text>
+                  {u.email && u.full_name ? <Text style={styles.modalRowEmail}>{u.email}</Text> : null}
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity style={styles.modalClose} onPress={() => setAssigneeModal(false)}>
+              <Text style={styles.modalCloseTxt}>Đóng</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -327,6 +758,97 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   addDealTxt: { color: CrmColors.white, fontWeight: '700', fontSize: 13 },
+  filterAdvBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 8,
+    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: CrmRadii.md,
+    backgroundColor: CrmColors.blue50,
+    borderWidth: 1,
+    borderColor: CrmColors.blue100,
+  },
+  filterAdvBtnTxt: { fontSize: 13, fontWeight: '700', color: CrmColors.blue700 },
+  filterBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: CrmColors.blue600,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  filterBadgeTxt: { color: CrmColors.white, fontSize: 11, fontWeight: '800' },
+  filterLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: CrmColors.gray600,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  chip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: CrmRadii.full,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  chipOn: {
+    backgroundColor: CrmColors.blue50,
+    borderColor: CrmColors.blue600,
+  },
+  chipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray600 },
+  chipTxtOn: { color: CrmColors.blue700 },
+  assigneeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    borderRadius: CrmRadii.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    ...CrmShadow.sm,
+  },
+  assigneeBtnTxt: { fontSize: 14, fontWeight: '600', color: CrmColors.gray900, flex: 1 },
+  assigneeBtnChev: { fontSize: 14, color: CrmColors.gray400 },
+  filterHint: { fontSize: 12, color: CrmColors.gray500, marginBottom: 12, lineHeight: 17 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.45)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: CrmColors.white,
+    borderTopLeftRadius: CrmRadii.xl,
+    borderTopRightRadius: CrmRadii.xl,
+    padding: 20,
+    paddingBottom: 28,
+    maxHeight: '80%',
+  },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: CrmColors.gray900 },
+  modalSub: { fontSize: 12, color: CrmColors.gray500, marginTop: 6, marginBottom: 12 },
+  modalRow: {
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: CrmColors.gray100,
+  },
+  modalRowTxt: { fontSize: 15, fontWeight: '600', color: CrmColors.gray900 },
+  modalRowEmail: { fontSize: 12, color: CrmColors.gray500, marginTop: 4 },
+  modalClose: {
+    marginTop: 16,
+    alignSelf: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  modalCloseTxt: { fontSize: 15, fontWeight: '700', color: CrmColors.blue600 },
   pillWrap: { marginBottom: 14 },
   pillOuter: {
     flexDirection: 'row',
@@ -436,4 +958,20 @@ const styles = StyleSheet.create({
     borderColor: CrmColors.gray200,
   },
   tableFooterTxt: { fontSize: 12, color: CrmColors.gray500, fontWeight: '500' },
+  headerIcons: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingRight: 8 },
+  headerIconTxt: { fontSize: 20 },
+  hScrollPad: { marginBottom: 10 },
+  vmChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: CrmRadii.full,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    marginRight: 8,
+  },
+  vmChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue600 },
+  vmChipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray600 },
+  vmChipTxtOn: { color: CrmColors.blue700 },
+  altLoading: { paddingVertical: 48, alignItems: 'center' },
 });
