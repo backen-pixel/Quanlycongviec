@@ -7,6 +7,8 @@ import {
   Pin,
   PanelRightClose,
   PanelRightOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   UserPlus,
   Image as ImageIcon,
   FileText,
@@ -20,6 +22,7 @@ import { useMessengerDock } from '../context/MessengerDockContext';
 import { MessengerGroupChatTab } from '../components/LeadChatTabs';
 import { useAuth } from '../lib/auth';
 import { messengerThreadKey } from '../lib/messengerHubStorage';
+import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 
 const URL_IN_TEXT = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/gi;
 
@@ -147,6 +150,7 @@ export default function MessengerHubPage() {
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [rightOpen, setRightOpen] = useState(true);
+  const [leftOpen, setLeftOpen] = useState(true);
   const [rightSection, setRightSection] = useState('media');
   const [createOpen, setCreateOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
@@ -452,11 +456,58 @@ export default function MessengerHubPage() {
   };
 
   return (
-    <div className="-m-6 flex flex-col bg-[#e8eef5] min-h-[calc(100vh-3rem)] text-slate-800">
-      <div className="flex flex-1 min-h-0 border-t border-slate-200/80">
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-[#e8eef5] text-slate-800">
+      <div className="flex min-h-0 flex-1 border-t border-slate-200/80">
+        {!leftOpen && (
+          <div className="flex w-[52px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm z-[1]">
+            <div className="flex shrink-0 justify-center border-b border-slate-100 py-2">
+              <button
+                type="button"
+                title="Mở danh sách đầy đủ"
+                onClick={() => setLeftOpen(true)}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700 hover:border-sky-200 hover:bg-sky-50"
+              >
+                <PanelLeftOpen className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto px-1.5 py-2">
+              {filteredThreads.map((t) => {
+                const isSel = t.groupId && selectedGroupId === t.groupId;
+                const unread = t.groupId ? unreadByGroupId[t.groupId] || 0 : 0;
+                return (
+                  <button
+                    key={threadRowKey(t)}
+                    type="button"
+                    title={t.title || 'Hội thoại'}
+                    onClick={() => openMessengerThread(t)}
+                    className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-cyan-600 text-sm font-bold text-white shadow-sm ring-2 ring-offset-1 ring-offset-white transition hover:opacity-95 ${
+                      isSel ? 'ring-sky-500' : 'ring-transparent'
+                    }`}
+                  >
+                    {(t.title || '?').slice(0, 1)}
+                    {unread > 0 ? (
+                      <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-red-500 px-0.5 text-[9px] font-bold text-white">
+                        {unread > 99 ? '…' : unread}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {/* —— Cột trái: danh sách —— */}
+        {leftOpen && (
         <aside className="w-[300px] shrink-0 flex flex-col bg-white border-r border-slate-200 shadow-sm">
           <div className="p-2.5 border-b border-slate-100 flex gap-1.5">
+            <button
+              type="button"
+              title="Thu gọn danh sách hội thoại"
+              onClick={() => setLeftOpen(false)}
+              className="h-9 w-9 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 flex items-center justify-center"
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </button>
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input
@@ -691,11 +742,12 @@ export default function MessengerHubPage() {
             })}
           </div>
         </aside>
+        )}
 
         {/* —— Giữa: chat —— */}
-        <section className="flex-1 flex flex-col min-w-0 bg-[#eef2f8]">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#eef2f8]">
           {!selectedGroupId ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8">
+            <div className="flex flex-1 flex-col items-center justify-center p-8 text-slate-400">
               <MessageCircle className="h-14 w-14 mb-3 opacity-40" />
               <p className="text-sm font-medium text-slate-600">Chọn một cuộc trò chuyện</p>
               <p className="text-xs mt-1 text-center max-w-xs">
@@ -738,19 +790,17 @@ export default function MessengerHubPage() {
                   Chat nổi
                 </button>
               </header>
-              <div className="flex-1 min-h-0 flex">
-                <div className="flex-1 min-w-0 p-2 flex flex-col min-h-0">
-                  <div className="flex-1 min-h-0 rounded-xl border border-slate-200/80 bg-white shadow-sm overflow-hidden flex flex-col">
-                    <MessengerGroupChatTab
-                      groupId={selectedGroupId}
-                      socket={socket}
-                      fillParent
-                      onMessagesChange={onMessagesChange}
-                    />
-                  </div>
+              <div className="flex min-h-0 flex-1">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
+                  <MessengerGroupChatTab
+                    groupId={selectedGroupId}
+                    socket={socket}
+                    fillParent
+                    onMessagesChange={onMessagesChange}
+                  />
                 </div>
                 {rightOpen && (
-                  <aside className="w-[272px] shrink-0 border-l border-slate-200 bg-white flex flex-col shadow-sm">
+                  <aside className="flex w-[272px] shrink-0 flex-col border-l border-slate-200 bg-white shadow-sm">
                     <div className="p-3 border-b border-slate-100 text-center">
                       <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center text-lg font-bold mb-2">
                         {(selected?.title || '?').slice(0, 1)}
@@ -788,15 +838,32 @@ export default function MessengerHubPage() {
                         <div className="space-y-2">
                           <p className="text-[10px] text-slate-400 px-1">Ảnh & video đã gửi trong hội thoại</p>
                           <div className="grid grid-cols-3 gap-1">
-                            {[...mediaBundle.images, ...mediaBundle.videos].slice(0, 18).map((att, i) => (
-                              <a key={`${att.url}-${i}`} href={att.url} target="_blank" rel="noreferrer" className="aspect-square rounded-md overflow-hidden bg-slate-100 border border-slate-200">
-                                {att.type?.startsWith('video/') ? (
-                                  <video src={att.url} className="w-full h-full object-cover" muted playsInline />
-                                ) : (
-                                  <img src={att.url} alt="" className="w-full h-full object-cover" />
-                                )}
-                              </a>
-                            ))}
+                            {[...mediaBundle.images, ...mediaBundle.videos].slice(0, 18).map((att, i) => {
+                              const u = resolveMediaUrl(att.url);
+                              return (
+                                <a
+                                  key={`${att.url}-${i}`}
+                                  href={u}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="aspect-square rounded-md overflow-hidden bg-slate-100 border border-slate-200"
+                                >
+                                  {att.type?.startsWith('video/') ? (
+                                    <video src={u} className="w-full h-full object-cover" muted playsInline />
+                                  ) : (
+                                    <img
+                                      src={u}
+                                      alt=""
+                                      className="w-full h-full object-cover"
+                                      onError={(e) => {
+                                        e.currentTarget.onerror = null;
+                                        e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
+                                      }}
+                                    />
+                                  )}
+                                </a>
+                              );
+                            })}
                           </div>
                           {[...mediaBundle.images, ...mediaBundle.videos].length === 0 && (
                             <p className="text-slate-400 text-center py-6">Chưa có ảnh/video</p>
@@ -808,7 +875,7 @@ export default function MessengerHubPage() {
                           {mediaBundle.files.map((f, i) => (
                             <li key={`${f.url}-${i}`}>
                               <a
-                                href={f.url}
+                                href={resolveMediaUrl(f.url)}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="flex items-center gap-2 p-2 rounded-lg border border-slate-100 hover:bg-slate-50"
@@ -888,7 +955,7 @@ export default function MessengerHubPage() {
                 />
                 <ul className="mt-1 max-h-28 overflow-y-auto rounded-lg border border-slate-100 divide-y divide-slate-50">
                   {filteredUsersForPick.map((u) => (
-                    <li key={u.id}>
+                    <li key={u.id || u.user_id || u.email}>
                       <button
                         type="button"
                         className="w-full px-2 py-1.5 text-left text-xs hover:bg-sky-50 flex justify-between"

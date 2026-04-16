@@ -1,30 +1,141 @@
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { LeadChatTab, MessengerGroupChatTab } from './LeadChatTabs';
-import { MessageCircle, X, Minus, Maximize2 } from 'lucide-react';
+import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight } from 'lucide-react';
+import api from '../lib/api';
 
+export const MESSENGER_DOCK_W = 52;
 const BUBBLE_W = 340;
 const BUBBLE_GAP = 14;
-const DOCK_W = 52;
+const DOCK_W = MESSENGER_DOCK_W;
+const LAUNCHER_W = 300;
+/** Trên layout CRM (main z-10); dưới modal toàn trang (vd. z-220) nhờ createPortal ra document.body */
+const Z_BUBBLE = 100;
+const Z_LAUNCHER = 110;
+const Z_DOCK = 120;
 
 export default function MessengerDock() {
   const { user, socket } = useAuth();
-  const { windows, closeWindow, toggleMinimize, unreadByLeadId, unreadByGroupId } = useMessengerDock();
+  const { windows, closeWindow, toggleMinimize, unreadByLeadId, unreadByGroupId, openMessengerGroupChat } =
+    useMessengerDock();
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [groups, setGroups] = useState([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [staffQ, setStaffQ] = useState('');
+  const [staffRows, setStaffRows] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [groupFilter, setGroupFilter] = useState('');
+
+  const launcherRef = useRef(null);
+  const dockBarRef = useRef(null);
+
+  useEffect(() => {
+    if (!launcherOpen) return;
+    const onDown = (e) => {
+      const t = e.target;
+      if (launcherRef.current?.contains(t) || dockBarRef.current?.contains(t)) return;
+      setLauncherOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [launcherOpen]);
+
+  const loadGroups = useCallback(async () => {
+    setGroupsLoading(true);
+    try {
+      const { data } = await api.get('/messenger/groups');
+      setGroups(Array.isArray(data) ? data : []);
+    } catch {
+      setGroups([]);
+    } finally {
+      setGroupsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!launcherOpen) return;
+    void loadGroups();
+  }, [launcherOpen, loadGroups]);
+
+  const expanded = useMemo(() => windows.filter((w) => !w.minimized), [windows]);
+
+  useEffect(() => {
+    const q = staffQ.trim();
+    if (!launcherOpen) {
+      setStaffRows([]);
+      return;
+    }
+    if (!q) {
+      setStaffRows([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setStaffLoading(true);
+      try {
+        const { data } = await api.get('/users', { params: { search: q } });
+        const users = data?.users || [];
+        if (!cancelled) setStaffRows(Array.isArray(users) ? users.slice(0, 14) : []);
+      } catch {
+        if (!cancelled) setStaffRows([]);
+      } finally {
+        if (!cancelled) setStaffLoading(false);
+      }
+    }, 320);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [staffQ, launcherOpen]);
+
+  const filteredGroups = useMemo(() => {
+    const f = groupFilter.trim().toLowerCase();
+    if (!f) return groups;
+    return groups.filter((g) => {
+      const n = (g.name || '').toLowerCase();
+      const r = (g.raw_name || '').toLowerCase();
+      return n.includes(f) || r.includes(f);
+    });
+  }, [groups, groupFilter]);
+
+  const uid = user?.userId || user?.id;
+
+  const onPickStaff = async (u) => {
+    if (!u?.id || String(u.id) === String(uid)) return;
+    try {
+      const { data } = await api.post('/messenger/direct', { peer_user_id: u.id });
+      if (data?.id) openMessengerGroupChat({ id: data.id, name: data.name || data.display_name || u.full_name });
+      setLauncherOpen(false);
+      setStaffQ('');
+      setStaffRows([]);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không mở được chat 1-1');
+    }
+  };
+
+  const onPickGroup = (g) => {
+    if (!g?.id) return;
+    openMessengerGroupChat({ id: g.id, name: g.name || g.raw_name });
+    setLauncherOpen(false);
+  };
+
   if (!user) return null;
-  const expanded = windows.filter((w) => !w.minimized);
 
   const totalUnread =
     Object.values(unreadByLeadId || {}).reduce((a, b) => a + (Number(b) || 0), 0) +
     Object.values(unreadByGroupId || {}).reduce((a, b) => a + (Number(b) || 0), 0);
 
-  return (
+  const ui = (
     <>
       {expanded.map((w, i) => (
         <div
           key={w.windowKey}
-          className="fixed z-[190] flex flex-col rounded-2xl border border-slate-200/80 bg-white shadow-2xl overflow-hidden ring-1 ring-black/5"
+          className="fixed flex flex-col rounded-2xl border border-slate-200/80 bg-white shadow-2xl overflow-hidden ring-1 ring-black/5"
           style={{
+            zIndex: Z_BUBBLE,
             width: BUBBLE_W,
             height: 460,
             right: DOCK_W + BUBBLE_GAP + i * (BUBBLE_W + BUBBLE_GAP),
@@ -86,22 +197,154 @@ export default function MessengerDock() {
         </div>
       ))}
 
+      {launcherOpen ? (
+        <div
+          ref={launcherRef}
+          className="fixed flex flex-col rounded-l-xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+          style={{
+            zIndex: Z_LAUNCHER,
+            width: LAUNCHER_W,
+            maxHeight: 'min(72vh, 560px)',
+            right: DOCK_W,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        >
+          <div className="shrink-0 px-3 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold text-slate-800">Chat nhanh</p>
+              <p className="text-[10px] text-slate-500">Tìm NV hoặc chọn nhóm</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <Link
+                to="/crm/messenger"
+                className="text-[10px] font-semibold text-sky-600 hover:text-sky-800 px-2 py-1 rounded-md hover:bg-sky-50"
+                onClick={() => setLauncherOpen(false)}
+              >
+                Trang đầy đủ
+              </Link>
+              <button
+                type="button"
+                className="p-1 rounded-lg text-slate-500 hover:bg-slate-200"
+                title="Đóng"
+                onClick={() => setLauncherOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-3">
+            <div>
+              <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
+                <Search className="h-3 w-3" /> Tìm nhân viên
+              </label>
+              <input
+                type="search"
+                value={staffQ}
+                onChange={(e) => setStaffQ(e.target.value)}
+                placeholder="Tên, email…"
+                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-sky-400 focus:border-transparent"
+              />
+              {staffLoading ? (
+                <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tìm…
+                </div>
+              ) : staffRows.length ? (
+                <ul className="mt-1.5 space-y-0.5 border border-slate-100 rounded-lg divide-y divide-slate-50 max-h-40 overflow-y-auto">
+                  {staffRows.map((u) => (
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        onClick={() => void onPickStaff(u)}
+                        disabled={String(u.id) === String(uid)}
+                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 disabled:opacity-40 flex items-center justify-between gap-2"
+                      >
+                        <span className="truncate">
+                          <span className="font-medium text-slate-800">{u.full_name || u.email}</span>
+                          {u.email && u.full_name ? (
+                            <span className="block text-[10px] text-slate-500 truncate">{u.email}</span>
+                          ) : null}
+                        </span>
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : staffQ.trim() ? (
+                <p className="text-[11px] text-slate-400 py-1">Không có kết quả</p>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
+                <Users className="h-3 w-3" /> Nhóm của tôi
+              </label>
+              <input
+                type="search"
+                value={groupFilter}
+                onChange={(e) => setGroupFilter(e.target.value)}
+                placeholder="Lọc tên nhóm…"
+                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-sky-400 focus:border-transparent mb-1.5"
+              />
+              {groupsLoading ? (
+                <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhóm…
+                </div>
+              ) : filteredGroups.length ? (
+                <ul className="space-y-0.5 border border-slate-100 rounded-lg divide-y divide-slate-50 max-h-48 overflow-y-auto">
+                  {filteredGroups.map((g) => {
+                    const n = unreadByGroupId[g.id] || 0;
+                    return (
+                      <li key={g.id}>
+                        <button
+                          type="button"
+                          onClick={() => onPickGroup(g)}
+                          className="w-full text-left px-2 py-1.5 text-xs hover:bg-cyan-50 flex items-center justify-between gap-2"
+                        >
+                          <span className="truncate font-medium text-slate-800">{g.name || 'Nhóm'}</span>
+                          {n > 0 ? (
+                            <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+                              {n > 99 ? '…' : n}
+                            </span>
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-[11px] text-slate-400 py-1">Chưa có nhóm hoặc không khớp lọc</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div
-        className="fixed z-[200] flex flex-col items-center gap-2 py-3 px-1.5 rounded-l-2xl border border-slate-200 bg-white/95 shadow-lg backdrop-blur-sm"
-        style={{ right: 0, top: '50%', transform: 'translateY(-50%)', width: DOCK_W }}
+        ref={dockBarRef}
+        className="fixed flex flex-col items-center gap-2 py-3 px-1.5 rounded-l-2xl border border-slate-200 bg-white/95 shadow-lg backdrop-blur-sm"
+        style={{ zIndex: Z_DOCK, right: 0, top: '50%', transform: 'translateY(-50%)', width: DOCK_W }}
       >
-        <Link
-          to="/crm/messenger"
-          className="relative w-10 h-10 rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center shadow-md hover:opacity-95"
-          title="Nhóm chat — Lead / Deal / nhóm nội bộ"
+        <button
+          type="button"
+          onClick={() => setLauncherOpen((v) => !v)}
+          className={`relative w-10 h-10 rounded-full flex items-center justify-center shadow-md transition ${
+            launcherOpen
+              ? 'bg-slate-800 text-white ring-2 ring-sky-400'
+              : 'bg-gradient-to-br from-sky-500 to-cyan-600 text-white hover:opacity-95'
+          }`}
+          title={launcherOpen ? 'Đóng danh sách' : 'Tìm nhân viên & nhóm chat'}
         >
           <MessageCircle className="h-5 w-5" />
-          {totalUnread > 0 && (
+          {!launcherOpen && totalUnread > 0 && (
             <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white">
               {totalUnread > 99 ? '99+' : totalUnread}
             </span>
           )}
-        </Link>
+        </button>
         <div className="w-8 border-t border-slate-200 my-0.5" />
         {windows.map((w) => {
           const n =
@@ -132,4 +375,6 @@ export default function MessengerDock() {
       </div>
     </>
   );
+
+  return createPortal(ui, document.body);
 }
