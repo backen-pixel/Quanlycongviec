@@ -1,9 +1,16 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Router } = require('express');
 const multer = require('multer');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const config = require('../config');
+
+/** Bucket Supabase Storage (mặc định giống upload CRM). */
+const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attachments';
+/** Thư mục trong bucket, mặc định `messenger` — có thể set `messsenger` trong .env nếu đã tạo đúng tên đó. */
+const MESSENGER_STORAGE_FOLDER = (process.env.SUPABASE_MESSENGER_FOLDER || 'messenger').replace(/^\/+|\/+$/g, '');
 
 const MESSENGER_CHAT_UPLOAD = path.join(__dirname, '../../uploads/messenger-chat');
 try {
@@ -11,6 +18,63 @@ try {
 } catch {
   /* ignore */
 }
+
+function supabaseMessengerStorageEnabled() {
+  return !!(config.supabaseUrl && config.supabaseServiceKey);
+}
+
+function writeMessengerBufferLocal(buffer, originalName) {
+  fs.mkdirSync(MESSENGER_CHAT_UPLOAD, { recursive: true });
+  const ext = path.extname(originalName || '') || '';
+  const base = path
+    .basename(originalName || 'file', ext)
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 80);
+  const fname = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}_${base}${ext}`;
+  const full = path.join(MESSENGER_CHAT_UPLOAD, fname);
+  fs.writeFileSync(full, buffer);
+  return `/uploads/messenger-chat/${fname}`;
+}
+
+/**
+ * Lưu file chat nhóm: ưu tiên Supabase Storage (`{folder}/{groupId}/…`), fallback thư mục uploads khi lỗi hoặc chưa cấu hình.
+ * @param {string} groupId
+ * @param {{ buffer: Buffer, mimetype: string, originalname: string, size: number }} file
+ */
+async function storeMessengerUploadedFile(groupId, file) {
+  const mime = file.mimetype || 'application/octet-stream';
+  const original = file.originalname || 'file';
+  const ext = path.extname(original) || '';
+  const safeBase = path
+    .basename(original, ext)
+    .replace(/[^a-zA-Z0-9.\u00C0-\u024F_\s-]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 100);
+
+  if (supabaseMessengerStorageEnabled()) {
+    const prefix = `${MESSENGER_STORAGE_FOLDER}/${groupId}`.replace(/\/+/g, '/');
+    const objectPath = `${prefix}/${Date.now()}_${crypto.randomBytes(4).toString('hex')}_${safeBase}${ext}`.replace(/^\//, '');
+    const { error } = await supabase.storage.from(MESSENGER_STORAGE_BUCKET).upload(objectPath, file.buffer, {
+      contentType: mime,
+      upsert: false,
+    });
+    if (error) {
+      console.error('[messenger] Supabase storage upload failed:', error.message);
+      const url = writeMessengerBufferLocal(file.buffer, original);
+      return { name: original, url, type: mime, size: file.size };
+    }
+    const { data: urlData } = supabase.storage.from(MESSENGER_STORAGE_BUCKET).getPublicUrl(objectPath);
+    return { name: original, url: urlData.publicUrl, type: mime, size: file.size };
+  }
+
+  const url = writeMessengerBufferLocal(file.buffer, original);
+  return { name: original, url, type: mime, size: file.size };
+}
+
+const messengerMemoryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
 
 const r = Router();
 r.use(auth);
@@ -443,18 +507,16 @@ r.get('/groups/:id/chat', async (req, res) => {
   }
 });
 
-r.post('/groups/:id/chat', multer({ dest: MESSENGER_CHAT_UPLOAD }).array('files'), async (req, res) => {
+r.post('/groups/:id/chat', messengerMemoryUpload.array('files', 20), async (req, res) => {
   try {
     const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     const { content, reply_to } = req.body;
     const files = req.files || [];
-    const attachments = files.map((f) => ({
-      name: f.originalname,
-      url: `/uploads/messenger-chat/${f.filename}`,
-      type: f.mimetype,
-      size: f.size,
-    }));
+    const attachments = [];
+    for (const f of files) {
+      attachments.push(await storeMessengerUploadedFile(req.params.id, f));
+    }
     if (!content && !attachments.length) return res.status(400).json({ error: 'Thiếu nội dung' });
     const mentionIds = parseMentionUserIds(req.body);
     const insertRow = {
@@ -479,15 +541,7 @@ r.post('/groups/:id/chat', multer({ dest: MESSENGER_CHAT_UPLOAD }).array('files'
   }
 });
 
-const groupChatUpload = multer({
-  storage: multer.diskStorage({
-    destination: MESSENGER_CHAT_UPLOAD,
-    filename: (_, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')),
-  }),
-  limits: { fileSize: 50 * 1024 * 1024 },
-});
-
-r.post('/groups/:id/chat/upload', groupChatUpload.single('file'), async (req, res) => {
+r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (req, res) => {
   try {
     const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
@@ -497,7 +551,8 @@ r.post('/groups/:id/chat/upload', groupChatUpload.single('file'), async (req, re
     if (mime.startsWith('image/')) message_type = 'image';
     else if (mime.startsWith('video/')) message_type = 'video';
     else if (mime.startsWith('audio/')) message_type = 'audio';
-    const attachment_url = `/uploads/messenger-chat/${req.file.filename}`;
+    const stored = await storeMessengerUploadedFile(req.params.id, req.file);
+    const attachment_url = stored.url;
     const mentionIds = parseMentionUserIds(req.body);
     const insertRow = {
       group_id: req.params.id,

@@ -1,12 +1,26 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../lib/api';
+import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import EmployeePicker from './EmployeePicker';
 
 function Avatar({ name, url, size = 8 }) {
-  if (url) return <img src={url} alt="" className={`w-${size} h-${size} rounded-full object-cover`} />;
+  if (url) {
+    const src = resolveMediaUrl(url);
+    return (
+      <img
+        src={src}
+        alt=""
+        className={`w-${size} h-${size} rounded-full object-cover bg-slate-200`}
+        onError={(e) => {
+          e.currentTarget.onerror = null;
+          e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
+        }}
+      />
+    );
+  }
   const letter = (name || 'U')[0].toUpperCase();
   const colors = ['bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-orange-500', 'bg-pink-500', 'bg-teal-500'];
   const color = colors[letter.charCodeAt(0) % colors.length];
@@ -42,17 +56,19 @@ export function LeadMembersTab({ leadId }) {
     { value: 'viewer', label: 'Xem', icon: <Eye size={12} className="text-gray-400" />, color: 'text-gray-500 bg-gray-100' },
   ];
 
-  useEffect(() => {
-    load();
-    api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
-  }, [leadId]);
-
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const r = await api.get(`/crm/leads/${leadId}/members`);
       setMembers(r.data || []);
-    } catch (e) { console.error(e); }
-  };
+    } catch (e) {
+      console.error(e);
+    }
+  }, [leadId]);
+
+  useEffect(() => {
+    void load();
+    api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
+  }, [leadId, load]);
 
   const addToQueue = () => {
     if (!pickUserId) return;
@@ -217,9 +233,19 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
     return registerLeadChatPresence(leadId);
   }, [leadId, registerLeadChatPresence]);
 
+  const load = useCallback(async () => {
+    try {
+      const r = await api.get(`/crm/leads/${leadId}/chat`);
+      setMessages(r.data || []);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 200);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [leadId]);
+
   useEffect(() => {
     setMessages([]);
-    load();
+    void load();
     if (socket) {
       socket.emit('join:lead', leadId);
       const handler = (msg) => {
@@ -232,15 +258,7 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
         socket.off('lead:chat', handler);
       };
     }
-  }, [leadId, socket]);
-
-  const load = async () => {
-    try {
-      const r = await api.get(`/crm/leads/${leadId}/chat`);
-      setMessages(r.data || []);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 200);
-    } catch (e) { console.error(e); }
-  };
+  }, [leadId, socket, load]);
 
   const send = async (files = null) => {
     const pickedFiles = files ? Array.from(files).filter(Boolean) : [];
@@ -279,16 +297,36 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
       const isImg = att.type?.startsWith('image/');
       const isVideo = att.type?.startsWith('video/');
       const isAudio = att.type?.startsWith('audio/');
+      const fileUrl = resolveMediaUrl(att.url);
       return (
         <div key={i} className="mt-2">
           {isImg ? (
-            <img src={att.url} className="rounded-lg max-w-full max-h-48 cursor-pointer" alt={att.name} onClick={() => setMediaPreview(att)} />
+            <img
+              src={fileUrl}
+              className="rounded-lg max-w-full max-h-48 cursor-pointer bg-slate-100 object-contain"
+              alt={att.name}
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
+              }}
+              onClick={() => setMediaPreview({ ...att, url: fileUrl })}
+            />
           ) : isVideo ? (
-            <video src={att.url} controls className="rounded-lg max-w-full max-h-48 cursor-pointer" onClick={() => setMediaPreview(att)} />
+            <video
+              src={fileUrl}
+              controls
+              className="rounded-lg max-w-full max-h-48 cursor-pointer bg-black/5"
+              onClick={() => setMediaPreview({ ...att, url: fileUrl })}
+            />
           ) : isAudio ? (
-            <audio src={att.url} controls className="w-full max-w-xs" />
+            <audio src={fileUrl} controls className="w-full max-w-xs" />
           ) : (
-            <a href={att.url} target="_blank" rel="noreferrer" className="bg-gray-100 p-2 rounded-lg flex items-center gap-2 text-xs text-blue-600 hover:bg-gray-200">
+            <a
+              href={fileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="bg-gray-100 p-2 rounded-lg flex items-center gap-2 text-xs text-blue-600 hover:bg-gray-200"
+            >
               <Paperclip size={12} /> {att.name || 'Tệp đính kèm'}
             </a>
           )}
@@ -303,8 +341,19 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
       {mediaPreview && (
         <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
           <button type="button" onClick={() => setMediaPreview(null)} className="absolute top-4 right-4 text-white p-2 hover:bg-white/10 rounded-full"><X /></button>
-          {mediaPreview.type?.startsWith('image/') ? <img src={mediaPreview.url} className="max-h-[80vh] max-w-full rounded-lg" /> :
-           <video src={mediaPreview.url} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />}
+          {mediaPreview.type?.startsWith('image/') ? (
+            <img
+              src={resolveMediaUrl(mediaPreview.url)}
+              className="max-h-[80vh] max-w-full rounded-lg object-contain"
+              alt=""
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
+              }}
+            />
+          ) : (
+            <video src={resolveMediaUrl(mediaPreview.url)} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />
+          )}
         </div>
       )}
 
@@ -630,16 +679,36 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             const isImg = att.type?.startsWith('image/');
             const isVideo = att.type?.startsWith('video/');
             const isAudio = att.type?.startsWith('audio/');
+            const fileUrl = resolveMediaUrl(att.url);
             return (
               <div key={`${sec.key}-${i}`}>
                 {isImg ? (
-                  <img src={att.url} className="rounded-lg max-w-full max-h-48 cursor-pointer" alt={att.name} onClick={() => setMediaPreview(att)} />
+                  <img
+                    src={fileUrl}
+                    className="rounded-lg max-w-full max-h-48 cursor-pointer bg-slate-100 object-contain"
+                    alt={att.name}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
+                    }}
+                    onClick={() => setMediaPreview({ ...att, url: fileUrl })}
+                  />
                 ) : isVideo ? (
-                  <video src={att.url} controls className="rounded-lg max-w-full max-h-48 cursor-pointer" onClick={() => setMediaPreview(att)} />
+                  <video
+                    src={fileUrl}
+                    controls
+                    className="rounded-lg max-w-full max-h-48 cursor-pointer bg-black/5"
+                    onClick={() => setMediaPreview({ ...att, url: fileUrl })}
+                  />
                 ) : isAudio ? (
-                  <audio src={att.url} controls className="w-full max-w-xs" />
+                  <audio src={fileUrl} controls className="w-full max-w-xs" />
                 ) : (
-                  <a href={att.url} target="_blank" rel="noreferrer" className="bg-gray-100 p-2 rounded-lg flex items-center gap-2 text-xs text-blue-600 hover:bg-gray-200">
+                  <a
+                    href={fileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="bg-gray-100 p-2 rounded-lg flex items-center gap-2 text-xs text-blue-600 hover:bg-gray-200"
+                  >
                     <Paperclip size={12} /> {att.name || 'Tệp đính kèm'}
                   </a>
                 )}
@@ -661,9 +730,17 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             <X />
           </button>
           {mediaPreview.type?.startsWith('image/') ? (
-            <img src={mediaPreview.url} className="max-h-[80vh] max-w-full rounded-lg" alt="" />
+            <img
+              src={resolveMediaUrl(mediaPreview.url)}
+              className="max-h-[80vh] max-w-full rounded-lg object-contain"
+              alt=""
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
+              }}
+            />
           ) : (
-            <video src={mediaPreview.url} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />
+            <video src={resolveMediaUrl(mediaPreview.url)} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />
           )}
         </div>
       )}

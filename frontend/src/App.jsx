@@ -143,9 +143,9 @@ function ProtectedLayout() {
 
   if (!user) return <Navigate to="/login" state={{ from: location }} />;
 
-  // Pages with full-screen layouts (no padding wrapper)
-  const fullscreenPages = ['/projects/create'];
-  const isFullscreen = fullscreenPages.some(p => location.pathname.startsWith(p));
+  // Pages with full-screen layouts (no padding wrapper; main becomes flex column fill)
+  const fullscreenPages = ['/projects/create', '/crm/messenger'];
+  const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p));
 
   return (
     <CrmNotesFabProvider>
@@ -156,8 +156,12 @@ function ProtectedLayout() {
           <div className="absolute inset-0 pointer-events-none z-0"
             style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
           <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0 relative z-10 pr-12">
-            <main className="flex-1 overflow-y-auto w-full">
+          <div className="flex-1 flex flex-col min-w-0 relative z-10">
+            <main
+              className={
+                isFullscreen ? 'flex-1 flex flex-col min-h-0 overflow-hidden w-full' : 'flex-1 overflow-y-auto w-full'
+              }
+            >
               {isFullscreen ? (
                 <Outlet />
               ) : (
