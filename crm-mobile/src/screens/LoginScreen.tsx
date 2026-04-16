@@ -53,9 +53,10 @@ export default function LoginScreen() {
       >
         <View style={styles.brandRow}>
           <View style={styles.brandIcon}>
-            <Text style={styles.brandIconTxt}>🏠</Text>
+            <Text style={styles.brandIconTxt}>💼</Text>
           </View>
-          <Text style={styles.brandTitle}>TuBep Pro</Text>
+          <Text style={styles.brandTitle}>TuBep CRM</Text>
+          <Text style={styles.brandTag}>Quản lý lead & deal · đồng bộ web</Text>
         </View>
 
         <View style={[styles.card, CrmShadow.card]}>
@@ -130,7 +131,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   brandIconTxt: { fontSize: 26 },
-  brandTitle: { fontSize: 22, fontWeight: '700', color: CrmColors.gray900 },
+  brandTitle: { fontSize: 24, fontWeight: '800', color: CrmColors.gray900 },
+  brandTag: { fontSize: 13, color: CrmColors.gray500, marginTop: 6, textAlign: 'center' },
   card: {
     backgroundColor: CrmColors.white,
     borderRadius: CrmRadii.xl,

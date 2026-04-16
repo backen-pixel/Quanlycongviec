@@ -26,11 +26,12 @@ import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDate, formatDateTime, formatVND } from '../lib/formatUtils';
 import { openWebPath } from '../lib/openWeb';
 import CrmTasksPanel from '../components/CrmTasksPanel';
+import CrmVoiceRecordingsPanel from '../components/CrmVoiceRecordingsPanel';
 
 type R = RouteProp<CrmStackParamList, 'LeadDetail'>;
 type Nav = NativeStackNavigationProp<CrmStackParamList, 'LeadDetail'>;
 
-type TabKey = 'tasks' | 'documents' | 'activities' | 'notes' | 'team' | 'chat';
+type TabKey = 'tasks' | 'documents' | 'activities' | 'notes' | 'team' | 'chat' | 'voice';
 
 const MEMBER_ROLE_VI: Record<string, string> = {
   responsible: 'Chịu trách nhiệm',
@@ -642,6 +643,7 @@ export default function LeadDetailScreen() {
                 ['notes', '📝 Ghi chú'],
                 ['team', '👥 Nhóm'],
                 ['chat', '💬 Chat'],
+                ['voice', '🎙 Ghi âm'],
               ] as const
             ).map(([key, label]) => (
               <TouchableOpacity
@@ -758,6 +760,9 @@ export default function LeadDetailScreen() {
               )}
             </View>
           )}
+          {activeTab === 'voice' && (
+            <CrmVoiceRecordingsPanel leadId={id} customerPhone={lead?.customer?.phone} />
+          )}
           {activeTab === 'chat' && (
             <View>
               <TouchableOpacity style={styles.webLinkBtn} onPress={() => openWebPath(`/crm/leads/${id}?tab=chat`)}>
@@ -808,7 +813,8 @@ export default function LeadDetailScreen() {
         </View>
 
         <Text style={styles.webHint}>
-          Facebook, ghi âm, Zalo OA, báo giá PDF… — mở trên web. Toast thông báo hiển thị khi có tin mới (socket).
+          Facebook, Zalo OA, báo giá PDF… — mở trên web. Ghi âm micro có tại tab Ghi âm. Toast thông báo khi có tin mới
+          (socket).
         </Text>
       </ScrollView>
 

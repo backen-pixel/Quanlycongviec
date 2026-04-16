@@ -4,7 +4,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import CrmStackNavigator from './CrmStackNavigator';
-import AccountScreen from '../screens/AccountScreen';
+import VoiceStackNavigator from './VoiceStackNavigator';
+import MoreStackNavigator from './MoreStackNavigator';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import { useNotifications } from '../context/NotificationContext';
 import type { MainTabParamList } from './types';
@@ -47,6 +48,17 @@ export default function MainTabNavigator() {
         }}
       />
       <Tab.Screen
+        name="VoiceTab"
+        component={VoiceStackNavigator}
+        options={{
+          title: 'Ghi âm',
+          tabBarLabel: 'Ghi âm',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'mic' : 'mic-outline'} size={24} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
         name="NotificationsTab"
         component={NotificationsScreen}
         options={{
@@ -60,13 +72,13 @@ export default function MainTabNavigator() {
         }}
       />
       <Tab.Screen
-        name="AccountTab"
-        component={AccountScreen}
+        name="MoreTab"
+        component={MoreStackNavigator}
         options={{
-          title: 'Tài khoản',
-          tabBarLabel: 'Tài khoản',
+          title: 'Menu',
+          tabBarLabel: 'Menu',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'person-circle' : 'person-circle-outline'} size={26} color={color} />
+            <Ionicons name={focused ? 'grid' : 'grid-outline'} size={24} color={color} />
           ),
         }}
       />

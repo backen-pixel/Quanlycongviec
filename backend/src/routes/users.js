@@ -169,6 +169,62 @@ r.post('/presence', async (req, res) => {
   }
 });
 
+// ═══ CRM / app preferences (đồng bộ web ↔ mobile, lưu JSON theo user) ═══
+const CRM_APP_PREFS_BOOL_KEYS = [
+  'voiceCaptureEnabled',
+  'autoLinkVoiceByPhone',
+  'backgroundRealtimeEnabled',
+  'autoToolsEnabled',
+  'facebookAutoTool',
+  'contactsAutoTool',
+];
+
+function crmAppPrefsStorageKey(userId) {
+  return `crm_app_prefs:${userId}`;
+}
+
+function mergeCrmAppPrefsFromBody(prev, body) {
+  const base = prev && typeof prev === 'object' ? { ...prev } : {};
+  const b = body && typeof body === 'object' ? body : {};
+  CRM_APP_PREFS_BOOL_KEYS.forEach((k) => {
+    if (b[k] !== undefined) base[k] = !!b[k];
+  });
+  return base;
+}
+
+r.get('/crm-app-prefs', async (req, res) => {
+  try {
+    const key = crmAppPrefsStorageKey(req.user.userId);
+    const { data, error } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    const v = data?.value;
+    res.json(v && typeof v === 'object' ? v : {});
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/crm-app-prefs', async (req, res) => {
+  try {
+    const key = crmAppPrefsStorageKey(req.user.userId);
+    const { data: existing } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    const prev = existing?.value && typeof existing.value === 'object' ? existing.value : {};
+    const merged = mergeCrmAppPrefsFromBody(prev, req.body);
+    const { error } = await supabase.from('app_settings').upsert(
+      {
+        key,
+        value: merged,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'key' },
+    );
+    if (error) throw error;
+    res.json(merged);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ════════════════════════════════════════════════════
 // PARAM ROUTES (/:id comes after static routes)
 // ════════════════════════════════════════════════════
