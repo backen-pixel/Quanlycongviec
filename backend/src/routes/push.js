@@ -8,6 +8,10 @@ try { webpush = require('web-push'); } catch { webpush = null; }
 const r = Router();
 r.use(auth);
 
+function currentUserId(req) {
+  return req.user?.userId || req.user?.id || null;
+}
+
 // Initialize web-push with VAPID keys
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
@@ -41,8 +45,11 @@ r.post('/subscribe', async (req, res) => {
       return res.status(400).json({ error: 'Invalid subscription' });
     }
 
+    const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+
     const { data, error } = await supabase.from('push_subscriptions').upsert({
-      user_id: req.user.userId,
+      user_id: uid,
       endpoint: subscription.endpoint,
       keys_p256dh: subscription.keys?.p256dh,
       keys_auth: subscription.keys?.auth,
@@ -67,9 +74,12 @@ r.post('/unsubscribe', async (req, res) => {
       return res.status(400).json({ error: 'Missing endpoint' });
     }
 
+    const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+
     await supabase.from('push_subscriptions')
       .delete()
-      .eq('user_id', req.user.userId)
+      .eq('user_id', uid)
       .eq('endpoint', endpoint);
 
     res.json({ ok: true });
@@ -84,15 +94,26 @@ r.post('/unsubscribe', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/preferences', async (req, res) => {
   try {
+    const uid = currentUserId(req);
+    if (!uid) {
+      return res.json({
+        browser_push: true, sound: true,
+        task_assigned: true, task_completed: true, deadline_warning: true,
+        comment_added: true, stage_changed: true, deal_won: true,
+        approval_request: true, checklist_completed: true,
+        lead_assigned: true, order_confirmed: true, invoice_overdue: true,
+      });
+    }
+
     let { data, error } = await supabase.from('notification_preferences')
       .select('*')
-      .eq('user_id', req.user.userId)
+      .eq('user_id', uid)
       .single();
 
     if (error && error.code === 'PGRST116') {
       // Not found, create default
       const { data: newPrefs, error: insErr } = await supabase.from('notification_preferences')
-        .insert({ user_id: req.user.userId })
+        .insert({ user_id: uid })
         .select()
         .single();
       if (insErr) throw insErr;
@@ -119,6 +140,11 @@ r.get('/preferences', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.put('/preferences', async (req, res) => {
   try {
+    const uid = currentUserId(req);
+    if (!uid) {
+      return res.json({ success: true, message: 'Preferences saved (default)' });
+    }
+
     const allowed = [
       'browser_push', 'sound',
       'task_assigned', 'task_completed', 'deadline_warning', 'comment_added',
@@ -134,7 +160,7 @@ r.put('/preferences', async (req, res) => {
     // Upsert: create if not exists, update if exists
     const { data, error } = await supabase.from('notification_preferences')
       .upsert({
-        user_id: req.user.userId,
+        user_id: uid,
         ...update,
       })
       .select()

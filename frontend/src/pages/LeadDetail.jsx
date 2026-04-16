@@ -105,14 +105,42 @@ export default function LeadDetail() {
 
   useEffect(() => { load(); }, [id]);
 
+  /** Mở đúng tab từ URL (?tab=chat|facebook|calls|voice_crm|approvals|…) — app mobile / liên kết ngoài. */
   useEffect(() => {
     const t = searchParams.get('tab');
-    if (t !== 'chat') return;
-    setActiveTab('chat');
+    if (!t) return;
+    const allowed = new Set([
+      'tasks',
+      'documents',
+      'activities',
+      'notes',
+      'facebook',
+      'team',
+      'chat',
+      'calls',
+      'voice_crm',
+      'approvals',
+    ]);
+    if (!allowed.has(t)) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+      return;
+    }
+    if (t === 'approvals') {
+      if (!lead || String(lead.id) !== String(id)) return;
+      if (lead.type !== 'deal') {
+        const next = new URLSearchParams(searchParams);
+        next.delete('tab');
+        setSearchParams(next, { replace: true });
+        return;
+      }
+    }
+    setActiveTab(t);
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
-  }, [id, searchParams, setSearchParams]);
+  }, [id, searchParams, setSearchParams, lead]);
 
   const load = async () => {
     setLoading(true);

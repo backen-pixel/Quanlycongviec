@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   TextInput,
   ActivityIndicator,
   RefreshControl,
+  ScrollView,
 } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { api } from '../api/client';
@@ -21,13 +22,47 @@ type FbContact = {
   id: string;
   fb_name?: string | null;
   page_id?: string | null;
+  phone?: string | null;
   last_message_preview?: string | null;
   unread_count?: number | null;
   display_phone?: string | null;
   lead?: { id: string; title?: string | null; code?: string | null } | null;
+  customer?: { phone?: string | null } | null;
 };
 
+type ContactFilter =
+  | 'all'
+  | 'has_phone'
+  | 'no_phone'
+  | 'has_lead'
+  | 'no_lead'
+  | 'lead_has_phone'
+  | 'lead_no_phone';
+
 type Props = { navigation: Nav };
+
+function hasPhone(c: FbContact): boolean {
+  return !!(c.display_phone || c.phone || c.customer?.phone);
+}
+
+function rowSurface(c: FbContact): { borderLeftColor: string; bg: string } {
+  const ph = hasPhone(c);
+  const ld = !!c.lead;
+  if (ld && ph) return { borderLeftColor: '#059669', bg: '#ecfdf5' };
+  if (ld && !ph) return { borderLeftColor: '#d97706', bg: '#fffbeb' };
+  if (!ld && ph) return { borderLeftColor: '#16a34a', bg: '#f0fdf4' };
+  return { borderLeftColor: CrmColors.gray200, bg: CrmColors.white };
+}
+
+const FILTER_CHIPS: { key: ContactFilter; label: string }[] = [
+  { key: 'all', label: 'Tất cả' },
+  { key: 'has_phone', label: '📞 Có SĐT' },
+  { key: 'no_phone', label: '❌ Chưa SĐT' },
+  { key: 'has_lead', label: '🏷 Có Lead' },
+  { key: 'no_lead', label: '🔔 Chưa Lead' },
+  { key: 'lead_has_phone', label: '✅ Lead + SĐT' },
+  { key: 'lead_no_phone', label: '⚠️ Lead thiếu SĐT' },
+];
 
 export default function FacebookInboxScreen({ navigation }: Props) {
   const [pages, setPages] = useState<FbPage[]>([]);
@@ -36,6 +71,7 @@ export default function FacebookInboxScreen({ navigation }: Props) {
   const [rows, setRows] = useState<FbContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [contactFilter, setContactFilter] = useState<ContactFilter>('all');
 
   const loadPages = useCallback(async () => {
     try {
@@ -49,20 +85,22 @@ export default function FacebookInboxScreen({ navigation }: Props) {
   const loadContacts = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get<{ data?: FbContact[] }>('/facebook/contacts', {
-        params: {
-          page_id: pageId || undefined,
-          search: q.trim() || undefined,
-          limit: 500,
-        },
-      });
+      const params: Record<string, string | number> = {
+        limit: 500,
+      };
+      if (pageId) params.page_id = pageId;
+      if (q.trim()) params.search = q.trim();
+      if (contactFilter === 'has_lead') params.has_lead = 'true';
+      else if (contactFilter === 'no_lead') params.has_lead = 'false';
+
+      const { data } = await api.get<{ data?: FbContact[] }>('/facebook/contacts', { params });
       setRows(Array.isArray(data?.data) ? data.data : []);
     } catch {
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, [pageId, q]);
+  }, [pageId, q, contactFilter]);
 
   useEffect(() => {
     void loadPages();
@@ -71,6 +109,25 @@ export default function FacebookInboxScreen({ navigation }: Props) {
   useEffect(() => {
     void loadContacts();
   }, [loadContacts]);
+
+  const filtered = useMemo(() => {
+    const list = rows;
+    switch (contactFilter) {
+      case 'has_phone':
+        return list.filter((c) => hasPhone(c));
+      case 'no_phone':
+        return list.filter((c) => !hasPhone(c));
+      case 'has_lead':
+      case 'no_lead':
+        return list;
+      case 'lead_has_phone':
+        return list.filter((c) => !!c.lead && hasPhone(c));
+      case 'lead_no_phone':
+        return list.filter((c) => !!c.lead && !hasPhone(c));
+      default:
+        return list;
+    }
+  }, [rows, contactFilter]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -84,7 +141,7 @@ export default function FacebookInboxScreen({ navigation }: Props) {
 
   return (
     <View style={styles.screen}>
-      <Text style={styles.hint}>Danh bạ & hội thoại Facebook (API giống web).</Text>
+      <Text style={styles.hint}>Danh bạ Facebook — màu & lọc giống web (SĐT / Lead).</Text>
       <View style={styles.pageRow}>
         <TouchableOpacity
           style={[styles.pageChip, !pageId && styles.pageChipOn]}
@@ -109,6 +166,24 @@ export default function FacebookInboxScreen({ navigation }: Props) {
           }}
         />
       </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+        {FILTER_CHIPS.map((f) => {
+          const on = contactFilter === f.key;
+          return (
+            <TouchableOpacity
+              key={f.key}
+              style={[styles.filterChip, on && styles.filterChipOn]}
+              onPress={() => setContactFilter(f.key)}
+            >
+              <Text style={[styles.filterChipTxt, on && styles.filterChipTxtOn]} numberOfLines={1}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
       <View style={styles.searchWrap}>
         <TextInput
           style={styles.searchInp}
@@ -127,41 +202,62 @@ export default function FacebookInboxScreen({ navigation }: Props) {
         <ActivityIndicator style={{ marginTop: 24 }} color={CrmColors.blue600} />
       ) : (
         <FlatList
-          data={rows}
+          data={filtered}
           keyExtractor={(c) => c.id}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={CrmColors.blue600} />
           }
           contentContainerStyle={styles.listPad}
           ListEmptyComponent={<Text style={styles.empty}>Không có liên hệ.</Text>}
-          renderItem={({ item: c }) => (
-            <TouchableOpacity
-              style={[styles.row, CrmShadow.sm]}
-              onPress={() => navigation.navigate('FacebookChat', { contactId: c.id })}
-              activeOpacity={0.85}
-            >
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <View style={styles.rowTop}>
-                  <Text style={styles.name} numberOfLines={1}>
-                    {c.fb_name || '—'}
+          renderItem={({ item: c }) => {
+            const surf = rowSurface(c);
+            const phoneStr = c.display_phone || c.phone || c.customer?.phone;
+            return (
+              <TouchableOpacity
+                style={[
+                  styles.row,
+                  CrmShadow.sm,
+                  { borderLeftWidth: 4, borderLeftColor: surf.borderLeftColor, backgroundColor: surf.bg },
+                ]}
+                onPress={() => navigation.navigate('FacebookChat', { contactId: c.id })}
+                activeOpacity={0.85}
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={styles.rowTop}>
+                    <Text style={styles.name} numberOfLines={1}>
+                      {c.fb_name || '—'}
+                    </Text>
+                    {(c.unread_count || 0) > 0 ? (
+                      <View style={styles.unread}>
+                        <Text style={styles.unreadTxt}>{c.unread_count}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.preview} numberOfLines={2}>
+                    {c.last_message_preview || '—'}
                   </Text>
-                  {(c.unread_count || 0) > 0 ? (
-                    <View style={styles.unread}>
-                      <Text style={styles.unreadTxt}>{c.unread_count}</Text>
-                    </View>
-                  ) : null}
+                  <View style={styles.badgeRow}>
+                    {phoneStr ? (
+                      <View style={styles.badgeGreen}>
+                        <Text style={styles.badgeGreenTxt}>📞 {phoneStr}</Text>
+                      </View>
+                    ) : null}
+                    {c.lead?.code ? (
+                      <View style={styles.badgeBlue}>
+                        <Text style={styles.badgeBlueTxt}>🏷 {c.lead.code}</Text>
+                      </View>
+                    ) : null}
+                    {!phoneStr && !c.lead ? (
+                      <View style={styles.badgeGray}>
+                        <Text style={styles.badgeGrayTxt}>💬 Messenger</Text>
+                      </View>
+                    ) : null}
+                  </View>
                 </View>
-                <Text style={styles.preview} numberOfLines={2}>
-                  {c.last_message_preview || '—'}
-                </Text>
-                <Text style={styles.meta} numberOfLines={1}>
-                  {c.display_phone ? `📞 ${c.display_phone}` : ''}
-                  {c.lead?.code ? ` · ${c.lead.code}` : ''}
-                </Text>
-              </View>
-              <Text style={styles.chev}>›</Text>
-            </TouchableOpacity>
-          )}
+                <Text style={styles.chev}>›</Text>
+              </TouchableOpacity>
+            );
+          }}
         />
       )}
     </View>
@@ -184,6 +280,19 @@ const styles = StyleSheet.create({
   pageChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue600 },
   pageChipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray600, maxWidth: 140 },
   pageChipTxtOn: { color: CrmColors.blue700 },
+  filterScroll: { paddingHorizontal: 12, paddingTop: 10, maxHeight: 44 },
+  filterChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: CrmRadii.full,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    marginRight: 8,
+  },
+  filterChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue600 },
+  filterChipTxt: { fontSize: 11, fontWeight: '700', color: CrmColors.gray600 },
+  filterChipTxtOn: { color: CrmColors.blue700 },
   searchWrap: {
     flexDirection: 'row',
     paddingHorizontal: 16,
@@ -213,7 +322,6 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: CrmColors.white,
     borderRadius: CrmRadii.lg,
     borderWidth: 1,
     borderColor: CrmColors.gray200,
@@ -233,7 +341,23 @@ const styles = StyleSheet.create({
   },
   unreadTxt: { color: '#fff', fontSize: 11, fontWeight: '800' },
   preview: { fontSize: 12, color: CrmColors.gray600, marginTop: 4 },
-  meta: { fontSize: 11, color: CrmColors.gray400, marginTop: 6 },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  badgeGreen: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  badgeGreenTxt: { fontSize: 10, fontWeight: '700', color: '#15803d' },
+  badgeBlue: {
+    backgroundColor: '#dbeafe',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  badgeBlueTxt: { fontSize: 10, fontWeight: '700', color: '#1d4ed8' },
+  badgeGray: { paddingHorizontal: 4, paddingVertical: 2 },
+  badgeGrayTxt: { fontSize: 11, color: CrmColors.gray400 },
   chev: { fontSize: 22, color: CrmColors.gray300, paddingLeft: 6 },
   empty: { textAlign: 'center', color: CrmColors.gray400, marginTop: 40 },
 });

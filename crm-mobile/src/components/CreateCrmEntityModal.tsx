@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Pressable,
   Alert,
+  FlatList,
 } from 'react-native';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -44,6 +45,7 @@ export default function CreateCrmEntityModal({ visible, mode, onClose, onCreated
   const [probability, setProbability] = useState('50');
   const [installAddress, setInstallAddress] = useState('');
   const [description, setDescription] = useState('');
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -237,22 +239,76 @@ export default function CreateCrmEntityModal({ visible, mode, onClose, onCreated
                 </>
               ) : null}
 
-              <Text style={styles.label}>Nguồn</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-                <TouchableOpacity style={[styles.chip, !sourceId && styles.chipOn]} onPress={() => setSourceId('')}>
-                  <Text style={[styles.chipTxt, !sourceId && styles.chipTxtOn]}>—</Text>
-                </TouchableOpacity>
-                {sources.map((s) => {
-                  const on = sourceId === s.id;
-                  return (
-                    <TouchableOpacity key={s.id} style={[styles.chip, on && styles.chipOn]} onPress={() => setSourceId(s.id)}>
-                      <Text style={[styles.chipTxt, on && styles.chipTxtOn]} numberOfLines={1}>
-                        {s.name}
-                      </Text>
+              <Text style={styles.label}>Nguồn (chọn rõ ràng)</Text>
+              <TouchableOpacity style={styles.sourcePick} onPress={() => setSourcePickerOpen(true)} activeOpacity={0.85}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.sourcePickMain}>
+                    {sourceId
+                      ? sources.find((x) => x.id === sourceId)?.name || 'Đã chọn'
+                      : '— Không chọn nguồn —'}
+                  </Text>
+                  {sourceId ? (
+                    <Text style={styles.sourcePickSub} numberOfLines={3}>
+                      {[
+                        sources.find((x) => x.id === sourceId)?.code,
+                        sources.find((x) => x.id === sourceId)?.description,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || 'Không có mô tả thêm'}
+                    </Text>
+                  ) : (
+                    <Text style={styles.sourcePickSub}>Chạm để mở danh sách nguồn CRM</Text>
+                  )}
+                </View>
+                <Text style={styles.sourcePickChev}>▾</Text>
+              </TouchableOpacity>
+
+              <Modal visible={sourcePickerOpen} animationType="slide" transparent onRequestClose={() => setSourcePickerOpen(false)}>
+                <Pressable style={styles.srcBackdrop} onPress={() => setSourcePickerOpen(false)}>
+                  <Pressable style={styles.srcSheet} onPress={(e) => e.stopPropagation()}>
+                    <Text style={styles.srcTitle}>Chọn nguồn</Text>
+                    <TouchableOpacity
+                      style={styles.srcRow}
+                      onPress={() => {
+                        setSourceId('');
+                        setSourcePickerOpen(false);
+                      }}
+                    >
+                      <Text style={styles.srcRowMain}>— Không chọn —</Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+                    <FlatList
+                      data={sources}
+                      keyExtractor={(s) => s.id}
+                      style={{ maxHeight: 420 }}
+                      renderItem={({ item: s }) => {
+                        const on = sourceId === s.id;
+                        const sub = [s.code, s.description].filter(Boolean).join(' · ');
+                        return (
+                          <TouchableOpacity
+                            style={[styles.srcRow, on && styles.srcRowOn]}
+                            onPress={() => {
+                              setSourceId(s.id);
+                              setSourcePickerOpen(false);
+                            }}
+                          >
+                            <Text style={styles.srcRowMain}>
+                              {(s.icon ? `${s.icon} ` : '') + (s.name || s.id)}
+                            </Text>
+                            {sub ? (
+                              <Text style={styles.srcRowSub} numberOfLines={4}>
+                                {sub}
+                              </Text>
+                            ) : null}
+                          </TouchableOpacity>
+                        );
+                      }}
+                    />
+                    <TouchableOpacity style={styles.srcClose} onPress={() => setSourcePickerOpen(false)}>
+                      <Text style={styles.srcCloseTxt}>Đóng</Text>
+                    </TouchableOpacity>
+                  </Pressable>
+                </Pressable>
+              </Modal>
 
               <View style={styles.row2}>
                 <View style={{ flex: 1 }}>
@@ -362,4 +418,39 @@ const styles = StyleSheet.create({
   submitTxt: { color: CrmColors.white, fontWeight: '700', fontSize: 16 },
   cancelOut: { marginTop: 12, alignItems: 'center', padding: 8 },
   cancelOutTxt: { color: CrmColors.gray600, fontWeight: '600' },
+  sourcePick: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    borderRadius: CrmRadii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: CrmColors.white,
+    gap: 8,
+  },
+  sourcePickMain: { fontSize: 15, fontWeight: '700', color: CrmColors.gray900 },
+  sourcePickSub: { fontSize: 12, color: CrmColors.gray500, marginTop: 4, lineHeight: 17 },
+  sourcePickChev: { fontSize: 18, color: CrmColors.gray400, fontWeight: '700' },
+  srcBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  srcSheet: {
+    backgroundColor: CrmColors.white,
+    borderTopLeftRadius: CrmRadii.xl,
+    borderTopRightRadius: CrmRadii.xl,
+    padding: 16,
+    paddingBottom: 28,
+    maxHeight: '88%',
+  },
+  srcTitle: { fontSize: 17, fontWeight: '800', color: CrmColors.gray900, marginBottom: 12 },
+  srcRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: CrmColors.gray100,
+  },
+  srcRowOn: { backgroundColor: CrmColors.blue50, borderRadius: CrmRadii.md },
+  srcRowMain: { fontSize: 15, fontWeight: '700', color: CrmColors.gray900 },
+  srcRowSub: { fontSize: 12, color: CrmColors.gray600, marginTop: 4, lineHeight: 17 },
+  srcClose: { marginTop: 14, alignItems: 'center', padding: 10 },
+  srcCloseTxt: { fontSize: 15, fontWeight: '700', color: CrmColors.blue700 },
 });

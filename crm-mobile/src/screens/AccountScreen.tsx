@@ -1,10 +1,21 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Switch } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Switch,
+  Alert,
+  AppState,
+  DeviceEventEmitter,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import {
+  CRM_MOBILE_PREFS_CHANGED,
   loadCrmMobilePrefs,
   saveCrmMobilePrefs,
   type CrmMobilePrefs,
@@ -23,7 +34,9 @@ export default function AccountScreen() {
   const [permBusy, setPermBusy] = useState(false);
 
   const refreshPrefs = useCallback(async () => {
-    setPrefs(await loadCrmMobilePrefs());
+    const next = await loadCrmMobilePrefs();
+    setPrefs(next);
+    DeviceEventEmitter.emit(CRM_MOBILE_PREFS_CHANGED, next);
   }, []);
 
   useFocusEffect(
@@ -31,6 +44,18 @@ export default function AccountScreen() {
       void refreshPrefs();
     }, [refreshPrefs]),
   );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') void refreshPrefs();
+    });
+    return () => sub.remove();
+  }, [refreshPrefs]);
+
+  const pullToolsFromServer = async () => {
+    await refreshPrefs();
+    Alert.alert('Đã đồng bộ', 'Đã tải cài đặt công cụ & ghi âm từ máy chủ (giống khi bạn chỉnh trên web).');
+  };
 
   const updatePrefs = async (next: CrmMobilePrefs) => {
     setPrefs(next);
@@ -177,6 +202,12 @@ export default function AccountScreen() {
                 />
               </View>
             </ScrollView>
+            <TouchableOpacity style={[styles.syncServerBtn, CrmShadow.sm]} onPress={() => void pullToolsFromServer()} activeOpacity={0.88}>
+              <Text style={styles.syncServerBtnTxt}>Đồng bộ từ máy chủ ngay</Text>
+              <Text style={styles.syncServerBtnSub}>
+                Nếu bạn bật/tắt công cụ trên web, chạm đây để app khớp lại (và khi bạn mở lại app từ nền cũng tự tải).
+              </Text>
+            </TouchableOpacity>
           </>
         ) : null}
 
@@ -310,6 +341,16 @@ const styles = StyleSheet.create({
   toolCardDim: { opacity: 0.55 },
   toolCardH: { fontSize: 15, fontWeight: '800', color: CrmColors.gray900 },
   toolCardSub: { fontSize: 11, color: CrmColors.gray500, marginTop: 6, marginBottom: 10, lineHeight: 15 },
+  syncServerBtn: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: CrmRadii.card,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.blue100,
+  },
+  syncServerBtnTxt: { fontSize: 15, fontWeight: '800', color: CrmColors.blue800 },
+  syncServerBtnSub: { fontSize: 12, color: CrmColors.gray600, marginTop: 8, lineHeight: 17 },
   voiceHint: {
     fontSize: 13,
     color: CrmColors.gray600,

@@ -20,6 +20,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../api/client';
 import { API_ORIGIN } from '../config';
+import { useAuth } from '../context/AuthContext';
+import { canAssigneeFilterDeals, canAssigneeFilterLeads } from '../lib/crmMobilePrefs';
 import type { CrmActivity, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmLeadMessage, CrmStage } from '../types/crm';
 import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
@@ -59,9 +61,22 @@ function emptyCust(): CustForm {
   return { full_name: '', phone: '', email: '', address: '', company: '', tax_code: '' };
 }
 
+type PickerUser = { id: string; full_name?: string | null; email?: string | null };
+
+/** File đính kèm nhiệm vụ (GET /crm/leads/:id/task-documents) */
+type TaskDocRow = {
+  id: string;
+  name?: string | null;
+  file_url?: string | null;
+  doc_type?: string | null;
+  task_title?: string | null;
+  stage_slug?: string | null;
+};
+
 export default function LeadDetailScreen() {
   const { params } = useRoute<R>();
   const navigation = useNavigation<Nav>();
+  const { user } = useAuth();
   const { id } = params;
 
   const [lead, setLead] = useState<CrmLeadDetail | null>(null);
@@ -69,7 +84,10 @@ export default function LeadDetailScreen() {
   const [stagesDeal, setStagesDeal] = useState<CrmStage[]>([]);
   const [activities, setActivities] = useState<CrmActivity[]>([]);
   const [documents, setDocuments] = useState<CrmDocument[]>([]);
+  const [taskDocuments, setTaskDocuments] = useState<TaskDocRow[]>([]);
   const [taskCount, setTaskCount] = useState(0);
+  const [custExpanded, setCustExpanded] = useState(false);
+  const [crmExpanded, setCrmExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [activeTab, setActiveTab] = useState<TabKey>('tasks');
@@ -93,20 +111,36 @@ export default function LeadDetailScreen() {
   const [noteDraft, setNoteDraft] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
 
+  const [valueDraft, setValueDraft] = useState('');
+  const [createdAtDraft, setCreatedAtDraft] = useState('');
+  const [assignDraftId, setAssignDraftId] = useState('');
+  const [metaSaving, setMetaSaving] = useState(false);
+  const [assigneeModal, setAssigneeModal] = useState(false);
+  const [pickerUsers, setPickerUsers] = useState<PickerUser[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+
   const load = useCallback(async () => {
     setErr('');
     setLoading(true);
     try {
-      const [detailRes, actRes, docRes, stL, stD] = await Promise.all([
+      const [detailRes, actRes, docRes, taskDocRes, stL, stD] = await Promise.all([
         api.get<CrmLeadDetail>(`/crm/leads/${id}/detail`),
         api.get<CrmActivity[]>(`/crm/leads/${id}/activities`).catch(() => ({ data: [] })),
         api.get<CrmDocument[]>(`/crm/leads/${id}/documents`).catch(() => ({ data: [] })),
+        api.get<TaskDocRow[]>(`/crm/leads/${id}/task-documents`).catch(() => ({ data: [] })),
         api.get<CrmStage[]>('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get<CrmStage[]>('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
       ]);
       const L = detailRes.data;
       setLead(L);
       setTitleDraft(L?.title || '');
+      setValueDraft(
+        L?.estimated_value != null && !Number.isNaN(Number(L.estimated_value))
+          ? String(Math.round(Number(L.estimated_value)))
+          : '',
+      );
+      setCreatedAtDraft(L?.created_at ? String(L.created_at).slice(0, 10) : '');
+      setAssignDraftId(String(L?.assigned_to || L?.lead_owner_id || ''));
       const k = L?.customer;
       setCust({
         full_name: k?.full_name || '',
@@ -118,6 +152,7 @@ export default function LeadDetailScreen() {
       });
       setActivities(Array.isArray(actRes.data) ? actRes.data : []);
       setDocuments(Array.isArray(docRes.data) ? docRes.data : []);
+      setTaskDocuments(Array.isArray(taskDocRes.data) ? taskDocRes.data : []);
       setStagesLead(Array.isArray(stL.data) ? stL.data : []);
       setStagesDeal(Array.isArray(stD.data) ? stD.data : []);
     } catch (e: unknown) {
@@ -158,6 +193,14 @@ export default function LeadDetailScreen() {
     () => (activities || []).filter((a) => a.type !== 'note'),
     [activities],
   );
+
+  const standaloneDocuments = useMemo(
+    () =>
+      documents.filter((d) => !d.is_from_task && !d.source_attachment_id),
+    [documents],
+  );
+
+  const documentTabCount = standaloneDocuments.length + taskDocuments.length;
 
   const loadMembers = useCallback(async () => {
     try {
@@ -247,27 +290,96 @@ export default function LeadDetailScreen() {
   };
 
   const saveCustomer = async () => {
-    const cid = lead?.customer?.id;
-    if (!cid) {
-      Alert.alert('Khách hàng', 'Chưa có khách hàng để cập nhật.');
+    if (!lead) return;
+    if (!cust.full_name.trim()) {
+      Alert.alert('Khách hàng', 'Vui lòng nhập tên khách hàng.');
       return;
     }
+    if (lead.type === 'deal' && !cust.phone.trim()) {
+      Alert.alert('Khách hàng', 'Deal cần số điện thoại khách hàng.');
+      return;
+    }
+    const cid = lead.customer?.id;
     setSavingCust(true);
     try {
-      const { data } = await api.put(`/customers/${cid}`, {
-        full_name: cust.full_name.trim() || null,
-        phone: cust.phone.trim() || null,
-        email: cust.email.trim() || null,
-        address: cust.address.trim() || null,
-        company: cust.company.trim() || null,
-        tax_code: cust.tax_code.trim() || null,
-      });
-      setLead((prev) => (prev ? { ...prev, customer: { ...prev.customer, ...data } } : prev));
-      Alert.alert('Đã lưu', 'Đã cập nhật khách hàng.');
+      if (cid) {
+        const { data: res } = await api.put<{ customer?: CrmLeadDetail['customer'] }>(`/customers/${cid}`, {
+          full_name: cust.full_name.trim() || null,
+          phone: cust.phone.trim() || null,
+          email: cust.email.trim() || null,
+          address: cust.address.trim() || null,
+          company: cust.company.trim() || null,
+          tax_code: cust.tax_code.trim() || null,
+        });
+        const row = res?.customer ?? (res as unknown as CrmLeadDetail['customer']);
+        setLead((prev) => (prev ? { ...prev, customer: { ...prev.customer, ...row, id: cid } } : prev));
+        Alert.alert('Đã lưu', 'Đã cập nhật khách hàng.');
+      } else {
+        const { data: res } = await api.post<{ customer?: { id: string } & Record<string, unknown> }>('/customers', {
+          full_name: cust.full_name.trim(),
+          phone: cust.phone.trim() || null,
+          email: cust.email.trim() || null,
+          address: cust.address.trim() || null,
+          company: cust.company.trim() || null,
+          tax_code: cust.tax_code.trim() || null,
+        });
+        const newId = res?.customer?.id;
+        if (!newId) {
+          Alert.alert('Lỗi', 'Không tạo được khách hàng (thiếu id).');
+          return;
+        }
+        await api.put<CrmLeadDetail>(`/crm/leads/${id}`, { customer_id: newId });
+        await load();
+        Alert.alert('Đã lưu', 'Đã tạo khách hàng và gắn vào lead/deal.');
+      }
     } catch (e: unknown) {
       Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không lưu được');
     } finally {
       setSavingCust(false);
+    }
+  };
+
+  const openAssigneePicker = async () => {
+    setAssigneeModal(true);
+    if (pickerUsers.length) return;
+    setPickerLoading(true);
+    try {
+      const { data } = await api.get<{ users?: PickerUser[] }>('/users');
+      setPickerUsers(Array.isArray(data?.users) ? data.users : []);
+    } catch {
+      setPickerUsers([]);
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  const saveLeadCoreMeta = async () => {
+    if (!lead) return;
+    const canPick =
+      lead.type === 'deal' ? canAssigneeFilterDeals(user?.role) : canAssigneeFilterLeads(user?.role);
+    const dateStr = createdAtDraft.trim();
+    if (dateStr && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      Alert.alert('Ngày tạo', 'Dùng định dạng YYYY-MM-DD (ví dụ 2026-04-16).');
+      return;
+    }
+    const digits = valueDraft.replace(/\D/g, '');
+    const estimated_value = digits ? parseInt(digits, 10) : 0;
+
+    const body: Record<string, unknown> = { estimated_value };
+    if (dateStr) body.created_at = `${dateStr}T12:00:00.000Z`;
+    if (canPick) {
+      body.assigned_to = assignDraftId.trim() || null;
+    }
+
+    setMetaSaving(true);
+    try {
+      await api.put<CrmLeadDetail>(`/crm/leads/${id}`, body);
+      await load();
+      Alert.alert('Đã lưu', 'Đã cập nhật thông tin lead/deal.');
+    } catch (e: unknown) {
+      Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không lưu được.');
+    } finally {
+      setMetaSaving(false);
     }
   };
 
@@ -412,6 +524,13 @@ export default function LeadDetailScreen() {
   const c = lead.customer;
   const isDeal = lead.type === 'deal';
   const canConvert = !isDeal;
+  const canPickAssignee = isDeal ? canAssigneeFilterDeals(user?.role) : canAssigneeFilterLeads(user?.role);
+  const assigneeLabel = !assignDraftId
+    ? '— Chưa gán —'
+    : pickerUsers.find((u) => u.id === assignDraftId)?.full_name ||
+      lead.assignee?.full_name ||
+      lead.lead_owner?.full_name ||
+      `${assignDraftId.slice(0, 8)}…`;
   const leadTypeTab: 'lead' | 'deal' = isDeal ? 'deal' : 'lead';
 
   return (
@@ -591,7 +710,7 @@ export default function LeadDetailScreen() {
           </View>
           <View style={[styles.statBox, styles.statAmber]}>
             <Text style={styles.statLabel}>Tài liệu</Text>
-            <Text style={styles.statValAmber}>{documents.length}</Text>
+            <Text style={styles.statValAmber}>{documentTabCount}</Text>
           </View>
           <View style={[styles.statBox, styles.statPurple]}>
             <Text style={styles.statLabel}>Công việc</Text>
@@ -600,50 +719,138 @@ export default function LeadDetailScreen() {
         </View>
 
         <View style={[styles.card, CrmShadow.card]}>
-          <Text style={styles.cardH}>Khách hàng</Text>
-          {!c?.id ? (
-            <Text style={styles.muted}>Chưa gán khách hàng — tạo trên web hoặc thêm từ CRM web.</Text>
-          ) : (
+          <TouchableOpacity
+            style={styles.collapseHead}
+            onPress={() => setCustExpanded((v) => !v)}
+            activeOpacity={0.75}
+          >
+            <View style={styles.collapseHeadRow}>
+              <Text style={[styles.cardH, styles.cardHInline]}>Khách hàng</Text>
+              <Text style={styles.collapseChevron}>{custExpanded ? '▼' : '▶'}</Text>
+            </View>
+            {!custExpanded ? (
+              <Text style={styles.collapsePreview} numberOfLines={2}>
+                {!c?.id
+                  ? 'Chưa gán KH — chạm để nhập / tạo'
+                  : [cust.full_name, cust.phone].filter(Boolean).join(' · ') || '—'}
+              </Text>
+            ) : null}
+          </TouchableOpacity>
+          {custExpanded ? (
             <>
-              <FieldInp label="👤 Tên" value={cust.full_name} onChange={(t) => setCust((p) => ({ ...p, full_name: t }))} />
-              <FieldInp label="📞 SĐT" value={cust.phone} onChange={(t) => setCust((p) => ({ ...p, phone: t }))} keyboard="phone-pad" />
+              {!c?.id ? (
+                <Text style={styles.custBanner}>
+                  Chưa gán khách hàng — nhập thông tin bên dưới và bấm «Tạo & gắn» để tạo mới và liên kết với lead/deal này.
+                </Text>
+              ) : null}
+              <FieldInp label="👤 Tên *" value={cust.full_name} onChange={(t) => setCust((p) => ({ ...p, full_name: t }))} />
+              <FieldInp
+                label={isDeal ? '📞 SĐT *' : '📞 SĐT'}
+                value={cust.phone}
+                onChange={(t) => setCust((p) => ({ ...p, phone: t }))}
+                keyboard="phone-pad"
+              />
               <FieldInp label="✉️ Email" value={cust.email} onChange={(t) => setCust((p) => ({ ...p, email: t }))} keyboard="email-address" />
               <View style={styles.divider} />
               <FieldInp label="📍 Địa chỉ" value={cust.address} onChange={(t) => setCust((p) => ({ ...p, address: t }))} />
               <FieldInp label="🏢 Công ty" value={cust.company} onChange={(t) => setCust((p) => ({ ...p, company: t }))} />
               <FieldInp label="🧾 MST" value={cust.tax_code} onChange={(t) => setCust((p) => ({ ...p, tax_code: t }))} />
               <TouchableOpacity style={styles.saveCust} onPress={() => void saveCustomer()} disabled={savingCust}>
-                <Text style={styles.saveCustTxt}>{savingCust ? 'Đang lưu…' : 'Lưu khách hàng'}</Text>
+                <Text style={styles.saveCustTxt}>
+                  {savingCust ? 'Đang lưu…' : c?.id ? 'Lưu khách hàng' : 'Tạo & gắn khách hàng'}
+                </Text>
               </TouchableOpacity>
             </>
-          )}
+          ) : null}
         </View>
 
         <View style={[styles.card, CrmShadow.card]}>
-          <Text style={styles.cardH}>Thông tin</Text>
-          <InfoRow label="Giá trị" value={formatVND(lead.estimated_value)} />
-          <InfoRow label="Ngày tạo" value={formatDate(lead.created_at)} />
-          <InfoRow
-            label="Nguồn"
-            value={
-              lead.source?.name ? `${lead.source.icon || ''} ${lead.source.name}`.trim() : undefined
-            }
-          />
-          <InfoRow label="Phụ trách" value={lead.assignee?.full_name || lead.lead_owner?.full_name} />
-          <InfoRow label="Giai đoạn" value={lead.stage?.name} />
+          <TouchableOpacity
+            style={styles.collapseHead}
+            onPress={() => setCrmExpanded((v) => !v)}
+            activeOpacity={0.75}
+          >
+            <View style={styles.collapseHeadRow}>
+              <Text style={[styles.cardH, styles.cardHInline]}>Thông tin CRM</Text>
+              <Text style={styles.collapseChevron}>{crmExpanded ? '▼' : '▶'}</Text>
+            </View>
+            {!crmExpanded ? (
+              <Text style={styles.collapsePreview} numberOfLines={2}>
+                {[
+                  valueDraft.trim() ? formatVND(Number(valueDraft)) : null,
+                  lead.stage?.name || null,
+                  assigneeLabel !== '— Chưa gán —' ? assigneeLabel : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || '—'}
+              </Text>
+            ) : null}
+          </TouchableOpacity>
+          {crmExpanded ? (
+            <>
+              <Text style={styles.metaHint}>Giá trị (VNĐ), ngày tạo (YYYY-MM-DD), người phụ trách — lưu chung một nút.</Text>
+
+              <FieldInp
+                label="💰 Giá trị dự kiến (VNĐ)"
+                value={valueDraft}
+                onChange={setValueDraft}
+                keyboard="numeric"
+              />
+
+              <FieldInp
+                label="📅 Ngày tạo (YYYY-MM-DD)"
+                value={createdAtDraft}
+                onChange={setCreatedAtDraft}
+              />
+
+              <View style={styles.fieldBlock}>
+                <Text style={styles.fieldLabel}>👤 Người phụ trách</Text>
+                <Text style={styles.fieldValue}>{assigneeLabel}</Text>
+                {canPickAssignee ? (
+                  <TouchableOpacity style={styles.pickAssignBtn} onPress={() => void openAssigneePicker()}>
+                    <Text style={styles.pickAssignBtnTxt}>Chọn nhân viên…</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.metaHintSm}>Chỉ tài khoản có quyền quản trị mới đổi phụ trách trên mobile.</Text>
+                )}
+              </View>
+
+              <InfoRow
+                label="Nguồn"
+                value={
+                  lead.source?.name ? `${lead.source.icon || ''} ${lead.source.name}`.trim() : undefined
+                }
+              />
+              <InfoRow label="Giai đoạn" value={lead.stage?.name} />
+
+              <TouchableOpacity style={styles.saveCust} onPress={() => void saveLeadCoreMeta()} disabled={metaSaving}>
+                <Text style={styles.saveCustTxt}>{metaSaving ? 'Đang lưu…' : 'Lưu thông tin CRM'}</Text>
+              </TouchableOpacity>
+
+              {canConvert ? (
+                <View style={styles.convertBlock}>
+                  <Text style={styles.convertLbl}>Lead → Deal</Text>
+                  <Text style={styles.metaHintSm}>Chuyển sang pipeline Deal (giữ khách hàng & lịch sử). Dùng khi chốt tư vấn.</Text>
+                  <TouchableOpacity style={styles.convertBtn} onPress={() => void convertToDeal()} disabled={converting}>
+                    <Text style={styles.convertBtnTxt}>{converting ? 'Đang chuyển…' : '⚡ Chuyển sang Deal'}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </>
+          ) : null}
         </View>
 
         <View style={[styles.tabsBar, CrmShadow.card]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
             {(
               [
-                ['tasks', '✅ Công việc'],
-                ['documents', '📄 Tài liệu'],
-                ['activities', '📋 Hoạt động'],
-                ['notes', '📝 Ghi chú'],
-                ['team', '👥 Nhóm'],
-                ['chat', '💬 Chat'],
-                ['voice', '🎙 Ghi âm'],
+                ['tasks', `✅ Công việc`] as const,
+                ['documents', `📋 Tài liệu (${documentTabCount})`] as const,
+                ['activities', `💬 Hoạt động (${pipelineActivities.length})`] as const,
+                ['notes', `📝 Ghi chú (${noteActivities.length})`] as const,
+                ['team', '👥 Thành viên'] as const,
+                ['chat', '💬 Trao đổi'] as const,
+                ['voice', '🎙 Ghi âm'] as const,
               ] as const
             ).map(([key, label]) => (
               <TouchableOpacity
@@ -657,6 +864,38 @@ export default function LeadDetailScreen() {
           </ScrollView>
         </View>
 
+        <View style={[styles.webTabsBar, CrmShadow.card]}>
+          <Text style={styles.webTabsKicker}>Chỉ trên web (mở trình duyệt)</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
+            <TouchableOpacity
+              style={styles.webTabChip}
+              onPress={() => openWebPath(`/crm/leads/${id}?tab=facebook`)}
+            >
+              <Text style={styles.webTabChipTxt}>📘 Facebook</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.webTabChip}
+              onPress={() => openWebPath(`/crm/leads/${id}?tab=calls`)}
+            >
+              <Text style={styles.webTabChipTxt}>📞 Tổng đài</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.webTabChip}
+              onPress={() => openWebPath(`/crm/leads/${id}?tab=voice_crm`)}
+            >
+              <Text style={styles.webTabChipTxt}>🎙 Ghi âm (web)</Text>
+            </TouchableOpacity>
+            {isDeal ? (
+              <TouchableOpacity
+                style={styles.webTabChip}
+                onPress={() => openWebPath(`/crm/leads/${id}?tab=approvals`)}
+              >
+                <Text style={styles.webTabChipTxt}>✅ Gửi duyệt deal</Text>
+              </TouchableOpacity>
+            ) : null}
+          </ScrollView>
+        </View>
+
         <View style={[styles.tabBody, CrmShadow.card]}>
           {activeTab === 'tasks' && (
             <CrmTasksPanel leadId={id} leadType={leadTypeTab} onCountChange={setTaskCount} />
@@ -666,24 +905,51 @@ export default function LeadDetailScreen() {
               <TouchableOpacity style={styles.uploadBtn} onPress={() => void pickAndUploadDoc()} disabled={uploadingDoc}>
                 <Text style={styles.uploadBtnTxt}>{uploadingDoc ? 'Đang tải…' : '📎 Thêm tệp'}</Text>
               </TouchableOpacity>
-              {documents.length === 0 ? (
+              {taskDocuments.length > 0 ? (
+                <>
+                  <Text style={styles.docSectionH}>📂 File nhiệm vụ ({taskDocuments.length})</Text>
+                  <Text style={styles.docSectionSub}>Từ nhiệm vụ CRM — xem / tải; xóa hoặc sửa trên web nếu cần.</Text>
+                  {taskDocuments.map((td) => (
+                    <View key={td.id} style={styles.rowItem}>
+                      <TouchableOpacity
+                        style={{ flex: 1 }}
+                        onPress={() => td.file_url && void Linking.openURL(td.file_url)}
+                        disabled={!td.file_url}
+                      >
+                        <Text style={styles.rowTitle}>{td.name || '—'}</Text>
+                        <Text style={styles.rowSub}>
+                          {[td.task_title, td.stage_slug].filter(Boolean).join(' · ') || 'Nhiệm vụ'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </>
+              ) : null}
+              {standaloneDocuments.length > 0 ? (
+                <>
+                  {taskDocuments.length > 0 ? (
+                    <Text style={[styles.docSectionH, { marginTop: 14 }]}>📋 Tài liệu lead / deal</Text>
+                  ) : null}
+                  {standaloneDocuments.map((d) => (
+                    <View key={d.id} style={styles.rowItem}>
+                      <TouchableOpacity
+                        style={{ flex: 1 }}
+                        onPress={() => d.file_url && void Linking.openURL(d.file_url)}
+                        disabled={!d.file_url}
+                      >
+                        <Text style={styles.rowTitle}>{d.name || '—'}</Text>
+                        {d.doc_type ? <Text style={styles.rowSub}>{d.doc_type}</Text> : null}
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => removeDoc(d)}>
+                        <Text style={styles.delDoc}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </>
+              ) : taskDocuments.length === 0 ? (
                 <Text style={styles.muted}>Chưa có tài liệu.</Text>
               ) : (
-                documents.map((d) => (
-                  <View key={d.id} style={styles.rowItem}>
-                    <TouchableOpacity
-                      style={{ flex: 1 }}
-                      onPress={() => d.file_url && void Linking.openURL(d.file_url)}
-                      disabled={!d.file_url}
-                    >
-                      <Text style={styles.rowTitle}>{d.name || '—'}</Text>
-                      {d.doc_type ? <Text style={styles.rowSub}>{d.doc_type}</Text> : null}
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => removeDoc(d)}>
-                      <Text style={styles.delDoc}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))
+                <Text style={[styles.muted, { marginTop: 8 }]}>Chưa có tài liệu lead riêng (chỉ file từ nhiệm vụ ở trên).</Text>
               )}
             </View>
           )}
@@ -813,8 +1079,8 @@ export default function LeadDetailScreen() {
         </View>
 
         <Text style={styles.webHint}>
-          Facebook, Zalo OA, báo giá PDF… — mở trên web. Ghi âm micro có tại tab Ghi âm. Toast thông báo khi có tin mới
-          (socket).
+          Tab «Ghi âm» trong app = ghi âm CRM trên thiết bị. Facebook, tổng đài, duyệt deal đầy đủ: hàng nút phía trên hoặc
+          mở web.
         </Text>
       </ScrollView>
 
@@ -862,6 +1128,44 @@ export default function LeadDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal visible={assigneeModal} animationType="slide" transparent onRequestClose={() => setAssigneeModal(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setAssigneeModal(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Người phụ trách</Text>
+            <TouchableOpacity
+              style={styles.sheetRow}
+              onPress={() => {
+                setAssignDraftId('');
+                setAssigneeModal(false);
+              }}
+            >
+              <Text style={styles.sheetName}>— Để trống / gỡ gán</Text>
+            </TouchableOpacity>
+            {pickerLoading ? <ActivityIndicator style={{ marginVertical: 16 }} color={CrmColors.blue600} /> : null}
+            <FlatList
+              data={pickerUsers}
+              keyExtractor={(u) => u.id}
+              style={{ maxHeight: 380 }}
+              renderItem={({ item: u }) => (
+                <TouchableOpacity
+                  style={styles.sheetRow}
+                  onPress={() => {
+                    setAssignDraftId(u.id);
+                    setAssigneeModal(false);
+                  }}
+                >
+                  <Text style={styles.sheetName}>{u.full_name || u.email || u.id}</Text>
+                  {u.email && u.full_name ? <Text style={styles.rowSub}>{u.email}</Text> : null}
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity style={styles.sheetClose} onPress={() => setAssigneeModal(false)}>
+              <Text style={styles.sheetCloseTxt}>Đóng</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -884,8 +1188,16 @@ function FieldInp({
   label: string;
   value: string;
   onChange: (t: string) => void;
-  keyboard?: 'phone-pad' | 'email-address';
+  keyboard?: 'phone-pad' | 'email-address' | 'numeric';
 }) {
+  const kt =
+    keyboard === 'phone-pad'
+      ? 'phone-pad'
+      : keyboard === 'email-address'
+        ? 'email-address'
+        : keyboard === 'numeric'
+          ? 'numeric'
+          : 'default';
   return (
     <View style={styles.fieldBlock}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -893,7 +1205,7 @@ function FieldInp({
         style={styles.custInput}
         value={value}
         onChangeText={onChange}
-        keyboardType={keyboard === 'phone-pad' ? 'phone-pad' : keyboard === 'email-address' ? 'email-address' : 'default'}
+        keyboardType={kt}
         autoCapitalize={keyboard === 'email-address' ? 'none' : 'sentences'}
       />
     </View>
@@ -1055,6 +1367,56 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   cardH: { fontSize: 13, fontWeight: '800', color: CrmColors.gray900, marginBottom: 12, textTransform: 'uppercase' },
+  cardHInline: { marginBottom: 0 },
+  collapseHead: { marginBottom: 0 },
+  collapseHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  collapseChevron: { fontSize: 14, color: CrmColors.gray500, fontWeight: '700', paddingLeft: 8 },
+  collapsePreview: { fontSize: 13, color: CrmColors.gray600, marginTop: 8, lineHeight: 18 },
+  webTabsBar: {
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    borderRadius: CrmRadii.xl,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginBottom: 10,
+  },
+  webTabsKicker: { fontSize: 11, fontWeight: '700', color: CrmColors.gray500, marginBottom: 8, textTransform: 'uppercase' },
+  webTabChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: CrmRadii.md,
+    backgroundColor: CrmColors.gray100,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    marginRight: 6,
+  },
+  webTabChipTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.gray800 },
+  docSectionH: { fontSize: 12, fontWeight: '800', color: CrmColors.gray700, marginBottom: 4, textTransform: 'uppercase' },
+  docSectionSub: { fontSize: 11, color: CrmColors.gray500, marginBottom: 8, lineHeight: 16 },
+  metaHint: { fontSize: 12, color: CrmColors.gray500, marginBottom: 12, lineHeight: 17 },
+  metaHintSm: { fontSize: 11, color: CrmColors.gray400, marginTop: 6, lineHeight: 15 },
+  pickAssignBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: CrmRadii.md,
+    borderWidth: 1,
+    borderColor: CrmColors.blue100,
+    backgroundColor: CrmColors.blue50,
+  },
+  pickAssignBtnTxt: { fontSize: 13, fontWeight: '700', color: CrmColors.blue700 },
+  convertBlock: { marginTop: 18, paddingTop: 16, borderTopWidth: 1, borderTopColor: CrmColors.gray100 },
+  convertLbl: { fontSize: 12, fontWeight: '800', color: CrmColors.gray700, marginBottom: 6 },
+  convertBtn: {
+    marginTop: 10,
+    backgroundColor: CrmColors.emerald600,
+    paddingVertical: 12,
+    borderRadius: CrmRadii.md,
+    alignItems: 'center',
+  },
+  convertBtnTxt: { color: CrmColors.white, fontWeight: '800', fontSize: 15 },
   fieldBlock: { marginBottom: 12 },
   fieldLabel: { fontSize: 11, fontWeight: '600', color: CrmColors.gray500, marginBottom: 2 },
   fieldValue: { fontSize: 14, fontWeight: '600', color: CrmColors.gray900 },
@@ -1099,6 +1461,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   muted: { fontSize: 13, color: CrmColors.gray400, textAlign: 'center', paddingVertical: 12 },
+  custBanner: {
+    fontSize: 13,
+    color: CrmColors.gray600,
+    lineHeight: 19,
+    marginBottom: 14,
+    padding: 12,
+    backgroundColor: CrmColors.blue50,
+    borderRadius: CrmRadii.md,
+    borderWidth: 1,
+    borderColor: CrmColors.blue100,
+  },
   uploadBtn: {
     alignSelf: 'flex-start',
     backgroundColor: CrmColors.gray100,

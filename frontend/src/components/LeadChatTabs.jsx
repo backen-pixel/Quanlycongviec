@@ -402,7 +402,7 @@ function resolveMentionIdsFromContent(content, members) {
     const piece = m[1].toLowerCase();
     const pieceCompact = piece.replace(/\s/g, '');
     for (const mem of members) {
-      const name = (mem.user?.full_name || '').trim();
+      const name = (mem.user?.full_name || mem.user?.email || '').trim();
       if (!name) continue;
       const low = name.toLowerCase();
       const lowCompact = low.replace(/\s/g, '');
@@ -478,6 +478,16 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
     }
   }, [groupId]);
 
+  const load = useCallback(async () => {
+    try {
+      const r = await api.get(`/messenger/groups/${groupId}/chat`);
+      setMessages(r.data || []);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 200);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [groupId]);
+
   useEffect(() => {
     setMessages([]);
     setMentionOpen(false);
@@ -505,16 +515,6 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
     return undefined;
   }, [groupId, socket, loadGroupMeta, load]);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await api.get(`/messenger/groups/${groupId}/chat`);
-      setMessages(r.data || []);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 200);
-    } catch (e) {
-      console.error(e);
-    }
-  }, [groupId]);
-
   const leaveGroup = async () => {
     if (groupMeta?.is_direct) return;
     if (!confirm('Rời nhóm chat này?')) return;
@@ -538,7 +538,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
     return members
       .filter((mem) => String(mem.user_id) !== String(user?.userId || user?.id))
       .filter((mem) => {
-        const name = (mem.user?.full_name || '').toLowerCase();
+        const name = (mem.user?.full_name || mem.user?.email || String(mem.user_id || '')).toLowerCase();
         if (!q) return true;
         return name.includes(q);
       })
@@ -567,7 +567,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
   const applyMentionPick = (mem) => {
     const el = textareaRef.current;
     const pos = el?.selectionStart ?? text.length;
-    const name = (mem.user?.full_name || 'Thành viên').trim();
+    const name = (mem.user?.full_name || mem.user?.email || `Thành viên ${String(mem.user_id || '').slice(0, 8)}`).trim();
     const before = text.slice(0, mentionStart);
     const after = text.slice(pos);
     const insert = `@${name} `;
@@ -691,9 +691,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
               </div>
             );
           }
+          const senderName = m.user?.full_name || m.user?.email || 'Thành viên';
           return (
             <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} gap-2`}>
-              {!isMe && <Avatar name={m.user?.full_name} url={m.user?.avatar} size={7} />}
+              {!isMe && <Avatar name={senderName} url={m.user?.avatar} size={7} />}
               <div
                 className={`max-w-[70%] rounded-2xl px-3.5 py-2 shadow-sm ${
                   isMe
@@ -701,7 +702,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
                     : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
                 }`}
               >
-                {!isMe && <p className="text-[10px] font-medium mb-0.5 text-blue-600">{m.user?.full_name}</p>}
+                {!isMe && <p className="text-[10px] font-medium mb-0.5 text-blue-600">{senderName}</p>}
                 {mentioned && (
                   <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
                     Bạn được nhắc (@)
@@ -730,7 +731,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => applyMentionPick(mem)}
                 >
-                  @{mem.user?.full_name || mem.user_id}
+                  @{mem.user?.full_name || mem.user?.email || mem.user_id}
                 </button>
               </li>
             ))}
