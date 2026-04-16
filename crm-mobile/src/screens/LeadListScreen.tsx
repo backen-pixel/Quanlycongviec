@@ -11,6 +11,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  Alert,
 } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { api } from '../api/client';
@@ -39,6 +40,7 @@ import {
   CrmPipelinePlannerView,
   CrmPipelineCalendarView,
 } from '../components/CrmPipelineViewModes';
+import CrmAutoPipelineStrip from '../components/CrmAutoPipelineStrip';
 
 type Nav = NativeStackNavigationProp<CrmStackParamList, 'LeadList'>;
 
@@ -47,7 +49,14 @@ type Props = { navigation: Nav };
 type PickerUser = { id: string; full_name?: string | null; email?: string | null };
 
 type CompanyRow = { id: string; name?: string | null };
-type StageRow = { id: string; name?: string | null; icon?: string | null };
+type StageRow = {
+  id: string;
+  name?: string | null;
+  icon?: string | null;
+  color?: string | null;
+  is_won?: boolean | null;
+  is_lost?: boolean | null;
+};
 type SourceRow = { id: string; name?: string | null; icon?: string | null };
 
 async function fetchAllCrmLeadsChunked(
@@ -357,6 +366,19 @@ export default function LeadListScreen({ navigation }: Props) {
     }
   }, [loadMeta]);
 
+  const handleKanbanMove = useCallback(async (itemId: string, stageId: string) => {
+    try {
+      await api.patch(`/crm/leads/${itemId}/stage`, { stage_id: stageId });
+      setRefreshNonce((n) => n + 1);
+    } catch (e: unknown) {
+      const body = (e as { response?: { data?: { error?: string; requires_conversion?: boolean } } })?.response
+        ?.data;
+      const msg = body?.error || 'Không chuyển được giai đoạn.';
+      Alert.alert('Kanban', msg);
+      throw e;
+    }
+  }, []);
+
   const searchSubmit = useCallback(() => {
     if (!snapshot) return;
     const s = draftQ.trim();
@@ -420,6 +442,8 @@ export default function LeadListScreen({ navigation }: Props) {
     <View style={styles.headerBlock}>
       <Text style={styles.kicker}>CRM / Quản lý khách hàng</Text>
       <Text style={styles.h1}>{tab === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}</Text>
+
+      <CrmAutoPipelineStrip onPress={() => openMoreTab(navigation, 'AutoPipelineStatus')} />
 
       <View style={styles.addRow}>
         <TouchableOpacity style={styles.addLeadBtn} onPress={() => setCreateMode('lead')} activeOpacity={0.85}>
@@ -619,6 +643,8 @@ export default function LeadListScreen({ navigation }: Props) {
             stages={tab === 'lead' ? stagesLead : stagesDeal}
             navigation={navigation}
             tabLabel={tab === 'lead' ? 'Lead' : 'Deal'}
+            pipelineKind={tab}
+            onMoveToStage={handleKanbanMove}
           />
         ) : snapshot.viewMode === 'planner' ? (
           <CrmPipelinePlannerView items={items} navigation={navigation} />

@@ -91,6 +91,9 @@ export type CrmDocument = {
   name?: string | null;
   doc_type?: string | null;
   file_url?: string | null;
+  /** Bản sao từ file nhiệm vụ — ẩn khỏi danh sách «tài liệu lead» trên web */
+  source_attachment_id?: string | null;
+  is_from_task?: boolean;
 };
 
 export type CrmTask = {
@@ -104,10 +107,21 @@ export type CrmTask = {
   assignee_id?: string | null;
   supervisor_id?: string | null;
   assignee?: { full_name?: string | null } | null;
+  /** Ghi chú nhanh trên nhiệm vụ (API PUT .../notes) */
+  notes?: string | null;
+  shared_to_project?: boolean | null;
+  file_count?: number | null;
+  note_count?: number | null;
 };
 
 export type CrmCompany = { id: string; name?: string; short_name?: string | null };
-export type CrmSource = { id: string; name?: string };
+export type CrmSource = {
+  id: string;
+  name?: string;
+  code?: string | null;
+  description?: string | null;
+  icon?: string | null;
+};
 
 /** Bản ghi âm CRM (API `/voice-recordings`) */
 export type CrmVoiceRecording = {

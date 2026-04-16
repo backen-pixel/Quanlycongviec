@@ -14,6 +14,15 @@ try {
 
 const r = Router();
 r.use(auth);
+/** JWT có thể chỉ có `id` — mọi chỗ trước dùng userId; thống nhất authUserId */
+r.use((req, res, next) => {
+  const id = req.user?.userId ?? req.user?.id;
+  if (id == null || String(id).trim() === '') {
+    return res.status(401).json({ error: 'Token thiếu user — đăng nhập lại.' });
+  }
+  req.authUserId = String(id).trim();
+  next();
+});
 
 function mapIncomingRole(role) {
   if (role === 'responsible' || role === 'leader') return 'leader';
@@ -37,6 +46,20 @@ async function fetchMessengerMessageById(id) {
   const { data, error } = await supabase.from('messenger_group_messages').select(MSG_USER_SELECT).eq('id', id).single();
   if (error) return null;
   return data;
+}
+
+/** .in('id', …) + map UUID — tránh lệch khóa string/UUID khi join profile */
+async function fetchUsersByIdsForMessenger(idList) {
+  const ids = [...new Set((idList || []).filter(Boolean).map((x) => String(x)))];
+  const rows = [];
+  const BATCH = 200;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const slice = ids.slice(i, i + BATCH);
+    const { data, error } = await supabase.from('users').select('id, full_name, email, avatar').in('id', slice);
+    if (error) throw error;
+    rows.push(...(data || []));
+  }
+  return rows;
 }
 
 function parseMentionUserIds(body) {
@@ -64,12 +87,12 @@ r.post('/direct', async (req, res) => {
   try {
     const peer = req.body.peer_user_id;
     if (!peer) return res.status(400).json({ error: 'Thiếu peer_user_id' });
-    if (String(peer) === String(req.user.userId)) return res.status(400).json({ error: 'Không thể chat với chính mình' });
-    const key = directPairKey(req.user.userId, peer);
+    if (String(peer) === String(req.authUserId)) return res.status(400).json({ error: 'Không thể chat với chính mình' });
+    const key = directPairKey(req.authUserId, peer);
     const { data: existing } = await supabase.from('messenger_groups').select('*').eq('direct_pair_key', key).maybeSingle();
     if (existing?.id) return res.status(200).json(existing);
 
-    const { data: me } = await supabase.from('users').select('full_name').eq('id', req.user.userId).single();
+    const { data: me } = await supabase.from('users').select('full_name').eq('id', req.authUserId).single();
     const { data: them } = await supabase.from('users').select('full_name').eq('id', peer).single();
     const name = `Trò chuyện: ${me?.full_name || 'Bạn'} — ${them?.full_name || 'Đồng nghiệp'}`;
 
@@ -77,7 +100,7 @@ r.post('/direct', async (req, res) => {
       .from('messenger_groups')
       .insert({
         name,
-        created_by: req.user.userId,
+        created_by: req.authUserId,
         is_direct: true,
         direct_pair_key: key,
       })
@@ -86,8 +109,8 @@ r.post('/direct', async (req, res) => {
     if (gErr) return res.status(400).json({ error: gErr.message });
 
     const { error: mErr } = await supabase.from('messenger_group_members').insert([
-      { group_id: group.id, user_id: req.user.userId, role: 'member', added_by: req.user.userId },
-      { group_id: group.id, user_id: peer, role: 'member', added_by: req.user.userId },
+      { group_id: group.id, user_id: req.authUserId, role: 'member', added_by: req.authUserId },
+      { group_id: group.id, user_id: peer, role: 'member', added_by: req.authUserId },
     ]);
     if (mErr) {
       await supabase.from('messenger_groups').delete().eq('id', group.id);
@@ -96,7 +119,7 @@ r.post('/direct', async (req, res) => {
 
     await supabase.from('messenger_group_messages').insert({
       group_id: group.id,
-      user_id: req.user.userId,
+      user_id: req.authUserId,
       content: 'Bắt đầu trò chuyện',
       message_type: 'system',
       is_system: true,
@@ -111,7 +134,7 @@ r.post('/direct', async (req, res) => {
 /** Danh sách nhóm mà user là thành viên */
 r.get('/groups', async (req, res) => {
   try {
-    const uid = req.user.userId;
+    const uid = req.authUserId;
     const { data: rows, error } = await supabase.from('messenger_group_members').select('group_id, role').eq('user_id', uid);
     if (error) throw error;
     const roleByGid = new Map((rows || []).map((r) => [r.group_id, r.role]));
@@ -192,7 +215,7 @@ r.get('/groups', async (req, res) => {
 /** Ghim hội thoại Messenger theo từng user (lưu DB) */
 r.get('/pins', async (req, res) => {
   try {
-    const uid = req.user.userId;
+    const uid = req.authUserId;
     const { data, error } = await supabase.from('messenger_user_pins').select('group_id').eq('user_id', uid);
     if (error) throw error;
     res.json({ group_ids: (data || []).map((x) => x.group_id) });
@@ -203,7 +226,7 @@ r.get('/pins', async (req, res) => {
 
 r.put('/pins/:groupId', async (req, res) => {
   try {
-    const uid = req.user.userId;
+    const uid = req.authUserId;
     const gid = req.params.groupId;
     const pinned = !!req.body?.pinned;
     const ok = await assertGroupMember(gid, uid);
@@ -227,7 +250,7 @@ r.put('/pins/:groupId', async (req, res) => {
 r.post('/groups/:id/leave', async (req, res) => {
   try {
     const gid = req.params.id;
-    const uid = req.user.userId;
+    const uid = req.authUserId;
     const { data: group, error: gErr } = await supabase.from('messenger_groups').select('id,is_direct').eq('id', gid).single();
     if (gErr || !group) return res.status(404).json({ error: 'Không tìm thấy nhóm' });
     if (group.is_direct) return res.status(400).json({ error: 'Không dùng rời nhóm cho chat trực tiếp' });
@@ -261,7 +284,7 @@ r.post('/groups/:id/leave', async (req, res) => {
 /** Chi tiết nhóm + thành viên */
 r.get('/groups/:id', async (req, res) => {
   try {
-    const ok = await assertGroupMember(req.params.id, req.user.userId);
+    const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     const { data: group, error: gErr } = await supabase.from('messenger_groups').select('*').eq('id', req.params.id).single();
     if (gErr || !group) return res.status(404).json({ error: 'Không tìm thấy nhóm' });
@@ -271,12 +294,12 @@ r.get('/groups/:id', async (req, res) => {
       .eq('group_id', req.params.id)
       .order('created_at');
     const uids = [...new Set((memberRows || []).map((m) => m.user_id).filter(Boolean))];
-    let userMap = new Map();
+    const userMap = new Map();
     if (uids.length) {
-      const { data: users } = await supabase.from('users').select('id, full_name, email, avatar').in('id', uids);
-      (users || []).forEach((u) => userMap.set(u.id, u));
+      const users = await fetchUsersByIdsForMessenger(uids);
+      users.forEach((u) => userMap.set(String(u.id), u));
     }
-    const members = (memberRows || []).map((m) => ({ ...m, user: userMap.get(m.user_id) || null }));
+    const members = (memberRows || []).map((m) => ({ ...m, user: userMap.get(String(m.user_id)) || null }));
     res.json({ ...group, members });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -291,7 +314,7 @@ r.post('/groups', async (req, res) => {
   try {
     const name = (req.body.name || '').trim();
     if (!name) return res.status(400).json({ error: 'Nhập tên nhóm' });
-    const creatorId = req.user.userId;
+    const creatorId = req.authUserId;
     const rawMembers = Array.isArray(req.body.members) ? req.body.members : [];
 
     const { data: group, error: gErr } = await supabase
@@ -337,14 +360,14 @@ r.post('/groups', async (req, res) => {
 /** Thêm thành viên (mọi thành viên hiện tại đều được thêm — có thể siết leader sau) */
 r.post('/groups/:id/members', async (req, res) => {
   try {
-    const ok = await assertGroupMember(req.params.id, req.user.userId);
+    const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     const batch = Array.isArray(req.body.members) ? req.body.members : [];
     const user_id = req.body.user_id;
     const toAdd = batch.length ? batch : user_id ? [{ user_id, role: req.body.role || 'member' }] : [];
     if (!toAdd.length) return res.status(400).json({ error: 'Thiếu members' });
 
-    const { data: adder } = await supabase.from('users').select('full_name').eq('id', req.user.userId).single();
+    const { data: adder } = await supabase.from('users').select('full_name').eq('id', req.authUserId).single();
     const io = req.app.get('io');
     const gid = req.params.id;
     const results = [];
@@ -359,7 +382,7 @@ r.post('/groups/:id/members', async (req, res) => {
         .maybeSingle();
       const { data, error } = await supabase
         .from('messenger_group_members')
-        .upsert({ group_id: gid, user_id: item.user_id, role, added_by: req.user.userId }, { onConflict: 'group_id,user_id' })
+        .upsert({ group_id: gid, user_id: item.user_id, role, added_by: req.authUserId }, { onConflict: 'group_id,user_id' })
         .select('id, group_id, user_id, role, created_at')
         .single();
       if (error) continue;
@@ -371,7 +394,7 @@ r.post('/groups/:id/members', async (req, res) => {
           .from('messenger_group_messages')
           .insert({
             group_id: gid,
-            user_id: req.user.userId,
+            user_id: req.authUserId,
             content: `${adder?.full_name || 'Ai đó'} đã thêm ${memberName} vào nhóm`,
             message_type: 'system',
             is_system: true,
@@ -395,7 +418,7 @@ r.post('/groups/:id/members', async (req, res) => {
 
 r.get('/groups/:id/chat', async (req, res) => {
   try {
-    const ok = await assertGroupMember(req.params.id, req.user.userId);
+    const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     const { data, error } = await supabase
       .from('messenger_group_messages')
@@ -404,7 +427,17 @@ r.get('/groups/:id/chat', async (req, res) => {
       .order('created_at', { ascending: true })
       .limit(500);
     if (error) throw error;
-    res.json(data || []);
+    let rows = data || [];
+    const missingIds = [...new Set(rows.filter((m) => m.user_id && !m.user).map((m) => String(m.user_id)))];
+    if (missingIds.length) {
+      const users = await fetchUsersByIdsForMessenger(missingIds);
+      const um = new Map(users.map((u) => [String(u.id), u]));
+      rows = rows.map((m) => {
+        if (m.user || !m.user_id) return m;
+        return { ...m, user: um.get(String(m.user_id)) || null };
+      });
+    }
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -412,7 +445,7 @@ r.get('/groups/:id/chat', async (req, res) => {
 
 r.post('/groups/:id/chat', multer({ dest: MESSENGER_CHAT_UPLOAD }).array('files'), async (req, res) => {
   try {
-    const ok = await assertGroupMember(req.params.id, req.user.userId);
+    const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     const { content, reply_to } = req.body;
     const files = req.files || [];
@@ -426,7 +459,7 @@ r.post('/groups/:id/chat', multer({ dest: MESSENGER_CHAT_UPLOAD }).array('files'
     const mentionIds = parseMentionUserIds(req.body);
     const insertRow = {
       group_id: req.params.id,
-      user_id: req.user.userId,
+      user_id: req.authUserId,
       content: content || '',
       attachments: attachments.length ? attachments : null,
       reply_to: reply_to || null,
@@ -456,7 +489,7 @@ const groupChatUpload = multer({
 
 r.post('/groups/:id/chat/upload', groupChatUpload.single('file'), async (req, res) => {
   try {
-    const ok = await assertGroupMember(req.params.id, req.user.userId);
+    const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     if (!req.file) return res.status(400).json({ error: 'Không có file' });
     const mime = req.file.mimetype;
@@ -468,7 +501,7 @@ r.post('/groups/:id/chat/upload', groupChatUpload.single('file'), async (req, re
     const mentionIds = parseMentionUserIds(req.body);
     const insertRow = {
       group_id: req.params.id,
-      user_id: req.user.userId,
+      user_id: req.authUserId,
       content: req.body.content || '',
       message_type,
       attachment_url,

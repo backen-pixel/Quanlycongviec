@@ -1561,7 +1561,7 @@ function AnalyticsTab() {
         <div className="bg-white rounded-xl border p-5">
           <h3 className="text-sm font-bold text-gray-700 mb-4">📅 Tin nhắn theo ngày</h3>
           <div className="flex items-end gap-0.5 h-40">
-            {(data.messagesByDay || []).slice(-30).map((d, i) => (
+            {(data.messagesByDay || []).slice(-days).map((d, i) => (
               <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: '120px' }}>
                 <div className="w-full rounded-t-sm transition-all" style={{ height: `${Math.max(d.total / maxDay * 100, 2)}%` }}
                   title={`${d.date}: ${d.inbound} đến + ${d.outbound} đi = ${d.total}`}>

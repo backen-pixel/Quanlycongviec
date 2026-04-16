@@ -125,14 +125,20 @@ r.get('/departments', async (req, res) => {
 r.post('/ping', async (req, res) => {
   try {
     const uid = req.user.userId || req.user.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
     const { error } = await supabase.from('user_last_activity').upsert(
       { user_id: uid, last_ping_at: new Date().toISOString() },
       { onConflict: 'user_id' },
     );
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      console.warn('[users/ping] Supabase:', error.message, '- chạy migration database/67_user_activity_and_messenger_pins.sql');
+      // Không chặn UI: thiếu bảng / lỗi DB vẫn trả 200
+      return res.json({ ok: true, skipped: true });
+    }
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.warn('[users/ping]', e.message);
+    res.json({ ok: true, skipped: true });
   }
 });
 
@@ -194,7 +200,9 @@ function mergeCrmAppPrefsFromBody(prev, body) {
 
 r.get('/crm-app-prefs', async (req, res) => {
   try {
-    const key = crmAppPrefsStorageKey(req.user.userId);
+    const uid = req.user.userId || req.user.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const key = crmAppPrefsStorageKey(uid);
     const { data, error } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
     if (error && error.code !== 'PGRST116') throw error;
     const v = data?.value;
@@ -206,7 +214,9 @@ r.get('/crm-app-prefs', async (req, res) => {
 
 r.put('/crm-app-prefs', async (req, res) => {
   try {
-    const key = crmAppPrefsStorageKey(req.user.userId);
+    const uid = req.user.userId || req.user.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const key = crmAppPrefsStorageKey(uid);
     const { data: existing } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
     const prev = existing?.value && typeof existing.value === 'object' ? existing.value : {};
     const merged = mergeCrmAppPrefsFromBody(prev, req.body);

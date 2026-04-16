@@ -1,12 +1,29 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  Modal,
+  Pressable,
+  FlatList,
+  ActivityIndicator,
+} from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { CrmLeadListItem } from '../types/crm';
 import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatVND, formatDate, calculateDays, stageTintBg } from '../lib/formatUtils';
 
-type StageRow = { id: string; name?: string | null; color?: string | null; icon?: string | null };
+export type KanbanStageRow = {
+  id: string;
+  name?: string | null;
+  color?: string | null;
+  icon?: string | null;
+  is_lost?: boolean | null;
+  is_won?: boolean | null;
+};
 type Nav = NativeStackNavigationProp<CrmStackParamList, 'LeadList'>;
 
 function dayKeyFromIso(iso?: string | null): string {
@@ -44,12 +61,101 @@ function monthMatrix(year: number, month1: number) {
 
 type KanbanProps = {
   items: CrmLeadListItem[];
-  stages: StageRow[];
+  stages: KanbanStageRow[];
   navigation: Nav;
   tabLabel: string;
+  pipelineKind: 'lead' | 'deal';
+  onMoveToStage: (leadId: string, stageId: string) => Promise<void>;
 };
 
-export function CrmPipelineKanbanView({ items, stages, navigation, tabLabel }: KanbanProps) {
+function KanbanLeadCard({
+  item,
+  onOpen,
+  onRequestMove,
+}: {
+  item: CrmLeadListItem;
+  onOpen: () => void;
+  onRequestMove: () => void;
+}) {
+  const stColor = item.stage?.color || '#94a3b8';
+  const days = calculateDays(item.created_at);
+  const dayStyle = days > 30 ? styles.kdHot : days > 14 ? styles.kdWarm : styles.kdCool;
+  const owner = item.assignee?.full_name || item.lead_owner?.full_name;
+
+  return (
+    <TouchableOpacity
+      style={styles.kanCard}
+      onPress={onOpen}
+      onLongPress={onRequestMove}
+      delayLongPress={380}
+      activeOpacity={0.88}
+    >
+      <View style={styles.kanCardTop}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.kanCardCode}>{item.code || '—'}</Text>
+          <View style={styles.kanTitleRow}>
+            <Text style={styles.kanCardTitle} numberOfLines={2}>
+              {item.title || '—'}
+            </Text>
+            {item.is_new_for_current_user ? (
+              <View style={styles.kanNew}>
+                <Text style={styles.kanNewTxt}>MỚI</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        {item.stage?.name ? (
+          <View style={[styles.kanStPill, { backgroundColor: stageTintBg(stColor) }]}>
+            <Text style={[styles.kanStTxt, { color: stColor }]} numberOfLines={2}>
+              {(item.stage.icon ? `${item.stage.icon} ` : '') + item.stage.name}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+      {item.customer?.full_name ? (
+        <Text style={styles.kanCardSub} numberOfLines={1}>
+          {item.customer.full_name}
+        </Text>
+      ) : null}
+      {item.customer?.phone ? (
+        <Text style={styles.kanPhone} numberOfLines={1}>
+          📞 {item.customer.phone}
+        </Text>
+      ) : null}
+      {item.source?.name ? (
+        <Text style={styles.kanSrc} numberOfLines={1}>
+          {(item.source.icon ? `${item.source.icon} ` : '') + item.source.name}
+        </Text>
+      ) : null}
+      {item.estimated_value != null && item.estimated_value > 0 ? (
+        <Text style={styles.kanCardVal}>{formatVND(item.estimated_value)}</Text>
+      ) : null}
+      <View style={styles.kanCardFoot}>
+        <Text style={dayStyle}>{days} ngày</Text>
+        {owner ? (
+          <Text style={styles.kanOwner} numberOfLines={1}>
+            👤 {owner}
+          </Text>
+        ) : null}
+      </View>
+      <TouchableOpacity style={styles.kanMoveBtn} onPress={onRequestMove} hitSlop={8}>
+        <Text style={styles.kanMoveBtnTxt}>⇄ Chuyển cột</Text>
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+}
+
+export function CrmPipelineKanbanView({
+  items,
+  stages,
+  navigation,
+  tabLabel,
+  pipelineKind,
+  onMoveToStage,
+}: KanbanProps) {
+  const [moveItem, setMoveItem] = useState<CrmLeadListItem | null>(null);
+  const [moving, setMoving] = useState(false);
+
   const byStage = useMemo(() => {
     const m = new Map<string, CrmLeadListItem[]>();
     stages.forEach((s) => m.set(s.id, []));
@@ -61,51 +167,106 @@ export function CrmPipelineKanbanView({ items, stages, navigation, tabLabel }: K
     return m;
   }, [items, stages]);
 
+  const pickableStages = useMemo(
+    () =>
+      stages.filter((s) => {
+        if (s.is_lost) return false;
+        if (pipelineKind === 'lead' && s.is_won) return false;
+        return true;
+      }),
+    [stages, pipelineKind],
+  );
+
+  const applyStage = async (stageId: string) => {
+    if (!moveItem) return;
+    setMoving(true);
+    try {
+      await onMoveToStage(moveItem.id, stageId);
+      setMoveItem(null);
+    } catch {
+      /* parent đã Alert */
+    } finally {
+      setMoving(false);
+    }
+  };
+
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator style={styles.kanbanH} contentContainerStyle={styles.kanbanHContent}>
-      {stages.map((st) => {
-        const col = byStage.get(st.id) || [];
-        const color = st.color || '#64748b';
-        return (
-          <View key={st.id} style={[styles.kanCol, CrmShadow.card]}>
-            <View style={[styles.kanColHead, { borderLeftColor: color }]}>
-              <Text style={styles.kanColTitle} numberOfLines={2}>
-                {(st.icon ? `${st.icon} ` : '') + (st.name || '—')}
-              </Text>
-              <Text style={styles.kanColCount}>{col.length}</Text>
+    <View>
+      <Text style={styles.kanHint}>
+        Giữ thẻ hoặc chọn «Chuyển cột» để đổi giai đoạn (kéo-thả đa cột trên native sẽ bổ sung sau).
+      </Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator style={styles.kanbanH} contentContainerStyle={styles.kanbanHContent}>
+        {stages.map((st) => {
+          const col = byStage.get(st.id) || [];
+          const color = st.color || '#64748b';
+          return (
+            <View key={st.id} style={[styles.kanCol, CrmShadow.card]}>
+              <View style={[styles.kanColHead, { borderLeftColor: color }]}>
+                <Text style={styles.kanColTitle} numberOfLines={2}>
+                  {(st.icon ? `${st.icon} ` : '') + (st.name || '—')}
+                </Text>
+                <Text style={styles.kanColCount}>{col.length}</Text>
+              </View>
+              <ScrollView style={styles.kanColScroll} nestedScrollEnabled showsVerticalScrollIndicator>
+                {col.map((item) => (
+                  <KanbanLeadCard
+                    key={item.id}
+                    item={item}
+                    onOpen={() => navigation.navigate('LeadDetail', { id: item.id })}
+                    onRequestMove={() => setMoveItem(item)}
+                  />
+                ))}
+                {col.length === 0 ? <Text style={styles.kanEmpty}>Trống</Text> : null}
+              </ScrollView>
             </View>
-            <ScrollView style={styles.kanColScroll} nestedScrollEnabled showsVerticalScrollIndicator>
-              {col.map((item) => (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.kanCard}
-                  onPress={() => navigation.navigate('LeadDetail', { id: item.id })}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.kanCardCode}>{item.code || '—'}</Text>
-                  <Text style={styles.kanCardTitle} numberOfLines={3}>
-                    {item.title || '—'}
-                  </Text>
-                  {item.customer?.full_name ? (
-                    <Text style={styles.kanCardSub} numberOfLines={1}>
-                      {item.customer.full_name}
-                    </Text>
-                  ) : null}
-                  {item.estimated_value != null && item.estimated_value > 0 ? (
-                    <Text style={styles.kanCardVal}>{formatVND(item.estimated_value)}</Text>
-                  ) : null}
-                  <Text style={styles.kanCardMeta}>{calculateDays(item.created_at)} ngày</Text>
-                </TouchableOpacity>
-              ))}
-              {col.length === 0 ? <Text style={styles.kanEmpty}>Trống</Text> : null}
-            </ScrollView>
-          </View>
-        );
-      })}
-      {stages.length === 0 ? (
-        <Text style={styles.muted}>Chưa có giai đoạn {tabLabel}. Tải lại hoặc cấu hình pipeline trên web.</Text>
-      ) : null}
-    </ScrollView>
+          );
+        })}
+        {stages.length === 0 ? (
+          <Text style={styles.muted}>Chưa có giai đoạn {tabLabel}. Tải lại hoặc cấu hình pipeline trên web.</Text>
+        ) : null}
+      </ScrollView>
+
+      <Modal visible={!!moveItem} animationType="fade" transparent onRequestClose={() => !moving && setMoveItem(null)}>
+        <Pressable style={styles.mvBackdrop} onPress={() => !moving && setMoveItem(null)}>
+          <Pressable style={styles.mvSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.mvTitle}>Chuyển sang cột</Text>
+            <Text style={styles.mvSub} numberOfLines={2}>
+              {moveItem?.code} · {moveItem?.title}
+            </Text>
+            {moving ? <ActivityIndicator style={{ marginVertical: 16 }} color={CrmColors.blue600} /> : null}
+            <FlatList
+              data={pickableStages}
+              keyExtractor={(s) => s.id}
+              style={{ maxHeight: 360 }}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item: s }) => {
+                const same = !!(moveItem && String(moveItem.stage_id) === s.id);
+                const c = s.color || '#64748b';
+                return (
+                  <TouchableOpacity
+                    style={[styles.mvRow, same && styles.mvRowOff]}
+                    disabled={moving || same}
+                    onPress={() => void applyStage(s.id)}
+                  >
+                    <View style={[styles.mvDot, { backgroundColor: c }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.mvRowTxt}>
+                        {(s.icon ? `${s.icon} ` : '') + (s.name || '—')}
+                      </Text>
+                      {same ? <Text style={styles.mvSame}>Đang ở cột này</Text> : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={<Text style={styles.muted}>Không có giai đoạn phù hợp để chuyển nhanh.</Text>}
+            />
+            <TouchableOpacity style={styles.mvClose} onPress={() => !moving && setMoveItem(null)}>
+              <Text style={styles.mvCloseTxt}>Hủy</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
   );
 }
 
@@ -323,11 +484,18 @@ export function CrmPipelineCalendarView({ items, navigation, onPickDay }: Calend
 }
 
 const styles = StyleSheet.create({
-  kanbanH: { maxHeight: 420, marginBottom: 8 },
+  kanHint: {
+    fontSize: 11,
+    color: CrmColors.gray500,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+    lineHeight: 16,
+  },
+  kanbanH: { maxHeight: 480, marginBottom: 8 },
   kanbanHContent: { paddingHorizontal: 12, paddingBottom: 8, gap: 10 },
   kanCol: {
-    width: 220,
-    maxHeight: 400,
+    width: 248,
+    maxHeight: 460,
     backgroundColor: CrmColors.white,
     borderRadius: CrmRadii.lg,
     borderWidth: 1,
@@ -346,7 +514,7 @@ const styles = StyleSheet.create({
   },
   kanColTitle: { flex: 1, fontSize: 12, fontWeight: '700', color: CrmColors.gray800 },
   kanColCount: { fontSize: 11, fontWeight: '800', color: CrmColors.gray500 },
-  kanColScroll: { maxHeight: 340, paddingHorizontal: 8, paddingVertical: 8 },
+  kanColScroll: { maxHeight: 400, paddingHorizontal: 8, paddingVertical: 8 },
   kanCard: {
     padding: 10,
     borderRadius: CrmRadii.md,
@@ -355,11 +523,46 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: CrmColors.gray200,
   },
+  kanCardTop: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+  kanTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 4 },
   kanCardCode: { fontSize: 11, fontWeight: '700', color: CrmColors.blue600 },
-  kanCardTitle: { fontSize: 13, fontWeight: '600', color: CrmColors.gray900, marginTop: 4 },
-  kanCardSub: { fontSize: 11, color: CrmColors.gray500, marginTop: 4 },
-  kanCardVal: { fontSize: 11, fontWeight: '700', marginTop: 6 },
-  kanCardMeta: { fontSize: 10, color: CrmColors.gray400, marginTop: 4 },
+  kanCardTitle: { flex: 1, fontSize: 13, fontWeight: '600', color: CrmColors.gray900 },
+  kanNew: {
+    backgroundColor: CrmColors.rose500,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  kanNewTxt: { fontSize: 9, fontWeight: '800', color: '#fff' },
+  kanStPill: { maxWidth: 88, paddingHorizontal: 6, paddingVertical: 4, borderRadius: CrmRadii.full },
+  kanStTxt: { fontSize: 9, fontWeight: '700' },
+  kanCardSub: { fontSize: 11, color: CrmColors.gray600, marginTop: 6 },
+  kanPhone: { fontSize: 11, color: CrmColors.gray700, marginTop: 2 },
+  kanSrc: { fontSize: 10, color: CrmColors.gray500, marginTop: 4 },
+  kanCardVal: { fontSize: 12, fontWeight: '800', color: CrmColors.gray900, marginTop: 6 },
+  kanCardFoot: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, gap: 8 },
+  kdHot: { fontSize: 10, fontWeight: '700', color: '#dc2626' },
+  kdWarm: { fontSize: 10, fontWeight: '700', color: '#ea580c' },
+  kdCool: { fontSize: 10, color: CrmColors.gray400 },
+  kanOwner: { flex: 1, fontSize: 10, color: CrmColors.gray500, textAlign: 'right' },
+  kanMoveBtn: { marginTop: 8, alignSelf: 'flex-start', paddingVertical: 4, paddingHorizontal: 8, borderRadius: CrmRadii.md, backgroundColor: CrmColors.white, borderWidth: 1, borderColor: CrmColors.gray200 },
+  kanMoveBtnTxt: { fontSize: 10, fontWeight: '800', color: CrmColors.blue700 },
+  mvBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 20 },
+  mvSheet: {
+    backgroundColor: CrmColors.white,
+    borderRadius: CrmRadii.lg,
+    padding: 16,
+    maxHeight: '80%',
+  },
+  mvTitle: { fontSize: 17, fontWeight: '800', color: CrmColors.gray900 },
+  mvSub: { fontSize: 13, color: CrmColors.gray600, marginTop: 6, marginBottom: 12 },
+  mvRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: CrmColors.gray100 },
+  mvRowOff: { opacity: 0.45 },
+  mvDot: { width: 10, height: 10, borderRadius: 5 },
+  mvRowTxt: { fontSize: 15, fontWeight: '600', color: CrmColors.gray900 },
+  mvSame: { fontSize: 11, color: CrmColors.gray500, marginTop: 2 },
+  mvClose: { marginTop: 12, alignItems: 'center', padding: 10 },
+  mvCloseTxt: { fontSize: 15, fontWeight: '700', color: CrmColors.blue700 },
   kanEmpty: { fontSize: 12, color: CrmColors.gray400, textAlign: 'center', paddingVertical: 16 },
   muted: { padding: 16, color: CrmColors.gray500, fontSize: 13 },
   planScroll: { maxHeight: 480 },

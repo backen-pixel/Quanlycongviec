@@ -33,6 +33,87 @@ const STALE_NO_CUSTOMER_REPLY_MS = AUTO_PIPELINE_RECENT_HOURS * 60 * 60 * 1000;
 
 /** Graph: lấy nhiều trang tin (mặc định FB chỉ trả ~100/trang). SĐT nằm trong text ở tin cũ vẫn cần kéo đủ. */
 const FB_GRAPH_MESSAGES_FIELDS = 'message,from,created_time,attachments';
+
+/** GET /facebook/analytics — PostgREST mặc định ~1000 dòng/request; phân trang để tải hết. ENV: FB_ANALYTICS_PAGE_SIZE */
+const FB_ANALYTICS_PAGE_SIZE = Math.min(
+  5000,
+  Math.max(500, parseInt(process.env.FB_ANALYTICS_PAGE_SIZE || '1000', 10) || 1000),
+);
+const FB_ANALYTICS_CONTACT_IN_BATCH = Math.min(
+  200,
+  Math.max(50, parseInt(process.env.FB_ANALYTICS_CONTACT_IN_BATCH || '150', 10) || 150),
+);
+
+async function fetchAllAnalyticsContacts({ page_id }) {
+  const contacts = [];
+  let from = 0;
+  while (true) {
+    let q = supabase
+      .from('facebook_contacts')
+      .select('id, phone, lead_id, page_id, created_at')
+      .order('id', { ascending: true });
+    if (page_id) q = q.eq('page_id', page_id);
+    const { data, error } = await q.range(from, from + FB_ANALYTICS_PAGE_SIZE - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    contacts.push(...chunk);
+    if (chunk.length < FB_ANALYTICS_PAGE_SIZE) break;
+    from += FB_ANALYTICS_PAGE_SIZE;
+  }
+  return contacts;
+}
+
+/** Mọi tin trong khoảng thời gian (không lọc page). */
+async function fetchAllAnalyticsMessagesSince(sinceIso) {
+  const messages = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('facebook_messages')
+      .select('id, direction, created_at, contact_id')
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + FB_ANALYTICS_PAGE_SIZE - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    messages.push(...chunk);
+    if (chunk.length < FB_ANALYTICS_PAGE_SIZE) break;
+    from += FB_ANALYTICS_PAGE_SIZE;
+  }
+  return messages;
+}
+
+/** Tin theo danh sách contact (lọc Page) — batch .in() + phân trang từng batch. */
+async function fetchAllAnalyticsMessagesForContactIds(contactIds, sinceIso) {
+  if (!contactIds.length) return [];
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < contactIds.length; i += FB_ANALYTICS_CONTACT_IN_BATCH) {
+    const batch = contactIds.slice(i, i + FB_ANALYTICS_CONTACT_IN_BATCH);
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('facebook_messages')
+        .select('id, direction, created_at, contact_id')
+        .in('contact_id', batch)
+        .gte('created_at', sinceIso)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + FB_ANALYTICS_PAGE_SIZE - 1);
+      if (error) throw error;
+      const chunk = data || [];
+      for (const m of chunk) {
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        out.push(m);
+      }
+      if (chunk.length < FB_ANALYTICS_PAGE_SIZE) break;
+      from += FB_ANALYTICS_PAGE_SIZE;
+    }
+  }
+  return out;
+}
 const FB_SYNC_SINGLE_MAX_PAGES = 25; // đồng bộ 1 contact (bấm tay): tới ~2500 tin
 
 async function graphFetchConversationMessages(convId, token, { maxPages = 5, limitPerPage = 100 } = {}) {
@@ -2698,37 +2779,40 @@ r.get('/stats', authMiddleware, async (req, res) => {
 
 r.get('/analytics', authMiddleware, async (req, res) => {
   try {
-    const { page_id, days = 30 } = req.query;
+    const { page_id: rawPageId, days = 30 } = req.query;
+    const page_id = rawPageId && String(rawPageId).trim() ? String(rawPageId).trim() : null;
     const since = new Date(Date.now() - days * 86400000).toISOString();
 
-    // 1. Contacts
-    let contactQ = supabase.from('facebook_contacts').select('id, phone, lead_id, page_id, created_at');
-    if (page_id) contactQ = contactQ.eq('page_id', page_id);
-    const { data: allContacts } = await contactQ;
-    const contacts = allContacts || [];
+    // 1. Contacts — phân trang (Supabase mặc định tối đa ~1000/request)
+    const contacts = await fetchAllAnalyticsContacts({ page_id });
 
     const totalContacts = contacts.length;
     const hasPhone = contacts.filter(c => c.phone).length;
     const hasLead = contacts.filter(c => c.lead_id).length;
 
-    // Deals
+    // Deals — .in() quá dài có thể lỗi; chia batch
     const leadIds = contacts.filter(c => c.lead_id).map(c => c.lead_id);
     let dealCount = 0;
-    if (leadIds.length) {
+    const DEAL_IN_BATCH = 500;
+    for (let b = 0; b < leadIds.length; b += DEAL_IN_BATCH) {
+      const slice = leadIds.slice(b, b + DEAL_IN_BATCH);
       const { count } = await supabase.from('crm_leads')
         .select('id', { count: 'exact', head: true })
-        .in('id', leadIds).eq('type', 'deal');
-      dealCount = count || 0;
+        .in('id', slice)
+        .eq('type', 'deal');
+      dealCount += count || 0;
     }
 
-    // 2. Messages
+    // 2. Messages — tải hết trong khoảng ngày (không dừng ở 1000 bản ghi)
     const pageContactIds = contacts.map(c => c.id);
-    let msgQ = supabase.from('facebook_messages')
-      .select('id, direction, created_at, contact_id')
-      .gte('created_at', since).order('created_at');
-    if (page_id && pageContactIds.length) msgQ = msgQ.in('contact_id', pageContactIds);
-    const { data: msgs } = await (page_id && !pageContactIds.length ? Promise.resolve({ data: [] }) : msgQ);
-    const messages = msgs || [];
+    let messages = [];
+    if (page_id && pageContactIds.length) {
+      messages = await fetchAllAnalyticsMessagesForContactIds(pageContactIds, since);
+    } else if (page_id) {
+      messages = [];
+    } else {
+      messages = await fetchAllAnalyticsMessagesSince(since);
+    }
 
     // By day + hour
     const byDay = {};
