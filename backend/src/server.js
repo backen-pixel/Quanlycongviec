@@ -314,13 +314,23 @@ server.listen(config.port, () => {
         }
       }
 
-      // Batch insert (ignore dupes via unique constraint or just let it be)
-      if (notifs.length) {
-        const { data: inserted } = await supabase.from('notifications').insert(notifs).select('*');
-        (inserted || []).forEach(n => io.to(`user:${n.user_id}`).emit('notification', n));
+      // Lọc theo notification_preferences từng user
+      const { isNotificationAllowedForUser } = require('./helpers/notificationPrefsUser');
+      const filteredNotifs = [];
+      for (const n of notifs) {
+        if (n.user_id && (await isNotificationAllowedForUser(n.user_id, n.type, n.entity_type))) {
+          filteredNotifs.push(n);
+        }
       }
 
-      console.log(`⏰ Deadline check: Tasks ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn | CRM: ${crmDueSoon?.length || 0} <2h, ${crmDueTomorrow?.length || 0} ngày mai, ${crmOverdue?.length || 0} quá hạn | ${notifs.length} thông báo`);
+      if (filteredNotifs.length) {
+        const { data: inserted } = await supabase.from('notifications').insert(filteredNotifs).select('*');
+        (inserted || []).forEach((n) => io.to(`user:${n.user_id}`).emit('notification', n));
+      }
+
+      console.log(
+        `⏰ Deadline check: Tasks ${dueSoon?.length || 0} sắp hạn, ${overdue?.length || 0} quá hạn | CRM: ${crmDueSoon?.length || 0} <2h, ${crmDueTomorrow?.length || 0} ngày mai, ${crmOverdue?.length || 0} quá hạn | ${filteredNotifs.length}/${notifs.length} thông báo (sau lọc prefs)`,
+      );
     } catch (e) { console.error('Deadline check error:', e.message); }
   };
 

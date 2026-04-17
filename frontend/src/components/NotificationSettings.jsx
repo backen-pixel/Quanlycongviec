@@ -29,12 +29,59 @@ const PREFS_FALLBACK = {
   lead_assigned: true,
   order_confirmed: true,
   invoice_overdue: true,
+  lead_new: true,
+  deal_new: true,
+  production_deadlines: true,
+  crm_lead_deadlines: true,
 };
+
+const MODULE_SECTIONS = [
+  {
+    title: 'CRM — Lead',
+    rows: [
+      { key: 'lead_new', label: 'Lead mới', sub: 'Tạo lead, tự động từ Facebook…' },
+      { key: 'lead_assigned', label: 'Được giao / chuyển lead' },
+      { key: 'crm_lead_deadlines', label: 'Hạn nhiệm vụ CRM trên lead', sub: 'Nhắc trước hạn, quá hạn (nhiệm vụ gắn lead)' },
+    ],
+  },
+  {
+    title: 'CRM — Deal',
+    rows: [
+      { key: 'deal_new', label: 'Deal mới & giao deal', sub: 'deal_created, deal_assigned' },
+      { key: 'deal_won', label: 'Deal thắng' },
+      { key: 'stage_changed', label: 'Đổi giai đoạn pipeline' },
+    ],
+  },
+  {
+    title: 'Dự án & sản xuất',
+    rows: [
+      { key: 'task_assigned', label: 'Nhiệm vụ được giao' },
+      { key: 'task_completed', label: 'Nhiệm vụ hoàn thành / cập nhật' },
+      { key: 'production_deadlines', label: 'Hạn nhiệm vụ dự án (SX)', sub: 'Nhắc / quá hạn task trên dự án' },
+      { key: 'deadline_warning', label: 'Hạn khác (không phải task dự án)', sub: 'Ít dùng' },
+      { key: 'checklist_completed', label: 'Checklist hoàn thành' },
+      { key: 'comment_added', label: 'Bình luận' },
+    ],
+  },
+  {
+    title: 'Bán hàng & kế toán',
+    rows: [
+      { key: 'order_confirmed', label: 'Đơn hàng (tạo / cập nhật)' },
+      { key: 'invoice_overdue', label: 'Hóa đơn quá hạn thanh toán' },
+    ],
+  },
+  {
+    title: 'Khác',
+    rows: [{ key: 'approval_request', label: 'Phê duyệt tạm ứng / yêu cầu duyệt' }],
+  },
+];
 
 /**
  * NotificationSettings — âm lượng, chuông tùy chỉnh, web push
  */
 export default function NotificationSettings({ isOpen, onClose }) {
+  const [modulePrefs, setModulePrefs] = useState(() => ({ ...PREFS_FALLBACK }));
+  const [savingPrefKey, setSavingPrefKey] = useState(null);
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushHint, setPushHint] = useState('');
@@ -66,13 +113,16 @@ export default function NotificationSettings({ isOpen, onClose }) {
       try {
         const { data } = await api.get('/push/preferences');
         if (data) {
-          // Không còn công tắc «Bật chuông» trong UI — tắt chuông bằng âm lượng 0%.
-          setNotificationPrefsCache({ ...data, sound: true });
+          const merged = { ...PREFS_FALLBACK, ...data, sound: true };
+          setNotificationPrefsCache(merged);
+          setModulePrefs(merged);
         } else {
-          setNotificationPrefsCache(PREFS_FALLBACK);
+          setNotificationPrefsCache({ ...PREFS_FALLBACK, sound: true });
+          setModulePrefs({ ...PREFS_FALLBACK });
         }
       } catch {
-        setNotificationPrefsCache(PREFS_FALLBACK);
+        setNotificationPrefsCache({ ...PREFS_FALLBACK, sound: true });
+        setModulePrefs({ ...PREFS_FALLBACK });
       }
     })();
 
@@ -135,6 +185,20 @@ export default function NotificationSettings({ isOpen, onClose }) {
         const subscription = await registration.pushManager.getSubscription();
         setPushSubscribed(!!subscription);
       } catch {}
+    }
+  };
+
+  const toggleModulePref = async (key, next) => {
+    setSavingPrefKey(key);
+    try {
+      const { data } = await api.put('/push/preferences', { [key]: next });
+      const merged = { ...modulePrefs, ...data };
+      setModulePrefs(merged);
+      setNotificationPrefsCache(merged);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không lưu được cài đặt');
+    } finally {
+      setSavingPrefKey(null);
     }
   };
 
@@ -308,6 +372,41 @@ export default function NotificationSettings({ isOpen, onClose }) {
               ) : null}
             </div>
           )}
+
+          <div className="space-y-3 border rounded-xl p-3 bg-slate-50/80 border-slate-100">
+            <h3 className="font-semibold text-xs text-slate-600 uppercase tracking-wide">Loại thông báo (theo module)</h3>
+            <p className="text-[10px] text-slate-500 leading-snug">
+              Tắt một mục để không nhận thông báo trong app và web push cho loại đó (áp dụng sau khi lưu).
+            </p>
+            {MODULE_SECTIONS.map((sec) => (
+              <div key={sec.title} className="space-y-2 pt-1 border-t border-slate-200/80 first:border-t-0 first:pt-0">
+                <p className="text-[11px] font-bold text-slate-700">{sec.title}</p>
+                <div className="space-y-2">
+                  {sec.rows.map((row) => {
+                    const on = modulePrefs[row.key] !== false;
+                    return (
+                      <div key={row.key} className="flex items-center justify-between gap-2 rounded-lg bg-white px-2 py-2 border border-slate-100">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-slate-800 font-medium">{row.label}</p>
+                          {row.sub ? <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{row.sub}</p> : null}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={savingPrefKey !== null}
+                          onClick={() => void toggleModulePref(row.key, !on)}
+                          className={`shrink-0 h-8 px-3 rounded-full text-xs font-bold transition ${
+                            on ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                          } ${savingPrefKey ? 'opacity-60' : 'hover:opacity-90'}`}
+                        >
+                          {savingPrefKey === row.key ? '…' : on ? 'Tắt' : 'Bật'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
 
           <div className="space-y-2">
             <h3 className="font-semibold text-xs text-gray-500 uppercase tracking-wide">Chuông trong app</h3>

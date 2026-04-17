@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isNotificationTypeAllowed } = require('../helpers/notificationPrefTypes');
+const { DEFAULT_PREFS, invalidateNotificationPrefsCache } = require('../helpers/notificationPrefsUser');
 let webpush;
 try { webpush = require('web-push'); } catch { webpush = null; }
 
@@ -96,13 +97,7 @@ r.get('/preferences', async (req, res) => {
   try {
     const uid = currentUserId(req);
     if (!uid) {
-      return res.json({
-        browser_push: true, sound: true,
-        task_assigned: true, task_completed: true, deadline_warning: true,
-        comment_added: true, stage_changed: true, deal_won: true,
-        approval_request: true, checklist_completed: true,
-        lead_assigned: true, order_confirmed: true, invoice_overdue: true,
-      });
+      return res.json({ ...DEFAULT_PREFS });
     }
 
     let { data, error } = await supabase.from('notification_preferences')
@@ -121,17 +116,10 @@ r.get('/preferences', async (req, res) => {
     }
 
     if (error) throw error;
-    res.json(data);
+    res.json({ ...DEFAULT_PREFS, ...data });
   } catch (e) {
     console.error('Get preferences error:', e.message);
-    // Return defaults if table doesn't exist
-    res.json({
-      browser_push: true, sound: true,
-      task_assigned: true, task_completed: true, deadline_warning: true,
-      comment_added: true, stage_changed: true, deal_won: true,
-      approval_request: true, checklist_completed: true,
-      lead_assigned: true, order_confirmed: true, invoice_overdue: true,
-    });
+    res.json({ ...DEFAULT_PREFS });
   }
 });
 
@@ -149,7 +137,8 @@ r.put('/preferences', async (req, res) => {
       'browser_push', 'sound',
       'task_assigned', 'task_completed', 'deadline_warning', 'comment_added',
       'stage_changed', 'deal_won', 'approval_request', 'checklist_completed',
-      'lead_assigned', 'order_confirmed', 'invoice_overdue'
+      'lead_assigned', 'order_confirmed', 'invoice_overdue',
+      'lead_new', 'deal_new', 'production_deadlines', 'crm_lead_deadlines',
     ];
 
     const update = { updated_at: new Date().toISOString() };
@@ -167,7 +156,8 @@ r.put('/preferences', async (req, res) => {
       .single();
 
     if (error) throw error;
-    res.json(data);
+    invalidateNotificationPrefsCache(uid);
+    res.json({ ...DEFAULT_PREFS, ...data });
   } catch (e) {
     console.error('Update preferences error:', e.message);
     // Graceful fallback if table doesn't exist
@@ -193,14 +183,16 @@ async function sendWebPush(userId, notification) {
     if (!subscriptions?.length) return;
 
     // Get user preferences
-    const { data: prefs } = await supabase.from('notification_preferences')
+    const { data: prefsRow } = await supabase.from('notification_preferences')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
+
+    const prefs = { ...DEFAULT_PREFS, ...(prefsRow || {}) };
 
     if (!prefs?.browser_push) return; // User disabled browser push
 
-    if (!isNotificationTypeAllowed(prefs, notification.type)) return;
+    if (!isNotificationTypeAllowed(prefs, notification.type, notification.entity_type)) return;
 
     // Send to each subscription
     const payload = JSON.stringify({

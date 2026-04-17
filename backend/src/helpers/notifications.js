@@ -1,4 +1,5 @@
 const { supabase } = require('../config/supabase');
+const { isNotificationAllowedForUser } = require('./notificationPrefsUser');
 
 /**
  * Create a single notification with Socket.IO push
@@ -14,6 +15,9 @@ const { supabase } = require('../config/supabase');
  */
 async function createNotification(req, userId, type, title, message, entityType, entityId, metadata = null) {
   if (!userId) return null;
+
+  const allowed = await isNotificationAllowedForUser(userId, type, entityType);
+  if (!allowed) return null;
 
   const insert = {
     user_id: userId,

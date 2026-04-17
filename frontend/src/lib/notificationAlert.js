@@ -202,12 +202,12 @@ export async function playLoudNotificationSound(opts = {}) {
 
 /**
  * Chỉ phát chuông (không đọc giọng).
- * @param {{ type?: string }} [opts] — nếu có `type`, tôn trọng công tắc «Loại thông báo».
+ * @param {{ type?: string, entityType?: string|null }} [opts] — `type` + `entityType` để tôn trọng công tắc theo module.
  */
 export async function alertIncomingNotification(opts = {}) {
   const p = getNotificationPrefsCache();
   if (p.sound === false) return;
-  if (opts.type && !isNotificationTypeEnabled(opts.type)) return;
+  if (opts.type && !isNotificationTypeEnabled(opts.type, opts.entityType)) return;
 
   cancelNotificationSpeech();
 

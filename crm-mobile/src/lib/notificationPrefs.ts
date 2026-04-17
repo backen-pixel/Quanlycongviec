@@ -1,7 +1,7 @@
 import type { NotificationPrefs } from '../types/notifications';
 
 /**
- * Map `notifications.type` → cột `notification_preferences` (đồng bộ web + backend).
+ * Map `notifications.type` (+ entity_type) → cột `notification_preferences` (đồng bộ web + backend).
  */
 export type NotifPrefToggleKey =
   | 'task_assigned'
@@ -14,7 +14,11 @@ export type NotifPrefToggleKey =
   | 'checklist_completed'
   | 'lead_assigned'
   | 'order_confirmed'
-  | 'invoice_overdue';
+  | 'invoice_overdue'
+  | 'lead_new'
+  | 'deal_new'
+  | 'production_deadlines'
+  | 'crm_lead_deadlines';
 
 const NOTIFICATION_TYPE_PREF_MAP: Record<string, NotifPrefToggleKey> = {
   task_assigned: 'task_assigned',
@@ -23,14 +27,6 @@ const NOTIFICATION_TYPE_PREF_MAP: Record<string, NotifPrefToggleKey> = {
   project_assigned: 'task_assigned',
   crm_task_assigned: 'task_assigned',
   crm_task_completed: 'task_completed',
-
-  deadline_warning: 'deadline_warning',
-  deadline_reminder: 'deadline_warning',
-  deadline_overdue: 'deadline_warning',
-  crm_deadline_warning: 'deadline_warning',
-  crm_deadline_1h: 'deadline_warning',
-  crm_deadline_overdue: 'deadline_warning',
-  crm_deadline_set: 'deadline_warning',
 
   comment_added: 'comment_added',
 
@@ -65,18 +61,47 @@ const PREF_KEYS = new Set<string>([
   'lead_assigned',
   'order_confirmed',
   'invoice_overdue',
+  'lead_new',
+  'deal_new',
+  'production_deadlines',
+  'crm_lead_deadlines',
 ]);
 
-export function preferenceKeyForNotificationType(type: string | undefined): NotifPrefToggleKey | null {
+export function preferenceKeyForNotificationType(
+  type: string | undefined,
+  entityType?: string | null,
+): NotifPrefToggleKey | null {
   if (!type || typeof type !== 'string') return null;
+
+  if (type === 'lead_created') return 'lead_new';
+  if (type === 'deal_created' || type === 'deal_assigned') return 'deal_new';
+
+  if (
+    type === 'crm_deadline_1h' ||
+    type === 'crm_deadline_warning' ||
+    type === 'crm_deadline_overdue' ||
+    type === 'crm_deadline_set'
+  ) {
+    return 'crm_lead_deadlines';
+  }
+
+  if (type === 'deadline_warning' || type === 'deadline_overdue' || type === 'deadline_reminder') {
+    if (entityType === 'task') return 'production_deadlines';
+    return 'deadline_warning';
+  }
+
   if (NOTIFICATION_TYPE_PREF_MAP[type]) return NOTIFICATION_TYPE_PREF_MAP[type];
   if (PREF_KEYS.has(type)) return type as NotifPrefToggleKey;
   return null;
 }
 
 /** Loại không map được → coi như bật (giống web). */
-export function isNotificationTypeEnabled(prefs: Partial<NotificationPrefs> | null, type: string | undefined): boolean {
-  const key = preferenceKeyForNotificationType(type);
+export function isNotificationTypeEnabled(
+  prefs: Partial<NotificationPrefs> | null,
+  type: string | undefined,
+  entityType?: string | null,
+): boolean {
+  const key = preferenceKeyForNotificationType(type, entityType);
   if (!key) return true;
   if (!prefs) return true;
   const v = prefs[key];
