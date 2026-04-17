@@ -45,7 +45,7 @@ function isToday(isoStr) { return isSameDay(isoStr, new Date()); }
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════
 export default function EventsFeedPage() {
-  const [view, setView] = useState('feed'); // feed | calendar | types
+  const [view, setView] = useState('calendar'); // feed | calendar | types
   const [events, setEvents] = useState([]);
   const [eventTypes, setEventTypes] = useState([]);
   const [users, setUsers] = useState([]);
@@ -133,11 +133,11 @@ export default function EventsFeedPage() {
         <div className="flex items-center gap-2">
           {/* View toggle */}
           <div className="flex bg-gray-100 rounded-lg p-0.5">
-            <button onClick={() => setView('feed')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'feed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
-              <List className="h-4 w-4" /> Feed
-            </button>
             <button onClick={() => setView('calendar')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'calendar' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
               <Calendar className="h-4 w-4" /> Lịch
+            </button>
+            <button onClick={() => setView('feed')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'feed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+              <List className="h-4 w-4" /> Feed
             </button>
             <button onClick={() => setView('types')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'types' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
               <Settings className="h-4 w-4" /> Loại
