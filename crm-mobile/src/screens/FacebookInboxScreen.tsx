@@ -144,30 +144,39 @@ export default function FacebookInboxScreen({ navigation }: Props) {
       <Text style={styles.hint}>Danh bạ Facebook — màu & lọc giống web (SĐT / Lead).</Text>
       <View style={styles.pageRow}>
         <TouchableOpacity
-          style={[styles.pageChip, !pageId && styles.pageChipOn]}
+          style={[styles.pageChip, styles.pageChipFirst, !pageId && styles.pageChipOn]}
           onPress={() => setPageId('')}
         >
-          <Text style={[styles.pageChipTxt, !pageId && styles.pageChipTxtOn]}>Tất cả Page</Text>
+          <Text style={[styles.pageChipTxt, !pageId && styles.pageChipTxtOn]} numberOfLines={1}>
+            Tất cả Page
+          </Text>
         </TouchableOpacity>
-        <FlatList
-          horizontal
-          data={pages}
-          keyExtractor={(p) => p.id}
-          showsHorizontalScrollIndicator={false}
-          renderItem={({ item: p }) => {
-            const on = pageId === p.page_id;
-            return (
-              <TouchableOpacity style={[styles.pageChip, on && styles.pageChipOn]} onPress={() => setPageId(p.page_id)}>
-                <Text style={[styles.pageChipTxt, on && styles.pageChipTxtOn]} numberOfLines={1}>
-                  {p.page_name || p.page_id}
-                </Text>
-              </TouchableOpacity>
-            );
-          }}
-        />
+        <View style={styles.pageListWrap}>
+          <FlatList
+            horizontal
+            data={pages}
+            keyExtractor={(p) => p.id}
+            showsHorizontalScrollIndicator={false}
+            renderItem={({ item: p }) => {
+              const on = pageId === p.page_id;
+              return (
+                <TouchableOpacity style={[styles.pageChip, on && styles.pageChipOn]} onPress={() => setPageId(p.page_id)}>
+                  <Text style={[styles.pageChipTxt, on && styles.pageChipTxtOn]} numberOfLines={1}>
+                    {p.page_name || p.page_id}
+                  </Text>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterScroll}
+        contentContainerStyle={styles.filterScrollContent}
+      >
         {FILTER_CHIPS.map((f) => {
           const on = contactFilter === f.key;
           return (
@@ -194,7 +203,7 @@ export default function FacebookInboxScreen({ navigation }: Props) {
           onSubmitEditing={() => void loadContacts()}
           returnKeyType="search"
         />
-        <TouchableOpacity style={styles.searchGo} onPress={() => void loadContacts()}>
+        <TouchableOpacity style={styles.searchGo} onPress={() => void loadContacts()} activeOpacity={0.85}>
           <Text style={styles.searchGoTxt}>Tìm</Text>
         </TouchableOpacity>
       </View>
@@ -254,7 +263,9 @@ export default function FacebookInboxScreen({ navigation }: Props) {
                     ) : null}
                   </View>
                 </View>
-                <Text style={styles.chev}>›</Text>
+                <View style={styles.chevWrap}>
+                  <Text style={styles.chev}>›</Text>
+                </View>
               </TouchableOpacity>
             );
           }}
@@ -268,6 +279,8 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: CrmColors.pageBg },
   hint: { paddingHorizontal: 16, paddingTop: 10, fontSize: 12, color: CrmColors.gray500 },
   pageRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, gap: 8 },
+  pageChipFirst: { flexShrink: 0, maxWidth: 118 },
+  pageListWrap: { flex: 1, minWidth: 0 },
   pageChip: {
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -276,11 +289,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: CrmColors.gray200,
     marginRight: 6,
+    flexShrink: 0,
   },
   pageChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue600 },
-  pageChipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray600, maxWidth: 140 },
+  pageChipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray600, maxWidth: 160 },
   pageChipTxtOn: { color: CrmColors.blue700 },
-  filterScroll: { paddingHorizontal: 12, paddingTop: 10, maxHeight: 44 },
+  filterScroll: { maxHeight: 52, flexGrow: 0, marginTop: 8 },
+  filterScrollContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+    paddingRight: 20,
+  },
   filterChip: {
     paddingVertical: 8,
     paddingHorizontal: 10,
@@ -289,6 +310,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: CrmColors.gray200,
     marginRight: 8,
+    flexShrink: 0,
   },
   filterChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue600 },
   filterChipTxt: { fontSize: 11, fontWeight: '700', color: CrmColors.gray600 },
@@ -302,6 +324,7 @@ const styles = StyleSheet.create({
   },
   searchInp: {
     flex: 1,
+    minWidth: 0,
     backgroundColor: CrmColors.white,
     borderRadius: CrmRadii.md,
     borderWidth: 1,
@@ -312,10 +335,14 @@ const styles = StyleSheet.create({
     color: CrmColors.gray900,
   },
   searchGo: {
+    flexShrink: 0,
     backgroundColor: CrmColors.blue600,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: CrmRadii.md,
+    minWidth: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   searchGoTxt: { color: '#fff', fontWeight: '700', fontSize: 14 },
   listPad: { paddingHorizontal: 16, paddingBottom: 24 },
@@ -356,8 +383,16 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   badgeBlueTxt: { fontSize: 10, fontWeight: '700', color: '#1d4ed8' },
-  badgeGray: { paddingHorizontal: 4, paddingVertical: 2 },
-  badgeGrayTxt: { fontSize: 11, color: CrmColors.gray400 },
-  chev: { fontSize: 22, color: CrmColors.gray300, paddingLeft: 6 },
+  badgeGray: {
+    backgroundColor: CrmColors.gray100,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  badgeGrayTxt: { fontSize: 10, fontWeight: '700', color: CrmColors.gray600 },
+  chevWrap: { flexShrink: 0, justifyContent: 'center', paddingLeft: 4 },
+  chev: { fontSize: 22, color: CrmColors.gray300 },
   empty: { textAlign: 'center', color: CrmColors.gray400, marginTop: 40 },
 });

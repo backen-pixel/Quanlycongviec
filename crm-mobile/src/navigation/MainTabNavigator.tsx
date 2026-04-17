@@ -46,6 +46,12 @@ export default function MainTabNavigator() {
             <Ionicons name={focused ? 'briefcase' : 'briefcase-outline'} size={24} color={color} />
           ),
         }}
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            navigation.navigate('CrmTab', { screen: 'LeadList' });
+          },
+        })}
       />
       <Tab.Screen
         name="VoiceTab"
@@ -57,6 +63,12 @@ export default function MainTabNavigator() {
             <Ionicons name={focused ? 'mic' : 'mic-outline'} size={24} color={color} />
           ),
         }}
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            navigation.navigate('VoiceTab', { screen: 'VoiceRecordingsList' });
+          },
+        })}
       />
       <Tab.Screen
         name="NotificationsTab"
@@ -70,6 +82,12 @@ export default function MainTabNavigator() {
           tabBarBadge: unreadCount > 0 ? (unreadCount > 99 ? '99+' : unreadCount) : undefined,
           tabBarBadgeStyle: styles.badge,
         }}
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            navigation.navigate('NotificationsTab');
+          },
+        })}
       />
       <Tab.Screen
         name="MoreTab"
@@ -81,6 +99,12 @@ export default function MainTabNavigator() {
             <Ionicons name={focused ? 'grid' : 'grid-outline'} size={24} color={color} />
           ),
         }}
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            navigation.navigate('MoreTab', { screen: 'MoreHome' });
+          },
+        })}
       />
     </Tab.Navigator>
   );

@@ -4,6 +4,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { View } from 'react-native';
 import { AuthProvider } from './src/context/AuthContext';
 import { NotificationProvider } from './src/context/NotificationContext';
+import PermissionBootstrap from './src/components/PermissionBootstrap';
 import RootNavigator from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/navigationRef';
 import GlobalNotificationToast from './src/components/GlobalNotificationToast';
@@ -25,6 +26,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
+        <PermissionBootstrap />
         <NotificationProvider>
           <NavigationContainer ref={navigationRef} theme={NavTheme}>
             <View style={{ flex: 1 }}>

@@ -77,6 +77,8 @@ export type CrmLeadMember = {
 
 export type CrmLeadMessage = {
   id: string;
+  lead_id?: string | null;
+  user_id?: string | null;
   content?: string | null;
   created_at?: string | null;
   message_type?: string | null;
@@ -84,6 +86,8 @@ export type CrmLeadMessage = {
   user?: { id?: string; full_name?: string | null } | null;
   attachment_url?: string | null;
   attachment_name?: string | null;
+  attachment_mime?: string | null;
+  attachments?: { name?: string; url?: string; type?: string }[] | null;
 };
 
 export type CrmDocument = {

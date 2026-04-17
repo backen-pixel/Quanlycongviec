@@ -19,21 +19,24 @@ import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../api/client';
-import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
 import { canAssigneeFilterDeals, canAssigneeFilterLeads } from '../lib/crmMobilePrefs';
-import type { CrmActivity, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmLeadMessage, CrmStage } from '../types/crm';
+import type { CrmActivity, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmStage } from '../types/crm';
 import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDate, formatDateTime, formatVND } from '../lib/formatUtils';
 import { openWebPath } from '../lib/openWeb';
 import CrmTasksPanel from '../components/CrmTasksPanel';
 import CrmVoiceRecordingsPanel from '../components/CrmVoiceRecordingsPanel';
+import LeadChatPanel from '../components/LeadChatPanel';
+import LeadMessengerPanel from '../components/LeadMessengerPanel';
+import LeadFacebookPanel from '../components/LeadFacebookPanel';
 
 type R = RouteProp<CrmStackParamList, 'LeadDetail'>;
 type Nav = NativeStackNavigationProp<CrmStackParamList, 'LeadDetail'>;
 
 type TabKey = 'tasks' | 'documents' | 'activities' | 'notes' | 'team' | 'chat' | 'voice';
+type ChatSubKey = 'crm' | 'internal' | 'facebook';
 
 const MEMBER_ROLE_VI: Record<string, string> = {
   responsible: 'Chịu trách nhiệm',
@@ -41,12 +44,6 @@ const MEMBER_ROLE_VI: Record<string, string> = {
   supervisor: 'Giám sát',
   viewer: 'Xem',
 };
-
-function chatFileUrl(path: string | null | undefined): string | null {
-  if (!path) return null;
-  if (path.startsWith('http')) return path;
-  return `${API_ORIGIN}${path.startsWith('/') ? '' : '/'}${path}`;
-}
 
 type CustForm = {
   full_name: string;
@@ -105,11 +102,13 @@ export default function LeadDetailScreen() {
   const [converting, setConverting] = useState(false);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [members, setMembers] = useState<CrmLeadMember[]>([]);
-  const [messages, setMessages] = useState<CrmLeadMessage[]>([]);
-  const [chatDraft, setChatDraft] = useState('');
-  const [chatSending, setChatSending] = useState(false);
   const [noteDraft, setNoteDraft] = useState('');
+  const [salesQuotes, setSalesQuotes] = useState<{ id: string; code?: string; title?: string; total?: number; status?: string }[]>([]);
+  const [salesOrders, setSalesOrders] = useState<{ id: string; code?: string; title?: string; total?: number; status?: string }[]>([]);
+  const [salesInvoices, setSalesInvoices] = useState<{ id: string; code?: string; title?: string; total?: number; status?: string }[]>([]);
+  const [salesLoading, setSalesLoading] = useState(false);
   const [noteSaving, setNoteSaving] = useState(false);
+  const [chatSub, setChatSub] = useState<ChatSubKey>('crm');
 
   const [valueDraft, setValueDraft] = useState('');
   const [createdAtDraft, setCreatedAtDraft] = useState('');
@@ -211,22 +210,40 @@ export default function LeadDetailScreen() {
     }
   }, [id]);
 
-  const loadChat = useCallback(async () => {
-    try {
-      const { data } = await api.get<CrmLeadMessage[]>(`/crm/leads/${id}/chat`);
-      setMessages(Array.isArray(data) ? data : []);
-    } catch {
-      setMessages([]);
-    }
-  }, [id]);
-
   useEffect(() => {
     if (activeTab === 'team') void loadMembers();
   }, [activeTab, loadMembers]);
 
+  const normalizeList = (raw: unknown) => (Array.isArray(raw) ? raw : []);
+
   useEffect(() => {
-    if (activeTab === 'chat') void loadChat();
-  }, [activeTab, loadChat]);
+    let cancelled = false;
+    setSalesLoading(true);
+    (async () => {
+      try {
+        const [qRes, oRes, iRes] = await Promise.all([
+          api.get(`/crm/quotations`, { params: { lead_id: id, limit: 40 } }).catch(() => ({ data: [] })),
+          api.get(`/crm/orders`, { params: { lead_id: id, limit: 40 } }).catch(() => ({ data: [] })),
+          api.get(`/crm/invoices`, { params: { lead_id: id, limit: 40 } }).catch(() => ({ data: [] })),
+        ]);
+        if (cancelled) return;
+        setSalesQuotes(normalizeList(qRes.data));
+        setSalesOrders(normalizeList(oRes.data));
+        setSalesInvoices(normalizeList(iRes.data));
+      } catch {
+        if (!cancelled) {
+          setSalesQuotes([]);
+          setSalesOrders([]);
+          setSalesInvoices([]);
+        }
+      } finally {
+        if (!cancelled) setSalesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   const applyStage = async (stageId: string, lost?: string) => {
     setSavingStage(true);
@@ -481,21 +498,6 @@ export default function LeadDetailScreen() {
     }
   };
 
-  const sendChat = async () => {
-    const t = chatDraft.trim();
-    if (!t) return;
-    setChatSending(true);
-    try {
-      await api.post(`/crm/leads/${id}/chat`, { content: t });
-      setChatDraft('');
-      await loadChat();
-    } catch (e: unknown) {
-      Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không gửi được tin');
-    } finally {
-      setChatSending(false);
-    }
-  };
-
   if (loading && !lead) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -549,7 +551,12 @@ export default function LeadDetailScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         {err ? (
           <View style={styles.errBanner}>
             <Text style={styles.errBannerTxt}>{err}</Text>
@@ -840,6 +847,77 @@ export default function LeadDetailScreen() {
           ) : null}
         </View>
 
+        <View style={[styles.card, CrmShadow.card]}>
+          <Text style={styles.cardH}>Báo giá · Đơn hàng · Hóa đơn</Text>
+          <Text style={styles.salesHint}>Theo lead/deal và cùng khách hàng (nếu đã gán KH).</Text>
+          {salesLoading ? (
+            <ActivityIndicator style={{ marginVertical: 12 }} color={CrmColors.blue600} />
+          ) : (
+            <>
+              {salesQuotes.length === 0 && salesOrders.length === 0 && salesInvoices.length === 0 ? (
+                <Text style={styles.muted}>Chưa có báo giá / đơn / hóa đơn liên quan.</Text>
+              ) : (
+                <ScrollView
+                  horizontal
+                  nestedScrollEnabled
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.salesScroll}
+                  contentContainerStyle={styles.salesScrollContent}
+                >
+                  {salesQuotes.map((row) => (
+                    <TouchableOpacity
+                      key={`q-${row.id}`}
+                      style={styles.salesChip}
+                      onPress={() => openWebPath(`/crm/quotations/${row.id}`)}
+                    >
+                      <Text style={styles.salesChipK}>BG</Text>
+                      <Text style={styles.salesChipCode} numberOfLines={1}>
+                        {row.code || row.id.slice(0, 8)}
+                      </Text>
+                      <Text style={styles.salesChipAmt}>{formatVND(Number(row.total) || 0)}</Text>
+                      <Text style={styles.salesChipSt} numberOfLines={1}>
+                        {row.status || '—'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  {salesOrders.map((row) => (
+                    <TouchableOpacity
+                      key={`o-${row.id}`}
+                      style={styles.salesChip}
+                      onPress={() => openWebPath(`/crm/orders/${row.id}`)}
+                    >
+                      <Text style={styles.salesChipK}>ĐH</Text>
+                      <Text style={styles.salesChipCode} numberOfLines={1}>
+                        {row.code || row.id.slice(0, 8)}
+                      </Text>
+                      <Text style={styles.salesChipAmt}>{formatVND(Number(row.total) || 0)}</Text>
+                      <Text style={styles.salesChipSt} numberOfLines={1}>
+                        {row.status || '—'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  {salesInvoices.map((row) => (
+                    <TouchableOpacity
+                      key={`i-${row.id}`}
+                      style={styles.salesChip}
+                      onPress={() => openWebPath(`/crm/invoices/${row.id}`)}
+                    >
+                      <Text style={styles.salesChipK}>HĐ</Text>
+                      <Text style={styles.salesChipCode} numberOfLines={1}>
+                        {row.code || row.id.slice(0, 8)}
+                      </Text>
+                      <Text style={styles.salesChipAmt}>{formatVND(Number(row.total) || 0)}</Text>
+                      <Text style={styles.salesChipSt} numberOfLines={1}>
+                        {row.status || '—'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </>
+          )}
+        </View>
+
         <View style={[styles.tabsBar, CrmShadow.card]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
             {(
@@ -871,7 +949,7 @@ export default function LeadDetailScreen() {
               style={styles.webTabChip}
               onPress={() => openWebPath(`/crm/leads/${id}?tab=facebook`)}
             >
-              <Text style={styles.webTabChipTxt}>📘 Facebook</Text>
+              <Text style={styles.webTabChipTxt}>📘 Facebook (đầy đủ trên web)</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.webTabChip}
@@ -1029,58 +1107,35 @@ export default function LeadDetailScreen() {
           {activeTab === 'voice' && (
             <CrmVoiceRecordingsPanel leadId={id} customerPhone={lead?.customer?.phone} />
           )}
-          {activeTab === 'chat' && (
+          {activeTab === 'chat' ? (
             <View>
-              <TouchableOpacity style={styles.webLinkBtn} onPress={() => openWebPath(`/crm/leads/${id}?tab=chat`)}>
-                <Text style={styles.webLinkBtnTxt}>Mở chat đầy đủ (file, reply — web)</Text>
-              </TouchableOpacity>
-              <ScrollView style={styles.chatList} nestedScrollEnabled>
-                {messages.length === 0 ? (
-                  <Text style={styles.muted}>Chưa có tin nhắn.</Text>
-                ) : (
-                  messages.map((msg) => {
-                    const who = msg.user?.full_name || (msg.is_system ? 'Hệ thống' : '—');
-                    const att = chatFileUrl(msg.attachment_url);
-                    return (
-                      <View key={msg.id} style={[styles.chatBubble, msg.is_system && styles.chatBubbleSys]}>
-                        <Text style={styles.chatWho}>{who}</Text>
-                        <Text style={styles.chatTime}>{formatDateTime(msg.created_at)}</Text>
-                        {msg.content ? <Text style={styles.chatText}>{msg.content}</Text> : null}
-                        {att ? (
-                          <TouchableOpacity onPress={() => void Linking.openURL(att)}>
-                            <Text style={styles.chatAttach}>{msg.attachment_name || '📎 Tệp đính kèm'}</Text>
-                          </TouchableOpacity>
-                        ) : null}
-                      </View>
-                    );
-                  })
-                )}
-              </ScrollView>
-              <View style={styles.chatInputRow}>
-                <TextInput
-                  style={styles.chatInput}
-                  placeholder="Nhập tin nhắn…"
-                  placeholderTextColor={CrmColors.gray400}
-                  value={chatDraft}
-                  onChangeText={setChatDraft}
-                  multiline
-                  maxLength={4000}
-                />
-                <TouchableOpacity
-                  style={[styles.chatSend, (!chatDraft.trim() || chatSending) && styles.chatSendOff]}
-                  onPress={() => void sendChat()}
-                  disabled={!chatDraft.trim() || chatSending}
-                >
-                  <Text style={styles.chatSendTxt}>{chatSending ? '…' : 'Gửi'}</Text>
-                </TouchableOpacity>
+              <View style={styles.chatSubBar}>
+                {(
+                  [
+                    ['crm', 'Trao đổi CRM'] as const,
+                    ['internal', 'Chat nội bộ'] as const,
+                    ['facebook', 'Facebook'] as const,
+                  ] as const
+                ).map(([k, label]) => (
+                  <TouchableOpacity
+                    key={k}
+                    style={[styles.chatSubChip, chatSub === k && styles.chatSubChipOn]}
+                    onPress={() => setChatSub(k)}
+                  >
+                    <Text style={[styles.chatSubChipTxt, chatSub === k && styles.chatSubChipTxtOn]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
+              {chatSub === 'crm' ? <LeadChatPanel leadId={id} /> : null}
+              {chatSub === 'internal' ? <LeadMessengerPanel leadId={id} navigation={navigation} /> : null}
+              {chatSub === 'facebook' ? <LeadFacebookPanel leadId={id} /> : null}
             </View>
-          )}
+          ) : null}
         </View>
 
         <Text style={styles.webHint}>
-          Tab «Ghi âm» trong app = ghi âm CRM trên thiết bị. Facebook, tổng đài, duyệt deal đầy đủ: hàng nút phía trên hoặc
-          mở web.
+          Tab «Ghi âm» trong app = ghi âm CRM trên thiết bị. Tab «Trao đổi» gồm CRM, chat nhóm nội bộ theo lead và tin
+          Facebook; tổng đài / duyệt deal đầy đủ: hàng nút phía trên hoặc mở web.
         </Text>
       </ScrollView>
 
@@ -1460,6 +1515,18 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
   },
+  chatSubBar: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12, gap: 8 },
+  chatSubChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: CrmRadii.full,
+    backgroundColor: CrmColors.gray100,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  chatSubChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue100 },
+  chatSubChipTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.gray600 },
+  chatSubChipTxtOn: { color: CrmColors.blue600 },
   muted: { fontSize: 13, color: CrmColors.gray400, textAlign: 'center', paddingVertical: 12 },
   custBanner: {
     fontSize: 13,
@@ -1548,37 +1615,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   teamAvatarTxt: { fontSize: 16, fontWeight: '800', color: CrmColors.blue700 },
-  chatList: { maxHeight: 280, marginBottom: 12 },
-  chatBubble: {
+  salesHint: { fontSize: 12, color: CrmColors.gray500, marginBottom: 6, lineHeight: 17 },
+  salesScroll: { marginTop: 4, marginBottom: 4, minHeight: 96 },
+  salesScrollContent: { alignItems: 'stretch', paddingVertical: 4 },
+  salesChip: {
+    width: 132,
+    marginRight: 10,
     padding: 10,
     borderRadius: CrmRadii.md,
     backgroundColor: CrmColors.gray50,
     borderWidth: 1,
     borderColor: CrmColors.gray200,
-    marginBottom: 8,
   },
-  chatBubbleSys: { backgroundColor: CrmColors.amber50, borderColor: CrmColors.amber100 },
-  chatWho: { fontSize: 12, fontWeight: '700', color: CrmColors.gray800 },
-  chatTime: { fontSize: 10, color: CrmColors.gray400, marginTop: 2 },
-  chatText: { fontSize: 14, color: CrmColors.gray800, marginTop: 6, lineHeight: 20 },
-  chatAttach: { fontSize: 13, color: CrmColors.blue600, fontWeight: '600', marginTop: 8 },
-  chatInputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
-  chatInput: {
-    flex: 1,
-    minHeight: 44,
-    maxHeight: 100,
-    borderWidth: 1,
-    borderColor: CrmColors.gray200,
-    borderRadius: CrmRadii.md,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: CrmColors.gray900,
-    backgroundColor: CrmColors.white,
-  },
-  chatSend: { backgroundColor: CrmColors.blue600, paddingHorizontal: 16, paddingVertical: 12, borderRadius: CrmRadii.md },
-  chatSendOff: { opacity: 0.45 },
-  chatSendTxt: { color: CrmColors.white, fontWeight: '800', fontSize: 14 },
+  salesChipK: { fontSize: 10, fontWeight: '800', color: CrmColors.blue600, marginBottom: 4 },
+  salesChipCode: { fontSize: 13, fontWeight: '700', color: CrmColors.gray900 },
+  salesChipAmt: { fontSize: 12, fontWeight: '700', color: CrmColors.gray800, marginTop: 4 },
+  salesChipSt: { fontSize: 11, color: CrmColors.gray500, marginTop: 4 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',

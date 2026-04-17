@@ -1,0 +1,46 @@
+export type MessengerGroupListItem = {
+  id: string;
+  name?: string | null;
+  raw_name?: string | null;
+  is_direct?: boolean;
+  peer_id?: string | null;
+  crm_lead_id?: string | null;
+  my_role?: string | null;
+  message_count?: number;
+  last_message_at?: string | null;
+};
+
+export type MessengerMember = {
+  id?: string;
+  user_id: string;
+  role?: string | null;
+  user?: { id?: string; full_name?: string | null; email?: string | null; avatar?: string | null } | null;
+};
+
+export type MessengerGroupDetail = MessengerGroupListItem & {
+  members?: MessengerMember[];
+  is_direct?: boolean;
+};
+
+export type MessengerAttachment = {
+  name?: string;
+  url?: string;
+  type?: string;
+  size?: number;
+};
+
+export type MessengerMessage = {
+  id: string;
+  group_id?: string;
+  user_id?: string | null;
+  content?: string | null;
+  created_at?: string | null;
+  is_system?: boolean;
+  message_type?: string | null;
+  attachments?: MessengerAttachment[] | null;
+  attachment_url?: string | null;
+  attachment_name?: string | null;
+  attachment_mime?: string | null;
+  reply_to?: string | null;
+  user?: { id?: string; full_name?: string | null; avatar?: string | null } | null;
+};

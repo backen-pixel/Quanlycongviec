@@ -4,7 +4,7 @@
     "slug": "crm-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/app-icon.jpg",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -15,7 +15,10 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Ứng dụng cần micro để ghi âm tư vấn và lưu vào lead/deal trên CRM."
+        "NSMicrophoneUsageDescription": "Ứng dụng cần micro để ghi âm tư vấn và lưu vào lead/deal trên CRM.",
+        "NSCameraUsageDescription": "Ứng dụng cần camera để chụp ảnh gửi trong chat nhóm CRM.",
+        "NSPhotoLibraryUsageDescription": "Ứng dụng cần truy cập thư viện ảnh để đính kèm trong chat nhóm CRM.",
+        "NSUserNotificationUsageDescription": "Ứng dụng cần gửi thông báo khi có tin nhắn CRM, Messenger và nhắc việc."
       }
     },
     "android": {
@@ -28,10 +31,11 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_AUDIO",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/app-icon.jpg",
         "backgroundColor": "#EEF2F8"
       },
       "usesCleartextTraffic": true,
@@ -39,7 +43,7 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/app-icon.jpg"
     }
   }
 }
