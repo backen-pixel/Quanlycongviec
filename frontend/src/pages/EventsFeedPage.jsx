@@ -497,7 +497,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
       {/* Calendar header */}
       <div className="flex items-center justify-between mb-4">
         <button onClick={onPrevMonth} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronLeft className="h-5 w-5" /></button>
-        <h2 className="text-lg font-bold text-gray-900">{monthNames[month]} {year}</h2>
+        <h2 className="text-2xl font-extrabold text-gray-900">{monthNames[month]} {year}</h2>
         <button onClick={onNextMonth} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronRight className="h-5 w-5" /></button>
       </div>
 
@@ -508,7 +508,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
           {/* Day headers */}
           <div className="grid grid-cols-7 mb-1">
             {dayNames.map(d => (
-              <div key={d} className="text-center text-xs font-bold text-gray-500 py-2">{d}</div>
+              <div key={d} className="text-center text-sm font-bold text-gray-500 py-3">{d}</div>
             ))}
           </div>
 
@@ -528,24 +528,24 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
                     onSelectDay(day);
                     onOpenCreateForDay(day);
                   }}
-                  className={`min-h-[90px] border-r border-b p-1 cursor-pointer transition
+                  className={`min-h-[150px] border-r border-b p-2 cursor-pointer transition
                     ${day ? 'hover:bg-blue-50/50' : 'bg-gray-50'}
                     ${isSelected ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : ''}
                   `}
                 >
                   {day && (
                     <>
-                      <div className={`text-sm font-medium mb-0.5 w-7 h-7 flex items-center justify-center rounded-full
+                      <div className={`text-lg font-bold mb-1 w-10 h-10 flex items-center justify-center rounded-full
                         ${isTodayCell ? 'bg-blue-600 text-white' : 'text-gray-700'}
                       `}>{day}</div>
-                      <div className="space-y-0.5">
-                        {dayEvents.slice(0, 3).map(ev => {
+                      <div className="space-y-1">
+                        {dayEvents.slice(0, 5).map(ev => {
                           const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || {};
                           return (
                             <div
                               key={ev.id}
                               data-cal-event-chip
-                              className="text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium"
+                              className="text-xs leading-tight px-2 py-1 rounded truncate font-semibold shadow-sm"
                               style={{ backgroundColor: (typeInfo.color || '#3B82F6') + '20', color: typeInfo.color || '#3B82F6' }}
                               title={`${ev.title} — ${formatTime(ev.start_time)} — Nhấn để sửa`}
                               onClick={(e) => {
@@ -558,8 +558,8 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
                             </div>
                           );
                         })}
-                        {dayEvents.length > 3 && (
-                          <div className="text-[10px] text-gray-400 px-1">+{dayEvents.length - 3} khác</div>
+                        {dayEvents.length > 5 && (
+                          <div className="text-xs text-gray-400 px-1 font-medium">+{dayEvents.length - 5} khác</div>
                         )}
                       </div>
                     </>
