@@ -12,10 +12,14 @@ let prefs = {
   lead_assigned: true,
   order_confirmed: true,
   invoice_overdue: true,
+  lead_new: true,
+  deal_new: true,
+  production_deadlines: true,
+  crm_lead_deadlines: true,
 };
 
 /**
- * `notifications.type` từ server → cột preferences (đồng bộ backend `notificationPrefTypes.js`).
+ * `notifications.type` + `entity_type` → cột preferences (đồng bộ backend `notificationPrefTypes.js`).
  */
 const NOTIFICATION_TYPE_PREF_MAP = {
   task_assigned: 'task_assigned',
@@ -24,14 +28,6 @@ const NOTIFICATION_TYPE_PREF_MAP = {
   project_assigned: 'task_assigned',
   crm_task_assigned: 'task_assigned',
   crm_task_completed: 'task_completed',
-
-  deadline_warning: 'deadline_warning',
-  deadline_reminder: 'deadline_warning',
-  deadline_overdue: 'deadline_warning',
-  crm_deadline_warning: 'deadline_warning',
-  crm_deadline_1h: 'deadline_warning',
-  crm_deadline_overdue: 'deadline_warning',
-  crm_deadline_set: 'deadline_warning',
 
   comment_added: 'comment_added',
 
@@ -66,10 +62,32 @@ const PREF_KEYS = new Set([
   'lead_assigned',
   'order_confirmed',
   'invoice_overdue',
+  'lead_new',
+  'deal_new',
+  'production_deadlines',
+  'crm_lead_deadlines',
 ]);
 
-export function preferenceKeyForNotificationType(type) {
+export function preferenceKeyForNotificationType(type, entityType) {
   if (!type || typeof type !== 'string') return null;
+
+  if (type === 'lead_created') return 'lead_new';
+  if (type === 'deal_created' || type === 'deal_assigned') return 'deal_new';
+
+  if (
+    type === 'crm_deadline_1h' ||
+    type === 'crm_deadline_warning' ||
+    type === 'crm_deadline_overdue' ||
+    type === 'crm_deadline_set'
+  ) {
+    return 'crm_lead_deadlines';
+  }
+
+  if (type === 'deadline_warning' || type === 'deadline_overdue' || type === 'deadline_reminder') {
+    if (entityType === 'task') return 'production_deadlines';
+    return 'deadline_warning';
+  }
+
   if (NOTIFICATION_TYPE_PREF_MAP[type]) return NOTIFICATION_TYPE_PREF_MAP[type];
   if (PREF_KEYS.has(type)) return type;
   return null;
@@ -180,8 +198,8 @@ export function clearNotificationCustomSoundMeta() {
 }
 
 /** Loại không map được → coi như bật (thông báo hệ thống / loại mới). */
-export function isNotificationTypeEnabled(type) {
-  const key = preferenceKeyForNotificationType(type);
+export function isNotificationTypeEnabled(type, entityType) {
+  const key = preferenceKeyForNotificationType(type, entityType);
   if (!key) return true;
   return prefs[key] !== false;
 }

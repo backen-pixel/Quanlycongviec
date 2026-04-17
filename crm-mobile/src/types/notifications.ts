@@ -28,4 +28,8 @@ export type NotificationPrefs = {
   lead_assigned?: boolean;
   order_confirmed?: boolean;
   invoice_overdue?: boolean;
+  lead_new?: boolean;
+  deal_new?: boolean;
+  production_deadlines?: boolean;
+  crm_lead_deadlines?: boolean;
 };

@@ -1,7 +1,8 @@
 /**
- * Map notification row `type` → column trong notification_preferences.
- * Giữ đồng bộ với frontend `notificationPrefsCache.js` (NOTIFICATION_TYPE_PREF_MAP).
+ * Map notification row `type` (+ entity_type) → cột notification_preferences.
+ * Đồng bộ với frontend `notificationPrefsCache.js`.
  */
+
 const NOTIFICATION_TYPE_PREF_MAP = {
   task_assigned: 'task_assigned',
   task_updated: 'task_completed',
@@ -9,14 +10,6 @@ const NOTIFICATION_TYPE_PREF_MAP = {
   project_assigned: 'task_assigned',
   crm_task_assigned: 'task_assigned',
   crm_task_completed: 'task_completed',
-
-  deadline_warning: 'deadline_warning',
-  deadline_reminder: 'deadline_warning',
-  deadline_overdue: 'deadline_warning',
-  crm_deadline_warning: 'deadline_warning',
-  crm_deadline_1h: 'deadline_warning',
-  crm_deadline_overdue: 'deadline_warning',
-  crm_deadline_set: 'deadline_warning',
 
   comment_added: 'comment_added',
 
@@ -51,19 +44,45 @@ const PREF_KEYS = new Set([
   'lead_assigned',
   'order_confirmed',
   'invoice_overdue',
+  'lead_new',
+  'deal_new',
+  'production_deadlines',
+  'crm_lead_deadlines',
 ]);
 
-function preferenceKeyForNotificationType(type) {
+/**
+ * @param {string} type
+ * @param {string|null|undefined} entityType — ví dụ 'task', 'crm_lead'
+ */
+function preferenceKeyForNotificationType(type, entityType) {
   if (!type || typeof type !== 'string') return null;
+
+  if (type === 'lead_created') return 'lead_new';
+  if (type === 'deal_created' || type === 'deal_assigned') return 'deal_new';
+
+  if (
+    type === 'crm_deadline_1h' ||
+    type === 'crm_deadline_warning' ||
+    type === 'crm_deadline_overdue' ||
+    type === 'crm_deadline_set'
+  ) {
+    return 'crm_lead_deadlines';
+  }
+
+  if (type === 'deadline_warning' || type === 'deadline_overdue' || type === 'deadline_reminder') {
+    if (entityType === 'task') return 'production_deadlines';
+    return 'deadline_warning';
+  }
+
   if (NOTIFICATION_TYPE_PREF_MAP[type]) return NOTIFICATION_TYPE_PREF_MAP[type];
   if (PREF_KEYS.has(type)) return type;
   return null;
 }
 
 /** Loại không nằm trong map → không chặn (coi như bật). */
-function isNotificationTypeAllowed(prefs, notificationType) {
+function isNotificationTypeAllowed(prefs, notificationType, entityType) {
   if (!prefs || !notificationType) return true;
-  const key = preferenceKeyForNotificationType(notificationType);
+  const key = preferenceKeyForNotificationType(notificationType, entityType);
   if (!key) return true;
   return prefs[key] !== false;
 }

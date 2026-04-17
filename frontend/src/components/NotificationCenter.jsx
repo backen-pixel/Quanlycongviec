@@ -134,6 +134,10 @@ export default function NotificationCenter({ socket }) {
             lead_assigned: true,
             order_confirmed: true,
             invoice_overdue: true,
+            lead_new: true,
+            deal_new: true,
+            production_deadlines: true,
+            crm_lead_deadlines: true,
           });
         }
       }
@@ -146,17 +150,17 @@ export default function NotificationCenter({ socket }) {
   useEffect(() => {
     if (!socket) return;
     const handler = (notif) => {
-      if (!isNotificationTypeEnabled(notif?.type)) return;
+      if (!isNotificationTypeEnabled(notif?.type, notif?.entity_type)) return;
 
       cancelNotificationSpeech();
 
-      setUnreadCount(c => c + 1);
-      setNotifications(prev => [notif, ...prev]);
+      setUnreadCount((c) => c + 1);
+      setNotifications((prev) => [notif, ...prev]);
       setToastNotification(notif);
 
       const p = getNotificationPrefsCache();
       if (p.sound !== false) {
-        void alertIncomingNotification({ type: notif.type });
+        void alertIncomingNotification({ type: notif.type, entityType: notif.entity_type });
       }
     };
     socket.on('notification', handler);

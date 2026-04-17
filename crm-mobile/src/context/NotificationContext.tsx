@@ -151,7 +151,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     const onNotif = (raw: unknown) => {
       const n = raw as AppNotification;
-      if (!isNotificationTypeEnabled(prefsRef.current, n?.type)) return;
+      if (!isNotificationTypeEnabled(prefsRef.current, n?.type, n?.entity_type)) return;
       setUnreadCount((c) => c + 1);
       setToast(n);
       listenersRef.current.forEach((fn) => {

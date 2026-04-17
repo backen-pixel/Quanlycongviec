@@ -16,17 +16,21 @@ import type { NotifPrefToggleKey } from '../lib/notificationPrefs';
 type Row = { key: NotifPrefToggleKey | 'sound' | 'browser_push'; label: string; sub?: string };
 
 const TOGGLE_ROWS: Row[] = [
+  { key: 'lead_new', label: 'Lead mới', sub: 'Tạo lead, Facebook…' },
+  { key: 'lead_assigned', label: 'Lead được giao / chuyển' },
+  { key: 'crm_lead_deadlines', label: 'Hạn nhiệm vụ CRM trên lead', sub: 'Nhắc hạn, quá hạn' },
+  { key: 'deal_new', label: 'Deal mới & giao deal' },
+  { key: 'deal_won', label: 'Deal thắng' },
+  { key: 'stage_changed', label: 'Đổi giai đoạn / pipeline' },
   { key: 'task_assigned', label: 'Nhiệm vụ được giao' },
   { key: 'task_completed', label: 'Nhiệm vụ hoàn thành' },
-  { key: 'deadline_warning', label: 'Nhắc hạn & deadline' },
+  { key: 'production_deadlines', label: 'Hạn task dự án (SX)', sub: 'Nhắc / quá hạn trên dự án' },
+  { key: 'deadline_warning', label: 'Hạn khác (không phải task DA)', sub: 'Ít dùng' },
   { key: 'comment_added', label: 'Bình luận' },
-  { key: 'stage_changed', label: 'Đổi giai đoạn / pipeline' },
-  { key: 'deal_won', label: 'Deal thắng' },
-  { key: 'approval_request', label: 'Phê duyệt tạm ứng' },
   { key: 'checklist_completed', label: 'Checklist hoàn thành' },
-  { key: 'lead_assigned', label: 'Lead / khách được giao' },
   { key: 'order_confirmed', label: 'Đơn hàng & xác nhận' },
   { key: 'invoice_overdue', label: 'Hóa đơn quá hạn' },
+  { key: 'approval_request', label: 'Phê duyệt tạm ứng' },
   {
     key: 'sound',
     label: 'Chuông trên web',
