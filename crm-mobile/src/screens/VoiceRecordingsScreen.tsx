@@ -16,6 +16,7 @@ import { Audio } from 'expo-av';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import type { CrmVoiceRecording } from '../types/crm';
+import { navigationRef } from '../navigation/navigationRef';
 import type { VoiceStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
@@ -184,6 +185,13 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
   };
 
   const goLead = (id: string) => {
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('Main', {
+        screen: 'CrmTab',
+        params: { screen: 'LeadDetail', params: { id } },
+      });
+      return;
+    }
     navigation.getParent()?.navigate('CrmTab', { screen: 'LeadDetail', params: { id } } as never);
   };
 

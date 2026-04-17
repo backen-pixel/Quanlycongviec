@@ -3075,15 +3075,28 @@ r.patch('/leads/:id/activities/:activityId', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // QUOTATIONS (Báo giá)
 // ═══════════════════════════════════════════════════════════════════════════
+/** Lead/Deal detail: chứng từ có lead_id HOẶC cùng customer_id (nhiều BG tạo từ KH chưa gắn lead). */
+async function applyLeadOrCustomerSalesFilter(queryBuilder, leadIdVal) {
+  const lid = String(leadIdVal || '');
+  if (!lid || !/^[0-9a-f-]{36}$/i.test(lid)) return queryBuilder;
+  const { data: leadRow } = await supabase.from('crm_leads').select('customer_id').eq('id', lid).maybeSingle();
+  const cid = leadRow?.customer_id ? String(leadRow.customer_id) : '';
+  if (cid && /^[0-9a-f-]{36}$/i.test(cid)) {
+    return queryBuilder.or(`lead_id.eq.${lid},customer_id.eq.${cid}`);
+  }
+  return queryBuilder.eq('lead_id', lid);
+}
+
 r.get('/quotations', async (req, res) => {
   try {
-    const { status, search, limit = 50 } = req.query;
+    const { status, search, limit = 50, lead_id } = req.query;
     let q = supabase.from('quotations')
       .select('*, customer:customers(id, full_name, phone), creator:users!quotations_created_by_fkey(id, full_name)')
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
+    if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
     const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
@@ -3521,12 +3534,13 @@ r.delete('/quotations/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/orders', async (req, res) => {
   try {
-    const { status, search, limit = 50 } = req.query;
+    const { status, search, limit = 50, lead_id } = req.query;
     let q = supabase.from('orders')
       .select('*, customer:customers(id, full_name, phone)')
       .order('created_at', { ascending: false }).limit(parseInt(limit));
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
+    if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
     const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
@@ -3700,12 +3714,13 @@ r.delete('/orders/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/invoices', async (req, res) => {
   try {
-    const { status, search, limit = 50 } = req.query;
+    const { status, search, limit = 50, lead_id } = req.query;
     let q = supabase.from('invoices')
       .select('*, customer:customers(id, full_name, phone)')
       .order('created_at', { ascending: false }).limit(parseInt(limit));
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
+    if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
     const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
@@ -5909,6 +5924,14 @@ r.delete('/leads/:id/members/:userId', async (req, res) => {
 // LEAD CHAT — Trao đổi realtime trong Lead/Deal
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** JSON body (mobile axios) không đi qua multer — tránh lỗi Android khi gửi application/json */
+const leadChatFilesMulter = multer({ dest: 'uploads/lead-chat/' }).array('files');
+function leadChatJsonOrFiles(req, res, next) {
+  const ct = String(req.headers['content-type'] || '').toLowerCase();
+  if (ct.includes('application/json')) return next();
+  return leadChatFilesMulter(req, res, next);
+}
+
 // GET /leads/:id/chat
 r.get('/leads/:id/chat', async (req, res) => {
   try {
@@ -5934,7 +5957,7 @@ r.get('/leads/:id/chat', async (req, res) => {
 });
 
 // POST /leads/:id/chat — gửi tin nhắn (text, file, image, video, audio)
-r.post('/leads/:id/chat', multer({ dest: 'uploads/lead-chat/' }).array('files'), async (req, res) => {
+r.post('/leads/:id/chat', leadChatJsonOrFiles, async (req, res) => {
   try {
     const { content, reply_to } = req.body;
     const files = req.files || [];

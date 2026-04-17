@@ -6,6 +6,29 @@ import FacebookInboxScreen from '../screens/FacebookInboxScreen';
 import FacebookChatScreen from '../screens/FacebookChatScreen';
 import AutoPipelineStatusScreen from '../screens/AutoPipelineStatusScreen';
 import AccountScreen from '../screens/AccountScreen';
+import MessengerGroupListScreen from '../screens/MessengerGroupListScreen';
+import MessengerGroupChatScreen from '../screens/MessengerGroupChatScreen';
+import MessengerComposeScreen from '../screens/MessengerComposeScreen';
+import MessengerAddMembersScreen from '../screens/MessengerAddMembersScreen';
+import SalesHubScreen from '../screens/SalesHubScreen';
+import QuotationListScreen from '../screens/QuotationListScreen';
+import QuotationDetailScreen from '../screens/QuotationDetailScreen';
+import QuotationFormScreen from '../screens/QuotationFormScreen';
+import QuotationExcelReviewScreen from '../screens/QuotationExcelReviewScreen';
+import OrderListScreen from '../screens/OrderListScreen';
+import OrderDetailScreen from '../screens/OrderDetailScreen';
+import InvoiceListScreen from '../screens/InvoiceListScreen';
+import InvoiceDetailScreen from '../screens/InvoiceDetailScreen';
+import CrmDashboardScreen from '../screens/CrmDashboardScreen';
+import CrmTasksOverviewScreen from '../screens/CrmTasksOverviewScreen';
+import CustomerListScreen from '../screens/CustomerListScreen';
+import CustomerDetailScreen from '../screens/CustomerDetailScreen';
+import ProductListScreen from '../screens/ProductListScreen';
+import ProductDetailScreen from '../screens/ProductDetailScreen';
+import CategoryListScreen from '../screens/CategoryListScreen';
+import CrmPipelineListScreen from '../screens/CrmPipelineListScreen';
+import CrmPipelineDetailScreen from '../screens/CrmPipelineDetailScreen';
+import CrmEmbeddedWebScreen from '../screens/CrmEmbeddedWebScreen';
 import type { MoreStackParamList } from './types';
 import { CrmColors } from '../theme/crmTheme';
 
@@ -36,6 +59,33 @@ export default function MoreStackNavigator() {
         options={{ title: 'Công cụ tự động' }}
       />
       <Stack.Screen name="AccountSettings" component={AccountScreen} options={{ title: 'Tài khoản' }} />
+      <Stack.Screen name="MessengerGroupList" component={MessengerGroupListScreen} options={{ title: 'Chat nhóm' }} />
+      <Stack.Screen name="MessengerGroupChat" component={MessengerGroupChatScreen} options={{ title: 'Chat' }} />
+      <Stack.Screen name="MessengerCompose" component={MessengerComposeScreen} options={{ title: 'Tạo chat' }} />
+      <Stack.Screen name="MessengerAddMembers" component={MessengerAddMembersScreen} options={{ title: 'Thêm thành viên' }} />
+      <Stack.Screen name="SalesHub" component={SalesHubScreen} options={{ title: 'Bán hàng' }} />
+      <Stack.Screen name="QuotationList" component={QuotationListScreen} options={{ title: 'Báo giá' }} />
+      <Stack.Screen name="QuotationDetail" component={QuotationDetailScreen} options={{ title: 'Chi tiết' }} />
+      <Stack.Screen name="QuotationForm" component={QuotationFormScreen} options={{ title: 'Báo giá' }} />
+      <Stack.Screen name="QuotationExcelReview" component={QuotationExcelReviewScreen} options={{ title: 'Review Excel' }} />
+      <Stack.Screen name="OrderList" component={OrderListScreen} options={{ title: 'Đơn hàng' }} />
+      <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Đơn hàng' }} />
+      <Stack.Screen name="InvoiceList" component={InvoiceListScreen} options={{ title: 'Hóa đơn' }} />
+      <Stack.Screen name="InvoiceDetail" component={InvoiceDetailScreen} options={{ title: 'Hóa đơn' }} />
+      <Stack.Screen name="CrmDashboard" component={CrmDashboardScreen} options={{ title: 'Dashboard CRM' }} />
+      <Stack.Screen name="CrmTasksOverview" component={CrmTasksOverviewScreen} options={{ title: 'Công việc CRM' }} />
+      <Stack.Screen name="CustomerList" component={CustomerListScreen} options={{ title: 'Khách hàng' }} />
+      <Stack.Screen name="CustomerDetail" component={CustomerDetailScreen} options={{ title: 'Khách hàng' }} />
+      <Stack.Screen name="ProductList" component={ProductListScreen} options={{ title: 'Sản phẩm' }} />
+      <Stack.Screen name="ProductDetail" component={ProductDetailScreen} options={{ title: 'Sản phẩm' }} />
+      <Stack.Screen name="CategoryList" component={CategoryListScreen} options={{ title: 'Nhóm ngành' }} />
+      <Stack.Screen name="CrmPipelineList" component={CrmPipelineListScreen} options={{ title: 'Pipeline' }} />
+      <Stack.Screen name="CrmPipelineDetail" component={CrmPipelineDetailScreen} options={{ title: 'Chi tiết pipeline' }} />
+      <Stack.Screen
+        name="CrmEmbeddedWeb"
+        component={CrmEmbeddedWebScreen}
+        options={({ route }) => ({ title: route.params.title || 'Xem trên web' })}
+      />
     </Stack.Navigator>
   );
 }

@@ -296,6 +296,7 @@ const styles = StyleSheet.create({
   },
   composerInp: {
     flex: 1,
+    minWidth: 0,
     minHeight: 40,
     maxHeight: 120,
     borderWidth: 1,
@@ -307,10 +308,15 @@ const styles = StyleSheet.create({
     color: CrmColors.gray900,
   },
   sendBtn: {
+    flexShrink: 0,
+    alignSelf: 'flex-end',
     backgroundColor: CrmColors.blue600,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: CrmRadii.md,
+    minWidth: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sendBtnOff: { opacity: 0.45 },
   sendBtnTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },

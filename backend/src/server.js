@@ -10,7 +10,11 @@ const config = require('./config');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: config.corsOrigins, methods: ['GET','POST'], credentials: true } });
+// RN / Postman thường không gửi Origin — whitelist cứng localhost sẽ chặn handshake → mất realtime chat.
+// Vẫn bắt buộc JWT trong `io.use`; CORS ở đây chỉ cho phép upgrade WebSocket.
+const io = new Server(server, {
+  cors: { origin: true, methods: ['GET', 'POST'], credentials: true },
+});
 app.set('io', io);
 
 app.use(helmet());

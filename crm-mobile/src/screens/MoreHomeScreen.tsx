@@ -1,9 +1,9 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Linking, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MoreStackParamList } from '../navigation/types';
+import { navigationRef } from '../navigation/navigationRef';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
-import { WEB_APP_ORIGIN } from '../config';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MoreHome'>;
 
@@ -17,25 +17,20 @@ type Row = {
 
 type Section = { key: string; emoji: string; title: string; rows: Row[] };
 
-function web(path: string) {
-  const base = WEB_APP_ORIGIN;
-  if (!base) {
-    Alert.alert(
-      'Chưa cấu hình web',
-      'Thêm biến EXPO_PUBLIC_WEB_APP_URL trong .env của crm-mobile (URL ứng dụng web CRM, ví dụ https://app.example.com).',
-    );
+function goCrmTab(n: Nav) {
+  if (navigationRef.isReady()) {
+    navigationRef.navigate('Main', { screen: 'CrmTab', params: { screen: 'LeadList' } });
     return;
   }
-  const p = path.startsWith('/') ? path : `/${path}`;
-  void Linking.openURL(`${base}${p}`);
-}
-
-function goCrmTab(n: Nav) {
   const p = n.getParent() as { navigate: (name: string, params?: object) => void } | undefined;
   p?.navigate('CrmTab', { screen: 'LeadList' });
 }
 
 function goVoiceTab(n: Nav) {
+  if (navigationRef.isReady()) {
+    navigationRef.navigate('Main', { screen: 'VoiceTab', params: { screen: 'VoiceRecordingsList' } });
+    return;
+  }
   const p = n.getParent() as { navigate: (name: string, params?: object) => void } | undefined;
   p?.navigate('VoiceTab', { screen: 'VoiceRecordingsList' });
 }
@@ -49,9 +44,9 @@ const sections: Section[] = [
       {
         key: 'dash',
         title: 'Dashboard CRM',
-        sub: 'Mở trên web',
+        sub: 'Trong app (KPI + ống bán hàng)',
         emoji: '📈',
-        onPress: () => web('/crm/dashboard'),
+        onPress: (n) => n.navigate('CrmDashboard', {}),
       },
       {
         key: 'events',
@@ -84,30 +79,16 @@ const sections: Section[] = [
       {
         key: 'tasks',
         title: 'Công việc CRM',
-        sub: 'Mở web',
+        sub: 'Danh sách, lọc, mở lead, đánh dấu hoàn thành',
         emoji: '✅',
-        onPress: () => web('/crm/tasks'),
+        onPress: (n) => n.navigate('CrmTasksOverview'),
       },
       {
-        key: 'quo',
-        title: 'Báo giá',
-        sub: 'Danh sách & tạo mới trên web',
-        emoji: '📄',
-        onPress: () => web('/crm/quotations'),
-      },
-      {
-        key: 'ord',
-        title: 'Đơn hàng',
-        sub: 'Mở web',
-        emoji: '🛒',
-        onPress: () => web('/crm/orders'),
-      },
-      {
-        key: 'inv',
-        title: 'Hóa đơn',
-        sub: 'Mở web',
-        emoji: '🧾',
-        onPress: () => web('/crm/invoices'),
+        key: 'sales_hub',
+        title: 'Báo giá · Đơn hàng · Hóa đơn',
+        sub: 'Trong app: CRUD, import Excel, review, thanh toán HĐ',
+        emoji: '💳',
+        onPress: (n) => n.navigate('SalesHub'),
       },
     ],
   },
@@ -119,30 +100,30 @@ const sections: Section[] = [
       {
         key: 'cust',
         title: 'Khách hàng',
-        sub: 'Mở web',
+        sub: 'Danh sách, chi tiết, lead/BG/ĐH/HĐ',
         emoji: '👥',
-        onPress: () => web('/crm/customers'),
+        onPress: (n) => n.navigate('CustomerList'),
       },
       {
         key: 'prod',
         title: 'Sản phẩm',
-        sub: 'Mở web',
+        sub: 'Danh sách, chi tiết, BOM',
         emoji: '📦',
-        onPress: () => web('/crm/products'),
+        onPress: (n) => n.navigate('ProductList'),
       },
       {
         key: 'cat',
         title: 'Nhóm ngành',
-        sub: 'Mở web',
+        sub: 'Danh sách, thêm / sửa',
         emoji: '🏷️',
-        onPress: () => web('/crm/categories'),
+        onPress: (n) => n.navigate('CategoryList'),
       },
       {
         key: 'rep',
         title: 'Báo cáo',
-        sub: 'Mở web',
+        sub: 'Trang web trong app (cần EXPO_PUBLIC_WEB_APP_URL)',
         emoji: '📉',
-        onPress: () => web('/crm/reports'),
+        onPress: (n) => n.navigate('CrmEmbeddedWeb', { path: '/crm/reports', title: 'Báo cáo' }),
       },
       {
         key: 'fb',
@@ -152,25 +133,18 @@ const sections: Section[] = [
         onPress: (n) => n.navigate('FacebookInbox'),
       },
       {
+        key: 'messenger',
+        title: 'Chat nhóm nội bộ',
+        sub: 'Nhóm, 1–1, ảnh & chụp gửi hình',
+        emoji: '💬',
+        onPress: (n) => n.navigate('MessengerGroupList'),
+      },
+      {
         key: 'pipe_set',
         title: 'Pipeline (cấu hình)',
-        sub: 'Mở web',
+        sub: 'Danh sách pipeline, chỉnh giai đoạn (tên, màu)',
         emoji: '⚙️',
-        onPress: () => web('/crm/pipeline-settings'),
-      },
-      {
-        key: 'tpl',
-        title: 'Bộ mẫu CRM',
-        sub: 'Mở web',
-        emoji: '📑',
-        onPress: () => web('/crm/task-templates'),
-      },
-      {
-        key: 'auto_proj',
-        title: 'Auto tạo dự án',
-        sub: 'Mở web',
-        emoji: '🤖',
-        onPress: () => web('/crm/auto-project-config'),
+        onPress: (n) => n.navigate('CrmPipelineList'),
       },
       {
         key: 'auto_pipe',
@@ -182,16 +156,16 @@ const sections: Section[] = [
       {
         key: 'guide',
         title: 'Hướng dẫn sử dụng',
-        sub: 'Mở web',
+        sub: 'Trang web trong app',
         emoji: '📖',
-        onPress: () => web('/guide'),
+        onPress: (n) => n.navigate('CrmEmbeddedWeb', { path: '/guide', title: 'Hướng dẫn' }),
       },
       {
         key: 'updates',
         title: 'Có gì mới?',
-        sub: 'Mở web',
+        sub: 'Trang web trong app',
         emoji: '✨',
-        onPress: () => web('/updates'),
+        onPress: (n) => n.navigate('CrmEmbeddedWeb', { path: '/updates', title: 'Có gì mới?' }),
       },
       {
         key: 'settings',
@@ -212,7 +186,7 @@ export default function MoreHomeScreen({ navigation }: Props) {
       <Text style={styles.kicker}>CRM Mobile</Text>
       <Text style={styles.h1}>Menu</Text>
       <Text style={styles.intro}>
-        Các mục giống cấu trúc web. Mục chỉ có trên web sẽ mở trình duyệt (cần đăng nhập web nếu phiên khác). Tab dưới: CRM, Ghi âm, Thông báo — không lặp lại ở đây trừ khi cần lối tắt.
+        Hầu hết mục CRM mở trong app (API + giao diện native). Báo cáo / hướng dẫn / cập nhật dùng WebView (cần cấu hình web URL; đăng nhập web nếu phiên khác với app). Tab dưới: CRM, Ghi âm, Thông báo.
       </Text>
 
       {sections.map((sec) => (

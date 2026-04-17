@@ -146,6 +146,140 @@ function directPairKey(userIdA, userIdB) {
   return a < b ? `${a}:${b}` : `${b}:${a}`;
 }
 
+function parseUuidParam(s) {
+  if (s == null || typeof s !== 'string') return null;
+  const t = String(s).trim();
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      t,
+    )
+  ) {
+    return null;
+  }
+  return t;
+}
+
+function isDuplicateKeyError(err) {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return code === '23505' || msg.includes('duplicate') || msg.includes('unique');
+}
+
+async function userCanEnsureLeadMessenger(uid, leadId) {
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('assigned_to, lead_owner_id, created_by')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!lead) return false;
+  const u = String(uid);
+  if ([lead.assigned_to, lead.lead_owner_id, lead.created_by].filter(Boolean).map(String).includes(u)) {
+    return true;
+  }
+  const { data: lm } = await supabase.from('lead_members').select('id').eq('lead_id', leadId).eq('user_id', uid).limit(1).maybeSingle();
+  if (lm) return true;
+  const { data: usr } = await supabase.from('users').select('role').eq('id', uid).maybeSingle();
+  return String(usr?.role || '') === 'admin';
+}
+
+/** Một nhóm chat nội bộ gắn lead/deal (get-or-create); thêm thành viên theo team lead. */
+r.post('/leads/:leadId/ensure-internal-chat', async (req, res) => {
+  try {
+    const leadId = parseUuidParam(req.params.leadId);
+    if (!leadId) return res.status(400).json({ error: 'Lead/deal không hợp lệ' });
+    const uid = req.authUserId;
+    const { data: lead, error: lErr } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, assigned_to, lead_owner_id, created_by')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (lErr || !lead) return res.status(404).json({ error: 'Lead/deal không tồn tại' });
+    const allowed = await userCanEnsureLeadMessenger(uid, leadId);
+    if (!allowed) return res.status(403).json({ error: 'Bạn không thuộc team lead/deal này' });
+
+    const { data: existing } = await supabase.from('messenger_groups').select('id,name').eq('crm_lead_id', leadId).maybeSingle();
+    if (existing?.id) {
+      let ok = await assertGroupMember(existing.id, uid);
+      if (!ok) {
+        const { error: addErr } = await supabase.from('messenger_group_members').insert({
+          group_id: existing.id,
+          user_id: uid,
+          role: 'member',
+          added_by: uid,
+        });
+        if (!addErr || isDuplicateKeyError(addErr)) ok = true;
+      }
+      if (!ok) return res.status(403).json({ error: 'Không thể tham gia nhóm chat nội bộ của lead/deal này' });
+      return res.json({ group_id: existing.id, name: existing.name, created: false });
+    }
+
+    const titlePart = String(lead.title || '').slice(0, 60);
+    const name = `Nội bộ · ${lead.code || leadId.slice(0, 8)}${titlePart ? ` — ${titlePart}` : ''}`;
+    const memberIds = new Set([uid]);
+    if (lead.assigned_to) memberIds.add(String(lead.assigned_to));
+    if (lead.lead_owner_id) memberIds.add(String(lead.lead_owner_id));
+    if (lead.created_by) memberIds.add(String(lead.created_by));
+    const { data: memRows } = await supabase.from('lead_members').select('user_id').eq('lead_id', leadId);
+    (memRows || []).forEach((m) => {
+      if (m.user_id) memberIds.add(String(m.user_id));
+    });
+
+    const { data: group, error: gErr } = await supabase
+      .from('messenger_groups')
+      .insert({ name, created_by: uid, crm_lead_id: leadId })
+      .select('*')
+      .single();
+    if (gErr) {
+      const code = String(gErr.code || '');
+      const msg = String(gErr.message || '').toLowerCase();
+      if (code === '23505' || msg.includes('unique') || msg.includes('duplicate')) {
+        const { data: ex2 } = await supabase.from('messenger_groups').select('id,name').eq('crm_lead_id', leadId).maybeSingle();
+        if (ex2?.id) {
+          const ok2 = await assertGroupMember(ex2.id, uid);
+          if (!ok2) {
+            const { error: addEx } = await supabase.from('messenger_group_members').insert({
+              group_id: ex2.id,
+              user_id: uid,
+              role: 'member',
+              added_by: uid,
+            });
+            if (addEx && !isDuplicateKeyError(addEx)) {
+              return res.status(403).json({ error: 'Không thể tham gia nhóm chat nội bộ của lead/deal này' });
+            }
+          }
+          return res.json({ group_id: ex2.id, name: ex2.name, created: false });
+        }
+      }
+      return res.status(400).json({ error: gErr.message });
+    }
+
+    const memberRows = [];
+    for (const mid of memberIds) {
+      const role = String(mid) === String(uid) ? 'leader' : 'member';
+      memberRows.push({ group_id: group.id, user_id: mid, role, added_by: uid });
+    }
+    const { error: mErr } = await supabase.from('messenger_group_members').insert(memberRows);
+    if (mErr) {
+      await supabase.from('messenger_groups').delete().eq('id', group.id);
+      return res.status(400).json({ error: mErr.message });
+    }
+
+    const { data: creator } = await supabase.from('users').select('full_name').eq('id', uid).single();
+    await supabase.from('messenger_group_messages').insert({
+      group_id: group.id,
+      user_id: uid,
+      content: `${creator?.full_name || 'Ai đó'} đã tạo nhóm nội bộ cho lead/deal «${name}»`,
+      message_type: 'system',
+      is_system: true,
+    });
+
+    res.status(201).json({ group_id: group.id, name: group.name, created: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /** Chat 1–1 giữa hai nhân viên (một hàng messenger_groups, is_direct = true) */
 r.post('/direct', async (req, res) => {
   try {
@@ -207,6 +341,12 @@ r.get('/groups', async (req, res) => {
     const { data: groups, error: gErr } = await supabase.from('messenger_groups').select('*').in('id', ids);
     if (gErr) throw gErr;
 
+    const leadQ = req.query.crm_lead_id != null ? String(req.query.crm_lead_id).trim() : '';
+    const leadFilter = leadQ ? parseUuidParam(leadQ) : null;
+
+    const groupsFiltered =
+      leadFilter && Array.isArray(groups) ? groups.filter((g) => String(g.crm_lead_id || '') === leadFilter) : groups || [];
+
     const { data: allMems } = await supabase
       .from('messenger_group_members')
       .select('group_id, user_id')
@@ -217,7 +357,7 @@ r.get('/groups', async (req, res) => {
       membersByG.get(m.group_id).push(m.user_id);
     }
     const peerIds = [];
-    for (const g of groups || []) {
+    for (const g of groupsFiltered || []) {
       if (!g.is_direct) continue;
       const mems = membersByG.get(g.id) || [];
       const other = mems.find((id) => String(id) !== String(uid));
@@ -243,7 +383,7 @@ r.get('/groups', async (req, res) => {
       }
     }
 
-    const list = (groups || []).map((g) => {
+    const list = (groupsFiltered || []).map((g) => {
       let display_name = g.name;
       let peer_id = null;
       if (g.is_direct) {
@@ -264,6 +404,7 @@ r.get('/groups', async (req, res) => {
         peer_id,
         created_by: g.created_by,
         created_at: g.created_at,
+        crm_lead_id: g.crm_lead_id || null,
         my_role: roleByGid.get(g.id),
         message_count: st?.message_count ?? 0,
         last_message_at: st?.last_message_at || g.created_at,
@@ -381,9 +522,18 @@ r.post('/groups', async (req, res) => {
     const creatorId = req.authUserId;
     const rawMembers = Array.isArray(req.body.members) ? req.body.members : [];
 
+    let crmLeadId = null;
+    if (req.body.crm_lead_id != null && String(req.body.crm_lead_id).trim() !== '') {
+      crmLeadId = parseUuidParam(String(req.body.crm_lead_id));
+      if (!crmLeadId) return res.status(400).json({ error: 'crm_lead_id không hợp lệ' });
+    }
+
+    const insertRow = { name, created_by: creatorId };
+    if (crmLeadId) insertRow.crm_lead_id = crmLeadId;
+
     const { data: group, error: gErr } = await supabase
       .from('messenger_groups')
-      .insert({ name, created_by: creatorId })
+      .insert(insertRow)
       .select('*')
       .single();
     if (gErr) return res.status(400).json({ error: gErr.message });
@@ -507,7 +657,14 @@ r.get('/groups/:id/chat', async (req, res) => {
   }
 });
 
-r.post('/groups/:id/chat', messengerMemoryUpload.array('files', 20), async (req, res) => {
+/** Text-only từ axios JSON (mobile) — không đi qua multer */
+function messengerChatJsonOrMultipart(req, res, next) {
+  const ct = String(req.headers['content-type'] || '').toLowerCase();
+  if (ct.includes('application/json')) return next();
+  return messengerMemoryUpload.array('files', 20)(req, res, next);
+}
+
+r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
   try {
     const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
