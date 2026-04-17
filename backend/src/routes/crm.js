@@ -5959,6 +5959,8 @@ r.get('/leads/:id/chat', async (req, res) => {
 // POST /leads/:id/chat — gửi tin nhắn (text, file, image, video, audio)
 r.post('/leads/:id/chat', leadChatJsonOrFiles, async (req, res) => {
   try {
+    const uid = req.user?.userId ?? req.user?.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
     const { content, reply_to } = req.body;
     const files = req.files || [];
     const attachments = files.map(f => ({
@@ -5972,7 +5974,7 @@ r.post('/leads/:id/chat', leadChatJsonOrFiles, async (req, res) => {
 
     const { data, error } = await supabase.from('lead_messages').insert({
       lead_id: req.params.id,
-      user_id: req.user.userId,
+      user_id: String(uid),
       content: content || '',
       attachments: attachments.length ? attachments : null,
       reply_to: reply_to || null,
@@ -5996,6 +5998,8 @@ const chatUpload = multer({ storage: multer.diskStorage({
 
 r.post('/leads/:id/chat/upload', chatUpload.single('file'), async (req, res) => {
   try {
+    const uid = req.user?.userId ?? req.user?.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
     if (!req.file) return res.status(400).json({ error: 'Không có file' });
     const mime = req.file.mimetype;
     let message_type = 'file';
@@ -6005,7 +6009,7 @@ r.post('/leads/:id/chat/upload', chatUpload.single('file'), async (req, res) => 
 
     const attachment_url = `/uploads/lead-chat/${req.file.filename}`;
     const { data, error } = await supabase.from('lead_messages').insert({
-      lead_id: req.params.id, user_id: req.user.userId,
+      lead_id: req.params.id, user_id: String(uid),
       content: req.body.content || '', message_type,
       attachment_url, attachment_name: req.file.originalname,
       attachment_size: req.file.size, attachment_mime: mime,
@@ -6018,7 +6022,9 @@ r.post('/leads/:id/chat/upload', chatUpload.single('file'), async (req, res) => 
 
     // Notify các thành viên khác (upload file cũng cần thông báo)
     const { data: uploadMembers } = await supabase.from('lead_members')
-      .select('user_id').eq('lead_id', req.params.id).neq('user_id', req.user.userId);
+      .select('user_id')
+      .eq('lead_id', req.params.id)
+      .neq('user_id', String(uid));
     if (uploadMembers?.length) {
       const senderName = data?.user?.full_name || 'Ai đó';
       const preview = message_type === 'image' ? '[🖼️ Hình ảnh]' : message_type === 'video' ? '[🎬 Video]' : message_type === 'audio' ? '[🎙️ Ghi âm]' : `[📎 ${req.file.originalname || 'Tệp'}]`;
