@@ -27,6 +27,7 @@ import type { MoreStackParamList } from '../navigation/types';
 import type { MessengerGroupDetail, MessengerMessage } from '../types/messenger';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
+import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
 
 type R = RouteProp<MoreStackParamList, 'MessengerGroupChat'>;
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupChat'>;
@@ -55,12 +56,37 @@ export default function MessengerGroupChatScreen() {
   const [replyTo, setReplyTo] = useState<MessengerMessage | null>(null);
   const listRef = useRef<FlatList<MessengerMessage>>(null);
   const seenIds = useRef<Set<string>>(new Set());
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugText, setDebugText] = useState('');
+
+  useEffect(() => {
+    const update = () => {
+      const rows = chatDebugSnapshot();
+      const text = rows
+        .map((r) => {
+          let d = '';
+          if (r.data !== undefined) {
+            try {
+              d = JSON.stringify(r.data, null, 2);
+            } catch {
+              d = String(r.data);
+            }
+          }
+          return `${r.at}  [${r.scope}]  ${r.message}${d ? `\n${d}` : ''}`;
+        })
+        .join('\n\n');
+      setDebugText(text);
+    };
+    update();
+    return chatDebugSubscribe(update);
+  }, []);
 
   const displayTitle = group?.name || titleParam || 'Chat nhóm';
 
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
+      chatDebugLog('messenger', 'GET group+chat', { groupId });
       const [gRes, mRes] = await Promise.all([
         api.get<MessengerGroupDetail>(`/messenger/groups/${groupId}`),
         api.get<MessengerMessage[]>(`/messenger/groups/${groupId}/chat`),
@@ -153,6 +179,7 @@ export default function MessengerGroupChatScreen() {
     setSending(true);
     try {
       if (pendingFiles.length === 0) {
+        chatDebugLog('messenger', 'POST group chat (text)', { groupId, content_len: text.length });
         const body: { content: string; reply_to?: string } = { content: text };
         if (replyTo?.id) body.reply_to = String(replyTo.id);
         const { data } = await api.post<MessengerMessage>(`/messenger/groups/${groupId}/chat`, body, {
@@ -167,6 +194,11 @@ export default function MessengerGroupChatScreen() {
       }
 
       const form = new FormData();
+      chatDebugLog('messenger', 'POST group chat (files)', {
+        groupId,
+        content_len: text.length,
+        files: pendingFiles.map((f) => ({ name: f.name, type: f.type, uri: f.uri })),
+      });
       form.append('content', text);
       if (replyTo?.id) form.append('reply_to', String(replyTo.id));
       for (const f of pendingFiles) {
@@ -180,7 +212,18 @@ export default function MessengerGroupChatScreen() {
       setReplyTo(null);
       appendMessage(data);
     } catch (e: unknown) {
-      Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Gửi không thành công');
+      const err = e as {
+        message?: string;
+        response?: { status?: number; data?: { error?: string; message?: string } };
+        config?: { method?: string; url?: string; baseURL?: string; timeout?: number };
+      };
+      chatDebugLog('messenger', 'POST failed', {
+        status: err?.response?.status,
+        api_error: err?.response?.data?.error || err?.response?.data?.message,
+        message: err?.message,
+        req: err?.config,
+      });
+      Alert.alert('Lỗi', err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Gửi không thành công');
     } finally {
       setSending(false);
     }
@@ -331,11 +374,16 @@ export default function MessengerGroupChatScreen() {
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={88}>
-      <TouchableOpacity style={styles.infoBar} onPress={() => setInfoOpen(true)}>
-        <Text style={styles.infoBarTxt}>
-          {isDirectChat ? 'ℹ️ Thành viên' : 'ℹ️ Thành viên · Thêm người · Rời nhóm'}
-        </Text>
-      </TouchableOpacity>
+      <View style={styles.infoBar}>
+        <TouchableOpacity style={{ flex: 1 }} onPress={() => setInfoOpen(true)}>
+          <Text style={styles.infoBarTxt}>
+            {isDirectChat ? 'ℹ️ Thành viên' : 'ℹ️ Thành viên · Thêm người · Rời nhóm'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setDebugOpen(true)} style={styles.debugPill} activeOpacity={0.85}>
+          <Text style={styles.debugPillTxt}>Log</Text>
+        </TouchableOpacity>
+      </View>
       <FlatList
         ref={listRef}
         data={messages}
@@ -432,6 +480,35 @@ export default function MessengerGroupChatScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal visible={debugOpen} transparent animationType="fade" onRequestClose={() => setDebugOpen(false)}>
+        <Pressable style={styles.modalBg} onPress={() => setDebugOpen(false)}>
+          <Pressable style={styles.debugSheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.debugHead}>
+              <Text style={styles.debugTitle}>Log chat (debug)</Text>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    chatDebugClear();
+                    setDebugText('');
+                  }}
+                >
+                  <Text style={styles.debugBtn}>Xóa</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setDebugOpen(false)}>
+                  <Text style={styles.debugBtn}>Đóng</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <FlatList
+              data={debugText ? debugText.split('\n') : ['Chưa có log.']}
+              keyExtractor={(_, i) => String(i)}
+              style={{ maxHeight: 420 }}
+              renderItem={({ item }) => <Text style={styles.debugMono}>{item}</Text>}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -445,8 +522,13 @@ const styles = StyleSheet.create({
     backgroundColor: CrmColors.white,
     borderBottomWidth: 1,
     borderBottomColor: CrmColors.gray200,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   infoBarTxt: { fontSize: 12, color: CrmColors.blue700, fontWeight: '600', textAlign: 'center' },
+  debugPill: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: CrmColors.gray900 },
+  debugPillTxt: { fontSize: 12, fontWeight: '800', color: CrmColors.white },
   listPad: { padding: 12, paddingBottom: 8 },
   sysWrap: { alignSelf: 'center', maxWidth: '92%', marginVertical: 6, alignItems: 'center' },
   sysTxt: { fontSize: 12, color: CrmColors.gray600, textAlign: 'center' },
@@ -554,4 +636,31 @@ const styles = StyleSheet.create({
   sheetBtnDangerTxt: { color: CrmColors.red700, fontWeight: '800' },
   sheetClose: { marginTop: 16, alignItems: 'center' },
   sheetCloseTxt: { color: CrmColors.gray500, fontWeight: '600' },
+  debugSheet: {
+    margin: 18,
+    borderRadius: 16,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    paddingBottom: 12,
+    maxHeight: '85%',
+    overflow: 'hidden',
+  },
+  debugHead: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: CrmColors.gray100,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  debugTitle: { fontSize: 14, fontWeight: '900', color: CrmColors.gray900 },
+  debugBtn: { fontSize: 12, fontWeight: '800', color: CrmColors.blue700 },
+  debugMono: {
+    fontSize: 11,
+    color: CrmColors.gray800,
+    paddingHorizontal: 12,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+  },
 });

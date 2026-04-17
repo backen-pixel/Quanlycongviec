@@ -12,6 +12,8 @@ import {
   Alert,
   Platform,
   KeyboardAvoidingView,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { io, type Socket } from 'socket.io-client';
 import * as ImagePicker from 'expo-image-picker';
@@ -23,6 +25,7 @@ import type { CrmLeadMessage } from '../types/crm';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { openWebPath } from '../lib/openWeb';
+import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
 
 type Props = { leadId: string };
 
@@ -60,12 +63,37 @@ export default function LeadChatPanel({ leadId }: Props) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [filter, setFilter] = useState<ChatFilter>('all');
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugText, setDebugText] = useState('');
   const socketRef = useRef<Socket | null>(null);
   const listRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    const update = () => {
+      const rows = chatDebugSnapshot();
+      const text = rows
+        .map((r) => {
+          let d = '';
+          if (r.data !== undefined) {
+            try {
+              d = JSON.stringify(r.data, null, 2);
+            } catch {
+              d = String(r.data);
+            }
+          }
+          return `${r.at}  [${r.scope}]  ${r.message}${d ? `\n${d}` : ''}`;
+        })
+        .join('\n\n');
+      setDebugText(text);
+    };
+    update();
+    return chatDebugSubscribe(update);
+  }, []);
 
   const loadChat = useCallback(async () => {
     setLoading(true);
     try {
+      chatDebugLog('lead-chat', 'GET /crm/leads/:id/chat', { leadId });
       const { data } = await api.get<CrmLeadMessage[]>(`/crm/leads/${leadId}/chat`);
       setMessages(Array.isArray(data) ? data : []);
     } catch {
@@ -142,6 +170,7 @@ export default function LeadChatPanel({ leadId }: Props) {
     if (!t || sending) return;
     setSending(true);
     try {
+      chatDebugLog('lead-chat', 'POST /crm/leads/:id/chat (text)', { leadId, content_len: t.length });
       await api.post(
         `/crm/leads/${leadId}/chat`,
         { content: t },
@@ -151,7 +180,18 @@ export default function LeadChatPanel({ leadId }: Props) {
       await loadChat();
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 250);
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không gửi được tin nhắn';
+      const err = e as {
+        message?: string;
+        response?: { status?: number; data?: { error?: string; message?: string } };
+        config?: { method?: string; url?: string; baseURL?: string; timeout?: number };
+      };
+      chatDebugLog('lead-chat', 'POST text failed', {
+        status: err?.response?.status,
+        api_error: err?.response?.data?.error || err?.response?.data?.message,
+        message: err?.message,
+        req: err?.config,
+      });
+      const msg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Không gửi được tin nhắn';
       Alert.alert('Lỗi gửi chat', String(msg));
     } finally {
       setSending(false);
@@ -161,6 +201,7 @@ export default function LeadChatPanel({ leadId }: Props) {
   const uploadAsset = async (uri: string, name: string, mime: string) => {
     setSending(true);
     try {
+      chatDebugLog('lead-chat', 'POST /crm/leads/:id/chat/upload', { leadId, name, mime, uri });
       const fd = new FormData();
       fd.append('file', { uri, name, type: mime } as unknown as Blob);
       if (draft.trim()) fd.append('content', draft.trim());
@@ -169,7 +210,18 @@ export default function LeadChatPanel({ leadId }: Props) {
       await loadChat();
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 200);
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Upload thất bại';
+      const err = e as {
+        message?: string;
+        response?: { status?: number; data?: { error?: string; message?: string } };
+        config?: { method?: string; url?: string; baseURL?: string; timeout?: number };
+      };
+      chatDebugLog('lead-chat', 'POST upload failed', {
+        status: err?.response?.status,
+        api_error: err?.response?.data?.error || err?.response?.data?.message,
+        message: err?.message,
+        req: err?.config,
+      });
+      const msg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Upload thất bại';
       Alert.alert('Lỗi', String(msg));
     } finally {
       setSending(false);
@@ -270,10 +322,41 @@ export default function LeadChatPanel({ leadId }: Props) {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
       style={styles.root}
     >
+      <Modal visible={debugOpen} transparent animationType="fade" onRequestClose={() => setDebugOpen(false)}>
+        <Pressable style={styles.debugBackdrop} onPress={() => setDebugOpen(false)}>
+          <Pressable style={[styles.debugSheet, CrmShadow.card]} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.debugHead}>
+              <Text style={styles.debugTitle}>Log chat (debug)</Text>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    chatDebugClear();
+                    setDebugText('');
+                  }}
+                >
+                  <Text style={styles.debugBtn}>Xóa</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setDebugOpen(false)}>
+                  <Text style={styles.debugBtn}>Đóng</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <ScrollView style={styles.debugBody}>
+              <Text style={styles.debugMono}>{debugText || 'Chưa có log.'}</Text>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <View style={styles.toolbar}>
-        <TouchableOpacity style={styles.webBtn} onPress={() => openWebPath(`/crm/leads/${leadId}?tab=chat`)}>
-          <Text style={styles.webBtnTxt}>Web đầy đủ (reply, reaction)</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+          <TouchableOpacity style={styles.webBtn} onPress={() => openWebPath(`/crm/leads/${leadId}?tab=chat`)}>
+            <Text style={styles.webBtnTxt}>Web đầy đủ (reply, reaction)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.debugBtnPill} onPress={() => setDebugOpen(true)} activeOpacity={0.85}>
+            <Text style={styles.debugBtnPillTxt}>Log</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       <View style={styles.bodyRow}>
         <View style={styles.chatCol}>
@@ -362,6 +445,14 @@ const styles = StyleSheet.create({
     borderColor: CrmColors.blue100,
   },
   webBtnTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.blue600 },
+  debugBtnPill: {
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: CrmRadii.md,
+    backgroundColor: CrmColors.gray900,
+  },
+  debugBtnPillTxt: { fontSize: 12, fontWeight: '800', color: CrmColors.white },
   bodyRow: { flexDirection: 'row', gap: 8, minHeight: 320 },
   chatCol: { flex: 1, minWidth: 0 },
   rail: { width: 76, flexShrink: 0, gap: 6 },
@@ -465,4 +556,31 @@ const styles = StyleSheet.create({
   },
   sendOff: { opacity: 0.45 },
   sendTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },
+
+  debugBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'center', padding: 18 },
+  debugSheet: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    maxHeight: '85%',
+    overflow: 'hidden',
+  },
+  debugHead: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: CrmColors.gray100,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  debugTitle: { fontSize: 14, fontWeight: '900', color: CrmColors.gray900 },
+  debugBtn: { fontSize: 12, fontWeight: '800', color: CrmColors.blue700 },
+  debugBody: { paddingHorizontal: 12, paddingVertical: 10 },
+  debugMono: {
+    fontSize: 11,
+    color: CrmColors.gray800,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+  },
 });

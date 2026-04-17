@@ -8,6 +8,7 @@ import PermissionBootstrap from './src/components/PermissionBootstrap';
 import RootNavigator from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/navigationRef';
 import GlobalNotificationToast from './src/components/GlobalNotificationToast';
+import FloatingChatBubble from './src/components/FloatingChatBubble';
 import { CrmColors } from './src/theme/crmTheme';
 
 const NavTheme = {
@@ -32,6 +33,7 @@ export default function App() {
             <View style={{ flex: 1 }}>
               <RootNavigator />
               <GlobalNotificationToast />
+              <FloatingChatBubble />
             </View>
             <StatusBar style="dark" />
           </NavigationContainer>
