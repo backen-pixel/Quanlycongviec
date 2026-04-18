@@ -249,7 +249,9 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
     if (socket) {
       socket.emit('join:lead', leadId);
       const handler = (msg) => {
-        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
+        const lid = msg?.lead_id ?? msg?.leadId;
+        if (lid == null || String(lid) !== String(leadId)) return;
+        setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       };
       socket.on('lead:chat', handler);
@@ -545,6 +547,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
     if (socket) {
       socket.emit('join:messenger_group', groupId);
       const onChat = (msg) => {
+        const gid = msg?.group_id ?? msg?.groupId;
+        if (gid == null || String(gid) !== String(groupId)) return;
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       };
