@@ -8,6 +8,7 @@ import PermissionBootstrap from './src/components/PermissionBootstrap';
 import RootNavigator from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/navigationRef';
 import GlobalNotificationToast from './src/components/GlobalNotificationToast';
+import ChatNotificationToast from './src/components/ChatNotificationToast';
 import FloatingChatBubble from './src/components/FloatingChatBubble';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
 import { CrmColors } from './src/theme/crmTheme';
@@ -51,6 +52,7 @@ export default function App() {
                 </View>
               )}
               <GlobalNotificationToast />
+              <ChatNotificationToast />
               <SystemBubbleSync />
               <FloatingChatBubble />
             </View>

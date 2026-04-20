@@ -8,6 +8,10 @@ export type MessengerGroupListItem = {
   my_role?: string | null;
   message_count?: number;
   last_message_at?: string | null;
+  /** Preview nội dung tin nhắn cuối (tối đa 100 ký tự). */
+  last_message?: string | null;
+  /** Số tin chưa đọc của user hiện tại trong nhóm này. */
+  unread_count?: number;
 };
 
 export type MessengerMember = {

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BackHandler,
   View,
   Text,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
   Linking,
   Image,
   KeyboardAvoidingView,
+  NativeModules,
   Platform,
   Keyboard,
 } from 'react-native';
@@ -51,7 +53,7 @@ export default function MessengerGroupChatScreen() {
   const { refreshUnread } = useNotifications();
   const [kbInset, setKbInset] = useState(0);
 
-  const { groupId, title: titleParam, isDirect: isDirectParam } = params;
+  const { groupId, title: titleParam, isDirect: isDirectParam, fromBubble } = params;
 
   const [group, setGroup] = useState<MessengerGroupDetail | null>(null);
   const [messages, setMessages] = useState<MessengerMessage[]>([]);
@@ -94,6 +96,16 @@ export default function MessengerGroupChatScreen() {
     void setMessengerBubbleTarget(groupId, displayTitle);
   }, [groupId, displayTitle]);
 
+  // Khi mở từ bubble (fromBubble=true): override back → minimizeApp (quay về app trước).
+  useEffect(() => {
+    if (!fromBubble || Platform.OS !== 'android') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      NativeModules.FloatingBubbleOverlay?.minimizeApp?.();
+      return true;
+    });
+    return () => sub.remove();
+  }, [fromBubble]);
+
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (e) => setKbInset(e.endCoordinates.height));
     const hide = Keyboard.addListener('keyboardDidHide', () => setKbInset(0));
@@ -127,7 +139,9 @@ export default function MessengerGroupChatScreen() {
     useCallback(() => {
       void refreshUnread();
       void loadAll();
-    }, [refreshUnread, loadAll]),
+      // Đánh dấu đã đọc khi mở nhóm chat (cập nhật messenger_read_receipts)
+      void api.patch(`/messenger/groups/${groupId}/read`).catch(() => {});
+    }, [refreshUnread, loadAll, groupId]),
   );
 
   useEffect(() => {

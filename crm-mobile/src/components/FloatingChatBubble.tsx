@@ -19,7 +19,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNotifications } from '../context/NotificationContext';
+import { isChatNotification, useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { navigationRef } from '../navigation/navigationRef';
@@ -142,6 +142,9 @@ export default function FloatingChatBubble() {
   const pressScale = useRef(new Animated.Value(1)).current;
   const badgePulse = useRef(new Animated.Value(1)).current;
   const dropRingPulse = useRef(new Animated.Value(1)).current;
+  const peekOpacity = useRef(new Animated.Value(0)).current;
+  const peekTranslateX = useRef(new Animated.Value(40)).current;
+  const [peekToast, setPeekToast] = useState<{ title: string; message: string } | null>(null);
 
   const avatarUrl =
     user && typeof (user as { avatar_url?: string }).avatar_url === 'string'
@@ -249,6 +252,29 @@ export default function FloatingChatBubble() {
     loop.start();
     return () => loop.stop();
   }, [dragging, dropRingPulse]);
+
+  // Peek: hiện sender + message khi có chat notification và bubble đang hiển thị
+  useEffect(() => {
+    if (toast && isChatNotification(toast)) {
+      const meta = toast.metadata && typeof toast.metadata === 'object'
+        ? (toast.metadata as Record<string, unknown>)
+        : {};
+      const sender = typeof meta.sender_name === 'string'
+        ? meta.sender_name
+        : (typeof meta.sender === 'string' ? meta.sender : toast.title);
+      setPeekToast({ title: sender, message: toast.message ?? '' });
+      peekTranslateX.setValue(40);
+      Animated.parallel([
+        Animated.timing(peekOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.spring(peekTranslateX, { toValue: 0, useNativeDriver: true, friction: 8 }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(peekOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        Animated.timing(peekTranslateX, { toValue: 32, duration: 180, useNativeDriver: true }),
+      ]).start(() => setPeekToast(null));
+    }
+  }, [toast?.id, toast?.type, peekOpacity, peekTranslateX]);
 
   useEffect(() => {
     if (!quickMenuOpen) suppressTapAfterLongPressRef.current = false;
@@ -404,6 +430,28 @@ export default function FloatingChatBubble() {
             </Animated.View>
           </View>
         </>
+      ) : null}
+
+      {/* Peek: hiện sender + message gần bong bóng khi có tin nhắn mới */}
+      {peekToast ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.peekWrap,
+            {
+              opacity: peekOpacity,
+              transform: [
+                ...xy.getTranslateTransform(),
+                { translateX: peekTranslateX },
+              ],
+            },
+          ]}
+        >
+          <View style={styles.peekCard}>
+            <Text style={styles.peekSender} numberOfLines={1}>{peekToast.title}</Text>
+            <Text style={styles.peekMsg} numberOfLines={2}>{peekToast.message}</Text>
+          </View>
+        </Animated.View>
       ) : null}
 
       <Animated.View
@@ -725,4 +773,26 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   menuCancelTxt: { fontSize: 16, fontWeight: '700', color: CrmColors.gray600 },
+  peekWrap: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    zIndex: 9998,
+    transform: [{ translateX: -180 }, { translateY: -8 }],
+  },
+  peekCard: {
+    backgroundColor: 'rgba(0,104,255,0.92)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    maxWidth: 180,
+    marginRight: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  peekSender: { color: CrmColors.white, fontSize: 12, fontWeight: '800', marginBottom: 2 },
+  peekMsg: { color: 'rgba(255,255,255,0.9)', fontSize: 11, lineHeight: 15 },
 });
