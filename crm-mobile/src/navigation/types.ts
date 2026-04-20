@@ -19,7 +19,7 @@ export type MoreStackParamList = {
   AutoPipelineStatus: undefined;
   AccountSettings: undefined;
   MessengerGroupList: undefined;
-  MessengerGroupChat: { groupId: string; title?: string; isDirect?: boolean };
+  MessengerGroupChat: { groupId: string; title?: string; isDirect?: boolean; fromBubble?: boolean };
   MessengerCompose: { mode: 'group' | 'direct' };
   MessengerAddMembers: { groupId: string };
   SalesHub: undefined;

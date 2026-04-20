@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNotifications } from '../context/NotificationContext';
+import { isChatNotification, useNotifications } from '../context/NotificationContext';
 import { navigateFromAppNotification, navigateToNotificationsTab } from '../lib/navigateFromAppNotification';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 
@@ -36,7 +36,8 @@ export default function GlobalNotificationToast() {
     };
   }, [toast, dismissToast, opacity, translateY]);
 
-  if (!toast) return null;
+  // Chat notifications (messenger_chat, lead_chat) hiển thị qua ChatNotificationToast riêng.
+  if (!toast || isChatNotification(toast)) return null;
 
   return (
     <Animated.View

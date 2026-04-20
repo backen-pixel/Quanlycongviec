@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -20,12 +20,29 @@ import { useNotifications } from '../context/NotificationContext';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupList'>;
 
+/** Sắp xếp: pin trước → last_message_at giảm dần */
+function sortGroups(list: MessengerGroupListItem[], pinSet: Set<string>): MessengerGroupListItem[] {
+  return [...list].sort((a, b) => {
+    const ap = pinSet.has(String(a.id)) ? 1 : 0;
+    const bp = pinSet.has(String(b.id)) ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    const ta = new Date(a.last_message_at || 0).getTime();
+    const tb = new Date(b.last_message_at || 0).getTime();
+    return tb - ta;
+  });
+}
+
 export default function MessengerGroupListScreen({ navigation }: { navigation: Nav }) {
-  const { refreshUnread } = useNotifications();
+  const { refreshUnread, subscribeIncoming } = useNotifications();
   const [groups, setGroups] = useState<MessengerGroupListItem[]>([]);
   const [pins, setPins] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const pinsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    pinsRef.current = pins;
+  }, [pins]);
 
   const load = useCallback(async () => {
     try {
@@ -35,17 +52,9 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
       ]);
       const list = Array.isArray(gRes.data) ? gRes.data : [];
       const ids = (pRes.data?.group_ids || []).filter(Boolean);
-      setPins(new Set(ids.map(String)));
       const pinSet = new Set(ids.map(String));
-      list.sort((a, b) => {
-        const ap = pinSet.has(String(a.id)) ? 1 : 0;
-        const bp = pinSet.has(String(b.id)) ? 1 : 0;
-        if (ap !== bp) return bp - ap;
-        const ta = new Date(a.last_message_at || 0).getTime();
-        const tb = new Date(b.last_message_at || 0).getTime();
-        return tb - ta;
-      });
-      setGroups(list);
+      setPins(pinSet);
+      setGroups(sortGroups(list, pinSet));
     } catch {
       setGroups([]);
     } finally {
@@ -61,6 +70,53 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
       void load();
     }, [load, refreshUnread]),
   );
+
+  // Re-sort realtime khi nhận tin nhắn mới qua socket
+  useEffect(() => {
+    const unsub = subscribeIncoming((n) => {
+      if (n.type !== 'messenger_chat' || n.entity_type !== 'messenger_group' || !n.entity_id) return;
+      const groupId = String(n.entity_id);
+      const meta = n.metadata && typeof n.metadata === 'object'
+        ? (n.metadata as Record<string, unknown>)
+        : {};
+      const groupName = typeof meta.group_name === 'string' ? meta.group_name : undefined;
+      const msgContent = n.message ?? '';
+
+      setGroups((prev) => {
+        const idx = prev.findIndex((g) => String(g.id) === groupId);
+        let updated: MessengerGroupListItem[];
+
+        if (idx >= 0) {
+          // Group đã có: cập nhật last_message_at, last_message, tăng unread_count
+          updated = prev.map((g, i) => {
+            if (i !== idx) return g;
+            return {
+              ...g,
+              last_message_at: new Date().toISOString(),
+              last_message: msgContent,
+              unread_count: (g.unread_count ?? 0) + 1,
+            };
+          });
+        } else {
+          // Group chưa có trong list (mới được thêm vào) — thêm tạm, sẽ reload khi focus lại
+          updated = [
+            {
+              id: groupId,
+              name: groupName,
+              last_message_at: new Date().toISOString(),
+              last_message: msgContent,
+              unread_count: 1,
+              message_count: 1,
+            },
+            ...prev,
+          ];
+        }
+
+        return sortGroups(updated, pinsRef.current);
+      });
+    });
+    return unsub;
+  }, [subscribeIncoming]);
 
   const togglePin = (g: MessengerGroupListItem) => {
     const id = String(g.id);
@@ -119,9 +175,11 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
         ListEmptyComponent={<Text style={styles.empty}>Chưa có nhóm chat. Tạo nhóm hoặc chat 1–1 với đồng nghiệp.</Text>}
         renderItem={({ item }) => {
           const pinned = pins.has(String(item.id));
+          const unread = item.unread_count ?? 0;
+          const hasUnread = unread > 0;
           return (
             <TouchableOpacity
-              style={[styles.row, CrmShadow.card]}
+              style={[styles.row, hasUnread && styles.rowUnread, CrmShadow.card]}
               onPress={() =>
                 navigation.navigate('MessengerGroupChat', {
                   groupId: String(item.id),
@@ -131,25 +189,56 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
               }
               activeOpacity={0.85}
             >
-              <View style={styles.rowIcon}>
+              {/* Avatar */}
+              <View style={[styles.rowIcon, hasUnread && styles.rowIconUnread]}>
                 <Text style={styles.rowIconTxt}>{item.is_direct ? '💬' : '👥'}</Text>
               </View>
+
+              {/* Content */}
               <View style={{ flex: 1, minWidth: 0 }}>
                 <View style={styles.titleRow}>
                   {pinned ? <Text style={styles.pinMark}>📌 </Text> : null}
-                  <Text style={styles.rowTitle} numberOfLines={1}>
+                  <Text
+                    style={[styles.rowTitle, hasUnread && styles.rowTitleUnread]}
+                    numberOfLines={1}
+                  >
                     {item.name || 'Nhóm'}
                   </Text>
                 </View>
-                <Text style={styles.rowSub} numberOfLines={1}>
-                  {item.is_direct ? 'Chat trực tiếp' : item.crm_lead_id ? 'Nhóm theo lead/deal' : 'Nhóm'} ·{' '}
-                  {item.message_count ?? 0} tin
-                  {item.last_message_at ? ` · ${formatDateTime(item.last_message_at)}` : ''}
-                </Text>
+
+                {/* Preview tin nhắn cuối */}
+                {item.last_message ? (
+                  <Text
+                    style={[styles.rowPreview, hasUnread && styles.rowPreviewUnread]}
+                    numberOfLines={1}
+                  >
+                    {item.last_message}
+                  </Text>
+                ) : (
+                  <Text style={styles.rowSub} numberOfLines={1}>
+                    {item.is_direct ? 'Chat trực tiếp' : item.crm_lead_id ? 'Nhóm theo lead/deal' : 'Nhóm'} ·{' '}
+                    {item.message_count ?? 0} tin
+                    {item.last_message_at ? ` · ${formatDateTime(item.last_message_at)}` : ''}
+                  </Text>
+                )}
+
+                {/* Thời gian + sub khi có preview */}
+                {item.last_message && item.last_message_at ? (
+                  <Text style={styles.rowTime}>{formatDateTime(item.last_message_at)}</Text>
+                ) : null}
               </View>
-              <TouchableOpacity style={styles.pinHit} onPress={() => togglePin(item)} hitSlop={10}>
-                <Text style={styles.pinBtn}>{pinned ? '📌' : '📍'}</Text>
-              </TouchableOpacity>
+
+              {/* Right side: unread badge + pin */}
+              <View style={styles.rowRight}>
+                {hasUnread ? (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadTxt}>{unread > 99 ? '99+' : String(unread)}</Text>
+                  </View>
+                ) : null}
+                <TouchableOpacity style={styles.pinHit} onPress={() => togglePin(item)} hitSlop={10}>
+                  <Text style={styles.pinBtn}>{pinned ? '📌' : '📍'}</Text>
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
           );
         }}
@@ -157,6 +246,8 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
     </View>
   );
 }
+
+const ZALO_BLUE = '#0068FF';
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: CrmColors.pageBg },
@@ -194,6 +285,10 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 12,
   },
+  rowUnread: {
+    borderColor: ZALO_BLUE + '55',
+    backgroundColor: '#F0F7FF',
+  },
   rowIcon: {
     width: 44,
     height: 44,
@@ -202,11 +297,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  rowIconUnread: {
+    backgroundColor: ZALO_BLUE + '22',
+  },
   rowIconTxt: { fontSize: 22 },
   titleRow: { flexDirection: 'row', alignItems: 'center' },
   pinMark: { fontSize: 13 },
-  rowTitle: { fontSize: 16, fontWeight: '700', color: CrmColors.gray900, flexShrink: 1 },
+  rowTitle: { fontSize: 15, fontWeight: '600', color: CrmColors.gray700, flexShrink: 1 },
+  rowTitleUnread: { fontWeight: '800', color: CrmColors.gray900 },
+  rowPreview: {
+    fontSize: 13,
+    color: CrmColors.gray500,
+    marginTop: 3,
+  },
+  rowPreviewUnread: {
+    color: CrmColors.gray800,
+    fontWeight: '600',
+  },
   rowSub: { fontSize: 12, color: CrmColors.gray500, marginTop: 4 },
-  pinHit: { padding: 6 },
-  pinBtn: { fontSize: 18 },
+  rowTime: { fontSize: 11, color: CrmColors.gray400, marginTop: 2 },
+  rowRight: { alignItems: 'flex-end', gap: 4, flexShrink: 0 },
+  unreadBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: ZALO_BLUE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  unreadTxt: { color: CrmColors.white, fontSize: 11, fontWeight: '900' },
+  pinHit: { padding: 4 },
+  pinBtn: { fontSize: 16 },
 });

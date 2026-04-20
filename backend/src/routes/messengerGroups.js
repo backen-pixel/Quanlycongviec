@@ -413,12 +413,29 @@ r.get('/groups', async (req, res) => {
 
     let statsMap = new Map();
     if (ids.length) {
-      const { data: statRows, error: statErr } = await supabase.rpc('messenger_group_list_stats', { p_group_ids: ids });
+      // Thử RPC v2 (có unread_count + last_message), fallback sang v1 nếu chưa migrate DB.
+      const { data: statRows, error: statErr } = await supabase.rpc('messenger_group_list_stats_v2', {
+        p_group_ids: ids,
+        p_user_id: uid,
+      });
       if (!statErr && Array.isArray(statRows)) {
         for (const row of statRows) {
           statsMap.set(row.group_id, {
             message_count: Number(row.message_count) || 0,
             last_message_at: row.last_message_at,
+            last_message: row.last_message || null,
+            unread_count: Number(row.unread_count) || 0,
+          });
+        }
+      } else {
+        // Fallback v1 (DB chưa migrate)
+        const { data: statRowsV1 } = await supabase.rpc('messenger_group_list_stats', { p_group_ids: ids });
+        for (const row of statRowsV1 || []) {
+          statsMap.set(row.group_id, {
+            message_count: Number(row.message_count) || 0,
+            last_message_at: row.last_message_at,
+            last_message: null,
+            unread_count: 0,
           });
         }
       }
@@ -449,6 +466,8 @@ r.get('/groups', async (req, res) => {
         my_role: roleByGid.get(g.id),
         message_count: st?.message_count ?? 0,
         last_message_at: st?.last_message_at || g.created_at,
+        last_message: st?.last_message ?? null,
+        unread_count: st?.unread_count ?? 0,
       };
     });
     list.sort((a, b) => new Date(b.last_message_at) - new Date(a.last_message_at));
@@ -521,6 +540,24 @@ r.post('/groups/:id/leave', async (req, res) => {
       if (io && full) io.to(`messenger_group:${gid}`).emit('messenger_group:chat', full);
     }
     if (io) io.to(`messenger_group:${gid}`).emit('messenger_group:members', { group_id: gid });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Đánh dấu đã đọc: cập nhật messenger_read_receipts cho user+group */
+r.patch('/groups/:id/read', async (req, res) => {
+  try {
+    const uid = req.authUserId;
+    const gid = req.params.id;
+    const ok = await assertGroupMember(gid, uid);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const { error } = await supabase.from('messenger_read_receipts').upsert(
+      { group_id: gid, user_id: uid, last_read_at: new Date().toISOString() },
+      { onConflict: 'group_id,user_id' },
+    );
+    if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
