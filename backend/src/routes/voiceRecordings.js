@@ -718,12 +718,10 @@ r.patch('/:id', async (req, res) => {
 /** DELETE /voice-recordings/:id */
 r.delete('/:id', async (req, res) => {
   try {
-    const { data: row, error: fe } = await supabase
-      .from('voice_recordings')
-      .select('id, storage_path')
-      .eq('id', req.params.id)
-      .eq('user_id', req.user.userId)
-      .single();
+    const admin = isVoiceRecordingsAdmin(req.user?.role);
+    let q = supabase.from('voice_recordings').select('id, storage_path').eq('id', req.params.id);
+    if (!admin) q = q.eq('user_id', req.user.userId);
+    const { data: row, error: fe } = await q.single();
     if (fe || !row) return res.status(404).json({ error: 'Không tìm thấy' });
 
     if (row.storage_path && !row.storage_path.startsWith('uploads/')) {

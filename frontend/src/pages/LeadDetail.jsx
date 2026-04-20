@@ -9,7 +9,6 @@ import CRMTasksTab from '../components/CRMTasksTab';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
-import CallLogsTab from '../components/CallLogsTab';
 import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
@@ -117,7 +116,6 @@ export default function LeadDetail() {
       'facebook',
       'team',
       'chat',
-      'calls',
       'voice_crm',
       'approvals',
     ]);
@@ -793,16 +791,6 @@ export default function LeadDetail() {
                 💬 Trao đổi
               </button>
               <button
-                onClick={() => setActiveTab('calls')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                  activeTab === 'calls'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                📞 Tổng đài
-              </button>
-              <button
                 onClick={() => setActiveTab('voice_crm')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
                   activeTab === 'voice_crm'
@@ -1034,8 +1022,6 @@ export default function LeadDetail() {
                 <LeadMembersTab leadId={id} />
               ) : activeTab === 'chat' ? (
                 <LeadChatTab leadId={id} socket={socket} />
-              ) : activeTab === 'calls' ? (
-                <CallLogsTab leadId={id} customerId={lead?.customer_id} />
               ) : activeTab === 'voice_crm' ? (
                 <LeadVoiceRecordingsTab leadId={id} />
               ) : activeTab === 'approvals' ? (

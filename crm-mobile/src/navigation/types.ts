@@ -53,4 +53,6 @@ export type MainTabParamList = {
 export type RootStackParamList = {
   Login: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
+  /** Chat screen mở từ bong bóng overlay — không có tab bar, back → minimizeApp */
+  BubbleChat: { groupId: string; title?: string };
 };

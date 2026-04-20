@@ -132,7 +132,7 @@ export default function SystemBubbleSync() {
     const tryNavigate = () => {
       void (async () => {
         try {
-          // Ưu tiên consumePendingGroup (tap cụ thể một cuộc hội thoại)
+          // Ưu tiên consumePendingGroup (tap bubble conversation cụ thể)
           const pendingGroupId = await Overlay.consumePendingGroup?.();
           if (pendingGroupId) {
             let tries = 0;
@@ -141,19 +141,16 @@ export default function SystemBubbleSync() {
                 if (tries++ < 50) setTimeout(go, 80);
                 return;
               }
-              navigationRef.navigate('Main', {
-                screen: 'MoreTab',
-                params: {
-                  screen: 'MessengerGroupChat',
-                  params: { groupId: pendingGroupId, fromBubble: true },
-                },
+              // Dùng BubbleChat (root screen) — không có tab bar, back → minimizeApp
+              navigationRef.navigate('BubbleChat', {
+                groupId: pendingGroupId,
               });
             };
             go();
             return;
           }
 
-          // Fallback: consumeOpenMessenger (tap bubble tổng)
+          // Fallback: consumeOpenMessenger (tap bubble tổng không có groupId)
           const open = await Overlay.consumeOpenMessenger?.();
           if (!open) return;
 
