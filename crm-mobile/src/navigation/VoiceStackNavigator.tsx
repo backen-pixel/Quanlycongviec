@@ -10,6 +10,7 @@ export default function VoiceStackNavigator() {
   return (
     <Stack.Navigator
       screenOptions={{
+        contentStyle: { backgroundColor: CrmColors.pageBg },
         headerStyle: {
           backgroundColor: CrmColors.white,
           borderBottomWidth: 1,

@@ -3,7 +3,8 @@ import type { ParsedExcelResponse } from '../types/salesDocs';
 
 export type CrmStackParamList = {
   LeadList: undefined;
-  LeadDetail: { id: string };
+  /** openLeadChat: mở thẳng tab Chat lead (tin lead_chat / lối tắt bong bóng) */
+  LeadDetail: { id: string; openLeadChat?: boolean };
 };
 
 export type VoiceStackParamList = {

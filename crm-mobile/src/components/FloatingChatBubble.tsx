@@ -1,24 +1,29 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  AppState,
+  type AppStateStatus,
   Dimensions,
   Image,
   Modal,
   PanResponder,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
   DeviceEventEmitter,
+  NativeModules,
+  Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { isChatNotification, useNotifications } from '../context/NotificationContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { navigationRef } from '../navigation/navigationRef';
+import type { MoreStackParamList } from '../navigation/types';
 import {
   CRM_MOBILE_PREFS_CHANGED,
   loadCrmMobilePrefs,
@@ -27,16 +32,24 @@ import {
 import {
   FLOATING_BUBBLE_CLEAR_HIDDEN_EVENT,
   FLOATING_BUBBLE_HIDDEN_KEY,
+  loadFloatingBubblePosition,
+  saveFloatingBubblePosition,
   setFloatingBubbleHiddenByDrop,
 } from '../lib/floatingChatBubbleStorage';
+import type { AppNotification } from '../types/notifications';
+import { getMessengerBubbleTarget } from '../lib/messengerBubbleTarget';
 
 /** Viền xanh đặc trưng Zalo (flat, hiện đại) */
 const ZALO_BLUE = '#0068FF';
 const ZALO_BLUE_SOFT = '#E8F4FF';
-const ZALO_BLUE_MUTED = '#B8DCFF';
 
 const EDGE = 10;
-const DROP_ZONE_H = 92;
+/** Đường kính vùng thả (hình tròn giữa đáy màn hình) */
+const DROP_TARGET_DIAM = 56;
+const DROP_MARGIN_ABOVE_HOME = 10;
+const PAN_MOVE_THRESHOLD = 12;
+/** Giữ lâu giống Zalo/Messenger — mở menu lối tắt */
+const LONG_PRESS_MS = 420;
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -75,6 +88,9 @@ function UserAvatarRing({
           height: size,
           borderRadius: size / 2,
           borderWidth: compact ? 2.5 : 3,
+          overflow: 'hidden',
+          alignItems: 'center',
+          justifyContent: 'center',
         },
       ]}
     >
@@ -104,21 +120,28 @@ function UserAvatarRing({
 
 export default function FloatingChatBubble() {
   const { user } = useAuth();
-  const { chatUnreadCount, toast, dismissToast } = useNotifications();
-  const [open, setOpen] = useState(false);
+  const { chatUnreadCount, toast, dismissToast, refreshUnread } = useNotifications();
+  const insets = useSafeAreaInsets();
+  const [quickMenuOpen, setQuickMenuOpen] = useState(false);
   const [prefs, setPrefs] = useState<CrmMobilePrefs | null>(null);
   const [dropHidden, setDropHidden] = useState(false);
   const [dragging, setDragging] = useState(false);
-
+  /** Android: có overlay hệ thống + đã cấp quyền → chỉ hiện bubble native, ẩn RN (tránh trùng hai bong bóng). */
+  const [nativeOverlayActive, setNativeOverlayActive] = useState(false);
   const { width, height } = Dimensions.get('window');
-  const sheetH = Math.round(height * 0.7);
   const compact = prefs?.floatingChatBubbleCompact ?? false;
   const bubbleSize = compact ? 48 : 58;
+  const badge = Math.max(0, Number(chatUnreadCount) || 0);
 
   const xy = useRef(
     new Animated.ValueXY({ x: width - 58 - EDGE, y: height * 0.62 }),
   ).current;
   const drag = useRef({ x: width - 58 - EDGE, y: height * 0.62 }).current;
+  /** Tránh onPress sau khi giữ lâu (một số máy vẫn fire press khi nhả tay) */
+  const suppressTapAfterLongPressRef = useRef(false);
+  const pressScale = useRef(new Animated.Value(1)).current;
+  const badgePulse = useRef(new Animated.Value(1)).current;
+  const dropRingPulse = useRef(new Animated.Value(1)).current;
 
   const avatarUrl =
     user && typeof (user as { avatar_url?: string }).avatar_url === 'string'
@@ -133,6 +156,17 @@ export default function FloatingChatBubble() {
       if (!cancelled && h === '1') setDropHidden(true);
       const p = await loadCrmMobilePrefs();
       if (!cancelled) setPrefs(p);
+      if (cancelled || h === '1') return;
+      const pos = await loadFloatingBubblePosition();
+      if (!cancelled && pos) {
+        const { width: w, height: hgt } = Dimensions.get('window');
+        const bs = (p?.floatingChatBubbleCompact ?? false) ? 48 : 58;
+        const nx = clamp(pos.x, EDGE, w - bs - EDGE);
+        const ny = clamp(pos.y, EDGE + 60, hgt - bs - EDGE - 40);
+        drag.x = nx;
+        drag.y = ny;
+        xy.setValue({ x: nx, y: ny });
+      }
     })();
     const subPrefs = DeviceEventEmitter.addListener(CRM_MOBILE_PREFS_CHANGED, (p: CrmMobilePrefs) =>
       setPrefs(p),
@@ -146,6 +180,79 @@ export default function FloatingChatBubble() {
       subClear.remove();
     };
   }, []);
+
+  const syncNativeOverlayFlag = () => {
+    if (Platform.OS !== 'android' || !prefs?.floatingChatBubbleSystemOverlay) {
+      setNativeOverlayActive(false);
+      return;
+    }
+    const m = NativeModules.FloatingBubbleOverlay as { canDrawOverlays?: () => Promise<boolean> } | undefined;
+    void m?.canDrawOverlays?.()?.then((ok) => setNativeOverlayActive(ok === true)).catch(() => setNativeOverlayActive(false));
+  };
+
+  useEffect(() => {
+    syncNativeOverlayFlag();
+  }, [prefs]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
+      if (s !== 'active') return;
+      void refreshUnread();
+      syncNativeOverlayFlag();
+    });
+    return () => sub.remove();
+  }, [refreshUnread, prefs]);
+
+  useEffect(() => {
+    if (badge <= 0) {
+      badgePulse.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(badgePulse, {
+          toValue: 1.14,
+          duration: 520,
+          useNativeDriver: true,
+        }),
+        Animated.timing(badgePulse, {
+          toValue: 1,
+          duration: 520,
+          useNativeDriver: true,
+        }),
+        Animated.delay(2400),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [badge, badgePulse]);
+
+  useEffect(() => {
+    if (!dragging) {
+      dropRingPulse.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dropRingPulse, {
+          toValue: 1.1,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+        Animated.timing(dropRingPulse, {
+          toValue: 1,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [dragging, dropRingPulse]);
+
+  useEffect(() => {
+    if (!quickMenuOpen) suppressTapAfterLongPressRef.current = false;
+  }, [quickMenuOpen]);
 
   useEffect(() => {
     const sub = Dimensions.addEventListener('change', ({ window }) => {
@@ -161,8 +268,10 @@ export default function FloatingChatBubble() {
   const responder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) + Math.abs(g.dy) > 2,
+        // Cho phép tap vào TouchableOpacity mở Modal; chỉ bắt cử chỉ khi đã kéo đủ xa
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_e, g) =>
+          Math.abs(g.dx) + Math.abs(g.dy) > PAN_MOVE_THRESHOLD,
         onPanResponderGrant: () => {
           setDragging(true);
           xy.setOffset({ x: drag.x, y: drag.y });
@@ -177,10 +286,14 @@ export default function FloatingChatBubble() {
           const nx = snapX(clamp(nxRaw, EDGE, width - bubbleSize - EDGE), width, bubbleSize);
           const ny = clamp(nyRaw, EDGE + 60, height - bubbleSize - EDGE - 40);
 
-          const zoneTop = height - DROP_ZONE_H;
-          const cx = nx + bubbleSize / 2;
-          const cy = ny + bubbleSize / 2;
-          if (cy >= zoneTop && cx >= width * 0.12 && cx <= width * 0.88) {
+          const bubbleCx = nx + bubbleSize / 2;
+          const bubbleCy = ny + bubbleSize / 2;
+          const targetCx = width / 2;
+          const targetCy =
+            height - insets.bottom - DROP_MARGIN_ABOVE_HOME - DROP_TARGET_DIAM / 2;
+          const hideReach = DROP_TARGET_DIAM / 2 + bubbleSize / 2 + 8;
+          const dist = Math.hypot(bubbleCx - targetCx, bubbleCy - targetCy);
+          if (dist <= hideReach) {
             void setFloatingBubbleHiddenByDrop();
             setDropHidden(true);
             drag.x = nx;
@@ -191,35 +304,106 @@ export default function FloatingChatBubble() {
 
           drag.x = nx;
           drag.y = ny;
+          void saveFloatingBubblePosition(nx, ny);
           Animated.spring(xy, { toValue: { x: nx, y: ny }, useNativeDriver: false, friction: 8 }).start();
         },
       }),
-    [drag, xy, width, height, bubbleSize],
+    [drag, xy, width, height, bubbleSize, insets.bottom],
   );
-
-  const badge = Math.max(0, Number(chatUnreadCount) || 0);
 
   const bubbleEnabled = prefs?.floatingChatBubbleEnabled ?? true;
   const onlyWhenUnread = prefs?.floatingChatBubbleOnlyWhenUnread ?? false;
-  const showBubble = !!user && bubbleEnabled && !dropHidden && !(onlyWhenUnread && badge === 0);
+  const hideRnBecauseNativeOverlay =
+    Platform.OS === 'android' && !!prefs?.floatingChatBubbleSystemOverlay && nativeOverlayActive;
+  const showBubble =
+    !!user &&
+    bubbleEnabled &&
+    !dropHidden &&
+    !(onlyWhenUnread && badge === 0) &&
+    !hideRnBecauseNativeOverlay;
+
+  const avatarDiameter = Math.max(30, bubbleSize - 12);
 
   if (!showBubble) return null;
 
-  const go = (screen: string, params?: Record<string, unknown>) => {
-    setOpen(false);
-    // @ts-expect-error navigationRef type narrowing
-    navigationRef.current?.navigate(screen, params);
-  };
+  function navigateMoreTab<S extends keyof MoreStackParamList>(
+    screen: S,
+    params?: MoreStackParamList[S],
+  ) {
+    setQuickMenuOpen(false);
+    if (!navigationRef.isReady()) return;
+    if (params !== undefined) {
+      navigationRef.navigate('Main', {
+        screen: 'MoreTab',
+        params: { screen, params } as never,
+      });
+    } else {
+      navigationRef.navigate('Main', {
+        screen: 'MoreTab',
+        params: { screen } as never,
+      });
+    }
+  }
 
-  const goInputBar = () => go('MessengerGroupList');
+  function openLeadChatFromToast(n: AppNotification & { entity_id: string }) {
+    setQuickMenuOpen(false);
+    dismissToast();
+    if (!navigationRef.isReady()) return;
+    navigationRef.navigate('Main', {
+      screen: 'CrmTab',
+      params: { screen: 'LeadDetail', params: { id: n.entity_id, openLeadChat: true } },
+    });
+  }
+
+  const toastMessengerShortcut =
+    toast?.type === 'messenger_chat' &&
+    toast.entity_type === 'messenger_group' &&
+    toast.entity_id;
+
+  const toastLeadShortcut =
+    toast?.type === 'lead_chat' &&
+    toast.entity_id &&
+    (toast.entity_type === 'lead' || toast.entity_type === 'crm_lead');
+
+  function openMessengerFromToast() {
+    setQuickMenuOpen(false);
+    dismissToast();
+    if (!navigationRef.isReady() || !toast?.entity_id) return;
+    const meta = toast.metadata && typeof toast.metadata === 'object' ? toast.metadata : {};
+    const gn = typeof (meta as { group_name?: unknown }).group_name === 'string' ? (meta as { group_name: string }).group_name : undefined;
+    navigationRef.navigate('Main', {
+      screen: 'MoreTab',
+      params: {
+        screen: 'MessengerGroupChat',
+        params: { groupId: toast.entity_id!, title: gn },
+      },
+    });
+  }
+
+  const dropAnchorBottom = DROP_MARGIN_ABOVE_HOME + insets.bottom;
+  const menuMaxH = Math.min(Math.round(height * 0.5), 460);
+
+  function hideBubbleLikeZalo() {
+    setQuickMenuOpen(false);
+    void setFloatingBubbleHiddenByDrop();
+    setDropHidden(true);
+  }
 
   return (
     <>
       {dragging ? (
-        <View pointerEvents="none" style={[styles.dropZone, { height: DROP_ZONE_H }]}>
-          <Text style={styles.dropTxt}>Thả vào đây để ẩn bong bóng</Text>
-          <Text style={styles.dropSub}>Mở Tài khoản → «Hiện lại bong bóng chat»</Text>
-        </View>
+        <>
+          <View pointerEvents="none" style={[styles.dragStrip, { height: 72 + insets.bottom }]} />
+          <View pointerEvents="none" style={[styles.dropAnchor, { bottom: dropAnchorBottom }]}>
+            <Text style={styles.dropHintTiny}>Thả vào đây để ẩn</Text>
+            <Text style={styles.dropSubTiny}>Giống Zalo — ẩn tạm · Hiện lại: Tài khoản → Hiện lại bong bóng chat</Text>
+            <Animated.View style={{ transform: [{ scale: dropRingPulse }] }}>
+              <View style={[styles.dropCircle, { width: DROP_TARGET_DIAM, height: DROP_TARGET_DIAM }]}>
+                <Ionicons name="close-circle-outline" size={26} color={CrmColors.red700} />
+              </View>
+            </Animated.View>
+          </View>
+        </>
       ) : null}
 
       <Animated.View
@@ -232,133 +416,190 @@ export default function FloatingChatBubble() {
           },
         ]}
       >
-        <TouchableOpacity
-          activeOpacity={0.92}
-          onPress={() => setOpen(true)}
-          accessibilityLabel="Chat nhanh CRM"
-        >
-          <View style={[styles.bubbleOuter, { width: bubbleSize, height: bubbleSize }]}>
-            <UserAvatarRing size={Math.max(36, bubbleSize - 8)} uri={avatarUrl} name={name} compact />
-            {badge > 0 ? (
-              <View style={styles.badge}>
-                <Text style={styles.badgeTxt}>{badge > 99 ? '99+' : String(badge)}</Text>
-              </View>
-            ) : null}
-          </View>
-        </TouchableOpacity>
+        <Animated.View style={{ transform: [{ scale: pressScale }] }}>
+          <TouchableOpacity
+            activeOpacity={1}
+            delayLongPress={LONG_PRESS_MS}
+            onPressIn={() => {
+              Animated.spring(pressScale, {
+                toValue: 0.92,
+                friction: 7,
+                useNativeDriver: true,
+              }).start();
+            }}
+            onPressOut={() => {
+              Animated.spring(pressScale, {
+                toValue: 1,
+                friction: 6,
+                useNativeDriver: true,
+              }).start();
+            }}
+            onPress={() => {
+              if (suppressTapAfterLongPressRef.current) {
+                suppressTapAfterLongPressRef.current = false;
+                return;
+              }
+              void (async () => {
+                const t = await getMessengerBubbleTarget();
+                if (!navigationRef.isReady()) return;
+                if (t?.groupId) {
+                  navigationRef.navigate('Main', {
+                    screen: 'MoreTab',
+                    params: {
+                      screen: 'MessengerGroupChat',
+                      params: { groupId: t.groupId, title: t.title },
+                    },
+                  });
+                } else {
+                  navigateMoreTab('MessengerGroupList');
+                }
+              })();
+            }}
+            onLongPress={() => {
+              suppressTapAfterLongPressRef.current = true;
+              setQuickMenuOpen(true);
+            }}
+            accessibilityLabel="Messenger CRM — chạm mở tin nhắn, giữ để menu (như Zalo)"
+          >
+            <View style={[styles.bubbleOuter, { width: bubbleSize, height: bubbleSize, borderRadius: bubbleSize / 2 }]}>
+              <UserAvatarRing size={avatarDiameter} uri={avatarUrl} name={name} compact />
+              {badge > 0 ? (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.badgeWrap, { transform: [{ scale: badgePulse }] }]}
+                >
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeTxt}>{badge > 99 ? '99+' : String(badge)}</Text>
+                  </View>
+                </Animated.View>
+              ) : null}
+            </View>
+          </TouchableOpacity>
+        </Animated.View>
       </Animated.View>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
-          <View style={[styles.sheet, { height: sheetH }]} onStartShouldSetResponder={() => true}>
-            {/* Header */}
-            <View style={styles.headerRow}>
-              <View style={styles.headerLeft}>
-                <UserAvatarRing size={40} uri={avatarUrl} name={name} />
-                <View style={styles.headerTextCol}>
-                  <Text style={styles.headerName} numberOfLines={1}>
-                    {name}
-                  </Text>
-                  <Text style={styles.headerSub}>
-                    {badge > 0 ? `${badge} tin chat chưa đọc · ` : ''}Messenger nội bộ
+      <Modal
+        visible={quickMenuOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setQuickMenuOpen(false)}
+      >
+        <View style={styles.menuRoot}>
+          <Pressable style={styles.menuBackdropFill} onPress={() => setQuickMenuOpen(false)} />
+          <View style={[styles.menuSheet, { paddingBottom: Math.max(insets.bottom, 14), maxHeight: menuMaxH }]}>
+            <View style={styles.menuGrab} />
+            <Text style={styles.menuTitle}>Messenger CRM</Text>
+            <Text style={styles.menuSub}>
+              {badge > 0 ? `${badge} tin chưa đọc · ` : ''}
+              Chạm = danh sách chat · Giữ = menu · Kéo = dính mép / ẩn đáy (giống Zalo)
+            </Text>
+
+            {toastMessengerShortcut ? (
+              <TouchableOpacity style={styles.menuRow} onPress={() => openMessengerFromToast()}>
+                <Ionicons name="chatbubbles-outline" size={22} color={ZALO_BLUE} />
+                <View style={styles.menuRowBody}>
+                  <Text style={styles.menuRowTxt}>Messenger — tin mới</Text>
+                  <Text style={styles.menuRowHint} numberOfLines={2}>
+                    {toast.title}
                   </Text>
                 </View>
-                {badge > 0 ? (
-                  <View style={styles.headerBadge}>
-                    <Text style={styles.headerBadgeTxt}>{badge > 99 ? '99+' : String(badge)}</Text>
-                  </View>
-                ) : null}
-              </View>
+                <Ionicons name="chevron-forward" size={18} color={CrmColors.gray400} />
+              </TouchableOpacity>
+            ) : null}
+
+            {toastLeadShortcut ? (
               <TouchableOpacity
-                style={styles.minBtn}
-                onPress={() => setOpen(false)}
-                accessibilityLabel="Thu nhỏ"
+                style={styles.menuRow}
+                onPress={() => openLeadChatFromToast(toast as AppNotification & { entity_id: string })}
               >
-                <Ionicons name="chevron-down-circle" size={28} color={ZALO_BLUE} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Khung chat dạng bong bóng */}
-            <ScrollView
-              style={styles.chatScroll}
-              contentContainerStyle={styles.chatContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              nestedScrollEnabled
-            >
-              <View style={[styles.bubbleLeft, styles.bubbleBase]}>
-                <Text style={styles.bubbleLeftTxt}>
-                  Chọn kênh bên dưới để mở chat đầy đủ. Bong bóng chỉ là lối tắt — soạn tin trên màn hình chat.
-                </Text>
-              </View>
-              {toast && isChatNotification(toast) ? (
-                <View style={[styles.bubbleLeft, styles.bubbleBase, styles.bubbleToast]}>
-                  <Text style={styles.toastTag}>Tin chat</Text>
-                  <Text style={styles.bubbleLeftTxt}>
-                    <Text style={styles.toastTitle}>{toast.title}</Text>
-                    {'\n'}
-                    {toast.message}
+                <Ionicons name="chatbubble-ellipses-outline" size={22} color={ZALO_BLUE} />
+                <View style={styles.menuRowBody}>
+                  <Text style={styles.menuRowTxt}>Tin trong Lead</Text>
+                  <Text style={styles.menuRowHint} numberOfLines={2}>
+                    {toast.title}
                   </Text>
-                  <TouchableOpacity onPress={() => dismissToast()}>
-                    <Text style={styles.dismissLink}>Ẩn</Text>
-                  </TouchableOpacity>
                 </View>
-              ) : null}
-              <View style={[styles.bubbleRight, styles.bubbleBase]}>
-                <Text style={styles.bubbleRightTxt}>Sẵn sàng trả lời khách trên CRM 👍</Text>
+                <Ionicons name="chevron-forward" size={18} color={CrmColors.gray400} />
+              </TouchableOpacity>
+            ) : null}
+
+            <TouchableOpacity style={styles.menuRow} onPress={() => navigateMoreTab('MessengerGroupList')}>
+              <Ionicons name="chatbubbles-outline" size={22} color={ZALO_BLUE} />
+              <Text style={styles.menuRowTxt}>Danh sách nhóm & tin nhắn</Text>
+              <Ionicons name="chevron-forward" size={18} color={CrmColors.gray400} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => navigateMoreTab('MessengerCompose', { mode: 'direct' })}
+            >
+              <Ionicons name="person-outline" size={22} color={ZALO_BLUE} />
+              <Text style={styles.menuRowTxt}>Chat 1–1</Text>
+              <Ionicons name="chevron-forward" size={18} color={CrmColors.gray400} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => navigateMoreTab('MessengerCompose', { mode: 'group' })}
+            >
+              <Ionicons name="people-outline" size={22} color={ZALO_BLUE} />
+              <Text style={styles.menuRowTxt}>Tạo nhóm</Text>
+              <Ionicons name="chevron-forward" size={18} color={CrmColors.gray400} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuRowDanger} onPress={() => hideBubbleLikeZalo()}>
+              <Ionicons name="eye-off-outline" size={22} color={CrmColors.red700} />
+              <View style={styles.menuRowBody}>
+                <Text style={styles.menuRowTxtDanger}>Ẩn bong bóng chat</Text>
+                <Text style={styles.menuRowHint}>Tương đương kéo xuống vùng đỏ đáy màn hình</Text>
               </View>
-            </ScrollView>
+            </TouchableOpacity>
 
-            {/* Thanh nhập + icon (mở chat đầy đủ — tránh bàn phím che trong overlay) */}
-            <View style={styles.inputBar}>
-              <TouchableOpacity style={styles.iconBtn} onPress={() => go('MessengerGroupList')} accessibilityLabel="Sticker">
-                <Ionicons name="happy-outline" size={24} color={ZALO_BLUE} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.iconBtn} onPress={() => go('MessengerGroupList')} accessibilityLabel="Hình ảnh">
-                <Ionicons name="image-outline" size={24} color={ZALO_BLUE} />
-              </TouchableOpacity>
-              <Pressable style={styles.fakeInput} onPress={goInputBar}>
-                <Text style={styles.fakeInputPh}>Nhập tin nhắn…</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.quickRow}>
-              <TouchableOpacity style={styles.quickChip} onPress={() => go('MessengerGroupList')}>
-                <Ionicons name="chatbubbles-outline" size={18} color={ZALO_BLUE} />
-                <Text style={styles.quickChipTxt}>Danh sách nhóm</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.quickChip} onPress={() => go('MessengerCompose', { mode: 'direct' })}>
-                <Ionicons name="person-outline" size={18} color={ZALO_BLUE} />
-                <Text style={styles.quickChipTxt}>Chat 1–1</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.quickChip} onPress={() => go('MessengerCompose', { mode: 'group' })}>
-                <Ionicons name="people-outline" size={18} color={ZALO_BLUE} />
-                <Text style={styles.quickChipTxt}>Tạo nhóm</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity style={styles.menuCancelBtn} onPress={() => setQuickMenuOpen(false)}>
+              <Text style={styles.menuCancelTxt}>Đóng</Text>
+            </TouchableOpacity>
           </View>
-        </Pressable>
+        </View>
       </Modal>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  dropZone: {
+  dropAnchor: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 9998,
+  },
+  dropCircle: {
+    borderRadius: 999,
+    backgroundColor: 'rgba(239,68,68,0.14)',
+    borderWidth: 2,
+    borderColor: 'rgba(239,68,68,0.42)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropHintTiny: { marginBottom: 4, fontSize: 11, fontWeight: '800', color: CrmColors.red700 },
+  dropSubTiny: {
+    fontSize: 9,
+    color: CrmColors.gray600,
+    marginBottom: 8,
+    textAlign: 'center',
+    paddingHorizontal: 12,
+  },
+  /** Vùng đỏ nhạt đáy khi kéo — gợi ý «thả để đóng» như Zalo */
+  dragStrip: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(239,68,68,0.12)',
-    borderTopWidth: 2,
-    borderTopColor: 'rgba(239,68,68,0.35)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 9998,
-    paddingHorizontal: 16,
+    backgroundColor: 'rgba(239,68,68,0.11)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(239,68,68,0.25)',
+    zIndex: 9997,
   },
-  dropTxt: { fontSize: 14, fontWeight: '800', color: CrmColors.red700 },
-  dropSub: { fontSize: 11, color: CrmColors.gray600, marginTop: 4, textAlign: 'center' },
   wrap: {
     position: 'absolute',
     left: 0,
@@ -395,10 +636,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: ZALO_BLUE,
   },
-  badge: {
+  badgeWrap: {
     position: 'absolute',
     right: -2,
     top: -2,
+  },
+  badge: {
     minWidth: 18,
     height: 18,
     paddingHorizontal: 4,
@@ -410,122 +653,76 @@ const styles = StyleSheet.create({
     borderColor: CrmColors.white,
   },
   badgeTxt: { color: CrmColors.white, fontSize: 9, fontWeight: '900' },
-  backdrop: {
+  menuRoot: {
     flex: 1,
-    backgroundColor: 'rgba(15,23,42,0.4)',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
+    justifyContent: 'flex-end',
+    backgroundColor: 'transparent',
   },
-  sheet: {
-    width: '100%',
-    alignSelf: 'center',
-    flexDirection: 'column',
+  menuBackdropFill: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,23,42,0.45)',
+  },
+  menuSheet: {
     backgroundColor: CrmColors.white,
-    borderRadius: CrmRadii.lg + 4,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: CrmColors.gray100,
+    borderTopLeftRadius: CrmRadii.lg + 6,
+    borderTopRightRadius: CrmRadii.lg + 6,
+    paddingHorizontal: 8,
+    paddingTop: 6,
     ...CrmShadow.card,
   },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: CrmColors.gray100,
-    backgroundColor: CrmColors.white,
+  menuGrab: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: CrmColors.gray200,
+    marginBottom: 12,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
-  headerTextCol: { marginLeft: 10, flex: 1, minWidth: 0 },
-  headerName: { fontSize: 16, fontWeight: '800', color: CrmColors.gray900 },
-  headerSub: { fontSize: 11, color: CrmColors.gray500, marginTop: 2 },
-  headerBadge: {
-    marginLeft: 6,
-    minWidth: 22,
-    height: 22,
-    paddingHorizontal: 6,
-    borderRadius: 11,
-    backgroundColor: '#FF3B30',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerBadgeTxt: { color: CrmColors.white, fontSize: 11, fontWeight: '900' },
-  minBtn: { padding: 4 },
-  chatScroll: { flex: 1, minHeight: 80 },
-  chatContent: { paddingHorizontal: 14, paddingVertical: 12, gap: 10, flexGrow: 1 },
-  bubbleBase: {
-    maxWidth: '88%',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 16,
-  },
-  bubbleLeft: {
-    alignSelf: 'flex-start',
-    backgroundColor: CrmColors.gray100,
-    borderBottomLeftRadius: 4,
-  },
-  bubbleLeftTxt: { fontSize: 14, color: CrmColors.gray800, lineHeight: 20 },
-  bubbleToast: { backgroundColor: ZALO_BLUE_SOFT, borderWidth: 1, borderColor: ZALO_BLUE_MUTED },
-  toastTag: {
-    fontSize: 10,
+  menuTitle: {
+    fontSize: 17,
     fontWeight: '800',
-    color: ZALO_BLUE,
-    marginBottom: 4,
+    color: CrmColors.gray900,
+    paddingHorizontal: 10,
   },
-  toastTitle: { fontWeight: '800', color: CrmColors.gray900 },
-  dismissLink: { marginTop: 8, fontSize: 12, color: ZALO_BLUE, fontWeight: '700' },
-  bubbleRight: {
-    alignSelf: 'flex-end',
-    backgroundColor: ZALO_BLUE_SOFT,
-    borderBottomRightRadius: 4,
-    borderWidth: 1,
-    borderColor: ZALO_BLUE_MUTED,
+  menuSub: {
+    fontSize: 12,
+    color: CrmColors.gray500,
+    marginTop: 4,
+    marginBottom: 12,
+    paddingHorizontal: 10,
+    lineHeight: 17,
   },
-  bubbleRightTxt: { fontSize: 14, color: CrmColors.gray900, lineHeight: 20 },
-  inputBar: {
+  menuRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: CrmColors.gray100,
-    backgroundColor: CrmColors.gray50,
-    gap: 6,
-  },
-  iconBtn: { padding: 6 },
-  fakeInput: {
-    flex: 1,
-    backgroundColor: CrmColors.white,
-    borderRadius: CrmRadii.full,
-    borderWidth: 1,
-    borderColor: CrmColors.gray200,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    minHeight: 40,
-    justifyContent: 'center',
-  },
-  fakeInputPh: { fontSize: 14, color: CrmColors.gray400 },
-  quickRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    gap: 10,
+    paddingVertical: 14,
     paddingHorizontal: 12,
-    paddingBottom: 14,
-    paddingTop: 4,
-    backgroundColor: CrmColors.white,
-  },
-  quickChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
     borderRadius: CrmRadii.md,
     backgroundColor: CrmColors.gray50,
-    borderWidth: 1,
-    borderColor: CrmColors.gray100,
+    marginBottom: 8,
   },
-  quickChipTxt: { fontSize: 13, fontWeight: '700', color: CrmColors.gray800 },
+  menuRowBody: { flex: 1, minWidth: 0 },
+  menuRowTxt: { fontSize: 15, fontWeight: '700', color: CrmColors.gray900 },
+  menuRowHint: { fontSize: 12, color: CrmColors.gray500, marginTop: 2 },
+  menuRowDanger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: CrmRadii.md,
+    backgroundColor: 'rgba(239,68,68,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.25)',
+    marginBottom: 8,
+  },
+  menuRowTxtDanger: { fontSize: 15, fontWeight: '800', color: CrmColors.red700 },
+  menuCancelBtn: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  menuCancelTxt: { fontSize: 16, fontWeight: '700', color: CrmColors.gray600 },
 });

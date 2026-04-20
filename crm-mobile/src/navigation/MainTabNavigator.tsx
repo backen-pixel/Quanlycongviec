@@ -22,6 +22,8 @@ export default function MainTabNavigator() {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
+        /** Nền cảnh tab — tránh lộ nền đen/đứt màu dưới nội dung. */
+        sceneStyle: { backgroundColor: CrmColors.pageBg },
         tabBarActiveTintColor: CrmColors.tabActive,
         tabBarInactiveTintColor: CrmColors.tabInactive,
         tabBarStyle: [

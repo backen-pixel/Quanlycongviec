@@ -13,6 +13,7 @@ import {
   Platform,
   TextInput,
   ActivityIndicator,
+  NativeModules,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,6 +21,7 @@ import { useAuth } from '../context/AuthContext';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import {
   CRM_MOBILE_PREFS_CHANGED,
+  createAllEnabledCrmMobilePrefs,
   loadCrmMobilePrefs,
   saveCrmMobilePrefs,
   type CrmMobilePrefs,
@@ -229,6 +231,31 @@ export default function AccountScreen() {
 
         {prefs ? (
           <>
+            <Text style={styles.sectionH}>Chế độ nhanh</Text>
+            <View style={[styles.card, CrmShadow.card, styles.enableAllCard]}>
+              <TouchableOpacity
+                onPress={() => {
+                  Alert.alert(
+                    'Bật tất cả chức năng CRM mobile?',
+                    'Bật ghi âm, đồng bộ nền, công cụ tự động, bong bóng (gồm overlay Android nếu bạn đã cấp quyền).',
+                    [
+                      { text: 'Hủy', style: 'cancel' },
+                      {
+                        text: 'Bật tất cả',
+                        onPress: () => void updatePrefs(createAllEnabledCrmMobilePrefs()),
+                      },
+                    ],
+                  );
+                }}
+              >
+                <Text style={styles.enableAllTitle}>Bật tất cả chức năng</Text>
+                <Text style={styles.enableAllSub}>
+                  Mặc định tối đa giống cài mới: ghi âm, đồng bộ file, realtime, Facebook/danh bạ tự động, bong bóng chat &
+                  overlay.
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <Text style={styles.sectionH}>Cài đặt ghi âm & đồng bộ web</Text>
             <View style={[styles.card, CrmShadow.card]}>
               <RowSwitch
@@ -296,14 +323,14 @@ export default function AccountScreen() {
             <View style={[styles.cardRow, CrmShadow.card]}>
               <RowSwitch
                 label="Hiển thị bong bóng chat"
-                sub="Nút tròn nổi để mở Messenger nhanh. Tắt nếu không muốn thấy."
+                sub="Kiểu Zalo: avatar tròn · chạm mở Messenger · giữ để menu · kéo dính mép hoặc thả đáy để ẩn · badge đỏ = tin CRM chưa đọc."
                 value={prefs.floatingChatBubbleEnabled}
                 onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleEnabled: v })}
               />
               <View style={styles.divider} />
               <RowSwitch
                 label="Chỉ hiện khi có tin chưa đọc"
-                sub="Ẩn bong bóng khi không có thông báo đếm badge."
+                sub="Giống tùy chỉnh Zalo: ẩn bubble khi không có số đếm đỏ (tin chat CRM)."
                 value={prefs.floatingChatBubbleOnlyWhenUnread}
                 onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleOnlyWhenUnread: v })}
                 disabled={!prefs.floatingChatBubbleEnabled}
@@ -311,17 +338,45 @@ export default function AccountScreen() {
               <View style={styles.divider} />
               <RowSwitch
                 label="Bong bóng nhỏ gọn"
-                sub="Giảm kích thước nút tròn."
+                sub="Thu nhỏ nút tròn (như cỡ nhỏ trên một số máy)."
                 value={prefs.floatingChatBubbleCompact}
                 onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleCompact: v })}
                 disabled={!prefs.floatingChatBubbleEnabled}
               />
+              {Platform.OS === 'android' ? (
+                <>
+                  <View style={styles.divider} />
+                  <RowSwitch
+                    label="Bong bóng trên app khác (Android)"
+                    sub="Giống Zalo: vẫn thấy khi thoát CRM — cần quyền «Hiển thị trên các ứng dụng khác». Có thông báo chạy nền hợp lệ."
+                    value={prefs.floatingChatBubbleSystemOverlay}
+                    onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleSystemOverlay: v })}
+                    disabled={!prefs.floatingChatBubbleEnabled}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.showBubbleBtn,
+                      (!prefs.floatingChatBubbleEnabled || !prefs.floatingChatBubbleSystemOverlay) && styles.permRowOff,
+                    ]}
+                    onPress={() =>
+                      (
+                        NativeModules as {
+                          FloatingBubbleOverlay?: { openOverlaySettings?: () => void };
+                        }
+                      ).FloatingBubbleOverlay?.openOverlaySettings?.()
+                    }
+                    disabled={!prefs.floatingChatBubbleEnabled || !prefs.floatingChatBubbleSystemOverlay}
+                  >
+                    <Text style={styles.showBubbleBtnTxt}>Cấp quyền hiển thị trên app khác</Text>
+                  </TouchableOpacity>
+                </>
+              ) : null}
               <TouchableOpacity
                 style={[styles.showBubbleBtn, !prefs.floatingChatBubbleEnabled && styles.permRowOff]}
                 onPress={() => void clearFloatingBubbleHidden()}
                 disabled={!prefs.floatingChatBubbleEnabled}
               >
-                <Text style={styles.showBubbleBtnTxt}>Hiện lại bong bóng (sau khi kéo ẩn)</Text>
+                <Text style={styles.showBubbleBtnTxt}>Hiện lại bong bóng chat (sau khi ẩn)</Text>
               </TouchableOpacity>
             </View>
 
@@ -608,6 +663,14 @@ const styles = StyleSheet.create({
   rowSwOff: { opacity: 0.45 },
   rowSwLabel: { fontSize: 15, fontWeight: '700', color: CrmColors.gray900 },
   rowSwSub: { fontSize: 12, color: CrmColors.gray500, marginTop: 4, lineHeight: 16 },
+  enableAllCard: { paddingVertical: 4 },
+  enableAllTitle: { fontSize: 16, fontWeight: '800', color: CrmColors.blue700 },
+  enableAllSub: {
+    marginTop: 10,
+    fontSize: 12,
+    color: CrmColors.gray600,
+    lineHeight: 17,
+  },
   divider: { height: 1, backgroundColor: CrmColors.gray100, width: '100%', marginVertical: 12 },
   bgHint: { marginTop: 10, fontSize: 12, color: CrmColors.gray500, lineHeight: 16 },
   permRowOff: { opacity: 0.5 },

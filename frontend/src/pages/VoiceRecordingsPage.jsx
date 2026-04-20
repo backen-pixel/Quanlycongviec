@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { Mic, Upload, Trash2, RefreshCw, Square, Circle, UserRound, Link2, UserPlus, Inbox } from 'lucide-react';
+import { Mic, Upload, Trash2, RefreshCw, Square, Circle, UserRound, Link2, UserPlus, Inbox, ScanLine } from 'lucide-react';
 import { formatDateTime } from '../lib/utils';
 
 function recordingAudioUrl(rec) {
@@ -57,6 +57,7 @@ export default function VoiceRecordingsPage() {
   /** all | unassigned | linked — linked = đã gắn lead/deal */
   const [listTab, setListTab] = useState('all');
   const [relinking, setRelinking] = useState(false);
+  const [relinkingRowId, setRelinkingRowId] = useState(null);
   const [scanMessage, setScanMessage] = useState('');
 
   const [bootstrapRecording, setBootstrapRecording] = useState(null);
@@ -148,12 +149,14 @@ export default function VoiceRecordingsPage() {
 
   const relinkFromPhone = async (id) => {
     setErr('');
+    setRelinkingRowId(id);
     try {
       await api.patch(`/voice-recordings/${id}`, { action: 'relink_from_phone' });
       await load();
     } catch (e) {
-      setErr(e.response?.data?.error || e.message || 'Ghép lại thất bại');
+      setErr(e.response?.data?.error || e.message || 'Quét thủ công thất bại');
     }
+    setRelinkingRowId(null);
   };
 
   const openBootstrap = (row) => {
@@ -388,14 +391,19 @@ export default function VoiceRecordingsPage() {
             Tuỳ chọn kèm file (SĐT, thời gian cuộc gọi, …)
           </summary>
           <div className="px-3 pb-3 pt-1 grid gap-3 sm:grid-cols-2 border-t border-gray-100">
-            <div>
+            <div className="sm:col-span-2">
               <label className="text-xs font-medium text-gray-500">Số điện thoại</label>
               <input
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
-                placeholder="+84…"
+                placeholder="+84… hoặc để trống nếu ghi SĐT ở ghi chú / tên file"
                 className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
               />
+              <p className="mt-1 text-xs text-gray-500">
+                Nếu không nhập ở đây, khi tải lên hệ thống sẽ quét số di động Việt Nam trong ghi chú, tên file và nhãn
+                thiết bị để gắn khách hàng; nếu khách có đúng một cơ hội (lead/deal) trong phạm vi của bạn thì gắn luôn,
+                còn từ hai trở lên thì chỉ gắn khách — bạn chọn cơ hội trong «Gắn KH / Lead».
+              </p>
             </div>
             <div>
               <label className="text-xs font-medium text-gray-500">Hướng</label>
@@ -517,10 +525,12 @@ export default function VoiceRecordingsPage() {
             <button
               type="button"
               onClick={() => void runAutoRelinkScan()}
-              disabled={loading || relinking}
-              className="h-9 px-3 rounded-lg border border-violet-300 text-violet-800 text-sm hover:bg-violet-50"
+              disabled={loading || relinking || relinkingRowId != null}
+              className="h-9 px-3 rounded-lg border border-violet-300 text-violet-800 text-sm hover:bg-violet-50 inline-flex items-center gap-1.5"
+              title="Quét tất cả bản có SĐT nhưng chưa ghép khách (theo danh sách hiện tại)"
             >
-              {relinking ? 'Đang quét…' : 'Quét ghép CRM'}
+              <RefreshCw className={`h-3.5 w-3.5 ${relinking ? 'animate-spin' : ''}`} />
+              {relinking ? 'Đang quét…' : 'Quét ghép CRM (hàng loạt)'}
             </button>
           </div>
         </div>
@@ -566,7 +576,7 @@ export default function VoiceRecordingsPage() {
                   {r.notes ? <p className="text-xs text-gray-600 mt-1 line-clamp-3">{r.notes}</p> : null}
                   {!r.customer && !r.lead && r.phone_number ? (
                     <p className="text-xs text-amber-800 mt-1 rounded border border-amber-100 bg-amber-50/80 px-2 py-1 inline-block">
-                      Chưa ghép CRM — thử «Ghép lại theo SĐT» hoặc «Gắn KH / Lead».
+                      Chưa ghép CRM — thử «Quét thủ công» hoặc «Gắn KH / Lead».
                     </p>
                   ) : null}
                   {(r.customer || r.lead) && (
@@ -588,7 +598,9 @@ export default function VoiceRecordingsPage() {
                           {leadTypeLabel(r.lead.type)}: {r.lead.code || r.lead.title}
                         </Link>
                       ) : r.customer ? (
-                        <span className="text-gray-500">Chưa gắn lead/deal</span>
+                        <span className="text-gray-500">
+                          Chưa gắn lead/deal — nếu khách có từ hai cơ hội trở lên, chọn thủ công trong «Gắn KH / Lead»
+                        </span>
                       ) : null}
                     </div>
                   )}
@@ -603,15 +615,16 @@ export default function VoiceRecordingsPage() {
                     <Link2 className="h-4 w-4" />
                     Gắn KH / Lead
                   </button>
-                  {r.phone_number ? (
-                    <button
-                      type="button"
-                      onClick={() => void relinkFromPhone(r.id)}
-                      className="h-9 px-3 rounded-lg border border-gray-200 text-gray-700 text-sm hover:bg-gray-50 cursor-pointer"
-                    >
-                      Ghép lại theo SĐT
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void relinkFromPhone(r.id)}
+                    disabled={relinkingRowId != null}
+                    title="Quét SĐT từ ô số, ghi chú, tên file, nhãn thiết bị rồi ghép khách / lead (nếu đủ điều kiện)"
+                    className="h-9 px-3 rounded-lg border border-emerald-200 bg-emerald-50/80 text-emerald-900 text-sm hover:bg-emerald-100 cursor-pointer disabled:opacity-50 disabled:pointer-events-none inline-flex items-center gap-1.5"
+                  >
+                    <ScanLine className={`h-3.5 w-3.5 shrink-0 ${relinkingRowId === r.id ? 'animate-pulse' : ''}`} />
+                    {relinkingRowId === r.id ? 'Đang quét…' : 'Quét thủ công'}
+                  </button>
                   {!r.customer_id && r.phone_number ? (
                     <button
                       type="button"

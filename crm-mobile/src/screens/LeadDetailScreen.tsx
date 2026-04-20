@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { api, formatApiError, postMultipart } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { canAssigneeFilterDeals, canAssigneeFilterLeads } from '../lib/crmMobilePrefs';
-import type { CrmActivity, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmStage } from '../types/crm';
+import type { CrmActivity, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmStage, CrmTask } from '../types/crm';
 import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDate, formatDateTime, formatVND } from '../lib/formatUtils';
@@ -37,6 +37,15 @@ type Nav = NativeStackNavigationProp<CrmStackParamList, 'LeadDetail'>;
 
 type TabKey = 'tasks' | 'documents' | 'activities' | 'notes' | 'team' | 'chat' | 'voice';
 type ChatSubKey = 'crm' | 'internal' | 'facebook';
+
+type LeadPreviewFbMsg = {
+  id: string;
+  direction?: string | null;
+  content?: string | null;
+  created_at?: string | null;
+  attachment_url?: string | null;
+  contact?: { fb_name?: string | null };
+};
 
 const MEMBER_ROLE_VI: Record<string, string> = {
   responsible: 'Chịu trách nhiệm',
@@ -74,7 +83,7 @@ export default function LeadDetailScreen() {
   const { params } = useRoute<R>();
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
-  const { id } = params;
+  const { id, openLeadChat } = params;
 
   const [lead, setLead] = useState<CrmLeadDetail | null>(null);
   const [stagesLead, setStagesLead] = useState<CrmStage[]>([]);
@@ -87,7 +96,7 @@ export default function LeadDetailScreen() {
   const [crmExpanded, setCrmExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
-  const [activeTab, setActiveTab] = useState<TabKey>('tasks');
+  const [activeTab, setActiveTab] = useState<TabKey>(() => (openLeadChat ? 'chat' : 'tasks'));
   const [savingStage, setSavingStage] = useState(false);
   const [lostOpen, setLostOpen] = useState(false);
   const [lostReason, setLostReason] = useState('');
@@ -109,6 +118,11 @@ export default function LeadDetailScreen() {
   const [salesLoading, setSalesLoading] = useState(false);
   const [noteSaving, setNoteSaving] = useState(false);
   const [chatSub, setChatSub] = useState<ChatSubKey>('crm');
+
+  const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewTasksWithNotes, setPreviewTasksWithNotes] = useState<CrmTask[]>([]);
+  const [previewFbMsgs, setPreviewFbMsgs] = useState<LeadPreviewFbMsg[]>([]);
 
   const [valueDraft, setValueDraft] = useState('');
   const [createdAtDraft, setCreatedAtDraft] = useState('');
@@ -213,6 +227,29 @@ export default function LeadDetailScreen() {
   useEffect(() => {
     if (activeTab === 'team') void loadMembers();
   }, [activeTab, loadMembers]);
+
+  const loadLeadPreview = useCallback(async () => {
+    setPreviewLoading(true);
+    try {
+      const [tRes, fRes] = await Promise.all([
+        api.get<CrmTask[]>(`/crm/leads/${id}/tasks`).catch(() => ({ data: [] as CrmTask[] })),
+        api.get<LeadPreviewFbMsg[]>(`/facebook/leads/${id}/messages`).catch(() => ({ data: [] as LeadPreviewFbMsg[] })),
+      ]);
+      const tasks = Array.isArray(tRes.data) ? tRes.data : [];
+      setPreviewTasksWithNotes(tasks.filter((t) => (t.notes || '').trim().length > 0));
+      const fb = Array.isArray(fRes.data) ? fRes.data : [];
+      setPreviewFbMsgs(fb.slice(-40));
+    } catch {
+      setPreviewTasksWithNotes([]);
+      setPreviewFbMsgs([]);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (previewExpanded) void loadLeadPreview();
+  }, [previewExpanded, loadLeadPreview]);
 
   const normalizeList = (raw: unknown) => (Array.isArray(raw) ? raw : []);
 
@@ -723,6 +760,83 @@ export default function LeadDetailScreen() {
             <Text style={styles.statLabel}>Công việc</Text>
             <Text style={styles.statValPurple}>{taskCount}</Text>
           </View>
+        </View>
+
+        <View style={[styles.card, CrmShadow.card]}>
+          <TouchableOpacity
+            style={styles.collapseHead}
+            onPress={() => setPreviewExpanded((v) => !v)}
+            activeOpacity={0.75}
+          >
+            <View style={styles.collapseHeadRow}>
+              <Text style={[styles.cardH, styles.cardHInline]}>Ghi chú nhiệm vụ & Facebook</Text>
+              <Text style={styles.collapseChevron}>{previewExpanded ? '▼' : '▶'}</Text>
+            </View>
+            {!previewExpanded ? (
+              <Text style={styles.collapsePreview} numberOfLines={2}>
+                {isDeal
+                  ? 'Xem nhanh ghi chú trên công việc và tin Facebook của khách (deal).'
+                  : 'Xem nhanh ghi chú trên công việc và tin Facebook của khách.'}
+              </Text>
+            ) : null}
+          </TouchableOpacity>
+          {previewExpanded ? (
+            <View style={styles.previewBody}>
+              {previewLoading ? (
+                <ActivityIndicator style={{ marginVertical: 16 }} color={CrmColors.blue600} />
+              ) : (
+                <>
+                  <Text style={styles.previewSectionH}>Ghi chú trên nhiệm vụ</Text>
+                  {previewTasksWithNotes.length === 0 ? (
+                    <Text style={styles.muted}>Chưa có ghi chú trên nhiệm vụ (tab Công việc).</Text>
+                  ) : (
+                    previewTasksWithNotes.map((t) => (
+                      <View key={t.id} style={styles.previewNoteCard}>
+                        <Text style={styles.previewTaskTitle}>{t.title || 'Nhiệm vụ'}</Text>
+                        <Text style={styles.previewTaskNotes}>{(t.notes || '').trim()}</Text>
+                      </View>
+                    ))
+                  )}
+
+                  <Text style={[styles.previewSectionH, { marginTop: 16 }]}>Tin nhắn Facebook</Text>
+                  {previewFbMsgs.length === 0 ? (
+                    <Text style={styles.muted}>Chưa có tin nhắn Facebook gắn hồ sơ này.</Text>
+                  ) : (
+                    <ScrollView style={styles.previewFbScroll} nestedScrollEnabled showsVerticalScrollIndicator>
+                      {previewFbMsgs.map((m) => {
+                        const out = String(m.direction || '').toLowerCase() === 'outbound';
+                        return (
+                          <View
+                            key={m.id}
+                            style={[styles.previewFbBubble, out ? styles.previewFbOut : styles.previewFbIn]}
+                          >
+                            <Text style={styles.previewFbMeta}>
+                              {out ? 'Page' : m.contact?.fb_name || 'Khách'} · {formatDateTime(m.created_at)}
+                            </Text>
+                            {m.content ? <Text style={styles.previewFbTxt}>{m.content}</Text> : null}
+                            {m.attachment_url ? (
+                              <TouchableOpacity onPress={() => void Linking.openURL(m.attachment_url!)}>
+                                <Text style={styles.previewFbLink}>Đính kèm / ảnh</Text>
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+                  <TouchableOpacity
+                    style={styles.previewWebBtn}
+                    onPress={() => openWebPath(`/crm/leads/${id}?tab=facebook`)}
+                  >
+                    <Text style={styles.previewWebBtnTxt}>Facebook đầy đủ trên web</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.previewReload} onPress={() => void loadLeadPreview()}>
+                    <Text style={styles.previewReloadTxt}>Tải lại</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          ) : null}
         </View>
 
         <View style={[styles.card, CrmShadow.card]}>
@@ -1427,6 +1541,48 @@ const styles = StyleSheet.create({
   collapseHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   collapseChevron: { fontSize: 14, color: CrmColors.gray500, fontWeight: '700', paddingLeft: 8 },
   collapsePreview: { fontSize: 13, color: CrmColors.gray600, marginTop: 8, lineHeight: 18 },
+  previewBody: { marginTop: 8, paddingTop: 4 },
+  previewSectionH: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: CrmColors.gray700,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  previewNoteCard: {
+    backgroundColor: CrmColors.gray50,
+    borderRadius: CrmRadii.md,
+    borderWidth: 1,
+    borderColor: CrmColors.gray100,
+    padding: 12,
+    marginBottom: 8,
+  },
+  previewTaskTitle: { fontSize: 14, fontWeight: '800', color: CrmColors.gray900, marginBottom: 6 },
+  previewTaskNotes: { fontSize: 14, color: CrmColors.gray800, lineHeight: 20 },
+  previewFbScroll: { maxHeight: 280, marginTop: 4 },
+  previewFbBubble: {
+    borderRadius: CrmRadii.md,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+  },
+  previewFbIn: { backgroundColor: CrmColors.white, borderColor: CrmColors.gray200, alignSelf: 'flex-start', maxWidth: '96%' },
+  previewFbOut: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue100, alignSelf: 'flex-end', maxWidth: '96%' },
+  previewFbMeta: { fontSize: 11, color: CrmColors.gray500, marginBottom: 4 },
+  previewFbTxt: { fontSize: 14, color: CrmColors.gray900, lineHeight: 20 },
+  previewFbLink: { fontSize: 13, color: CrmColors.blue600, fontWeight: '700', marginTop: 4 },
+  previewWebBtn: {
+    marginTop: 12,
+    paddingVertical: 10,
+    borderRadius: CrmRadii.md,
+    borderWidth: 1,
+    borderColor: CrmColors.blue100,
+    backgroundColor: CrmColors.blue50,
+    alignItems: 'center',
+  },
+  previewWebBtnTxt: { fontSize: 14, fontWeight: '800', color: CrmColors.blue700 },
+  previewReload: { marginTop: 8, alignItems: 'center', paddingVertical: 6 },
+  previewReloadTxt: { fontSize: 13, color: CrmColors.gray500, fontWeight: '600' },
   webTabsBar: {
     backgroundColor: CrmColors.white,
     borderWidth: 1,

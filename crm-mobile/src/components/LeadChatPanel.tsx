@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Pressable,
@@ -65,6 +66,7 @@ export default function LeadChatPanel({ leadId }: Props) {
   const [filter, setFilter] = useState<ChatFilter>('all');
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugText, setDebugText] = useState('');
+  const [kbInset, setKbInset] = useState(0);
   const socketRef = useRef<Socket | null>(null);
   const listRef = useRef<ScrollView>(null);
 
@@ -88,6 +90,15 @@ export default function LeadChatPanel({ leadId }: Props) {
     };
     update();
     return chatDebugSubscribe(update);
+  }, []);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) => setKbInset(e.endCoordinates.height));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKbInset(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
   }, []);
 
   const loadChat = useCallback(async () => {
@@ -417,7 +428,7 @@ export default function LeadChatPanel({ leadId }: Props) {
           <Text style={styles.iconBtnTxt}>📎</Text>
         </TouchableOpacity>
       </View>
-      <View style={styles.inputRow}>
+      <View style={[styles.inputRow, Platform.OS === 'android' && { paddingBottom: kbInset }]}>
         <TextInput
           style={styles.input}
           placeholder="Nhập tin nhắn…"
@@ -440,7 +451,7 @@ export default function LeadChatPanel({ leadId }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { minHeight: 420 },
+  root: { flexGrow: 1, minHeight: 280 },
   toolbar: { marginBottom: 8 },
   webBtn: {
     alignSelf: 'flex-start',

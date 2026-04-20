@@ -25,6 +25,17 @@ export function navigateFromAppNotification(n: AppNotification): void {
     openWebPath(`/tasks?task=${encodeURIComponent(n.entity_id)}`);
     return;
   }
+  if (n.entity_type === 'messenger_group' && n.entity_id) {
+    const groupName = typeof m.group_name === 'string' ? m.group_name : undefined;
+    navigationRef.navigate('Main', {
+      screen: 'MoreTab',
+      params: {
+        screen: 'MessengerGroupChat',
+        params: { groupId: n.entity_id, title: groupName, isDirect: m.is_direct === true },
+      } as never,
+    });
+    return;
+  }
   if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal' || n.entity_type === 'lead') {
     const id = n.entity_id;
     if (id) {

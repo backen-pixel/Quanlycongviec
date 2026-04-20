@@ -14,13 +14,15 @@ import { API_ORIGIN } from '../config';
 import { useAuth } from './AuthContext';
 import { isNotificationTypeEnabled } from '../lib/notificationPrefs';
 import { CRM_MOBILE_PREFS_CHANGED, loadCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
+import { rememberMessengerTargetFromNotification } from '../lib/messengerBubbleTarget';
 import type { AppNotification, NotificationPrefs } from '../types/notifications';
 
 type Listener = (n: AppNotification) => void;
 
-/** Thông báo tin nhắn (lead chat) — không gồm task/deadline/hệ thống */
+/** Thông báo tin nhắn (lead chat + Messenger nhóm/1–1) — không gồm task/deadline/hệ thống */
 export function isChatNotification(n: { type?: string } | null | undefined): boolean {
-  return n?.type === 'lead_chat';
+  const t = n?.type;
+  return t === 'lead_chat' || t === 'messenger_chat';
 }
 
 type Ctx = {
@@ -169,6 +171,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       if (!isNotificationTypeEnabled(prefsRef.current, n?.type, n?.entity_type)) return;
       setUnreadCount((c) => c + 1);
       if (isChatNotification(n)) setChatUnreadCount((c) => c + 1);
+      if (n?.type === 'messenger_chat') rememberMessengerTargetFromNotification(n);
       setToast(n);
       listenersRef.current.forEach((fn) => {
         try {
