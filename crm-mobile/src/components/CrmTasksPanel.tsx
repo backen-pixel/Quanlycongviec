@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { api } from '../api/client';
+import { api, formatApiError, postMultipart } from '../api/client';
 import type { CrmTask } from '../types/crm';
 import { CrmColors, CrmRadii } from '../theme/crmTheme';
 import { formatDate } from '../lib/formatUtils';
@@ -231,7 +231,7 @@ export default function CrmTasksPanel({ leadId, leadType, onCountChange }: Props
       await load();
       Alert.alert('Đã lưu', 'Ghi chú nhiệm vụ đã cập nhật (đồng bộ với web).');
     } catch (e: unknown) {
-      Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không lưu ghi chú');
+      Alert.alert('Lỗi', formatApiError(e));
     } finally {
       setSavingNote(false);
     }
@@ -273,7 +273,7 @@ export default function CrmTasksPanel({ leadId, leadType, onCountChange }: Props
           type: f.mime,
         } as unknown as Blob);
       }
-      const { data: up } = await api.post<{
+      const { data: up } = await postMultipart<{
         files: { file_url?: string; file_name?: string; file_size?: number; mime_type?: string }[];
       }>('/upload', form);
       const uploaded = up?.files || [];
@@ -292,7 +292,7 @@ export default function CrmTasksPanel({ leadId, leadType, onCountChange }: Props
       await loadAttachments(detailTask.id);
       await load();
     } catch (e: unknown) {
-      Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message || 'Upload lỗi');
+      Alert.alert('Lỗi upload', formatApiError(e));
     } finally {
       setUploadBusy(false);
     }
@@ -388,12 +388,12 @@ export default function CrmTasksPanel({ leadId, leadType, onCountChange }: Props
         name: a.name || 'bao-gia.xlsx',
         type: a.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       } as unknown as Blob);
-      const { data } = await api.post<{
+      const { data } = await postMultipart<{
         quotation_code?: string;
         total?: number;
         item_count?: number;
       }>(`/crm/leads/${leadId}/tasks/${detailTask.id}/import-quotation-excel`, form, {
-        timeout: 120000,
+        timeoutMs: 120000,
       });
       await load();
       if (detailTask) {
@@ -410,7 +410,7 @@ export default function CrmTasksPanel({ leadId, leadType, onCountChange }: Props
         `Báo giá ${data?.quotation_code || ''}\nTổng: ${data?.total != null ? `${data.total}` : '—'}\nSố dòng: ${data?.item_count ?? '—'}\nNhiệm vụ đã được đánh dấu hoàn thành nếu cần.`,
       );
     } catch (e: unknown) {
-      Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Import Excel thất bại');
+      Alert.alert('Lỗi', formatApiError(e));
     } finally {
       setExcelBusy(false);
     }

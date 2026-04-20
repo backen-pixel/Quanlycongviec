@@ -35,6 +35,7 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
   const [err, setErr] = useState('');
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [relinkBusy, setRelinkBusy] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [filterUserId, setFilterUserId] = useState<string>('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerUsers, setPickerUsers] = useState<PickerUser[]>([]);
@@ -83,6 +84,41 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
       setPickerUsers([]);
     } finally {
       setPickerLoading(false);
+    }
+  };
+
+  const canDeleteVoice = (r: CrmVoiceRecording) => !!(user?.id && r.user_id && r.user_id === user.id);
+
+  const confirmDeleteVoice = (r: CrmVoiceRecording) => {
+    Alert.alert('Xóa bản ghi?', 'Xóa trên server; không lấy lại được.', [
+      { text: 'Hủy', style: 'cancel' },
+      { text: 'Xóa', style: 'destructive', onPress: () => void deleteVoice(r) },
+    ]);
+  };
+
+  const deleteVoice = async (r: CrmVoiceRecording) => {
+    if (playingId === r.id) {
+      try {
+        await soundRef.current?.stopAsync();
+        await soundRef.current?.unloadAsync();
+      } catch {
+        /* ignore */
+      }
+      soundRef.current = null;
+      setPlayingId(null);
+    }
+    setDeletingId(r.id);
+    try {
+      await api.delete(`/voice-recordings/${r.id}`);
+      setList((prev) => prev.filter((x) => x.id !== r.id));
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        (e as Error)?.message ||
+        'Xóa thất bại';
+      Alert.alert('Xóa', String(msg));
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -293,6 +329,15 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
                   <Text style={styles.mini2Txt}>Ghép SĐT</Text>
                 </TouchableOpacity>
               ) : null}
+              {canDeleteVoice(r) ? (
+                <TouchableOpacity
+                  style={[styles.miniDel, deletingId === r.id && { opacity: 0.5 }]}
+                  disabled={deletingId === r.id}
+                  onPress={() => confirmDeleteVoice(r)}
+                >
+                  <Text style={styles.miniDelTxt}>{deletingId === r.id ? '…' : 'Xóa'}</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         )}
@@ -427,6 +472,15 @@ const styles = StyleSheet.create({
     borderRadius: CrmRadii.md,
   },
   mini2Txt: { fontSize: 13, fontWeight: '700', color: CrmColors.blue800 },
+  miniDel: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(239,68,68,0.12)',
+    borderRadius: CrmRadii.md,
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.35)',
+  },
+  miniDelTxt: { fontSize: 13, fontWeight: '800', color: CrmColors.red700 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15,23,42,0.45)',

@@ -20,7 +20,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { io, type Socket } from 'socket.io-client';
-import { api, getStoredToken } from '../api/client';
+import { api, getStoredToken, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
 import type { MoreStackParamList } from '../navigation/types';
@@ -201,11 +201,20 @@ export default function MessengerGroupChatScreen() {
       });
       form.append('content', text);
       if (replyTo?.id) form.append('reply_to', String(replyTo.id));
-      for (const f of pendingFiles) {
-        form.append('files', { uri: f.uri, name: f.name, type: f.type } as unknown as Blob);
-      }
-      const { data } = await api.post<MessengerMessage>(`/messenger/groups/${groupId}/chat`, form, {
-        timeout: 120000,
+      pendingFiles.forEach((f, i) => {
+        const rawName = (f.name || '').trim();
+        const safeName =
+          rawName && rawName !== '.'
+            ? rawName
+            : `file_${Date.now()}_${i}.${(f.type || '').includes('image') ? 'jpg' : 'bin'}`;
+        form.append('files', {
+          uri: f.uri,
+          name: safeName,
+          type: f.type || 'application/octet-stream',
+        } as unknown as Blob);
+      });
+      const { data } = await postMultipart<MessengerMessage>(`/messenger/groups/${groupId}/chat`, form, {
+        timeoutMs: 120000,
       });
       setDraft('');
       setPendingFiles([]);

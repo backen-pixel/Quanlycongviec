@@ -18,7 +18,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { api } from '../api/client';
+import { api, formatApiError, postMultipart } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { canAssigneeFilterDeals, canAssigneeFilterLeads } from '../lib/crmMobilePrefs';
 import type { CrmActivity, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmStage } from '../types/crm';
@@ -435,7 +435,7 @@ export default function LeadDetailScreen() {
         name: asset.name || 'file',
         type: asset.mimeType || 'application/octet-stream',
       } as unknown as Blob);
-      const { data: up } = await api.post<{ files: { file_url?: string; file_name?: string; file_size?: number; mime_type?: string }[] }>(
+      const { data: up } = await postMultipart<{ files: { file_url?: string; file_name?: string; file_size?: number; mime_type?: string }[] }>(
         '/upload',
         form,
       );
@@ -454,7 +454,7 @@ export default function LeadDetailScreen() {
       const { data: newDocs } = await api.post<CrmDocument[]>(`/crm/leads/${id}/documents/bulk`, { items });
       setDocuments((prev) => [...(newDocs || []), ...prev]);
     } catch (e: unknown) {
-      Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message || 'Upload lỗi');
+      Alert.alert('Lỗi upload', formatApiError(e));
     } finally {
       setUploadingDoc(false);
     }

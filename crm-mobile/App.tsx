@@ -1,7 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View } from 'react-native';
+import { KeyboardAvoidingView, Platform, StatusBar as RNStatusBar, View } from 'react-native';
 import { AuthProvider } from './src/context/AuthContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
@@ -30,11 +30,17 @@ export default function App() {
         <PermissionBootstrap />
         <NotificationProvider>
           <NavigationContainer ref={navigationRef} theme={NavTheme}>
-            <View style={{ flex: 1 }}>
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              keyboardVerticalOffset={
+                Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 0) : 0
+              }
+            >
               <RootNavigator />
-              <GlobalNotificationToast />
-              <FloatingChatBubble />
-            </View>
+            </KeyboardAvoidingView>
+            <GlobalNotificationToast />
+            <FloatingChatBubble />
             <StatusBar style="dark" />
           </NavigationContainer>
         </NotificationProvider>

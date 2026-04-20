@@ -153,6 +153,9 @@ object VoiceRepository {
         source: String,
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
+            if (!file.exists() || file.length() < 32) {
+                return@withContext Result.failure(IllegalStateException("File ghi âm rỗng hoặc chưa ghi xong (${file.length()} byte)"))
+            }
             val base = baseUrl(ctx)
             val body = file.asRequestBody(mime.toMediaTypeOrNull())
             val multipart = MultipartBody.Builder()

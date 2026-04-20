@@ -10,6 +10,8 @@ export const CRM_MOBILE_PREFS_CHANGED = 'crm-mobile-prefs-changed';
 export type CrmMobilePrefs = {
   /** Cho phép dùng micro / tải ghi âm lên web từ app */
   voiceCaptureEnabled: boolean;
+  /** Android: quét file audio mới theo định kỳ và tải lên server khi app ở nền */
+  voiceBackgroundSyncEnabled: boolean;
   /** Sau khi có file mới, gọi quét ghép CRM theo SĐT (API relink-unassigned) */
   autoLinkVoiceByPhone: boolean;
   /**
@@ -21,24 +23,35 @@ export type CrmMobilePrefs = {
   autoToolsEnabled: boolean;
   facebookAutoTool: boolean;
   contactsAutoTool: boolean;
+  floatingChatBubbleEnabled: boolean;
+  floatingChatBubbleOnlyWhenUnread: boolean;
+  floatingChatBubbleCompact: boolean;
 };
 
 const DEFAULTS: CrmMobilePrefs = {
   voiceCaptureEnabled: true,
+  voiceBackgroundSyncEnabled: false,
   autoLinkVoiceByPhone: true,
   backgroundRealtimeEnabled: true,
   autoToolsEnabled: false,
   facebookAutoTool: false,
   contactsAutoTool: false,
+  floatingChatBubbleEnabled: true,
+  floatingChatBubbleOnlyWhenUnread: false,
+  floatingChatBubbleCompact: false,
 };
 
 const SERVER_KEYS: (keyof CrmMobilePrefs)[] = [
   'voiceCaptureEnabled',
+  'voiceBackgroundSyncEnabled',
   'autoLinkVoiceByPhone',
   'backgroundRealtimeEnabled',
   'autoToolsEnabled',
   'facebookAutoTool',
   'contactsAutoTool',
+  'floatingChatBubbleEnabled',
+  'floatingChatBubbleOnlyWhenUnread',
+  'floatingChatBubbleCompact',
 ];
 
 export async function loadCrmMobilePrefs(): Promise<CrmMobilePrefs> {
