@@ -1067,12 +1067,6 @@ export default function LeadDetailScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.webTabChip}
-              onPress={() => openWebPath(`/crm/leads/${id}?tab=calls`)}
-            >
-              <Text style={styles.webTabChipTxt}>📞 Tổng đài</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.webTabChip}
               onPress={() => openWebPath(`/crm/leads/${id}?tab=voice_crm`)}
             >
               <Text style={styles.webTabChipTxt}>🎙 Ghi âm (web)</Text>
@@ -1249,7 +1243,7 @@ export default function LeadDetailScreen() {
 
         <Text style={styles.webHint}>
           Tab «Ghi âm» trong app = ghi âm CRM trên thiết bị. Tab «Trao đổi» gồm CRM, chat nhóm nội bộ theo lead và tin
-          Facebook; tổng đài / duyệt deal đầy đủ: hàng nút phía trên hoặc mở web.
+          Facebook; duyệt deal đầy đủ: hàng nút phía trên hoặc mở web.
         </Text>
       </ScrollView>
 

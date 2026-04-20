@@ -44,8 +44,18 @@ function mediaUrl(u: string | null | undefined): string | null {
   return `${API_ORIGIN}${u.startsWith('/') ? '' : '/'}${u}`;
 }
 
-export default function MessengerGroupChatScreen() {
-  const { params } = useRoute<R>();
+type Props = {
+  /** Khi truyền từ BubbleChatScreen (root stack), params được pass qua props thay vì useRoute. */
+  overrideGroupId?: string;
+  overrideTitle?: string;
+  overrideFromBubble?: boolean;
+};
+
+export default function MessengerGroupChatScreen({ overrideGroupId, overrideTitle, overrideFromBubble }: Props = {}) {
+  const routeResult = useRoute<R>();
+  const params = overrideGroupId
+    ? { groupId: overrideGroupId, title: overrideTitle, isDirect: false, fromBubble: overrideFromBubble }
+    : routeResult.params;
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
   const myId = String(user?.id || user?.userId || '');
