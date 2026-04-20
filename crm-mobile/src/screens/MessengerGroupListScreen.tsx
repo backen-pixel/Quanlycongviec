@@ -16,10 +16,12 @@ import type { MoreStackParamList } from '../navigation/types';
 import type { MessengerGroupListItem } from '../types/messenger';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
+import { useNotifications } from '../context/NotificationContext';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupList'>;
 
 export default function MessengerGroupListScreen({ navigation }: { navigation: Nav }) {
+  const { refreshUnread } = useNotifications();
   const [groups, setGroups] = useState<MessengerGroupListItem[]>([]);
   const [pins, setPins] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -54,9 +56,10 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
 
   useFocusEffect(
     useCallback(() => {
+      void refreshUnread();
       setLoading(true);
       void load();
-    }, [load]),
+    }, [load, refreshUnread]),
   );
 
   const togglePin = (g: MessengerGroupListItem) => {

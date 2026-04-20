@@ -39,6 +39,7 @@ export default function MoreStackNavigator() {
     <Stack.Navigator
       initialRouteName="MoreHome"
       screenOptions={{
+        contentStyle: { backgroundColor: CrmColors.pageBg },
         headerStyle: {
           backgroundColor: CrmColors.white,
           borderBottomWidth: 1,

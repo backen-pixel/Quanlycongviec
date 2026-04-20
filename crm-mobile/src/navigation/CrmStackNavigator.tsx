@@ -11,6 +11,7 @@ export default function CrmStackNavigator() {
   return (
     <Stack.Navigator
       screenOptions={{
+        contentStyle: { backgroundColor: CrmColors.pageBg },
         headerStyle: {
           backgroundColor: CrmColors.white,
           borderBottomWidth: 1,

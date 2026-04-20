@@ -26,6 +26,7 @@ export default function RootNavigator() {
       screenOptions={{
         headerShown: false,
         animation: 'fade',
+        contentStyle: { backgroundColor: CrmColors.pageBg },
       }}
     >
       {!token ? (

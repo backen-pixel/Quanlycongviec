@@ -5,7 +5,12 @@ const fs = require('fs');
 const os = require('os');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
-const { resolveCustomerLeadByPhone, findCustomerByPhoneDigits } = require('../helpers/phoneCrmLink');
+const {
+  resolveCustomerLeadByPhone,
+  findCustomerByPhoneDigits,
+  extractPhonesFromText,
+  digitsOnly,
+} = require('../helpers/phoneCrmLink');
 const { nextCrmCode } = require('../helpers/crmNextCode');
 const {
   uploadVoiceFromTempFile,
@@ -259,7 +264,7 @@ r.post('/', upload.single('audio'), async (req, res) => {
       if (Number.isFinite(d) && d >= 0 && d < 86400) duration_sec = d;
     }
 
-    const phone_number = req.body.phone_number
+    let phone_number = req.body.phone_number
       ? String(req.body.phone_number).replace(/\s+/g, '').slice(0, 32)
       : null;
     let direction = req.body.direction ? String(req.body.direction).toLowerCase().slice(0, 16) : null;
@@ -326,9 +331,35 @@ r.post('/', upload.single('audio'), async (req, res) => {
       }
     }
 
+    const fileBaseName = req.file.originalname || req.file.filename || '';
+    const metaTextBlob = [notes, fileBaseName, device_label].filter(Boolean).join('\n');
+
     let customer_id = null;
     let lead_id = null;
-    if (phone_number) {
+
+    /** Quét SĐT trong ghi chú / tên file / nhãn thiết bị khi chưa nhập SĐT tay */
+    if (!phone_number && metaTextBlob.trim()) {
+      const candidates = extractPhonesFromText(metaTextBlob);
+      for (const c of candidates) {
+        const resolved = await resolveCustomerLeadByPhone(
+          supabase,
+          c,
+          req.user.userId,
+          req.user.role,
+        );
+        if (resolved?.customer_id) {
+          phone_number = digitsOnly(c).slice(0, 32);
+          customer_id = resolved.customer_id;
+          lead_id = resolved.lead_id;
+          break;
+        }
+      }
+      if (!phone_number && candidates.length) {
+        phone_number = digitsOnly(candidates[0]).slice(0, 32);
+      }
+    }
+
+    if (phone_number && customer_id == null && lead_id == null) {
       const resolved = await resolveCustomerLeadByPhone(
         supabase,
         phone_number,
@@ -541,7 +572,7 @@ r.patch('/:id', async (req, res) => {
     const admin = isVoiceRecordingsAdmin(req.user?.role);
     let sel = supabase
       .from('voice_recordings')
-      .select('id, phone_number, customer_id, lead_id, user_id')
+      .select('id, phone_number, customer_id, lead_id, user_id, notes, file_name, device_label')
       .eq('id', req.params.id);
     if (!admin) sel = sel.eq('user_id', req.user.userId);
     const { data: row, error: fe } = await sel.single();
@@ -558,21 +589,53 @@ r.patch('/:id', async (req, res) => {
     }
 
     if (req.body.action === 'relink_from_phone') {
-      const phone = phone_number ? String(phone_number).trim() : '';
-      if (!phone) return res.status(400).json({ error: 'Bản ghi chưa có số điện thoại để ghép' });
-      const resolved = await resolveCustomerLeadByPhone(
-        supabase,
-        phone,
-        row.user_id || req.user.userId,
-        req.user.role,
-      );
-      if (!resolved) {
-        customer_id = null;
-        lead_id = null;
-      } else {
-        customer_id = resolved.customer_id;
-        lead_id = resolved.lead_id;
+      customer_id = null;
+      lead_id = null;
+      let phoneNum = phone_number ? String(phone_number).trim() : '';
+      const metaTextBlob = [row.notes, row.file_name, row.device_label].filter(Boolean).join('\n');
+      let candidates = [];
+      if (!phoneNum && metaTextBlob.trim()) {
+        candidates = extractPhonesFromText(metaTextBlob);
+        for (const c of candidates) {
+          const resolved0 = await resolveCustomerLeadByPhone(
+            supabase,
+            c,
+            row.user_id || req.user.userId,
+            req.user.role,
+          );
+          if (resolved0?.customer_id) {
+            phoneNum = digitsOnly(c).slice(0, 32);
+            customer_id = resolved0.customer_id;
+            lead_id = resolved0.lead_id;
+            break;
+          }
+        }
+        if (!phoneNum && candidates.length) {
+          phoneNum = digitsOnly(candidates[0]).slice(0, 32);
+        }
       }
+      if (!phoneNum) {
+        return res.status(400).json({
+          error:
+            'Bản ghi chưa có số điện thoại để ghép (nhập SĐT hoặc ghi trong ghi chú / tên file / nhãn thiết bị).',
+        });
+      }
+      if (customer_id == null && lead_id == null) {
+        const resolved = await resolveCustomerLeadByPhone(
+          supabase,
+          phoneNum,
+          row.user_id || req.user.userId,
+          req.user.role,
+        );
+        if (!resolved) {
+          customer_id = null;
+          lead_id = null;
+        } else {
+          customer_id = resolved.customer_id;
+          lead_id = resolved.lead_id;
+        }
+      }
+      phone_number = phoneNum;
     } else {
       if (req.body.customer_id !== undefined) {
         const v = uuidOrNull(req.body.customer_id);

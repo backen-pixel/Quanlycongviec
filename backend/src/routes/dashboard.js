@@ -9,7 +9,7 @@ r.use(auth);
 // ROOT DASHBOARD - Unread notifications count (for NotificationCenter)
 // ═══════════════════════════════════════════════════════════════════════════
 /** Chỉ tin nhắn/hội thoại (badge bong bóng chat CRM mobile), không gồm deadline / task / hệ thống… */
-const CHAT_NOTIFICATION_TYPES = ['lead_chat'];
+const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 
 r.get('/', async (req, res) => {
   try {

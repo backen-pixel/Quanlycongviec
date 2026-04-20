@@ -1,11 +1,55 @@
 /**
- * Chuẩn hoá SĐT (chỉ số) và ghép với customers + cơ hội CRM (lead/deal) gần nhất.
+ * Chuẩn hoá SĐT (chỉ số) và ghép với customers + cơ hội CRM (lead/deal).
+ * Nếu khách có đúng 1 lead/deal trong phạm vi quyền → tự gắn lead_id.
+ * Từ 2 trở lên → chỉ gắn customer_id; lead_id để NV chọn thủ công trên web.
  */
 
 const { fetchCrmLeadsForCustomerScoped } = require('./crmAccessRoles');
 
 function digitsOnly(s) {
   return String(s || '').replace(/\D/g, '');
+}
+
+/** Chuẩn hoá dãy số VN di động (0xxxxxxxxx, 10–11 ký tự số). */
+function normalizeVnMobileDigits(d) {
+  let x = String(d || '').replace(/\D/g, '');
+  if (x.length < 9) return '';
+  if (x.startsWith('84') && x.length >= 11) x = `0${x.slice(2)}`;
+  else if (x.length === 9 && /^[35789]/.test(x)) x = `0${x}`;
+  if (x.startsWith('0') && x.length >= 10 && x.length <= 11) return x;
+  return '';
+}
+
+/**
+ * Trích các số điện thoại di động VN có thể có trong ghi chú / tên file / nhãn thiết bị.
+ * @returns {string[]} dãy số (chỉ số) ưu tiên thứ tự xuất hiện trong text
+ */
+function extractPhonesFromText(text) {
+  if (!text || typeof text !== 'string') return [];
+  const raw = String(text);
+  const out = [];
+  const seenTail = new Set();
+
+  const pushDigits = (chunk) => {
+    const n = normalizeVnMobileDigits(chunk);
+    if (!n) return;
+    const tail = n.slice(-9);
+    if (seenTail.has(tail)) return;
+    seenTail.add(tail);
+    out.push(n);
+  };
+
+  const reMobile = /\b0(3|5|7|8|9)\d{8}\b/g;
+  let m;
+  while ((m = reMobile.exec(raw)) !== null) pushDigits(m[0]);
+
+  const re84sp = /\+?\s*84[-\s]?(3|5|7|8|9)\d{8}\b/g;
+  while ((m = re84sp.exec(raw)) !== null) pushDigits(m[0]);
+
+  const re84 = /\b84(3|5|7|8|9)\d{8}\b/g;
+  while ((m = re84.exec(raw)) !== null) pushDigits(m[0]);
+
+  return out;
 }
 
 /**
@@ -41,7 +85,14 @@ async function resolveCustomerLeadByPhone(supabase, phoneRaw, staffUserId, role)
   try {
     leads = await fetchCrmLeadsForCustomerScoped(supabase, customer.id, staffUserId, role, 40);
   } catch (_e) {
-    return { customer_id: customer.id, lead_id: null, customer, lead: null };
+    return {
+      customer_id: customer.id,
+      lead_id: null,
+      customer,
+      lead: null,
+      multiple_leads: false,
+      visible_lead_count: 0,
+    };
   }
 
   if (!leads?.length) {
@@ -50,24 +101,30 @@ async function resolveCustomerLeadByPhone(supabase, phoneRaw, staffUserId, role)
       lead_id: null,
       customer,
       lead: null,
+      multiple_leads: false,
+      visible_lead_count: 0,
     };
   }
 
-  /** Ưu tiên Deal, sau đó Lead/record mới cập nhật gần nhất */
-  const sorted = [...leads].sort((a, b) => {
-    const pa = a.type === 'deal' ? 0 : 1;
-    const pb = b.type === 'deal' ? 0 : 1;
-    if (pa !== pb) return pa - pb;
-    const ta = new Date(a.updated_at || 0).getTime();
-    const tb = new Date(b.updated_at || 0).getTime();
-    return tb - ta;
-  });
-  const lead = sorted[0] || null;
+  if (leads.length >= 2) {
+    return {
+      customer_id: customer.id,
+      lead_id: null,
+      customer,
+      lead: null,
+      multiple_leads: true,
+      visible_lead_count: leads.length,
+    };
+  }
+
+  const lead = leads[0] || null;
   return {
     customer_id: customer.id,
     lead_id: lead?.id || null,
     customer,
     lead,
+    multiple_leads: false,
+    visible_lead_count: 1,
   };
 }
 
@@ -91,4 +148,10 @@ async function findCustomerByPhoneDigits(supabase, phoneRaw) {
   return exact || candidates[0];
 }
 
-module.exports = { digitsOnly, resolveCustomerLeadByPhone, findCustomerByPhoneDigits };
+module.exports = {
+  digitsOnly,
+  normalizeVnMobileDigits,
+  extractPhonesFromText,
+  resolveCustomerLeadByPhone,
+  findCustomerByPhoneDigits,
+};

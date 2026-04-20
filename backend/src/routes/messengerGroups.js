@@ -6,6 +6,7 @@ const multer = require('multer');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const config = require('../config');
+const { notifyMultiple } = require('../helpers/notifications');
 
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
 const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attachments';
@@ -102,6 +103,46 @@ async function assertGroupMember(groupId, userId) {
     .eq('user_id', userId)
     .maybeSingle();
   return !!data;
+}
+
+/**
+ * Thông báo + socket cho thành viên khác (tin user, không gồm system) — badge / toast mobile.
+ */
+async function notifyMessengerGroupChatRecipients(req, groupId, senderId, msgRow, groupName) {
+  if (!msgRow || msgRow.is_system) return;
+  const { data: members } = await supabase
+    .from('messenger_group_members')
+    .select('user_id')
+    .eq('group_id', groupId);
+  const sid = String(senderId);
+  const targets = (members || []).map((m) => String(m.user_id)).filter((id) => id && id !== sid);
+  if (!targets.length) return;
+
+  const senderName = msgRow.user?.full_name || 'Đồng nghiệp';
+
+  let preview = typeof msgRow.content === 'string' ? msgRow.content.trim() : '';
+  if (!preview) {
+    if (Array.isArray(msgRow.attachments) && msgRow.attachments.length) preview = '📎 Tệp đính kèm';
+    else if (msgRow.message_type === 'image') preview = '🖼️ Hình ảnh';
+    else if (msgRow.message_type === 'video') preview = '🎬 Video';
+    else if (msgRow.message_type === 'audio') preview = '🎙️ Ghi âm';
+    else if (msgRow.message_type === 'file' || msgRow.attachment_url) preview = '📎 Tệp đính kèm';
+    else preview = '[Tin nhắn]';
+  }
+  if (preview.length > 140) preview = `${preview.slice(0, 137)}…`;
+
+  const titleBase = groupName ? `Messenger · ${groupName}` : 'Tin nhắn Messenger';
+
+  await notifyMultiple(
+    req,
+    targets,
+    'messenger_chat',
+    titleBase,
+    `${senderName}: ${preview}`,
+    'messenger_group',
+    groupId,
+    { group_name: groupName || null },
+  );
 }
 
 const MSG_USER_SELECT = '*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar)';
@@ -692,6 +733,8 @@ r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     const io = req.app.get('io');
     if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
+    const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();
+    await notifyMessengerGroupChatRecipients(req, req.params.id, req.authUserId, data, grpRow?.name || '');
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -731,6 +774,8 @@ r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (r
     if (error) return res.status(400).json({ error: error.message });
     const io = req.app.get('io');
     if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
+    const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();
+    await notifyMessengerGroupChatRecipients(req, req.params.id, req.authUserId, data, grpRow?.name || '');
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

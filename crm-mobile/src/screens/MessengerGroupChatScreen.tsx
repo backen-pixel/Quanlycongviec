@@ -14,9 +14,11 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
 } from 'react-native';
-import { RouteProp, useRoute, useNavigation } from '@react-navigation/native';
+import { RouteProp, useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { io, type Socket } from 'socket.io-client';
@@ -28,6 +30,8 @@ import type { MessengerGroupDetail, MessengerMessage } from '../types/messenger'
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
+import { setMessengerBubbleTarget } from '../lib/messengerBubbleTarget';
+import { useNotifications } from '../context/NotificationContext';
 
 type R = RouteProp<MoreStackParamList, 'MessengerGroupChat'>;
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupChat'>;
@@ -43,6 +47,9 @@ export default function MessengerGroupChatScreen() {
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
   const myId = String(user?.id || user?.userId || '');
+  const insets = useSafeAreaInsets();
+  const { refreshUnread } = useNotifications();
+  const [kbInset, setKbInset] = useState(0);
 
   const { groupId, title: titleParam, isDirect: isDirectParam } = params;
 
@@ -83,6 +90,19 @@ export default function MessengerGroupChatScreen() {
 
   const displayTitle = group?.name || titleParam || 'Chat nhóm';
 
+  useEffect(() => {
+    void setMessengerBubbleTarget(groupId, displayTitle);
+  }, [groupId, displayTitle]);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) => setKbInset(e.endCoordinates.height));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKbInset(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
@@ -103,13 +123,20 @@ export default function MessengerGroupChatScreen() {
     }
   }, [groupId]);
 
+  useFocusEffect(
+    useCallback(() => {
+      void refreshUnread();
+      void loadAll();
+    }, [refreshUnread, loadAll]),
+  );
+
+  useEffect(() => {
+    listRef.current?.scrollToEnd({ animated: true });
+  }, [messages.length]);
+
   useEffect(() => {
     navigation.setOptions({ title: displayTitle });
   }, [navigation, displayTitle]);
-
-  useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
 
   useEffect(() => {
     let socket: Socket | null = null;
@@ -130,6 +157,7 @@ export default function MessengerGroupChatScreen() {
       if (socket.connected) onSockConnect();
       socket.on('messenger_group:chat', (msg: MessengerMessage) => {
         if (!msg?.id) return;
+        if (String(msg.group_id || '') !== String(groupId)) return;
         const id = String(msg.id);
         setMessages((prev) => {
           if (seenIds.current.has(id)) {
@@ -382,7 +410,11 @@ export default function MessengerGroupChatScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={88}>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+    >
       <View style={styles.infoBar}>
         <TouchableOpacity style={{ flex: 1 }} onPress={() => setInfoOpen(true)}>
           <Text style={styles.infoBarTxt}>
@@ -399,6 +431,8 @@ export default function MessengerGroupChatScreen() {
         keyExtractor={(m) => String(m.id)}
         renderItem={renderMsg}
         contentContainerStyle={styles.listPad}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
       />
 
@@ -422,7 +456,15 @@ export default function MessengerGroupChatScreen() {
         </View>
       ) : null}
 
-      <View style={styles.composer}>
+      <View
+        style={[
+          styles.composer,
+          {
+            paddingBottom:
+              Math.max(insets.bottom, 8) + (Platform.OS === 'android' ? kbInset : 0),
+          },
+        ]}
+      >
         <TouchableOpacity style={styles.iconAct} onPress={() => void pickGallery()} disabled={sending}>
           <Text style={styles.iconActTxt}>🖼</Text>
         </TouchableOpacity>

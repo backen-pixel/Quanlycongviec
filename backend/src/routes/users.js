@@ -187,6 +187,7 @@ const CRM_APP_PREFS_BOOL_KEYS = [
   'floatingChatBubbleEnabled',
   'floatingChatBubbleOnlyWhenUnread',
   'floatingChatBubbleCompact',
+  'floatingChatBubbleSystemOverlay',
 ];
 
 function crmAppPrefsStorageKey(userId) {

@@ -26,20 +26,29 @@ export type CrmMobilePrefs = {
   floatingChatBubbleEnabled: boolean;
   floatingChatBubbleOnlyWhenUnread: boolean;
   floatingChatBubbleCompact: boolean;
+  /** Android: bong bóng SYSTEM overlay trên app khác (TYPE_APPLICATION_OVERLAY). */
+  floatingChatBubbleSystemOverlay: boolean;
 };
 
-const DEFAULTS: CrmMobilePrefs = {
-  voiceCaptureEnabled: true,
-  voiceBackgroundSyncEnabled: false,
-  autoLinkVoiceByPhone: true,
-  backgroundRealtimeEnabled: true,
-  autoToolsEnabled: false,
-  facebookAutoTool: false,
-  contactsAutoTool: false,
-  floatingChatBubbleEnabled: true,
-  floatingChatBubbleOnlyWhenUnread: false,
-  floatingChatBubbleCompact: false,
-};
+/** Bật tối đa mọi tùy chọn bool (cài mới; nút «Bật tất cả» trong Tài khoản). */
+export function createAllEnabledCrmMobilePrefs(): CrmMobilePrefs {
+  return {
+    voiceCaptureEnabled: true,
+    voiceBackgroundSyncEnabled: true,
+    autoLinkVoiceByPhone: true,
+    backgroundRealtimeEnabled: true,
+    autoToolsEnabled: true,
+    facebookAutoTool: true,
+    contactsAutoTool: true,
+    floatingChatBubbleEnabled: true,
+    /** false = luôn hiện bong bóng khi có tin (không chỉ khi unread). */
+    floatingChatBubbleOnlyWhenUnread: false,
+    floatingChatBubbleCompact: false,
+    floatingChatBubbleSystemOverlay: true,
+  };
+}
+
+const DEFAULTS: CrmMobilePrefs = createAllEnabledCrmMobilePrefs();
 
 const SERVER_KEYS: (keyof CrmMobilePrefs)[] = [
   'voiceCaptureEnabled',
@@ -52,6 +61,7 @@ const SERVER_KEYS: (keyof CrmMobilePrefs)[] = [
   'floatingChatBubbleEnabled',
   'floatingChatBubbleOnlyWhenUnread',
   'floatingChatBubbleCompact',
+  'floatingChatBubbleSystemOverlay',
 ];
 
 export async function loadCrmMobilePrefs(): Promise<CrmMobilePrefs> {
