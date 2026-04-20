@@ -18,8 +18,16 @@ import type { AppNotification, NotificationPrefs } from '../types/notifications'
 
 type Listener = (n: AppNotification) => void;
 
+/** Thông báo tin nhắn (lead chat) — không gồm task/deadline/hệ thống */
+export function isChatNotification(n: { type?: string } | null | undefined): boolean {
+  return n?.type === 'lead_chat';
+}
+
 type Ctx = {
+  /** Tất cả thông báo chưa đọc (tab / Trung tâm thông báo) */
   unreadCount: number;
+  /** Chỉ tin nhắn chat lead — dùng cho bong bóng chat */
+  chatUnreadCount: number;
   prefs: NotificationPrefs | null;
   /** Toast in-app (socket) — giống NotificationToast web */
   toast: AppNotification | null;
@@ -44,6 +52,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const { token, user, loading: authLoading } = useAuth();
   const uid = userId(user);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [toast, setToast] = useState<AppNotification | null>(null);
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const prefsRef = useRef<NotificationPrefs | null>(null);
@@ -58,9 +67,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   const refreshUnread = useCallback(async () => {
     try {
-      const { data } = await api.get<{ stats?: { unread?: number } }>('/dashboard');
+      const { data } = await api.get<{ stats?: { unread?: number; unread_chat?: number } }>('/dashboard');
       const u = data?.stats?.unread;
+      const uc = data?.stats?.unread_chat;
       setUnreadCount(typeof u === 'number' ? u : 0);
+      setChatUnreadCount(typeof uc === 'number' ? uc : 0);
     } catch {
       /* ignore */
     }
@@ -127,7 +138,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, [authLoading, token, refreshUnread]);
 
   useEffect(() => {
-    if (!token) setToast(null);
+    if (!token) {
+      setToast(null);
+      setUnreadCount(0);
+      setChatUnreadCount(0);
+    }
   }, [token]);
 
   useEffect(() => {
@@ -153,6 +168,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       const n = raw as AppNotification;
       if (!isNotificationTypeEnabled(prefsRef.current, n?.type, n?.entity_type)) return;
       setUnreadCount((c) => c + 1);
+      if (isChatNotification(n)) setChatUnreadCount((c) => c + 1);
       setToast(n);
       listenersRef.current.forEach((fn) => {
         try {
@@ -188,6 +204,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const value = useMemo(
     () => ({
       unreadCount,
+      chatUnreadCount,
       prefs,
       toast,
       dismissToast,
@@ -196,7 +213,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       updatePrefs,
       subscribeIncoming,
     }),
-    [unreadCount, prefs, toast, dismissToast, refreshUnread, loadPrefs, updatePrefs, subscribeIncoming],
+    [unreadCount, chatUnreadCount, prefs, toast, dismissToast, refreshUnread, loadPrefs, updatePrefs, subscribeIncoming],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

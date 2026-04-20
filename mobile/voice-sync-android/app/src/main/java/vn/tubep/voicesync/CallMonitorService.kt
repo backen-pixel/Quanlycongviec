@@ -207,6 +207,9 @@ class CallMonitorService : Service() {
             return
         }
 
+        // Đợi file ổn định sau MediaRecorder.stop() — tránh upload bản rỗng/chỉ “vỏ”.
+        waitForRecordingFileReady(file)
+
         scope.launch {
             val res = VoiceRepository.uploadAudioFile(
                 this@CallMonitorService,
@@ -231,6 +234,29 @@ class CallMonitorService : Service() {
             runOnMain {
                 startForeground(NOTIF_ID, buildNotification("Theo dõi cuộc gọi — $msg"))
             }
+        }
+    }
+
+    /** Một số máy flush chậm sau MediaRecorder — đợi kích thước file ổn định trước khi upload. */
+    private fun waitForRecordingFileReady(f: File) {
+        var last = -1L
+        var stable = 0
+        var i = 0
+        while (i < 40) {
+            val len = if (f.exists()) f.length() else 0L
+            if (len >= 200 && len == last) {
+                stable++
+                if (stable >= 2) return
+            } else {
+                stable = 0
+            }
+            last = len
+            try {
+                Thread.sleep(50)
+            } catch (_: InterruptedException) {
+                return
+            }
+            i++
         }
     }
 

@@ -178,11 +178,15 @@ r.post('/presence', async (req, res) => {
 // ═══ CRM / app preferences (đồng bộ web ↔ mobile, lưu JSON theo user) ═══
 const CRM_APP_PREFS_BOOL_KEYS = [
   'voiceCaptureEnabled',
+  'voiceBackgroundSyncEnabled',
   'autoLinkVoiceByPhone',
   'backgroundRealtimeEnabled',
   'autoToolsEnabled',
   'facebookAutoTool',
   'contactsAutoTool',
+  'floatingChatBubbleEnabled',
+  'floatingChatBubbleOnlyWhenUnread',
+  'floatingChatBubbleCompact',
 ];
 
 function crmAppPrefsStorageKey(userId) {

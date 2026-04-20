@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { promptAppPermissionsIfNeeded } from '../lib/appPermissions';
+import { syncVoiceBackgroundTaskWithPrefs } from '../lib/voiceBackgroundSync';
 
 /**
  * Sau khi đăng nhập: kiểm tra micro + thông báo; mỗi lần app vào foreground vẫn kiểm tra lại nếu chưa đủ.
@@ -18,6 +19,7 @@ export default function PermissionBootstrap() {
       if (now - lastPromptRef.current < 1500) return;
       lastPromptRef.current = now;
       promptAppPermissionsIfNeeded();
+      void syncVoiceBackgroundTaskWithPrefs();
     };
 
     maybePrompt();

@@ -18,7 +18,7 @@ import {
 import { io, type Socket } from 'socket.io-client';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { api } from '../api/client';
+import { api, formatApiError, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
 import type { CrmLeadMessage } from '../types/crm';
@@ -191,7 +191,7 @@ export default function LeadChatPanel({ leadId }: Props) {
         message: err?.message,
         req: err?.config,
       });
-      const msg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Không gửi được tin nhắn';
+      const msg = formatApiError(e);
       Alert.alert('Lỗi gửi chat', String(msg));
     } finally {
       setSending(false);
@@ -203,9 +203,17 @@ export default function LeadChatPanel({ leadId }: Props) {
     try {
       chatDebugLog('lead-chat', 'POST /crm/leads/:id/chat/upload', { leadId, name, mime, uri });
       const fd = new FormData();
-      fd.append('file', { uri, name, type: mime } as unknown as Blob);
+      const fileName =
+        (name || '').trim() && (name || '').trim() !== '.'
+          ? (name || '').trim()
+          : `file_${Date.now()}.${(mime || '').includes('png') ? 'png' : (mime || '').includes('pdf') ? 'pdf' : 'bin'}`;
+      fd.append('file', {
+        uri,
+        name: fileName,
+        type: mime || 'application/octet-stream',
+      } as unknown as Blob);
       if (draft.trim()) fd.append('content', draft.trim());
-      await api.post(`/crm/leads/${leadId}/chat/upload`, fd);
+      await postMultipart(`/crm/leads/${leadId}/chat/upload`, fd, { timeoutMs: 120000 });
       setDraft('');
       await loadChat();
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 200);
@@ -221,8 +229,7 @@ export default function LeadChatPanel({ leadId }: Props) {
         message: err?.message,
         req: err?.config,
       });
-      const msg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Upload thất bại';
-      Alert.alert('Lỗi', String(msg));
+      Alert.alert('Lỗi upload', formatApiError(e));
     } finally {
       setSending(false);
     }

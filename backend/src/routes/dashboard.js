@@ -8,15 +8,31 @@ r.use(auth);
 // ═══════════════════════════════════════════════════════════════════════════
 // ROOT DASHBOARD - Unread notifications count (for NotificationCenter)
 // ═══════════════════════════════════════════════════════════════════════════
+/** Chỉ tin nhắn/hội thoại (badge bong bóng chat CRM mobile), không gồm deadline / task / hệ thống… */
+const CHAT_NOTIFICATION_TYPES = ['lead_chat'];
+
 r.get('/', async (req, res) => {
   try {
-    const { count: unread } = await supabase
-      .from('notifications')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', req.user.userId)
-      .eq('is_read', false);
+    const [{ count: unread }, { count: unreadChat }] = await Promise.all([
+      supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', req.user.userId)
+        .eq('is_read', false),
+      supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', req.user.userId)
+        .eq('is_read', false)
+        .in('type', CHAT_NOTIFICATION_TYPES),
+    ]);
 
-    res.json({ stats: { unread: unread || 0 } });
+    res.json({
+      stats: {
+        unread: unread || 0,
+        unread_chat: unreadChat || 0,
+      },
+    });
   } catch (e) {
     console.error('Dashboard root error:', e);
     res.status(500).json({ error: e.message });

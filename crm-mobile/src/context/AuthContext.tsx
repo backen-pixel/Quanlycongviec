@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, getStoredToken, setStoredToken, setUnauthorizedHandler } from '../api/client';
+import { stopVoiceForegroundSyncLogout } from '../lib/voiceBackgroundSync';
 
 const USER_KEY = 'crm_user_json';
 
@@ -54,6 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    await stopVoiceForegroundSyncLogout();
     await setStoredToken(null);
     await AsyncStorage.removeItem(USER_KEY);
     setToken(null);
@@ -63,6 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       void (async () => {
+        await stopVoiceForegroundSyncLogout();
         await AsyncStorage.removeItem(USER_KEY);
         setToken(null);
         setUser(null);

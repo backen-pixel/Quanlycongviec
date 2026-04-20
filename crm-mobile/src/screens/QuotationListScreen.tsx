@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { api } from '../api/client';
+import { api, formatApiError, postMultipart } from '../api/client';
 import type { MoreStackParamList } from '../navigation/types';
 import type { ParsedExcelResponse, QuotationRow } from '../types/salesDocs';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
@@ -89,11 +89,10 @@ export default function QuotationListScreen({ navigation }: Props) {
         type: asset.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       } as unknown as Blob);
 
-      const { data } = await api.post<ParsedExcelResponse>('/crm/quotations/parse-excel', form);
+      const { data } = await postMultipart<ParsedExcelResponse>('/crm/quotations/parse-excel', form);
       navigation.navigate('QuotationExcelReview', { parsed: data });
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      Alert.alert('Không đọc được Excel', msg || (e as Error).message || 'Lỗi không xác định');
+      Alert.alert('Không đọc được Excel', formatApiError(e));
     } finally {
       setParsing(false);
     }

@@ -12,7 +12,8 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Audio } from 'expo-av';
-import { api } from '../api/client';
+import * as DocumentPicker from 'expo-document-picker';
+import { api, formatApiError, postMultipart } from '../api/client';
 import type { CrmVoiceRecording } from '../types/crm';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
@@ -25,6 +26,7 @@ import {
 } from '../lib/voicePermissions';
 import { loadCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
 import { voiceRecordingPlayUrl } from '../lib/crmVoicePlayUrl';
+import { guessAudioMimeFromFileName } from '../lib/guessAudioMime';
 
 const NOTES_MAX = 2000;
 
@@ -178,6 +180,71 @@ export default function CrmVoiceRecordingsPanel({ leadId, customerPhone }: Props
     }
   };
 
+  const performUpload = async (localUri: string, fileName: string, mime: string, durationSec?: number) => {
+    const notes = noteDraft.trim().slice(0, NOTES_MAX);
+    const form = new FormData();
+    form.append('audio', {
+      uri: Platform.OS === 'ios' ? localUri.replace('file://', '') : localUri,
+      name: fileName,
+      type: mime,
+    } as unknown as Parameters<FormData['append']>[1]);
+    form.append('source', 'crm_mobile');
+    form.append('device_label', `${Platform.OS} crm-mobile`);
+    if (notes) form.append('notes', notes);
+    if (durationSec != null && durationSec > 0) {
+      form.append('duration_sec', String(Math.round(durationSec * 10) / 10));
+    }
+    const phone = customerPhone?.replace(/\s+/g, '').trim();
+    if (phone) form.append('phone_number', phone.slice(0, 32));
+
+    const { data } = await postMultipart<{ recording?: CrmVoiceRecording }>('/voice-recordings', form);
+    const rid = data?.recording?.id;
+    if (!rid) throw new Error('Thiếu id bản ghi sau upload');
+
+    await api.patch(`/voice-recordings/${rid}`, { lead_id: leadId });
+    setNoteDraft('');
+    await load();
+    const p = await loadCrmMobilePrefs();
+    setPrefs(p);
+    if (p.autoLinkVoiceByPhone) {
+      void api.post('/voice-recordings/relink-unassigned').catch(() => {});
+    }
+    setOkBanner('Đã tải lên server — mở lead này trên web sẽ thấy trong phần ghi âm.');
+    if (okBannerTimerRef.current) clearTimeout(okBannerTimerRef.current);
+    okBannerTimerRef.current = setTimeout(() => {
+      okBannerTimerRef.current = null;
+      setOkBanner('');
+    }, 5000);
+  };
+
+  const pickRecordingFromDevice = async () => {
+    if (uploading || recording) return;
+    try {
+      const pick = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        type: ['audio/*'],
+      });
+      if (pick.canceled || !pick.assets?.[0]) return;
+      const asset = pick.assets[0];
+      let mime = asset.mimeType || '';
+      if (!mime || mime === 'application/octet-stream') {
+        mime = guessAudioMimeFromFileName(asset.name || '');
+      }
+      const fileName =
+        (asset.name || `phone_recording_${Date.now()}.m4a`).trim() || `phone_recording_${Date.now()}.m4a`;
+      setUploading(true);
+      try {
+        await performUpload(asset.uri, fileName, mime);
+      } catch (e: unknown) {
+        Alert.alert('Ghi âm', formatApiError(e));
+      } finally {
+        setUploading(false);
+      }
+    } catch (e: unknown) {
+      Alert.alert('File', (e as Error)?.message || 'Không chọn được file');
+    }
+  };
+
   const stopAndUpload = async () => {
     const rec = recordingRef.current;
     if (!rec || !recording) return;
@@ -216,46 +283,15 @@ export default function CrmVoiceRecordingsPanel({ leadId, customerPhone }: Props
       /* ignore */
     }
 
-    const notes = noteDraft.trim().slice(0, NOTES_MAX);
-    const fileName = `crm_mobile_${Date.now()}.m4a`;
-    const form = new FormData();
-    form.append('audio', {
-      uri: Platform.OS === 'ios' ? localUri.replace('file://', '') : localUri,
-      name: fileName,
-      type: 'audio/m4a',
-    } as unknown as Parameters<FormData['append']>[1]);
-    form.append('source', 'crm_mobile');
-    form.append('device_label', `${Platform.OS} crm-mobile`);
-    if (notes) form.append('notes', notes);
-    if (durationSec > 0) form.append('duration_sec', String(Math.round(durationSec * 10) / 10));
-    const phone = customerPhone?.replace(/\s+/g, '').trim();
-    if (phone) form.append('phone_number', phone.slice(0, 32));
-
     try {
-      const { data } = await api.post<{ recording?: CrmVoiceRecording }>('/voice-recordings', form);
-      const rid = data?.recording?.id;
-      if (!rid) throw new Error('Thiếu id bản ghi sau upload');
-
-      await api.patch(`/voice-recordings/${rid}`, { lead_id: leadId });
-      setNoteDraft('');
-      await load();
-      const p = await loadCrmMobilePrefs();
-      setPrefs(p);
-      if (p.autoLinkVoiceByPhone) {
-        void api.post('/voice-recordings/relink-unassigned').catch(() => {});
-      }
-      setOkBanner('Đã tải lên server — mở lead này trên web sẽ thấy trong phần ghi âm.');
-      if (okBannerTimerRef.current) clearTimeout(okBannerTimerRef.current);
-      okBannerTimerRef.current = setTimeout(() => {
-        okBannerTimerRef.current = null;
-        setOkBanner('');
-      }, 5000);
+      await performUpload(
+        localUri,
+        `crm_mobile_${Date.now()}.m4a`,
+        'audio/m4a',
+        durationSec > 0 ? durationSec : undefined,
+      );
     } catch (e: unknown) {
-      const msg =
-        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-        (e as Error)?.message ||
-        'Tải lên thất bại';
-      Alert.alert('Ghi âm', String(msg));
+      Alert.alert('Ghi âm', formatApiError(e));
     } finally {
       setUploading(false);
     }
@@ -350,9 +386,11 @@ export default function CrmVoiceRecordingsPanel({ leadId, customerPhone }: Props
 
   return (
     <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
-      <Text style={styles.hint}>
-        Ghi micro trong app → tải lên API `/voice-recordings` (giống web & app Voice Sync). Sau khi tải xong, mở chi
-        tiết lead trên web sẽ thấy trong phần ghi âm.
+        <Text style={styles.hint}>
+        Ghi micro trong app hoặc chọn file âm thanh → tải lên API. Trên Android, bật «Tự đồng bộ nền» ở Tài khoản
+        thì mỗi lần quét tối đa <Text style={styles.hintBold}>một</Text> file âm thanh đủ dấu hiệu{' '}
+        <Text style={styles.hintBold}>ghi âm cuộc gọi máy</Text> (Dialer/OEM/Call recordings…) hoặc SĐT trong tên —
+        không đồng bộ ghi âm ghi chú kiểu Voice Recorder; ngoài ra bạn vẫn chọn file thủ công tại đây.
       </Text>
 
       <View style={[styles.permCard, CrmShadow.card]}>
@@ -407,6 +445,13 @@ export default function CrmVoiceRecordingsPanel({ leadId, customerPhone }: Props
             <Text style={styles.stopBtnTxt}>{uploading ? 'Đang tải…' : '⏹ Dừng & gửi web'}</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity
+          style={[styles.pickFileBtn, (uploading || loading || recording) && styles.pickFileBtnOff]}
+          onPress={() => void pickRecordingFromDevice()}
+          disabled={uploading || loading || recording}
+        >
+          <Text style={styles.pickFileBtnTxt}>📁 File trên máy</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.refreshBtn} onPress={() => void load()} disabled={loading}>
           <Text style={styles.refreshTxt}>{loading ? '…' : 'Làm mới'}</Text>
         </TouchableOpacity>
@@ -472,6 +517,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     lineHeight: 19,
   },
+  hintBold: { fontWeight: '800', color: CrmColors.gray800 },
   permCard: {
     backgroundColor: '#fff',
     borderRadius: CrmRadii.lg,
@@ -530,6 +576,16 @@ const styles = StyleSheet.create({
     borderRadius: CrmRadii.md,
   },
   stopBtnTxt: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  pickFileBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: CrmRadii.md,
+    borderWidth: 1,
+    borderColor: CrmColors.blue100,
+    backgroundColor: CrmColors.blue50,
+  },
+  pickFileBtnOff: { opacity: 0.5 },
+  pickFileBtnTxt: { color: CrmColors.blue800, fontWeight: '700', fontSize: 14 },
   refreshBtn: {
     paddingVertical: 10,
     paddingHorizontal: 14,

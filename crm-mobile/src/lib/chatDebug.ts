@@ -61,6 +61,8 @@ export function useChatDebugText() {
 
 export function chatDebugSubscribe(fn: () => void) {
   listeners.add(fn);
-  return () => listeners.delete(fn);
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
