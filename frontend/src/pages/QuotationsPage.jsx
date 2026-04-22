@@ -2,17 +2,11 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Plus, Search, FileText, Filter, ShoppingCart, Calendar, Download, Trash2 } from 'lucide-react';
+import { Plus, Search, FileText, Filter, ShoppingCart, Calendar, Download, Trash2, Loader2 } from 'lucide-react';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 
 const STATUS_MAP = { draft: 'Nháp', sent: 'Đã gửi', accepted: 'Chấp nhận', rejected: 'Từ chối', expired: 'Hết hạn', converted: 'Đã chuyển ĐH' };
 const STATUS_COLORS = { draft: 'bg-gray-100 text-gray-600', sent: 'bg-blue-100 text-blue-700', accepted: 'bg-emerald-100 text-emerald-700', rejected: 'bg-red-100 text-red-700', expired: 'bg-amber-100 text-amber-700', converted: 'bg-purple-100 text-purple-700' };
-
-function downloadPdf(type, id, code) {
-  api.get(`/crm/${type}/${id}/pdf`, { responseType: 'blob' })
-    .then(r => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' })); a.download = `${(code || type).replace(/[^a-zA-Z0-9\-]/g, '_')}.pdf`; a.click(); URL.revokeObjectURL(a.href); })
-    .catch(() => alert('Lỗi tải PDF'));
-}
 
 export default function QuotationsPage() {
   const [quotes, setQuotes] = useState([]);
@@ -21,11 +15,28 @@ export default function QuotationsPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
+  const [convertLoadingId, setConvertLoadingId] = useState(null);
+  const [pdfLoadingId, setPdfLoadingId] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
   const load = async () => { setLoading(true); const { data } = await api.get('/crm/quotations'); setQuotes(data || []); setLoading(false); };
+
+  const downloadPdf = async (id, code, e) => {
+    e.stopPropagation();
+    if (pdfLoadingId) return;
+    setPdfLoadingId(id);
+    try {
+      const r = await api.get(`/crm/quotations/${id}/pdf`, { responseType: 'blob' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }));
+      a.download = `${(code || 'bao-gia').replace(/[^a-zA-Z0-9\-]/g, '_')}.pdf`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch { alert('Lỗi tải PDF'); }
+    setPdfLoadingId(null);
+  };
 
   const filtered = quotes.filter(q => {
     if (statusFilter && q.status !== statusFilter) return false;
@@ -37,6 +48,8 @@ export default function QuotationsPage() {
 
   const summary = { total: quotes.length, draft: 0, sent: 0, accepted: 0, rejected: 0, converted: 0, value: 0 };
   quotes.forEach(q => { summary[q.status] = (summary[q.status] || 0) + 1; summary.value += q.total || 0; });
+
+  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
 
   return (
     <div className="space-y-6">
@@ -85,8 +98,19 @@ export default function QuotationsPage() {
                   <td className="py-3 px-3 text-right font-bold text-gray-900">{formatVND(q.total || 0)}</td>
                   <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_COLORS[q.status] || ''}`}>{STATUS_MAP[q.status] || q.status}</span></td>
                   <td className="py-3 px-3 text-gray-500">{formatDate(q.created_at)}</td>
-                  <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('quotations', q.id, q.code); }} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
-                  <td className="py-3 px-3">{q.status !== 'converted' && <button onClick={e => { e.stopPropagation(); convertToOrder(q.id); }} className="text-xs text-emerald-600 hover:underline flex items-center gap-1 cursor-pointer"><ShoppingCart className="h-3.5 w-3.5" />→ĐH</button>}</td>
+                  <td className="py-3 px-3 text-center">
+                    <button onClick={e => downloadPdf(q.id, q.code, e)} disabled={pdfLoadingId === q.id} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer disabled:opacity-50" title="Tải PDF">
+                      {pdfLoadingId === q.id ? <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> : <Download className="h-4 w-4" />}
+                    </button>
+                  </td>
+                  <td className="py-3 px-3">
+                    {q.status !== 'converted' && (
+                      <button onClick={e => { e.stopPropagation(); convertToOrder(q.id); }} disabled={convertLoadingId === q.id} className="text-xs text-emerald-600 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50">
+                        {convertLoadingId === q.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
+                        {convertLoadingId === q.id ? 'Đang tạo...' : '→ĐH'}
+                      </button>
+                    )}
+                  </td>
                   <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa báo giá ' + q.code + '?')) api.delete('/crm/quotations/' + q.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
                 </tr>
               ))}
@@ -111,8 +135,11 @@ export default function QuotationsPage() {
   );
 
   async function convertToOrder(id) {
+    if (convertLoadingId) return;
     if (!confirm('Chuyển báo giá thành đơn hàng?')) return;
+    setConvertLoadingId(id);
     try { const { data } = await api.post(`/crm/quotations/${id}/convert-to-order`); alert(`Đã tạo đơn hàng ${data.code}`); load(); }
     catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setConvertLoadingId(null);
   }
 }

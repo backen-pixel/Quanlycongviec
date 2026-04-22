@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { ArrowLeft, Receipt, User, Phone, MapPin, DollarSign, Plus, X, Building2, Download, Printer } from 'lucide-react';
+import { ArrowLeft, Receipt, User, Phone, MapPin, DollarSign, Plus, X, Building2, Download, Printer, Send, FileCheck, AlertCircle, Mail, Loader2, Pencil } from 'lucide-react';
 
 export default function InvoiceDetail() {
   const { id } = useParams();
@@ -10,19 +10,53 @@ export default function InvoiceDetail() {
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showPay, setShowPay] = useState(false);
+  const [showMisaEmail, setShowMisaEmail] = useState(false);
+  const [misaLoading, setMisaLoading] = useState(false);
+  const [payLoading, setPayLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [printLoading, setPrintLoading] = useState(false);
 
   useEffect(() => { load(); }, [id]);
   const load = async () => { setLoading(true); const { data } = await api.get(`/crm/invoices/${id}`); setInvoice(data); setLoading(false); };
 
+  const publishToMisa = async () => {
+    if (!confirm('Phát hành hóa đơn điện tử lên MISA meInvoice?')) return;
+    setMisaLoading(true);
+    try {
+      const { data } = await api.post(`/crm/invoices/${id}/misa-publish`);
+      alert(`Phát hành thành công!\nSố HĐ MISA: ${data.invoiceNo || 'N/A'}`);
+      load();
+    } catch (e) {
+      alert('Lỗi phát hành MISA: ' + (e.response?.data?.error || e.message));
+    } finally { setMisaLoading(false); }
+  };
+
+  const sendMisaEmail = async (email) => {
+    setMisaLoading(true);
+    try {
+      await api.post(`/crm/invoices/${id}/misa-send-email`, { email });
+      alert('Đã gửi email hóa đơn điện tử thành công!');
+      setShowMisaEmail(false);
+      load();
+    } catch (e) {
+      alert('Lỗi gửi email: ' + (e.response?.data?.error || e.message));
+    } finally { setMisaLoading(false); }
+  };
+
   const recordPayment = async (amount, method, ref) => {
+    if (payLoading) return;
+    setPayLoading(true);
     try {
       await api.post(`/crm/invoices/${id}/payments`, { amount: parseFloat(amount), payment_method: method, reference_number: ref });
       setShowPay(false);
       load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setPayLoading(false);
   };
 
   const downloadPdf = async () => {
+    if (pdfLoading) return;
+    setPdfLoading(true);
     try {
       const response = await api.get(`/crm/invoices/${id}/pdf`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
@@ -32,9 +66,12 @@ export default function InvoiceDetail() {
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (e) { alert('Lỗi tải PDF'); }
+    setPdfLoading(false);
   };
 
   const printInvoice = async () => {
+    if (printLoading) return;
+    setPrintLoading(true);
     try {
       const response = await api.get(`/crm/invoices/${id}/pdf`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
@@ -43,6 +80,7 @@ export default function InvoiceDetail() {
         printWindow.addEventListener('load', () => { printWindow.print(); });
       }
     } catch (e) { alert('Lỗi in hóa đơn'); }
+    setPrintLoading(false);
   };
 
   if (loading || !invoice) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-purple-600 border-t-transparent rounded-full" /></div>;
@@ -61,9 +99,27 @@ export default function InvoiceDetail() {
             <h1 className="text-xl font-bold text-gray-900">{invoice.title || 'Hóa đơn'}</h1>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={downloadPdf} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Download className="h-4 w-4" /> Xuất PDF</button>
-          <button onClick={printInvoice} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Printer className="h-4 w-4" /> In hóa đơn</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => navigate(`/crm/invoices/${id}/edit`)} className="h-9 px-4 border border-purple-300 text-purple-600 hover:bg-purple-50 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
+            <Pencil className="h-4 w-4" /> Sửa
+          </button>
+          <button onClick={downloadPdf} disabled={pdfLoading} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 disabled:opacity-50">
+            {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
+          </button>
+          <button onClick={printInvoice} disabled={printLoading} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 disabled:opacity-50">
+            {printLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+            {printLoading ? 'Đang in...' : 'In hóa đơn'}
+          </button>
+          {invoice.misa_status === 'not_sent' || !invoice.misa_status ? (
+            <button onClick={publishToMisa} disabled={misaLoading} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
+              <FileCheck className="h-4 w-4" /> {misaLoading ? 'Đang phát hành...' : 'Phát hành HĐĐT'}
+            </button>
+          ) : invoice.misa_status === 'published' ? (
+            <button onClick={() => setShowMisaEmail(true)} disabled={misaLoading} className="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
+              <Mail className="h-4 w-4" /> Gửi email HĐĐT
+            </button>
+          ) : null}
           {remaining > 0 && (
             <button onClick={() => setShowPay(true)} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><DollarSign className="h-4 w-4" /> Thu tiền</button>
           )}
@@ -86,6 +142,9 @@ export default function InvoiceDetail() {
         </div>
         {remaining > 0 && <p className="text-sm text-red-600 font-medium mt-2">Còn nợ: {formatVND(remaining)}</p>}
       </div>
+
+      {/* MISA meInvoice Status Panel */}
+      <MisaStatusPanel invoice={invoice} onPublish={publishToMisa} onSendEmail={() => setShowMisaEmail(true)} loading={misaLoading} />
 
       <div className="grid grid-cols-1 gap-4">
         {/* Customer + Payment History - horizontal */}
@@ -174,12 +233,108 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
-      {showPay && <PayModal remaining={remaining} code={invoice.code} onPay={recordPayment} onClose={() => setShowPay(false)} />}
+      {showPay && <PayModal remaining={remaining} code={invoice.code} onPay={recordPayment} onClose={() => setShowPay(false)} loading={payLoading} />}
+      {showMisaEmail && (
+        <MisaEmailModal
+          defaultEmail={invoice.customer?.email || ''}
+          onSend={sendMisaEmail}
+          onClose={() => setShowMisaEmail(false)}
+          loading={misaLoading}
+        />
+      )}
     </div>
   );
 }
 
-function PayModal({ remaining, code, onPay, onClose }) {
+const MISA_STATUS_MAP = {
+  not_sent: { label: 'Chưa phát hành', color: 'bg-gray-100 text-gray-600', icon: '📄' },
+  published: { label: 'Đã phát hành HĐĐT', color: 'bg-blue-100 text-blue-700', icon: '✅' },
+  sent_email: { label: 'Đã gửi email', color: 'bg-indigo-100 text-indigo-700', icon: '📧' },
+  cancelled: { label: 'Đã hủy HĐĐT', color: 'bg-red-100 text-red-700', icon: '❌' },
+};
+
+function MisaStatusPanel({ invoice, onPublish, onSendEmail, loading }) {
+  const status = invoice.misa_status || 'not_sent';
+  const info = MISA_STATUS_MAP[status] || MISA_STATUS_MAP.not_sent;
+
+  return (
+    <div className="bg-white rounded-xl border p-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
+            <FileCheck className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Hóa đơn điện tử (MISA meInvoice)</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${info.color}`}>{info.icon} {info.label}</span>
+              {invoice.misa_invoice_no && (
+                <span className="text-xs text-gray-500">Số HĐ: <span className="font-bold text-gray-800">{invoice.misa_invoice_no}</span></span>
+              )}
+              {invoice.misa_published_at && (
+                <span className="text-xs text-gray-400">· {new Date(invoice.misa_published_at).toLocaleString('vi-VN')}</span>
+              )}
+            </div>
+            {invoice.misa_error_message && (
+              <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" /> {invoice.misa_error_message}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {(status === 'not_sent') && (
+            <button onClick={onPublish} disabled={loading} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+              <Send className="h-3.5 w-3.5" /> {loading ? 'Đang xử lý...' : 'Phát hành HĐĐT'}
+            </button>
+          )}
+          {(status === 'published' || status === 'sent_email') && (
+            <button onClick={onSendEmail} disabled={loading} className="h-8 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+              <Mail className="h-3.5 w-3.5" /> {status === 'sent_email' ? 'Gửi lại email' : 'Gửi email'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MisaEmailModal({ defaultEmail, onSend, onClose, loading }) {
+  const [email, setEmail] = useState(defaultEmail);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-bold text-gray-900 flex items-center gap-2"><Mail className="h-4 w-4 text-indigo-600" /> Gửi email HĐĐT</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer"><X className="h-5 w-5" /></button>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">Hệ thống sẽ gửi hóa đơn điện tử đã phát hành qua MISA đến địa chỉ email bên dưới.</p>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Email người nhận</label>
+          <input
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="email@example.com"
+            className="w-full h-10 px-3 border rounded-lg text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+          />
+        </div>
+        <div className="flex justify-end gap-3 mt-5">
+          <button onClick={onClose} className="h-9 px-4 border rounded-lg text-sm cursor-pointer">Hủy</button>
+          <button
+            onClick={() => onSend(email)}
+            disabled={loading || !email}
+            className="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-2"
+          >
+            <Send className="h-4 w-4" /> {loading ? 'Đang gửi...' : 'Gửi ngay'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PayModal({ remaining, code, onPay, onClose, loading }) {
   const [amount, setAmount] = useState(remaining);
   const [method, setMethod] = useState('transfer');
   const [ref, setRef] = useState('');
@@ -198,8 +353,11 @@ function PayModal({ remaining, code, onPay, onClose }) {
           <div><label className="text-xs font-medium text-gray-600">Số GD / Ghi chú</label><input value={ref} onChange={e => setRef(e.target.value)} className="w-full h-10 px-3 border rounded-lg text-sm mt-1" /></div>
         </div>
         <div className="flex justify-end gap-3 mt-5">
-          <button onClick={onClose} className="h-9 px-4 border rounded-lg text-sm cursor-pointer">Hủy</button>
-          <button onClick={() => onPay(amount, method, ref)} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium cursor-pointer">Xác nhận thu</button>
+          <button onClick={onClose} disabled={loading} className="h-9 px-4 border rounded-lg text-sm cursor-pointer disabled:opacity-50">Hủy</button>
+          <button onClick={() => onPay(amount, method, ref)} disabled={loading} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-60 flex items-center gap-2">
+            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+            {loading ? 'Đang lưu...' : 'Xác nhận thu'}
+          </button>
         </div>
       </div>
     </div>

@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND as _formatVND } from '../lib/utils';
-import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search, X } from 'lucide-react';
+import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search, X, AlignLeft, Loader2 } from 'lucide-react';
+import SaveToast from '../components/SaveToast';
+import CustomerSearchPicker from '../components/CustomerSearchPicker';
 
 // Override formatVND: 0 → "0đ" thay vì "—"
 const formatVND = (n) => {
@@ -110,7 +112,10 @@ export default function QuotationForm() {
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [showProductPicker, setShowProductPicker] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const [saveMsg, setSaveMsg] = useState('');
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   useEffect(() => {
     api.get('/customers', { params: { limit: 5000 } }).then(r => setCustomers(r.data.customers || r.data || []));
@@ -128,17 +133,20 @@ export default function QuotationForm() {
           lead_id: d.lead_id, project_id: d.project_id,
         });
         if (!isPreset && pt) { setIsCustomPayment(true); setCustomPaymentTerms(pt); }
-        if (d.items?.length) setItems(d.items.map(i => ({
-          name: i.name, description: i.description || '', product_code: i.product_code || '',
-          unit: i.unit || 'bộ', quantity: i.quantity || 1,
-          unit_price: i.unit_price || 0, discount_percent: i.discount_percent || 0,
-          vat_rate: i.vat_rate || 0,
-          height: i.height || '', width: i.width || '', length: i.length || '', weight: i.weight || '',
-          dimensions: i.dimensions || '', material: i.material || '', color: i.color || '',
-          product_id: i.product_id, promo_code: i.promo_code || '', is_promo: i.is_promo || false,
-          spec_factor: i.spec_factor || 0, group_name: i.group_name || '',
-          standard_area: i.standard_area || 0,
-        })));
+        if (d.items?.length) setItems(d.items.map(i => {
+          if (i.notes === '__SECTION__') return { row_type: 'section', name: i.name, notes: '__SECTION__' };
+          return {
+            name: i.name, description: i.description || '', product_code: i.product_code || '',
+            unit: i.unit || 'bộ', quantity: i.quantity || 1,
+            unit_price: i.unit_price || 0, discount_percent: i.discount_percent || 0,
+            vat_rate: i.vat_rate || 0,
+            height: i.height || '', width: i.width || '', length: i.length || '', weight: i.weight || '',
+            dimensions: i.dimensions || '', material: i.material || '', color: i.color || '',
+            product_id: i.product_id, promo_code: i.promo_code || '', is_promo: i.is_promo || false,
+            spec_factor: i.spec_factor || 0, group_name: i.group_name || '',
+            standard_area: i.standard_area || 0,
+          };
+        }));
       });
     } else {
       // Auto-fill from lead/deal if lead_id in URL
@@ -161,10 +169,9 @@ export default function QuotationForm() {
   }, [id]);
 
   // Auto-fill customer info
-  const selectCustomer = (cid) => {
-    const c = customers.find(x => x.id === cid);
-    if (c) setForm(f => ({ ...f, customer_id: cid, customer_name: c.full_name, customer_phone: c.phone || '', customer_address: c.address || '' }));
-    else setForm(f => ({ ...f, customer_id: cid }));
+  const selectCustomer = (c) => {
+    if (c) setForm(f => ({ ...f, customer_id: c.id, customer_name: c.full_name, customer_phone: c.phone || '', customer_address: c.address || '' }));
+    else setForm(f => ({ ...f, customer_id: '' }));
   };
 
       // Add product to items — auto-fill vat_rate, dimensions, standard_area from product
@@ -205,6 +212,7 @@ export default function QuotationForm() {
   // Calculations with per-item VAT + spec_factor (hệ số quy cách) + area formula
   const calcs = useMemo(() => {
     const rows = items.map(i => {
+      if (i.row_type === 'section') return { ...i, amount: 0, gross_amount: 0, discount_amount: 0, vat_amount: 0, tax_amount: 0, total: 0, actual_area: 0, area_ratio: 0, notes: '__SECTION__' };
       const factor = parseFloat(i.spec_factor) || 0;
       const qty = i.quantity || 0;
       const price = i.unit_price || 0;
@@ -278,20 +286,37 @@ export default function QuotationForm() {
     return { rows, subtotal, discountAmt, afterDiscount, totalVat, total: afterDiscount + totalVat, groupSubtotals, groupDetails, groupOrder };
   }, [items, form.discount_type, form.discount_value]);
 
+  const _isSaving = useRef(false);
   const save = async () => {
+    if (_isSaving.current) return;
     if (!form.title && !form.customer_name) return alert('Nhập tiêu đề hoặc khách hàng');
-    setSaving(true);
+    _isSaving.current = true;
+    setSaveStatus('loading');
+    setSaveMsg(isEdit ? 'Đang cập nhật báo giá...' : 'Đang tạo báo giá...');
     try {
       const effectivePayment = isCustomPayment ? customPaymentTerms : form.payment_terms;
       const payload = { ...form, payment_terms: effectivePayment, items: calcs.rows };
-      if (isEdit) await api.put(`/crm/quotations/${id}`, payload);
-      else { const { data } = await api.post('/crm/quotations', payload); navigate(`/crm/quotations/${data.id}`, { replace: true }); return; }
-      navigate('/crm/quotations');
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
-    setSaving(false);
+      if (isEdit) {
+        await api.put(`/crm/quotations/${id}`, payload);
+        setSaveMsg('Cập nhật báo giá thành công!');
+        setSaveStatus('success');
+        setTimeout(() => navigate('/crm/quotations'), 1200);
+      } else {
+        const { data } = await api.post('/crm/quotations', payload);
+        setSaveMsg('Tạo báo giá thành công!');
+        setSaveStatus('success');
+        setTimeout(() => navigate(`/crm/quotations/${data.id}`, { replace: true }), 1200);
+      }
+    } catch (e) {
+      setSaveMsg(e.response?.data?.error || 'Có lỗi xảy ra khi lưu');
+      setSaveStatus('error');
+      _isSaving.current = false;
+    }
   };
 
   const updateStatus = async (newStatus) => {
+    if (statusLoading) return;
+    setStatusLoading(true);
     try {
       const { data } = await api.put(`/crm/quotations/${id}`, { status: newStatus });
       setForm(f => ({ ...f, status: newStatus }));
@@ -303,9 +328,12 @@ export default function QuotationForm() {
         alert(msg);
       }
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setStatusLoading(false);
   };
 
   const downloadPdf = async () => {
+    if (pdfLoading) return;
+    setPdfLoading(true);
     try {
       const response = await api.get(`/crm/quotations/${id}/pdf`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
@@ -315,14 +343,17 @@ export default function QuotationForm() {
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (e) { alert('Lỗi tải PDF'); }
+    setPdfLoading(false);
   };
 
   const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
   const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '', spec_factor: 0, group_name: '', standard_area: 0 }]);
+  const addSection = () => setItems(prev => [...prev, { row_type: 'section', name: 'Phần mới', notes: '__SECTION__' }]);
 
   return (
     <div className="space-y-4 w-full">
+      <SaveToast status={saveStatus} message={saveMsg} onDone={() => setSaveStatus('idle')} />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -334,22 +365,32 @@ export default function QuotationForm() {
         </div>
         <div className="flex items-center gap-2" data-print-hide>
           {isEdit && (
-            <select value={form.status || 'draft'} onChange={e => updateStatus(e.target.value)}
-              className={`h-9 px-3 rounded-lg text-sm font-medium border-2 cursor-pointer ${
-                form.status === 'accepted' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' :
-                form.status === 'sent' ? 'border-blue-300 bg-blue-50 text-blue-700' :
-                form.status === 'rejected' ? 'border-red-300 bg-red-50 text-red-700' :
-                form.status === 'converted' ? 'border-purple-300 bg-purple-50 text-purple-700' :
-                'border-gray-200'}`}>
-              <option value="draft">📝 Nháp</option>
-              <option value="sent">📤 Đã gửi KH</option>
-              <option value="accepted">✅ KH chấp nhận</option>
-              <option value="rejected">❌ Từ chối</option>
-            </select>
+            <div className="relative flex items-center">
+              <select value={form.status || 'draft'} onChange={e => updateStatus(e.target.value)} disabled={statusLoading}
+                className={`h-9 px-3 rounded-lg text-sm font-medium border-2 cursor-pointer disabled:opacity-60 ${
+                  form.status === 'accepted' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' :
+                  form.status === 'sent' ? 'border-blue-300 bg-blue-50 text-blue-700' :
+                  form.status === 'rejected' ? 'border-red-300 bg-red-50 text-red-700' :
+                  form.status === 'converted' ? 'border-purple-300 bg-purple-50 text-purple-700' :
+                  'border-gray-200'}`}>
+                <option value="draft">📝 Nháp</option>
+                <option value="sent">📤 Đã gửi KH</option>
+                <option value="accepted">✅ KH chấp nhận</option>
+                <option value="rejected">❌ Từ chối</option>
+              </select>
+              {statusLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-500 absolute right-7 pointer-events-none" />}
+            </div>
           )}
-          {isEdit && <button onClick={downloadPdf} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Download className="h-4 w-4" /> Xuất PDF</button>}
-          <button onClick={save} disabled={saving} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
-            <Save className="h-4 w-4" /> {saving ? 'Đang lưu...' : 'Lưu'}
+          {isEdit && (
+            <button onClick={downloadPdf} disabled={pdfLoading} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 disabled:opacity-50">
+              {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
+            </button>
+          )}
+          <button onClick={save} disabled={saveStatus === 'loading'} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
+            {saveStatus === 'loading'
+              ? <><Loader2 className="h-4 w-4 animate-spin" /> Đang lưu...</>
+              : <><Save className="h-4 w-4" /> Lưu</>}
           </button>
         </div>
       </div>
@@ -360,10 +401,14 @@ export default function QuotationForm() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-medium text-gray-600">Khách hàng</label>
-            <select value={form.customer_id} onChange={e => selectCustomer(e.target.value)} className="w-full h-10 px-3 border rounded-lg text-sm mt-1">
-              <option value="">Chọn hoặc nhập mới</option>
-              {customers.map(c => <option key={c.id} value={c.id}>{c.full_name} {c.phone ? `- ${c.phone}` : ''}</option>)}
-            </select>
+            <div className="mt-1">
+              <CustomerSearchPicker
+                customers={customers}
+                value={form.customer_id}
+                onChange={selectCustomer}
+                placeholder="Tìm theo tên, SĐT, MST..."
+              />
+            </div>
           </div>
           <div>
             <label className="text-xs font-medium text-gray-600">Tiêu đề báo giá</label>
@@ -391,6 +436,9 @@ export default function QuotationForm() {
           <div className="flex items-center gap-2 flex-wrap">
             <button onClick={() => setShowProductPicker(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
               <Search className="h-3.5 w-3.5" /> Tìm & thêm sản phẩm
+            </button>
+            <button onClick={addSection} className="h-9 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer border border-indigo-200">
+              <AlignLeft className="h-3.5 w-3.5" /> Thêm tiêu đề phần
             </button>
             <button onClick={addRow} className="h-9 px-3 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer">
               <Plus className="h-3.5 w-3.5" /> Thêm dòng trống
@@ -425,9 +473,27 @@ export default function QuotationForm() {
               <th className="py-2.5 px-1.5" style={{width:36}}></th>
             </tr></thead>
             <tbody>
-              {items.map((item, idx) => {
+              {(() => { let itemNo = 0; return items.map((item, idx) => {
+                if (item.row_type === 'section') return (
+                  <React.Fragment key={idx}>
+                    <tr className="bg-indigo-50 border-b border-indigo-200">
+                      <td colSpan={21} className="py-1.5 px-2">
+                        <input
+                          value={item.name}
+                          onChange={e => updateItem(idx, 'name', e.target.value)}
+                          className="w-full bg-transparent text-xs font-bold text-indigo-800 outline-none placeholder-indigo-300"
+                          placeholder="Tên tiêu đề phần..."
+                        />
+                      </td>
+                      <td className="py-1 px-1 text-center">
+                        <button onClick={() => removeItem(idx)} className="p-0.5 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </td>
+                    </tr>
+                  </React.Fragment>
+                );
                 const row = calcs.rows[idx] || {};
-                const prevGroupName = idx > 0 ? (items[idx - 1].group_name || '') : '';
+                itemNo++;
+                const prevGroupName = idx > 0 ? (items[idx - 1].row_type !== 'section' ? items[idx - 1].group_name || '' : '') : '';
                 const currentGroupName = item.group_name || '';
                 const showGroupHeader = currentGroupName && currentGroupName !== prevGroupName;
                 // Check if this is the last item in its group
@@ -444,7 +510,7 @@ export default function QuotationForm() {
                     </tr>
                   )}
                   <tr className="border-b hover:bg-blue-50/30">
-                    <td className="py-1 px-1 text-gray-400 text-xs">{idx + 1}</td>
+                    <td className="py-1 px-1 text-gray-400 text-xs">{itemNo}</td>
                     <td className="py-1 px-1"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent" /></td>
                     <td className="py-1 px-1">
                       <ProductAutocompleteCell
@@ -551,7 +617,7 @@ export default function QuotationForm() {
                   )}
                   </React.Fragment>
                 );
-              })}
+              }); })()}
             </tbody>
           </table>
         </div>
