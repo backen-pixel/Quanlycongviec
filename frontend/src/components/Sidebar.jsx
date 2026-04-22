@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck
+  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -64,6 +64,7 @@ const MENU_GROUPS = [
       { to: '/settings/pdf', icon: Settings, label: 'Thông tin PDF' },
       { to: '/settings/theme', icon: Settings, label: 'Giao diện & Hình nền' },
       { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice' },
+      { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
       { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
@@ -111,6 +112,7 @@ const CRM_MENU_GROUPS = [
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM' },
       { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án' },
       { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice' },
+      { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
       { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
     ]

@@ -102,6 +102,7 @@ import WorkflowFlowsPage from './pages/WorkflowFlowsPage';
 import CompanyProcessesPage from './pages/CompanyProcessesPage';
 import PDFSettingsPage from './pages/PDFSettingsPage';
 import MisaSettingsPage from './pages/MisaSettingsPage';
+import ApiKeysSettingsPage from './pages/ApiKeysSettingsPage';
 import CreateProject from './pages/CreateProject';
 import CreateProjectNew from './pages/CreateProjectNew';
 import TemplateSetsPage from './pages/TemplateSetsPage';
@@ -253,6 +254,7 @@ export default function App() {
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/settings/misa" element={<MisaSettingsPage />} />
+            <Route path="/settings/api-keys" element={<ApiKeysSettingsPage />} />
             <Route path="/crm/customers" element={<CustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/task-templates" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><CRMTemplatesPage /></Suspense>} />

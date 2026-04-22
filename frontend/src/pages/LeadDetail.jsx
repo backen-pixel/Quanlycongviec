@@ -14,6 +14,7 @@ import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
+import PipelineStepper from '../components/PipelineStepper';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -579,46 +580,7 @@ export default function LeadDetail() {
       )}
 
       {/* Pipeline Progress - MISA Style Stepper */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <div className="flex items-start justify-between overflow-x-auto">
-          {stages.map((s, i) => {
-            const isCurrent = s.id === lead.stage_id;
-            const isPast = i < currentStageIdx;
-            
-            return (
-              <div key={s.id} className="flex items-start flex-1 min-w-0">
-                {/* Step: circle + name stacked vertically */}
-                <div className="flex flex-col items-center flex-shrink-0" style={{ minWidth: 70 }}>
-                  <button 
-                    onClick={() => moveStage(s.id)}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 cursor-pointer ${
-                      isPast ? 'bg-emerald-500 text-white shadow-sm' 
-                      : isCurrent ? 'text-white shadow-lg ring-4 ring-blue-100' 
-                      : 'border-2 border-gray-300 text-gray-400 hover:border-gray-400'
-                    }`}
-                    style={isCurrent ? { backgroundColor: s.color || '#3B82F6' } : {}}
-                    title={s.name}
-                  >
-                    {isPast ? '✓' : s.icon || (i + 1)}
-                  </button>
-                  <p className={`mt-2 text-xs text-center leading-tight max-w-[80px] ${
-                    isCurrent ? 'text-gray-900 font-bold' : isPast ? 'text-emerald-600 font-medium' : 'text-gray-500'
-                  }`}>
-                    {s.name}
-                  </p>
-                </div>
-                
-                {/* Connecting line */}
-                {i < stages.length - 1 && (
-                  <div className="flex-1 flex items-center pt-5 px-1">
-                    <div className={`w-full h-0.5 ${isPast ? 'bg-emerald-400' : 'bg-gray-200'}`} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <PipelineStepper stages={stages} currentStageId={lead.stage_id} onMoveToStage={moveStage} />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Left: Customer Info */}
