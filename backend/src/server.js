@@ -84,6 +84,7 @@ app.use('/api/facebook', facebookRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/external', require('./routes/external'));
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
 try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
@@ -418,10 +418,27 @@ function KPICard({ icon, iconBgColor, iconColor, label, value }) {
   );
 }
 
-// Kanban Stage Card
+// Kanban Stage Card — matches CRM KanbanStageCard style
 function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
-  
+  const containerRef = useRef(null);
+  const [columnMaxH, setColumnMaxH] = useState('70vh');
+
+  useEffect(() => {
+    const measure = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const available = window.innerHeight - rect.top - 40;
+        setColumnMaxH(`${Math.max(300, available)}px`);
+      }
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  const stageColor = stage.color || '#e5e7eb';
+
   const handleColumnDragOver = (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -429,20 +446,16 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
   };
 
   const handleColumnDragLeave = (e) => {
-    if (e.target === e.currentTarget) {
-      setIsOverColumn(false);
-    }
+    if (e.target === e.currentTarget) setIsOverColumn(false);
   };
 
   const handleColumnDrop = (e) => {
     e.preventDefault();
     setIsOverColumn(false);
     const projectId = e.dataTransfer.getData('projectId');
-    if (projectId) {
-      onMoveStage(projectId, stage);
-    }
+    if (projectId) onMoveStage(projectId, stage);
   };
-  
+
   return (
     <div
       onDragOver={handleColumnDragOver}
@@ -453,35 +466,32 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
       }`}
     >
       {/* Colored Header Bar */}
-      <div
-        className="h-1.5 w-full"
-        style={{ backgroundColor: stage.color }}
-      />
-      
+      <div className="h-1.5 w-full" style={{ backgroundColor: stageColor }} />
+
       {/* Stage Header */}
-      <div className={`bg-white border border-gray-200 border-t-0 p-4 transition-all ${
-        isOverColumn ? 'bg-teal-50' : ''
-      }`}>
+      <div className={`bg-white border border-gray-200 border-t-0 p-4 transition-all ${isOverColumn ? 'bg-teal-50' : ''}`}>
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">{stage.icon}</span>
-            <h3 className="font-semibold text-gray-900">{stage.name}</h3>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-lg shrink-0">{stage.icon || '📌'}</span>
+            <h3 className="font-semibold text-gray-900 truncate">{stage.name}</h3>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs font-bold rounded">
               {items.length}
             </span>
           </div>
         </div>
         <p className="text-xs text-gray-500">
-          Giá trị: {formatVND(stage.totalValue)}
+          Giá trị: {formatVND(items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0))}
         </p>
       </div>
-      
-      {/* Cards Container */}
-      <div className={`bg-gray-50 border border-gray-200 border-t-0 p-3 min-h-96 max-h-96 overflow-y-auto space-y-3 transition-all ${
-        isOverColumn ? 'bg-teal-50' : ''
-      }`}>
+
+      {/* Cards Container — responsive height like CRM */}
+      <div
+        ref={containerRef}
+        className={`bg-gray-50 border border-gray-200 border-t-0 p-3 space-y-3 overflow-y-auto transition-all ${isOverColumn ? 'bg-teal-50' : ''}`}
+        style={{ maxHeight: columnMaxH, minHeight: '200px' }}
+      >
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
             <p className="text-sm flex items-center gap-1">
@@ -489,14 +499,8 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
             </p>
           </div>
         ) : (
-          items.map(item => (
-            <KanbanCard
-              key={item.id}
-              item={item}
-              stage={stage}
-              onMoveStage={onMoveStage}
-              calculateDays={calculateDays}
-            />
+          items.map((item) => (
+            <KanbanCard key={item.id} item={item} stage={stage} onMoveStage={onMoveStage} calculateDays={calculateDays} />
           ))
         )}
       </div>
@@ -504,21 +508,24 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays }) {
   );
 }
 
-// Kanban Item Card
-function KanbanCard({ item, stage, onMoveStage, calculateDays }) {
+// Kanban Item Card — matches CRM KanbanCard (MISA style)
+function KanbanCard({ item, stage, calculateDays }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
   const handleDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('projectId', item.id);
   };
 
-  const getInitials = (name) => {
-    if (!name) return '?';
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-  };
-
+  const stageColor = stage.color || '#e5e7eb';
   const progressPercent = item.progress || 0;
+  const assignee = item.production_person || item.assignee;
+
+  const getInitialsLocal = (name) => {
+    if (!name) return '?';
+    return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
+  };
 
   return (
     <div
@@ -528,38 +535,36 @@ function KanbanCard({ item, stage, onMoveStage, calculateDays }) {
         const a = searchParams.get('area');
         navigate(`/sx/projects/${item.id}${a === 'logistics' ? '?area=logistics' : ''}`);
       }}
-      className={`bg-white rounded-lg border border-gray-200 p-3 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg`}
-      style={{
-        borderLeft: `3px solid ${stage.color}`,
-      }}
+      className="relative bg-white rounded-lg border border-gray-200 p-3 pt-9 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg"
+      style={{ borderLeft: `3px solid ${stageColor}` }}
     >
-      {/* Header: Code + Priority */}
-      <div className="flex items-start justify-between mb-2">
+      {/* Header row: Code (left) + Value (right) — same as CRM */}
+      <div className="flex items-start justify-between pr-1 mb-2 absolute top-3 left-3 right-3">
         <p className="text-xs font-semibold text-teal-600">{item.code}</p>
-        {item.priority && (
-          <span className={`text-xs font-medium px-2 py-0.5 rounded ${PRIORITY_COLORS[item.priority] || 'bg-gray-100 text-gray-600'}`}>
-            {item.priority === 'high' ? '🔴' : item.priority === 'medium' ? '🟡' : '🟢'} {item.priority}
-          </span>
+        {item.estimated_value > 0 && (
+          <p className="text-xs font-bold text-emerald-600 text-right">{formatVND(item.estimated_value)}</p>
         )}
       </div>
 
       {/* Title */}
-      <p className="text-sm font-medium text-gray-900 truncate mb-2">{item.name}</p>
+      <p className="text-sm font-medium text-gray-900 truncate mb-1">{item.name}</p>
+
+      {/* Priority badge below title */}
+      {item.priority && (
+        <span className={`inline-flex text-xs font-medium px-1.5 py-0.5 rounded mb-2 ${PRIORITY_COLORS[item.priority] || 'bg-gray-100 text-gray-600'}`}>
+          {item.priority === 'high' ? '🔴' : item.priority === 'medium' ? '🟡' : '🟢'} {item.priority === 'high' ? 'Cao' : item.priority === 'medium' ? 'TB' : 'Thấp'}
+        </span>
+      )}
 
       {/* Customer name */}
       {item.customer?.full_name && (
         <p className="text-xs text-gray-600 truncate mb-2">{item.customer.full_name}</p>
       )}
 
-      {/* Value + Deadline */}
-      <div className="space-y-1 mb-3 text-xs">
-        {item.estimated_value > 0 && (
-          <p className="text-emerald-600 font-semibold">{formatVND(item.estimated_value)}</p>
-        )}
-        {item.deadline && (
-          <p className="text-gray-500">📅 {formatDate(item.deadline)}</p>
-        )}
-      </div>
+      {/* Deadline */}
+      {item.deadline && (
+        <p className="text-xs text-gray-500 mb-2">📅 {formatDate(item.deadline)}</p>
+      )}
 
       {/* Progress Bar */}
       {item.progress !== undefined && (
@@ -569,30 +574,31 @@ function KanbanCard({ item, stage, onMoveStage, calculateDays }) {
             <span className="text-xs font-bold text-teal-600">{progressPercent}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-            <div
-              className="bg-teal-600 h-full transition-all duration-300 rounded-full"
-              style={{ width: `${progressPercent}%` }}
-            />
+            <div className="bg-teal-600 h-full transition-all duration-300 rounded-full" style={{ width: `${progressPercent}%` }} />
           </div>
         </div>
       )}
 
-      {/* Assignee */}
+      {/* Assignee + Days — same bottom row as CRM */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {item.production_person && (
+        <div className="flex items-center gap-1.5 min-w-0">
+          {assignee?.full_name && (
             <>
-              <div
-                className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                style={{ backgroundColor: stage.color }}
-              >
-                {item.production_person.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-              </div>
-              <span className="text-xs text-gray-600 truncate">{item.production_person.full_name}</span>
+              {assignee.avatar ? (
+                <img src={assignee.avatar} alt="" className="h-6 w-6 rounded-full shrink-0" />
+              ) : (
+                <div
+                  className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                  style={{ backgroundColor: stageColor }}
+                >
+                  {getInitialsLocal(assignee.full_name)}
+                </div>
+              )}
+              <span className="text-xs text-gray-600 truncate">{assignee.full_name}</span>
             </>
           )}
         </div>
-        <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded whitespace-nowrap">
+        <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded shrink-0 whitespace-nowrap">
           {calculateDays(item.created_at)}
         </span>
       </div>

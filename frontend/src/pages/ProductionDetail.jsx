@@ -5,8 +5,8 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatVND, formatDate, formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import {
-  ArrowLeft, Phone, Mail, Calendar, DollarSign, FileIcon, FolderKanban, MessageSquare, Plus, X,
-  FileUp,
+  ArrowLeft, FileIcon, FolderKanban, MessageSquare, Plus, X,
+  FileUp, Edit2, Save,
 } from 'lucide-react';
 import WorkshopProjectTasksPanel from '../components/WorkshopProjectTasksPanel';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
@@ -14,6 +14,7 @@ import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CallLogsTab from '../components/CallLogsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
+import PipelineStepper from '../components/PipelineStepper';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) */
 const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'facebook', 'team', 'chat', 'calls', 'approvals']);
@@ -250,9 +251,19 @@ export default function ProductionDetail() {
     type: 'note', title: '', description: '', outcome: '',
   });
   const [savingCrmActivity, setSavingCrmActivity] = useState(false);
-  /** Lỗi tải trang (404 deal chưa có dự án, v.v.) — không dùng alert để có thể hướng dẫn rõ */
   const [loadError, setLoadError] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
+
+  // Title inline editing — same pattern as LeadDetail
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  // Production pipeline stages (loaded from API)
+  const [productionStages, setProductionStages] = useState([]);
+
+  // Document upload state
+  const [uploadingDoc, setUploadingDoc] = useState(false);
 
   const workArea = searchParams.get('area') === 'logistics' ? 'logistics' : 'production';
   const filteredTasksForArea = useMemo(
@@ -356,6 +367,14 @@ export default function ProductionDetail() {
     })();
     return () => { cancelled = true; };
   }, [project?.crmDeals?.[0]?.id]);
+
+  // Load production pipeline stages once
+  useEffect(() => {
+    api.get('/production/pipeline-stages').then((r) => {
+      const rows = r.data || [];
+      if (rows.length) setProductionStages(rows);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     setLoadError(null);
@@ -466,10 +485,54 @@ export default function ProductionDetail() {
         current_stage_id: p.current_stage_id,
         current_stage: p.current_stage || prev.current_stage,
       } : prev));
-      alert('Cập nhật giai đoạn thành công');
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
     }
+  };
+
+  const saveTitle = async () => {
+    const dealId = project?.crmDeals?.[0]?.id;
+    if (!titleDraft.trim() || savingTitle) return;
+    setSavingTitle(true);
+    try {
+      if (dealId) {
+        const { data } = await api.put(`/crm/leads/${dealId}`, { title: titleDraft.trim() });
+        setProject((prev) => prev ? { ...prev, crmDeals: prev.crmDeals?.map((d) => d.id === dealId ? { ...d, ...data } : d) } : prev);
+      }
+      setEditingTitle(false);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi cập nhật tên');
+    }
+    setSavingTitle(false);
+  };
+
+  const uploadDocument = async () => {
+    const dealId = project?.crmDeals?.[0]?.id;
+    if (!dealId) { alert('Cần liên kết deal CRM để upload tài liệu'); return; }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      setUploadingDoc(true);
+      try {
+        const uploaded = [];
+        for (const file of files) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const { data } = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          uploaded.push({ name: file.name, file_url: data.url || data.file_url, file_name: file.name });
+        }
+        await api.post(`/crm/leads/${dealId}/documents/bulk`, { documents: uploaded });
+        const { data: docs } = await api.get(`/crm/leads/${dealId}/documents`);
+        setCrmDealDocs(Array.isArray(docs) ? docs : []);
+      } catch (err) {
+        alert(err.response?.data?.error || 'Lỗi upload file');
+      }
+      setUploadingDoc(false);
+    };
+    input.click();
   };
 
   if (loadError) {
@@ -522,16 +585,17 @@ export default function ProductionDetail() {
     );
   }
 
-  const pipelineStages = project.workshopPipeline?.length
-    ? project.workshopPipeline
-    : [
-        { id: null, slug: 'production', name: 'Sản xuất', color: '#0f766e', icon: '🏭' },
-        { id: null, slug: 'delivery', name: 'VC & Lắp đặt', color: '#14b8a6', icon: '🚚' },
-        { id: null, slug: 'customer-care', name: 'CSKH', color: '#5eead4', icon: '🤝' },
-      ];
+  const pipelineStages = productionStages.length
+    ? productionStages
+    : project.workshopPipeline?.length
+      ? project.workshopPipeline
+      : [
+          { id: null, slug: 'production', name: 'Sản xuất', color: '#0f766e', icon: '🏭' },
+          { id: null, slug: 'delivery', name: 'VC & Lắp đặt', color: '#14b8a6', icon: '🚚' },
+          { id: null, slug: 'customer-care', name: 'CSKH', color: '#5eead4', icon: '🤝' },
+        ];
 
   const currentStageId = project.current_stage_id || project.current_stage?.id;
-  const currentStageIdx = pipelineStages.findIndex((s) => s.id && currentStageId && s.id === currentStageId);
   const primaryCrmDeal = project.crmDeals?.[0];
   const crmLeadId = primaryCrmDeal?.id;
   const displayCode = primaryCrmDeal?.code || project.code;
@@ -557,7 +621,7 @@ export default function ProductionDetail() {
 
   return (
     <div className="space-y-4 mx-auto">
-      {/* Header — giống LeadDetail (deal) */}
+      {/* Header — same style as LeadDetail */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
@@ -569,15 +633,49 @@ export default function ProductionDetail() {
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
-                🎯 DEAL (xưởng)
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">
+                🏭 SX
               </span>
               <span className="text-xs text-gray-500 font-mono">{displayCode}</span>
-              <span className="text-xs text-gray-400 font-mono hidden sm:inline">· {project.code}</span>
             </div>
-            <div className="mt-1 flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold text-gray-900">{displayTitle}</h1>
-            </div>
+            {editingTitle ? (
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <input
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  className="h-10 min-w-[320px] max-w-[560px] px-3 border border-gray-300 rounded-lg text-lg font-semibold text-gray-900 bg-white"
+                  placeholder="Nhập tên deal"
+                  autoFocus
+                />
+                <button
+                  onClick={saveTitle}
+                  disabled={savingTitle || !titleDraft.trim()}
+                  className="h-10 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Save className="h-4 w-4" /> {savingTitle ? 'Đang lưu...' : 'Lưu'}
+                </button>
+                <button
+                  onClick={() => { setTitleDraft(displayTitle || ''); setEditingTitle(false); }}
+                  disabled={savingTitle}
+                  className="h-10 px-3 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium cursor-pointer hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <X className="h-4 w-4" /> Hủy
+                </button>
+              </div>
+            ) : (
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-bold text-gray-900">{displayTitle}</h1>
+                {crmLeadId && (
+                  <button
+                    onClick={() => { setTitleDraft(displayTitle || ''); setEditingTitle(true); }}
+                    className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer transition"
+                    title="Sửa tên deal"
+                  >
+                    <Edit2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -598,57 +696,12 @@ export default function ProductionDetail() {
         </div>
       </div>
 
-      {/* Pipeline — cùng layout stepper MISA như LeadDetail */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <div className="flex items-start justify-between overflow-x-auto">
-          {(() => {
-            let pipelineIdx = currentStageIdx;
-            if (pipelineIdx < 0) {
-              pipelineIdx = pipelineStages.findIndex((x) => x.slug === project.current_stage?.slug);
-            }
-            return pipelineStages.map((s, i) => {
-              const isCurrent = pipelineIdx >= 0 && i === pipelineIdx;
-              const isPast = pipelineIdx >= 0 && i < pipelineIdx;
-              return (
-                <div key={s.id || s.slug} className="flex items-start flex-1 min-w-0">
-                  <div className="flex flex-col items-center flex-shrink-0" style={{ minWidth: 70 }}>
-                    <button
-                      type="button"
-                      onClick={() => s.id && moveStage(s.id)}
-                      disabled={!s.id}
-                      className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 ${
-                        s.id ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-                      } ${
-                        isPast
-                          ? 'bg-emerald-500 text-white shadow-sm'
-                          : isCurrent
-                            ? 'text-white shadow-lg ring-4 ring-blue-100'
-                            : 'border-2 border-gray-300 text-gray-400 hover:border-gray-400'
-                      }`}
-                      style={isCurrent ? { backgroundColor: s.color || '#3B82F6' } : {}}
-                      title={s.name}
-                    >
-                      {isPast ? '✓' : s.icon || (i + 1)}
-                    </button>
-                    <p
-                      className={`mt-2 text-xs text-center leading-tight max-w-[80px] ${
-                        isCurrent ? 'text-gray-900 font-bold' : isPast ? 'text-emerald-600 font-medium' : 'text-gray-500'
-                      }`}
-                    >
-                      {s.name}
-                    </p>
-                  </div>
-                  {i < pipelineStages.length - 1 && (
-                    <div className="flex-1 flex items-center pt-5 px-1">
-                      <div className={`w-full h-0.5 ${i < pipelineIdx ? 'bg-emerald-400' : 'bg-gray-200'}`} />
-                    </div>
-                  )}
-                </div>
-              );
-            });
-          })()}
-        </div>
-      </div>
+      {/* Pipeline — shared PipelineStepper component */}
+      <PipelineStepper
+        stages={pipelineStages}
+        currentStageId={currentStageId}
+        onMoveToStage={moveStage}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Cột trái — giống LeadDetail */}
@@ -763,8 +816,8 @@ export default function ProductionDetail() {
               {tabBtn('facebook', '📘 Facebook')}
               {tabBtn('team', '👥 Thành viên')}
               {tabBtn('chat', '💬 Trao đổi')}
-              {tabBtn('calls', '📞 Ghi âm')}
-              {tabBtn('approvals', '✅ Gửi duyệt deal')}
+              {tabBtn('calls', '📞 Tổng đài')}
+              {tabBtn('approvals', '✅ Gửi duyệt')}
             </div>
 
             <div className="p-5">
@@ -782,11 +835,33 @@ export default function ProductionDetail() {
               )}
 
               {activeTab === 'documents' && (
-                <ProductionDocumentsDealLayout
-                  project={project}
-                  crmDealDocs={crmDealDocs}
-                  crmLeadId={crmLeadId}
-                />
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {uploadingDoc ? (
+                        <span className="h-8 px-3 bg-orange-100 text-orange-700 rounded-lg text-xs font-medium flex items-center gap-1.5">
+                          <span className="animate-spin h-3.5 w-3.5 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải lên...
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={uploadDocument}
+                          className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <FileUp className="h-3.5 w-3.5" /> Upload file
+                        </button>
+                      )}
+                      {crmLeadId && (
+                        <span className="text-xs text-gray-500">Upload sẽ lưu vào deal CRM</span>
+                      )}
+                    </div>
+                  </div>
+                  <ProductionDocumentsDealLayout
+                    project={project}
+                    crmDealDocs={crmDealDocs}
+                    crmLeadId={crmLeadId}
+                  />
+                </>
               )}
 
               {activeTab === 'activities' && (
@@ -926,7 +1001,7 @@ export default function ProductionDetail() {
                   type="button"
                   onClick={saveCrmActivity}
                   disabled={savingCrmActivity}
-                  className="h-9 px-4 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50"
+                  className="h-9 px-4 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
                   {savingCrmActivity ? 'Đang lưu...' : 'Lưu'}
                 </button>
