@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,9 +13,10 @@ import {
   Alert,
   Platform,
   Linking,
+  Image,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api, formatApiError, postMultipart } from '../api/client';
@@ -31,6 +32,15 @@ import CrmVoiceRecordingsPanel from '../components/CrmVoiceRecordingsPanel';
 import LeadChatPanel from '../components/LeadChatPanel';
 import LeadMessengerPanel from '../components/LeadMessengerPanel';
 import LeadFacebookPanel from '../components/LeadFacebookPanel';
+import CrmNoteRichText from '../components/CrmNoteRichText';
+import CrmMediaSlideshowModal from '../components/CrmMediaSlideshowModal';
+import {
+  slideshowItemsFromDocuments,
+  classifyUrlMediaKind,
+  getLeadActivityNoteBody,
+  type SlideshowItem,
+} from '../lib/crmNoteMedia';
+import { resolveAttachmentUrl } from '../lib/resolveMediaUrl';
 
 type R = RouteProp<CrmStackParamList, 'LeadDetail'>;
 type Nav = NativeStackNavigationProp<CrmStackParamList, 'LeadDetail'>;
@@ -75,6 +85,7 @@ type TaskDocRow = {
   name?: string | null;
   file_url?: string | null;
   doc_type?: string | null;
+  mime_type?: string | null;
   task_title?: string | null;
   stage_slug?: string | null;
 };
@@ -112,12 +123,14 @@ export default function LeadDetailScreen() {
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [members, setMembers] = useState<CrmLeadMember[]>([]);
   const [noteDraft, setNoteDraft] = useState('');
-  const [salesQuotes, setSalesQuotes] = useState<{ id: string; code?: string; title?: string; total?: number; status?: string }[]>([]);
-  const [salesOrders, setSalesOrders] = useState<{ id: string; code?: string; title?: string; total?: number; status?: string }[]>([]);
-  const [salesInvoices, setSalesInvoices] = useState<{ id: string; code?: string; title?: string; total?: number; status?: string }[]>([]);
-  const [salesLoading, setSalesLoading] = useState(false);
   const [noteSaving, setNoteSaving] = useState(false);
   const [chatSub, setChatSub] = useState<ChatSubKey>('crm');
+
+  const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
+  const [mediaViewerItems, setMediaViewerItems] = useState<SlideshowItem[]>([]);
+  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
+  /** Remount slideshow khi mở lại (đồng bộ index / vuốt ngang). */
+  const [mediaViewerSession, setMediaViewerSession] = useState(0);
 
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -184,6 +197,29 @@ export default function LeadDetailScreen() {
     void load();
   }, [load]);
 
+  const skipNextActivitiesRefreshRef = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (skipNextActivitiesRefreshRef.current) {
+        skipNextActivitiesRefreshRef.current = false;
+        return;
+      }
+      if (!id) return;
+      let cancelled = false;
+      void (async () => {
+        try {
+          const { data } = await api.get<CrmActivity[]>(`/crm/leads/${id}/activities`);
+          if (!cancelled && Array.isArray(data)) setActivities(data);
+        } catch {
+          /* giữ danh sách hiện tại */
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [id]),
+  );
+
   const stages = useMemo(() => {
     if (!lead?.type) return [];
     return lead.type === 'deal' ? stagesDeal : stagesLead;
@@ -199,7 +235,8 @@ export default function LeadDetailScreen() {
   }, [lead?.stage_id, sortedStages]);
 
   const noteActivities = useMemo(
-    () => (activities || []).filter((a) => a.type === 'note'),
+    () =>
+      (activities || []).filter((a) => String(a.type || '').toLowerCase().trim() === 'note'),
     [activities],
   );
   const pipelineActivities = useMemo(
@@ -214,6 +251,46 @@ export default function LeadDetailScreen() {
   );
 
   const documentTabCount = standaloneDocuments.length + taskDocuments.length;
+
+  const allDocMediaSources = useMemo(
+    () => [
+      ...taskDocuments.map((td) => ({
+        file_url: td.file_url,
+        mime_type: td.mime_type,
+        name: td.name,
+      })),
+      ...standaloneDocuments.map((d) => ({
+        file_url: d.file_url,
+        mime_type: d.mime_type,
+        name: d.name,
+      })),
+    ],
+    [taskDocuments, standaloneDocuments],
+  );
+  const documentSlideshowItems = useMemo(
+    () => slideshowItemsFromDocuments(allDocMediaSources),
+    [allDocMediaSources],
+  );
+
+  const openMediaSlideshow = useCallback((items: SlideshowItem[], index: number) => {
+    if (!items.length) return;
+    setMediaViewerItems(items);
+    setMediaViewerIndex(Math.min(Math.max(0, index), items.length - 1));
+    setMediaViewerSession((s) => s + 1);
+    setMediaViewerOpen(true);
+  }, []);
+
+  const closeMediaSlideshow = useCallback(() => {
+    setMediaViewerOpen(false);
+  }, []);
+
+  const openDocSlideshowAtUri = useCallback(
+    (resolvedUri: string) => {
+      const idx = documentSlideshowItems.findIndex((it) => it.uri === resolvedUri);
+      openMediaSlideshow(documentSlideshowItems, idx >= 0 ? idx : 0);
+    },
+    [documentSlideshowItems, openMediaSlideshow],
+  );
 
   const loadMembers = useCallback(async () => {
     try {
@@ -250,37 +327,6 @@ export default function LeadDetailScreen() {
   useEffect(() => {
     if (previewExpanded) void loadLeadPreview();
   }, [previewExpanded, loadLeadPreview]);
-
-  const normalizeList = (raw: unknown) => (Array.isArray(raw) ? raw : []);
-
-  useEffect(() => {
-    let cancelled = false;
-    setSalesLoading(true);
-    (async () => {
-      try {
-        const [qRes, oRes, iRes] = await Promise.all([
-          api.get(`/crm/quotations`, { params: { lead_id: id, limit: 40 } }).catch(() => ({ data: [] })),
-          api.get(`/crm/orders`, { params: { lead_id: id, limit: 40 } }).catch(() => ({ data: [] })),
-          api.get(`/crm/invoices`, { params: { lead_id: id, limit: 40 } }).catch(() => ({ data: [] })),
-        ]);
-        if (cancelled) return;
-        setSalesQuotes(normalizeList(qRes.data));
-        setSalesOrders(normalizeList(oRes.data));
-        setSalesInvoices(normalizeList(iRes.data));
-      } catch {
-        if (!cancelled) {
-          setSalesQuotes([]);
-          setSalesOrders([]);
-          setSalesInvoices([]);
-        }
-      } finally {
-        if (!cancelled) setSalesLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [id]);
 
   const applyStage = async (stageId: string, lost?: string) => {
     setSavingStage(true);
@@ -526,7 +572,16 @@ export default function LeadDetailScreen() {
         title: titleLine,
         description: desc,
       });
-      setActivities((prev) => [data, ...prev]);
+      if (data?.id) {
+        setActivities((prev) => [data, ...(prev || []).filter((x) => x.id !== data.id)]);
+      } else {
+        try {
+          const listRes = await api.get<CrmActivity[]>(`/crm/leads/${id}/activities`);
+          if (Array.isArray(listRes.data)) setActivities(listRes.data);
+        } catch {
+          /* ignore */
+        }
+      }
       setNoteDraft('');
     } catch (e: unknown) {
       Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không lưu được ghi chú');
@@ -645,9 +700,6 @@ export default function LeadDetailScreen() {
         <View style={[styles.actionsCard, CrmShadow.card]}>
           <Text style={styles.actionsH}>Thao tác nhanh</Text>
           <View style={styles.actionsGrid}>
-            <TouchableOpacity style={styles.actBtnAmber} onPress={() => openWebPath(`/crm/quotations/new?lead_id=${id}`)}>
-              <Text style={styles.actBtnTxt}>📄 Báo giá</Text>
-            </TouchableOpacity>
             {isDeal && lead.project_id ? (
               <>
                 <TouchableOpacity style={styles.actBtnTeal} onPress={() => openWebPath(`/sx/projects/${lead.project_id}`)}>
@@ -793,7 +845,11 @@ export default function LeadDetailScreen() {
                     previewTasksWithNotes.map((t) => (
                       <View key={t.id} style={styles.previewNoteCard}>
                         <Text style={styles.previewTaskTitle}>{t.title || 'Nhiệm vụ'}</Text>
-                        <Text style={styles.previewTaskNotes}>{(t.notes || '').trim()}</Text>
+                    <CrmNoteRichText
+                      text={(t.notes || '').trim() || '—'}
+                      bodyStyle={styles.previewTaskNotes}
+                      onOpenSlideshow={(items, index) => openMediaSlideshow(items, index)}
+                    />
                       </View>
                     ))
                   )}
@@ -961,77 +1017,6 @@ export default function LeadDetailScreen() {
           ) : null}
         </View>
 
-        <View style={[styles.card, CrmShadow.card]}>
-          <Text style={styles.cardH}>Báo giá · Đơn hàng · Hóa đơn</Text>
-          <Text style={styles.salesHint}>Theo lead/deal và cùng khách hàng (nếu đã gán KH).</Text>
-          {salesLoading ? (
-            <ActivityIndicator style={{ marginVertical: 12 }} color={CrmColors.blue600} />
-          ) : (
-            <>
-              {salesQuotes.length === 0 && salesOrders.length === 0 && salesInvoices.length === 0 ? (
-                <Text style={styles.muted}>Chưa có báo giá / đơn / hóa đơn liên quan.</Text>
-              ) : (
-                <ScrollView
-                  horizontal
-                  nestedScrollEnabled
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.salesScroll}
-                  contentContainerStyle={styles.salesScrollContent}
-                >
-                  {salesQuotes.map((row) => (
-                    <TouchableOpacity
-                      key={`q-${row.id}`}
-                      style={styles.salesChip}
-                      onPress={() => openWebPath(`/crm/quotations/${row.id}`)}
-                    >
-                      <Text style={styles.salesChipK}>BG</Text>
-                      <Text style={styles.salesChipCode} numberOfLines={1}>
-                        {row.code || row.id.slice(0, 8)}
-                      </Text>
-                      <Text style={styles.salesChipAmt}>{formatVND(Number(row.total) || 0)}</Text>
-                      <Text style={styles.salesChipSt} numberOfLines={1}>
-                        {row.status || '—'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  {salesOrders.map((row) => (
-                    <TouchableOpacity
-                      key={`o-${row.id}`}
-                      style={styles.salesChip}
-                      onPress={() => openWebPath(`/crm/orders/${row.id}`)}
-                    >
-                      <Text style={styles.salesChipK}>ĐH</Text>
-                      <Text style={styles.salesChipCode} numberOfLines={1}>
-                        {row.code || row.id.slice(0, 8)}
-                      </Text>
-                      <Text style={styles.salesChipAmt}>{formatVND(Number(row.total) || 0)}</Text>
-                      <Text style={styles.salesChipSt} numberOfLines={1}>
-                        {row.status || '—'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  {salesInvoices.map((row) => (
-                    <TouchableOpacity
-                      key={`i-${row.id}`}
-                      style={styles.salesChip}
-                      onPress={() => openWebPath(`/crm/invoices/${row.id}`)}
-                    >
-                      <Text style={styles.salesChipK}>HĐ</Text>
-                      <Text style={styles.salesChipCode} numberOfLines={1}>
-                        {row.code || row.id.slice(0, 8)}
-                      </Text>
-                      <Text style={styles.salesChipAmt}>{formatVND(Number(row.total) || 0)}</Text>
-                      <Text style={styles.salesChipSt} numberOfLines={1}>
-                        {row.status || '—'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
-            </>
-          )}
-        </View>
-
         <View style={[styles.tabsBar, CrmShadow.card]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
             {(
@@ -1067,6 +1052,12 @@ export default function LeadDetailScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.webTabChip}
+              onPress={() => openWebPath(`/crm/leads/${id}?tab=calls`)}
+            >
+              <Text style={styles.webTabChipTxt}>📞 Tổng đài</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.webTabChip}
               onPress={() => openWebPath(`/crm/leads/${id}?tab=voice_crm`)}
             >
               <Text style={styles.webTabChipTxt}>🎙 Ghi âm (web)</Text>
@@ -1091,24 +1082,84 @@ export default function LeadDetailScreen() {
               <TouchableOpacity style={styles.uploadBtn} onPress={() => void pickAndUploadDoc()} disabled={uploadingDoc}>
                 <Text style={styles.uploadBtnTxt}>{uploadingDoc ? 'Đang tải…' : '📎 Thêm tệp'}</Text>
               </TouchableOpacity>
+
+              {documentSlideshowItems.length > 0 ? (
+                <View style={styles.docSlideStrip}>
+                  <Text style={styles.docSlideStripH}>Trình chiếu ảnh / video / âm thanh</Text>
+                  <ScrollView
+                    horizontal
+                    nestedScrollEnabled
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.docSlideStripInner}
+                  >
+                    {documentSlideshowItems.map((item, idx) => (
+                      <TouchableOpacity
+                        key={`doc-slide-${idx}-${item.uri}`}
+                        style={styles.docSlideChip}
+                        onPress={() => openMediaSlideshow(documentSlideshowItems, idx)}
+                        activeOpacity={0.85}
+                      >
+                        {item.kind === 'image' ? (
+                          <Image source={{ uri: item.uri }} style={styles.docSlideThumb} resizeMode="cover" />
+                        ) : item.kind === 'video' ? (
+                          <View style={[styles.docSlideThumb, styles.docSlideThumbVid]}>
+                            <Text style={styles.docSlideThumbVidTxt}>▶</Text>
+                          </View>
+                        ) : (
+                          <View style={[styles.docSlideThumb, styles.docSlideThumbAud]}>
+                            <Text style={styles.docSlideThumbVidTxt}>♪</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              ) : null}
+
               {taskDocuments.length > 0 ? (
                 <>
                   <Text style={styles.docSectionH}>📂 File nhiệm vụ ({taskDocuments.length})</Text>
-                  <Text style={styles.docSectionSub}>Từ nhiệm vụ CRM — xem / tải; xóa hoặc sửa trên web nếu cần.</Text>
-                  {taskDocuments.map((td) => (
-                    <View key={td.id} style={styles.rowItem}>
-                      <TouchableOpacity
-                        style={{ flex: 1 }}
-                        onPress={() => td.file_url && void Linking.openURL(td.file_url)}
-                        disabled={!td.file_url}
-                      >
-                        <Text style={styles.rowTitle}>{td.name || '—'}</Text>
-                        <Text style={styles.rowSub}>
-                          {[td.task_title, td.stage_slug].filter(Boolean).join(' · ') || 'Nhiệm vụ'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
+                  <Text style={styles.docSectionSub}>Từ nhiệm vụ CRM — chạm ảnh/video để trình chiếu; PDF/file khác mở liên kết.</Text>
+                  {taskDocuments.map((td) => {
+                    const resolved = td.file_url ? resolveAttachmentUrl(td.file_url) : null;
+                    const mk = td.file_url ? classifyUrlMediaKind(td.file_url, td.mime_type) : 'file';
+                    const openRow = () => {
+                      if (resolved && mk !== 'file') {
+                        openDocSlideshowAtUri(resolved);
+                      } else if (td.file_url) {
+                        void Linking.openURL(resolveAttachmentUrl(td.file_url) || td.file_url);
+                      }
+                    };
+                    return (
+                      <View key={td.id} style={styles.rowItemMedia}>
+                        {resolved && mk === 'image' ? (
+                          <TouchableOpacity onPress={openRow}>
+                            <Image source={{ uri: resolved }} style={styles.rowThumb} resizeMode="cover" />
+                          </TouchableOpacity>
+                        ) : resolved && mk === 'video' ? (
+                          <TouchableOpacity onPress={openRow}>
+                            <View style={[styles.rowThumb, styles.rowThumbVid]}>
+                              <Text style={styles.rowThumbVidTxt}>▶</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ) : resolved && mk === 'audio' ? (
+                          <TouchableOpacity onPress={openRow}>
+                            <View style={[styles.rowThumb, styles.rowThumbAud]}>
+                              <Text style={styles.rowThumbVidTxt}>♪</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={styles.rowThumbPlaceholder} />
+                        )}
+                        <TouchableOpacity style={styles.rowItemMain} onPress={openRow} disabled={!td.file_url}>
+                          <Text style={styles.rowTitle}>{td.name || '—'}</Text>
+                          <Text style={styles.rowSub}>
+                            {[td.task_title, td.stage_slug].filter(Boolean).join(' · ') || 'Nhiệm vụ'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
                 </>
               ) : null}
               {standaloneDocuments.length > 0 ? (
@@ -1116,21 +1167,47 @@ export default function LeadDetailScreen() {
                   {taskDocuments.length > 0 ? (
                     <Text style={[styles.docSectionH, { marginTop: 14 }]}>📋 Tài liệu lead / deal</Text>
                   ) : null}
-                  {standaloneDocuments.map((d) => (
-                    <View key={d.id} style={styles.rowItem}>
-                      <TouchableOpacity
-                        style={{ flex: 1 }}
-                        onPress={() => d.file_url && void Linking.openURL(d.file_url)}
-                        disabled={!d.file_url}
-                      >
-                        <Text style={styles.rowTitle}>{d.name || '—'}</Text>
-                        {d.doc_type ? <Text style={styles.rowSub}>{d.doc_type}</Text> : null}
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => removeDoc(d)}>
-                        <Text style={styles.delDoc}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
+                  {standaloneDocuments.map((d) => {
+                    const resolved = d.file_url ? resolveAttachmentUrl(d.file_url) : null;
+                    const mk = d.file_url ? classifyUrlMediaKind(d.file_url, d.mime_type) : 'file';
+                    const openRow = () => {
+                      if (resolved && mk !== 'file') {
+                        openDocSlideshowAtUri(resolved);
+                      } else if (d.file_url) {
+                        void Linking.openURL(resolveAttachmentUrl(d.file_url) || d.file_url);
+                      }
+                    };
+                    return (
+                      <View key={d.id} style={styles.rowItemMedia}>
+                        {resolved && mk === 'image' ? (
+                          <TouchableOpacity onPress={openRow}>
+                            <Image source={{ uri: resolved }} style={styles.rowThumb} resizeMode="cover" />
+                          </TouchableOpacity>
+                        ) : resolved && mk === 'video' ? (
+                          <TouchableOpacity onPress={openRow}>
+                            <View style={[styles.rowThumb, styles.rowThumbVid]}>
+                              <Text style={styles.rowThumbVidTxt}>▶</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ) : resolved && mk === 'audio' ? (
+                          <TouchableOpacity onPress={openRow}>
+                            <View style={[styles.rowThumb, styles.rowThumbAud]}>
+                              <Text style={styles.rowThumbVidTxt}>♪</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={styles.rowThumbPlaceholder} />
+                        )}
+                        <TouchableOpacity style={styles.rowItemMain} onPress={openRow} disabled={!d.file_url}>
+                          <Text style={styles.rowTitle}>{d.name || '—'}</Text>
+                          {d.doc_type ? <Text style={styles.rowSub}>{d.doc_type}</Text> : null}
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => removeDoc(d)}>
+                          <Text style={styles.delDoc}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
                 </>
               ) : taskDocuments.length === 0 ? (
                 <Text style={styles.muted}>Chưa có tài liệu.</Text>
@@ -1183,7 +1260,11 @@ export default function LeadDetailScreen() {
                       {formatDateTime(a.activity_date)}
                       {a.creator?.full_name ? ` · ${a.creator.full_name}` : ''}
                     </Text>
-                    <Text style={styles.noteBody}>{a.description || a.title || '—'}</Text>
+                    <CrmNoteRichText
+                      text={getLeadActivityNoteBody(a)}
+                      bodyStyle={styles.noteBody}
+                      onOpenSlideshow={(items, index) => openMediaSlideshow(items, index)}
+                    />
                   </View>
                 ))
               )}
@@ -1243,7 +1324,7 @@ export default function LeadDetailScreen() {
 
         <Text style={styles.webHint}>
           Tab «Ghi âm» trong app = ghi âm CRM trên thiết bị. Tab «Trao đổi» gồm CRM, chat nhóm nội bộ theo lead và tin
-          Facebook; duyệt deal đầy đủ: hàng nút phía trên hoặc mở web.
+          Facebook; tổng đài / duyệt deal đầy đủ: hàng nút phía trên hoặc mở web.
         </Text>
       </ScrollView>
 
@@ -1329,6 +1410,14 @@ export default function LeadDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <CrmMediaSlideshowModal
+        key={`slideshow-${mediaViewerSession}`}
+        visible={mediaViewerOpen}
+        items={mediaViewerItems}
+        initialIndex={mediaViewerIndex}
+        onClose={closeMediaSlideshow}
+      />
     </SafeAreaView>
   );
 }
@@ -1443,7 +1532,6 @@ const styles = StyleSheet.create({
   },
   actionsH: { fontSize: 12, fontWeight: '800', color: CrmColors.gray600, marginBottom: 10 },
   actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  actBtnAmber: { backgroundColor: CrmColors.amber500, paddingHorizontal: 12, paddingVertical: 10, borderRadius: CrmRadii.md },
   actBtnTeal: { backgroundColor: CrmColors.teal100, paddingHorizontal: 12, paddingVertical: 10, borderRadius: CrmRadii.md },
   actBtnEmerald: { backgroundColor: CrmColors.emerald100, paddingHorizontal: 12, paddingVertical: 10, borderRadius: CrmRadii.md },
   actBtnIndigo: { backgroundColor: CrmColors.indigo600, paddingHorizontal: 12, paddingVertical: 10, borderRadius: CrmRadii.md },
@@ -1700,6 +1788,29 @@ const styles = StyleSheet.create({
     borderColor: CrmColors.gray200,
   },
   uploadBtnTxt: { fontWeight: '700', color: CrmColors.gray800 },
+  docSlideStrip: { marginBottom: 14 },
+  docSlideStripH: { fontSize: 12, fontWeight: '800', color: CrmColors.gray600, marginBottom: 8 },
+  docSlideStripInner: { gap: 10, paddingVertical: 4 },
+  docSlideChip: { marginRight: 10 },
+  docSlideThumb: {
+    width: 104,
+    height: 104,
+    borderRadius: CrmRadii.md,
+    backgroundColor: CrmColors.gray100,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  docSlideThumbVid: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: CrmColors.gray900,
+  },
+  docSlideThumbAud: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: CrmColors.blue900,
+  },
+  docSlideThumbVidTxt: { fontSize: 28, color: '#fff', fontWeight: '800' },
   rowItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1707,6 +1818,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: CrmColors.gray100,
   },
+  rowItemMedia: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: CrmColors.gray100,
+    gap: 10,
+  },
+  rowItemMain: { flex: 1, minWidth: 0 },
+  rowThumb: {
+    width: 52,
+    height: 52,
+    borderRadius: CrmRadii.sm,
+    backgroundColor: CrmColors.gray100,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  rowThumbVid: { justifyContent: 'center', alignItems: 'center', backgroundColor: CrmColors.gray900 },
+  rowThumbAud: { justifyContent: 'center', alignItems: 'center', backgroundColor: CrmColors.blue900 },
+  rowThumbVidTxt: { fontSize: 18, color: '#fff', fontWeight: '800' },
+  rowThumbPlaceholder: { width: 52, height: 52 },
   rowTitle: { fontSize: 14, fontWeight: '600', color: CrmColors.gray900 },
   rowSub: { fontSize: 12, color: CrmColors.gray500, marginTop: 2 },
   delDoc: { fontSize: 16, color: CrmColors.red500, paddingLeft: 12 },
@@ -1765,22 +1897,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   teamAvatarTxt: { fontSize: 16, fontWeight: '800', color: CrmColors.blue700 },
-  salesHint: { fontSize: 12, color: CrmColors.gray500, marginBottom: 6, lineHeight: 17 },
-  salesScroll: { marginTop: 4, marginBottom: 4, minHeight: 96 },
-  salesScrollContent: { alignItems: 'stretch', paddingVertical: 4 },
-  salesChip: {
-    width: 132,
-    marginRight: 10,
-    padding: 10,
-    borderRadius: CrmRadii.md,
-    backgroundColor: CrmColors.gray50,
-    borderWidth: 1,
-    borderColor: CrmColors.gray200,
-  },
-  salesChipK: { fontSize: 10, fontWeight: '800', color: CrmColors.blue600, marginBottom: 4 },
-  salesChipCode: { fontSize: 13, fontWeight: '700', color: CrmColors.gray900 },
-  salesChipAmt: { fontSize: 12, fontWeight: '700', color: CrmColors.gray800, marginTop: 4 },
-  salesChipSt: { fontSize: 11, color: CrmColors.gray500, marginTop: 4 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',

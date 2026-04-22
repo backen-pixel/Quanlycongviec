@@ -64,6 +64,8 @@ export type CrmActivity = {
   type?: string;
   title?: string | null;
   description?: string | null;
+  /** Một số luồng có thể trả trường song song — ưu tiên description */
+  notes?: string | null;
   activity_date?: string | null;
   creator?: { id?: string; full_name?: string | null } | null;
 };
@@ -95,6 +97,7 @@ export type CrmDocument = {
   name?: string | null;
   doc_type?: string | null;
   file_url?: string | null;
+  mime_type?: string | null;
   /** Bản sao từ file nhiệm vụ — ẩn khỏi danh sách «tài liệu lead» trên web */
   source_attachment_id?: string | null;
   is_from_task?: boolean;

@@ -13,6 +13,8 @@ const { userSeesAllCrmDeals, userSeesAllCrmLeads, normalizeCrmUserRole } = requi
 const { applyDefaultWorkshopTemplatesForNewProject } = require('../helpers/workshopApplyTemplates');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
+let misaService = null;
+try { misaService = require('../services/misaService'); } catch (e) { console.warn('⚠️ misaService not loaded:', e.message); }
 const {
   sendZaloTemplateMessage,
   buildDealTemplateData,
@@ -3887,6 +3889,132 @@ r.delete('/invoices/:id', async (req, res) => {
 
     res.json({ message: 'Đã xóa hóa đơn' });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══ MISA meInvoice — Phát hành hóa đơn điện tử ═══
+
+// POST /invoices/:id/misa-publish — Phát hành HĐĐT lên MISA meInvoice
+r.post('/invoices/:id/misa-publish', async (req, res) => {
+  try {
+    if (!misaService) return res.status(503).json({ error: 'MISA service chưa được cấu hình' });
+
+    const { data: invoice, error: invErr } = await supabase
+      .from('invoices')
+      .select('*, customer:customers(id, full_name, email, tax_code)')
+      .eq('id', req.params.id).single();
+    if (invErr || !invoice) return res.status(404).json({ error: 'Không tìm thấy hóa đơn' });
+
+    if (invoice.misa_status === 'published') {
+      return res.status(400).json({ error: 'Hóa đơn đã được phát hành lên MISA (số: ' + invoice.misa_invoice_no + ')' });
+    }
+
+    const { data: items } = await supabase
+      .from('invoice_items')
+      .select('*')
+      .eq('invoice_id', req.params.id)
+      .order('item_order');
+
+    // Gắn email từ customer nếu invoice không có
+    const invoiceWithEmail = {
+      ...invoice,
+      customer_email: invoice.customer_email || invoice.customer?.email || '',
+    };
+
+    const result = await misaService.publishInvoice(invoiceWithEmail, items || []);
+
+    // Cập nhật trạng thái MISA vào DB
+    await supabase.from('invoices').update({
+      misa_status: 'published',
+      misa_invoice_no: result.invoiceNo,
+      misa_lookup_code: result.lookupCode,
+      misa_ref_id: invoice.id,
+      misa_published_at: new Date().toISOString(),
+      misa_error_message: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+
+    res.json({
+      success: true,
+      invoiceNo: result.invoiceNo,
+      lookupCode: result.lookupCode,
+    });
+  } catch (e) {
+    // Lưu lỗi vào DB để dễ debug
+    await supabase.from('invoices').update({
+      misa_error_message: e.message,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /invoices/:id/misa-send-email — Gửi email HĐĐT qua MISA
+r.post('/invoices/:id/misa-send-email', async (req, res) => {
+  try {
+    if (!misaService) return res.status(503).json({ error: 'MISA service chưa được cấu hình' });
+
+    const { data: invoice } = await supabase
+      .from('invoices')
+      .select('misa_invoice_no, misa_status, customer_name, customer:customers(email)')
+      .eq('id', req.params.id).single();
+
+    if (!invoice) return res.status(404).json({ error: 'Không tìm thấy hóa đơn' });
+    if (invoice.misa_status !== 'published' && invoice.misa_status !== 'sent_email') {
+      return res.status(400).json({ error: 'Hóa đơn chưa được phát hành lên MISA' });
+    }
+
+    const email = req.body.email || invoice.customer?.email || '';
+    if (!email) return res.status(400).json({ error: 'Không có địa chỉ email để gửi' });
+
+    await misaService.sendEmailInvoice(
+      invoice.misa_invoice_no,
+      email,
+      invoice.customer_name || ''
+    );
+
+    await supabase.from('invoices').update({
+      misa_status: 'sent_email',
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+
+    res.json({ success: true, sentTo: email });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /invoices/:id/misa-status — Kiểm tra trạng thái HĐĐT từ MISA
+r.get('/invoices/:id/misa-status', async (req, res) => {
+  try {
+    if (!misaService) return res.status(503).json({ error: 'MISA service chưa được cấu hình' });
+
+    const { data: invoice } = await supabase
+      .from('invoices')
+      .select('id, misa_status, misa_invoice_no, misa_ref_id, misa_published_at, misa_lookup_code, misa_error_message')
+      .eq('id', req.params.id).single();
+
+    if (!invoice) return res.status(404).json({ error: 'Không tìm thấy hóa đơn' });
+
+    let misaDetail = null;
+    if (invoice.misa_ref_id) {
+      try {
+        misaDetail = await misaService.getInvoiceStatus(invoice.misa_ref_id);
+      } catch (statusErr) {
+        // Không ném lỗi, chỉ trả local status
+      }
+    }
+
+    res.json({
+      localStatus: invoice.misa_status,
+      invoiceNo: invoice.misa_invoice_no,
+      publishedAt: invoice.misa_published_at,
+      lookupCode: invoice.misa_lookup_code,
+      errorMessage: invoice.misa_error_message,
+      misaDetail,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Convert Lead → Project

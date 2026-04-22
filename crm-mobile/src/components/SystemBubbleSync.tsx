@@ -8,6 +8,7 @@ import {
   loadCrmMobilePrefs,
   type CrmMobilePrefs,
 } from '../lib/crmMobilePrefs';
+import { WEB_APP_ORIGIN } from '../config';
 
 const Overlay = NativeModules.FloatingBubbleOverlay as
   | {
@@ -17,6 +18,7 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
       setBadgeCount?: (n: number) => void;
       consumeOpenMessenger?: () => Promise<boolean>;
       saveAuthToken?: (token: string) => void;
+      saveWebOrigin?: (origin: string) => void;
       showConvBubble?: (groupId: string, title: string, avatarLetter: string) => void;
       hideConvBubble?: (groupId: string) => void;
       showPeek?: (sender: string, message: string) => void;
@@ -55,12 +57,14 @@ export default function SystemBubbleSync() {
     };
   }, []);
 
-  // ─── Lưu auth token vào native khi thay đổi ─────────────────────────────────
+  // ─── Lưu auth token + web origin vào native khi thay đổi ────────────────────
   useEffect(() => {
-    if (Platform.OS !== 'android' || !Overlay?.saveAuthToken) return;
+    if (Platform.OS !== 'android' || !Overlay) return;
     if (token && token !== lastTokenRef.current) {
       lastTokenRef.current = token;
-      Overlay.saveAuthToken(token);
+      Overlay.saveAuthToken?.(token);
+      // Lưu web origin để ChatBubbleOverlayService mở WebView overlay chat
+      if (WEB_APP_ORIGIN) Overlay.saveWebOrigin?.(WEB_APP_ORIGIN);
     }
   }, [token]);
 
@@ -119,6 +123,14 @@ export default function SystemBubbleSync() {
         ? meta.sender_name
         : (typeof meta.sender === 'string' ? meta.sender : 'Tin nhắn mới');
       const msgContent = n.message ?? '';
+
+      // Khi app đang active (foreground): KHÔNG kích hoạt bubble notification system
+      // vì API 30+ sẽ gọi postBubbleNotification(IMPORTANCE_HIGH) → Heads-up notification
+      // xuất hiện trên màn hình → user vô tình tap → BubbleChatActivity launch → "out app"
+      // In-app toast đã xử lý hiển thị khi active, không cần system notification.
+      const isActive = AppState.currentState === 'active';
+      if (isActive) return;
+
       Overlay.showConvBubble?.(groupId, groupName, letter);
       Overlay.showPeek?.(senderName, msgContent);
     });

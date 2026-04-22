@@ -2,18 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Search, ShoppingCart, Receipt, Calendar, Download, Plus, Trash2 } from 'lucide-react';
+import { Search, ShoppingCart, Receipt, Calendar, Download, Plus, Trash2, Loader2 } from 'lucide-react';
 
 const ORDER_STATUS = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
 const ORDER_COLORS = { draft: 'bg-gray-100 text-gray-600', confirmed: 'bg-blue-100 text-blue-700', processing: 'bg-amber-100 text-amber-700', shipped: 'bg-indigo-100 text-indigo-700', delivered: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-red-100 text-red-700' };
 const PAY_STATUS = { unpaid: 'Chưa TT', partial: 'TT 1 phần', paid: 'Đã TT' };
 const PAY_COLORS = { unpaid: 'bg-red-100 text-red-700', partial: 'bg-amber-100 text-amber-700', paid: 'bg-emerald-100 text-emerald-700' };
-
-function downloadPdf(type, id, code) {
-  api.get(`/crm/${type}/${id}/pdf`, { responseType: 'blob' })
-    .then(r => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' })); a.download = `${(code || type).replace(/[^a-zA-Z0-9\-]/g, '_')}.pdf`; a.click(); URL.revokeObjectURL(a.href); })
-    .catch(() => alert('Lỗi tải PDF'));
-}
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
@@ -23,6 +17,8 @@ export default function OrdersPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
+  const [invoiceLoadingId, setInvoiceLoadingId] = useState(null);
+  const [pdfLoadingId, setPdfLoadingId] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
@@ -41,11 +37,32 @@ export default function OrdersPage() {
   orders.forEach(o => { summary[o.status] = (summary[o.status] || 0) + 1; });
   const totalValue = orders.reduce((s, o) => s + (o.total || 0), 0);
 
-  const createInvoice = async (id) => {
+  const createInvoice = async (id, e) => {
+    e.stopPropagation();
+    if (invoiceLoadingId) return;
     if (!confirm('Tạo hóa đơn từ đơn hàng này?')) return;
+    setInvoiceLoadingId(id);
     try { const { data } = await api.post(`/crm/orders/${id}/create-invoice`); alert(`Đã tạo hóa đơn ${data.code}`); navigate('/crm/invoices'); }
     catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setInvoiceLoadingId(null);
   };
+
+  const downloadPdf = async (id, code, e) => {
+    e.stopPropagation();
+    if (pdfLoadingId) return;
+    setPdfLoadingId(id);
+    try {
+      const r = await api.get(`/crm/orders/${id}/pdf`, { responseType: 'blob' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }));
+      a.download = `${(code || 'don-hang').replace(/[^a-zA-Z0-9\-]/g, '_')}.pdf`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch { alert('Lỗi tải PDF'); }
+    setPdfLoadingId(null);
+  };
+
+  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-emerald-600 border-t-transparent rounded-full" /></div>;
 
   return (
     <div className="space-y-6">
@@ -90,8 +107,17 @@ export default function OrdersPage() {
               <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${ORDER_COLORS[o.status] || ''}`}>{ORDER_STATUS[o.status] || o.status}</span></td>
               <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${PAY_COLORS[o.payment_status] || ''}`}>{PAY_STATUS[o.payment_status] || o.payment_status}</span></td>
               <td className="py-3 px-3 text-gray-500">{formatDate(o.created_at)}</td>
-              <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('orders', o.id, o.code); }} className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
-              <td className="py-3 px-3"><button onClick={e => { e.stopPropagation(); createInvoice(o.id); }} className="text-xs text-purple-600 hover:underline flex items-center gap-1 cursor-pointer"><Receipt className="h-3.5 w-3.5" />→HĐ</button></td>
+              <td className="py-3 px-3 text-center">
+                <button onClick={e => downloadPdf(o.id, o.code, e)} disabled={pdfLoadingId === o.id} className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg cursor-pointer disabled:opacity-50" title="Tải PDF">
+                  {pdfLoadingId === o.id ? <Loader2 className="h-4 w-4 animate-spin text-emerald-500" /> : <Download className="h-4 w-4" />}
+                </button>
+              </td>
+              <td className="py-3 px-3">
+                <button onClick={e => createInvoice(o.id, e)} disabled={invoiceLoadingId === o.id} className="text-xs text-purple-600 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50">
+                  {invoiceLoadingId === o.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
+                  {invoiceLoadingId === o.id ? 'Đang tạo...' : '→HĐ'}
+                </button>
+              </td>
               <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa đơn hàng ' + o.code + '?')) api.delete('/crm/orders/' + o.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
             </tr>
           ))}

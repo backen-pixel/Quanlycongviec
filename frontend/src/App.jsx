@@ -101,6 +101,7 @@ import DepartmentChat from './pages/DepartmentChat';
 import WorkflowFlowsPage from './pages/WorkflowFlowsPage';
 import CompanyProcessesPage from './pages/CompanyProcessesPage';
 import PDFSettingsPage from './pages/PDFSettingsPage';
+import MisaSettingsPage from './pages/MisaSettingsPage';
 import CreateProject from './pages/CreateProject';
 import CreateProjectNew from './pages/CreateProjectNew';
 import TemplateSetsPage from './pages/TemplateSetsPage';
@@ -243,6 +244,7 @@ export default function App() {
             <Route path="/crm/orders/:id" element={<OrderDetail />} />
             <Route path="/crm/invoices" element={<InvoicesPage />} />
             <Route path="/crm/invoices/new" element={<InvoiceForm />} />
+            <Route path="/crm/invoices/:id/edit" element={<InvoiceForm />} />
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<CRMReports />} />
             <Route path="/crm/facebook" element={<FacebookPage />} />
@@ -250,6 +252,7 @@ export default function App() {
             <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
+            <Route path="/settings/misa" element={<MisaSettingsPage />} />
             <Route path="/crm/customers" element={<CustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/task-templates" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><CRMTemplatesPage /></Suspense>} />

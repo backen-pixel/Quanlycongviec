@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import {
   Search,
@@ -143,11 +144,12 @@ export default function MessengerHubPage() {
   const uid = user?.userId || user?.id;
   const { openMessengerGroupChat, markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, unreadByGroupId } =
     useMessengerDock();
+  const [searchParams] = useSearchParams();
 
   const [threads, setThreads] = useState([]);
   const [listTab, setListTab] = useState('all');
   const [threadFilter, setThreadFilter] = useState('');
-  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [selectedGroupId, setSelectedGroupId] = useState(() => searchParams.get('openGroup') || null);
   const [messages, setMessages] = useState([]);
   const [rightOpen, setRightOpen] = useState(true);
   const [leftOpen, setLeftOpen] = useState(true);
@@ -196,6 +198,14 @@ export default function MessengerHubPage() {
     if (!uid) return;
     void reloadMessengerThreads();
   }, [uid, reloadMessengerThreads]);
+
+  // Khi mở từ bong bóng chat (overlay WebView) với ?openGroup=ID
+  useEffect(() => {
+    const targetId = searchParams.get('openGroup');
+    if (!targetId || !threads.length) return;
+    const found = threads.find((t) => t.kind === 'messenger' && String(t.groupId) === String(targetId));
+    if (found) setSelectedGroupId(targetId);
+  }, [searchParams, threads]);
 
   useEffect(() => {
     const onLeft = (e) => {

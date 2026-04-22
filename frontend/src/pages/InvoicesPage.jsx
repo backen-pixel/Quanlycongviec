@@ -2,16 +2,18 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Search, Receipt, DollarSign, Calendar, Download, Plus, Trash2 } from 'lucide-react';
+import { Search, Receipt, DollarSign, Calendar, Download, Plus, Trash2, FileCheck, Loader2 } from 'lucide-react';
 
 const PAY_MAP = { unpaid: 'Chưa TT', partial: 'TT 1 phần', paid: 'Đã TT đủ' };
 const PAY_COLORS = { unpaid: 'bg-red-100 text-red-700', partial: 'bg-amber-100 text-amber-700', paid: 'bg-emerald-100 text-emerald-700' };
 
-function downloadPdf(type, id, code) {
-  api.get(`/crm/${type}/${id}/pdf`, { responseType: 'blob' })
-    .then(r => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' })); a.download = `${(code || type).replace(/[^a-zA-Z0-9\-]/g, '_')}.pdf`; a.click(); URL.revokeObjectURL(a.href); })
-    .catch(() => alert('Lỗi tải PDF'));
-}
+const MISA_BADGE = {
+  not_sent:  { label: 'Chưa PH', cls: 'bg-gray-100 text-gray-500' },
+  published: { label: 'Đã PH', cls: 'bg-blue-100 text-blue-700' },
+  sent_email:{ label: 'Đã gửi', cls: 'bg-indigo-100 text-indigo-700' },
+  cancelled: { label: 'Đã hủy', cls: 'bg-red-100 text-red-700' },
+};
+
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState([]);
@@ -20,10 +22,39 @@ export default function InvoicesPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
+  const [pdfLoadingId, setPdfLoadingId] = useState(null);
+  const [misaLoadingId, setMisaLoadingId] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
   const load = async () => { setLoading(true); const { data } = await api.get('/crm/invoices'); setInvoices(data || []); setLoading(false); };
+
+  const downloadPdf = async (id, code) => {
+    if (pdfLoadingId) return;
+    setPdfLoadingId(id);
+    try {
+      const r = await api.get(`/crm/invoices/${id}/pdf`, { responseType: 'blob' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }));
+      a.download = `${(code || 'hoa-don').replace(/[^a-zA-Z0-9\-]/g, '_')}.pdf`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch { alert('Lỗi tải PDF'); }
+    setPdfLoadingId(null);
+  };
+
+  const publishMisa = async (inv, e) => {
+    e.stopPropagation();
+    if (misaLoadingId) return;
+    if (!confirm(`Phát hành HĐĐT cho ${inv.code}?`)) return;
+    setMisaLoadingId(inv.id);
+    try {
+      const { data } = await api.post(`/crm/invoices/${inv.id}/misa-publish`);
+      alert(`Phát hành thành công!\nSố HĐ MISA: ${data.invoiceNo || 'N/A'}`);
+      load();
+    } catch (e) { alert('Lỗi MISA: ' + (e.response?.data?.error || e.message)); }
+    setMisaLoadingId(null);
+  };
 
   const filtered = invoices.filter(i => {
     if (payFilter && i.payment_status !== payFilter) return false;
@@ -76,10 +107,14 @@ export default function InvoicesPage() {
         </div>
         <table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
           <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3 text-right">Đã thu</th><th className="py-3 px-3 text-right">Còn nợ</th><th className="py-3 px-3">TT</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th>
+          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3 text-right">Đã thu</th><th className="py-3 px-3 text-right">Còn nợ</th><th className="py-3 px-3">TT</th>
+          <th className="py-3 px-3 text-center"><span className="flex items-center gap-1 justify-center"><FileCheck className="h-3.5 w-3.5" />HĐĐT</span></th>
+          <th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3 text-center">Phát hành MISA</th><th className="py-3 px-3"></th>
         </tr></thead><tbody>
           {filtered.map(i => {
             const debt = (i.total || 0) - (i.paid_amount || 0);
+            const misaKey = i.misa_status || 'not_sent';
+            const misaBadge = MISA_BADGE[misaKey] || MISA_BADGE.not_sent;
             return (
               <tr key={i.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/crm/invoices/${i.id}`)}>
                 <td className="py-3 px-3 font-bold text-purple-600">{i.code}</td>
@@ -89,8 +124,27 @@ export default function InvoicesPage() {
                 <td className="py-3 px-3 text-right text-emerald-600 font-medium">{formatVND(i.paid_amount || 0)}</td>
                 <td className="py-3 px-3 text-right font-medium text-red-600">{debt > 0 ? formatVND(debt) : '—'}</td>
                 <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${PAY_COLORS[i.payment_status] || ''}`}>{PAY_MAP[i.payment_status] || i.payment_status}</span></td>
+                <td className="py-3 px-3 text-center">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap ${misaBadge.cls}`} title={i.misa_invoice_no ? `Số HĐ: ${i.misa_invoice_no}` : ''}>
+                    {misaBadge.label}
+                  </span>
+                </td>
                 <td className="py-3 px-3 text-gray-500">{formatDate(i.created_at)}</td>
-                <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); downloadPdf('invoices', i.id, i.code); }} className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg cursor-pointer" title="Tải PDF"><Download className="h-4 w-4" /></button></td>
+                <td className="py-3 px-3 text-center">
+                  <button onClick={e => { e.stopPropagation(); downloadPdf(i.id, i.code); }} disabled={pdfLoadingId === i.id} className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg cursor-pointer disabled:opacity-50" title="Tải PDF">
+                    {pdfLoadingId === i.id ? <Loader2 className="h-4 w-4 animate-spin text-purple-500" /> : <Download className="h-4 w-4" />}
+                  </button>
+                </td>
+                <td className="py-3 px-3 text-center">
+                  {(!i.misa_status || i.misa_status === 'not_sent') && (
+                    <button onClick={e => publishMisa(i, e)} disabled={misaLoadingId === i.id} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 disabled:opacity-50 cursor-pointer whitespace-nowrap">
+                      {misaLoadingId === i.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileCheck className="h-3 w-3" />}
+                      {misaLoadingId === i.id ? 'Đang PH...' : 'Phát hành'}
+                    </button>
+                  )}
+                  {i.misa_status === 'published' && <span className="text-xs text-blue-600 font-medium">✓ Đã PH</span>}
+                  {i.misa_status === 'sent_email' && <span className="text-xs text-indigo-600 font-medium">✓ Đã gửi</span>}
+                </td>
                 <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa hóa đơn ' + i.code + '?')) api.delete('/crm/invoices/' + i.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
               </tr>
             );

@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { ArrowLeft, ShoppingCart, Receipt, User, Phone, MapPin, Package, Calendar, Truck, Download } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Receipt, User, Phone, MapPin, Package, Calendar, Truck, Download, Loader2, Pencil } from 'lucide-react';
 
 const STATUS_MAP = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
 const STATUS_COLORS = { draft: 'bg-gray-100 text-gray-600', confirmed: 'bg-blue-100 text-blue-700', processing: 'bg-amber-100 text-amber-700', shipped: 'bg-indigo-100 text-indigo-700', delivered: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-red-100 text-red-700' };
@@ -13,18 +13,27 @@ export default function OrderDetail() {
   const navigate = useNavigate();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [statusLoadingStep, setStatusLoadingStep] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const _invoiceSaving = useRef(false);
 
   useEffect(() => { load(); }, [id]);
   const load = async () => { setLoading(true); const { data } = await api.get(`/crm/orders/${id}`); setOrder(data); setLoading(false); };
 
   const createInvoice = async () => {
+    if (_invoiceSaving.current) return;
     if (!confirm('Tạo hóa đơn từ đơn hàng này?')) return;
+    _invoiceSaving.current = true;
+    setInvoiceLoading(true);
     try { const { data } = await api.post(`/crm/orders/${id}/create-invoice`); alert(`Đã tạo hóa đơn ${data.code}`); navigate('/crm/invoices'); }
-    catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    catch (e) { alert(e.response?.data?.error || 'Lỗi'); _invoiceSaving.current = false; setInvoiceLoading(false); }
   };
 
   const updateStatus = async (newStatus) => {
+    if (statusLoadingStep) return;
     if (!confirm(`Chuyển trạng thái sang "${STATUS_MAP[newStatus]}"?`)) return;
+    setStatusLoadingStep(newStatus);
     try {
       const { data } = await api.put(`/crm/orders/${id}`, { status: newStatus });
       if (data.auto_project) {
@@ -32,9 +41,12 @@ export default function OrderDetail() {
       }
       load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setStatusLoadingStep(null);
   };
 
   const downloadPdf = async () => {
+    if (pdfLoading) return;
+    setPdfLoading(true);
     try {
       const response = await api.get(`/crm/orders/${id}/pdf`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
@@ -44,6 +56,7 @@ export default function OrderDetail() {
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (e) { alert('Lỗi tải PDF'); }
+    setPdfLoading(false);
   };
 
   if (loading || !order) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-emerald-600 border-t-transparent rounded-full" /></div>;
@@ -63,8 +76,17 @@ export default function OrderDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={downloadPdf} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50"><Download className="h-4 w-4" /> Xuất PDF</button>
-          <button onClick={createInvoice} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Receipt className="h-4 w-4" /> Tạo hóa đơn</button>
+          <button onClick={() => navigate(`/crm/orders/${id}/edit`)} className="h-9 px-4 border border-emerald-300 text-emerald-600 hover:bg-emerald-50 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
+            <Pencil className="h-4 w-4" /> Sửa
+          </button>
+          <button onClick={downloadPdf} disabled={pdfLoading} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 disabled:opacity-50">
+            {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
+          </button>
+          <button onClick={createInvoice} disabled={invoiceLoading} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-60">
+            {invoiceLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
+            {invoiceLoading ? 'Đang tạo HĐ...' : 'Tạo hóa đơn'}
+          </button>
         </div>
       </div>
 
@@ -73,9 +95,11 @@ export default function OrderDetail() {
         <div className="flex items-center justify-between">
           {STATUS_STEPS.map((step, i) => (
             <div key={step} className="flex items-center flex-1">
-              <button onClick={() => updateStatus(step)}
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold cursor-pointer transition-all ${i <= currentStep ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
-                title={`Chuyển sang: ${STATUS_MAP[step]}`}>{i + 1}</button>
+              <button onClick={() => updateStatus(step)} disabled={!!statusLoadingStep}
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold cursor-pointer transition-all disabled:cursor-not-allowed ${i <= currentStep ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
+                title={`Chuyển sang: ${STATUS_MAP[step]}`}>
+                {statusLoadingStep === step ? <Loader2 className="h-3 w-3 animate-spin" /> : i + 1}
+              </button>
               <span className={`text-xs font-medium ml-2 ${i <= currentStep ? 'text-emerald-700' : 'text-gray-400'}`}>{STATUS_MAP[step]}</span>
               {i < STATUS_STEPS.length - 1 && <div className={`flex-1 h-0.5 mx-3 ${i < currentStep ? 'bg-emerald-500' : 'bg-gray-200'}`} />}
             </div>
