@@ -5,9 +5,9 @@ import { formatVND, formatDate } from '../lib/utils';
 import {
   Zap, CheckCircle2, AlertTriangle, Search, X, Calendar,
   DollarSign, Factory, Users, LayoutGrid, List, Plus,
-  CheckSquare, Square, UserCheck, Loader2,
+  CheckSquare, Square, UserCheck, Loader2, Truck,
 } from 'lucide-react';
-import { ProductionListView, ProductionPlannerView } from '../components/ProductionViews';
+import { ProductionListView, ProductionPlannerView, ProductionCalendarView } from '../components/ProductionViews';
 import NewProductionProjectModal from '../components/NewProductionProjectModal';
 
 const INTAKE_BUCKET = 'won_pending';
@@ -195,6 +195,17 @@ export default function ProductionDashboard() {
     }
   }, [load]);
 
+  const handleHandoverVC = useCallback(async (projectId, projectName) => {
+    if (!confirm(`Bàn giao dự án "${projectName}" sang module Vận chuyển & Lắp đặt?\n\nDự án sẽ chuyển sang cột "Chờ vận chuyển" và không còn hiển thị trong Xưởng SX.`)) return;
+    try {
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      await api.patch(`/production/projects/${projectId}/handover-vc`);
+    } catch (e) {
+      console.error(e);
+      load();
+    }
+  }, [load]);
+
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
     const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24));
@@ -239,36 +250,36 @@ export default function ProductionDashboard() {
       </div>
 
       {/* KPI — compact horizontal style, same as CRMDashboard */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-1 md:gap-1.5">
-        <KPICard
-          icon={<Factory className="h-3.5 w-3.5" />}
-          iconBgColor="bg-blue-100"
-          iconColor="text-blue-600"
-          label="Tổng dự án SX"
-          value={projects.length}
-        />
-        <KPICard
-          icon={<Zap className="h-3.5 w-3.5" />}
-          iconBgColor="bg-teal-100"
-          iconColor="text-teal-600"
-          label="Đang sản xuất"
-          value={kpis?.producing || 0}
-        />
-        <KPICard
-          icon={<AlertTriangle className="h-3.5 w-3.5" />}
-          iconBgColor="bg-red-100"
-          iconColor="text-red-600"
-          label="Quá hạn"
-          value={kpis?.overdue || 0}
-        />
-        <KPICard
-          icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-          iconBgColor="bg-green-100"
-          iconColor="text-green-600"
-          label="Hoàn thành"
-          value={kpis?.completed || 0}
-        />
-      </div>
+      {(() => {
+        const overdueProd = projects.filter(p => p.is_production_overdue).length;
+        const soonProd = projects.filter(p => {
+          if (!p.production_deadline || p.is_production_overdue) return false;
+          return new Date(p.production_deadline) < new Date(Date.now() + 3 * 86400000);
+        }).length;
+        const loadPercent = projects.length ? Math.round((kpis?.producing || 0) / projects.length * 100) : 0;
+        return (
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-1 md:gap-1.5">
+            <KPICard icon={<Factory className="h-3.5 w-3.5" />} iconBgColor="bg-blue-100" iconColor="text-blue-600" label="Tổng dự án SX" value={projects.length} />
+            <KPICard icon={<Zap className="h-3.5 w-3.5" />} iconBgColor="bg-teal-100" iconColor="text-teal-600" label="Đang sản xuất" value={kpis?.producing || 0} />
+            <KPICard icon={<CheckCircle2 className="h-3.5 w-3.5" />} iconBgColor="bg-green-100" iconColor="text-green-600" label="Hoàn thành" value={kpis?.completed || 0} />
+            <KPICard icon={<AlertTriangle className="h-3.5 w-3.5" />} iconBgColor="bg-red-100" iconColor="text-red-600" label="Quá hạn" value={kpis?.overdue || 0} />
+            <KPICard
+              icon={<AlertTriangle className="h-3.5 w-3.5" />}
+              iconBgColor={overdueProd > 0 ? 'bg-red-100' : 'bg-gray-100'}
+              iconColor={overdueProd > 0 ? 'text-red-600' : 'text-gray-400'}
+              label="Trễ giao xưởng"
+              value={overdueProd > 0 ? <span className="text-red-600">{overdueProd}</span> : overdueProd}
+            />
+            <KPICard
+              icon={<Calendar className="h-3.5 w-3.5" />}
+              iconBgColor={soonProd > 0 ? 'bg-amber-100' : 'bg-gray-100'}
+              iconColor={soonProd > 0 ? 'text-amber-600' : 'text-gray-400'}
+              label="Sắp giao (3 ngày)"
+              value={soonProd > 0 ? <span className="text-amber-600">{soonProd}</span> : soonProd}
+            />
+          </div>
+        );
+      })()}
 
       {/* Search & Filter — same style as CRM */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -373,20 +384,14 @@ export default function ProductionDashboard() {
 
       {viewMode === 'kanban' && (
         <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
-          selectedIds={selectedIds} onToggleSelect={toggleSelect} />
+          selectedIds={selectedIds} onToggleSelect={toggleSelect} onHandoverVC={handleHandoverVC} />
       )}
 
       {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
 
       {viewMode === 'planner' && <ProductionPlannerView pipeline={filteredKanbanPipeline} />}
 
-      {viewMode === 'calendar' && (
-        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-500 shadow-sm">
-          <Calendar className="h-12 w-12 mx-auto mb-3 opacity-30 text-blue-600" />
-          <p className="font-medium text-gray-700">Lịch sản xuất</p>
-          <p className="text-sm mt-1">Chức năng Lịch đang được phát triển.</p>
-        </div>
-      )}
+      {viewMode === 'calendar' && <ProductionCalendarView pipeline={filteredKanbanPipeline} />}
 
       {showNewProject && (
         <NewProductionProjectModal
@@ -483,7 +488,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value }) {
 }
 
 // ── KANBAN STAGE CARD (y hệt CRM KanbanStageCard) ──────────────────────────
-function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect }) {
+function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onHandoverVC }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
@@ -561,7 +566,8 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
         ) : (
           items.map((item) => (
             <KanbanCard key={item.id} item={item} stage={stage} calculateDays={calculateDays}
-              isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect} />
+              isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect}
+              onHandoverVC={onHandoverVC} />
           ))
         )}
       </div>
@@ -570,8 +576,9 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 }
 
 // ── KANBAN ITEM CARD (y hệt CRM KanbanCard) ─────────────────────────────────
-function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) {
+function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC }) {
   const navigate = useNavigate();
+  const [handingOver, setHandingOver] = useState(false);
 
   const handleDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'move';
@@ -676,8 +683,22 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) 
         </span>
       </div>
 
+      {/* Ngày giao xưởng (production_deadline) */}
+      {item.production_deadline && (
+        <div className={`mt-2 text-[10px] px-2 py-1 rounded-lg font-medium ${
+          item.is_production_overdue
+            ? 'bg-red-100 text-red-600'
+            : new Date(item.production_deadline) < new Date(Date.now() + 3 * 86400000)
+            ? 'bg-amber-100 text-amber-600'
+            : 'bg-sky-100 text-sky-600'
+        }`}>
+          🏭 Giao xưởng: {new Date(item.production_deadline).toLocaleDateString('vi-VN')}
+          {item.is_production_overdue && ' ⚠️'}
+        </div>
+      )}
+
       {/* Deadline — màu sắc như CRM */}
-      {item.deadline && (
+      {item.deadline && !item.production_deadline && (
         <div className={`mt-2 text-[10px] px-2 py-1 rounded-lg font-medium ${
           new Date(item.deadline) < new Date()
             ? 'bg-red-100 text-red-600'
@@ -709,12 +730,34 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) 
           </div>
         </div>
       )}
+
+      {/* Nút Bàn giao VC — hiện khi hover */}
+      {onHandoverVC && item.status !== 'shipping' && item.status !== 'installing' && item.status !== 'warranty' && item.status !== 'completed' && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (handingOver) return;
+            setHandingOver(true);
+            onHandoverVC(item.id, item.name).finally(() => setHandingOver(false));
+          }}
+          className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-semibold
+            bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 hover:border-orange-400
+            opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+          title="Bàn giao sang module Vận chuyển & Lắp đặt"
+        >
+          {handingOver
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            : <Truck className="h-3.5 w-3.5" />}
+          {handingOver ? 'Đang bàn giao...' : 'Bàn giao VC'}
+        </button>
+      )}
     </div>
   );
 }
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
-function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect }) {
+function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onHandoverVC }) {
   return (
     <div className="overflow-x-auto pb-4">
       <div className="flex gap-0 min-w-max">
@@ -727,6 +770,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
             calculateDays={calculateDays}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
+            onHandoverVC={onHandoverVC}
           />
         ))}
       </div>

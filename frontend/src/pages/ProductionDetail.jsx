@@ -8,6 +8,7 @@ import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFi
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
+  AlertTriangle, CheckCircle2, Clock, Truck, Wrench,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
 import ProductionTasksTab from '../components/ProductionTasksTab';
@@ -17,7 +18,7 @@ import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import PipelineStepper from '../components/PipelineStepper';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
-const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
 const LEGACY_TAB_MAP = {
   timeline: 'activities',
   'crm-notes': 'notes',
@@ -92,7 +93,7 @@ function WorkshopInfoPanel({ project, onUpdate }) {
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'deadline' && startEdit('deadline', project.deadline ? project.deadline.substring(0, 10) : '')}>
         <span className="text-sm mt-0.5 shrink-0">📅</span>
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Deadline</p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Deadline tổng</p>
           {editing === 'deadline' ? (
             <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
               <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
@@ -105,6 +106,38 @@ function WorkshopInfoPanel({ project, onUpdate }) {
           )}
         </div>
       </div>
+
+      {/* Ngày giao xưởng */}
+      {(() => {
+        const pd = project.production_deadline;
+        const pdDate = pd ? new Date(pd) : null;
+        const isOverdue = pdDate && pdDate < new Date();
+        const isSoon = pdDate && !isOverdue && pdDate < new Date(Date.now() + 3 * 86400000);
+        return (
+          <div className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+            onClick={() => editing !== 'production_deadline' && startEdit('production_deadline', pd ? pd.substring(0, 10) : '')}>
+            <span className="text-sm mt-0.5 shrink-0">🏭</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày giao xưởng</p>
+              {editing === 'production_deadline' ? (
+                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                  <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
+                  <button onClick={() => save('production_deadline', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className={`text-sm font-medium flex items-center gap-1 ${isOverdue ? 'text-red-600' : isSoon ? 'text-amber-600' : 'text-gray-900'}`}>
+                  {pd ? formatDate(pd) : '—'}
+                  {isOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
+                  {isSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Tiến độ SX */}
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
@@ -229,7 +262,12 @@ function DocRow({ doc, onDelete }) {
   );
 }
 
-export default function ProductionDetail() {
+export default function ProductionDetail({ moduleKey = 'sx' }) {
+  // moduleKey = 'sx' (sản xuất) | 'vc' (vận chuyển)
+  const MOD = moduleKey === 'vc'
+    ? { apiPrefix: '/logistics', routePrefix: '/vc', label: 'Vận chuyển', icon: '🚚', stageField: 'vc_kanban_column_id', stagesKey: 'vcKanbanStages' }
+    : { apiPrefix: '/production', routePrefix: '/sx', label: 'Sản xuất', icon: '🏭', stageField: 'sx_kanban_column_id', stagesKey: 'sxKanbanStages' };
+
   const { id } = useParams();
   const navigate = useNavigate();
   const { socket, user } = useAuth();
@@ -247,6 +285,8 @@ export default function ProductionDetail() {
   const [crmDealDocs, setCrmDealDocs] = useState([]);
   const [productionTaskSummary, setProductionTaskSummary] = useState({ total: 0, completed: 0, percent: 0 });
   const [savingProductionOwner, setSavingProductionOwner] = useState(false);
+  const [vcTeams, setVcTeams] = useState([]);
+  const [savingTeamAssign, setSavingTeamAssign] = useState(false);
   const [showAddCrmActivity, setShowAddCrmActivity] = useState(false);
   const [crmActivityForm, setCrmActivityForm] = useState({
     type: 'note', title: '', description: '', outcome: '',
@@ -273,6 +313,12 @@ export default function ProductionDetail() {
 
   // Document upload state
   const [uploadingDoc, setUploadingDoc] = useState(false);
+
+  // Incidents
+  const [incidents, setIncidents] = useState([]);
+  const [showIncidentForm, setShowIncidentForm] = useState(false);
+  const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'medium' });
+  const [savingIncident, setSavingIncident] = useState(false);
 
   const noteActivities = useMemo(
     () => (crmActivities || []).filter((a) => a.type === 'note'),
@@ -348,8 +394,14 @@ export default function ProductionDetail() {
       const u = r.data?.users || r.data || [];
       if (!cancelled) setAllUsers(Array.isArray(u) ? u : []);
     }).catch(() => {});
+    // Load VC teams (chỉ cần cho module VC)
+    if (moduleKey === 'vc') {
+      api.get('/workshop-teams').then((r) => {
+        if (!cancelled) setVcTeams(r.data || []);
+      }).catch(() => {});
+    }
     return () => { cancelled = true; };
-  }, []);
+  }, [moduleKey]);
 
   useEffect(() => {
     const dealId = project?.crmDeals?.[0]?.id;
@@ -383,9 +435,9 @@ export default function ProductionDetail() {
     return () => { cancelled = true; };
   }, [project?.crmDeals?.[0]?.id]);
 
-  // Load production pipeline stages once
+  // Load module pipeline stages once
   useEffect(() => {
-    api.get('/production/pipeline-stages').then((r) => {
+    api.get(`${MOD.apiPrefix}/pipeline-stages`).then((r) => {
       const rows = r.data || [];
       if (rows.length) setProductionStages(rows);
     }).catch(() => {});
@@ -422,7 +474,7 @@ export default function ProductionDetail() {
     setLoadError(null);
     try {
       const [projRes, tasksRes] = await Promise.all([
-        api.get(`/production/projects/${id}`),
+        api.get(`${MOD.apiPrefix}/projects/${id}`),
         api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
       ]);
       const proj = projRes.data?.project;
@@ -432,7 +484,7 @@ export default function ProductionDetail() {
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
-      // Load production-native docs & task files in background
+      if (proj?.incidents) setIncidents(proj.incidents);
       loadProjectDocs(id);
       loadTaskFiles(id);
       loadProjectActivities(id);
@@ -464,7 +516,7 @@ export default function ProductionDetail() {
         try {
           const { data: lead } = await api.get(`/crm/leads/${id}/detail`);
           if (lead?.project_id) {
-            navigate(`/sx/projects/${lead.project_id}`, { replace: true });
+            navigate(`${MOD.routePrefix}/projects/${lead.project_id}`, { replace: true });
             return;
           }
           if (lead?.id) {
@@ -494,7 +546,7 @@ export default function ProductionDetail() {
   const refreshProjectSilently = useCallback(async () => {
     try {
       const [projRes, tasksRes] = await Promise.all([
-        api.get(`/production/projects/${id}`),
+        api.get(`${MOD.apiPrefix}/projects/${id}`),
         api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
       ]);
       const proj = projRes.data?.project;
@@ -513,13 +565,31 @@ export default function ProductionDetail() {
     if (!project?.id) return;
     setSavingProductionOwner(true);
     try {
-      await api.put(`/projects/${project.id}`, { production_person_id: userId || null });
+      const personField = moduleKey === 'vc' ? 'logistics_person_id' : 'production_person_id';
+      if (moduleKey === 'vc') {
+        // Dùng endpoint assign để kèm thông báo
+        await api.patch(`/workshop-teams/projects/${project.id}/assign`, { [personField]: userId || null });
+      } else {
+        await api.put(`/projects/${project.id}`, { [personField]: userId || null });
+      }
       await refreshProjectSilently();
     } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi phân công sản xuất');
+      alert(e.response?.data?.error || `Lỗi phân công ${MOD.label}`);
     }
     setSavingProductionOwner(false);
-  }, [project?.id, refreshProjectSilently]);
+  }, [project?.id, refreshProjectSilently, moduleKey, MOD.label]);
+
+  const setVcTeamAssign = useCallback(async (field, value) => {
+    if (!project?.id || moduleKey !== 'vc') return;
+    setSavingTeamAssign(true);
+    try {
+      await api.patch(`/workshop-teams/projects/${project.id}/assign`, { [field]: value || null });
+      await refreshProjectSilently();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi gán đội');
+    }
+    setSavingTeamAssign(false);
+  }, [project?.id, moduleKey, refreshProjectSilently]);
 
   const saveCrmActivity = async () => {
     const dealId = project?.crmDeals?.[0]?.id;
@@ -547,7 +617,7 @@ export default function ProductionDetail() {
 
   const moveStage = async (stageId) => {
     try {
-      const { data } = await api.patch(`/production/projects/${id}/stage`, { stage_id: stageId });
+      const { data } = await api.patch(`${MOD.apiPrefix}/projects/${id}/stage`, { stage_id: stageId });
       const p = data.project;
       setProject((prev) => (prev && p ? {
         ...prev,
@@ -586,6 +656,25 @@ export default function ProductionDetail() {
       setActivityForm({ type: 'note', title: '', description: '', outcome: '' });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
     setSavingActivity(false);
+  };
+
+  const saveIncident = async () => {
+    if (!incidentForm.title.trim()) { alert('Nhập tiêu đề sự cố'); return; }
+    setSavingIncident(true);
+    try {
+      const { data } = await api.post(`${MOD.apiPrefix}/projects/${project.id}/incidents`, incidentForm);
+      setIncidents((prev) => [data.incident, ...prev]);
+      setShowIncidentForm(false);
+      setIncidentForm({ title: '', description: '', severity: 'medium' });
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi báo sự cố'); }
+    setSavingIncident(false);
+  };
+
+  const resolveIncident = async (incidentId) => {
+    try {
+      await api.patch(`${MOD.apiPrefix}/projects/${project.id}/incidents/${incidentId}`, { status: 'resolved' });
+      setIncidents((prev) => prev.map((inc) => inc.id === incidentId ? { ...inc, status: 'resolved' } : inc));
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi cập nhật sự cố'); }
   };
 
   const uploadProjectDocument = async () => {
@@ -671,20 +760,20 @@ export default function ProductionDetail() {
             </Link>
             <button
               type="button"
-              onClick={() => navigate('/sx/dashboard')}
-              className="inline-flex h-10 px-4 items-center rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            onClick={() => navigate(`${MOD.routePrefix}/dashboard`)}
+            className="inline-flex h-10 px-4 items-center rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
-              Về dashboard xưởng
+              Về dashboard
             </button>
           </div>
         )}
         {!isDealNoProject && (
           <button
             type="button"
-            onClick={() => navigate('/sx/dashboard')}
+            onClick={() => navigate(`${MOD.routePrefix}/dashboard`)}
             className="h-10 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
-            Về dashboard xưởng
+            Về dashboard
           </button>
         )}
       </div>
@@ -699,15 +788,23 @@ export default function ProductionDetail() {
     );
   }
 
+  const defaultPipelineStages = moduleKey === 'vc'
+    ? [
+        { id: null, slug: 'delivery_pending', name: 'Chờ vận chuyển', color: '#f97316', icon: '📦' },
+        { id: null, slug: 'delivery', name: 'Đang vận chuyển', color: '#ea580c', icon: '🚚' },
+        { id: null, slug: 'installation', name: 'Đang lắp đặt', color: '#d97706', icon: '🔧' },
+        { id: null, slug: 'customer-care', name: 'Bảo hành', color: '#0f766e', icon: '🤝' },
+      ]
+    : [
+        { id: null, slug: 'won_pending', name: 'Chờ vào xưởng', color: '#64748b', icon: '⏳' },
+        { id: null, slug: 'production', name: 'Sản xuất', color: '#0f766e', icon: '🏭' },
+        { id: null, slug: 'customer-care', name: 'CSKH', color: '#5eead4', icon: '🤝' },
+      ];
   const pipelineStages = productionStages.length
     ? productionStages
     : project.workshopPipeline?.length
       ? project.workshopPipeline
-      : [
-          { id: null, slug: 'won_pending', name: 'Chờ vào xưởng', color: '#64748b', icon: '⏳' },
-          { id: null, slug: 'production', name: 'Sản xuất', color: '#0f766e', icon: '🏭' },
-          { id: null, slug: 'customer-care', name: 'CSKH', color: '#5eead4', icon: '🤝' },
-        ];
+      : defaultPipelineStages;
 
   const currentStageId = project.current_stage_id || project.current_stage?.id;
   const primaryCrmDeal = project.crmDeals?.[0];
@@ -739,15 +836,15 @@ export default function ProductionDetail() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => navigate('/sx/dashboard')}
+            onClick={() => navigate(`${MOD.routePrefix}/dashboard`)}
             className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">
-                🏭 SX
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${moduleKey === 'vc' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
+                {MOD.icon} {moduleKey === 'vc' ? 'VC' : 'SX'}
               </span>
               <span className="text-xs text-gray-500 font-mono">{displayCode}</span>
             </div>
@@ -831,7 +928,7 @@ export default function ProductionDetail() {
               <p className="text-xl font-bold text-amber-600">{project.sharedDocuments?.length || 0}</p>
             </div>
             <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
-              <p className="text-xs text-gray-600 mb-1">Nhiệm vụ xưởng</p>
+              <p className="text-xs text-gray-600 mb-1">Nhiệm vụ {MOD.label}</p>
               <p className="text-xl font-bold text-purple-600">{taskCount}</p>
             </div>
           </div>
@@ -850,16 +947,18 @@ export default function ProductionDetail() {
                 )}
               </div>
             )}
-            <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Dự án xưởng</p>
+            <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Dự án {MOD.label}</p>
             <div className="space-y-2">
               <PersonCard label="Kinh doanh" person={project.sales_person} />
               <PersonCard label="QL dự án" person={project.project_manager} />
               <PersonCard label="Giám sát" person={project.supervisor} />
-              <PersonCard label="Sản xuất" person={project.production_person} />
+              <PersonCard label={moduleKey === 'vc' ? 'Người vận chuyển' : 'Sản xuất'} person={project.logistics_person || project.production_person} />
               <div className="pl-2">
-                <p className="text-[10px] text-gray-400 uppercase font-medium mb-1">Phân công người chịu trách nhiệm SX</p>
+                <p className="text-[10px] text-gray-400 uppercase font-medium mb-1">
+                  {moduleKey === 'vc' ? '🚚 Người vận chuyển phụ trách' : `Phân công ${MOD.label}`}
+                </p>
                 <select
-                  value={project.production_person?.id || project.production_person_id || ''}
+                  value={project.logistics_person?.id || project.logistics_person_id || project.production_person?.id || project.production_person_id || ''}
                   onChange={(e) => setProductionPerson(e.target.value)}
                   disabled={savingProductionOwner}
                   className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
@@ -870,6 +969,72 @@ export default function ProductionDetail() {
                   ))}
                 </select>
               </div>
+
+              {/* VC-only: Đội vận chuyển & người lắp đặt */}
+              {moduleKey === 'vc' && (
+                <>
+                  {/* Đội vận chuyển */}
+                  <div className="pl-2">
+                    <p className="text-[10px] text-gray-400 uppercase font-medium mb-1 flex items-center gap-1">
+                      <Truck className="h-3 w-3 text-orange-500" /> Đội vận chuyển
+                    </p>
+                    <select
+                      value={project.delivery_team?.id || project.delivery_team_id || ''}
+                      onChange={(e) => setVcTeamAssign('delivery_team_id', e.target.value)}
+                      disabled={savingTeamAssign}
+                      className="w-full h-9 px-3 border border-orange-200 rounded-lg text-sm bg-orange-50/40 focus:ring-2 focus:ring-orange-400 disabled:opacity-60"
+                    >
+                      <option value="">— Chưa gán đội —</option>
+                      {vcTeams.filter((t) => t.type === 'delivery').map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    {project.delivery_team?.name && (
+                      <p className="text-[10px] text-orange-600 mt-0.5">✓ {project.delivery_team.name}</p>
+                    )}
+                  </div>
+
+                  {/* Người lắp đặt */}
+                  <div className="pl-2">
+                    <p className="text-[10px] text-gray-400 uppercase font-medium mb-1 flex items-center gap-1">
+                      <Wrench className="h-3 w-3 text-amber-600" /> Người lắp đặt
+                    </p>
+                    <select
+                      value={project.installer_person?.id || project.installer_person_id || ''}
+                      onChange={(e) => setVcTeamAssign('installer_person_id', e.target.value)}
+                      disabled={savingTeamAssign}
+                      className="w-full h-9 px-3 border border-amber-200 rounded-lg text-sm bg-amber-50/40 focus:ring-2 focus:ring-amber-400 disabled:opacity-60"
+                    >
+                      <option value="">— Chưa phân công —</option>
+                      {taskUsers.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Đội lắp đặt */}
+                  <div className="pl-2">
+                    <p className="text-[10px] text-gray-400 uppercase font-medium mb-1 flex items-center gap-1">
+                      <Wrench className="h-3 w-3 text-amber-600" /> Đội lắp đặt
+                    </p>
+                    <select
+                      value={project.installation_team?.id || project.installation_team_id || ''}
+                      onChange={(e) => setVcTeamAssign('installation_team_id', e.target.value)}
+                      disabled={savingTeamAssign}
+                      className="w-full h-9 px-3 border border-amber-200 rounded-lg text-sm bg-amber-50/40 focus:ring-2 focus:ring-amber-400 disabled:opacity-60"
+                    >
+                      <option value="">— Chưa gán đội —</option>
+                      {vcTeams.filter((t) => t.type === 'installation').map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    {project.installation_team?.name && (
+                      <p className="text-[10px] text-amber-600 mt-0.5">✓ {project.installation_team.name}</p>
+                    )}
+                  </div>
+                </>
+              )}
+
               <PersonCard label="CSKH" person={project.care_person} />
             </div>
             <div className="border-t border-gray-100 pt-3">
@@ -892,6 +1057,9 @@ export default function ProductionDetail() {
               {tabBtn('documents', `📋 Tài liệu (${projectDocs.length + (project.sharedDocuments?.length || 0) + taskFiles.length})`)}
               {tabBtn('activities', `💬 Hoạt động (${crmLeadId ? sharedActivities.length : projectActivities.length})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
+              {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
+                ? `⚠️ Sự cố (${incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length})`
+                : '⚠️ Sự cố')}
               {tabBtn('team', '👥 Thành viên')}
               {tabBtn('chat', '💬 Trao đổi')}
               {tabBtn('approvals', '✅ Gửi duyệt')}
@@ -915,6 +1083,43 @@ export default function ProductionDetail() {
               {/* Tài liệu */}
               {activeTab === 'documents' && (
                 <>
+                  {/* Bản vẽ kỹ thuật nổi bật */}
+                  {(() => {
+                    const allDocs = [...(project.documents || []), ...projectDocs];
+                    const seen = new Set();
+                    const drawings = allDocs.filter((d) => {
+                      if (seen.has(d.id)) return false;
+                      seen.add(d.id);
+                      const name = d.file_name || d.name || '';
+                      return d.doc_type === 'drawing' || /\.(dwg|dxf|pdf|png|jpg|jpeg|webp)$/i.test(name);
+                    });
+                    if (!drawings.length) return null;
+                    return (
+                      <div className="mb-5 p-4 bg-sky-50 border border-sky-200 rounded-xl">
+                        <p className="text-xs font-bold text-sky-700 uppercase tracking-wide mb-3">📐 Bản vẽ & Tài liệu kỹ thuật ({drawings.length})</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {drawings.map((d) => {
+                            const name = d.file_name || d.name || 'File';
+                            const href = d.file_url ? (d.file_url.startsWith('http') ? d.file_url : `${window.location.origin}/${d.file_url}`) : '';
+                            const ext = name.split('.').pop()?.toLowerCase();
+                            const isImage = /^(jpg|jpeg|png|gif|webp|bmp|svg)$/.test(ext);
+                            return (
+                              <a key={d.id} href={href || undefined} target="_blank" rel="noopener noreferrer"
+                                className="flex flex-col items-center gap-1.5 p-3 bg-white border border-sky-100 rounded-lg hover:border-sky-300 hover:shadow-sm transition-all cursor-pointer group">
+                                {isImage && href ? (
+                                  <img src={href} alt={name} className="w-full h-20 object-contain rounded" />
+                                ) : (
+                                  <span className="text-3xl">{/pdf/i.test(ext) ? '📕' : /dwg|dxf/i.test(ext) ? '📐' : '📄'}</span>
+                                )}
+                                <p className="text-[10px] text-center text-gray-700 font-medium truncate w-full">{name}</p>
+                              </a>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Header buttons */}
                   <div className="flex items-center gap-2 mb-4 flex-wrap">
                     {uploadingDoc ? (
@@ -1099,6 +1304,100 @@ export default function ProductionDetail() {
                 ) : (
                   <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để dùng ghi chú.</p>
                 )
+              )}
+
+              {/* Sự cố */}
+              {activeTab === 'incidents' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-gray-900">Báo sự cố xưởng</h3>
+                    <button type="button" onClick={() => setShowIncidentForm(true)}
+                      className="h-8 px-3 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                      <AlertTriangle className="h-3.5 w-3.5" /> Báo sự cố
+                    </button>
+                  </div>
+
+                  {showIncidentForm && (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3">
+                      <h4 className="text-sm font-bold text-red-700">Báo sự cố mới</h4>
+                      <div>
+                        <label className="text-xs font-medium text-gray-600">Tiêu đề sự cố *</label>
+                        <input value={incidentForm.title} onChange={e => setIncidentForm(f => ({ ...f, title: e.target.value }))}
+                          className="w-full h-9 px-2 border border-gray-200 rounded-lg mt-1 text-sm" placeholder="Ví dụ: Máy cắt bị hỏng, nguyên liệu thiếu..." />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-600">Mô tả chi tiết</label>
+                        <textarea value={incidentForm.description} onChange={e => setIncidentForm(f => ({ ...f, description: e.target.value }))}
+                          className="w-full min-h-[80px] px-2 py-2 border border-gray-200 rounded-lg mt-1 text-sm resize-none" placeholder="Mô tả thêm về sự cố..." />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-600">Mức độ</label>
+                        <select value={incidentForm.severity} onChange={e => setIncidentForm(f => ({ ...f, severity: e.target.value }))}
+                          className="w-full h-9 px-2 border border-gray-200 rounded-lg mt-1 text-sm">
+                          <option value="low">🟢 Thấp — không ảnh hưởng tiến độ</option>
+                          <option value="medium">🟡 Trung bình — có thể chậm tiến độ</option>
+                          <option value="high">🔴 Cao — ảnh hưởng nghiêm trọng</option>
+                          <option value="critical">🚨 Khẩn cấp — dừng sản xuất</option>
+                        </select>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button type="button" onClick={() => { setShowIncidentForm(false); setIncidentForm({ title: '', description: '', severity: 'medium' }); }}
+                          className="h-9 px-4 text-sm text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer">Hủy</button>
+                        <button type="button" onClick={saveIncident} disabled={savingIncident}
+                          className="h-9 px-4 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 cursor-pointer">
+                          {savingIncident ? 'Đang gửi...' : 'Gửi báo cáo'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {incidents.length === 0 ? (
+                    <div className="text-center py-10 bg-gray-50 rounded-xl border-2 border-dashed">
+                      <CheckCircle2 className="h-10 w-10 text-green-300 mx-auto mb-2" />
+                      <p className="text-sm text-gray-500 font-medium">Chưa có sự cố nào</p>
+                      <p className="text-xs text-gray-400 mt-1">Dự án đang vận hành bình thường</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {incidents.map((inc) => {
+                        const isOpen = inc.status === 'open' || inc.status === 'in_progress';
+                        const sevColor = {
+                          low: 'bg-green-100 text-green-700 border-green-200',
+                          medium: 'bg-amber-100 text-amber-700 border-amber-200',
+                          high: 'bg-red-100 text-red-700 border-red-200',
+                          critical: 'bg-red-200 text-red-800 border-red-300',
+                        }[inc.severity] || 'bg-gray-100 text-gray-700';
+                        const sevLabel = { low: '🟢 Thấp', medium: '🟡 Trung bình', high: '🔴 Cao', critical: '🚨 Khẩn cấp' }[inc.severity] || inc.severity;
+                        return (
+                          <div key={inc.id} className={`rounded-xl border p-4 ${isOpen ? 'border-red-200 bg-red-50/50' : 'border-gray-200 bg-gray-50'}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${sevColor}`}>{sevLabel}</span>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${isOpen ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                    {isOpen ? '🔴 Đang mở' : '✅ Đã giải quyết'}
+                                  </span>
+                                </div>
+                                <p className="text-sm font-semibold text-gray-900">{inc.title}</p>
+                                {inc.description && <p className="text-xs text-gray-600 mt-1">{inc.description}</p>}
+                                <div className="flex items-center gap-2 mt-2">
+                                  {inc.reporter?.full_name && <span className="text-[10px] text-gray-400">👤 {inc.reporter.full_name}</span>}
+                                  <span className="text-[10px] text-gray-400"><Clock className="h-2.5 w-2.5 inline mr-0.5" />{new Date(inc.created_at).toLocaleDateString('vi-VN')}</span>
+                                </div>
+                              </div>
+                              {isOpen && (
+                                <button type="button" onClick={() => resolveIncident(inc.id)}
+                                  className="shrink-0 h-8 px-3 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-medium cursor-pointer">
+                                  Đã xử lý
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* Thành viên */}
