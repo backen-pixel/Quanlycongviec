@@ -135,8 +135,6 @@ const SX_MENU_GROUPS = [
     emoji: '📦',
     items: [
       { to: '/sx/dashboard', icon: FolderKanban, label: 'Deal vào xưởng' },
-      { to: '/sx/pipeline', icon: ArrowRightLeft, label: 'Pipeline Kanban' },
-      { to: '/sx/approvals', icon: ClipboardCheck, label: 'Duyệt theo deal' },
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
     ]

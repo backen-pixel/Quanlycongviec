@@ -222,10 +222,14 @@ r.post('/', async (req, res) => {
 
     // Notification — project team (only for project tasks)
     if (b.project_id) {
-      const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,code').eq('id', b.project_id).single();
+      const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,production_person_id,code').eq('id', b.project_id).single();
       if (proj) {
-        const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
-        await notifyMultiple(req, [...teamIds, b.assignee_id], 'task_created',
+        // Production project → only notify production_person_id; CRM project → CRM team
+        const teamIds = proj.production_person_id
+          ? [proj.production_person_id]
+          : [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
+        const allIds = [...new Set([...teamIds, b.assignee_id].filter(Boolean))];
+        await notifyMultiple(req, allIds, 'task_created',
           '✅ Công việc mới', `Công việc "${b.title}" được tạo trong dự án ${proj.code}`,
           'task', data.id);
       }
@@ -245,7 +249,7 @@ r.put('/:id', async (req, res) => {
     const update = { updated_at: new Date().toISOString() };
 
     // Pick allowed fields
-    const fields = ['title','description','status','priority','assignee_id','due_date','start_date','estimated_hours','actual_hours','stage_id','order_index'];
+    const fields = ['title','description','notes','status','priority','assignee_id','supervisor_id','due_date','start_date','estimated_hours','actual_hours','stage_id','order_index'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
 
     if (update.status === 'done') update.completed_at = new Date().toISOString();
@@ -305,17 +309,20 @@ r.patch('/:id/status', async (req, res) => {
       }
       await logActivity(req.user.userId, 'status_changed', 'task', data.id, `${old.status} → ${update.status}`);
 
-      // ── CHECK AUTO-ADVANCE: if all stage tasks done → notify PM ──
+      // ── CHECK AUTO-ADVANCE: if all stage tasks done → notify responsible person ──
       if (update.status === 'done' && data.project_id && data.stage_id) {
         const { data: stageTasks } = await supabase.from('tasks')
           .select('id,status').eq('project_id', data.project_id).eq('stage_id', data.stage_id);
         const allDone = stageTasks?.length > 0 && stageTasks.every(t => t.status === 'done');
         if (allDone) {
           const { data: proj } = await supabase.from('projects')
-            .select('code,name,sales_person_id,designer_id,project_manager_id,current_stage_id').eq('id', data.project_id).single();
+            .select('code,name,sales_person_id,designer_id,project_manager_id,production_person_id,current_stage_id').eq('id', data.project_id).single();
           const { data: stage } = await supabase.from('workflow_stages').select('name').eq('id', data.stage_id).single();
           if (proj) {
-            const teamIds = [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
+            // Production project → only production person; CRM → full team
+            const teamIds = proj.production_person_id
+              ? [proj.production_person_id]
+              : [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
             await notifyMultiple(req, teamIds, 'project_stage_changed',
               `🎉 Hoàn thành giai đoạn "${stage?.name}"`,
               `Tất cả công việc giai đoạn "${stage?.name}" của dự án ${proj.code} đã hoàn thành. Sẵn sàng chuyển giai đoạn tiếp theo!`,
@@ -502,6 +509,39 @@ r.post('/:id/comments', async (req, res) => {
 r.delete('/:taskId/comments/:commentId', async (req, res) => {
   try {
     await supabase.from('task_comments').delete().eq('id', req.params.commentId).eq('user_id', req.user.userId);
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── TASK ATTACHMENTS (for production tasks) ──
+r.get('/:id/attachments', async (req, res) => {
+  try {
+    const { data } = await supabase.from('file_attachments')
+      .select('*, uploader:users!file_attachments_uploaded_by_fkey(id,full_name)')
+      .eq('entity_type', 'task').eq('entity_id', req.params.id)
+      .order('created_at', { ascending: false });
+    res.json({ attachments: data || [] });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/:id/attachments/bulk', async (req, res) => {
+  try {
+    const items = (req.body.items || []).map(f => ({
+      entity_type: 'task', entity_id: req.params.id,
+      file_name: f.original_name || f.file_name, file_url: f.file_url,
+      file_size: f.file_size, mime_type: f.mime_type,
+      uploaded_by: req.user.userId,
+    }));
+    if (!items.length) return res.status(400).json({ error: 'Không có file' });
+    const { data, error } = await supabase.from('file_attachments').insert(items).select();
+    if (error) throw error;
+    res.status(201).json({ attachments: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:taskId/attachments/:attId', async (req, res) => {
+  try {
+    await supabase.from('file_attachments').delete().eq('id', req.params.attId).eq('entity_type', 'task');
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });

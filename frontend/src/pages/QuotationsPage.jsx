@@ -87,7 +87,7 @@ export default function QuotationsPage() {
           <table className="w-full text-sm">
             <thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
               <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-              <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Ngày tạo</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th><th className="py-3 px-3"></th>
+              <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Người tạo</th><th className="py-3 px-3">Ngày tạo</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th><th className="py-3 px-3"></th>
             </tr></thead>
             <tbody>
               {filtered.map(q => (
@@ -97,6 +97,12 @@ export default function QuotationsPage() {
                   <td className="py-3 px-3 text-gray-600">{q.customer_name || q.customer?.full_name || '-'}</td>
                   <td className="py-3 px-3 text-right font-bold text-gray-900">{formatVND(q.total || 0)}</td>
                   <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_COLORS[q.status] || ''}`}>{STATUS_MAP[q.status] || q.status}</span></td>
+                  <td className="py-3 px-3 text-xs">
+                    <span className="text-gray-700 font-medium">{q.creator?.full_name || '—'}</span>
+                    {q.approver?.full_name && q.approver.full_name !== q.creator?.full_name && (
+                      <span className="block text-[10px] text-emerald-600" title="Đã kiểm tra & xác nhận">✓ {q.approver.full_name}</span>
+                    )}
+                  </td>
                   <td className="py-3 px-3 text-gray-500">{formatDate(q.created_at)}</td>
                   <td className="py-3 px-3 text-center">
                     <button onClick={e => downloadPdf(q.id, q.code, e)} disabled={pdfLoadingId === q.id} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer disabled:opacity-50" title="Tải PDF">

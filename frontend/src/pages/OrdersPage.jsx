@@ -96,7 +96,7 @@ export default function OrdersPage() {
         </div>
         <table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
           <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Thanh toán</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th><th className="py-3 px-3"></th>
+          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Thanh toán</th><th className="py-3 px-3">Người tạo</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th><th className="py-3 px-3"></th>
         </tr></thead><tbody>
           {filtered.map(o => (
             <tr key={o.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/crm/orders/${o.id}`)}>
@@ -106,6 +106,7 @@ export default function OrdersPage() {
               <td className="py-3 px-3 text-right font-bold">{formatVND(o.total || 0)}</td>
               <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${ORDER_COLORS[o.status] || ''}`}>{ORDER_STATUS[o.status] || o.status}</span></td>
               <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${PAY_COLORS[o.payment_status] || ''}`}>{PAY_STATUS[o.payment_status] || o.payment_status}</span></td>
+              <td className="py-3 px-3 text-gray-600 text-xs">{o.creator?.full_name || '—'}</td>
               <td className="py-3 px-3 text-gray-500">{formatDate(o.created_at)}</td>
               <td className="py-3 px-3 text-center">
                 <button onClick={e => downloadPdf(o.id, o.code, e)} disabled={pdfLoadingId === o.id} className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg cursor-pointer disabled:opacity-50" title="Tải PDF">

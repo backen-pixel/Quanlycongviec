@@ -109,7 +109,7 @@ export default function InvoicesPage() {
           <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
           <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3 text-right">Đã thu</th><th className="py-3 px-3 text-right">Còn nợ</th><th className="py-3 px-3">TT</th>
           <th className="py-3 px-3 text-center"><span className="flex items-center gap-1 justify-center"><FileCheck className="h-3.5 w-3.5" />HĐĐT</span></th>
-          <th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3 text-center">Phát hành MISA</th><th className="py-3 px-3"></th>
+          <th className="py-3 px-3">Người tạo</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3 text-center">Phát hành MISA</th><th className="py-3 px-3"></th>
         </tr></thead><tbody>
           {filtered.map(i => {
             const debt = (i.total || 0) - (i.paid_amount || 0);
@@ -129,6 +129,7 @@ export default function InvoicesPage() {
                     {misaBadge.label}
                   </span>
                 </td>
+                <td className="py-3 px-3 text-gray-600 text-xs">{i.creator?.full_name || '—'}</td>
                 <td className="py-3 px-3 text-gray-500">{formatDate(i.created_at)}</td>
                 <td className="py-3 px-3 text-center">
                   <button onClick={e => { e.stopPropagation(); downloadPdf(i.id, i.code); }} disabled={pdfLoadingId === i.id} className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg cursor-pointer disabled:opacity-50" title="Tải PDF">

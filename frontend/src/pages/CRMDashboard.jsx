@@ -11,6 +11,7 @@ import {
   Clock, List, LayoutGrid, GitMerge, UserCheck
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
+import EmployeePicker from '../components/EmployeePicker';
 import {
   loadCrmPipelineSnapshot,
   saveCrmPipelineSnapshot,
@@ -110,6 +111,7 @@ export default function CRMDashboard() {
   const [allDeals, setAllDeals] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => P?.filterCompany ?? '');
   const [searchText, setSearchText] = useState(() => P?.searchText ?? '');
+  const [searchFocused, setSearchFocused] = useState(false);
   const [filterAssignee, setFilterAssignee] = useState(() => P?.filterAssignee ?? '');
   /** Gõ tên để thu hẹp danh sách trong dropdown NV */
   const [assigneeListSearch, setAssigneeListSearch] = useState(() => P?.assigneeListSearch ?? '');
@@ -131,6 +133,11 @@ export default function CRMDashboard() {
   });
   const [showNewLead, setShowNewLead] = useState(false);
   const [showNewDeal, setShowNewDeal] = useState(false);
+  const [wonAssignModal, setWonAssignModal] = useState(false);
+  const [wonAssignLeadId, setWonAssignLeadId] = useState(null);
+  const [wonAssignUser, setWonAssignUser] = useState('');
+  const [wonAssigning, setWonAssigning] = useState(false);
+  const [wonAssignError, setWonAssignError] = useState('');
   const [pinnedTab, setPinnedTab] = useState(() => P?.pinnedTab ?? (localStorage.getItem('crm_pinned_tab') || ''));
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState(() => {
@@ -671,6 +678,15 @@ export default function CRMDashboard() {
       extraData.lost_reason = lostReason;
     }
 
+    // Kéo Lead sang cột Thắng → luôn hiển thị modal chọn người phụ trách
+    if (targetStage?.is_won && pipelineType === 'lead') {
+      const lead = allLeads.find(l => l.id === leadId);
+      setWonAssignLeadId(leadId);
+      setWonAssignUser(lead?.assigned_to || lead?.lead_owner_id || '');
+      setWonAssignModal(true);
+      return;
+    }
+
     // Optimistic update
     if (pipelineType === 'lead') {
       setAllLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l));
@@ -682,7 +698,6 @@ export default function CRMDashboard() {
       const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId, ...extraData });
 
       if (data.requires_conversion) {
-        alert('Để chuyển Lead sang Deal, vui lòng dùng nút "Chuyển sang Deal" trên trang chi tiết.');
         if (pipelineType === 'lead') setAllLeads(prevLeads);
         else setAllDeals(prevDeals);
       }
@@ -704,6 +719,29 @@ export default function CRMDashboard() {
       else setAllDeals(prevDeals);
     }
   }, [pipelineType, allLeads, allDeals, stagesLead, stagesDeal]);
+
+  const handleWonAssignConvert = async () => {
+    if (!wonAssignUser) { setWonAssignError('Vui lòng chọn nhân viên phụ trách'); return; }
+    setWonAssigning(true);
+    setWonAssignError('');
+    const lead = allLeads.find(l => l.id === wonAssignLeadId);
+    try {
+      await api.post(`/crm/leads/${wonAssignLeadId}/convert-to-deal`, {
+        assigned_to: wonAssignUser,
+        company_id: lead?.company_id || undefined,
+      });
+      setWonAssignModal(false);
+      const snap = loadCrmPipelineSnapshot();
+      saveCrmPipelineSnapshot({ ...(snap || {}), pipelineType: 'deal' });
+      markCrmPipelineCardFocus(wonAssignLeadId);
+      setPipelineType('deal');
+      load();
+    } catch (e) {
+      setWonAssignError(e.response?.data?.error || 'Lỗi chuyển sang Deal');
+    } finally {
+      setWonAssigning(false);
+    }
+  };
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
@@ -841,16 +879,22 @@ export default function CRMDashboard() {
               type="text"
               value={searchText}
               onChange={e => setSearchText(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
               placeholder={`🔍 Tìm nhanh: tên, SĐT, mã, mô tả, người phụ trách...`}
               className={`w-full ${ctrlH} pl-9 pr-8 bg-white border border-gray-200 rounded-xl ${ctrlTxt} focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm`}
             />
             {searchText && (
-              <button onClick={() => setSearchText('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
+              <button
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => { setSearchText(''); setSearchFocused(false); }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+              >
                 <X className="h-4 w-4" />
               </button>
             )}
-            {/* Instant search results dropdown */}
-            {searchText.trim().length >= 2 && (pipelineType === 'lead' ? leads : deals).length > 0 && (pipelineType === 'lead' ? leads : deals).length <= 10 && (
+            {/* Instant search results dropdown — chỉ hiện khi ô tìm đang focus */}
+            {searchFocused && searchText.trim().length >= 2 && (pipelineType === 'lead' ? leads : deals).length > 0 && (pipelineType === 'lead' ? leads : deals).length <= 10 && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 max-h-80 overflow-y-auto">
                 <div className="p-2 border-b bg-gray-50 rounded-t-xl">
                   <p className="text-[11px] text-gray-500 font-medium">
@@ -861,9 +905,11 @@ export default function CRMDashboard() {
                   <Link key={item.id} to={`/crm/leads/${item.id}`}
                     className="flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50 transition cursor-pointer border-b border-gray-50 last:border-0"
                     data-crm-pipeline-card={item.id}
+                    onMouseDown={e => e.preventDefault()}
                     onClick={() => {
                       markCrmPipelineCardFocus(item.id);
                       setSearchText('');
+                      setSearchFocused(false);
                     }}>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -1328,6 +1374,81 @@ export default function CRMDashboard() {
           currentUser={user}
         />
       )}
+
+      {/* Modal chọn người phụ trách khi kéo Lead sang cột Thắng */}
+      {wonAssignModal && (() => {
+        const wonLead = allLeads.find(l => l.id === wonAssignLeadId);
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!wonAssigning) { setWonAssignModal(false); setWonAssignError(''); } }}>
+            <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 mb-1">
+                <span className="text-2xl">🏆</span>
+                <h3 className="text-base font-bold text-gray-900">Chuyển sang Deal</h3>
+              </div>
+
+              {/* Thông tin lead */}
+              {wonLead && (
+                <div className="bg-gray-50 rounded-xl px-3 py-2 mb-4 mt-2">
+                  <p className="text-xs font-semibold text-gray-500 mb-0.5">Lead:</p>
+                  <p className="text-sm font-medium text-gray-900 truncate">{wonLead.title}</p>
+                  {wonLead.customer?.full_name && (
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      👤 {wonLead.customer.full_name}
+                      {wonLead.customer.phone && <span className="ml-2 text-green-600">📞 {wonLead.customer.phone}</span>}
+                      {!wonLead.customer.phone && <span className="ml-2 text-amber-500">⚠️ Chưa có SĐT</span>}
+                    </p>
+                  )}
+                  {!wonLead.customer_id && (
+                    <p className="text-xs text-red-500 mt-0.5 font-medium">⛔ Chưa liên kết khách hàng — cần vào chi tiết Lead để thêm trước</p>
+                  )}
+                </div>
+              )}
+
+              <div className="mb-4">
+                <label className="text-xs font-semibold text-gray-700 mb-1.5 block">👤 Người phụ trách deal</label>
+                <EmployeePicker
+                  companyId={wonLead?.company_id}
+                  value={wonAssignUser}
+                  onChange={(userId) => { setWonAssignUser(userId || ''); setWonAssignError(''); }}
+                  placeholder="Tìm và chọn nhân viên..."
+                  size="md"
+                />
+                {!wonLead?.company_id && (
+                  <p className="text-[10px] text-amber-500 mt-1">⚠️ Lead chưa có công ty — hiển thị toàn bộ nhân viên</p>
+                )}
+              </div>
+
+              {/* Lỗi inline */}
+              {wonAssignError && (
+                <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                  ⛔ {wonAssignError}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setWonAssignModal(false); setWonAssignError(''); }}
+                  disabled={wonAssigning}
+                  className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  onClick={handleWonAssignConvert}
+                  disabled={wonAssigning || !wonAssignUser || !wonLead?.customer_id}
+                  className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {wonAssigning ? (
+                    <><span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" /> Đang xử lý...</>
+                  ) : (
+                    <>✅ Xác nhận & Chuyển Deal</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <BulkAssignLeadsModal
         open={bulkAssignModalOpen}

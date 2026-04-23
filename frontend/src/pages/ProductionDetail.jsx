@@ -1,23 +1,23 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { formatVND, formatDate, formatDateTime, getInitials, avatarColor } from '../lib/utils';
+import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
+import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import {
-  ArrowLeft, FileIcon, FolderKanban, MessageSquare, Plus, X,
-  FileUp, Edit2, Save,
+  ArrowLeft, FolderKanban, MessageSquare, Plus, X,
+  FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
 } from 'lucide-react';
-import WorkshopProjectTasksPanel from '../components/WorkshopProjectTasksPanel';
+import CRMTasksTab from '../components/CRMTasksTab';
+import ProductionTasksTab from '../components/ProductionTasksTab';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
-import CallLogsTab from '../components/CallLogsTab';
-import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import PipelineStepper from '../components/PipelineStepper';
 
-/** Cùng tên tab với LeadDetail (chi tiết deal) */
-const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'facebook', 'team', 'chat', 'calls', 'approvals']);
+/** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
+const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals']);
 const LEGACY_TAB_MAP = {
   timeline: 'activities',
   'crm-notes': 'notes',
@@ -27,14 +27,6 @@ const LEGACY_TAB_MAP = {
   'crm-deal-docs': 'documents',
   'crm-members': 'team',
 };
-
-const PRODUCTION_SLUGS = new Set(['production']);
-const LOGISTICS_SLUGS = new Set(['delivery', 'shipping', 'installing', 'installation']);
-
-function filterProjectTasksByWorkArea(tasks, workArea) {
-  const sl = workArea === 'logistics' ? LOGISTICS_SLUGS : PRODUCTION_SLUGS;
-  return (tasks || []).filter((t) => sl.has(t.stage?.slug || ''));
-}
 
 function calcProgressForTasks(taskList) {
   if (!taskList?.length) return 0;
@@ -54,178 +46,185 @@ const ACTIVITY_FORM_TYPES = ACTIVITY_TYPES.filter((t) =>
   ['call', 'meeting', 'email', 'zalo', 'note'].includes(t.value),
 );
 
-/** Cột trái — cùng phong cách card "Thông tin" như LeadDetail (chỉ đọc) */
-function WorkshopInfoPanel({ project, workArea, filteredTasks }) {
-  const fromApi = workArea === 'logistics' ? project.logisticsTaskProgress : project.productionTaskProgress;
-  const prob = typeof fromApi === 'number' ? fromApi : calcProgressForTasks(filteredTasks);
-  const areaLabel = workArea === 'logistics' ? 'VC & lắp đặt' : 'Sản xuất';
+/** Cột trái — inline-editable như LeadDetail */
+function WorkshopInfoPanel({ project, onUpdate }) {
+  const [editing, setEditing] = useState(null); // field name
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const prob = typeof project.productionTaskProgress === 'number' ? project.productionTaskProgress : 0;
+
+  const startEdit = (field, value) => { setEditing(field); setDraft(value ?? ''); };
+  const cancelEdit = () => { setEditing(null); setDraft(''); };
+
+  const save = async (field, value) => {
+    setSaving(true);
+    try {
+      await api.put(`/projects/${project.id}`, { [field]: value || null });
+      onUpdate?.();
+      setEditing(null);
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
+    setSaving(false);
+  };
+
   return (
     <div className="bg-white rounded-xl border p-5 space-y-1">
       <h3 className="text-sm font-bold text-gray-900 uppercase mb-2">Thông tin</h3>
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+
+      {/* Giá trị */}
+      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || '')}>
         <span className="text-sm mt-0.5 shrink-0">💰</span>
         <div className="flex-1 min-w-0">
           <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị dự án</p>
-          <p className="text-sm font-medium text-gray-900">{formatVND(project.estimated_value)}</p>
+          {editing === 'estimated_value' ? (
+            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+              <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
+              <button onClick={() => save('estimated_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+            </div>
+          ) : (
+            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{formatVND(project.estimated_value)} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
+          )}
         </div>
       </div>
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+
+      {/* Deadline */}
+      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'deadline' && startEdit('deadline', project.deadline ? project.deadline.substring(0, 10) : '')}>
         <span className="text-sm mt-0.5 shrink-0">📅</span>
         <div className="flex-1 min-w-0">
           <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Deadline</p>
-          <p className="text-sm font-medium text-gray-900">{project.deadline ? formatDate(project.deadline) : '—'}</p>
+          {editing === 'deadline' ? (
+            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+              <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
+              <button onClick={() => save('deadline', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+            </div>
+          ) : (
+            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{project.deadline ? formatDate(project.deadline) : '—'} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
+          )}
         </div>
       </div>
+
+      {/* Tiến độ SX */}
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
         <span className="text-sm mt-0.5 shrink-0">📊</span>
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">
-            Tiến độ NV ({areaLabel})
-          </p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tiến độ sản xuất</p>
           <p className="text-sm font-medium text-gray-900">{prob}%</p>
           <div className="mt-1 w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
             <div className="bg-blue-600 h-full rounded-full transition-all duration-300" style={{ width: `${prob}%` }} />
           </div>
         </div>
       </div>
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+
+      {/* Ưu tiên */}
+      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'priority' && startEdit('priority', project.priority || 'medium')}>
         <span className="text-sm mt-0.5 shrink-0">🎯</span>
         <div className="flex-1 min-w-0">
           <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ưu tiên</p>
-          <p className="text-sm font-medium text-gray-900 capitalize">
-            {project.priority === 'high' ? '🔴 Cao' : project.priority === 'medium' ? '🟡 Trung bình' : '🟢 Thấp'}
-          </p>
+          {editing === 'priority' ? (
+            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+              <select value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400">
+                <option value="low">🟢 Thấp</option>
+                <option value="medium">🟡 Trung bình</option>
+                <option value="high">🔴 Cao</option>
+              </select>
+              <button onClick={() => save('priority', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+            </div>
+          ) : (
+            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+              {project.priority === 'high' ? '🔴 Cao' : project.priority === 'medium' ? '🟡 Trung bình' : '🟢 Thấp'}
+              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+            </p>
+          )}
         </div>
       </div>
-      {project.notes && (
-        <div className="pt-2 border-t border-gray-100">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1">Ghi chú nội bộ xưởng</p>
-          <p className="text-xs text-gray-700 whitespace-pre-wrap">{project.notes}</p>
+
+      {/* Ghi chú xưởng */}
+      <div className="pt-2 border-t border-gray-100">
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">Ghi chú nội bộ xưởng</p>
+          {editing !== 'notes' && <button onClick={() => startEdit('notes', project.notes || '')} className="text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer">Sửa</button>}
         </div>
-      )}
+        {editing === 'notes' ? (
+          <div className="space-y-1">
+            <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3} autoFocus
+              className="w-full px-2 py-1.5 border border-blue-300 rounded text-xs outline-none focus:ring-1 focus:ring-blue-400 resize-none" placeholder="Ghi chú nội bộ..." />
+            <div className="flex gap-1">
+              <button onClick={() => save('notes', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓ Lưu</button>
+              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">Hủy</button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-700 whitespace-pre-wrap">{project.notes || <span className="text-gray-400 italic">Chưa có ghi chú</span>}</p>
+        )}
+      </div>
     </div>
   );
 }
 
-function ProductionDocumentsDealLayout({ project, crmDealDocs, crmLeadId }) {
-  return (
-    <>
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2 flex-wrap">
-          {crmLeadId ? (
-            <Link
-              to={`/crm/leads/${crmLeadId}`}
-              className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5"
-            >
-              📋 Chỉnh tài liệu trên CRM
-            </Link>
-          ) : null}
-          <span className="text-xs text-gray-500">Tab xưởng chỉ liệt kê tài liệu đã bật «chia sẻ xưởng»; team CRM vẫn xem đủ trên chi tiết deal. Upload trên deal CRM.</span>
-        </div>
-      </div>
-      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📂 Đã chia sẻ xưởng</p>
-      <DocumentsTab project={project} />
-      <p className="text-xs font-bold text-gray-500 uppercase mb-2 mt-6">
-        📄 Tài liệu deal CRM ({crmDealDocs.length})
-      </p>
-      {crmDealDocs.length === 0 ? (
-        <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
-          <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-          <p className="text-sm text-gray-500">Chưa có tài liệu trên deal</p>
-        </div>
-      ) : (
-        <div className="space-y-2 max-h-96 overflow-y-auto">
-          {crmDealDocs.map((doc) => (
-            <div key={doc.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg">
-              <FileIcon className="h-5 w-5 text-blue-500 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">{doc.name || doc.file_name}</p>
-                {doc.notes && <p className="text-xs text-gray-500 truncate">{doc.notes}</p>}
-              </div>
-              {doc.file_url && (
-                <a
-                  href={doc.file_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs font-medium text-blue-600 hover:underline shrink-0"
-                >
-                  Mở
-                </a>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </>
-  );
+function getFileIcon(name) {
+  if (!name) return '📄';
+  const ext = name.split('.').pop()?.toLowerCase();
+  const map = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', dwg: '📐', dxf: '📐', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️', zip: '📦', rar: '📦', mp4: '🎬', mov: '🎬', webm: '🎬', avi: '🎬' };
+  return map[ext] || '📄';
 }
 
-function ProductionActivitiesDealLayout({
-  crmActivities,
-  crmLeadId,
-  setShowAddCrmActivity,
-  project,
-}) {
+/** Row tài liệu — rich preview như CRM DocumentRow */
+function DocRow({ doc, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+  const name = doc.file_name || doc.name || doc.file_path?.split('/').pop() || 'Tài liệu';
+  const fileHref = doc.file_url ? pubUrl(doc.file_url) : '';
+  const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: name }) : null;
+  const isFile = !!fileHref;
+  const mime = doc.mime_type || '';
+  const isImage = isFile && (mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name));
+  const isVideo = isFile && (mime.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(name));
+  const hasExtra = doc.notes || isImage || isVideo;
   return (
-    <div className="space-y-10">
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          {crmLeadId ? (
-            <button
-              type="button"
-              onClick={() => setShowAddCrmActivity(true)}
-              className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5" /> Thêm
-            </button>
-          ) : (
-            <p className="text-xs text-gray-500">Liên kết deal CRM để thêm hoạt động.</p>
-          )}
-        </div>
-        {crmActivities.length === 0 ? (
-          <div className="text-center py-8">
-            <MessageSquare className="h-10 w-10 text-gray-200 mx-auto mb-2" />
-            <p className="text-sm text-gray-400">Chưa có hoạt động</p>
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            <div className="relative">
-              <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-300 to-blue-100" />
-              {crmActivities.map((act) => {
-                const typeInfo = ACTIVITY_TYPES.find((t) => t.value === act.type) || ACTIVITY_TYPES[4];
-                return (
-                  <div key={act.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4">
-                    <div className="absolute -left-5 top-4 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
-                    <div className="flex items-start gap-2">
-                      <span className="text-lg shrink-0">{typeInfo.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium text-gray-900">{act.title}</p>
-                          <span className="text-[10px] text-gray-400">{formatDate(act.activity_date)}</span>
-                        </div>
-                        {act.description && <p className="text-xs text-gray-600 mt-1">{act.description}</p>}
-                        {act.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {act.outcome}</p>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+    <div className="bg-gray-50 rounded-lg border overflow-hidden">
+      <div className="flex items-center justify-between p-3">
+        <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer" onClick={() => hasExtra && setExpanded(!expanded)}>
+          <span className="text-lg shrink-0">{isVideo ? '🎬' : getFileIcon(name)}</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-gray-900 truncate">{name}</p>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-500">{isImage ? '🖼️ Ảnh' : isVideo ? '🎬 Video' : '📄 File'}</span>
+              {doc.file_size > 0 && <span className="text-[10px] text-gray-400">{doc.file_size > 1048576 ? `${(doc.file_size/1048576).toFixed(1)} MB` : `${(doc.file_size/1024).toFixed(1)} KB`}</span>}
+              {doc.created_at && <span className="text-[10px] text-gray-400">{new Date(doc.created_at).toLocaleDateString('vi-VN')}</span>}
+              {(doc.uploader?.full_name || doc.creator?.full_name) && <span className="text-[10px] text-gray-400">· {doc.uploader?.full_name || doc.creator?.full_name}</span>}
             </div>
           </div>
+          {isFile && !isImage && !isVideo && fileOpenProps && (
+            <a {...fileOpenProps} className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>Mở</a>
+          )}
+          {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`} />}
+        </div>
+        {onDelete && (
+          <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
         )}
-      </section>
-
-      {(project.crmSharedNotes?.length > 0) && (
-        <section>
-          <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">💬 Ghi chú CRM chia sẻ xưởng</h4>
-          <CrmSharedNotesTab project={project} />
-        </section>
+      </div>
+      {isVideo && (
+        <div className={`px-3 ${expanded ? 'pb-3' : 'pb-2'}`}>
+          <video src={fileHref} controls preload="metadata" className={`w-full rounded-lg border border-gray-200 bg-black shadow-sm ${expanded ? 'max-h-96' : 'max-h-40'}`} />
+        </div>
       )}
-
-      <section>
-        <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">📜 Lịch sử chuyển giai đoạn xưởng</h4>
-        <TimelineTab project={project} />
-      </section>
+      {isImage && !expanded && fileOpenProps && (
+        <div className="px-3 pb-2">
+          <a {...fileOpenProps} className="block"><img src={fileHref} alt={name} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" /></a>
+        </div>
+      )}
+      {expanded && (
+        <div className="px-3 pb-3 space-y-2">
+          {isImage && fileOpenProps && (
+            <a {...fileOpenProps} className="block"><img src={fileHref} alt={name} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90" /></a>
+          )}
+          {doc.notes && <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -246,6 +245,8 @@ export default function ProductionDetail() {
   const [crmUsers, setCrmUsers] = useState([]);
   const [crmActivities, setCrmActivities] = useState([]);
   const [crmDealDocs, setCrmDealDocs] = useState([]);
+  const [productionTaskSummary, setProductionTaskSummary] = useState({ total: 0, completed: 0, percent: 0 });
+  const [savingProductionOwner, setSavingProductionOwner] = useState(false);
   const [showAddCrmActivity, setShowAddCrmActivity] = useState(false);
   const [crmActivityForm, setCrmActivityForm] = useState({
     type: 'note', title: '', description: '', outcome: '',
@@ -253,6 +254,14 @@ export default function ProductionDetail() {
   const [savingCrmActivity, setSavingCrmActivity] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
+  const [projectDocs, setProjectDocs] = useState([]); // production-native documents
+  const [taskFiles, setTaskFiles] = useState([]); // task file attachments
+  const [projectActivities, setProjectActivities] = useState([]); // production-native activities
+  const [showAddActivity, setShowAddActivity] = useState(false);
+  const [activityForm, setActivityForm] = useState({ type: 'note', title: '', description: '', outcome: '' });
+  const [savingActivity, setSavingActivity] = useState(false);
+  const [showAddTextDoc, setShowAddTextDoc] = useState(false);
+  const [textDocForm, setTextDocForm] = useState({ name: '', notes: '' });
 
   // Title inline editing — same pattern as LeadDetail
   const [editingTitle, setEditingTitle] = useState(false);
@@ -265,14 +274,20 @@ export default function ProductionDetail() {
   // Document upload state
   const [uploadingDoc, setUploadingDoc] = useState(false);
 
-  const workArea = searchParams.get('area') === 'logistics' ? 'logistics' : 'production';
-  const filteredTasksForArea = useMemo(
-    () => filterProjectTasksByWorkArea(project?.tasks, workArea),
-    [project?.tasks, workArea],
-  );
-
   const noteActivities = useMemo(
     () => (crmActivities || []).filter((a) => a.type === 'note'),
+    [crmActivities],
+  );
+
+  /** Chỉ hiện hoạt động đã được chia sẻ xưởng (shared_to_workshop = true) */
+  const sharedActivities = useMemo(
+    () => (crmActivities || []).filter((a) => a.shared_to_workshop === true),
+    [crmActivities],
+  );
+
+  /** Chỉ hiện ghi chú đã được chia sẻ xưởng */
+  const sharedNotes = useMemo(
+    () => (crmActivities || []).filter((a) => a.type === 'note' && a.shared_to_workshop === true),
     [crmActivities],
   );
 
@@ -376,6 +391,27 @@ export default function ProductionDetail() {
     }).catch(() => {});
   }, []);
 
+  const loadProjectDocs = useCallback(async (projectId) => {
+    try {
+      const { data } = await api.get(`/projects/${projectId}/documents`);
+      setProjectDocs(data?.documents || []);
+    } catch (_) { setProjectDocs([]); }
+  }, []);
+
+  const loadTaskFiles = useCallback(async (projectId) => {
+    try {
+      const { data } = await api.get(`/projects/${projectId}/task-files`);
+      setTaskFiles(data?.taskFiles || []);
+    } catch (_) { setTaskFiles([]); }
+  }, []);
+
+  const loadProjectActivities = useCallback(async (projectId) => {
+    try {
+      const { data } = await api.get(`/projects/${projectId}/activities`);
+      setProjectActivities(data?.activities || []);
+    } catch (_) { setProjectActivities([]); }
+  }, []);
+
   useEffect(() => {
     setLoadError(null);
     load();
@@ -385,8 +421,21 @@ export default function ProductionDetail() {
     setLoading(true);
     setLoadError(null);
     try {
-      const { data } = await api.get(`/production/projects/${id}`);
-      setProject(data.project);
+      const [projRes, tasksRes] = await Promise.all([
+        api.get(`/production/projects/${id}`),
+        api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
+      ]);
+      const proj = projRes.data?.project;
+      const list = tasksRes.data?.tasks || tasksRes.data || [];
+      const total = Array.isArray(list) ? list.length : 0;
+      const completed = Array.isArray(list) ? list.filter((t) => t.status === 'done').length : 0;
+      const percent = total ? Math.round((completed / total) * 100) : 0;
+      setProductionTaskSummary({ total, completed, percent });
+      setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
+      // Load production-native docs & task files in background
+      loadProjectDocs(id);
+      loadTaskFiles(id);
+      loadProjectActivities(id);
     } catch (e) {
       console.error(e);
       const st = e.response?.status;
@@ -444,12 +493,33 @@ export default function ProductionDetail() {
 
   const refreshProjectSilently = useCallback(async () => {
     try {
-      const { data } = await api.get(`/production/projects/${id}`);
-      setProject(data.project);
+      const [projRes, tasksRes] = await Promise.all([
+        api.get(`/production/projects/${id}`),
+        api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
+      ]);
+      const proj = projRes.data?.project;
+      const list = tasksRes.data?.tasks || tasksRes.data || [];
+      const total = Array.isArray(list) ? list.length : 0;
+      const completed = Array.isArray(list) ? list.filter((t) => t.status === 'done').length : 0;
+      const percent = total ? Math.round((completed / total) * 100) : 0;
+      setProductionTaskSummary({ total, completed, percent });
+      setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
     } catch (_) {
       /* giữ state cũ */
     }
   }, [id]);
+
+  const setProductionPerson = useCallback(async (userId) => {
+    if (!project?.id) return;
+    setSavingProductionOwner(true);
+    try {
+      await api.put(`/projects/${project.id}`, { production_person_id: userId || null });
+      await refreshProjectSilently();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi phân công sản xuất');
+    }
+    setSavingProductionOwner(false);
+  }, [project?.id, refreshProjectSilently]);
 
   const saveCrmActivity = async () => {
     const dealId = project?.crmDeals?.[0]?.id;
@@ -504,6 +574,50 @@ export default function ProductionDetail() {
       alert(e.response?.data?.error || 'Lỗi cập nhật tên');
     }
     setSavingTitle(false);
+  };
+
+  const saveProjectActivity = async () => {
+    if (!activityForm.title.trim()) { alert('Nhập tiêu đề hoạt động'); return; }
+    setSavingActivity(true);
+    try {
+      await api.post(`/projects/${project.id}/activities`, activityForm);
+      await loadProjectActivities(project.id);
+      setShowAddActivity(false);
+      setActivityForm({ type: 'note', title: '', description: '', outcome: '' });
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    setSavingActivity(false);
+  };
+
+  const uploadProjectDocument = async () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      setUploadingDoc(true);
+      try {
+        const uploaded = [];
+        for (const file of files) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const { data } = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          uploaded.push({ original_name: file.name, file_url: data.url || data.file_url, file_name: data.file_name || file.name, file_size: data.file_size || file.size, mime_type: data.mime_type || file.type });
+        }
+        await api.post(`/projects/${project.id}/documents/bulk`, { items: uploaded });
+        await loadProjectDocs(project.id);
+      } catch (err) { alert(err.response?.data?.error || 'Lỗi upload file'); }
+      setUploadingDoc(false);
+    };
+    input.click();
+  };
+
+  const deleteProjectDocument = async (docId) => {
+    if (!confirm('Xóa tài liệu này?')) return;
+    try {
+      await api.delete(`/projects/${project.id}/documents/${docId}`);
+      await loadProjectDocs(project.id);
+    } catch (e) { alert('Lỗi xóa tài liệu'); }
   };
 
   const uploadDocument = async () => {
@@ -590,8 +704,8 @@ export default function ProductionDetail() {
     : project.workshopPipeline?.length
       ? project.workshopPipeline
       : [
+          { id: null, slug: 'won_pending', name: 'Chờ vào xưởng', color: '#64748b', icon: '⏳' },
           { id: null, slug: 'production', name: 'Sản xuất', color: '#0f766e', icon: '🏭' },
-          { id: null, slug: 'delivery', name: 'VC & Lắp đặt', color: '#14b8a6', icon: '🚚' },
           { id: null, slug: 'customer-care', name: 'CSKH', color: '#5eead4', icon: '🤝' },
         ];
 
@@ -600,9 +714,8 @@ export default function ProductionDetail() {
   const crmLeadId = primaryCrmDeal?.id;
   const displayCode = primaryCrmDeal?.code || project.code;
   const displayTitle = primaryCrmDeal?.title || project.name;
-  const taskCount = filteredTasksForArea.length;
+  const taskCount = productionTaskSummary.total || 0;
   const taskUsers = allUsers.length ? allUsers : crmUsers;
-  const ownDocCount = (project.sharedDocuments?.length || 0) + crmDealDocs.length;
 
   const tabBtn = (tab, label) => (
     <button
@@ -706,54 +819,7 @@ export default function ProductionDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Cột trái — giống LeadDetail */}
         <div className="lg:col-span-1 space-y-4">
-          <div className="bg-white rounded-xl border p-5 space-y-4">
-            <h3 className="text-sm font-bold text-gray-900 uppercase">Khách hàng</h3>
-            {project.customer ? (
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5 font-medium">👤 Tên</p>
-                  <p className="text-sm font-medium text-gray-900">{project.customer.full_name || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5 font-medium">📞 SĐT</p>
-                  {project.customer.phone ? (
-                    <a href={`tel:${project.customer.phone}`} className="text-sm font-medium text-gray-900 hover:text-blue-600">
-                      {project.customer.phone}
-                    </a>
-                  ) : (
-                    <p className="text-sm text-gray-400">—</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5 font-medium">✉️ Email</p>
-                  {project.customer.email ? (
-                    <a href={`mailto:${project.customer.email}`} className="text-sm font-medium text-gray-900 hover:text-blue-600 break-all">
-                      {project.customer.email}
-                    </a>
-                  ) : (
-                    <p className="text-sm text-gray-400">—</p>
-                  )}
-                </div>
-                <div className="border-t border-gray-100" />
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5 font-medium">📍 Địa chỉ</p>
-                  <p className="text-sm font-medium text-gray-900">{project.customer.address || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5 font-medium">🏢 Công ty (KH)</p>
-                  <p className="text-sm font-medium text-gray-900">{project.customer.company || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5 font-medium">🧾 MST</p>
-                  <p className="text-sm font-medium text-gray-900">{project.customer.tax_code || '—'}</p>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400">Chưa có khách hàng trên dự án.</p>
-            )}
-          </div>
-
-          <WorkshopInfoPanel project={project} workArea={workArea} filteredTasks={filteredTasksForArea} />
+          <WorkshopInfoPanel project={project} onUpdate={refreshProjectSilently} />
 
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center">
@@ -765,7 +831,7 @@ export default function ProductionDetail() {
               <p className="text-xl font-bold text-amber-600">{project.sharedDocuments?.length || 0}</p>
             </div>
             <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
-              <p className="text-xs text-gray-600 mb-1">Nhiệm vụ</p>
+              <p className="text-xs text-gray-600 mb-1">Nhiệm vụ xưởng</p>
               <p className="text-xl font-bold text-purple-600">{taskCount}</p>
             </div>
           </div>
@@ -790,8 +856,20 @@ export default function ProductionDetail() {
               <PersonCard label="QL dự án" person={project.project_manager} />
               <PersonCard label="Giám sát" person={project.supervisor} />
               <PersonCard label="Sản xuất" person={project.production_person} />
-              <PersonCard label="Vận chuyển" person={project.shipping_person} />
-              <PersonCard label="Lắp đặt" person={project.installation_person} />
+              <div className="pl-2">
+                <p className="text-[10px] text-gray-400 uppercase font-medium mb-1">Phân công người chịu trách nhiệm SX</p>
+                <select
+                  value={project.production_person?.id || project.production_person_id || ''}
+                  onChange={(e) => setProductionPerson(e.target.value)}
+                  disabled={savingProductionOwner}
+                  className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                >
+                  <option value="">— Chưa phân công —</option>
+                  {taskUsers.map((u) => (
+                    <option key={u.id} value={u.id}>{u.full_name}</option>
+                  ))}
+                </select>
+              </div>
               <PersonCard label="CSKH" person={project.care_person} />
             </div>
             <div className="border-t border-gray-100 pt-3">
@@ -808,86 +886,213 @@ export default function ProductionDetail() {
         {/* Cột phải — tab giống LeadDetail */}
         <div className="lg:col-span-3 space-y-4">
           <div className="bg-white rounded-xl border">
+            {/* Tab bar — giống LeadDetail, bỏ Facebook và Tổng đài */}
             <div className="flex border-b flex-wrap">
               {tabBtn('tasks', '✅ Công việc')}
-              {tabBtn('documents', `📋 Tài liệu (${ownDocCount})`)}
-              {tabBtn('activities', `💬 Hoạt động (${crmActivities.length})`)}
-              {tabBtn('notes', `📝 Ghi chú (${noteActivities.length})`)}
-              {tabBtn('facebook', '📘 Facebook')}
+              {tabBtn('documents', `📋 Tài liệu (${projectDocs.length + (project.sharedDocuments?.length || 0) + taskFiles.length})`)}
+              {tabBtn('activities', `💬 Hoạt động (${crmLeadId ? sharedActivities.length : projectActivities.length})`)}
+              {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
               {tabBtn('team', '👥 Thành viên')}
               {tabBtn('chat', '💬 Trao đổi')}
-              {tabBtn('calls', '📞 Tổng đài')}
               {tabBtn('approvals', '✅ Gửi duyệt')}
             </div>
 
             <div className="p-5">
+              {/* Công việc — dùng CRMTasksTab giống hệt chi tiết deal */}
               {activeTab === 'tasks' && (
-                <WorkshopProjectTasksPanel
-                  project={project}
-                  workArea={workArea}
-                  workshopPipeline={pipelineStages}
-                  tasks={project.tasks}
-                  users={taskUsers}
-                  onReload={refreshProjectSilently}
-                  crmSharedNotes={project?.crmSharedNotes || []}
-                  crmDealDocs={crmDealDocs}
-                />
+                crmLeadId ? (
+                  <CRMTasksTab leadId={crmLeadId} leadType="deal" users={taskUsers} />
+                ) : (
+                  <ProductionTasksTab
+                    projectId={project.id}
+                    stages={pipelineStages}
+                    users={taskUsers}
+                    onReload={refreshProjectSilently}
+                  />
+                )
               )}
 
+              {/* Tài liệu */}
               {activeTab === 'documents' && (
                 <>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {uploadingDoc ? (
-                        <span className="h-8 px-3 bg-orange-100 text-orange-700 rounded-lg text-xs font-medium flex items-center gap-1.5">
-                          <span className="animate-spin h-3.5 w-3.5 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải lên...
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={uploadDocument}
-                          className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <FileUp className="h-3.5 w-3.5" /> Upload file
-                        </button>
-                      )}
-                      {crmLeadId && (
-                        <span className="text-xs text-gray-500">Upload sẽ lưu vào deal CRM</span>
-                      )}
-                    </div>
+                  {/* Header buttons */}
+                  <div className="flex items-center gap-2 mb-4 flex-wrap">
+                    {uploadingDoc ? (
+                      <span className="h-8 px-3 bg-orange-100 text-orange-700 rounded-lg text-xs font-medium flex items-center gap-1.5">
+                        <span className="animate-spin h-3.5 w-3.5 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải lên...
+                      </span>
+                    ) : (
+                      <button type="button" onClick={uploadProjectDocument} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                        <FileUp className="h-3.5 w-3.5" /> Upload file xưởng
+                      </button>
+                    )}
+                    <button type="button" onClick={() => setShowAddTextDoc(true)} className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                      <Plus className="h-3.5 w-3.5" /> Nhập văn bản
+                    </button>
+                    {crmLeadId && (
+                      <Link to={`/crm/leads/${crmLeadId}?tab=documents`} className="h-8 px-3 bg-violet-100 hover:bg-violet-200 text-violet-700 rounded-lg text-xs font-medium flex items-center gap-1.5">
+                        📋 CRM tài liệu
+                      </Link>
+                    )}
                   </div>
-                  <ProductionDocumentsDealLayout
-                    project={project}
-                    crmDealDocs={crmDealDocs}
-                    crmLeadId={crmLeadId}
-                  />
+
+                  {/* Production-native documents */}
+                  {projectDocs.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📁 Tài liệu xưởng ({projectDocs.length})</p>
+                      <div className="space-y-2">
+                        {projectDocs.map(doc => <DocRow key={doc.id} doc={doc} onDelete={() => deleteProjectDocument(doc.id)} />)}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* CRM shared documents */}
+                  {(project.sharedDocuments?.length || 0) > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">🔗 Từ CRM — đã chia sẻ xưởng ({project.sharedDocuments.length})</p>
+                      <div className="space-y-2">
+                        {project.sharedDocuments.map(doc => <DocRow key={doc.id} doc={doc} />)}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Task file attachments */}
+                  {taskFiles.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📌 File đính kèm nhiệm vụ ({taskFiles.length})</p>
+                      <div className="space-y-1">
+                        {taskFiles.map(f => (
+                          <div key={f.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 border rounded-lg">
+                            <span className="text-sm shrink-0">{getFileIcon(f.file_name)}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-gray-800 truncate">{f.file_name}</p>
+                              {f.task?.title && <p className="text-[10px] text-purple-600 truncate">📌 {f.task.title}</p>}
+                            </div>
+                            {f.file_url && (
+                              <a {...getFileOpenAnchorProps(f.file_url, { fileName: f.file_name })} className="text-[10px] text-blue-600 hover:underline shrink-0">Mở</a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {projectDocs.length === 0 && (project.sharedDocuments?.length || 0) === 0 && taskFiles.length === 0 && (
+                    <div className="text-center py-10 bg-gray-50 rounded-lg border-2 border-dashed">
+                      <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                      <p className="text-sm text-gray-500">Chưa có tài liệu nào</p>
+                      <p className="text-xs text-gray-400 mt-1">Upload file xưởng hoặc bật chia sẻ từ CRM</p>
+                    </div>
+                  )}
+
+                  {(project.hiddenDocumentsCount || 0) > 0 && (
+                    <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-700">
+                      Còn <strong>{project.hiddenDocumentsCount}</strong> tài liệu CRM chưa chia sẻ xưởng.
+                    </div>
+                  )}
                 </>
               )}
 
+              {/* Hoạt động */}
               {activeTab === 'activities' && (
-                <ProductionActivitiesDealLayout
-                  crmActivities={crmActivities}
-                  crmLeadId={crmLeadId}
-                  setShowAddCrmActivity={setShowAddCrmActivity}
-                  project={project}
-                />
+                <>
+                  <div className="flex items-center gap-2 mb-4 flex-wrap">
+                    <button type="button" onClick={() => crmLeadId ? setShowAddCrmActivity(true) : setShowAddActivity(true)}
+                      className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                      <Plus className="h-3.5 w-3.5" /> Thêm hoạt động
+                    </button>
+                  </div>
+
+                  {/* Production-native activities (no CRM) */}
+                  {!crmLeadId && (
+                    projectActivities.length === 0 ? (
+                      <div className="text-center py-8">
+                        <MessageSquare className="h-10 w-10 text-gray-200 mx-auto mb-2" />
+                        <p className="text-sm text-gray-400">Chưa có hoạt động nào</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        <div className="relative">
+                          <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-300 to-blue-100" />
+                          {projectActivities.map((act) => {
+                            let parsed = null;
+                            try { parsed = JSON.parse(act.content); } catch { parsed = null; }
+                            const typeInfo = ACTIVITY_TYPES.find(t => t.value === parsed?.type) || ACTIVITY_TYPES[4];
+                            return (
+                              <div key={act.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4 mb-2">
+                                <div className="absolute -left-5 top-4 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
+                                <div className="flex items-start gap-2">
+                                  <span className="text-lg shrink-0">{typeInfo.icon}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between">
+                                      <p className="text-sm font-medium text-gray-900">{parsed?.title || act.content}</p>
+                                      <span className="text-[10px] text-gray-400">{formatDate(act.created_at)}</span>
+                                    </div>
+                                    {parsed?.description && <p className="text-xs text-gray-600 mt-1">{parsed.description}</p>}
+                                    {parsed?.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {parsed.outcome}</p>}
+                                    {act.user && <p className="text-[10px] text-gray-400 mt-1">{act.user.full_name}</p>}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )
+                  )}
+
+                  {/* CRM shared activities */}
+                  {crmLeadId && (
+                    sharedActivities.length === 0 ? (
+                      <div className="text-center py-8">
+                        <MessageSquare className="h-10 w-10 text-gray-200 mx-auto mb-2" />
+                        <p className="text-sm text-gray-400">Chưa có hoạt động nào được chia sẻ xưởng</p>
+                        <p className="text-xs text-gray-400 mt-1">Bên CRM, bật «Chia sẻ xưởng» để hiện ở đây</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        <div className="relative">
+                          <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-300 to-blue-100" />
+                          {sharedActivities.map((act) => {
+                            const typeInfo = ACTIVITY_TYPES.find((t) => t.value === act.type) || ACTIVITY_TYPES[4];
+                            return (
+                              <div key={act.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4 mb-2">
+                                <div className="absolute -left-5 top-4 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
+                                <div className="flex items-start gap-2">
+                                  <span className="text-lg shrink-0">{typeInfo.icon}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between">
+                                      <p className="text-sm font-medium text-gray-900">{act.title}</p>
+                                      <span className="text-[10px] text-gray-400">{formatDate(act.activity_date)}</span>
+                                    </div>
+                                    {act.description && <p className="text-xs text-gray-600 mt-1">{act.description}</p>}
+                                    {act.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {act.outcome}</p>}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )
+                  )}
+                </>
               )}
 
+              {/* Ghi chú — chỉ hiện ghi chú đã chia sẻ xưởng, dùng CrmChatNotesPanel giống LeadDetail */}
               {activeTab === 'notes' && (
                 crmLeadId ? (
                   <CrmChatNotesPanel
                     variant="embedded"
                     leadId={crmLeadId}
-                    notes={noteActivities}
+                    notes={sharedNotes}
                     onPosted={refreshCrmActivities}
                     currentUserId={user?.id || user?.userId}
                     canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
                     contextLine={
                       primaryCrmDeal
                         ? `🎯 Deal ${[primaryCrmDeal.code, primaryCrmDeal.title].filter(Boolean).join(' — ')}`
-                        : project?.code
-                          ? `📋 Dự án ${project.code}`
-                          : ''
+                        : `📋 Dự án ${project.code || ''}`
                     }
                     contextBadge={primaryCrmDeal?.code || project?.code || ''}
                   />
@@ -896,50 +1101,26 @@ export default function ProductionDetail() {
                 )
               )}
 
-              {activeTab === 'facebook' && (
-                crmLeadId ? (
-                  <FacebookChatTab leadId={crmLeadId} />
-                ) : (
-                  <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để xem Facebook.</p>
-                )
-              )}
-
+              {/* Thành viên */}
               {activeTab === 'team' && (
-                crmLeadId ? (
-                  <LeadMembersTab leadId={crmLeadId} />
-                ) : (
-                  <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để xem thành viên.</p>
-                )
+                crmLeadId ? <LeadMembersTab leadId={crmLeadId} /> : <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để xem thành viên.</p>
               )}
 
+              {/* Trao đổi */}
               {activeTab === 'chat' && (
-                crmLeadId ? (
-                  <LeadChatTab leadId={crmLeadId} socket={socket} />
-                ) : (
-                  <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để trao đổi.</p>
-                )
+                crmLeadId
+                  ? <LeadChatTab leadId={crmLeadId} socket={socket} />
+                  : <ProjectChatTab projectId={project.id} socket={socket} />
               )}
 
-              {activeTab === 'calls' && (
-                crmLeadId ? (
-                  <CallLogsTab leadId={crmLeadId} customerId={project.customer?.id} />
-                ) : (
-                  <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để xem ghi âm.</p>
-                )
-              )}
-
+              {/* Gửi duyệt — dùng ProjectApprovalsTab thật */}
               {activeTab === 'approvals' && (
-                <div className="max-w-2xl space-y-4">
-                  <div className="rounded-xl bg-blue-50 border border-blue-100 p-4 text-sm text-blue-800">
-                    Duyệt file theo dự án xưởng (cùng luồng với CRM). Thêm / xử lý yêu cầu duyệt bên dưới.
-                  </div>
-                  <ProjectApprovalsTab
-                    variant="workshop"
-                    projectId={project.id}
-                    project={project}
-                    onUpdated={() => load()}
-                  />
-                </div>
+                <ProjectApprovalsTab
+                  variant="workshop"
+                  projectId={project.id}
+                  project={project}
+                  onUpdated={() => load()}
+                />
               )}
             </div>
           </div>
@@ -1010,6 +1191,79 @@ export default function ProductionDetail() {
           </div>
         </div>
       )}
+
+      {/* Production-native activity modal */}
+      {showAddActivity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowAddActivity(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-900">Thêm hoạt động xưởng</h2>
+              <button type="button" onClick={() => setShowAddActivity(false)} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">Loại</label>
+                <select value={activityForm.type} onChange={e => setActivityForm(f => ({ ...f, type: e.target.value }))} className="w-full h-9 px-2 border border-gray-200 rounded-lg mt-1 text-sm">
+                  {ACTIVITY_FORM_TYPES.map(t => <option key={t.value} value={t.value}>{t.icon} {t.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Tiêu đề</label>
+                <input value={activityForm.title} onChange={e => setActivityForm(f => ({ ...f, title: e.target.value }))} className="w-full h-9 px-2 border border-gray-200 rounded-lg mt-1 text-sm" placeholder="Ví dụ: Kiểm tra nguyên vật liệu" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Mô tả</label>
+                <textarea value={activityForm.description} onChange={e => setActivityForm(f => ({ ...f, description: e.target.value }))} className="w-full min-h-[80px] px-2 py-2 border border-gray-200 rounded-lg mt-1 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Kết quả</label>
+                <input value={activityForm.outcome} onChange={e => setActivityForm(f => ({ ...f, outcome: e.target.value }))} className="w-full h-9 px-2 border border-gray-200 rounded-lg mt-1 text-sm" />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setShowAddActivity(false)} className="h-9 px-4 text-sm text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer">Hủy</button>
+                <button type="button" onClick={saveProjectActivity} disabled={savingActivity} className="h-9 px-4 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 cursor-pointer">
+                  {savingActivity ? 'Đang lưu...' : 'Lưu'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Nhập văn bản modal */}
+      {showAddTextDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowAddTextDoc(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-900">Nhập văn bản tài liệu</h2>
+              <button type="button" onClick={() => setShowAddTextDoc(false)} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">Tên tài liệu</label>
+                <input value={textDocForm.name} onChange={e => setTextDocForm(f => ({ ...f, name: e.target.value }))} className="w-full h-9 px-2 border border-gray-200 rounded-lg mt-1 text-sm" placeholder="Ví dụ: Phiếu nghiệm thu nội bộ" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Nội dung / ghi chú</label>
+                <textarea value={textDocForm.notes} onChange={e => setTextDocForm(f => ({ ...f, notes: e.target.value }))} rows={5} className="w-full px-2 py-2 border border-gray-200 rounded-lg mt-1 text-sm resize-none" placeholder="Nhập nội dung..." />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setShowAddTextDoc(false)} className="h-9 px-4 text-sm text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer">Hủy</button>
+                <button type="button" disabled={!textDocForm.name.trim()} onClick={async () => {
+                  const content = textDocForm.notes || '';
+                  const dataUrl = content ? `data:text/plain;charset=utf-8,${encodeURIComponent(content)}` : '';
+                  try {
+                    await api.post(`/projects/${project.id}/documents/bulk`, { items: [{ file_name: textDocForm.name + '.txt', file_url: dataUrl, file_size: content.length, mime_type: 'text/plain', original_name: textDocForm.name + '.txt', notes: content }] });
+                    await loadProjectDocs(project.id);
+                    setShowAddTextDoc(false);
+                    setTextDocForm({ name: '', notes: '' });
+                  } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
+                }} className="h-9 px-4 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 cursor-pointer">Lưu</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1057,52 +1311,12 @@ function TasksTab({ project }) {
 }
 
 // Documents Tab Component
-function DocumentsTab({ project }) {
-  return (
-    <div className="space-y-3">
-      {project.sharedDocuments && project.sharedDocuments.length > 0 ? (
-        project.sharedDocuments.map((doc) => {
-          const href = doc.file_url || (doc.file_path ? `/uploads/${doc.file_path}` : '#');
-          return (
-            <div key={doc.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
-              <FileIcon className="h-5 w-5 text-blue-600 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">{doc.file_name || doc.name || doc.file_path?.split('/').pop() || 'Tài liệu'}</p>
-                <p className="text-xs text-gray-500">Tải lên: {formatDate(doc.created_at || doc.uploaded_at)}</p>
-                {doc.notes && <p className="text-xs text-gray-400 mt-1 truncate">{doc.notes}</p>}
-              </div>
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded transition"
-              >
-                Xem
-              </a>
-            </div>
-          );
-        })
-      ) : (
-        <p className="text-gray-500 text-sm text-center py-6">Chưa có tài liệu nào được chia sẻ cho xưởng</p>
-      )}
-      {(project.hiddenDocumentsCount || 0) > 0 && (
-        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-700">
-          Còn {project.hiddenDocumentsCount} tài liệu chưa hiển thị ở đây (trên CRM, ai xem được deal vẫn mở được file). Để xưởng thấy: trên CRM bật <strong>chia sẻ xưởng</strong> (hoặc quyền tương đương) cho từng tài liệu — hoặc chạy migration cột <code className="text-xs bg-white/80 px-1 rounded">shared_to_workshop</code>.
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Timeline Tab Component
 function PersonCard({ label, person, showPlaceholder }) {
   if (!person?.full_name) {
     if (!showPlaceholder) return null;
     return (
       <div className="flex items-center gap-3 py-0.5">
-        <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 text-xs font-bold shrink-0">
-          —
-        </div>
+        <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 text-xs font-bold shrink-0">—</div>
         <div className="flex-1 min-w-0">
           <p className="text-xs text-gray-500">{label}</p>
           <p className="text-sm text-gray-400">Chưa gán</p>
@@ -1115,10 +1329,7 @@ function PersonCard({ label, person, showPlaceholder }) {
       {person.avatar ? (
         <img src={person.avatar} alt="" className="h-8 w-8 rounded-full" />
       ) : (
-        <div
-          className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
-          style={{ backgroundColor: avatarColor(person.full_name) }}
-        >
+        <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold" style={{ backgroundColor: avatarColor(person.full_name) }}>
           {getInitials(person.full_name)}
         </div>
       )}
@@ -1130,67 +1341,121 @@ function PersonCard({ label, person, showPlaceholder }) {
   );
 }
 
-function CrmSharedNotesTab({ project }) {
-  const notes = project.crmSharedNotes || [];
-  const dealMap = Object.fromEntries((project.crmDeals || []).map((d) => [d.id, d]));
-  if (!notes.length) {
-    return (
-      <div className="text-center py-10 text-gray-400 max-w-lg mx-auto">
-        <MessageSquare className="h-10 w-10 mx-auto mb-2 opacity-30" />
-        <p className="text-sm">Chưa có ghi chú / hoạt động CRM nào được đánh dấu chia sẻ xưởng.</p>
-        <p className="text-xs mt-2 text-gray-500">Trên CRM, ghi chú vẫn thấy trong cùng module; để hiện ở tab xưởng, bật chia sẻ xưởng (cột <code className="text-[11px] bg-gray-100 px-1 rounded">shared_to_workshop</code>).</p>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-3 max-w-3xl">
-      {notes.map((n) => {
-        const deal = dealMap[n.lead_id];
-        return (
-          <div key={n.id} className="rounded-xl border border-teal-100 bg-teal-50/40 p-4">
-            <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
-              <span className="text-xs font-bold text-teal-800">{n.title}</span>
-              <span className="text-[10px] text-gray-500">{formatDateTime(n.created_at)}</span>
-            </div>
-            {deal && (
-              <p className="text-[11px] text-violet-700 mb-1">Deal CRM: {deal.code}</p>
-            )}
-            {n.description && <p className="text-sm text-gray-700 whitespace-pre-wrap">{n.description}</p>}
-            <p className="text-[10px] text-gray-500 mt-1">
-              {n.type} · {n.creator?.full_name || 'CRM'}
-            </p>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+/** Chat nội bộ xưởng — dùng project_comments khi không có CRM deal */
+function ProjectChatTab({ projectId, socket }) {
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const { user } = useAuth();
+  const bottomRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-function TimelineTab({ project }) {
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/projects/${projectId}/comments`);
+      setMessages((data?.comments || []).slice().reverse());
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 150);
+    } catch (_) {}
+  }, [projectId]);
+
+  useEffect(() => {
+    load();
+    if (socket) {
+      socket.emit('join:project', projectId);
+      const handler = (payload) => {
+        if (String(payload?.project_id) !== String(projectId)) return;
+        setMessages(prev => prev.some(m => m.id === payload.comment?.id) ? prev : [...prev, payload.comment]);
+        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      };
+      socket.on('project:comment', handler);
+      return () => socket.off('project:comment', handler);
+    }
+  }, [projectId, socket, load]);
+
+  const send = async () => {
+    if (!text.trim() || sending) return;
+    setSending(true);
+    try {
+      const { data } = await api.post(`/projects/${projectId}/comments`, { content: text.trim() });
+      setMessages(prev => [...prev, data.comment]);
+      setText('');
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi gửi'); }
+    setSending(false);
+  };
+
+  const handleUpload = async (files) => {
+    const arr = Array.from(files || []);
+    if (!arr.length) return;
+    setSending(true);
+    try {
+      const uploaded = [];
+      for (const file of arr) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const { data: up } = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+        uploaded.push({ url: up.url || up.file_url, name: file.name, type: file.type, size: file.size });
+      }
+      const { data } = await api.post(`/projects/${projectId}/comments`, { content: text.trim() || '', attachments: uploaded });
+      setMessages(prev => [...prev, data.comment]);
+      setText('');
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi upload'); }
+    setSending(false);
+  };
+
+  const formatTime = (d) => {
+    const date = new Date(d);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const time = date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    return isToday ? time : date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) + ' ' + time;
+  };
+
   return (
-    <div className="space-y-4">
-      {project.stage_transitions && project.stage_transitions.length > 0 ? (
-        project.stage_transitions.map((transition, idx) => (
-          <div key={transition.id} className="flex gap-4">
-            <div className="flex flex-col items-center">
-              <div className="w-4 h-4 bg-blue-600 rounded-full border-4 border-white shadow-md" />
-              {idx < project.stage_transitions.length - 1 && (
-                <div className="w-0.5 h-16 bg-gray-300 my-2" />
+    <div className="flex flex-col" style={{ height: '450px' }}>
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50 rounded-t-xl">
+        {messages.length === 0 && <p className="text-center text-sm text-gray-400 py-8">Chưa có tin nhắn nào. Bắt đầu trao đổi!</p>}
+        {messages.map(m => {
+          const isMe = String(m.user_id) === String(user?.userId || user?.id);
+          const atts = Array.isArray(m.attachments) ? m.attachments : [];
+          return (
+            <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} gap-2`}>
+              {!isMe && (
+                <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  {(m.user?.full_name || 'U')[0].toUpperCase()}
+                </div>
               )}
+              <div className={`max-w-[70%] rounded-2xl px-3.5 py-2 shadow-sm ${isMe ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'}`}>
+                {!isMe && <p className="text-[10px] font-medium mb-0.5 text-blue-600">{m.user?.full_name}</p>}
+                {m.content && <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>}
+                {atts.map((att, i) => {
+                  const isImg = att.type?.startsWith('image/');
+                  const href = pubUrl(att.url);
+                  return isImg ? (
+                    <img key={i} src={href} alt={att.name} className="rounded-lg max-w-full max-h-48 mt-1 object-contain" />
+                  ) : (
+                    <a key={i} href={href} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-1 text-xs underline"><Paperclip size={11} />{att.name || 'File'}</a>
+                  );
+                })}
+                <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+              </div>
             </div>
-            <div className="flex-1 py-2">
-              <p className="text-sm font-semibold text-gray-900">
-                {transition.from_stage?.name} → {transition.to_stage?.name}
-              </p>
-              <p className="text-xs text-gray-600 mt-1">
-                Bởi: {transition.user?.full_name || 'Hệ thống'} | {formatDate(transition.created_at)}
-              </p>
-            </div>
-          </div>
-        ))
-      ) : (
-        <p className="text-gray-500 text-sm text-center py-6">Không có lịch sử</p>
-      )}
+          );
+        })}
+        <div ref={bottomRef} />
+      </div>
+      <div className="p-3 border-t bg-white rounded-b-xl flex gap-2 shrink-0">
+        <input type="file" multiple className="hidden" ref={fileInputRef} onChange={e => { handleUpload(e.target.files); e.target.value = ''; }} />
+        <button type="button" onClick={() => fileInputRef.current?.click()} className="text-gray-400 hover:text-blue-500 p-2 cursor-pointer" title="Đính kèm">
+          <Paperclip size={18} />
+        </button>
+        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
+          placeholder="Nhập tin nhắn..." className="flex-1 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+        <button type="button" onClick={send} disabled={sending || !text.trim()}
+          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl w-10 h-10 flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer shadow-sm">
+          <Send size={16} />
+        </button>
+      </div>
     </div>
   );
 }
