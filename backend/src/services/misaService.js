@@ -5,17 +5,54 @@
  */
 
 const axios = require('axios');
-const misaConfig = require('../config/misaConfig');
+const fs = require('fs');
+const path = require('path');
+const _envConfig = require('../config/misaConfig');
+
+const MISA_CONFIG_FILE = path.join(__dirname, '../../data/misa-config.json');
+const BASE_URL_TEST = 'https://testapi.meinvoice.vn/api/integration';
+const BASE_URL_PROD = 'https://api.meinvoice.vn/api/integration';
+
+/**
+ * Đọc config MISA: ưu tiên misa-config.json, fallback về .env
+ */
+function getMisaConfig() {
+  try {
+    if (fs.existsSync(MISA_CONFIG_FILE)) {
+      const raw = fs.readFileSync(MISA_CONFIG_FILE, 'utf-8').replace(/^\uFEFF/, '');
+      const saved = JSON.parse(raw);
+      const isProduction = saved.isProduction === true;
+      return {
+        appId: saved.appId || _envConfig.appId || '',
+        taxcode: saved.taxcode || _envConfig.taxcode || '',
+        username: saved.username || _envConfig.username || '',
+        password: saved.password || _envConfig.password || '',
+        invSeries: saved.invSeries || _envConfig.invSeries || '1C26TYY',
+        signType: saved.signType != null ? Number(saved.signType) : _envConfig.signType,
+        isProduction,
+        baseUrl: isProduction ? BASE_URL_PROD : BASE_URL_TEST,
+      };
+    }
+  } catch (e) {
+    console.warn('[misaService] Cannot read misa-config.json, fallback to .env:', e.message);
+  }
+  return _envConfig;
+}
+
+// Expose misaConfig (computed lazily) for backwards compat
+const misaConfig = _envConfig;
 
 // Cache token trong memory để tránh gọi /auth/token liên tục
-let _tokenCache = { token: null, expiresAt: 0 };
+// Key = appId so we bust cache when credentials change
+let _tokenCache = { token: null, expiresAt: 0, appId: null };
 
 /**
  * Lấy Bearer token từ MISA meInvoice API
  */
-async function getMisaToken(config = misaConfig) {
+async function getMisaToken(config) {
+  if (!config) config = getMisaConfig();
   const now = Date.now();
-  if (_tokenCache.token && now < _tokenCache.expiresAt - 60_000) {
+  if (_tokenCache.token && _tokenCache.appId === config.appId && now < _tokenCache.expiresAt - 60_000) {
     return _tokenCache.token;
   }
 
@@ -35,7 +72,7 @@ async function getMisaToken(config = misaConfig) {
   }
 
   const token = resp.data.data;
-  _tokenCache = { token, expiresAt: now + 3_600_000 };
+  _tokenCache = { token, expiresAt: now + 3_600_000, appId: config.appId };
   return token;
 }
 
@@ -92,7 +129,8 @@ function mapPaymentMethod(method) {
 /**
  * Map dữ liệu từ CRM invoices/invoice_items sang format MISA InvoiceData
  */
-function mapInvoiceToMisa(invoice, items, config = misaConfig) {
+function mapInvoiceToMisa(invoice, items, config) {
+  if (!config) config = getMisaConfig();
   const invoiceData = {
     RefID: invoice.id,
     InvSeries: invoice.misa_inv_series || config.invSeries,
@@ -170,7 +208,8 @@ function buildTaxRateInfo(items) {
  * @param {object[]} items - mảng invoice_items
  * @param {object} config - override config nếu cần
  */
-async function publishInvoice(invoice, items, config = misaConfig) {
+async function publishInvoice(invoice, items, config) {
+  if (!config) config = getMisaConfig();
   if (!config.appId) throw new Error('MISA_APP_ID chưa được cấu hình');
 
   const token = await getMisaToken(config);
@@ -213,7 +252,8 @@ async function publishInvoice(invoice, items, config = misaConfig) {
  * @param {string} email - Email người nhận
  * @param {string} customerName - Tên khách hàng
  */
-async function sendEmailInvoice(invoiceNo, email, customerName = '', config = misaConfig) {
+async function sendEmailInvoice(invoiceNo, email, customerName = '', config) {
+  if (!config) config = getMisaConfig();
   if (!config.appId) throw new Error('MISA_APP_ID chưa được cấu hình');
   if (!invoiceNo) throw new Error('Chưa có số hóa đơn MISA (cần phát hành trước)');
 
@@ -250,7 +290,8 @@ async function sendEmailInvoice(invoiceNo, email, customerName = '', config = mi
 /**
  * Lấy trạng thái hóa đơn từ MISA theo RefID
  */
-async function getInvoiceStatus(refId, config = misaConfig) {
+async function getInvoiceStatus(refId, config) {
+  if (!config) config = getMisaConfig();
   if (!config.appId) throw new Error('MISA_APP_ID chưa được cấu hình');
 
   const token = await getMisaToken(config);
@@ -270,6 +311,7 @@ async function getInvoiceStatus(refId, config = misaConfig) {
 }
 
 module.exports = {
+  getMisaConfig,
   getMisaToken,
   mapInvoiceToMisa,
   publishInvoice,

@@ -65,7 +65,7 @@ export default function PipelineSettingsPage() {
   const [activeType, setActiveType] = useState('lead');
   const [adding, setAdding] = useState(null);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ name: '', color: '#94A3B8', icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false });
+  const [form, setForm] = useState({ name: '', color: '#94A3B8', icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false, sync_role: '' });
 
   const [zaloSettings, setZaloSettings] = useState(null);
   const [zaloLoading, setZaloLoading] = useState(false);
@@ -297,7 +297,7 @@ export default function PipelineSettingsPage() {
   const startAdd = (type) => {
     setAdding(type);
     setEditId(null);
-    setForm({ name: '', color: COLORS[filtered.length % COLORS.length], icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false });
+    setForm({ name: '', color: COLORS[filtered.length % COLORS.length], icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false, sync_role: '' });
   };
 
   const startEdit = (stage) => {
@@ -310,6 +310,7 @@ export default function PipelineSettingsPage() {
       is_won: stage.is_won,
       is_lost: stage.is_lost,
       send_zalo_on_enter: !!stage.send_zalo_on_enter,
+      sync_role: stage.sync_role || '',
     });
   };
 
@@ -414,10 +415,13 @@ export default function PipelineSettingsPage() {
             <span className="text-lg shrink-0">{s.icon || '📋'}</span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-gray-900">{s.name}</p>
-              <div className="flex items-center gap-2 text-[10px] text-gray-400">
+              <div className="flex items-center gap-2 text-[10px] text-gray-400 flex-wrap">
                 {s.is_won && <span className="text-emerald-600 font-bold">✅ Thắng</span>}
                 {s.is_lost && <span className="text-red-500 font-bold">❌ Thua/Mất</span>}
                 {!s.is_active && <span className="text-orange-500">Ẩn</span>}
+                {s.sync_role === 'vc_delivery' && <span className="text-blue-600 font-medium">🚚 Vận chuyển (VC→CRM)</span>}
+                {s.sync_role === 'vc_installation' && <span className="text-amber-700 font-medium">🔧 Lắp đặt (VC→CRM)</span>}
+                {s.sync_role === 'vc_customer_care' && <span className="text-teal-700 font-medium">🤝 CSKH (VC→CRM)</span>}
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
@@ -774,6 +778,27 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead' }) {
           </label>
         )}
       </div>
+
+      {pipelineType === 'deal' && !form.is_won && !form.is_lost && (
+        <div>
+          <label className="text-[10px] font-medium text-gray-500 block mb-1">
+            Vai trò đồng bộ từ Vận chuyển & Lắp đặt (sync_role)
+          </label>
+          <select
+            value={form.sync_role || ''}
+            onChange={(e) => setForm((f) => ({ ...f, sync_role: e.target.value }))}
+            className="w-full h-8 px-2 border rounded-lg text-xs bg-white"
+          >
+            <option value="">— Không đồng bộ —</option>
+            <option value="vc_delivery">🚚 Nhận deal khi VC chuyển sang «Vận chuyển thành công»</option>
+            <option value="vc_installation">🔧 Nhận deal khi VC chuyển sang «Lắp đặt thành công»</option>
+            <option value="vc_customer_care">🤝 Nhận deal khi VC chuyển sang «Chăm sóc KH / Bảo hành»</option>
+          </select>
+          <p className="text-[10px] text-gray-400 mt-1">
+            Khi cột VC pipeline được đánh dấu đồng bộ, hệ thống tìm cột CRM có sync_role tương ứng và cập nhật deal.
+          </p>
+        </div>
+      )}
 
       <div className="flex gap-2 justify-end">
         <button onClick={onCancel} className="h-8 px-3 bg-gray-100 text-gray-700 rounded-lg text-xs cursor-pointer">Hủy</button>

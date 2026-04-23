@@ -73,7 +73,7 @@ async function loadProductionPipelineStagesRows(includeInactive = false) {
   let q = supabase
     .from('production_pipeline_stages')
     .select(`
-      id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug,
+      id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, is_handover_to_logistics,
       workflow_stage:workflow_stages(id, slug, name, color, icon)
     `)
     .order('order_index');
@@ -217,6 +217,105 @@ async function getCrmSanXuatStageId() {
   return data?.id || null;
 }
 
+/** Tìm CRM stage có sync_role = 'vc_delivery' hoặc tên chứa 'Vận chuyển' */
+async function getCrmVcDeliveryStageId() {
+  // Ưu tiên sync_role rõ ràng
+  const { data: byRole } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', 'deal')
+    .eq('is_active', true)
+    .eq('sync_role', 'vc_delivery')
+    .limit(1)
+    .maybeSingle();
+  if (byRole?.id) return byRole.id;
+
+  // Fallback: tìm theo tên
+  const { data: byName } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', 'deal')
+    .eq('is_active', true)
+    .or('name.ilike.%Vận chuyển%,name.ilike.%van chuyen%,name.ilike.%Giao hàng%')
+    .limit(1)
+    .maybeSingle();
+  return byName?.id || null;
+}
+
+/** Tìm CRM stage có sync_role = 'vc_installation' hoặc tên chứa 'Lắp đặt' */
+async function getCrmVcInstallationStageId() {
+  const { data: byRole } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', 'deal')
+    .eq('is_active', true)
+    .eq('sync_role', 'vc_installation')
+    .limit(1)
+    .maybeSingle();
+  if (byRole?.id) return byRole.id;
+
+  const { data: byName } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', 'deal')
+    .eq('is_active', true)
+    .or('name.ilike.%Lắp đặt%,name.ilike.%lap dat%,name.ilike.%Lắp%')
+    .limit(1)
+    .maybeSingle();
+  return byName?.id || null;
+}
+
+/** Tìm CRM stage có sync_role = 'vc_customer_care' hoặc tên chứa 'Chăm sóc' */
+async function getCrmVcCustomerCareStageId() {
+  const { data: byRole } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', 'deal')
+    .eq('is_active', true)
+    .eq('sync_role', 'vc_customer_care')
+    .limit(1)
+    .maybeSingle();
+  if (byRole?.id) return byRole.id;
+
+  const { data: byName } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', 'deal')
+    .eq('is_active', true)
+    .or('name.ilike.%Chăm sóc%,name.ilike.%CSKH%,name.ilike.%Bảo hành%')
+    .limit(1)
+    .maybeSingle();
+  return byName?.id || null;
+}
+
+/**
+ * Khi project chuyển sang stage VC có crm_sync_type → cập nhật CRM deal
+ * crm_sync_type: 'delivery' | 'installation' | 'customer_care'
+ */
+async function syncCrmLeadFromLogisticsStage(projectId, crmSyncType) {
+  if (!crmSyncType) return;
+
+  let targetCrmStageId = null;
+  if (crmSyncType === 'delivery') {
+    targetCrmStageId = await getCrmVcDeliveryStageId();
+  } else if (crmSyncType === 'installation') {
+    targetCrmStageId = await getCrmVcInstallationStageId();
+  } else if (crmSyncType === 'customer_care') {
+    targetCrmStageId = await getCrmVcCustomerCareStageId();
+  }
+  if (!targetCrmStageId) return;
+
+  const { data: leads } = await supabase
+    .from('crm_leads')
+    .select('id, stage_id')
+    .eq('project_id', projectId)
+    .eq('type', 'deal');
+
+  for (const lead of leads || []) {
+    await supabase.from('crm_leads').update({ stage_id: targetCrmStageId }).eq('id', lead.id);
+  }
+}
+
 /**
  * Tìm ID stage "Thắng" trong CRM deal pipeline (is_won=true).
  */
@@ -316,4 +415,8 @@ module.exports = {
   syncCrmLeadSxPipelineFromProject,
   getCrmSanXuatStageId,
   getCrmThangStageId,
+  getCrmVcDeliveryStageId,
+  getCrmVcInstallationStageId,
+  getCrmVcCustomerCareStageId,
+  syncCrmLeadFromLogisticsStage,
 };

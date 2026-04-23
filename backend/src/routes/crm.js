@@ -812,6 +812,7 @@ r.post('/pipeline-stages', async (req, res) => {
       color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
       is_won: b.is_won || false, is_lost: b.is_lost || false, is_active: true,
       send_zalo_on_enter: !!b.send_zalo_on_enter,
+      sync_role: b.sync_role || null,
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -822,7 +823,7 @@ r.put('/pipeline-stages/:id', async (req, res) => {
   try {
     const b = req.body;
     const update = {};
-    ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter'].forEach(f => {
+    ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter', 'sync_role'].forEach(f => {
       if (b[f] !== undefined) update[f] = f === 'send_zalo_on_enter' ? !!b[f] : b[f];
     });
     const { data, error } = await supabase.from('crm_pipeline_stages').update(update)
@@ -1686,8 +1687,22 @@ r.get('/leads-by-fb-page', async (req, res) => {
 // LEADS (CRUD + Pipeline)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const CRM_LEAD_LIST_SELECT =
+/** linked_project embed added in migration 76 — included here, stripped by runtime fallback if migration not applied */
+const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, production_deadline, production_note)';
+const CRM_LEAD_LIST_SELECT_BASE =
   '*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies(id, name, short_name), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)';
+let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
+let _crmLeadSelectMigrationChecked = false;
+async function getCrmLeadListSelect() {
+  if (_crmLeadSelectMigrationChecked) return CRM_LEAD_LIST_SELECT;
+  const { error } = await supabase.from('projects').select('production_deadline').limit(0);
+  if (error && error.message?.includes('production_deadline')) {
+    CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE;
+    console.warn('[crm] Migration 76 not applied — linked_project.production_deadline unavailable');
+  }
+  _crmLeadSelectMigrationChecked = true;
+  return CRM_LEAD_LIST_SELECT;
+}
 
 /** Lead/deal tạo trong N ngày và user chưa mở chi tiết → badge "Mới" */
 const CRM_NEW_LEAD_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -1801,11 +1816,12 @@ function parseCrmLeadsPageRpc(raw) {
 async function fetchCrmLeadsByIdsOrdered(ids) {
   const list = Array.isArray(ids) ? ids : [];
   if (list.length === 0) return [];
+  const selectStr = await getCrmLeadListSelect();
   const chunkSize = 300;
   const byId = new Map();
   for (let i = 0; i < list.length; i += chunkSize) {
     const chunk = list.slice(i, i + chunkSize);
-    const { data, error } = await supabase.from('crm_leads').select(CRM_LEAD_LIST_SELECT).in('id', chunk);
+    const { data, error } = await supabase.from('crm_leads').select(selectStr).in('id', chunk);
     if (error) throw error;
     (data || []).forEach((row) => byId.set(row.id, row));
   }
@@ -1819,10 +1835,11 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 5000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
 
+  const selectStr = await getCrmLeadListSelect();
   const buildBaseQuery = () => {
     let q = supabase
       .from('crm_leads')
-      .select(CRM_LEAD_LIST_SELECT)
+      .select(selectStr)
       .eq('type', type)
       .order('created_at', { ascending: false });
     if (stage_id) q = q.eq('stage_id', stage_id);

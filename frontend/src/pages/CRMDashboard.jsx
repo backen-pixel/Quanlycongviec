@@ -2203,6 +2203,22 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
         </div>
       )}
 
+      {/* Ngày giao xưởng từ linked project */}
+      {item.linked_project?.production_deadline && (() => {
+        const pd = item.linked_project.production_deadline;
+        const isOverdue = new Date(pd) < new Date();
+        const isSoon = !isOverdue && new Date(pd) < new Date(Date.now() + 3 * 86400000);
+        return (
+          <div className={`${compact ? 'mt-1' : 'mt-2'} flex items-center gap-1.5 px-2 py-1 rounded-lg ${isOverdue ? 'bg-red-50 border border-red-200' : isSoon ? 'bg-amber-50 border border-amber-200' : 'bg-teal-50 border border-teal-200'}`}>
+            <span className="text-[10px]">🏭</span>
+            <span className={`font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'} ${isOverdue ? 'text-red-700' : isSoon ? 'text-amber-700' : 'text-teal-700'}`}>
+              Giao xưởng: {new Date(pd).toLocaleDateString('vi-VN')}
+              {isOverdue ? ' ⚠️' : isSoon ? ' ⚡' : ''}
+            </span>
+          </div>
+        );
+      })()}
+
       {/* Lý do thua */}
       {item.lost_reason && (
         <div className="mt-2 px-2 py-1.5 bg-red-50 border border-red-100 rounded-lg">

@@ -70,12 +70,17 @@ import ApprovalRulesPage from './pages/ApprovalRulesPage';
 import EcosystemPage from './pages/EcosystemPage';
 import EcosystemLevelsPage from './pages/EcosystemLevelsPage';
 import CRMDashboard from './pages/CRMDashboard';
+import LeadJourneyPage from './pages/LeadJourneyPage';
 import ProductionLayout from './layouts/ProductionLayout';
 import ProductionDashboard from './pages/ProductionDashboard';
 import ProductionDetail from './pages/ProductionDetail';
 import ProductionApprovalsPage from './pages/ProductionApprovalsPage';
 import ProductionPipelineSettingsPage from './pages/ProductionPipelineSettingsPage';
 const WorkshopTaskTemplatesPage = lazy(() => import('./pages/WorkshopTaskTemplatesPage'));
+import LogisticsDashboard from './pages/LogisticsDashboard';
+import LogisticsDetail from './pages/LogisticsDetail';
+import LogisticsPipelineSettingsPage from './pages/LogisticsPipelineSettingsPage';
+import WorkshopTeamsPage from './pages/WorkshopTeamsPage';
 import QuotationsPage from './pages/QuotationsPage';
 import QuotationForm from './pages/QuotationForm';
 import OrdersPage from './pages/OrdersPage';
@@ -183,6 +188,7 @@ function ProtectedLayout() {
 function DefaultRedirect() {
   const pinned = localStorage.getItem('pinned_module') || '/crm';
   if (pinned === '/sx') return <Navigate to="/sx/dashboard" replace />;
+  if (pinned === '/vc') return <Navigate to="/vc/dashboard" replace />;
   return <Navigate to={pinned} replace />;
 }
 
@@ -231,6 +237,7 @@ export default function App() {
             <Route path="/template-sets/:setId" element={<TemplateSetDetailPage />} />
             <Route path="/permissions" element={<PermissionsPage />} />
             <Route path="/crm" element={<Navigate to="/crm/dashboard" replace />} />
+            <Route path="/crm/lead-journey" element={<LeadJourneyPage />} />
             <Route path="/crm/events" element={<EventsFeedPage />} />
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
@@ -275,6 +282,14 @@ export default function App() {
                 )}
               />
               <Route path="projects/:id" element={<ProductionDetail />} />
+            </Route>
+            {/* Module Vận chuyển & Lắp đặt */}
+            <Route path="/vc" element={<ProductionLayout />}>
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<LogisticsDashboard />} />
+              <Route path="pipeline-settings" element={<LogisticsPipelineSettingsPage />} />
+              <Route path="teams" element={<WorkshopTeamsPage />} />
+              <Route path="projects/:id" element={<LogisticsDetail />} />
             </Route>
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />

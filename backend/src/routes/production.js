@@ -14,6 +14,7 @@ const {
   enrichProjectsForSx,
   buildPipelineSummary,
   syncCrmLeadSxPipelineFromProject,
+  getCrmVcDeliveryStageId,
 } = require('../helpers/workshopKanban');
 const { applyWorkshopTemplateToProject } = require('../helpers/workshopApplyTemplates');
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
@@ -104,6 +105,7 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       is_active: b.is_active !== false,
       workflow_stage_id: b.workflow_stage_id || null,
       bucket_slug: b.bucket_slug || null,
+      is_handover_to_logistics: b.bucket_slug === INTAKE_BUCKET ? false : (b.is_handover_to_logistics || false),
     };
     if (insertPayload.bucket_slug === INTAKE_BUCKET) insertPayload.workflow_stage_id = null;
 
@@ -111,7 +113,7 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       .from('production_pipeline_stages')
       .insert(insertPayload)
       .select(`
-        id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug,
+        id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, is_handover_to_logistics,
         workflow_stage:workflow_stages(id, slug, name, color, icon)
       `)
       .single();
@@ -132,11 +134,12 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       .eq('id', req.params.id)
       .single();
     const update = {};
-    ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug'].forEach((f) => {
+    ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug', 'is_handover_to_logistics'].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
       update.workflow_stage_id = null;
+      update.is_handover_to_logistics = false;
     }
     if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET) {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
@@ -146,7 +149,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       .update(update)
       .eq('id', req.params.id)
       .select(`
-        id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug,
+        id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, is_handover_to_logistics,
         workflow_stage:workflow_stages(id, slug, name, color, icon)
       `)
       .single();
@@ -275,6 +278,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       .from('projects')
       .select(`
         id, code, name, estimated_value, priority, deadline, created_at, status, notes,
+        production_deadline, production_note,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
@@ -321,7 +325,34 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       .order('created_at', { ascending: false })
       .range(offset, offset + parsedLimit - 1);
 
-    const { data: projects, error, count } = await query;
+    let { data: projects, error, count } = await query;
+    if (error && error.message?.includes('production_deadline')) {
+      // Migration 76 not yet applied — retry without new columns
+      let fallbackQuery = supabase
+        .from('projects')
+        .select(`
+          id, code, name, estimated_value, priority, deadline, created_at, status, notes,
+          current_stage_id,
+          current_stage:workflow_stages(id, slug, name, color, icon),
+          customer:customers(id, full_name, phone),
+          company:companies(id, name, short_name),
+          production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
+          sales_person:users!projects_sales_person_id_fkey(id, full_name),
+          supervisor:users!projects_supervisor_id_fkey(id, full_name),
+          tasks(id, status)
+        `, { count: 'exact' });
+      if (String(sx_intake) === '1') {
+        if (!wonIds.length) return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
+        fallbackQuery = fallbackQuery.in('id', wonIds);
+        if (stageIds.length) fallbackQuery = fallbackQuery.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
+      } else {
+        fallbackQuery = fallbackQuery.or(buildScopeOrFilter(stageIds, wonIds));
+      }
+      if (search) fallbackQuery = fallbackQuery.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
+      if (priority) fallbackQuery = fallbackQuery.eq('priority', priority);
+      fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
+      ({ data: projects, error, count } = await fallbackQuery);
+    }
     if (error) throw error;
 
     const enhanced = enrichProjectsForSx(projects, sortedKanban, wonIds).map((project) => ({
@@ -330,6 +361,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       task_total: project.tasks?.length || 0,
       done_tasks: project.tasks?.filter((task) => task.status === 'done').length || 0,
       is_overdue: Boolean(project.deadline && new Date(project.deadline) < new Date() && project.status !== 'completed'),
+      is_production_overdue: Boolean(project.production_deadline && new Date(project.production_deadline) < new Date() && project.status !== 'completed'),
     }));
 
     res.json({
@@ -346,8 +378,11 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 });
 
 // ─── GET /production/projects/:id ──
+/** Columns added in migration 76 — included here, falls back gracefully if migration not yet applied */
+const MIGRATION_76_COLS = 'production_deadline, production_note,';
+
 const PROJECT_DETAIL_SELECT = `
-        id, code, name, description, estimated_value, priority, deadline, status, notes, created_at,
+        id, code, name, description, estimated_value, priority, deadline, ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
@@ -387,6 +422,12 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       .select(PROJECT_DETAIL_SELECT)
       .eq('id', projectId)
       .single();
+
+    // Migration 76 not yet applied — retry without new columns
+    if (error && error.message?.includes('production_deadline')) {
+      const fallbackSelect = PROJECT_DETAIL_SELECT.replace(MIGRATION_76_COLS, '');
+      ({ data: project, error } = await supabase.from('projects').select(fallbackSelect).eq('id', projectId).single());
+    }
 
     if (error || !project) {
       const { data: bareProject } = await supabase.from('projects').select('id').eq('id', projectId).maybeSingle();
@@ -435,6 +476,10 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           .select(PROJECT_DETAIL_SELECT)
           .eq('id', projectId)
           .single());
+        if (error && error.message?.includes('production_deadline')) {
+          const fallbackSelect = PROJECT_DETAIL_SELECT.replace(MIGRATION_76_COLS, '');
+          ({ data: project, error } = await supabase.from('projects').select(fallbackSelect).eq('id', projectId).single());
+        }
       }
     }
 
@@ -455,7 +500,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       return res.status(403).json({ error: 'Dự án không thuộc phạm vi sản xuất / deal thắng' });
     }
 
-    const [documentsRes, commentsRes] = await Promise.all([
+    const [documentsRes, commentsRes, incidentsRes] = await Promise.all([
       supabase
         .from('lead_documents')
         .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
@@ -467,6 +512,12 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         .eq('project_id', project.id)
         .order('created_at', { ascending: false })
         .limit(20),
+      supabase
+        .from('project_incidents')
+        .select(`id, title, severity, status, created_at, reporter:users!project_incidents_reported_by_fkey(id, full_name)`)
+        .eq('project_id', project.id)
+        .order('created_at', { ascending: false })
+        .limit(10),
     ]);
 
     const documents = documentsRes.data || [];
@@ -556,6 +607,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         crmDeals: crmSummary || [],
         crmSharedNotes,
         recentComments: commentsRes.data || [],
+        incidents: incidentsRes.error ? [] : (incidentsRes.data || []),
         workshopPipeline,
         sxKanbanStages: sortedK.map((c) => ({
           id: c.id,
@@ -691,6 +743,68 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       console.warn('[production] syncCrmLeadSxPipelineFromProject:', syncErr.message);
     }
 
+    // Kiểm tra cột SX có cờ is_handover_to_logistics → chuyển sang module VC
+    try {
+      // Graceful degradation: nếu cột is_handover_to_logistics chưa tồn tại (migration 78 chưa chạy),
+      // thử query không có cột đó và bỏ qua tính năng handover tự động
+      let sxPipeStage = null;
+      const { data: sxPipeStageRaw, error: sxPipeErr } = await supabase
+        .from('production_pipeline_stages')
+        .select('id, is_handover_to_logistics, name')
+        .eq('workflow_stage_id', stage_id)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      if (sxPipeErr && sxPipeErr.message?.includes('is_handover_to_logistics')) {
+        console.warn('[production/stage] is_handover_to_logistics column missing — run migration 78');
+      } else {
+        sxPipeStage = sxPipeStageRaw;
+      }
+
+      if (sxPipeStage?.is_handover_to_logistics) {
+        // Đổi status project sang 'shipping' để lọc trong VC module
+        await supabase.from('projects').update({ status: 'shipping' }).eq('id', id);
+
+        // Đồng bộ CRM deal sang cột "Vận chuyển" nếu cấu hình
+        try {
+          const vcDeliveryStageId = await getCrmVcDeliveryStageId();
+          if (vcDeliveryStageId) {
+            const { data: leads } = await supabase
+              .from('crm_leads')
+              .select('id')
+              .eq('project_id', id)
+              .eq('type', 'deal');
+            for (const lead of leads || []) {
+              await supabase.from('crm_leads').update({ stage_id: vcDeliveryStageId }).eq('id', lead.id);
+            }
+          }
+        } catch (crmErr) {
+          console.warn('[production/handover] sync CRM VC delivery:', crmErr.message);
+        }
+
+        // Thông báo nhân viên VC
+        const { data: vcUsers } = await supabase
+          .from('users')
+          .select('id')
+          .in('role', ['logistics', 'installer', 'manager'])
+          .eq('is_active', true);
+        const vcRecipients = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
+        if (vcRecipients.length) {
+          await notifyMultipleShared(
+            req,
+            vcRecipients,
+            'workshop_new_deal',
+            `🚚 Vận chuyển: Deal mới từ Xưởng`,
+            `Dự án ${updated.code || updated.name} đã hoàn thành sản xuất, chuyển sang Vận chuyển & Lắp đặt`,
+            'project',
+            id,
+          );
+        }
+      }
+    } catch (handoverErr) {
+      console.warn('[production/stage] handover to logistics:', handoverErr.message);
+    }
+
     // Thông báo đến toàn bộ nhân viên xưởng (production + manager), trừ người thực hiện
     try {
       const { data: workshopUsers } = await supabase
@@ -721,6 +835,85 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     if (io) io.emit('project:stage_changed', updated);
 
     res.json({ project: updated });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── PATCH /production/projects/:id/handover-vc ───────────────────────────
+// Bàn giao thủ công từ SX sang module Vận chuyển & Lắp đặt
+r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, code, name, status, current_stage_id')
+      .eq('id', id)
+      .single();
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Đổi status sang 'shipping' và xoá current_stage_id
+    // để project rơi vào cột "Chờ vận chuyển" trong VC Kanban
+    const { error: updateError } = await supabase
+      .from('projects')
+      .update({ status: 'shipping', current_stage_id: null })
+      .eq('id', id);
+    if (updateError) throw updateError;
+
+    // Ghi stage_transition
+    try {
+      await supabase.from('stage_transitions').insert({
+        project_id: id,
+        from_stage_id: project.current_stage_id,
+        to_stage_id: null,
+        notes: 'Bàn giao sang module Vận chuyển & Lắp đặt (thủ công)',
+        transitioned_by: userId,
+      });
+    } catch (te) { console.warn('[production/handover-vc] stage_transitions:', te.message); }
+
+    // Đồng bộ CRM deal sang cột "Vận chuyển" nếu cấu hình
+    try {
+      const vcDeliveryStageId = await getCrmVcDeliveryStageId();
+      if (vcDeliveryStageId) {
+        const { data: leads } = await supabase
+          .from('crm_leads').select('id').eq('project_id', id).eq('type', 'deal');
+        for (const lead of leads || []) {
+          await supabase.from('crm_leads').update({ stage_id: vcDeliveryStageId }).eq('id', lead.id);
+        }
+      }
+    } catch (crmErr) {
+      console.warn('[production/handover-vc] sync CRM:', crmErr.message);
+    }
+
+    // Thông báo nhân viên VC
+    try {
+      const { data: vcUsers } = await supabase
+        .from('users').select('id').in('role', ['logistics', 'installer', 'manager']).eq('is_active', true);
+      const vcRecipients = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
+      if (vcRecipients.length) {
+        await notifyMultipleShared(
+          req, vcRecipients, 'workshop_new_deal',
+          `🚚 Vận chuyển: Deal mới từ Xưởng`,
+          `Dự án ${project.code || project.name} đã bàn giao sang Vận chuyển & Lắp đặt`,
+          'project', id,
+        );
+      }
+    } catch (notifErr) {
+      console.warn('[production/handover-vc] notify VC:', notifErr.message);
+    }
+
+    const { data: updated } = await supabase
+      .from('projects')
+      .select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name)')
+      .eq('id', id).single();
+
+    const io = req.app.get('io');
+    if (io) io.emit('project:stage_changed', updated);
+
+    res.json({ project: updated, handed_over: true });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -914,6 +1107,112 @@ r.post('/projects/:id/tasks/from-template', requirePermission('projects', 'edit'
       return res.status(result.statusCode || 400).json({ error: result.error });
     }
     res.status(201).json({ count: result.count, task_ids: result.task_ids });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ INCIDENTS (Sự cố xưởng) ═══
+
+r.get('/projects/:id/incidents', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('project_incidents')
+      .select(`
+        id, title, description, severity, status, created_at, resolved_at,
+        reporter:users!project_incidents_reported_by_fkey(id, full_name, avatar),
+        resolver:users!project_incidents_resolved_by_fkey(id, full_name, avatar)
+      `)
+      .eq('project_id', id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ incidents: data || [] });
+  } catch (e) {
+    if (e.message?.includes('project_incidents')) {
+      return res.json({ incidents: [], _note: 'migration_pending' });
+    }
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, severity } = req.body;
+    const userId = req.user.userId;
+    if (!title?.trim()) return res.status(400).json({ error: 'Thiếu tiêu đề sự cố' });
+    const { data, error } = await supabase
+      .from('project_incidents')
+      .insert({
+        project_id: id,
+        reported_by: userId,
+        title: title.trim(),
+        description: description || null,
+        severity: severity || 'medium',
+        status: 'open',
+      })
+      .select(`
+        id, title, description, severity, status, created_at,
+        reporter:users!project_incidents_reported_by_fkey(id, full_name, avatar)
+      `)
+      .single();
+    if (error) throw error;
+
+    // Notify managers and production supervisors
+    try {
+      const { data: managers } = await supabase
+        .from('users')
+        .select('id')
+        .in('role', ['manager', 'admin'])
+        .eq('is_active', true);
+      const recipientIds = (managers || []).map((u) => u.id).filter((uid) => uid !== userId);
+      if (recipientIds.length) {
+        const { notifyMultiple: notifyM } = require('../helpers/notifications');
+        await notifyM(
+          req, recipientIds, 'project_updated',
+          `⚠️ Sự cố: ${title}`,
+          `Dự án ${id} báo sự cố mức ${severity || 'medium'}`,
+          'project', id,
+        );
+      }
+    } catch (ne) {
+      console.warn('[incidents] notify:', ne.message);
+    }
+
+    res.status(201).json({ incident: data });
+  } catch (e) {
+    if (e.message?.includes('project_incidents')) {
+      return res.status(503).json({ error: 'Tính năng báo sự cố chưa được kích hoạt. Vui lòng chạy migration 76.' });
+    }
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.patch('/projects/:projectId/incidents/:incidentId', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const { projectId, incidentId } = req.params;
+    const { status, description } = req.body;
+    const userId = req.user.userId;
+    const update = { updated_at: new Date().toISOString() };
+    if (status) update.status = status;
+    if (description !== undefined) update.description = description;
+    if (status === 'resolved' || status === 'closed') {
+      update.resolved_at = new Date().toISOString();
+      update.resolved_by = userId;
+    }
+    const { data, error } = await supabase
+      .from('project_incidents')
+      .update(update)
+      .eq('id', incidentId)
+      .eq('project_id', projectId)
+      .select('id, title, severity, status, resolved_at')
+      .single();
+    if (error) throw error;
+    res.json({ incident: data });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });

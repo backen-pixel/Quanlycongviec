@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck } from 'lucide-react';
 
 const INTAKE = 'won_pending';
 const COLORS = ['#0f766e', '#14b8a6', '#5eead4', '#64748b', '#3B82F6', '#8B5CF6', '#F59E0B', '#10B981'];
@@ -14,7 +14,7 @@ export default function ProductionPipelineSettingsPage() {
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({
-    name: '', color: COLORS[0], icon: '📋', workflow_stage_id: '', is_active: true,
+    name: '', color: COLORS[0], icon: '📋', workflow_stage_id: '', is_active: true, is_handover_to_logistics: false,
   });
 
   const load = useCallback(async () => {
@@ -41,7 +41,7 @@ export default function ProductionPipelineSettingsPage() {
     setEditId(null);
     setForm({
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
-      workflow_stage_id: '', is_active: true,
+      workflow_stage_id: '', is_active: true, is_handover_to_logistics: false,
     });
   };
 
@@ -54,6 +54,7 @@ export default function ProductionPipelineSettingsPage() {
       icon: stage.icon || '📋',
       workflow_stage_id: stage.workflow_stage_id || stage.workflow_stage?.id || '',
       is_active: stage.is_active !== false,
+      is_handover_to_logistics: stage.is_handover_to_logistics || false,
     });
   };
 
@@ -66,6 +67,7 @@ export default function ProductionPipelineSettingsPage() {
         icon: form.icon,
         workflow_stage_id: form.workflow_stage_id || null,
         is_active: form.is_active,
+        is_handover_to_logistics: form.is_handover_to_logistics,
       });
       setAdding(false);
       load();
@@ -84,6 +86,7 @@ export default function ProductionPipelineSettingsPage() {
         icon: form.icon,
         workflow_stage_id: intakeRow ? null : (form.workflow_stage_id || null),
         is_active: form.is_active,
+        is_handover_to_logistics: intakeRow ? false : form.is_handover_to_logistics,
       });
       setEditId(null);
       load();
@@ -223,7 +226,14 @@ export default function ProductionPipelineSettingsPage() {
                 </div>
                 <span className="text-lg shrink-0">{s.icon || '📋'}</span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900">{s.name}</p>
+                  <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                    {s.name}
+                    {s.is_handover_to_logistics && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-700">
+                        <Truck className="h-2.5 w-2.5" /> Bàn giao VC
+                      </span>
+                    )}
+                  </p>
                   <p className="text-[10px] text-gray-400 truncate">
                     {s.bucket_slug === INTAKE
                       ? 'Bucket: deal CRM thắng, chưa ở giai đoạn xưởng đã map'
@@ -304,15 +314,31 @@ export default function ProductionPipelineSettingsPage() {
                   ))}
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.is_active}
-                  onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
-                  className="rounded border-gray-300"
-                />
-                Đang hiển thị trên Kanban
-              </label>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.is_active}
+                    onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
+                    className="rounded border-gray-300"
+                  />
+                  Đang hiển thị trên Kanban
+                </label>
+                {!editingIntake && (
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.is_handover_to_logistics}
+                      onChange={(e) => setForm((f) => ({ ...f, is_handover_to_logistics: e.target.checked }))}
+                      className="rounded border-orange-400 accent-orange-500"
+                    />
+                    <span className="flex items-center gap-1 font-medium text-orange-700">
+                      <Truck className="h-3.5 w-3.5" /> Bàn giao sang Vận chuyển &amp; Lắp đặt
+                    </span>
+                    <span className="text-gray-400 font-normal">(khi deal SX tới đây tự nhảy sang module VC)</span>
+                  </label>
+                )}
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"

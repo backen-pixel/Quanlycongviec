@@ -81,6 +81,7 @@ const CRM_MENU_GROUPS = [
     emoji: '📊',
     items: [
       { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM' },
+      { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
       { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
       { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
       { to: '/tools/voice-recordings', icon: Mic, label: 'Ghi âm' },
@@ -137,6 +138,29 @@ const SX_MENU_GROUPS = [
       { to: '/sx/dashboard', icon: FolderKanban, label: 'Deal vào xưởng' },
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
+      { to: '/vc/teams', icon: Users, label: 'Quản lý Đội VC' },
+    ]
+  },
+];
+
+// LOGISTICS (VẬN CHUYỂN & LẮP ĐẶT) menu structure
+const VC_MENU_GROUPS = [
+  {
+    id: 'vc-overview',
+    title: '1. Tổng quan',
+    emoji: '🚚',
+    items: [
+      { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Dashboard VC', end: true },
+    ]
+  },
+  {
+    id: 'vc-projects',
+    title: '2. Điều hành VC',
+    emoji: '📦',
+    items: [
+      { to: '/vc/dashboard', icon: FolderKanban, label: 'Dự án vận chuyển' },
+      { to: '/vc/teams', icon: Users, label: 'Quản lý Đội nhóm' },
+      { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline VC' },
     ]
   },
 ];
@@ -217,7 +241,8 @@ export default function Sidebar() {
   const isCRM =
     location.pathname.startsWith('/crm') || location.pathname.startsWith('/tools/voice-recordings');
   const isSX = location.pathname.startsWith('/sx');
-  const activeMenuGroups = isSX ? SX_MENU_GROUPS : isCRM ? CRM_MENU_GROUPS : MENU_GROUPS;
+  const isVC = location.pathname.startsWith('/vc');
+  const activeMenuGroups = isVC ? VC_MENU_GROUPS : isSX ? SX_MENU_GROUPS : isCRM ? CRM_MENU_GROUPS : MENU_GROUPS;
 
   const pinModule = (path) => {
     localStorage.setItem('pinned_module', path);
@@ -301,7 +326,7 @@ export default function Sidebar() {
                     <Factory className="h-6 w-6 text-white" />
                   </div>
                   <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Xưởng</h3>
+                    <h3 className="text-sm font-bold text-gray-900">Xưởng SX</h3>
                     <p className="text-xs text-gray-500 mt-0.5">Quản lý deal, pipeline và duyệt sản xuất</p>
                   </div>
                 </button>
@@ -311,6 +336,27 @@ export default function Sidebar() {
                     title={pinnedModule === '/sx' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
                     className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/sx' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
                     <Pin className={`h-4 w-4 ${pinnedModule === '/sx' ? 'rotate-45' : ''}`} />
+                  </button>
+                </div>
+              </div>
+              {/* Vận chuyển & Lắp đặt */}
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isVC ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-200 hover:border-amber-400 hover:bg-amber-50'}`}>
+                <button onClick={() => { setShowAppSwitcher(false); navigate('/vc'); }}
+                  className="flex items-center gap-4 flex-1 cursor-pointer">
+                  <div className="w-12 h-12 rounded-xl bg-amber-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                    <span className="text-2xl">🚚</span>
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-sm font-bold text-gray-900">Vận chuyển & Lắp đặt</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Quản lý giao hàng, lắp đặt, bảo hành</p>
+                  </div>
+                </button>
+                <div className="flex flex-col items-center gap-1 ml-auto">
+                  {isVC && <span className="text-[10px] px-2 py-0.5 bg-amber-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  <button onClick={(e) => { e.stopPropagation(); pinModule('/vc'); }}
+                    title={pinnedModule === '/vc' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
+                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/vc' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
+                    <Pin className={`h-4 w-4 ${pinnedModule === '/vc' ? 'rotate-45' : ''}`} />
                   </button>
                 </div>
               </div>
@@ -335,25 +381,35 @@ export default function Sidebar() {
           className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors cursor-pointer ${showAppSwitcher ? 'bg-white/20 ring-1 ring-white/30' : 'hover:bg-white/10'}`} title="Chuyển ứng dụng">
           <Grid3X3 className="h-5 w-5 text-white" />
         </button>
-        {/* Active app indicator — clickable to switch */}
-        <button onClick={() => {
-          if (isCRM) navigate('/dashboard');
-          else if (isSX) navigate('/dashboard');
-          else navigate('/crm');
-        }}
-          className={`flex items-center gap-2 flex-1 rounded-lg px-2 py-1.5 transition-colors cursor-pointer ${
-            isCRM ? 'bg-emerald-500/20 hover:bg-emerald-500/30' : isSX ? 'bg-orange-500/20 hover:bg-orange-500/30' : 'bg-white/5 hover:bg-white/10'
-          }`} title={isCRM ? 'Đang ở CRM — Click để chuyển Công việc' : isSX ? 'Đang ở Sản xuất — Click để chuyển Công việc' : 'Đang ở Công việc — Click để chuyển CRM'}>
-          <div className={`flex items-center justify-center w-7 h-7 rounded-md text-white text-sm ${isCRM ? 'bg-emerald-500/40' : isSX ? 'bg-orange-500/40' : 'bg-blue-500/30'}`}>
-            {isCRM ? '💼' : isSX ? '🏭' : '📋'}
-          </div>
-          {!collapsed && (
-            <div className="flex-1 text-left">
-              <h1 className="text-sm font-bold text-white leading-tight">{isCRM ? 'CRM' : isSX ? 'Xưởng' : 'Công việc'}</h1>
-              <p className="text-[10px] text-white/50 leading-tight">Nhấn để chuyển → {isCRM ? 'Công việc' : isSX ? 'Công việc' : 'CRM'}</p>
-            </div>
-          )}
-        </button>
+        {/* Active app indicator — click cycles through 4 modules */}
+        {(() => {
+          const modules = [
+            { key: 'work',  label: 'Công việc',  emoji: '📋', path: '/dashboard', color: 'bg-blue-500/20 hover:bg-blue-500/30',    dot: 'bg-blue-500/30'    },
+            { key: 'crm',   label: 'CRM',         emoji: '💼', path: '/crm',       color: 'bg-emerald-500/20 hover:bg-emerald-500/30', dot: 'bg-emerald-500/40' },
+            { key: 'sx',    label: 'Xưởng SX',    emoji: '🏭', path: '/sx',        color: 'bg-orange-500/20 hover:bg-orange-500/30',   dot: 'bg-orange-500/40'  },
+            { key: 'vc',    label: 'Vận chuyển',  emoji: '🚚', path: '/vc',        color: 'bg-amber-500/20 hover:bg-amber-500/30',    dot: 'bg-amber-500/40'   },
+          ];
+          const curIdx = isCRM ? 1 : isSX ? 2 : isVC ? 3 : 0;
+          const cur = modules[curIdx];
+          const next = modules[(curIdx + 1) % modules.length];
+          return (
+            <button
+              onClick={() => navigate(next.path)}
+              title={`Chuyển sang ${next.label}`}
+              className={`flex items-center gap-2 flex-1 rounded-lg px-2 py-1.5 transition-colors cursor-pointer ${cur.color}`}
+            >
+              <div className={`flex items-center justify-center w-7 h-7 rounded-md text-white text-sm shrink-0 ${cur.dot}`}>
+                {cur.emoji}
+              </div>
+              {!collapsed && (
+                <div className="flex-1 text-left min-w-0">
+                  <h1 className="text-sm font-bold text-white leading-tight truncate">{cur.label}</h1>
+                  <p className="text-[10px] text-white/50 leading-tight truncate">→ {next.label}</p>
+                </div>
+              )}
+            </button>
+          );
+        })()}
       </div>
 
       {/* Notification bell */}
