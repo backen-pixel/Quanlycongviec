@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -47,6 +47,7 @@ const ICON_MAP = {
   crm_task_completed: CheckSquare,
   document_uploaded: Paperclip,
   project_created: FolderKanban,
+  workshop_new_deal: Factory,
   item_deleted: AlertTriangle,
   system: Bell,
 };
@@ -75,6 +76,7 @@ const COLOR_MAP = {
   deal_won: 'bg-emerald-100 text-emerald-600',
   order_confirmed: 'bg-orange-100 text-orange-600',
   invoice_overdue: 'bg-red-100 text-red-600',
+  workshop_new_deal: 'bg-sky-100 text-sky-700',
   system: 'bg-gray-100 text-gray-600',
 };
 

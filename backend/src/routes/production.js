@@ -691,14 +691,30 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       console.warn('[production] syncCrmLeadSxPipelineFromProject:', syncErr.message);
     }
 
-    // Notify production person only
-    if (updated?.production_person_id && updated.production_person_id !== userId) {
-      try {
-        await createNotif(req, updated.production_person_id, 'project_stage_changed',
-          `🔄 Giai đoạn SX: ${updated.current_stage?.name || ''}`,
-          `Dự án ${updated.code || updated.name} chuyển sang "${updated.current_stage?.name || ''}"`,
-          'project', id);
-      } catch (_) {}
+    // Thông báo đến toàn bộ nhân viên xưởng (production + manager), trừ người thực hiện
+    try {
+      const { data: workshopUsers } = await supabase
+        .from('users')
+        .select('id')
+        .in('role', ['production', 'manager'])
+        .eq('is_active', true);
+      const recipientIds = (workshopUsers || [])
+        .map((u) => u.id)
+        .filter((id) => id !== userId);
+      if (recipientIds.length) {
+        const stageName = updated.current_stage?.name || '';
+        await notifyMultipleShared(
+          req,
+          recipientIds,
+          'workshop_new_deal',
+          `🏭 Xưởng: ${stageName}`,
+          `Dự án ${updated.code || updated.name} vừa chuyển sang giai đoạn "${stageName}"`,
+          'project',
+          id,
+        );
+      }
+    } catch (notifErr) {
+      console.warn('[production/stage] notify workshop staff:', notifErr.message);
     }
 
     const io = req.app.get('io');
