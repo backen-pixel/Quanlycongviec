@@ -1,9 +1,11 @@
 import { useState, useRef } from 'react';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
+import { useAuth } from '../lib/auth';
 import { Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportDone, onClose }) {
+  const { user } = useAuth();
   const [file, setFile] = useState(null);
   const [parsing, setParsing] = useState(false);
   const [preview, setPreview] = useState(null); // parsed data
@@ -11,6 +13,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
   const [saving, setSaving] = useState(false);
   const [expandGroups, setExpandGroups] = useState({});
   const [descPopup, setDescPopup] = useState(null); // { name, description }
+  const [confirmed, setConfirmed] = useState(false);
   const fileRef = useRef(null);
 
   const handleFileSelect = async (e) => {
@@ -24,6 +27,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     setError('');
     setParsing(true);
     setPreview(null);
+    setConfirmed(false);
 
     try {
       const formData = new FormData();
@@ -134,6 +138,8 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
           discount_value: computedDiscount,
           notes: notesParts.join('\n\n'),
           payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
+          // Lưu nhân viên xác nhận (đã tick checkbox "đã kiểm tra")
+          approved_by: user?.id || '',
         };
 
       const { data } = await api.post('/crm/quotations', payload);
@@ -498,28 +504,48 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-between">
-          <div className="text-xs text-gray-500">
-            {preview ? `✅ Đọc thành công — kiểm tra dữ liệu trước khi tạo báo giá` : 'Chọn file Excel để bắt đầu'}
-          </div>
-          <div className="flex gap-2">
-            {preview && (
-              <button onClick={() => { setPreview(null); setFile(null); fileRef.current && (fileRef.current.value = ''); }}
-                className="h-9 px-4 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition">
-                🔄 Chọn file khác
+        <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl space-y-3">
+          {preview && (
+            <label className="flex items-center gap-3 cursor-pointer select-none group">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={e => setConfirmed(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-emerald-600 cursor-pointer"
+              />
+              <span className={`text-sm font-medium transition-colors ${confirmed ? 'text-emerald-700' : 'text-gray-600'}`}>
+                {user?.full_name ? (
+                  <><span className="font-bold text-blue-700">{user.full_name}</span> đã kiểm tra lại báo giá và xác nhận số liệu chính xác</>
+                ) : (
+                  'Tôi đã kiểm tra lại báo giá và xác nhận số liệu chính xác'
+                )}
+              </span>
+              {confirmed && <Check className="h-4 w-4 text-emerald-600 flex-shrink-0" />}
+            </label>
+          )}
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-gray-500">
+              {preview ? (confirmed ? '✅ Sẵn sàng tạo báo giá' : '⚠️ Vui lòng kiểm tra và xác nhận trước khi tạo') : 'Chọn file Excel để bắt đầu'}
+            </div>
+            <div className="flex gap-2">
+              {preview && (
+                <button onClick={() => { setPreview(null); setFile(null); setConfirmed(false); fileRef.current && (fileRef.current.value = ''); }}
+                  className="h-9 px-4 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition">
+                  🔄 Chọn file khác
+                </button>
+              )}
+              <button onClick={onClose}
+                className="h-9 px-4 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium cursor-pointer transition">
+                Hủy
               </button>
-            )}
-            <button onClick={onClose}
-              className="h-9 px-4 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium cursor-pointer transition">
-              Hủy
-            </button>
-            {preview && (
-              <button onClick={handleConfirm} disabled={saving}
-                className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50 transition">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                {saving ? 'Đang tạo...' : `✅ Tạo báo giá (${itemCount} SP)`}
-              </button>
-            )}
+              {preview && (
+                <button onClick={handleConfirm} disabled={saving || !confirmed}
+                  className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  {saving ? 'Đang tạo...' : `✅ Tạo báo giá (${itemCount} SP)`}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

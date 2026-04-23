@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser } from '../lib/crmPipelineStorage';
+import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser, saveCrmPipelineSnapshot, loadCrmPipelineSnapshot } from '../lib/crmPipelineStorage';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
+import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CallLogsTab from '../components/CallLogsTab';
@@ -69,6 +70,10 @@ export default function LeadDetail() {
   const [showLostModal, setShowLostModal] = useState(false);
   const [lostReason, setLostReason] = useState('');
   const [pendingLostStageId, setPendingLostStageId] = useState(null);
+  const [showAssignBeforeWonModal, setShowAssignBeforeWonModal] = useState(false);
+  const [assignBeforeWonUser, setAssignBeforeWonUser] = useState('');
+  const [assigningForWon, setAssigningForWon] = useState(false);
+  const [assignBeforeWonError, setAssignBeforeWonError] = useState('');
   const [editingLeadTitle, setEditingLeadTitle] = useState(false);
   const [leadTitleDraft, setLeadTitleDraft] = useState('');
   const [savingLeadTitle, setSavingLeadTitle] = useState(false);
@@ -242,6 +247,13 @@ export default function LeadDetail() {
     }
   }, [id, isDealHoanThanhForZalo, load]);
 
+  const navigateToCrmDealFocused = (dealId) => {
+    const snapshot = loadCrmPipelineSnapshot();
+    saveCrmPipelineSnapshot({ ...(snapshot || {}), pipelineType: 'deal' });
+    if (dealId) markCrmPipelineCardFocus(dealId);
+    navigate('/crm');
+  };
+
   const moveStage = async (stageId, extraData = {}) => {
     const stages = lead?.type === 'deal' ? stagesDeal : stagesLead;
     const targetStage = stages.find(s => s.id === stageId);
@@ -251,6 +263,19 @@ export default function LeadDetail() {
       setPendingLostStageId(stageId);
       setLostReason('');
       setShowLostModal(true);
+      return;
+    }
+
+    // Nếu stage là Thắng và đây là Lead (cần chuyển sang Deal)
+    if (targetStage?.is_won && lead?.type !== 'deal') {
+      const hasAssignee = !!(lead?.assigned_to || lead?.lead_owner_id);
+      if (!hasAssignee) {
+        // Chưa có người phụ trách → chỉ hiện ô chọn nhân viên
+        setAssignBeforeWonUser('');
+        setShowAssignBeforeWonModal(true);
+      } else {
+        setShowConvertModal(true);
+      }
       return;
     }
 
@@ -267,6 +292,10 @@ export default function LeadDetail() {
         load();
       }
     } catch (e) {
+      if (e.response?.data?.requires_conversion) {
+        setShowConvertModal(true);
+        return;
+      }
       alert(e.response?.data?.error || 'Lỗi');
     }
   };
@@ -276,6 +305,24 @@ export default function LeadDetail() {
     setShowLostModal(false);
     moveStage(pendingLostStageId, { lost_reason: lostReason.trim() });
     setPendingLostStageId(null);
+  };
+
+  const handleAssignAndConvert = async () => {
+    if (!assignBeforeWonUser) { setAssignBeforeWonError('Vui lòng chọn nhân viên phụ trách'); return; }
+    setAssigningForWon(true);
+    setAssignBeforeWonError('');
+    try {
+      const { data } = await api.post(`/crm/leads/${id}/convert-to-deal`, {
+        assigned_to: assignBeforeWonUser,
+        company_id: lead?.company_id || undefined,
+      });
+      setShowAssignBeforeWonModal(false);
+      navigateToCrmDealFocused(data?.deal?.id || data?.id || id);
+    } catch (e) {
+      setAssignBeforeWonError(e.response?.data?.error || 'Lỗi chuyển sang Deal');
+    } finally {
+      setAssigningForWon(false);
+    }
   };
 
   const submitDealApproval = () => {
@@ -1001,48 +1048,25 @@ export default function LeadDetail() {
               ) : activeTab === 'voice_crm' ? (
                 <LeadVoiceRecordingsTab leadId={id} />
               ) : activeTab === 'approvals' ? (
-                <div className="max-w-2xl space-y-4">
-                  <div className="rounded-xl bg-blue-50 border border-blue-100 p-4 text-sm text-blue-800">
-                    `Gửi duyệt deal này` nằm trong chi tiết deal ở CRM. Từ đây sale hoặc quản lý có thể gửi bản vẽ, vật tư hoặc yêu cầu chỉnh sửa sang xưởng theo đúng deal đang mở.
+                lead.project_id ? (
+                  <ProjectApprovalsTab
+                    projectId={lead.project_id}
+                    project={lead}
+                    onUpdated={load}
+                  />
+                ) : (
+                  <div className="text-center py-10 text-gray-400 space-y-3">
+                    <ClipboardCheck className="h-12 w-12 mx-auto opacity-20" />
+                    <p className="text-sm">Deal chưa có dự án xưởng</p>
+                    <p className="text-xs text-gray-400">Chuyển deal sang trạng thái <strong>Thắng</strong> để tự động tạo dự án, sau đó dùng tab này để gửi duyệt.</p>
+                    {lead.type === 'deal' && (
+                      <button onClick={() => navigate(`/projects/create?deal_id=${id}`)}
+                        className="inline-flex h-9 px-4 items-center gap-1.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 cursor-pointer">
+                        <FolderKanban className="h-4 w-4" /> Tạo dự án thủ công
+                      </button>
+                    )}
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Loại gửi duyệt</label>
-                    <select
-                      value={approvalForm.type}
-                      onChange={(e) => setApprovalForm((prev) => ({ ...prev, type: e.target.value }))}
-                      className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm"
-                    >
-                      <option value="drawing">Bản vẽ</option>
-                      <option value="material">Vật tư</option>
-                      <option value="change-request">Yêu cầu chỉnh sửa</option>
-                      <option value="handoff">Hồ sơ bàn giao</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Tiêu đề</label>
-                    <input
-                      value={approvalForm.title}
-                      onChange={(e) => setApprovalForm((prev) => ({ ...prev, title: e.target.value }))}
-                      className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm"
-                      placeholder="Ví dụ: Gửi bản vẽ để xưởng xác nhận trước sản xuất"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Ghi chú</label>
-                    <textarea
-                      value={approvalForm.note}
-                      onChange={(e) => setApprovalForm((prev) => ({ ...prev, note: e.target.value }))}
-                      className="w-full min-h-[120px] px-3 py-2 border border-gray-200 rounded-lg text-sm"
-                      placeholder="Mô tả nội dung gửi duyệt cho deal này..."
-                    />
-                  </div>
-                  <button
-                    onClick={submitDealApproval}
-                    className="h-10 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 flex items-center gap-2 cursor-pointer"
-                  >
-                    <ClipboardCheck className="h-4 w-4" /> Gửi duyệt deal này
-                  </button>
-                </div>
+                )
               ) : null}
             </div>
           </div>
@@ -1068,8 +1092,79 @@ export default function LeadDetail() {
           documents={documents}
           flows={flows}
           onClose={() => setShowConvertModal(false)}
-          onSuccess={() => { setShowConvertModal(false); load(); }}
+          onSuccess={(dealId) => { setShowConvertModal(false); navigateToCrmDealFocused(dealId || id); }}
         />
+      )}
+
+      {/* Modal chọn người phụ trách trước khi chuyển sang Deal (won stage) */}
+      {showAssignBeforeWonModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!assigningForWon) { setShowAssignBeforeWonModal(false); setAssignBeforeWonError(''); } }}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-1">
+              <span className="text-2xl">🏆</span>
+              <h3 className="text-base font-bold text-gray-900">Chuyển sang Deal</h3>
+            </div>
+
+            {/* Cảnh báo nếu chưa có khách hàng */}
+            {!lead?.customer_id ? (
+              <div className="mt-3 mb-4 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+                ⛔ Lead chưa được liên kết khách hàng.<br />
+                <span className="text-xs">Vui lòng thêm khách hàng ở mục <strong>Thông tin</strong> trước khi chuyển Deal.</span>
+              </div>
+            ) : (
+              <div className="bg-gray-50 rounded-xl px-3 py-2 mb-4 mt-2">
+                <p className="text-xs font-semibold text-gray-500 mb-0.5">Khách hàng:</p>
+                <p className="text-sm font-medium text-gray-900">{customer?.full_name || '—'}</p>
+                {customer?.phone
+                  ? <p className="text-xs text-green-600 mt-0.5">📞 {customer.phone}</p>
+                  : <p className="text-xs text-amber-500 mt-0.5">⚠️ Chưa có SĐT (có thể bổ sung sau)</p>
+                }
+              </div>
+            )}
+
+            <div className="mb-4">
+              <label className="text-xs font-semibold text-gray-700 mb-1.5 block">👤 Người phụ trách deal</label>
+              <EmployeePicker
+                companyId={lead?.company_id}
+                value={assignBeforeWonUser}
+                onChange={(userId) => { setAssignBeforeWonUser(userId || ''); setAssignBeforeWonError(''); }}
+                placeholder="Tìm và chọn nhân viên..."
+                size="md"
+              />
+              {!lead?.company_id && (
+                <p className="text-[10px] text-amber-500 mt-1">⚠️ Lead chưa có công ty — sẽ hiển thị toàn bộ nhân viên</p>
+              )}
+            </div>
+
+            {/* Lỗi inline */}
+            {assignBeforeWonError && (
+              <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                ⛔ {assignBeforeWonError}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setShowAssignBeforeWonModal(false); setAssignBeforeWonError(''); }}
+                disabled={assigningForWon}
+                className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleAssignAndConvert}
+                disabled={assigningForWon || !assignBeforeWonUser || !lead?.customer_id}
+                className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {assigningForWon ? (
+                  <><span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" /> Đang xử lý...</>
+                ) : (
+                  <>✅ Xác nhận & Chuyển Deal</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Excel Import Modal */}
@@ -1690,7 +1785,7 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
         company_id: selectedCompany || undefined,
       });
       alert(`✅ ${data.message}`);
-      onSuccess();
+      onSuccess(data?.deal?.id || data?.id || leadId);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
     }

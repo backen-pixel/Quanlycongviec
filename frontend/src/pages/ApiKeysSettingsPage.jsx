@@ -1,21 +1,184 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { ArrowLeft, Plus, Trash2, Copy, Check, Eye, EyeOff, RefreshCw, Key, Shield, ToggleLeft, ToggleRight, ExternalLink } from 'lucide-react';
+import {
+  ArrowLeft, Plus, Trash2, Copy, Check, ExternalLink, Key, Shield,
+  ToggleLeft, ToggleRight, RefreshCw, Webhook, Zap, Code2, ChevronDown,
+  ChevronRight, Activity, Users, Layers, Globe, Send, CheckCircle2,
+} from 'lucide-react';
 
 const BASE_URL = window.location.origin;
+const API_BASE = `${BASE_URL}/api/external`;
+
+// ── Code example helpers ────────────────────────────────────────────────────
+
+function buildCurl(key) {
+  return `curl -X POST ${API_BASE}/leads \\
+  -H "Content-Type: application/json" \\
+  -H "X-Api-Key: ${key}" \\
+  -d '{
+    "title": "Khách hàng từ website",
+    "full_name": "Nguyễn Văn A",
+    "phone": "0901234567",
+    "email": "khachhang@example.com",
+    "source_name": "Website",
+    "estimated_value": 50000000
+  }'`;
+}
+
+function buildJS(key) {
+  return `const response = await fetch('${API_BASE}/leads', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Api-Key': '${key}',
+  },
+  body: JSON.stringify({
+    title: 'Khách hàng từ website',
+    full_name: 'Nguyễn Văn A',
+    phone: '0901234567',
+    email: 'khachhang@example.com',
+    source_name: 'Website',
+    estimated_value: 50000000,
+  }),
+});
+const data = await response.json();
+console.log(data.lead); // { id, code, title, customer, stage }`;
+}
+
+function buildPython(key) {
+  return `import requests
+
+response = requests.post(
+    '${API_BASE}/leads',
+    headers={
+        'Content-Type': 'application/json',
+        'X-Api-Key': '${key}',
+    },
+    json={
+        'title': 'Khách hàng từ website',
+        'full_name': 'Nguyễn Văn A',
+        'phone': '0901234567',
+        'email': 'khachhang@example.com',
+        'source_name': 'Website',
+        'estimated_value': 50000000,
+    }
+)
+print(response.json())`;
+}
+
+// ── CodeBlock ────────────────────────────────────────────────────────────────
+
+function CodeBlock({ code, lang }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <div className="relative group">
+      <div className="text-[10px] text-gray-400 mb-1 font-mono uppercase tracking-wide">{lang}</div>
+      <pre className="bg-gray-900 text-green-300 rounded-xl p-4 overflow-x-auto text-xs leading-relaxed whitespace-pre">
+        {code}
+      </pre>
+      <button
+        onClick={copy}
+        className="absolute top-7 right-2 h-7 px-2 bg-gray-700 hover:bg-gray-500 text-white rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition"
+      >
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        {copied ? 'Đã copy' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
+// ── TestPanel ─────────────────────────────────────────────────────────────────
+
+function TestPanel({ apiKey }) {
+  const [form, setForm] = useState({ title: 'Test lead từ UI', full_name: '', phone: '', email: '', source_name: 'Website' });
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const runTest = async () => {
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/leads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      setResult({ ok: res.ok, status: res.status, data });
+    } catch (e) {
+      setResult({ ok: false, status: 0, data: { error: e.message } });
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        {[
+          ['title', 'Tên lead *'],
+          ['full_name', 'Họ tên KH'],
+          ['phone', 'SĐT'],
+          ['email', 'Email'],
+          ['source_name', 'Nguồn'],
+        ].map(([k, label]) => (
+          <div key={k} className={k === 'title' ? 'col-span-2' : ''}>
+            <label className="text-[10px] text-gray-500 font-medium mb-0.5 block">{label}</label>
+            <input
+              value={form[k]}
+              onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+              className="w-full h-8 px-2.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={runTest}
+        disabled={loading || !form.title}
+        className="h-8 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+      >
+        {loading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+        {loading ? 'Đang gửi...' : 'Gửi test'}
+      </button>
+      {result && (
+        <div className={`rounded-xl p-3 text-xs font-mono ${result.ok ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+          <div className={`font-bold mb-1 flex items-center gap-1.5 ${result.ok ? 'text-emerald-700' : 'text-red-700'}`}>
+            {result.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : '✕'} HTTP {result.status}
+          </div>
+          <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[10px]">
+            {JSON.stringify(result.data, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ApiKeysSettingsPage() {
   const navigate = useNavigate();
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', default_assigned_to: '' });
+  const [form, setForm] = useState({ name: '', default_assigned_to: '', webhook_url: '' });
   const [showForm, setShowForm] = useState(false);
-  const [newKeyValue, setNewKeyValue] = useState(null); // key vừa tạo — hiện 1 lần
-  const [copied, setCopied] = useState(false);
+  const [newKeyValue, setNewKeyValue] = useState(null);
   const [users, setUsers] = useState([]);
   const [error, setError] = useState('');
+  const [copiedId, setCopiedId] = useState(null);
+
+  // expanded sections per key
+  const [expandedKey, setExpandedKey] = useState(null);
+  const [activeTab, setActiveTab] = useState('curl');
+  const [keyStats, setKeyStats] = useState({});
+  const [pingResult, setPingResult] = useState({});
 
   const load = async () => {
     setLoading(true);
@@ -43,9 +206,10 @@ export default function ApiKeysSettingsPage() {
       const { data } = await api.post('/settings/api-keys', {
         name: form.name.trim(),
         default_assigned_to: form.default_assigned_to || null,
+        webhook_url: form.webhook_url.trim() || null,
       });
       setNewKeyValue(data.key);
-      setForm({ name: '', default_assigned_to: '' });
+      setForm({ name: '', default_assigned_to: '', webhook_url: '' });
       setShowForm(false);
       await load();
     } catch (e) {
@@ -63,6 +227,15 @@ export default function ApiKeysSettingsPage() {
     }
   };
 
+  const saveWebhook = async (id, webhookUrl) => {
+    try {
+      await api.patch(`/settings/api-keys/${id}`, { webhook_url: webhookUrl || null });
+      setKeys((prev) => prev.map((k) => k.id === id ? { ...k, webhook_url: webhookUrl || null } : k));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi cập nhật webhook');
+    }
+  };
+
   const deleteKey = async (id, name) => {
     if (!confirm(`Xóa key "${name}"? Tất cả hệ thống đang dùng key này sẽ bị từ chối.`)) return;
     try {
@@ -73,28 +246,28 @@ export default function ApiKeysSettingsPage() {
     }
   };
 
-  const copyText = (text) => {
+  const copyText = (text, id) => {
     navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
     });
   };
 
-  const exampleCurl = newKeyValue
-    ? `curl -X POST ${BASE_URL}/api/external/leads \\
-  -H "Content-Type: application/json" \\
-  -H "X-Api-Key: ${newKeyValue}" \\
-  -d '{
-    "title": "Khách hàng mới từ website",
-    "full_name": "Nguyễn Văn A",
-    "phone": "0901234567",
-    "email": "a@example.com",
-    "source_name": "Website"
-  }'`
-    : '';
+  const pingKey = async (keyPreview) => {
+    setPingResult((p) => ({ ...p, [keyPreview]: 'loading' }));
+    try {
+      const res = await fetch(`${API_BASE}/ping`, { headers: { 'X-Api-Key': keyPreview } });
+      setPingResult((p) => ({ ...p, [keyPreview]: res.ok ? 'ok' : 'fail' }));
+    } catch {
+      setPingResult((p) => ({ ...p, [keyPreview]: 'fail' }));
+    }
+  };
+
+  const displayKey = newKeyValue || '••••••••••••••••••••••••••••••••';
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 p-4">
+    <div className="max-w-3xl mx-auto space-y-6 p-4 pb-16">
+
       {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => navigate(-1)} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer">
@@ -104,72 +277,83 @@ export default function ApiKeysSettingsPage() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Key className="h-6 w-6 text-blue-600" /> API Key — Tích hợp ngoài
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Cấp key cho bên ngoài (website, Zalo bot, Zapier…) tự động tạo lead vào CRM mà không cần đăng nhập.</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Cấp key cho bên ngoài (website, Zalo bot, Zapier, Make…) tự động tạo lead vào CRM mà không cần đăng nhập.
+          </p>
         </div>
       </div>
 
-      {/* Endpoint info */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
+      {/* Endpoint overview */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
         <div className="flex items-center gap-2 text-blue-800 font-semibold text-sm">
-          <Shield className="h-4 w-4" /> Endpoint tạo lead từ bên ngoài
+          <Shield className="h-4 w-4" /> Endpoints tích hợp
         </div>
-        <code className="block text-xs bg-white border border-blue-100 rounded-lg px-3 py-2 text-blue-900 font-mono break-all">
-          POST {BASE_URL}/api/external/leads
-        </code>
+        <div className="space-y-1.5 text-xs font-mono">
+          {[
+            ['POST', '/leads', 'Tạo lead mới'],
+            ['GET', '/stages?type=lead', 'Danh sách giai đoạn pipeline'],
+            ['GET', '/sources', 'Danh sách nguồn lead'],
+            ['GET', '/users', 'Danh sách nhân viên'],
+            ['GET', '/ping', 'Kiểm tra key hợp lệ'],
+          ].map(([method, path, desc]) => (
+            <div key={path} className="flex items-center gap-2 bg-white border border-blue-100 rounded-lg px-3 py-1.5">
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${method === 'POST' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                {method}
+              </span>
+              <code className="text-blue-800 flex-1">{API_BASE}{path}</code>
+              <span className="text-gray-400 text-[10px]">{desc}</span>
+            </div>
+          ))}
+        </div>
         <p className="text-xs text-blue-700">
-          Header: <code className="bg-blue-100 px-1 rounded">X-Api-Key: &lt;key&gt;</code> · Body: JSON với các trường
-          <code className="bg-blue-100 px-1 rounded ml-1">title</code>
-          <code className="bg-blue-100 px-1 rounded ml-1">full_name</code>
-          <code className="bg-blue-100 px-1 rounded ml-1">phone</code>
-          <code className="bg-blue-100 px-1 rounded ml-1">email</code>
-          <code className="bg-blue-100 px-1 rounded ml-1">source_name</code>
-          <code className="bg-blue-100 px-1 rounded ml-1">estimated_value</code>
-          <code className="bg-blue-100 px-1 rounded ml-1">description</code>
+          Header bắt buộc: <code className="bg-blue-100 px-1 rounded">X-Api-Key: &lt;key&gt;</code>
         </p>
         <a
-          href={`${BASE_URL}/api/external/ping`}
+          href={`${API_BASE}/ping`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
         >
-          <ExternalLink className="h-3.5 w-3.5" /> Kiểm tra ping endpoint
+          <ExternalLink className="h-3.5 w-3.5" /> Mở /ping trong tab mới
         </a>
       </div>
 
-      {/* New key reveal */}
+      {/* New key banner */}
       {newKeyValue && (
         <div className="bg-emerald-50 border-2 border-emerald-400 rounded-xl p-5 space-y-3">
-          <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
-            ✅ Key mới đã tạo — sao chép ngay, sẽ không hiển thị lại!
+          <div className="font-bold text-sm text-emerald-800 flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" /> Key mới đã tạo — sao chép ngay, sẽ không hiển thị lại!
           </div>
           <div className="flex items-center gap-2">
             <code className="flex-1 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-sm font-mono text-emerald-900 break-all">
               {newKeyValue}
             </code>
             <button
-              onClick={() => copyText(newKeyValue)}
+              onClick={() => copyText(newKeyValue, 'new')}
               className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 shrink-0 cursor-pointer"
             >
-              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? 'Đã sao chép' : 'Copy'}
+              {copiedId === 'new' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {copiedId === 'new' ? 'Đã copy' : 'Copy'}
             </button>
           </div>
 
-          {/* Example curl */}
-          <details className="text-xs">
-            <summary className="cursor-pointer text-emerald-700 font-medium mb-2">Xem ví dụ cURL</summary>
-            <div className="relative">
-              <pre className="bg-gray-900 text-green-300 rounded-lg p-4 overflow-x-auto text-xs leading-relaxed">
-                {exampleCurl}
-              </pre>
-              <button
-                onClick={() => copyText(exampleCurl)}
-                className="absolute top-2 right-2 h-7 px-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-[10px] flex items-center gap-1 cursor-pointer"
-              >
-                <Copy className="h-3 w-3" /> Copy
-              </button>
+          {/* Code examples */}
+          <div>
+            <div className="flex gap-1 mb-2">
+              {['curl', 'javascript', 'python'].map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setActiveTab(t)}
+                  className={`h-7 px-3 rounded-lg text-xs font-medium cursor-pointer transition ${activeTab === t ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >
+                  {t === 'curl' ? 'cURL' : t === 'javascript' ? 'JavaScript' : 'Python'}
+                </button>
+              ))}
             </div>
-          </details>
+            {activeTab === 'curl' && <CodeBlock code={buildCurl(newKeyValue)} lang="bash" />}
+            {activeTab === 'javascript' && <CodeBlock code={buildJS(newKeyValue)} lang="javascript" />}
+            {activeTab === 'python' && <CodeBlock code={buildPython(newKeyValue)} lang="python" />}
+          </div>
 
           <button onClick={() => setNewKeyValue(null)} className="text-xs text-emerald-700 hover:underline cursor-pointer">
             Ẩn key
@@ -181,7 +365,7 @@ export default function ApiKeysSettingsPage() {
         <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">{error}</div>
       )}
 
-      {/* Create form */}
+      {/* Keys list */}
       <div className="bg-white rounded-xl border p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Danh sách key ({keys.length})</h2>
@@ -206,7 +390,7 @@ export default function ApiKeysSettingsPage() {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">Phụ trách mặc định (tùy chọn)</label>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Nhân viên phụ trách mặc định</label>
               <select
                 value={form.default_assigned_to}
                 onChange={(e) => setForm((f) => ({ ...f, default_assigned_to: e.target.value }))}
@@ -217,6 +401,18 @@ export default function ApiKeysSettingsPage() {
                   <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1 flex items-center gap-1">
+                <Webhook className="h-3.5 w-3.5 text-purple-500" /> Webhook URL (tùy chọn)
+              </label>
+              <input
+                value={form.webhook_url}
+                onChange={(e) => setForm((f) => ({ ...f, webhook_url: e.target.value }))}
+                placeholder="https://hooks.zapier.com/hooks/catch/..."
+                className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+              <p className="text-[10px] text-gray-400 mt-1">Khi có lead mới, hệ thống sẽ POST JSON tới URL này.</p>
             </div>
             <div className="flex gap-2 pt-1">
               <button
@@ -237,7 +433,6 @@ export default function ApiKeysSettingsPage() {
           </div>
         )}
 
-        {/* Keys list */}
         {loading ? (
           <div className="flex justify-center py-8">
             <div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" />
@@ -248,59 +443,114 @@ export default function ApiKeysSettingsPage() {
             <p className="text-sm">Chưa có API key nào. Tạo key để tích hợp bên ngoài.</p>
           </div>
         ) : (
-          <div className="space-y-2 mt-2">
-            {keys.map((k) => (
-              <div
-                key={k.id}
-                className={`flex items-center gap-3 p-4 rounded-xl border transition-all ${
-                  k.active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'
-                }`}
-              >
-                <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${k.active ? 'bg-emerald-100' : 'bg-gray-200'}`}>
-                  <Key className={`h-4 w-4 ${k.active ? 'text-emerald-600' : 'text-gray-400'}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-semibold text-gray-900">{k.name}</p>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${k.active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
-                      {k.active ? 'Active' : 'Đã tắt'}
-                    </span>
+          <div className="space-y-3 mt-2">
+            {keys.map((k) => {
+              const isExpanded = expandedKey === k.id;
+              return (
+                <div
+                  key={k.id}
+                  className={`rounded-xl border transition-all ${k.active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'}`}
+                >
+                  {/* Key header row */}
+                  <div className="flex items-center gap-3 p-4">
+                    <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${k.active ? 'bg-emerald-100' : 'bg-gray-200'}`}>
+                      <Key className={`h-4 w-4 ${k.active ? 'text-emerald-600' : 'text-gray-400'}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-gray-900">{k.name}</p>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${k.active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {k.active ? 'Active' : 'Đã tắt'}
+                        </span>
+                        {k.webhook_url && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700 flex items-center gap-1">
+                            <Webhook className="h-2.5 w-2.5" /> Webhook
+                          </span>
+                        )}
+                      </div>
+                      <code className="text-xs text-gray-500 font-mono">{k.preview}</code>
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        Tạo lúc {new Date(k.created_at).toLocaleString('vi-VN')}
+                        {k.default_assigned_to && (
+                          <span className="ml-2">· Phụ trách: {users.find((u) => u.id === k.default_assigned_to)?.full_name || '—'}</span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => copyText(k.preview.replace(/•/g, ''), k.id + '_copy')}
+                        title="Copy key preview"
+                        className="p-1.5 hover:bg-gray-100 rounded-lg cursor-pointer transition"
+                      >
+                        {copiedId === k.id + '_copy' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4 text-gray-400" />}
+                      </button>
+                      <button
+                        onClick={() => toggleActive(k.id, k.active)}
+                        title={k.active ? 'Tắt key này' : 'Bật lại key này'}
+                        className="p-1.5 hover:bg-gray-100 rounded-lg cursor-pointer transition"
+                      >
+                        {k.active
+                          ? <ToggleRight className="h-5 w-5 text-emerald-500" />
+                          : <ToggleLeft className="h-5 w-5 text-gray-400" />}
+                      </button>
+                      <button
+                        onClick={() => setExpandedKey(isExpanded ? null : k.id)}
+                        title="Xem chi tiết / code mẫu"
+                        className="p-1.5 hover:bg-blue-50 text-blue-400 hover:text-blue-600 rounded-lg cursor-pointer transition"
+                      >
+                        {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </button>
+                      <button
+                        onClick={() => deleteKey(k.id, k.name)}
+                        title="Xóa key"
+                        className="p-1.5 hover:bg-red-50 text-red-400 hover:text-red-600 rounded-lg cursor-pointer transition"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
-                  <code className="text-xs text-gray-500 font-mono">{k.preview}</code>
-                  <p className="text-[10px] text-gray-400 mt-0.5">
-                    Tạo lúc {new Date(k.created_at).toLocaleString('vi-VN')}
-                    {k.default_assigned_to && (
-                      <span className="ml-2">· Phụ trách: {users.find((u) => u.id === k.default_assigned_to)?.full_name || k.default_assigned_to}</span>
-                    )}
-                  </p>
+
+                  {/* Expanded section */}
+                  {isExpanded && (
+                    <div className="border-t border-gray-100 p-4 space-y-4 bg-gray-50 rounded-b-xl">
+                      {/* Webhook config */}
+                      <WebhookEditor keyData={k} onSave={(url) => saveWebhook(k.id, url)} />
+
+                      {/* Tabs: code examples / test */}
+                      <div>
+                        <div className="flex gap-1 mb-3">
+                          {['curl', 'javascript', 'python', 'test'].map((t) => (
+                            <button
+                              key={t}
+                              onClick={() => setActiveTab(t)}
+                              className={`h-7 px-3 rounded-lg text-xs font-medium cursor-pointer transition flex items-center gap-1 ${activeTab === t ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'}`}
+                            >
+                              {t === 'curl' && <><Code2 className="h-3 w-3" /> cURL</>}
+                              {t === 'javascript' && <><Zap className="h-3 w-3" /> JS</>}
+                              {t === 'python' && <><Code2 className="h-3 w-3" /> Python</>}
+                              {t === 'test' && <><Send className="h-3 w-3" /> Test</>}
+                            </button>
+                          ))}
+                        </div>
+                        {activeTab === 'curl' && <CodeBlock code={buildCurl(k.preview)} lang="bash" />}
+                        {activeTab === 'javascript' && <CodeBlock code={buildJS(k.preview)} lang="javascript" />}
+                        {activeTab === 'python' && <CodeBlock code={buildPython(k.preview)} lang="python" />}
+                        {activeTab === 'test' && <TestPanel apiKey={k.preview} />}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => toggleActive(k.id, k.active)}
-                    title={k.active ? 'Tắt key này' : 'Bật lại key này'}
-                    className="p-1.5 hover:bg-gray-100 rounded-lg cursor-pointer transition"
-                  >
-                    {k.active
-                      ? <ToggleRight className="h-5 w-5 text-emerald-500" />
-                      : <ToggleLeft className="h-5 w-5 text-gray-400" />}
-                  </button>
-                  <button
-                    onClick={() => deleteKey(k.id, k.name)}
-                    title="Xóa key"
-                    className="p-1.5 hover:bg-red-50 text-red-400 hover:text-red-600 rounded-lg cursor-pointer transition"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Body fields docs */}
+      {/* Fields reference */}
       <div className="bg-white rounded-xl border p-5">
-        <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Trường dữ liệu Body (JSON)</h2>
+        <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">
+          Trường dữ liệu Body — POST /leads
+        </h2>
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-gray-100">
@@ -323,6 +573,7 @@ export default function ApiKeysSettingsPage() {
               ['notes', '', 'Ghi chú nội bộ'],
               ['stage_id', '', 'UUID giai đoạn pipeline — mặc định giai đoạn đầu tiên'],
               ['assigned_to', '', 'UUID nhân viên phụ trách — mặc định theo config key'],
+              ['webhook_url', '', 'Callback URL nhận kết quả (ghi đè webhook của key)'],
             ].map(([field, req, desc]) => (
               <tr key={field} className="hover:bg-gray-50">
                 <td className="py-1.5 pr-3 font-mono text-blue-700">{field}</td>
@@ -333,6 +584,70 @@ export default function ApiKeysSettingsPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Webhook payload reference */}
+      <div className="bg-white rounded-xl border p-5 space-y-3">
+        <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide flex items-center gap-2">
+          <Webhook className="h-4 w-4 text-purple-500" /> Webhook Payload
+        </h2>
+        <p className="text-xs text-gray-500">
+          Khi có lead mới, hệ thống POST JSON sau tới webhook URL (nếu được cấu hình):
+        </p>
+        <CodeBlock lang="json" code={`{
+  "event": "lead.created",
+  "key_name": "Website form",
+  "lead": {
+    "id": "uuid...",
+    "code": "LEAD-0001",
+    "title": "Khách hàng từ website",
+    "customer": { "id": "...", "full_name": "Nguyễn Văn A", "phone": "090..." },
+    "stage": { "id": "...", "name": "Mới", "color": "#..." },
+    "created_at": "2026-04-22T10:00:00.000Z"
+  },
+  "timestamp": "2026-04-22T10:00:00.123Z"
+}`} />
+      </div>
+    </div>
+  );
+}
+
+// ── WebhookEditor sub-component ───────────────────────────────────────────────
+
+function WebhookEditor({ keyData, onSave }) {
+  const [val, setVal] = useState(keyData.webhook_url || '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    await onSave(val.trim() || null);
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium text-gray-600 flex items-center gap-1">
+        <Webhook className="h-3.5 w-3.5 text-purple-500" /> Webhook URL
+      </label>
+      <div className="flex gap-2">
+        <input
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          placeholder="https://hooks.zapier.com/..."
+          className="flex-1 h-8 px-3 border border-gray-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
+        />
+        <button
+          onClick={save}
+          disabled={saving}
+          className="h-8 px-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+        >
+          {saving ? <RefreshCw className="h-3 w-3 animate-spin" /> : saved ? <Check className="h-3 w-3" /> : null}
+          {saved ? 'Đã lưu' : 'Lưu'}
+        </button>
+      </div>
+      <p className="text-[10px] text-gray-400">Nhập URL Zapier / Make / server riêng để nhận POST khi có lead mới.</p>
     </div>
   );
 }

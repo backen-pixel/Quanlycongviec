@@ -2425,9 +2425,9 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     if (!lead) return res.status(404).json({ error: 'Lead không tồn tại' });
     if (lead.type === 'deal') return res.status(400).json({ error: 'Đã là Deal rồi' });
 
-    // Validation
-    if (!lead.customer_id || !lead.customer?.full_name || !lead.customer?.phone) {
-      return res.status(400).json({ error: 'Khách hàng chưa đủ thông tin (tên, SĐT)' });
+    // Chỉ cần có khách hàng liên kết, không bắt buộc đủ SĐT để có thể convert nhanh
+    if (!lead.customer_id) {
+      return res.status(400).json({ error: 'Lead chưa được liên kết khách hàng. Vào chi tiết Lead → chọn Khách hàng trước khi chuyển Deal.' });
     }
 
     // Get first deal stage
@@ -3093,7 +3093,7 @@ r.get('/quotations', async (req, res) => {
   try {
     const { status, search, limit = 50, lead_id } = req.query;
     let q = supabase.from('quotations')
-      .select('*, customer:customers(id, full_name, phone), creator:users!quotations_created_by_fkey(id, full_name)')
+      .select('*, customer:customers(id, full_name, phone), creator:users!quotations_created_by_fkey(id, full_name), approver:users!quotations_approved_by_fkey(id, full_name)')
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
     if (status) q = q.eq('status', status);
@@ -3538,7 +3538,7 @@ r.get('/orders', async (req, res) => {
   try {
     const { status, search, limit = 50, lead_id } = req.query;
     let q = supabase.from('orders')
-      .select('*, customer:customers(id, full_name, phone)')
+      .select('*, customer:customers(id, full_name, phone), creator:users!orders_created_by_fkey(id, full_name)')
       .order('created_at', { ascending: false }).limit(parseInt(limit));
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
@@ -3718,7 +3718,7 @@ r.get('/invoices', async (req, res) => {
   try {
     const { status, search, limit = 50, lead_id } = req.query;
     let q = supabase.from('invoices')
-      .select('*, customer:customers(id, full_name, phone)')
+      .select('*, customer:customers(id, full_name, phone), creator:users!invoices_created_by_fkey(id, full_name)')
       .order('created_at', { ascending: false }).limit(parseInt(limit));
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
@@ -4691,9 +4691,10 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
   try {
     if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
 
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    // cellFormula:false → chỉ đọc cached value, không parse/tính lại công thức Excel
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellFormula: false });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
 
     if (!rows.length) return res.status(400).json({ error: 'File rỗng' });
 

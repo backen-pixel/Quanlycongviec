@@ -16,6 +16,7 @@ const {
   syncCrmLeadSxPipelineFromProject,
 } = require('../helpers/workshopKanban');
 const { applyWorkshopTemplateToProject } = require('../helpers/workshopApplyTemplates');
+const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
 
 const r = Router();
 r.use(auth);
@@ -218,6 +219,8 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     const enhancedProjects = enrichProjectsForSx(projects, sortedKanban, wonIds).map((project) => ({
       ...project,
       progress: calcTaskProgress(project.tasks),
+      task_total: project.tasks?.length || 0,
+      done_tasks: project.tasks?.filter((t) => t.status === 'done').length || 0,
     }));
 
     const overdueCount = enhancedProjects.filter((project) => (
@@ -676,7 +679,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     const { data: updated } = await supabase
       .from('projects')
       .select(`
-        id, code, name, status, current_stage_id,
+        id, code, name, status, current_stage_id, production_person_id,
         current_stage:workflow_stages(id, slug, name, color)
       `)
       .eq('id', id)
@@ -687,6 +690,19 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     } catch (syncErr) {
       console.warn('[production] syncCrmLeadSxPipelineFromProject:', syncErr.message);
     }
+
+    // Notify production person only
+    if (updated?.production_person_id && updated.production_person_id !== userId) {
+      try {
+        await createNotif(req, updated.production_person_id, 'project_stage_changed',
+          `🔄 Giai đoạn SX: ${updated.current_stage?.name || ''}`,
+          `Dự án ${updated.code || updated.name} chuyển sang "${updated.current_stage?.name || ''}"`,
+          'project', id);
+      } catch (_) {}
+    }
+
+    const io = req.app.get('io');
+    if (io) io.emit('project:stage_changed', updated);
 
     res.json({ project: updated });
   } catch (e) {

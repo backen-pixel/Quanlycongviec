@@ -1015,9 +1015,12 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
         `Chuyển trạng thái: ${old.status} → ${update.status}`,
         { status: old.status }, { status: update.status });
 
-      // Notify team
-      const teamIds = [data.sales_person_id, data.designer_id, data.project_manager_id].filter(Boolean);
-      await notifyMultiple(req, teamIds, 'project_updated',
+      // Production project → only production_person; CRM → team
+      const notifyIds = data.production_person_id
+        ? [data.production_person_id]
+        : [data.sales_person_id, data.designer_id, data.project_manager_id].filter(Boolean);
+      const filteredIds = [...new Set(notifyIds)].filter(id => id !== req.user.userId);
+      await notifyMultiple(req, filteredIds, 'project_updated',
         '📋 Cập nhật dự án', `Dự án ${data.code || data.name} chuyển từ "${old.status}" → "${update.status}"`,
         'project', data.id);
     }
@@ -1175,15 +1178,18 @@ r.put('/:id/stage', async (req, res) => {
       { status: old?.status }, { status: new_status, stage: stage.name });
 
     // ── THÔNG BÁO chuyển giai đoạn ──
-    // Notify ALL stage persons + old team
+    // Production project → only production_person; CRM project → CRM team
     if (fullProj) {
-      const allPersonIds = [
-        fullProj.consulting_person_id, fullProj.design_person_id, fullProj.quotation_person_id,
-        fullProj.contract_person_id, fullProj.production_person_id, fullProj.shipping_person_id,
-        fullProj.installation_person_id, fullProj.care_person_id,
-        fullProj.sales_person_id, fullProj.designer_id, fullProj.project_manager_id,
-      ].filter(Boolean);
-      await notifyMultiple(req, allPersonIds, 'project_stage_changed',
+      const notifyIds = fullProj.production_person_id
+        ? [fullProj.production_person_id]
+        : [
+            fullProj.consulting_person_id, fullProj.design_person_id, fullProj.quotation_person_id,
+            fullProj.contract_person_id, fullProj.shipping_person_id,
+            fullProj.installation_person_id, fullProj.care_person_id,
+            fullProj.sales_person_id, fullProj.designer_id, fullProj.project_manager_id,
+          ].filter(Boolean);
+      const filteredIds = [...new Set(notifyIds)].filter(id => id !== req.user.userId);
+      await notifyMultiple(req, filteredIds, 'project_stage_changed',
         `🔄 Chuyển giai đoạn: ${stage.name}`,
         `Dự án ${fullProj.code} đã chuyển sang giai đoạn "${stage.name}"`,
         'project', data.id);
@@ -1611,16 +1617,21 @@ r.post('/:id/comments', async (req, res) => {
     }).select('*, user:users(id,full_name,avatar)').single();
     if (error) throw error;
 
-    // Notify project team: managers + all task assignees
+    // Emit socket for realtime chat
+    const io = req.app.get('io');
+    if (io) io.emit('project:comment', { project_id: req.params.id, comment: data });
+
+    // Notify project team — production project: only production_person + task assignees; CRM: full team
     try {
-      const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,supervisor_id,code').eq('id', req.params.id).single();
+      const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,supervisor_id,production_person_id,code').eq('id', req.params.id).single();
       const { data: taskAssignees } = await supabase.from('tasks').select('assignee_id').eq('project_id', req.params.id).not('assignee_id', 'is', null);
-      const teamIds = new Set([
-        proj?.sales_person_id, proj?.designer_id, proj?.project_manager_id, proj?.supervisor_id,
-        ...(taskAssignees || []).map(t => t.assignee_id),
-      ].filter(Boolean));
+      const taskAssigneeIds = (taskAssignees || []).map(t => t.assignee_id).filter(Boolean);
+      const baseTeam = proj?.production_person_id
+        ? [proj.production_person_id]  // production project → only production person
+        : [proj?.sales_person_id, proj?.designer_id, proj?.project_manager_id, proj?.supervisor_id].filter(Boolean);
+      const allIds = [...new Set([...baseTeam, ...taskAssigneeIds])].filter(id => id !== req.user.userId);
       const shortContent = (req.body.content || '').substring(0, 80);
-      await notifyMultiple(req, [...teamIds], 'comment_added',
+      await notifyMultiple(req, allIds, 'comment_added',
         '💬 Bình luận dự án',
         `${req.user.fullName} trong ${proj?.code || 'dự án'}: "${shortContent}${shortContent.length >= 80 ? '...' : ''}"`,
         'project', req.params.id,
@@ -1628,6 +1639,92 @@ r.post('/:id/comments', async (req, res) => {
     } catch (notifErr) { console.error('Comment notify error:', notifErr.message); }
 
     res.status(201).json({ comment: data });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:id/comments/:commentId', async (req, res) => {
+  try {
+    await supabase.from('project_comments').delete().eq('id', req.params.commentId).eq('user_id', req.user.userId);
+    const io = req.app.get('io');
+    if (io) io.emit('project:comment:deleted', { project_id: req.params.id, comment_id: req.params.commentId });
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── PROJECT DOCUMENTS (production-native file storage) ──
+r.get('/:id/documents', async (req, res) => {
+  try {
+    const { data } = await supabase.from('file_attachments')
+      .select('*, uploader:users!file_attachments_uploaded_by_fkey(id,full_name)')
+      .eq('entity_type', 'project').eq('entity_id', req.params.id)
+      .order('created_at', { ascending: false });
+    res.json({ documents: data || [] });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/:id/documents/bulk', async (req, res) => {
+  try {
+    const baseItems = (req.body.items || []).map(f => ({
+      entity_type: 'project', entity_id: req.params.id,
+      file_name: f.original_name || f.file_name,
+      file_url: f.file_url || '', file_size: f.file_size || 0, mime_type: f.mime_type || 'application/octet-stream',
+      uploaded_by: req.user.userId,
+    }));
+    const itemsWithNotes = (req.body.items || []).map((f, i) => f.notes ? { ...baseItems[i], notes: f.notes } : baseItems[i]);
+    if (!baseItems.length) return res.status(400).json({ error: 'Không có file' });
+    let { data, error } = await supabase.from('file_attachments').insert(itemsWithNotes).select();
+    if (error?.message?.includes('notes')) {
+      // notes column not yet migrated, retry without notes
+      ({ data, error } = await supabase.from('file_attachments').insert(baseItems).select());
+    }
+    if (error) throw error;
+    res.status(201).json({ documents: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.delete('/:id/documents/:docId', async (req, res) => {
+  try {
+    await supabase.from('file_attachments').delete().eq('id', req.params.docId).eq('entity_type', 'project');
+    res.json({ message: 'Đã xóa' });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── PROJECT TASK FILES (all task attachments for a project) ──
+r.get('/:id/task-files', async (req, res) => {
+  try {
+    const { data: tasks } = await supabase.from('tasks').select('id,title,stage_id,stage:workflow_stages(id,name,color)').eq('project_id', req.params.id);
+    if (!tasks?.length) return res.json({ taskFiles: [] });
+    const taskIds = tasks.map(t => t.id);
+    const { data: files } = await supabase.from('file_attachments')
+      .select('*, uploader:users!file_attachments_uploaded_by_fkey(id,full_name)')
+      .eq('entity_type', 'task').in('entity_id', taskIds)
+      .order('created_at', { ascending: false });
+    const taskMap = Object.fromEntries(tasks.map(t => [t.id, t]));
+    const taskFiles = (files || []).map(f => ({ ...f, task: taskMap[f.entity_id] || null }));
+    res.json({ taskFiles });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── PROJECT ACTIVITIES (production-native, no CRM needed) ──
+r.get('/:id/activities', async (req, res) => {
+  try {
+    const { data } = await supabase.from('project_comments')
+      .select('*, user:users(id,full_name,avatar)')
+      .eq('project_id', req.params.id)
+      .order('created_at', { ascending: false });
+    res.json({ activities: data || [] });
+  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+r.post('/:id/activities', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_comments').insert({
+      project_id: req.params.id, user_id: req.user.userId,
+      content: JSON.stringify({ type: req.body.type || 'note', title: req.body.title, description: req.body.description || '', outcome: req.body.outcome || '' }),
+      attachments: [],
+    }).select('*, user:users(id,full_name,avatar)').single();
+    if (error) throw error;
+    res.status(201).json({ activity: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 

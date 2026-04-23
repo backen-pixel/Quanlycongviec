@@ -179,6 +179,7 @@ r.get('/api-keys', (req, res) => {
       preview: k.key.slice(0, 8) + '••••••••••••••••',
       active: k.active !== false,
       default_assigned_to: k.default_assigned_to || null,
+      webhook_url: k.webhook_url || null,
       created_at: k.created_at,
     }));
     res.json(keys);
@@ -193,7 +194,7 @@ r.post('/api-keys', (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới tạo được API key' });
     }
-    const { name, default_assigned_to } = req.body;
+    const { name, default_assigned_to, webhook_url } = req.body;
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'Nhập tên để nhận biết key này (VD: "Website form", "Zap")' });
     }
@@ -204,6 +205,7 @@ r.post('/api-keys', (req, res) => {
       key,
       active: true,
       default_assigned_to: default_assigned_to || null,
+      webhook_url: webhook_url || null,
       created_by: req.user.userId,
       created_at: new Date().toISOString(),
     };
@@ -226,12 +228,13 @@ r.patch('/api-keys/:id', (req, res) => {
     const keys = loadKeys();
     const idx = keys.findIndex((k) => k.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy key' });
-    const { name, default_assigned_to, active } = req.body;
+    const { name, default_assigned_to, active, webhook_url } = req.body;
     if (name != null) keys[idx].name = String(name).trim();
     if (default_assigned_to !== undefined) keys[idx].default_assigned_to = default_assigned_to || null;
     if (active !== undefined) keys[idx].active = !!active;
+    if (webhook_url !== undefined) keys[idx].webhook_url = webhook_url || null;
     saveKeys(keys);
-    res.json({ id: keys[idx].id, name: keys[idx].name, active: keys[idx].active, default_assigned_to: keys[idx].default_assigned_to });
+    res.json({ id: keys[idx].id, name: keys[idx].name, active: keys[idx].active, default_assigned_to: keys[idx].default_assigned_to, webhook_url: keys[idx].webhook_url || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

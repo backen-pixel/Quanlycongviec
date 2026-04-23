@@ -26,6 +26,24 @@ async function resolveStageIdForWorkshopArea(workshopArea) {
   return null;
 }
 
+function guessStageSlugForTemplateItemTitle(workshopArea, title) {
+  const t = String(title || '').toLowerCase();
+  if (workshopArea === 'production') {
+    // Planning / materials
+    if (t.includes('kế hoạch') || t.includes('vật tư') || t.includes('xuất vật') || t.includes('chuẩn bị') || t.includes('hồ sơ')) return 'planning';
+    // QC
+    if (t.includes('qc') || t.includes('kiểm tra') || t.includes('nghiệm thu') || t.includes('chất lượng')) return 'quality-check';
+    // Packaging / warehouse
+    if (t.includes('đóng gói') || t.includes('xuất kho') || t.includes('bàn giao') || t.includes('giao cho kho')) return 'packaging';
+    // Default: production
+    return 'production';
+  }
+  // logistics
+  if (t.includes('lắp đặt') || t.includes('install')) return 'installation';
+  if (t.includes('vận chuyển') || t.includes('giao hàng') || t.includes('shipping') || t.includes('delivery')) return 'shipping';
+  return 'shipping';
+}
+
 /**
  * Áp một bộ mẫu xưởng → tạo tasks dự án (dùng cho API và auto-gen deal thắng).
  * @returns {{ ok: true, count: number, task_ids: string[] } | { ok: false, error: string, statusCode?: number }}
@@ -58,8 +76,15 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
     return { ok: false, error: 'Bộ mẫu trống', statusCode: 400 };
   }
 
-  const stageId = await resolveStageIdForWorkshopArea(tpl.workshop_area);
-  if (!stageId) {
+  // Resolve stage ids that Production UI uses (tasks.stage_id is workflow_stages.id)
+  const { bySlug } = await getWorkshopStageMap();
+  const fallbackStageId = await resolveStageIdForWorkshopArea(tpl.workshop_area);
+  const resolveStageIdBySlug = (slug) => {
+    const s = bySlug?.[slug];
+    return s?.id ?? null;
+  };
+
+  if (!fallbackStageId) {
     return {
       ok: false,
       error: 'Chưa cấu hình workflow_stages (production / delivery…)',
@@ -67,20 +92,31 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
     };
   }
 
-  const { data: lastTask } = await supabase
-    .from('tasks')
-    .select('order_index')
-    .eq('project_id', projectId)
-    .eq('stage_id', stageId)
-    .order('order_index', { ascending: false })
-    .limit(1);
-  let orderBase = lastTask?.[0]?.order_index ?? 0;
+  // Track per-stage order_index, because template items may be distributed across multiple stages.
+  const orderBaseByStage = {};
+  async function nextOrder(stageId) {
+    if (!stageId) stageId = fallbackStageId;
+    if (orderBaseByStage[stageId] == null) {
+      const { data: lastTask } = await supabase
+        .from('tasks')
+        .select('order_index')
+        .eq('project_id', projectId)
+        .eq('stage_id', stageId)
+        .order('order_index', { ascending: false })
+        .limit(1);
+      orderBaseByStage[stageId] = lastTask?.[0]?.order_index ?? 0;
+    }
+    orderBaseByStage[stageId] += 1;
+    return orderBaseByStage[stageId];
+  }
 
   const now = Date.now();
   const createdIds = [];
 
   for (const item of items) {
-    orderBase += 1;
+    const guessedSlug = guessStageSlugForTemplateItemTitle(tpl.workshop_area, item.title);
+    const stageId = resolveStageIdBySlug(guessedSlug) || fallbackStageId;
+    const orderIndex = await nextOrder(stageId);
     const dueDate = item.deadline_days
       ? new Date(now + item.deadline_days * 86400000).toISOString()
       : null;
@@ -97,8 +133,8 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
         task_type: 'project',
         created_by_id: userId,
         due_date: dueDate,
-        order_index: orderBase,
-        metadata: { workshop_template_id: templateId, workshop_template_item_id: item.id },
+        order_index: orderIndex,
+        metadata: { workshop_template_id: templateId, workshop_template_item_id: item.id, guessed_stage_slug: guessedSlug },
       })
       .select('id')
       .single();
