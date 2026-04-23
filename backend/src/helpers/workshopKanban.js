@@ -18,6 +18,7 @@ async function getWorkshopStageMap() {
 }
 
 async function getWonDealProjectIds() {
+  // Lấy deals đang ở stage "Thắng" (is_won=true)
   const { data: wonStages } = await supabase
     .from('crm_pipeline_stages')
     .select('id')
@@ -25,18 +26,37 @@ async function getWonDealProjectIds() {
     .eq('is_active', true)
     .or('pipeline_type.eq.deal,pipeline_type.is.null');
   const wonStageIds = (wonStages || []).map((s) => s.id).filter(Boolean);
-  if (!wonStageIds.length) return [];
 
-  const { data: leads } = await supabase
-    .from('crm_leads')
-    .select('project_id')
-    .eq('type', 'deal')
-    .not('project_id', 'is', null)
-    .in('stage_id', wonStageIds);
+  // Lấy deals có project (đã thắng trước đây — actual_close_date IS NOT NULL)
+  // OR đang ở stage is_won=true. Dùng union để không bỏ sót deals đã chuyển
+  // sang cột "Sản xuất"/"Vận chuyển" nhưng project vẫn đang trong xưởng.
+  const queries = [];
+  if (wonStageIds.length) {
+    queries.push(
+      supabase
+        .from('crm_leads')
+        .select('project_id')
+        .eq('type', 'deal')
+        .not('project_id', 'is', null)
+        .in('stage_id', wonStageIds),
+    );
+  }
+  // Deals đã từng thắng (có actual_close_date) và được gắn project
+  queries.push(
+    supabase
+      .from('crm_leads')
+      .select('project_id')
+      .eq('type', 'deal')
+      .not('project_id', 'is', null)
+      .not('actual_close_date', 'is', null),
+  );
 
+  const results = await Promise.all(queries);
   const out = new Set();
-  for (const l of leads || []) {
-    if (l.project_id) out.add(l.project_id);
+  for (const { data } of results) {
+    for (const l of data || []) {
+      if (l.project_id) out.add(l.project_id);
+    }
   }
   return [...out];
 }
@@ -180,7 +200,43 @@ async function resolveSxPipelineStageUuidForProject(project) {
 }
 
 /**
+ * Tìm ID stage "Sản xuất" trong CRM deal pipeline (pipeline_type='deal', is_won=false, is_lost=false, name chứa 'Sản xuất').
+ * Trả về UUID hoặc null nếu chưa có.
+ */
+async function getCrmSanXuatStageId() {
+  const { data } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', 'deal')
+    .eq('is_won', false)
+    .eq('is_lost', false)
+    .eq('is_active', true)
+    .ilike('name', '%Sản xuất%')
+    .limit(1)
+    .maybeSingle();
+  return data?.id || null;
+}
+
+/**
+ * Tìm ID stage "Thắng" trong CRM deal pipeline (is_won=true).
+ */
+async function getCrmThangStageId() {
+  const { data } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', 'deal')
+    .eq('is_won', true)
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle();
+  return data?.id || null;
+}
+
+/**
  * Cập nhật crm_leads.sx_pipeline_stage_id cho mọi deal gắn project_id.
+ * Đồng thời cập nhật stage_id CRM:
+ *   - Project rời "Chờ vào xưởng" (có current_stage_id thực) → stage_id = "Sản xuất"
+ *   - Project quay về intake (current_stage_id = null) → stage_id = "Thắng"
  */
 async function syncCrmLeadSxPipelineFromProject(projectId) {
   const { data: project } = await supabase
@@ -189,14 +245,57 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     .eq('id', projectId)
     .single();
   if (!project) return;
+
   const stageUuid = await resolveSxPipelineStageUuidForProject(project);
+
+  // Lấy tập hợp workflow_stage_id được cấu hình trong production_pipeline_stages
+  // (tức là các cột thực — không tính cột intake bucket_slug='won_pending')
+  const { data: prodPipeRows } = await supabase
+    .from('production_pipeline_stages')
+    .select('workflow_stage_id')
+    .not('workflow_stage_id', 'is', null)
+    .eq('is_active', true);
+  const prodWorkflowStageIds = new Set(
+    (prodPipeRows || []).map((r) => r.workflow_stage_id).filter(Boolean).map(String),
+  );
+
+  // Chỉ coi là "đang sản xuất thực" khi current_stage_id trỏ đến một giai đoạn
+  // được cấu hình trong production_pipeline_stages. Nếu project vẫn đang ở
+  // giai đoạn tư vấn/thiết kế/báo giá, deal phải giữ nguyên ở "Thắng".
+  const isInRealProductionStage =
+    !!project.current_stage_id &&
+    prodWorkflowStageIds.has(String(project.current_stage_id));
+
+  const [sanXuatStageId, thangStageId] = await Promise.all([
+    getCrmSanXuatStageId(),
+    getCrmThangStageId(),
+  ]);
+
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id')
+    .select('id, stage_id')
     .eq('project_id', projectId)
     .eq('type', 'deal');
+
   for (const lead of leads || []) {
-    await supabase.from('crm_leads').update({ sx_pipeline_stage_id: stageUuid }).eq('id', lead.id);
+    const update = { sx_pipeline_stage_id: stageUuid };
+
+    // Cập nhật CRM stage_id khi deal đang ở "Thắng" hoặc "Sản xuất"
+    const isOnWonOrSx =
+      (thangStageId && lead.stage_id === thangStageId) ||
+      (sanXuatStageId && lead.stage_id === sanXuatStageId);
+
+    if (isOnWonOrSx) {
+      if (isInRealProductionStage && sanXuatStageId) {
+        // Project đang sản xuất → chuyển deal sang cột "Sản xuất"
+        update.stage_id = sanXuatStageId;
+      } else if (!isInRealProductionStage && thangStageId) {
+        // Project quay về intake → giữ/trả lại cột "Thắng"
+        update.stage_id = thangStageId;
+      }
+    }
+
+    await supabase.from('crm_leads').update(update).eq('id', lead.id);
   }
 }
 
@@ -215,4 +314,6 @@ module.exports = {
   getDbIntakeStageId,
   resolveSxPipelineStageUuidForProject,
   syncCrmLeadSxPipelineFromProject,
+  getCrmSanXuatStageId,
+  getCrmThangStageId,
 };

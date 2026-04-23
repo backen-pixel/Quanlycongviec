@@ -2193,6 +2193,16 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
         </div>
       )}
 
+      {/* Giai đoạn sản xuất (nếu deal đã được đưa vào xưởng) */}
+      {item.sx_pipeline_stage && (
+        <div className={`${compact ? 'mt-1' : 'mt-2'} flex items-center gap-1.5 px-2 py-1 rounded-lg bg-sky-50 border border-sky-200`}>
+          <span className="text-[10px]">{item.sx_pipeline_stage.bucket_slug === 'won_pending' ? '⏳' : '🏭'}</span>
+          <span className={`font-medium text-sky-700 truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>
+            {item.sx_pipeline_stage.bucket_slug === 'won_pending' ? 'Chờ vào xưởng' : item.sx_pipeline_stage.name}
+          </span>
+        </div>
+      )}
+
       {/* Lý do thua */}
       {item.lost_reason && (
         <div className="mt-2 px-2 py-1.5 bg-red-50 border border-red-100 rounded-lg">
