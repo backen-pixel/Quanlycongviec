@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { getSocket, connectSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
 import {
   TrendingUp, Users, User, DollarSign, Target, Phone, Mail, MapPin,
@@ -82,7 +83,7 @@ const TIME_PRESETS = [
   { key: 'custom', label: 'Tùy chỉnh' },
 ];
 
-const KANBAN_LOAD_OPTIONS = ['1000', '2000', '5000', 'all'];
+const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
 
 /** Lead/Deal đang trên pipeline (chưa cột Thắng / Thua) — dùng stage từ API, không dùng is_won ở root. */
 function isActiveCrmPipelineItem(item) {
@@ -93,6 +94,7 @@ function isActiveCrmPipelineItem(item) {
 export default function CRMDashboard() {
   const { user } = useAuth();
   const seesAllCrmDeals = userSeesAllCrmDeals(user?.role);
+  const isAdmin = user?.role === 'admin';
 
   const persistedUiRef = useRef(undefined);
   if (persistedUiRef.current === undefined) {
@@ -106,9 +108,13 @@ export default function CRMDashboard() {
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   const [sources, setSources] = useState([]);
+  const [leadTypes, setLeadTypes] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [pipelines, setPipelines] = useState([]);
   const [allLeads, setAllLeads] = useState([]);
   const [allDeals, setAllDeals] = useState([]);
+  const allDealsRef = useRef(allDeals);
+  allDealsRef.current = allDeals;
   const [filterCompany, setFilterCompany] = useState(() => P?.filterCompany ?? '');
   const [searchText, setSearchText] = useState(() => P?.searchText ?? '');
   const [searchFocused, setSearchFocused] = useState(false);
@@ -119,9 +125,11 @@ export default function CRMDashboard() {
   const [filterAssigneeName, setFilterAssigneeName] = useState(() => P?.filterAssigneeName ?? '');
   const [filterSource, setFilterSource] = useState(() => P?.filterSource ?? '');
   const [filterStage, setFilterStage] = useState(() => P?.filterStage ?? '');
+  const [filterLeadType, setFilterLeadType] = useState(() => P?.filterLeadType ?? '');
+  // Mặc định luôn chỉ hiện lead đã có SĐT; không phục hồi giá trị '' (tất cả)
   const [filterPhone, setFilterPhone] = useState(() => {
     const v = P?.filterPhone;
-    return v === '' || v === 'has_phone' || v === 'no_phone' ? v : 'has_phone';
+    return v === 'no_phone' ? v : 'has_phone';
   });
   const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [users, setUsers] = useState([]);
@@ -153,11 +161,13 @@ export default function CRMDashboard() {
     const fromP = P?.kanbanLoadLimit != null ? String(P.kanbanLoadLimit) : null;
     if (fromP && KANBAN_LOAD_OPTIONS.includes(fromP)) return fromP;
     const s = localStorage.getItem('crm_kanban_load_limit');
-    return KANBAN_LOAD_OPTIONS.includes(s) ? s : 'all';
+    return KANBAN_LOAD_OPTIONS.includes(s) ? s : '1000';
   });
 
   /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
+  /** Trạng thái "Tải thêm": offset đang dừng, total server, và đang loading */
+  const [loadMoreState, setLoadMoreState] = useState({ leadOffset: 0, dealOffset: 0, leadTotal: null, dealTotal: null, loading: false });
 
   // ── TIME FILTER STATE ──
   const [timePreset, setTimePreset] = useState(() => (typeof P?.timePreset === 'string' ? P.timePreset : ''));
@@ -268,6 +278,188 @@ export default function CRMDashboard() {
 
   useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee]);
 
+  // Admin: khi đổi filterCompany thì nạp đúng stages của pipeline công ty đó (không reload toàn bộ Kanban)
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const { data: pls } = await api.get('/crm/pipelines').catch(() => ({ data: [] }));
+        if (cancel) return;
+        const list = Array.isArray(pls) ? pls : [];
+        setPipelines(list);
+
+        if (!filterCompany) {
+          const [leadRes, dealRes] = await Promise.all([
+            api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
+            api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
+          ]);
+          if (cancel) return;
+          setStagesLead(leadRes.data || []);
+          setStagesDeal(dealRes.data || []);
+          return;
+        }
+
+        const byCompany = list.filter((p) => String(p.company_id || '') === String(filterCompany));
+        const def = byCompany.find((p) => p.is_default) || byCompany[0] || null;
+        const pipelineId = def?.id || null;
+        const [leadRes, dealRes] = await Promise.all([
+          api.get('/crm/pipeline-stages', { params: pipelineId ? { type: 'lead', pipeline_id: pipelineId } : { type: 'lead' } }).catch(() => ({ data: [] })),
+          api.get('/crm/pipeline-stages', { params: pipelineId ? { type: 'deal', pipeline_id: pipelineId } : { type: 'deal' } }).catch(() => ({ data: [] })),
+        ]);
+        if (cancel) return;
+        setStagesLead(leadRes.data || []);
+        setStagesDeal(dealRes.data || []);
+      } catch (e) {
+        // ignore
+      }
+    })();
+    return () => { cancel = true; };
+  }, [isAdmin, filterCompany]);
+
+  // Reset stage filter if it doesn't exist in current company pipeline stages
+  useEffect(() => {
+    if (!filterStage) return;
+    const list = pipelineType === 'lead' ? stagesLead : stagesDeal;
+    const ok = (list || []).some((s) => String(s.id) === String(filterStage));
+    if (!ok) setFilterStage('');
+  }, [filterStage, pipelineType, stagesLead, stagesDeal]);
+
+  // ── Realtime: cập nhật badge SX/VC khi project thay đổi stage ──
+  useEffect(() => {
+    const socket = getSocket() || connectSocket();
+    if (!socket) return;
+
+    /**
+     * Backend emit `crm:badge_updated` sau mỗi syncCrmLead*FromProject.
+     * Payload: { lead_id, project_id, stage_id, sx_pipeline_stage, vc_pipeline_stage }
+     */
+    const badgeHandler = (payload) => {
+      if (!payload?.lead_id) return;
+      const lid = String(payload.lead_id);
+      const patch = {};
+      if (payload.sx_pipeline_stage !== undefined) patch.sx_pipeline_stage = payload.sx_pipeline_stage;
+      if (payload.vc_pipeline_stage !== undefined) patch.vc_pipeline_stage = payload.vc_pipeline_stage;
+      if (payload.stage_id !== undefined) patch.stage_id = payload.stage_id;
+      if (Object.keys(patch).length === 0) return;
+
+      const matchId = (row) => String(row.id) === lid;
+      console.log('[CRM] badge realtime update:', lid, '→', patch.vc_pipeline_stage?.name || patch.sx_pipeline_stage?.name);
+      setAllDeals((prev) => prev.map((d) => (matchId(d) ? { ...d, ...patch } : d)));
+      setAllLeads((prev) => prev.map((l) => (matchId(l) ? { ...l, ...patch } : l)));
+    };
+
+    socket.on('crm:badge_updated', badgeHandler);
+    return () => socket.off('crm:badge_updated', badgeHandler);
+  }, []);
+
+  /** Khi xưởng/VC đổi cột: refetch badge REST (dự phòng nếu socket chậm hoặc tab CRM mở trước khi sync xong) */
+  useEffect(() => {
+    const EVENT = 'crm-project-badges-refresh';
+    const onRefresh = async (e) => {
+      const projectId = e.detail?.projectId;
+      if (!projectId) return;
+      const targets = allDealsRef.current.filter(
+        (d) => String(d.project_id || '') === String(projectId),
+      );
+      if (!targets.length) return;
+      const patches = await Promise.all(
+        targets.map(async (d) => {
+          try {
+            const { data } = await api.get(`/crm/leads/${d.id}/badge`);
+            return { id: d.id, data };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      setAllDeals((prev) => {
+        const map = new Map((patches.filter(Boolean) || []).map((p) => [String(p.id), p.data]));
+        if (map.size === 0) return prev;
+        return prev.map((x) => {
+          const badge = map.get(String(x.id));
+          if (!badge) return x;
+          return {
+            ...x,
+            sx_pipeline_stage: badge.sx_pipeline_stage ?? null,
+            vc_pipeline_stage: badge.vc_pipeline_stage ?? null,
+            stage_id: badge.stage_id != null ? badge.stage_id : x.stage_id,
+          };
+        });
+      });
+    };
+    window.addEventListener(EVENT, onRefresh);
+    return () => window.removeEventListener(EVENT, onRefresh);
+  }, []);
+
+  /** Tải thêm 1000 records tiếp theo (append, không reload lại) */
+  const handleLoadMore = useCallback(async () => {
+    if (loadMoreState.loading) return;
+    const type = pipelineType;
+    const offset = type === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
+    const total = type === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
+    if (total !== null && offset >= total) return; // hết rồi
+    setLoadMoreState((s) => ({ ...s, loading: true }));
+    try {
+      const common = { type, phone_filter: filterPhone || undefined, limit: 1000, offset };
+      if (filterAssignee) common.assigned_to = filterAssignee;
+      const res = await api.get('/crm/leads', { params: common });
+      const d = res.data;
+      const rows = Array.isArray(d) ? d : (d?.data || []);
+      const newTotal = typeof d?.total === 'number' ? d.total : total;
+      const newNextOffset = typeof d?.nextOffset === 'number' ? d.nextOffset : offset + rows.length;
+      const userKey = getCurrentUserKeyForLeadSeen(user);
+      const viewedLocal = getLocallyViewedLeadIdSet(userKey);
+      const merged = rows.map((l) =>
+        viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
+      );
+      if (type === 'lead') {
+        setAllLeads((prev) => {
+          const existing = new Set(prev.map((x) => x.id));
+          return [...prev, ...merged.filter((x) => !existing.has(x.id))];
+        });
+        setLoadMoreState((s) => ({ ...s, leadOffset: newNextOffset, leadTotal: newTotal, loading: false }));
+      } else {
+        setAllDeals((prev) => {
+          const existing = new Set(prev.map((x) => x.id));
+          return [...prev, ...merged.filter((x) => !existing.has(x.id))];
+        });
+        setLoadMoreState((s) => ({ ...s, dealOffset: newNextOffset, dealTotal: newTotal, loading: false }));
+      }
+    } catch (e) {
+      console.error('[loadMore]', e);
+      setLoadMoreState((s) => ({ ...s, loading: false }));
+    }
+  }, [loadMoreState, pipelineType, filterPhone, filterAssignee, user]);
+
+  useEffect(() => {
+    if (!user?.company_id) return;
+    setUserCompanyId(String(user.company_id));
+    // Non-admin: khóa theo công ty của user
+    if (!isAdmin) {
+      setFilterCompany(String(user.company_id));
+    }
+  }, [user?.company_id, isAdmin]);
+
+  const resolvePipelineIdForCompany = useCallback((companyId) => {
+    if (!companyId) return null;
+    const list = pipelines || [];
+    const byCompany = list.filter((p) => String(p.company_id || '') === String(companyId));
+    const def = byCompany.find((p) => p.is_default);
+    return (def || byCompany[0] || null)?.id || null;
+  }, [pipelines]);
+
+  const buildStagesParams = useCallback((type) => {
+    // Admin: khi đã chọn company filter → nạp stages đúng pipeline của công ty đó
+    if (isAdmin && filterCompany) {
+      const pid = resolvePipelineIdForCompany(filterCompany);
+      if (pid) return { type, pipeline_id: pid };
+      return { type };
+    }
+    // Non-admin: backend đã tự scope theo company user (fallback default pipeline)
+    return { type };
+  }, [isAdmin, filterCompany, resolvePipelineIdForCompany]);
+
   useEffect(() => {
     const onSeen = (e) => {
       const seenId = e.detail?.id;
@@ -295,6 +487,8 @@ export default function CRMDashboard() {
       const buildCountParams = (type, phone_filter) => {
         const p = { type, ...dateParams, limit: 1, offset: 0 };
         if (filterAssignee) p.assigned_to = filterAssignee;
+        if (filterCompany) p.company_id = filterCompany;
+        if (filterLeadType) p.lead_type_id = filterLeadType;
         if (phone_filter) p.phone_filter = phone_filter;
         return p;
       };
@@ -302,16 +496,18 @@ export default function CRMDashboard() {
       const fetchKanbanRows = async (type) => {
         const common = { type, phone_filter: filterPhone || undefined, ...dateParams };
         if (filterAssignee) common.assigned_to = filterAssignee;
+        if (filterCompany) common.company_id = filterCompany;
+        if (filterLeadType) common.lead_type_id = filterLeadType;
         const loadAll =
           String(kanbanLoadLimit ?? '')
             .trim()
             .toLowerCase() === 'all';
         if (loadAll) {
-          const chunk = 5000;
+          const chunk = 1000;
           let offset = 0;
           const out = [];
           let guard = 0;
-          while (guard < 200) {
+          while (guard < 500) {
             guard += 1;
             const res = await api.get('/crm/leads', { params: { ...common, limit: chunk, offset } }).catch(() => ({ data: {} }));
             const payload = res.data || {};
@@ -330,22 +526,27 @@ export default function CRMDashboard() {
             if (!hasMore) break;
             offset = nextOffset;
           }
-          return out;
+          return { rows: out, nextOffset: null, total: out.length };
         }
         const limit = parseInt(kanbanLoadLimit, 10) || 1000;
-        const res = await api.get('/crm/leads', { params: { ...common, limit } }).catch(() => ({ data: {} }));
+        const res = await api.get('/crm/leads', { params: { ...common, limit, offset: 0 } }).catch(() => ({ data: {} }));
         const d = res.data;
-        return Array.isArray(d) ? d : (d?.data || []);
+        const rows = Array.isArray(d) ? d : (d?.data || []);
+        const total = typeof d?.total === 'number' ? d.total : null;
+        const nextOffset = typeof d?.nextOffset === 'number' ? d.nextOffset : rows.length;
+        return { rows, nextOffset, total };
       };
 
-      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, stagesLeadRes, stagesDealRes, sourcesRes, alertsRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, alertsRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
+        api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams, ...(filterCompany ? { company_id: filterCompany } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams, ...(filterCompany ? { company_id: filterCompany } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         fetchKanbanRows('lead'),
         fetchKanbanRows('deal'),
-        api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
-        api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
+        api.get('/crm/pipelines').catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: buildStagesParams('lead') }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: buildStagesParams('deal') }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
+        api.get('/crm/lead-types', { params: { ...(filterCompany ? { company_id: filterCompany } : {}) } }).catch(() => ({ data: [] })),
         api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
         api.get('/companies').catch(() => ({ data: { companies: [] } })),
         api.get('/users').catch(() => ({ data: [] })),
@@ -370,17 +571,30 @@ export default function CRMDashboard() {
       });
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
+      setPipelines(Array.isArray(pipelinesRes.data) ? pipelinesRes.data : []);
       const userKey = getCurrentUserKeyForLeadSeen(user);
       const viewedLocal = getLocallyViewedLeadIdSet(userKey);
       const mergeLeadSeenLocal = (rows) =>
         (rows || []).map((l) =>
           viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
         );
-      setAllLeads(mergeLeadSeenLocal(leadsRows));
-      setAllDeals(mergeLeadSeenLocal(dealsRows));
+      const leadsResult = leadsRows || { rows: [], nextOffset: 0, total: null };
+      const dealsResult = dealsRows || { rows: [], nextOffset: 0, total: null };
+      const leadsData = Array.isArray(leadsResult) ? leadsResult : leadsResult.rows;
+      const dealsData = Array.isArray(dealsResult) ? dealsResult : dealsResult.rows;
+      setAllLeads(mergeLeadSeenLocal(leadsData));
+      setAllDeals(mergeLeadSeenLocal(dealsData));
+      setLoadMoreState({
+        leadOffset: Array.isArray(leadsResult) ? leadsData.length : (leadsResult.nextOffset ?? leadsData.length),
+        dealOffset: Array.isArray(dealsResult) ? dealsData.length : (dealsResult.nextOffset ?? dealsData.length),
+        leadTotal: Array.isArray(leadsResult) ? null : leadsResult.total,
+        dealTotal: Array.isArray(dealsResult) ? null : dealsResult.total,
+        loading: false,
+      });
       setStagesLead(stagesLeadRes.data);
       setStagesDeal(stagesDealRes.data);
       setSources(sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []));
+      setLeadTypes(Array.isArray(leadTypesRes.data) ? leadTypesRes.data : []);
       if (sourcesRes.data?.fb_pages) setFbPages(sourcesRes.data.fb_pages);
       setCompanies(companiesRes.data?.companies || companiesRes.data || []);
       setUsers(Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || []);
@@ -607,6 +821,7 @@ export default function CRMDashboard() {
       filterAssigneeName,
       filterSource,
       filterStage,
+      filterLeadType,
       filterPhone,
       showAdvSearch,
       pipelineType,
@@ -626,6 +841,7 @@ export default function CRMDashboard() {
     filterAssigneeName,
     filterSource,
     filterStage,
+    filterLeadType,
     filterPhone,
     showAdvSearch,
     pipelineType,
@@ -963,46 +1179,33 @@ export default function CRMDashboard() {
               className={`${ctrlH} px-3 pl-9 rounded-xl ${ctrlTxt} font-medium cursor-pointer transition-all border appearance-none pr-8 bg-white text-gray-700 border-gray-200 hover:bg-gray-50`}
               style={{ minWidth: compactLeadUi ? '142px' : '158px' }}
             >
+              <option value="500">📥 Tải 500</option>
               <option value="1000">📥 Tải 1.000</option>
               <option value="2000">📥 Tải 2.000</option>
-              <option value="5000">📥 Tải 5.000</option>
               <option value="all">📥 Tải tất cả</option>
             </select>
             <LayoutGrid className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
           </div>
 
-          {activePipelinePhoneTotals?.all != null && (
-            <span
-              className="text-[11px] text-emerald-900 bg-emerald-50 border border-emerald-200 px-2.5 py-2 rounded-lg max-w-[min(100vw-2rem,24rem)] leading-snug"
-              title="Đếm từ API (limit=1, chỉ dùng trường total) — không phụ thuộc mức Tải Kanban. Theo lọc NV + khoảng ngày trên server; chưa gồm lọc công ty / nguồn / giai đoạn / tìm nhanh (lọc phía client)."
-            >
-              <span className="font-semibold">{pipelineType === 'lead' ? 'Lead' : 'Deal'} — tổng:</span>{' '}
-              {activePipelinePhoneTotals.all.toLocaleString('vi-VN')}
-              {' · '}
-              <span className="text-emerald-700">📞 có SĐT {typeof activePipelinePhoneTotals.hasPhone === 'number' ? activePipelinePhoneTotals.hasPhone.toLocaleString('vi-VN') : '—'}</span>
-              {' · '}
-              <span className="text-amber-800">chưa SĐT {typeof activePipelinePhoneTotals.noPhone === 'number' ? activePipelinePhoneTotals.noPhone.toLocaleString('vi-VN') : '—'}</span>
-            </span>
-          )}
 
           {/* Toggle advanced filters */}
           <button onClick={() => setShowAdvSearch(!showAdvSearch)}
             className={`h-10 px-4 rounded-xl text-sm font-medium flex items-center gap-2 cursor-pointer transition-all border ${
-              showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone
+              showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterLeadType || filterPhone
                 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             }`}>
             <Filter className="h-4 w-4" />
             Bộ lọc
-            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone) && (
+            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterLeadType || filterPhone === 'no_phone') && (
               <span className="bg-blue-600 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {[filterAssignee, filterAssigneeName, filterCompany, filterSource, filterStage, filterPhone].filter(Boolean).length}
+                {[filterAssignee, filterAssigneeName, filterCompany, filterSource, filterStage, filterLeadType, filterPhone === 'no_phone' ? filterPhone : ''].filter(Boolean).length}
               </span>
             )}
           </button>
 
           {/* Clear all filters */}
-          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
+          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterLeadType || filterPhone !== 'has_phone' || timePreset) && (
             <button onClick={() => {
               setSearchText('');
               setFilterAssignee('');
@@ -1011,7 +1214,8 @@ export default function CRMDashboard() {
               setFilterCompany('');
               setFilterSource('');
               setFilterStage('');
-              setFilterPhone('');
+              setFilterLeadType('');
+              setFilterPhone('has_phone');
               handleTimePresetChange('');
             }}
               className="h-10 px-4 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-sm font-medium flex items-center gap-1.5 cursor-pointer transition-all border border-red-200">
@@ -1020,7 +1224,7 @@ export default function CRMDashboard() {
           )}
 
           {/* Result count */}
-          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterPhone || timePreset) && (
+          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterLeadType || filterPhone === 'no_phone' || timePreset) && (
             <span className="text-xs text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
               {pipelineType === 'lead' ? leads.length : deals.length} / {pipelineType === 'lead' ? allLeads.length : allDeals.length} trên Kanban
               {activePipelinePhoneTotals?.all != null && filterPhone && (
@@ -1141,12 +1345,20 @@ export default function CRMDashboard() {
             </div>
 
             {/* Company */}
-            {companies.length > 0 && (
-              <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)}
-                className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+            {isAdmin && companies.length > 0 && (
+              <select
+                value={filterCompany}
+                onChange={e => setFilterCompany(e.target.value)}
+                className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
                 <option value="">🏢 Tất cả công ty</option>
                 {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
               </select>
+            )}
+            {!isAdmin && userCompanyId && (
+              <span className="h-9 inline-flex items-center px-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+                🏢 Công ty của bạn
+              </span>
             )}
 
             {/* Source - smart: chỉ nguồn đang dùng, FB → [FB] Tên Page */}
@@ -1165,12 +1377,26 @@ export default function CRMDashboard() {
               {(pipelineType === 'lead' ? stagesLead : stagesDeal).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
 
+            {/* Lead/Deal type */}
+            {leadTypes.length > 0 && (
+              <select
+                value={filterLeadType}
+                onChange={e => setFilterLeadType(e.target.value)}
+                className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="">🏷️ Tất cả loại</option>
+                {leadTypes
+                  .filter((t) => t.applies_to === 'both' || t.applies_to === pipelineType)
+                  .map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            )}
+
             {/* Phone filter */}
             <select value={filterPhone} onChange={e => setFilterPhone(e.target.value)}
               className={`h-9 px-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${
-                filterPhone ? 'bg-green-50 border-green-300 text-green-700' : 'bg-gray-50 border-gray-200'
+                filterPhone === 'has_phone' ? 'bg-green-50 border-green-300 text-green-700' :
+                filterPhone === 'no_phone'  ? 'bg-red-50 border-red-300 text-red-700' : 'bg-gray-50 border-gray-200'
               }`}>
-              <option value="">📞 SĐT: Tất cả</option>
               <option value="has_phone">✅ Đã có SĐT</option>
               <option value="no_phone">❌ Chưa có SĐT</option>
             </select>
@@ -1328,6 +1554,38 @@ export default function CRMDashboard() {
           onToggleMergeSelect={toggleManualMergeSelect}
           compact={pipelineType === 'lead'}
         />
+        {/* Nút Tải thêm 1000 */}
+        {kanbanLoadLimit !== 'all' && (() => {
+          const offset = pipelineType === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
+          const total = pipelineType === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
+          const loaded = pipelineType === 'lead' ? allLeads.length : allDeals.length;
+          const hasMore = total === null || offset < total;
+          if (!hasMore) return null;
+          return (
+            <div className="flex items-center justify-center gap-3 py-3 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
+              <span className="text-xs text-gray-500">
+                Đã tải <span className="font-semibold text-gray-700">{loaded.toLocaleString()}</span>
+                {total !== null && <> / <span className="font-semibold text-indigo-600">{total.toLocaleString()}</span> lead</>}
+              </span>
+              <button
+                onClick={handleLoadMore}
+                disabled={loadMoreState.loading}
+                className="flex items-center gap-1.5 h-8 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:opacity-60 transition-colors"
+              >
+                {loadMoreState.loading
+                  ? <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Đang tải...</>
+                  : <>📥 Tải thêm 1.000 {pipelineType === 'lead' ? 'lead' : 'deal'}</>
+                }
+              </button>
+              <button
+                onClick={() => { setKanbanLoadLimit('all'); localStorage.setItem('crm_kanban_load_limit', 'all'); }}
+                className="h-8 px-3 border border-gray-200 bg-white text-xs text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Tải tất cả
+              </button>
+            </div>
+          );
+        })()}
       </div>
       )}
 
@@ -1359,6 +1617,7 @@ export default function CRMDashboard() {
         <NewLeadModal
           onClose={() => { setShowNewLead(false); load(); }}
           sources={sources}
+          leadTypes={leadTypes}
           companies={companies}
           type={pipelineType}
           defaultCompanyId={filterCompany || user?.company_id}
@@ -1369,6 +1628,7 @@ export default function CRMDashboard() {
         <NewDealModal
           onClose={() => { setShowNewDeal(false); load(); }}
           sources={sources}
+          leadTypes={leadTypes}
           companies={companies}
           defaultCompanyId={filterCompany || user?.company_id}
           currentUser={user}
@@ -2193,15 +2453,42 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
         </div>
       )}
 
-      {/* Giai đoạn sản xuất (nếu deal đã được đưa vào xưởng) */}
-      {item.sx_pipeline_stage && (
-        <div className={`${compact ? 'mt-1' : 'mt-2'} flex items-center gap-1.5 px-2 py-1 rounded-lg bg-sky-50 border border-sky-200`}>
-          <span className="text-[10px]">{item.sx_pipeline_stage.bucket_slug === 'won_pending' ? '⏳' : '🏭'}</span>
-          <span className={`font-medium text-sky-700 truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>
-            {item.sx_pipeline_stage.bucket_slug === 'won_pending' ? 'Chờ vào xưởng' : item.sx_pipeline_stage.name}
-          </span>
-        </div>
-      )}
+      {/* Badge trạng thái module — ưu tiên VC nếu đã bàn giao, còn lại hiện SX */}
+      {(item.sx_pipeline_stage || item.vc_pipeline_stage) && (() => {
+        const vcStage = item.vc_pipeline_stage;
+        const sxStage = item.sx_pipeline_stage;
+
+        // Ưu tiên: nếu deal đã sang VC → chỉ hiện VC (sản xuất đã xong)
+        // Nếu chưa sang VC → chỉ hiện SX
+        const activeStage = vcStage || sxStage;
+        const isVC = !!vcStage;
+        const icon = activeStage?.icon
+          || (isVC
+            ? (activeStage?.bucket_slug === 'delivery_pending' ? '📦'
+              : activeStage?.bucket_slug === 'completed' ? '✅' : '🚚')
+            : (activeStage?.bucket_slug === 'won_pending' ? '⏳'
+              : activeStage?.bucket_slug === 'completed' ? '✅' : '🏭'));
+        const label = isVC ? 'VC' : 'SX';
+        const defaultColor = isVC ? '#ea580c' : '#0369a1';
+
+        return (
+          <div className={`${compact ? 'mt-1' : 'mt-2'}`}>
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg"
+              style={{
+                backgroundColor: activeStage.color ? `${activeStage.color}12` : (isVC ? '#fff7ed' : '#f0f9ff'),
+                border: `1px solid ${activeStage.color ? `${activeStage.color}50` : (isVC ? '#fed7aa' : '#bae6fd')}`,
+              }}>
+              <span className="text-[11px] shrink-0">{icon}</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide shrink-0"
+                style={{ color: activeStage.color || defaultColor }}>{label}</span>
+              <span className={`font-semibold truncate ${compact ? 'text-[10px]' : 'text-xs'}`}
+                style={{ color: activeStage.color || defaultColor }}>
+                {activeStage.name}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Ngày giao xưởng từ linked project */}
       {item.linked_project?.production_deadline && (() => {
@@ -2254,7 +2541,8 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeS
 }
 
 // ── NEW DEAL MODAL ─────────────────────────────────────────────────────────
-function NewDealModal({ onClose, sources, companies, defaultCompanyId, currentUser }) {
+function NewDealModal({ onClose, sources, leadTypes, companies, defaultCompanyId, currentUser }) {
+  const isAdmin = currentUser?.role === 'admin';
   const [formData, setFormData] = useState({
     title: '',
     customer_name: '',
@@ -2262,12 +2550,36 @@ function NewDealModal({ onClose, sources, companies, defaultCompanyId, currentUs
     customer_email: '',
     source_id: '',
     company_id: defaultCompanyId || '',
+    lead_type_id: '',
     estimated_value: 0,
     probability: 50,
     install_address: '',
     description: '',
   });
   const [saving, setSaving] = useState(false);
+
+  const visibleLeadTypes = useMemo(() => {
+    const cid = String(formData.company_id || '');
+    return (Array.isArray(leadTypes) ? leadTypes : [])
+      .filter((t) => String(t.company_id || '') === cid)
+      .filter((t) => t.applies_to === 'both' || t.applies_to === 'deal');
+  }, [leadTypes, formData.company_id]);
+
+  // Lock company for non-admin
+  useEffect(() => {
+    if (isAdmin) return;
+    const cid = defaultCompanyId || currentUser?.company_id || '';
+    if (cid && String(formData.company_id || '') !== String(cid)) {
+      setFormData((prev) => ({ ...prev, company_id: cid }));
+    }
+  }, [isAdmin, defaultCompanyId, currentUser?.company_id]);
+
+  // Reset lead_type when company changes
+  useEffect(() => {
+    if (!formData.lead_type_id) return;
+    const ok = visibleLeadTypes.some((t) => String(t.id) === String(formData.lead_type_id));
+    if (!ok) setFormData((prev) => ({ ...prev, lead_type_id: '' }));
+  }, [formData.company_id, visibleLeadTypes, formData.lead_type_id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -2293,6 +2605,7 @@ function NewDealModal({ onClose, sources, companies, defaultCompanyId, currentUs
         customer_id: customerId || null,
         source_id: formData.source_id || null,
         company_id: formData.company_id || null,
+        lead_type_id: formData.lead_type_id || null,
         estimated_value: parseFloat(formData.estimated_value) || 0,
         probability: parseInt(formData.probability) || 50,
         install_address: formData.install_address || null,
@@ -2330,11 +2643,19 @@ function NewDealModal({ onClose, sources, companies, defaultCompanyId, currentUs
           {/* Công ty */}
           <div>
             <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty *</label>
-            <select value={formData.company_id} onChange={e => set('company_id', e.target.value)} required
-              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}>
-              <option value="">-- Chọn công ty --</option>
-              {(companies || []).map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
-            </select>
+            {isAdmin ? (
+              <select value={formData.company_id} onChange={e => set('company_id', e.target.value)} required
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}>
+                <option value="">-- Chọn công ty --</option>
+                {(companies || []).map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+              </select>
+            ) : (
+              <div className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800">
+                {companies.find((c) => String(c.id) === String(formData.company_id))?.short_name
+                  || companies.find((c) => String(c.id) === String(formData.company_id))?.name
+                  || 'Công ty của bạn'}
+              </div>
+            )}
           </div>
 
           {/* Khách hàng */}
@@ -2379,6 +2700,21 @@ function NewDealModal({ onClose, sources, companies, defaultCompanyId, currentUs
               {(sources || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
+
+          {/* Loại Deal */}
+          {visibleLeadTypes.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1.5">🏷️ Loại Deal</label>
+              <select
+                value={formData.lead_type_id}
+                onChange={e => set('lead_type_id', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              >
+                <option value="">-- Chọn loại (không bắt buộc) --</option>
+                {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* Giá trị + Xác suất */}
           <div className="grid grid-cols-2 gap-4">
@@ -2433,18 +2769,43 @@ function NewDealModal({ onClose, sources, companies, defaultCompanyId, currentUs
 }
 
 // New Lead Modal - Auto create customer
-function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId, currentUser }) {
+function NewLeadModal({ onClose, sources, leadTypes, companies, type, defaultCompanyId, currentUser }) {
+  const isAdmin = currentUser?.role === 'admin';
   const [formData, setFormData] = useState({
     title: '',
     customer_name: '',
     customer_phone: '',
     source_id: '',
     company_id: defaultCompanyId || '',
+    lead_type_id: '',
     estimated_value: 0,
     probability: 50,
     assigned_to: currentUser?.id || '',
   });
   const [saving, setSaving] = useState(false);
+
+  const visibleLeadTypes = useMemo(() => {
+    const cid = String(formData.company_id || '');
+    return (Array.isArray(leadTypes) ? leadTypes : [])
+      .filter((t) => String(t.company_id || '') === cid)
+      .filter((t) => t.applies_to === 'both' || t.applies_to === 'lead');
+  }, [leadTypes, formData.company_id]);
+
+  // Lock company for non-admin
+  useEffect(() => {
+    if (isAdmin) return;
+    const cid = defaultCompanyId || currentUser?.company_id || '';
+    if (cid && String(formData.company_id || '') !== String(cid)) {
+      setFormData((prev) => ({ ...prev, company_id: cid }));
+    }
+  }, [isAdmin, defaultCompanyId, currentUser?.company_id]);
+
+  // Reset lead_type when company changes
+  useEffect(() => {
+    if (!formData.lead_type_id) return;
+    const ok = visibleLeadTypes.some((t) => String(t.id) === String(formData.lead_type_id));
+    if (!ok) setFormData((prev) => ({ ...prev, lead_type_id: '' }));
+  }, [formData.company_id, visibleLeadTypes, formData.lead_type_id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -2475,6 +2836,7 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId, cur
         customer_id: customerId || null,
         source_id: formData.source_id || null,
         company_id: formData.company_id || null,
+        lead_type_id: formData.lead_type_id || null,
         assigned_to: formData.assigned_to || null,
         type: 'lead',
         stage_id: firstStage?.id,
@@ -2511,17 +2873,25 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId, cur
 
           <div>
             <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty *</label>
-            <select
-              value={formData.company_id}
-              onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
-              required
-              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}
-            >
-              <option value="">-- Chọn công ty --</option>
-              {(companies || []).map(c => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-              ))}
-            </select>
+            {isAdmin ? (
+              <select
+                value={formData.company_id}
+                onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
+                required
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}
+              >
+                <option value="">-- Chọn công ty --</option>
+                {(companies || []).map(c => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800">
+                {companies.find((c) => String(c.id) === String(formData.company_id))?.short_name
+                  || companies.find((c) => String(c.id) === String(formData.company_id))?.name
+                  || 'Công ty của bạn'}
+              </div>
+            )}
             {!formData.company_id && <p className="text-xs text-red-500 mt-1">Bắt buộc chọn công ty</p>}
           </div>
 
@@ -2564,6 +2934,21 @@ function NewLeadModal({ onClose, sources, companies, type, defaultCompanyId, cur
               ))}
             </select>
           </div>
+
+          {/* Loại Lead */}
+          {visibleLeadTypes.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1.5">🏷️ Loại Lead</label>
+              <select
+                value={formData.lead_type_id}
+                onChange={(e) => setFormData({ ...formData, lead_type_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              >
+                <option value="">-- Chọn loại (không bắt buộc) --</option>
+                {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* Người phụ trách - auto filled */}
           {currentUser && (

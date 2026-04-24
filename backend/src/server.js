@@ -30,6 +30,10 @@ app.use(morgan('dev'));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
+// Metrics middleware — đặt trước các route để đếm mọi request /api/*
+const { metricsMiddleware, getSnapshot, resetMetrics } = require('./helpers/requestMetrics');
+app.use(metricsMiddleware);
+
 // Serve uploaded files
 const path = require('path');
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -37,6 +41,27 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Root + Health
 app.get('/', (_, res) => res.json({ app: 'TuBep Pro API', status: 'ok' }));
 app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString(), uptime: process.uptime() }));
+
+// ─── Request Metrics (admin only) ───────────────────────────────────────────
+const jwt_verify = require('jsonwebtoken');
+app.get('/api/metrics', (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace('Bearer ', '');
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    const decoded = jwt_verify.verify(token, config.jwtSecret);
+    if (!['admin', 'manager'].includes(decoded?.role)) return res.status(403).json({ error: 'Forbidden' });
+    res.json(getSnapshot());
+  } catch { res.status(401).json({ error: 'Invalid token' }); }
+});
+app.post('/api/metrics/reset', (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace('Bearer ', '');
+    const decoded = jwt_verify.verify(token, config.jwtSecret);
+    if (decoded?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+    resetMetrics();
+    res.json({ ok: true });
+  } catch { res.status(401).json({ error: 'Invalid token' }); }
+});
 
 // Seed endpoint — only run manually when needed (not on every startup)
 app.post('/api/seed-passwords', async (req, res) => {

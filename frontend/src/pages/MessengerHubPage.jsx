@@ -324,10 +324,12 @@ export default function MessengerHubPage() {
     if (!staffPanelOpen || !staffListLoaded || staffRows.length === 0) return undefined;
     const ids = staffRows.map((u) => u.id || u.user_id).filter(Boolean);
     const tick = () => {
+      if (document.hidden) return;
       api.post('/users/presence', { user_ids: ids }).then((r) => setPresenceByUser(r.data?.presence || {})).catch(() => {});
     };
-    const id = setInterval(tick, 60 * 1000);
-    return () => clearInterval(id);
+    const id = setInterval(tick, 120 * 1000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
   }, [staffPanelOpen, staffListLoaded, staffRows]);
 
   const onMessagesChange = useCallback(

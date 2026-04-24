@@ -10,22 +10,27 @@ const ICONS = ['🏭', '🚚', '🤝', '⏳', '📋', '✅', '🎯', '🔧', '�
 export default function ProductionPipelineSettingsPage() {
   const [stages, setStages] = useState([]);
   const [workflowStages, setWorkflowStages] = useState([]);
+  const [crmStages, setCrmStages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({
-    name: '', color: COLORS[0], icon: '📋', workflow_stage_id: '', is_active: true, is_handover_to_logistics: false,
+    name: '', color: COLORS[0], icon: '📋', workflow_stage_id: '', is_active: true,
+    is_handover_to_logistics: false, crm_sync_type: null, crm_target_stage_id: '',
   });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [pipeRes, stRes] = await Promise.all([
+      const [pipeRes, stRes, crmRes] = await Promise.all([
         api.get('/production/pipeline-stages', { params: { all: 'true' } }),
         api.get('/stages').catch(() => api.get('/users/stages').catch(() => ({ data: { stages: [] } }))),
+        api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
       ]);
       setStages(pipeRes.data || []);
       setWorkflowStages(stRes.data?.stages || []);
+      setCrmStages((crmRes.data || []).filter((s) => s.pipeline_type === 'deal' || !s.pipeline_type));
     } catch {
       setStages([]);
     }
@@ -42,6 +47,7 @@ export default function ProductionPipelineSettingsPage() {
     setForm({
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
       workflow_stage_id: '', is_active: true, is_handover_to_logistics: false,
+      crm_sync_type: null, crm_target_stage_id: '',
     });
   };
 
@@ -55,6 +61,8 @@ export default function ProductionPipelineSettingsPage() {
       workflow_stage_id: stage.workflow_stage_id || stage.workflow_stage?.id || '',
       is_active: stage.is_active !== false,
       is_handover_to_logistics: stage.is_handover_to_logistics || false,
+      crm_sync_type: stage.crm_sync_type || null,
+      crm_target_stage_id: stage.crm_target_stage_id || '',
     });
   };
 
@@ -68,6 +76,8 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: form.workflow_stage_id || null,
         is_active: form.is_active,
         is_handover_to_logistics: form.is_handover_to_logistics,
+        crm_sync_type: form.crm_target_stage_id ? null : (form.crm_sync_type || null),
+        crm_target_stage_id: form.crm_target_stage_id || null,
       });
       setAdding(false);
       load();
@@ -87,6 +97,8 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: intakeRow ? null : (form.workflow_stage_id || null),
         is_active: form.is_active,
         is_handover_to_logistics: intakeRow ? false : form.is_handover_to_logistics,
+        crm_sync_type: intakeRow ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: intakeRow ? null : (form.crm_target_stage_id || null),
       });
       setEditId(null);
       load();
@@ -115,12 +127,38 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
 
+  const seedSampleColumns = async () => {
+    if (!confirm('Thêm 5 cột mẫu (nhận bản vẽ, CNC, lắp ráp, sơn, nghiệm thu nội bộ)? Có thể chạy lại an toàn — cột đã tồn tại sẽ bỏ qua.')) return;
+    setSeeding(true);
+    try {
+      const { data } = await api.post('/production/pipeline-stages/seed-samples');
+      const parts = [];
+      if (data.inserted > 0) {
+        parts.push(`Đã thêm ${data.inserted} cột: ${(data.insertedNames || []).join(', ')}`);
+      }
+      if (data.skipped > 0) {
+        parts.push(`Đã có sẵn (bỏ qua): ${(data.skippedNames || []).join(', ')}`);
+      }
+      if (!parts.length) parts.push('Không thay đổi (đã đủ cột mẫu).');
+      alert(parts.join('\n\n'));
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi thêm cột mẫu');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const moveStage = async (stage, dir) => {
+    if (stage.bucket_slug === INTAKE) return; // Cột deal-thắng luôn đứng đầu
     const list = [...stages].sort((a, b) => a.order_index - b.order_index);
     const idx = list.findIndex((s) => s.id === stage.id);
-    if ((dir === -1 && idx === 0) || (dir === 1 && idx === list.length - 1)) return;
-    [list[idx], list[idx + dir]] = [list[idx + dir], list[idx]];
-    const reorder = list.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+    if (idx < 0 || (dir === -1 && idx === 0) || (dir === 1 && idx === list.length - 1)) return;
+    // Không cho nhảy lên trước cột INTAKE
+    if (dir === -1 && list[idx - 1]?.bucket_slug === INTAKE) return;
+    const newList = [...list];
+    [newList[idx], newList[idx + dir]] = [newList[idx + dir], newList[idx]];
+    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
     try {
       await api.put('/production/pipeline-stages-reorder', { stages: reorder });
       load();
@@ -155,6 +193,7 @@ export default function ProductionPipelineSettingsPage() {
       <div className="bg-teal-50 border border-teal-100 rounded-xl p-4 text-sm text-teal-900">
         <strong>Deal thắng:</strong> mọi dự án gắn deal ở giai đoạn «Thắng» đều xuất hiện trong module sản xuất (cột chờ hoặc cột giai đoạn workflow tương ứng).
         Chạy migration <code className="text-xs bg-white/80 px-1 rounded">database/53_production_pipeline_stages.sql</code> nếu chưa có bảng cấu hình.
+        Có thể bấm «Thêm cột mẫu» bên dưới hoặc chạy <code className="text-xs bg-white/80 px-1 rounded">database/80_production_pipeline_sample_stages.sql</code> trên Supabase.
       </div>
 
       {loading ? (
@@ -173,13 +212,25 @@ export default function ProductionPipelineSettingsPage() {
                 <p className="text-[10px] text-gray-500">{sorted.length} cột</p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={startAdd}
-              className="h-8 px-3 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5" /> Thêm cột
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={seedSampleColumns}
+                disabled={seeding}
+                className="h-8 px-3 border border-teal-200 bg-white text-teal-800 rounded-lg text-xs hover:bg-teal-50 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Nhận bản vẽ, CNC, lắp ráp, sơn, nghiệm thu nội bộ"
+              >
+                {seeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span aria-hidden>📦</span>}
+                Thêm cột mẫu (5)
+              </button>
+              <button
+                type="button"
+                onClick={startAdd}
+                className="h-8 px-3 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" /> Thêm cột
+              </button>
+            </div>
           </div>
 
           <div className="p-4 border-b">
@@ -215,8 +266,12 @@ export default function ProductionPipelineSettingsPage() {
                 className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50 ${!s.is_active ? 'opacity-50' : ''}`}
               >
                 <div className="flex flex-col gap-0.5">
-                  <button type="button" onClick={() => moveStage(s, -1)} disabled={i === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
-                  <button type="button" onClick={() => moveStage(s, 1)} disabled={i === sorted.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
+                  <button type="button" onClick={() => moveStage(s, -1)}
+                    disabled={i === 0 || s.bucket_slug === INTAKE || sorted[i - 1]?.bucket_slug === INTAKE}
+                    className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
+                  <button type="button" onClick={() => moveStage(s, 1)}
+                    disabled={i === sorted.length - 1 || s.bucket_slug === INTAKE}
+                    className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
                 </div>
                 <div
                   className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
@@ -226,8 +281,18 @@ export default function ProductionPipelineSettingsPage() {
                 </div>
                 <span className="text-lg shrink-0">{s.icon || '📋'}</span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                  <p className="text-sm font-semibold text-gray-900 flex items-center gap-2 flex-wrap">
                     {s.name}
+                    {s.crm_target_stage && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                        📋 → CRM: {s.crm_target_stage.icon ? `${s.crm_target_stage.icon} ` : ''}{s.crm_target_stage.name}
+                      </span>
+                    )}
+                    {!s.crm_target_stage && s.crm_sync_type === 'production' && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                        📋 → CRM Sản xuất
+                      </span>
+                    )}
                     {s.is_handover_to_logistics && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-700">
                         <Truck className="h-2.5 w-2.5" /> Bàn giao VC
@@ -324,6 +389,37 @@ export default function ProductionPipelineSettingsPage() {
                   />
                   Đang hiển thị trên Kanban
                 </label>
+                {!editingIntake && (
+                  <div className="w-full space-y-1">
+                    <label className="text-[10px] font-medium text-blue-700 block">
+                      📋 Khi project đến cột này → CRM deal tự chuyển sang:
+                    </label>
+                    <select
+                      value={form.crm_target_stage_id || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, crm_target_stage_id: e.target.value, crm_sync_type: e.target.value ? null : f.crm_sync_type }))}
+                      className="w-full h-8 px-2 border rounded-lg text-sm bg-white border-blue-200 focus:border-blue-400"
+                    >
+                      <option value="">— Không tự chuyển CRM —</option>
+                      {crmStages.filter((cs) => !cs.is_lost && !cs.is_won).map((cs) => (
+                        <option key={cs.id} value={cs.id}>
+                          {cs.icon ? `${cs.icon} ` : ''}{cs.name}
+                        </option>
+                      ))}
+                    </select>
+                    {!form.crm_target_stage_id && (
+                      <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
+                        <input
+                          type="checkbox"
+                          checked={form.crm_sync_type === 'production'}
+                          onChange={(e) => setForm((f) => ({ ...f, crm_sync_type: e.target.checked ? 'production' : null }))}
+                          className="rounded border-blue-400 accent-blue-600"
+                        />
+                        <span className="text-blue-600 font-medium">Dùng sync_role mặc định (Sản xuất)</span>
+                        <span className="text-gray-400 font-normal text-[10px]">legacy — chọn cột CRM bên trên thay thế</span>
+                      </label>
+                    )}
+                  </div>
+                )}
                 {!editingIntake && (
                   <label className="flex items-center gap-2 text-xs cursor-pointer">
                     <input

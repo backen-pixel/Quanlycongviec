@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
+import { getSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
 import {
   Truck, CheckCircle2, AlertTriangle, Search, X, Calendar,
@@ -56,6 +57,22 @@ export default function LogisticsDashboard() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Tự reload khi có project bàn giao sang VC qua socket
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handler = (data) => {
+      // Reload nếu project chuyển sang trạng thái logistics
+      const s = data?.status || data?.project?.status;
+      if (s === 'shipping' || s === 'installing' || s === 'warranty' || s === 'completed') {
+        load();
+      }
+    };
+    socket.on('project:stage_changed', handler);
+    return () => socket.off('project:stage_changed', handler);
+  }, [load]);
+
   useEffect(() => {
     api.get('/users').then(r => setAllUsers(r.data?.users || r.data || [])).catch(() => {});
   }, []);
@@ -111,9 +128,19 @@ export default function LogisticsDashboard() {
           { id: 'vc_install', name: 'Đang lắp đặt', slug: 'installation', icon: '🔧', color: '#d97706' },
           { id: 'vc_warranty', name: 'Bảo hành', slug: 'customer-care', icon: '🤝', color: '#0f766e' },
         ];
+
+    const stageIds = new Set(baseStages.map((s) => s.id));
+    // Project không được gán cột (vc_kanban_column_id=null hoặc không khớp) → đưa vào cột đầu tiên
+    const orphans = projects.filter((p) => !p.vc_kanban_column_id || !stageIds.has(p.vc_kanban_column_id));
+    const firstStageId = baseStages[0]?.id;
+
     return baseStages.map((stage) => ({
       ...stage,
-      items: projects.filter((p) => p.vc_kanban_column_id === stage.id),
+      items: [
+        ...projects.filter((p) => p.vc_kanban_column_id === stage.id),
+        // orphans vào cột đầu tiên
+        ...(stage.id === firstStageId ? orphans : []),
+      ],
     }));
   }, [pipeline, projects]);
 
@@ -148,13 +175,20 @@ export default function LogisticsDashboard() {
       } catch (e) { console.error(e); load(); }
       return;
     }
+
+    // Optimistic update: dùng workflow_stage nếu có, không thì dùng thông tin từ cột
     const wid = targetCol?.workflow_stage_id;
-    if (!wid) return;
-    const optimisticStage = { id: wid, slug: targetCol.slug, name: targetCol.name, color: targetCol.color, icon: targetCol.icon };
+    const optimisticStage = wid
+      ? { id: wid, slug: targetCol.slug || targetCol.bucket_slug, name: targetCol.name, color: targetCol.color, icon: targetCol.icon }
+      : { id: targetCol.id, slug: targetCol.bucket_slug || targetCol.slug, name: targetCol.name, color: targetCol.color, icon: targetCol.icon };
     setProjects((prev) => prev.map((p) => (p.id === projectId
       ? { ...p, current_stage: optimisticStage, vc_kanban_column_id: targetCol.id, vc_intake: false } : p)));
+
     try {
-      await api.patch(`/logistics/projects/${projectId}/stage`, { stage_id: wid });
+      // Luôn gửi vc_stage_id (logistics_pipeline_stages.id); thêm stage_id nếu có workflow_stage_id
+      const body = { vc_stage_id: targetCol.id };
+      if (wid) body.stage_id = wid;
+      await api.patch(`/logistics/projects/${projectId}/stage`, body);
     } catch (e) { console.error(e); load(); }
   }, [load]);
 

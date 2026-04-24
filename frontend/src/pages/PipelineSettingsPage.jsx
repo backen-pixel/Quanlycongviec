@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2 } from 'lucide-react';
+import { useAuth } from '../lib/auth';
 
 /** Hai mẫu theo tài liệu Zalo / ví dụ template ngắn — ID chỉ để thử form; OA thật cần template_id của bạn */
 const ZALO_TEST_PRESETS = [
@@ -60,12 +61,21 @@ const COLORS = ['#94A3B8','#3B82F6','#8B5CF6','#F59E0B','#F97316','#10B981','#EF
 const ICONS = ['🆕','📞','💬','📋','📧','⏳','🤝','💰','📝','✅','❌','🎯','🔥','⭐','🏆'];
 
 export default function PipelineSettingsPage() {
+  const { user } = useAuth();
   const [stages, setStages] = useState([]);
+  const [sxStages, setSxStages] = useState([]);
+  const [vcStages, setVcStages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeType, setActiveType] = useState('lead');
   const [adding, setAdding] = useState(null);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ name: '', color: '#94A3B8', icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false, sync_role: '' });
+  const isAdmin = user?.role === 'admin';
+  const [companies, setCompanies] = useState([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [selectedPipelineId, setSelectedPipelineId] = useState('');
+  const [zaloExpanded, setZaloExpanded] = useState(false);
+  const [zaloPipelineExpanded, setZaloPipelineExpanded] = useState(false);
 
   const [zaloSettings, setZaloSettings] = useState(null);
   const [zaloLoading, setZaloLoading] = useState(false);
@@ -86,14 +96,88 @@ export default function PipelineSettingsPage() {
   const [zaloPlSaving, setZaloPlSaving] = useState(false);
   const [zaloStructureJson, setZaloStructureJson] = useState(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY);
 
+  // Copy pipeline (admin)
+  const [copyFromId, setCopyFromId] = useState('');
+  const [copyToCompanyId, setCopyToCompanyId] = useState('');
+  const [copyName, setCopyName] = useState('');
+  const [copySetDefault, setCopySetDefault] = useState(false);
+  const [copying, setCopying] = useState(false);
+
+  // Lead/Deal types (company-scoped)
+  const [leadTypes, setLeadTypes] = useState([]);
+  const [leadTypesLoading, setLeadTypesLoading] = useState(false);
+  const [leadTypeNew, setLeadTypeNew] = useState({ name: '', applies_to: 'both', is_active: true });
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/crm/pipeline-stages', { params: { all: 'true' } });
-      setStages(data || []);
+      const [pipelinesRes, companiesRes, sxRes, vcRes] = await Promise.all([
+        api.get('/crm/pipelines').catch(() => ({ data: [] })),
+        api.get('/companies').catch(() => ({ data: { companies: [] } })),
+        api.get('/production/pipeline-stages', { params: { all: 'true' } }).catch(() => ({ data: [] })),
+        api.get('/logistics/pipeline-stages', { params: { all: 'true' } }).catch(() => ({ data: [] })),
+      ]);
+      const pls = Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [];
+      setPipelines(pls);
+      const cos = companiesRes.data?.companies || companiesRes.data || [];
+      setCompanies(Array.isArray(cos) ? cos : []);
+
+      // Resolve selectedCompanyId (admin: keep existing; non-admin: lock to user.company_id)
+      const lockedCompanyId = !isAdmin ? (user?.company_id ? String(user.company_id) : '') : '';
+      const companyIdToUse = lockedCompanyId || selectedCompanyId || (isAdmin ? '' : '');
+      if (!lockedCompanyId && selectedCompanyId === '' && isAdmin && cos?.length) {
+        // Admin default: pick first company in list if none selected yet
+        const firstC = (Array.isArray(cos) ? cos : [])[0];
+        if (firstC?.id) setSelectedCompanyId(String(firstC.id));
+      }
+      if (lockedCompanyId) setSelectedCompanyId(lockedCompanyId);
+
+      const pipelinesForCompany =
+        (companyIdToUse ? pls.filter((p) => String(p.company_id || '') === String(companyIdToUse)) : pls);
+      const defaultPipeline =
+        pipelinesForCompany.find((p) => p.is_default) || pipelinesForCompany[0] || null;
+      const pipelineIdToUse = selectedPipelineId && pipelinesForCompany.some((p) => p.id === selectedPipelineId)
+        ? selectedPipelineId
+        : (defaultPipeline?.id || '');
+
+      // Admin chọn công ty nhưng công ty chưa có pipeline → không load stages (tránh fallback load tất cả stage)
+      if (isAdmin && companyIdToUse && !pipelineIdToUse) {
+        setSelectedPipelineId('');
+        setStages([]);
+      } else {
+        if (pipelineIdToUse && pipelineIdToUse !== selectedPipelineId) setSelectedPipelineId(pipelineIdToUse);
+        const crmRes = await api.get('/crm/pipeline-stages', {
+          params: { all: 'true', ...(pipelineIdToUse ? { pipeline_id: pipelineIdToUse } : {}) },
+        }).catch(() => ({ data: [] }));
+        setStages(crmRes.data || []);
+      }
+      setSxStages((sxRes.data || []).filter((s) => s.bucket_slug !== 'won_pending'));
+      setVcStages((vcRes.data || []).filter((s) => s.bucket_slug !== 'delivery_pending'));
     } catch {}
     setLoading(false);
-  }, []);
+  }, [isAdmin, selectedCompanyId, selectedPipelineId, user?.company_id]);
+
+  // Load Lead/Deal types for selected company
+  useEffect(() => {
+    const cid = selectedCompanyId || user?.company_id;
+    if (!cid) {
+      setLeadTypes([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLeadTypesLoading(true);
+      try {
+        const { data } = await api.get('/crm/lead-types', { params: { company_id: cid, all: 'true' } });
+        if (!cancelled) setLeadTypes(Array.isArray(data) ? data : []);
+      } catch (e) {
+        if (!cancelled) setLeadTypes([]);
+      } finally {
+        if (!cancelled) setLeadTypesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedCompanyId, user?.company_id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -129,6 +213,7 @@ export default function PipelineSettingsPage() {
           if (prev && list.some((p) => p.id === prev)) return prev;
           return list[0]?.id || '';
         });
+        setCopyFromId((prev) => (prev && list.some((p) => p.id === prev) ? prev : (list[0]?.id || '')));
       } catch (e) {
         if (cancel) return;
         const d = e.response?.data;
@@ -290,6 +375,19 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  const visiblePipelines = useMemo(() => {
+    if (!isAdmin) return pipelines || [];
+    if (!selectedCompanyId) return pipelines || [];
+    return (pipelines || []).filter((p) => String(p.company_id || '') === String(selectedCompanyId));
+  }, [pipelines, isAdmin, selectedCompanyId]);
+
+  useEffect(() => {
+    if (!zaloPlId) return;
+    if (!zaloPipelineExpanded) return;
+    const ok = visiblePipelines.some((p) => p.id === zaloPlId);
+    if (!ok) setZaloPlId(visiblePipelines[0]?.id || '');
+  }, [zaloPlId, visiblePipelines, zaloPipelineExpanded]);
+
   const filtered = stages.filter(s => s.pipeline_type === activeType).sort((a, b) => a.order_index - b.order_index);
   const otherType = activeType === 'lead' ? 'deal' : 'lead';
   const otherFiltered = stages.filter(s => s.pipeline_type === otherType).sort((a, b) => a.order_index - b.order_index);
@@ -317,7 +415,8 @@ export default function PipelineSettingsPage() {
   const saveNew = async () => {
     if (!form.name.trim()) return alert('Nhập tên giai đoạn');
     try {
-      await api.post('/crm/pipeline-stages', { ...form, pipeline_type: adding });
+      if (!selectedPipelineId) return alert('Chọn pipeline trước');
+      await api.post('/crm/pipeline-stages', { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId });
       setAdding(null);
       load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
@@ -348,15 +447,32 @@ export default function PipelineSettingsPage() {
   };
 
   const moveStage = async (stage, dir) => {
-    const list = filtered.slice();
-    const idx = list.findIndex(s => s.id === stage.id);
-    if ((dir === -1 && idx === 0) || (dir === 1 && idx === list.length - 1)) return;
-    [list[idx], list[idx + dir]] = [list[idx + dir], list[idx]];
-    const reorder = list.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+    // Dùng đúng type của stage (không phụ thuộc activeType) để tránh nhầm list
+    const list = stages
+      .filter((s) => s.pipeline_type === stage.pipeline_type)
+      .sort((a, b) => a.order_index - b.order_index);
+    const idx = list.findIndex((s) => s.id === stage.id);
+    if (idx < 0 || (dir === -1 && idx === 0) || (dir === 1 && idx === list.length - 1)) return;
+    const newList = [...list];
+    [newList[idx], newList[idx + dir]] = [newList[idx + dir], newList[idx]];
+    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
     try {
       await api.put('/crm/pipeline-stages-reorder', { stages: reorder });
       load();
-    } catch (e) { alert('Lỗi'); }
+    } catch (e) { alert('Lỗi sắp xếp: ' + (e.response?.data?.error || e.message)); }
+  };
+
+  /** Cập nhật crm_target_stage_id trên SX hoặc VC stage từ phía CRM */
+  const setModuleStageTarget = async (moduleStage, moduleType, targetCrmStageId) => {
+    const endpoint = moduleType === 'sx'
+      ? `/production/pipeline-stages/${moduleStage.id}`
+      : `/logistics/pipeline-stages/${moduleStage.id}`;
+    try {
+      await api.put(endpoint, { crm_target_stage_id: targetCrmStageId || null });
+      load();
+    } catch (e) {
+      alert('Lỗi cập nhật: ' + (e.response?.data?.error || e.message));
+    }
   };
 
   const renderPipeline = (type, list) => (
@@ -403,11 +519,17 @@ export default function PipelineSettingsPage() {
 
       {/* Stages List */}
       <div className="border-t">
-        {list.map((s, i) => (
+        {list.map((s, i) => {
+          const linkedSx = sxStages.filter((sx) => sx.crm_target_stage_id === s.id);
+          const linkedVc = vcStages.filter((vc) => vc.crm_target_stage_id === s.id);
+          const syncRoleLabels = {
+            sx_production: '🏭 SX', vc_delivery: '🚚 VC Giao', vc_installation: '🔧 VC Lắp', vc_customer_care: '🤝 VC CSKH',
+          };
+          return (
           <div key={s.id} className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50 ${!s.is_active ? 'opacity-50' : ''}`}>
             <div className="flex flex-col gap-0.5">
-              <button onClick={() => moveStage(s, -1)} disabled={i === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
-              <button onClick={() => moveStage(s, 1)} disabled={i === list.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
+              <button type="button" onClick={() => moveStage(s, -1)} disabled={i === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
+              <button type="button" onClick={() => moveStage(s, 1)} disabled={i === list.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
             </div>
             <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0" style={{ backgroundColor: s.color }}>
               {s.order_index}
@@ -415,13 +537,25 @@ export default function PipelineSettingsPage() {
             <span className="text-lg shrink-0">{s.icon || '📋'}</span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-gray-900">{s.name}</p>
-              <div className="flex items-center gap-2 text-[10px] text-gray-400 flex-wrap">
+              <div className="flex items-center gap-1.5 text-[10px] text-gray-400 flex-wrap mt-0.5">
                 {s.is_won && <span className="text-emerald-600 font-bold">✅ Thắng</span>}
-                {s.is_lost && <span className="text-red-500 font-bold">❌ Thua/Mất</span>}
+                {s.is_lost && <span className="text-red-500 font-bold">❌ Thua</span>}
                 {!s.is_active && <span className="text-orange-500">Ẩn</span>}
-                {s.sync_role === 'vc_delivery' && <span className="text-blue-600 font-medium">🚚 Vận chuyển (VC→CRM)</span>}
-                {s.sync_role === 'vc_installation' && <span className="text-amber-700 font-medium">🔧 Lắp đặt (VC→CRM)</span>}
-                {s.sync_role === 'vc_customer_care' && <span className="text-teal-700 font-medium">🤝 CSKH (VC→CRM)</span>}
+                {s.sync_role && (
+                  <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-medium">
+                    {syncRoleLabels[s.sync_role] || s.sync_role}
+                  </span>
+                )}
+                {linkedSx.map((sx) => (
+                  <span key={sx.id} className="bg-teal-50 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded font-medium">
+                    🏭 {sx.icon || ''}{sx.name}
+                  </span>
+                ))}
+                {linkedVc.map((vc) => (
+                  <span key={vc.id} className="bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded font-medium">
+                    🚚 {vc.icon || ''}{vc.name}
+                  </span>
+                ))}
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
@@ -451,7 +585,8 @@ export default function PipelineSettingsPage() {
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Add Form */}
@@ -475,36 +610,245 @@ export default function PipelineSettingsPage() {
         </div>
       </div>
 
+      {/* Company + Pipeline selector */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap gap-3 items-end">
+        {isAdmin ? (
+          <label className="flex flex-col gap-1 text-[11px] text-gray-700 min-w-[260px]">
+            <span className="font-semibold">Công ty</span>
+            <select
+              className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
+              value={selectedCompanyId}
+              onChange={(e) => { setSelectedCompanyId(e.target.value); setSelectedPipelineId(''); setAdding(null); setEditId(null); }}
+            >
+              {companies.length === 0 && <option value="">— Chưa có công ty —</option>}
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <div className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+            Đang quản lý pipeline của công ty bạn
+          </div>
+        )}
+
+        <label className="flex flex-col gap-1 text-[11px] text-gray-700 min-w-[320px] flex-1">
+          <span className="font-semibold">Pipeline CRM (thuộc công ty đang chọn)</span>
+          <select
+            className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
+            value={selectedPipelineId}
+            onChange={(e) => { setSelectedPipelineId(e.target.value); setAdding(null); setEditId(null); }}
+          >
+            {visiblePipelines.length === 0 && <option value="">— Chưa có pipeline —</option>}
+            {visiblePipelines.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.is_default ? ' (default)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button
+          type="button"
+          onClick={() => load()}
+          className="h-9 px-4 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 cursor-pointer"
+          title="Tải lại stages theo pipeline đang chọn"
+        >
+          Tải lại
+        </button>
+      </div>
+      {isAdmin && selectedCompanyId && visiblePipelines.length === 0 && (
+        <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Công ty này chưa có pipeline CRM. Hãy tạo pipeline mới hoặc copy từ công ty khác.
+        </div>
+      )}
+
+      {/* Lead/Deal types */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+            <Settings className="h-4 w-4 text-indigo-600" />
+            Phân loại Lead/Deal (theo công ty)
+          </h2>
+          {leadTypesLoading && <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />}
+        </div>
+
+        <p className="text-[11px] text-gray-600">
+          Mỗi công ty có danh mục riêng. Khi tạo Lead/Deal, hệ thống sẽ chỉ cho chọn loại thuộc đúng công ty đó.
+        </p>
+
+        {/* Add new type */}
+        <div className="grid gap-2 sm:grid-cols-4 items-end">
+          <label className="flex flex-col gap-1 text-[11px] text-gray-700 sm:col-span-2">
+            <span className="font-semibold">Tên loại</span>
+            <input
+              value={leadTypeNew.name}
+              onChange={(e) => setLeadTypeNew((v) => ({ ...v, name: e.target.value }))}
+              className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
+              placeholder="VD: Chung cư, Nhà phố, Dự án lớn..."
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[11px] text-gray-700">
+            <span className="font-semibold">Áp dụng</span>
+            <select
+              value={leadTypeNew.applies_to}
+              onChange={(e) => setLeadTypeNew((v) => ({ ...v, applies_to: e.target.value }))}
+              className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
+            >
+              <option value="both">Lead + Deal</option>
+              <option value="lead">Chỉ Lead</option>
+              <option value="deal">Chỉ Deal</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={!selectedCompanyId || !leadTypeNew.name.trim()}
+            onClick={async () => {
+              try {
+                const { data } = await api.post('/crm/lead-types', {
+                  company_id: selectedCompanyId || null,
+                  name: leadTypeNew.name.trim(),
+                  applies_to: leadTypeNew.applies_to,
+                  is_active: leadTypeNew.is_active !== false,
+                });
+                setLeadTypes((prev) => [data, ...(prev || [])]);
+                setLeadTypeNew({ name: '', applies_to: 'both', is_active: true });
+              } catch (e) {
+                alert(e.response?.data?.error || 'Lỗi tạo loại');
+              }
+            }}
+            className="h-9 px-4 rounded-lg bg-indigo-700 text-white text-sm font-medium hover:bg-indigo-800 disabled:opacity-50 cursor-pointer"
+            title={!selectedCompanyId ? 'Chọn công ty trước' : ''}
+          >
+            + Thêm loại
+          </button>
+        </div>
+
+        {/* List */}
+        {leadTypes.length === 0 ? (
+          <div className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            Chưa có loại nào cho công ty này.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {leadTypes
+              .slice()
+              .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+              .map((t) => (
+                <div key={t.id} className="flex flex-wrap items-center gap-2 border border-gray-200 rounded-lg px-3 py-2">
+                  <input
+                    value={t.name || ''}
+                    onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, name: e.target.value } : x))}
+                    className="flex-1 min-w-[200px] border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
+                  />
+                  <select
+                    value={t.applies_to || 'both'}
+                    onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, applies_to: e.target.value } : x))}
+                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white"
+                    title="Áp dụng"
+                  >
+                    <option value="both">Lead+Deal</option>
+                    <option value="lead">Lead</option>
+                    <option value="deal">Deal</option>
+                  </select>
+                  <input
+                    type="number"
+                    value={t.order_index ?? 0}
+                    onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, order_index: parseInt(e.target.value || '0', 10) } : x))}
+                    className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
+                    title="Thứ tự"
+                  />
+                  <label className="flex items-center gap-2 text-[11px] text-gray-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={t.is_active !== false}
+                      onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, is_active: e.target.checked } : x))}
+                    />
+                    Hiện
+                  </label>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const payload = { name: (t.name || '').trim(), applies_to: t.applies_to, order_index: t.order_index ?? 0, is_active: t.is_active !== false };
+                        const { data } = await api.put(`/crm/lead-types/${t.id}`, payload);
+                        setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? data : x));
+                      } catch (e) {
+                        alert(e.response?.data?.error || 'Lỗi lưu');
+                      }
+                    }}
+                    className="h-8 px-3 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-black cursor-pointer"
+                  >
+                    Lưu
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!confirm('Xóa loại này?')) return;
+                      try {
+                        await api.delete(`/crm/lead-types/${t.id}`);
+                        setLeadTypes((prev) => (prev || []).filter((x) => x.id !== t.id));
+                      } catch (e) {
+                        alert(e.response?.data?.error || 'Lỗi xóa');
+                      }
+                    }}
+                    className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 cursor-pointer"
+                    title="Xóa"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
+      </div>
+
       {/* Zalo OA — bật/tắt + test gửi tin */}
       <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-bold text-sky-900 flex items-center gap-2">
             <MessageCircle className="h-4 w-4" /> Zalo OA — tin qua SĐT
           </h2>
-          {zaloLoading ? (
-            <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
-          ) : (
-            <label className="flex items-center gap-2 text-xs font-medium text-sky-900 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={!!zaloSettings?.enabled}
-                onChange={(e) => {
-                  saveZaloMaster({ enabled: e.target.checked });
-                }}
-                className="rounded border-sky-400"
-              />
-              Bật gửi Zalo khi deal vào cột đã tích «Zalo»
-            </label>
-          )}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setZaloExpanded((v) => !v)}
+              className="text-[10px] px-2 py-1 rounded-md border border-sky-200 bg-white/70 text-sky-900 hover:bg-white cursor-pointer"
+            >
+              {zaloExpanded ? 'Thu gọn' : 'Mở cấu hình'}
+            </button>
+            {zaloLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
+            ) : (
+              <label className="flex items-center gap-2 text-xs font-medium text-sky-900 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={!!zaloSettings?.enabled}
+                  onChange={(e) => {
+                    saveZaloMaster({ enabled: e.target.checked });
+                  }}
+                  className="rounded border-sky-400"
+                />
+                Bật gửi Zalo khi deal vào cột đã tích «Zalo»
+              </label>
+            )}
+          </div>
         </div>
-        <p className="text-[11px] text-sky-800 leading-relaxed">
-          Lưu <strong>access_token</strong> từ Zalo Cloud. <strong>template_id</strong> là mẫu “tin qua SĐT” của OA bạn — để trống thì hệ thống dùng mặc định <strong>566121</strong> (biến{' '}
-          <code className="text-[10px] bg-white/80 px-0.5 rounded">ten_san_pham</code>,{' '}
-          <code className="text-[10px] bg-white/80 px-0.5 rounded">order_code</code>,{' '}
-          <code className="text-[10px] bg-white/80 px-0.5 rounded">date</code>,{' '}
-          <code className="text-[10px] bg-white/80 px-0.5 rounded">ten_khach_hang</code> — tự lấy từ deal/khách khi deal vào cột <strong>Hoàn thành</strong>). Ở pipeline <strong>Deal</strong>, thêm cột tên «Hoàn thành» (nếu chưa có), rồi bấm <strong>Zalo</strong> trên đúng cột đó để bật tự gửi (mỗi deal + cột tối đa một lần gửi thành công). Chế độ <strong>3</strong> chỉ khi OA được whitelist vượt hạn mức.
-        </p>
-        <div className="rounded-lg border border-sky-200 bg-white/90 p-3 space-y-2">
+        {!zaloExpanded && (
+          <p className="text-[11px] text-sky-900/70">
+            (Đang thu gọn) Bấm <strong>Mở cấu hình</strong> để xem token, template, test gửi.
+          </p>
+        )}
+        {zaloExpanded && (
+          <>
+            <p className="text-[11px] text-sky-800 leading-relaxed">
+              Lưu <strong>access_token</strong> từ Zalo Cloud. <strong>template_id</strong> là mẫu “tin qua SĐT” của OA bạn — để trống thì hệ thống dùng mặc định <strong>566121</strong> (biến{' '}
+              <code className="text-[10px] bg-white/80 px-0.5 rounded">ten_san_pham</code>,{' '}
+              <code className="text-[10px] bg-white/80 px-0.5 rounded">order_code</code>,{' '}
+              <code className="text-[10px] bg-white/80 px-0.5 rounded">date</code>,{' '}
+              <code className="text-[10px] bg-white/80 px-0.5 rounded">ten_khach_hang</code> — tự lấy từ deal/khách khi deal vào cột <strong>Hoàn thành</strong>). Ở pipeline <strong>Deal</strong>, thêm cột tên «Hoàn thành» (nếu chưa có), rồi bấm <strong>Zalo</strong> trên đúng cột đó để bật tự gửi (mỗi deal + cột tối đa một lần gửi thành công). Chế độ <strong>3</strong> chỉ khi OA được whitelist vượt hạn mức.
+            </p>
+            <div className="rounded-lg border border-sky-200 bg-white/90 p-3 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label className="text-[10px] font-semibold text-sky-800 uppercase">Cấu trúc template_data (key = biến OA)</label>
             <button
@@ -525,8 +869,8 @@ export default function PipelineSettingsPage() {
             spellCheck={false}
             className="w-full font-mono text-[11px] border border-sky-200 rounded-lg px-2 py-1.5 bg-white"
           />
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="space-y-2">
             <label className="text-[10px] font-semibold text-sky-800 uppercase">Template ID</label>
             <input
@@ -618,6 +962,8 @@ export default function PipelineSettingsPage() {
             )}
           </div>
         </div>
+          </>
+        )}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-sm">
@@ -645,56 +991,150 @@ export default function PipelineSettingsPage() {
           Deal có trường <strong>pipeline</strong>: khi gửi Zalo (deal ở cột «Hoàn thành»), hệ thống lấy{' '}
           <strong>template_id</strong> và <strong>merge_template_data</strong> của pipeline đó; nếu để trống thì dùng cấu hình chung ở khối «Zalo OA — tin qua SĐT» phía trên. Merge của pipeline <strong>ghi đè</strong> key trùng với merge chung.
         </p>
-        <div className="flex flex-wrap gap-3 items-end">
-          <label className="flex flex-col gap-1 text-[11px] text-gray-700 min-w-[220px] flex-1">
-            <span className="font-semibold">Chọn pipeline</span>
-            <select
-              className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
-              value={zaloPlId}
-              onChange={(e) => setZaloPlId(e.target.value)}
-            >
-              {pipelines.length === 0 && <option value="">— Chưa có pipeline —</option>}
-              {pipelines.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.company?.name ? ` — ${p.company.name}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        {zaloPlId && (
-          <div className="space-y-2 border-t border-gray-100 pt-3">
-            <label className="flex flex-col gap-1 text-[11px]">
-              <span className="text-gray-700 font-semibold">Template ID (riêng pipeline)</span>
-              <input
-                value={zaloPlTemplateId}
-                onChange={(e) => setZaloPlTemplateId(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm"
-                placeholder="VD 566121 — để trống: dùng template chung / mặc định"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-[11px]">
-              <span className="text-gray-700 font-semibold">merge_template_data (JSON object, tùy chọn)</span>
-              <textarea
-                value={zaloPlMergeJson}
-                onChange={(e) => setZaloPlMergeJson(e.target.value)}
-                rows={6}
-                className="w-full font-mono text-[11px] border border-gray-200 rounded-lg px-2 py-1.5"
-                spellCheck={false}
-              />
-            </label>
-            <button
-              type="button"
-              disabled={zaloPlSaving}
-              onClick={savePipelineZalo}
-              className="h-9 px-4 rounded-lg bg-violet-700 text-white text-sm font-medium hover:bg-violet-800 disabled:opacity-50 cursor-pointer"
-            >
-              {zaloPlSaving ? 'Đang lưu…' : 'Lưu Zalo cho pipeline này'}
-            </button>
-          </div>
+        <button
+          type="button"
+          onClick={() => setZaloPipelineExpanded((v) => !v)}
+          className="h-7 px-3 rounded-lg bg-violet-50 border border-violet-200 text-violet-900 text-xs font-semibold hover:bg-violet-100 cursor-pointer"
+        >
+          {zaloPipelineExpanded ? 'Thu gọn' : 'Mở cấu hình'}
+        </button>
+        {!zaloPipelineExpanded && (
+          <p className="text-[11px] text-gray-500">(Đang thu gọn) Bấm <strong>Mở cấu hình</strong> để chỉnh theo từng pipeline.</p>
+        )}
+        {zaloPipelineExpanded && (
+          <>
+            <div className="flex flex-wrap gap-3 items-end">
+              <label className="flex flex-col gap-1 text-[11px] text-gray-700 min-w-[220px] flex-1">
+                <span className="font-semibold">Chọn pipeline</span>
+                <select
+                  className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
+                  value={zaloPlId}
+                  onChange={(e) => setZaloPlId(e.target.value)}
+                >
+                  {visiblePipelines.length === 0 && <option value="">— Chưa có pipeline —</option>}
+                  {visiblePipelines.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {p.company?.name ? ` — ${p.company.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {zaloPlId && (
+              <div className="space-y-2 border-t border-gray-100 pt-3">
+                <label className="flex flex-col gap-1 text-[11px]">
+                  <span className="text-gray-700 font-semibold">Template ID (riêng pipeline)</span>
+                  <input
+                    value={zaloPlTemplateId}
+                    onChange={(e) => setZaloPlTemplateId(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm"
+                    placeholder="VD 566121 — để trống: dùng template chung / mặc định"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[11px]">
+                  <span className="text-gray-700 font-semibold">merge_template_data (JSON object, tùy chọn)</span>
+                  <textarea
+                    value={zaloPlMergeJson}
+                    onChange={(e) => setZaloPlMergeJson(e.target.value)}
+                    rows={6}
+                    className="w-full font-mono text-[11px] border border-gray-200 rounded-lg px-2 py-1.5"
+                    spellCheck={false}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={zaloPlSaving}
+                  onClick={savePipelineZalo}
+                  className="h-9 px-4 rounded-lg bg-violet-700 text-white text-sm font-medium hover:bg-violet-800 disabled:opacity-50 cursor-pointer"
+                >
+                  {zaloPlSaving ? 'Đang lưu…' : 'Lưu Zalo cho pipeline này'}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
+
+      {user?.role === 'admin' && (
+        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-sm">
+          <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+            <Settings className="h-4 w-4 text-emerald-600" />
+            Copy pipeline CRM giữa công ty
+          </h2>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="flex flex-col gap-1 text-[11px] text-gray-700">
+              <span className="font-semibold">Pipeline nguồn</span>
+              <select
+                className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
+                value={copyFromId}
+                onChange={(e) => setCopyFromId(e.target.value)}
+              >
+                {pipelines.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.company?.name ? ` — ${p.company.name}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] text-gray-700">
+              <span className="font-semibold">Công ty đích (ID)</span>
+              <input
+                value={copyToCompanyId}
+                onChange={(e) => setCopyToCompanyId(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
+                placeholder="UUID company_id"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] text-gray-700">
+              <span className="font-semibold">Tên pipeline mới</span>
+              <input
+                value={copyName}
+                onChange={(e) => setCopyName(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
+                placeholder="Để trống: tự đặt (Copy)"
+              />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-[11px] text-gray-700">
+            <input
+              type="checkbox"
+              checked={copySetDefault}
+              onChange={(e) => setCopySetDefault(e.target.checked)}
+            />
+            Đặt làm pipeline mặc định của công ty đích
+          </label>
+          <button
+            type="button"
+            disabled={copying || !copyFromId || !copyToCompanyId.trim()}
+            onClick={async () => {
+              setCopying(true);
+              try {
+                await api.post(`/crm/pipelines/${copyFromId}/copy`, {
+                  target_company_id: copyToCompanyId.trim(),
+                  name: copyName.trim() || null,
+                  set_default: copySetDefault,
+                });
+                alert('Đã copy pipeline');
+                // reload pipelines list
+                const { data } = await api.get('/crm/pipelines');
+                setPipelines(Array.isArray(data) ? data : []);
+              } catch (e) {
+                alert(e.response?.data?.error || 'Lỗi copy pipeline');
+              } finally {
+                setCopying(false);
+              }
+            }}
+            className="h-9 px-4 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 disabled:opacity-50 cursor-pointer"
+          >
+            {copying ? 'Đang copy…' : 'Copy pipeline'}
+          </button>
+          <p className="text-[11px] text-gray-500 leading-snug">
+            Ghi chú: hiện form nhận <strong>company_id</strong> dạng UUID. Nếu bạn muốn chọn từ danh sách công ty thay vì nhập UUID, mình có thể bổ sung dropdown lấy từ API /companies.
+          </p>
+        </div>
+      )}
 
       {/* Edit Form (floating) */}
       {editId && (
@@ -706,6 +1146,10 @@ export default function PipelineSettingsPage() {
             onSave={saveEdit}
             onCancel={() => setEditId(null)}
             pipelineType={stages.find((s) => s.id === editId)?.pipeline_type || 'lead'}
+            editingStageId={editId}
+            sxStages={sxStages}
+            vcStages={vcStages}
+            onSetModuleTarget={setModuleStageTarget}
           />
         </div>
       )}
@@ -722,7 +1166,7 @@ export default function PipelineSettingsPage() {
   );
 }
 
-function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead' }) {
+function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', editingStageId, sxStages = [], vcStages = [], onSetModuleTarget }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -774,7 +1218,7 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead' }) {
               onChange={(e) => setForm((f) => ({ ...f, send_zalo_on_enter: e.target.checked }))}
               className="rounded border-sky-400"
             />
-            <MessageCircle className="h-3.5 w-3.5" /> Tự gửi Zalo OA khi deal vào cột này (nên dùng cho cột «Hoàn thành»)
+            <MessageCircle className="h-3.5 w-3.5" /> Tự gửi Zalo OA khi deal vào cột này
           </label>
         )}
       </div>
@@ -782,7 +1226,7 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead' }) {
       {pipelineType === 'deal' && !form.is_won && !form.is_lost && (
         <div>
           <label className="text-[10px] font-medium text-gray-500 block mb-1">
-            Vai trò đồng bộ từ Vận chuyển & Lắp đặt (sync_role)
+            Vai trò đồng bộ (sync_role) — fallback khi không cài direct target
           </label>
           <select
             value={form.sync_role || ''}
@@ -790,13 +1234,81 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead' }) {
             className="w-full h-8 px-2 border rounded-lg text-xs bg-white"
           >
             <option value="">— Không đồng bộ —</option>
-            <option value="vc_delivery">🚚 Nhận deal khi VC chuyển sang «Vận chuyển thành công»</option>
-            <option value="vc_installation">🔧 Nhận deal khi VC chuyển sang «Lắp đặt thành công»</option>
-            <option value="vc_customer_care">🤝 Nhận deal khi VC chuyển sang «Chăm sóc KH / Bảo hành»</option>
+            <optgroup label="Sản xuất (SX)">
+              <option value="sx_production">🏭 Nhận deal khi SX project đến cột có trigger CRM</option>
+            </optgroup>
+            <optgroup label="Vận chuyển & Lắp đặt (VC)">
+              <option value="vc_delivery">🚚 Nhận deal khi VC chuyển sang «Vận chuyển»</option>
+              <option value="vc_installation">🔧 Nhận deal khi VC chuyển sang «Lắp đặt»</option>
+              <option value="vc_customer_care">🤝 Nhận deal khi VC chuyển sang «CSKH / Bảo hành»</option>
+            </optgroup>
           </select>
-          <p className="text-[10px] text-gray-400 mt-1">
-            Khi cột VC pipeline được đánh dấu đồng bộ, hệ thống tìm cột CRM có sync_role tương ứng và cập nhật deal.
+        </div>
+      )}
+
+      {/* Module management — chỉ hiện khi đang edit deal stage */}
+      {pipelineType === 'deal' && editingStageId && !form.is_won && !form.is_lost && (
+        <div className="border border-indigo-100 rounded-lg p-3 bg-indigo-50/40 space-y-2">
+          <p className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide">
+            🔗 Cột module nào sẽ nhảy vào CRM cột này?
           </p>
+          <p className="text-[10px] text-gray-500">
+            Tick vào cột Sản xuất / Vận chuyển để khi deal SX/VC tới cột đó, CRM deal tự chuyển sang cột này.
+          </p>
+
+          {sxStages.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-teal-700 mb-1">🏭 Sản xuất (SX)</p>
+              <div className="flex flex-wrap gap-1.5">
+                {sxStages.map((sx) => {
+                  const linked = sx.crm_target_stage_id === editingStageId;
+                  return (
+                    <button
+                      key={sx.id}
+                      type="button"
+                      onClick={() => onSetModuleTarget?.(sx, 'sx', linked ? null : editingStageId)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer transition-all ${
+                        linked
+                          ? 'bg-teal-100 text-teal-800 border-teal-400 ring-1 ring-teal-400'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-teal-300 hover:text-teal-700'
+                      }`}
+                      style={linked ? { borderColor: sx.color } : {}}
+                    >
+                      {sx.icon || '📋'} {sx.name}
+                      {linked && ' ✓'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {vcStages.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-orange-700 mb-1">🚚 Vận chuyển & Lắp đặt (VC)</p>
+              <div className="flex flex-wrap gap-1.5">
+                {vcStages.map((vc) => {
+                  const linked = vc.crm_target_stage_id === editingStageId;
+                  return (
+                    <button
+                      key={vc.id}
+                      type="button"
+                      onClick={() => onSetModuleTarget?.(vc, 'vc', linked ? null : editingStageId)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer transition-all ${
+                        linked
+                          ? 'bg-orange-100 text-orange-800 border-orange-400 ring-1 ring-orange-400'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-700'
+                      }`}
+                      style={linked ? { borderColor: vc.color } : {}}
+                    >
+                      {vc.icon || '📋'} {vc.name}
+                      {linked && ' ✓'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

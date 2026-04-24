@@ -20,9 +20,6 @@ r.post('/login', async (req, res) => {
     if (!(await bcrypt.compare(password, user.password))) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
 
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
-    // Không đặt expiresIn — JWT không có `exp`, phiên chỉ hết khi đăng xuất hoặc đổi JWT_SECRET.
-    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role, fullName: user.full_name }, config.jwtSecret);
-
     // Resolve company_id from department
     let company_id = user.company_id || null;
     if (!company_id && user.department_id) {
@@ -31,6 +28,17 @@ r.post('/login', async (req, res) => {
         company_id = dept?.company_id || null;
       } catch (_) {}
     }
+
+    // Không đặt expiresIn — JWT không có `exp`, phiên chỉ hết khi đăng xuất hoặc đổi JWT_SECRET.
+    // Include company_id so CRM pipeline scoping works immediately.
+    const token = jwt.sign({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      fullName: user.full_name,
+      company_id,
+      department_id: user.department_id || null,
+    }, config.jwtSecret);
 
     res.json({ token, user: { id: user.id, userId: user.id, email: user.email, fullName: user.full_name, full_name: user.full_name, role: user.role, avatar: user.avatar, phone: user.phone, department_id: user.department_id || null, company_id, position: user.position || null } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }

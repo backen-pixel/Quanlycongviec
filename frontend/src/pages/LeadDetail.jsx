@@ -707,7 +707,7 @@ export default function LeadDetail() {
           </div>
 
           {/* Lead Info — Editable inline */}
-          <LeadInfoPanel lead={lead} allUsers={allUsers} onUpdate={load} />
+          <LeadInfoPanel lead={lead} allUsers={allUsers} onUpdate={load} currentUser={user} />
 
           {/* Quick Stats Card */}
           <div className="grid grid-cols-3 gap-2">
@@ -1467,18 +1467,52 @@ function AddDocumentModal({ onClose, onSave }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LeadInfoPanel — Inline editable fields (always visible)
 // ═══════════════════════════════════════════════════════════════════════════
-function LeadInfoPanel({ lead, allUsers, onUpdate }) {
+function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
   const [sources, setSources] = useState([]);
+  const [leadTypes, setLeadTypes] = useState([]);
   const [editing, setEditing] = useState(null);
   const [editVal, setEditVal] = useState('');
   const [saving, setSaving] = useState(false);
   const [companies, setCompanies] = useState([]);
+  const [sxHandoverForm, setSxHandoverForm] = useState({
+    construction_start_date: '',
+    expected_production_start_date: '',
+    expected_production_end_date: '',
+    sale_acknowledged: false,
+  });
+  const [sxHandoverSaving, setSxHandoverSaving] = useState(false);
+  const [sxHandoverNotice, setSxHandoverNotice] = useState('');
+  const [sxHandoverExpanded, setSxHandoverExpanded] = useState(false);
+
+  useEffect(() => {
+    if (lead?.type !== 'deal' || lead?.sx_handover_at) return;
+    setSxHandoverForm({
+      construction_start_date: lead.construction_start_date || '',
+      expected_production_start_date: lead.expected_production_start_date || '',
+      expected_production_end_date: lead.expected_production_end_date || '',
+      sale_acknowledged: false,
+    });
+    setSxHandoverNotice('');
+    setSxHandoverExpanded(false);
+  }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_handover_at, lead?.construction_start_date, lead?.expected_production_start_date, lead?.expected_production_end_date]);
 
   // Load sources + companies
   useEffect(() => {
     api.get('/crm/sources').then(r => setSources(r.data?.sources || (Array.isArray(r.data) ? r.data : []))).catch(() => {});
     api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!lead?.company_id) { setLeadTypes([]); return; }
+    let cancelled = false;
+    api.get('/crm/lead-types', { params: { company_id: lead.company_id } })
+      .then((r) => {
+        if (cancelled) return;
+        setLeadTypes(Array.isArray(r.data) ? r.data : []);
+      })
+      .catch(() => { if (!cancelled) setLeadTypes([]); });
+    return () => { cancelled = true; };
+  }, [lead?.company_id]);
 
   const saveField = async (field, value) => {
     setSaving(true);
@@ -1487,6 +1521,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
       if (field === 'estimated_value') payload.estimated_value = parseFloat(value) || 0;
       else if (field === 'probability') payload.probability = Math.min(100, Math.max(0, parseInt(value) || 0));
       else if (field === 'source_id') payload.source_id = value || null;
+      else if (field === 'lead_type_id') payload.lead_type_id = value || null;
       else if (field === 'assigned_to') {
         payload.assigned_to = value || null;
         payload.lead_owner_id = value || null;
@@ -1632,6 +1667,14 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
         type="select"
         options={sources.map(s => ({ value: s.id, label: `${s.icon} ${s.name}` }))} />
 
+      <EditableRow icon="🏷️" label="Loại" field="lead_type_id"
+        value={lead?.lead_type_id || ''}
+        displayValue={lead?.lead_type_id ? (leadTypes.find(t => t.id === lead.lead_type_id)?.name || null) : null}
+        type="select"
+        options={leadTypes
+          .filter((t) => t.applies_to === 'both' || t.applies_to === (lead?.type === 'deal' ? 'deal' : 'lead'))
+          .map((t) => ({ value: t.id, label: t.name }))} />
+
       {/* Công ty */}
       <EditableRow icon="🏢" label="Công ty" field="company_id"
         value={lead?.company_id || ''}
@@ -1677,20 +1720,175 @@ function LeadInfoPanel({ lead, allUsers, onUpdate }) {
         displayValue={lead?.description || null}
         type="textarea" />
 
+      {lead?.type === 'deal' && lead?.stage?.is_won && !lead?.sx_handover_at && (
+        <div className="rounded-xl border-2 border-amber-300 bg-amber-50/90 p-4 space-y-3">
+          {!sxHandoverExpanded ? (
+            <button
+              type="button"
+              onClick={() => setSxHandoverExpanded(true)}
+              className="w-full sm:w-auto h-10 px-4 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold cursor-pointer"
+            >
+              Bàn giao Sản xuất (thủ công)
+            </button>
+          ) : (
+            <>
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-amber-900 uppercase tracking-wide">🏭 Bàn giao Sản xuất (thủ công)</p>
+                  <button
+                    type="button"
+                    onClick={() => { setSxHandoverExpanded(false); setSxHandoverNotice(''); }}
+                    className="text-[11px] text-amber-700 hover:text-amber-900 cursor-pointer"
+                    title="Ẩn"
+                  >
+                    Ẩn
+                  </button>
+                </div>
+                {!!sxHandoverNotice && (
+                  <p className="text-[11px] text-amber-800 mt-1 leading-snug">
+                    {sxHandoverNotice}
+                  </p>
+                )}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <label className="text-[10px] font-semibold text-amber-900 block">
+                  Ngày bắt đầu công trình
+                  <input
+                    type="date"
+                    value={sxHandoverForm.construction_start_date}
+                    onChange={(e) => { setSxHandoverForm((f) => ({ ...f, construction_start_date: e.target.value })); setSxHandoverNotice(''); }}
+                    className="mt-0.5 w-full h-9 px-2 border border-amber-200 rounded-lg text-sm bg-white"
+                  />
+                </label>
+                <label className="text-[10px] font-semibold text-amber-900 block">
+                  Ngày dự kiến sản xuất
+                  <input
+                    type="date"
+                    value={sxHandoverForm.expected_production_start_date}
+                    onChange={(e) => { setSxHandoverForm((f) => ({ ...f, expected_production_start_date: e.target.value })); setSxHandoverNotice(''); }}
+                    className="mt-0.5 w-full h-9 px-2 border border-amber-200 rounded-lg text-sm bg-white"
+                  />
+                </label>
+                <label className="text-[10px] font-semibold text-amber-900 block">
+                  Ngày dự kiến hoàn thành SX (không bắt buộc)
+                  <input
+                    type="date"
+                    value={sxHandoverForm.expected_production_end_date}
+                    onChange={(e) => { setSxHandoverForm((f) => ({ ...f, expected_production_end_date: e.target.value })); setSxHandoverNotice(''); }}
+                    className="mt-0.5 w-full h-9 px-2 border border-amber-200 rounded-lg text-sm bg-white"
+                  />
+                </label>
+              </div>
+              <label className="flex items-start gap-2 cursor-pointer text-xs text-amber-950">
+                <input
+                  type="checkbox"
+                  checked={sxHandoverForm.sale_acknowledged}
+                  onChange={(e) => { setSxHandoverForm((f) => ({ ...f, sale_acknowledged: e.target.checked })); setSxHandoverNotice(''); }}
+                  className="mt-0.5 rounded border-amber-400"
+                />
+                <span>
+                  Tôi xác nhận với tư cách <strong>Sale</strong>
+                  {currentUser?.full_name ? ` (${currentUser.full_name})` : ''}: đồng ý bàn giao dự án sang quy trình Sản xuất với các mốc ngày đã nhập.
+                </span>
+              </label>
+              <button
+                type="button"
+                disabled={sxHandoverSaving || !lead?.project_id}
+                onClick={async () => {
+                  if (!lead?.project_id) {
+                    setSxHandoverNotice('Deal đang ở trạng thái Thắng nhưng chưa có dự án. Hãy tạo dự án trước, sau đó mới xác nhận bàn giao SX.');
+                    return;
+                  }
+                  if (!sxHandoverForm.sale_acknowledged) {
+                    setSxHandoverNotice('Vui lòng tick xác nhận Sale trước khi bàn giao sang Sản xuất.');
+                    return;
+                  }
+                  if (!sxHandoverForm.construction_start_date || !sxHandoverForm.expected_production_start_date) {
+                    setSxHandoverNotice('Vui lòng nhập đủ: ngày dự kiến thi công và ngày dự kiến sản xuất.');
+                    return;
+                  }
+                  setSxHandoverSaving(true);
+                  try {
+                    await api.post(`/crm/leads/${lead.id}/sx-handover`, {
+                      sale_acknowledged: true,
+                      construction_start_date: sxHandoverForm.construction_start_date,
+                      expected_production_start_date: sxHandoverForm.expected_production_start_date,
+                      expected_production_end_date: sxHandoverForm.expected_production_end_date || null,
+                    });
+                    onUpdate();
+                  } catch (e) {
+                    alert(e.response?.data?.error || 'Lỗi');
+                  }
+                  setSxHandoverSaving(false);
+                }}
+                className="w-full sm:w-auto h-10 px-4 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {sxHandoverSaving ? 'Đang lưu…' : 'Xác nhận bàn giao Sản xuất'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {lead?.type === 'deal' && lead?.project_id && lead?.sx_handover_at && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2.5 space-y-1">
+          <p className="text-[10px] font-bold text-emerald-800 uppercase">Đã bàn giao Sản xuất</p>
+          <p className="text-xs text-emerald-900">
+            Bắt đầu CT: <strong>{lead.construction_start_date ? formatDate(lead.construction_start_date) : '—'}</strong>
+            {' · '}Dự kiến SX: <strong>{lead.expected_production_start_date ? formatDate(lead.expected_production_start_date) : '—'}</strong>
+            {' · '}Hoàn thành SX: <strong>{lead.expected_production_end_date ? formatDate(lead.expected_production_end_date) : '—'}</strong>
+          </p>
+        </div>
+      )}
+
       {lead?.type === 'deal' && lead?.project_id && (
-        <div className="flex items-start gap-2 py-2 px-1 rounded-lg bg-teal-50/60 border border-teal-100">
-          <span className="text-sm mt-0.5 shrink-0">🏭</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-teal-800 uppercase tracking-wider font-medium mb-0.5">Cột sản xuất (Kanban xưởng)</p>
-            <p className="text-sm font-medium text-gray-900">
-              {lead.sx_pipeline_stage?.name
-                ? `${lead.sx_pipeline_stage.icon || '📌'} ${lead.sx_pipeline_stage.name}`
-                : 'Chưa gán cột — chạy migration sx_pipeline_stage_id hoặc tạo cột «Chờ vào xưởng» trong Pipeline xưởng'}
-            </p>
-            {lead.sx_pipeline_stage?.bucket_slug === 'won_pending' && (
-              <p className="text-xs text-teal-700 mt-0.5">Hàng chờ vào xưởng (deal thắng)</p>
-            )}
-          </div>
+        <div className="flex flex-col gap-1.5">
+          {/* Trạng thái Sản xuất */}
+          {lead.sx_pipeline_stage && (() => {
+            const sx = lead.sx_pipeline_stage;
+            const icon = sx.bucket_slug === 'won_pending' ? '⏳' : sx.bucket_slug === 'completed' ? '✅' : (sx.icon || '🏭');
+            const label = sx.bucket_slug === 'won_pending' ? 'Chờ vào xưởng' : sx.name;
+            return (
+              <div className="flex items-start gap-2 py-2 px-3 rounded-lg border"
+                style={{ backgroundColor: sx.color ? `${sx.color}10` : '#f0f9ff', borderColor: sx.color ? `${sx.color}40` : '#bae6fd' }}>
+                <span className="text-base mt-0.5 shrink-0">{icon}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: sx.color || '#0369a1' }}>
+                    🏭 Sản xuất
+                  </p>
+                  <p className="text-sm font-semibold" style={{ color: sx.color || '#0c4a6e' }}>
+                    {label}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+          {/* Trạng thái Vận chuyển & Lắp đặt */}
+          {lead.vc_pipeline_stage && (() => {
+            const vc = lead.vc_pipeline_stage;
+            const icon = vc.bucket_slug === 'delivery_pending' ? '📦'
+              : vc.bucket_slug === 'installation' ? '🔧'
+              : vc.bucket_slug === 'customer_care' || vc.bucket_slug === 'customer-care' ? '🤝'
+              : vc.bucket_slug === 'completed' ? '✅' : (vc.icon || '🚚');
+            const label = vc.bucket_slug === 'delivery_pending' ? 'Chờ vận chuyển' : vc.name;
+            return (
+              <div className="flex items-start gap-2 py-2 px-3 rounded-lg border"
+                style={{ backgroundColor: vc.color ? `${vc.color}12` : '#fff7ed', borderColor: vc.color ? `${vc.color}50` : '#fed7aa' }}>
+                <span className="text-base mt-0.5 shrink-0">{icon}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: vc.color || '#ea580c' }}>
+                    🚚 Vận chuyển & Lắp đặt
+                  </p>
+                  <p className="text-sm font-semibold" style={{ color: vc.color || '#c2410c' }}>
+                    {label}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+          {!lead.sx_pipeline_stage && !lead.vc_pipeline_stage && (
+            <p className="text-xs text-gray-400 italic px-1">Chưa có thông tin pipeline xưởng</p>
+          )}
         </div>
       )}
     </div>
