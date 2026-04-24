@@ -48,7 +48,8 @@ const ACTIVITY_FORM_TYPES = ACTIVITY_TYPES.filter((t) =>
 );
 
 /** Cột trái — inline-editable như LeadDetail */
-function WorkshopInfoPanel({ project, onUpdate }) {
+function WorkshopInfoPanel({ project, onUpdate, moduleKey = 'sx' }) {
+  const isVC = moduleKey === 'vc';
   const [editing, setEditing] = useState(null); // field name
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
@@ -107,23 +108,26 @@ function WorkshopInfoPanel({ project, onUpdate }) {
         </div>
       </div>
 
-      {/* Ngày giao xưởng */}
+      {/* Ngày giao xưởng (SX) / Deadline giao hàng (VC) */}
       {(() => {
-        const pd = project.production_deadline;
+        const fieldKey = isVC ? 'deadline' : 'production_deadline';
+        const pd = isVC ? project.deadline : project.production_deadline;
         const pdDate = pd ? new Date(pd) : null;
         const isOverdue = pdDate && pdDate < new Date();
         const isSoon = pdDate && !isOverdue && pdDate < new Date(Date.now() + 3 * 86400000);
         return (
           <div className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
-            onClick={() => editing !== 'production_deadline' && startEdit('production_deadline', pd ? pd.substring(0, 10) : '')}>
-            <span className="text-sm mt-0.5 shrink-0">🏭</span>
+            onClick={() => editing !== fieldKey && startEdit(fieldKey, pd ? pd.substring(0, 10) : '')}>
+            <span className="text-sm mt-0.5 shrink-0">{isVC ? '🚚' : '🏭'}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày giao xưởng</p>
-              {editing === 'production_deadline' ? (
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">
+                {isVC ? 'Deadline giao hàng' : 'Ngày giao xưởng'}
+              </p>
+              {editing === fieldKey ? (
                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                   <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
                     className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
-                  <button onClick={() => save('production_deadline', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button onClick={() => save(fieldKey, draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
                   <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
                 </div>
               ) : (
@@ -139,14 +143,42 @@ function WorkshopInfoPanel({ project, onUpdate }) {
         );
       })()}
 
-      {/* Tiến độ SX */}
+      {/* Địa chỉ lắp đặt (VC only) */}
+      {isVC && (
+        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer"
+          onClick={() => editing !== 'install_address' && startEdit('install_address', project.install_address || project.customer?.address || '')}>
+          <span className="text-sm mt-0.5 shrink-0">📍</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Địa chỉ lắp đặt</p>
+            {editing === 'install_address' ? (
+              <div className="flex items-start gap-1" onClick={e => e.stopPropagation()}>
+                <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={2} autoFocus
+                  className="flex-1 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400 resize-none" placeholder="Nhập địa chỉ lắp đặt..." />
+                <div className="flex flex-col gap-1">
+                  <button onClick={() => save('install_address', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm font-medium text-gray-900 flex items-start gap-1">
+                <span className="flex-1">{project.install_address || project.customer?.address || '—'}</span>
+                <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 mt-0.5 shrink-0" />
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Tiến độ SX / Lắp đặt */}
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
         <span className="text-sm mt-0.5 shrink-0">📊</span>
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tiến độ sản xuất</p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">
+            {isVC ? 'Tiến độ lắp đặt' : 'Tiến độ sản xuất'}
+          </p>
           <p className="text-sm font-medium text-gray-900">{prob}%</p>
           <div className="mt-1 w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-            <div className="bg-blue-600 h-full rounded-full transition-all duration-300" style={{ width: `${prob}%` }} />
+            <div className={`${isVC ? 'bg-orange-500' : 'bg-blue-600'} h-full rounded-full transition-all duration-300`} style={{ width: `${prob}%` }} />
           </div>
         </div>
       </div>
@@ -176,16 +208,19 @@ function WorkshopInfoPanel({ project, onUpdate }) {
         </div>
       </div>
 
-      {/* Ghi chú xưởng */}
+      {/* Ghi chú xưởng / giao hàng */}
       <div className="pt-2 border-t border-gray-100">
         <div className="flex items-center justify-between mb-1">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">Ghi chú nội bộ xưởng</p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">
+            {isVC ? 'Ghi chú vận chuyển' : 'Ghi chú nội bộ xưởng'}
+          </p>
           {editing !== 'notes' && <button onClick={() => startEdit('notes', project.notes || '')} className="text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer">Sửa</button>}
         </div>
         {editing === 'notes' ? (
           <div className="space-y-1">
             <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3} autoFocus
-              className="w-full px-2 py-1.5 border border-blue-300 rounded text-xs outline-none focus:ring-1 focus:ring-blue-400 resize-none" placeholder="Ghi chú nội bộ..." />
+              className="w-full px-2 py-1.5 border border-blue-300 rounded text-xs outline-none focus:ring-1 focus:ring-blue-400 resize-none"
+              placeholder={isVC ? 'Ghi chú vận chuyển, lắp đặt...' : 'Ghi chú nội bộ...'} />
             <div className="flex gap-1">
               <button onClick={() => save('notes', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓ Lưu</button>
               <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">Hủy</button>
@@ -195,6 +230,14 @@ function WorkshopInfoPanel({ project, onUpdate }) {
           <p className="text-xs text-gray-700 whitespace-pre-wrap">{project.notes || <span className="text-gray-400 italic">Chưa có ghi chú</span>}</p>
         )}
       </div>
+
+      {/* Ghi chú xưởng SX (production_note) — chỉ hiện cho SX */}
+      {!isVC && project.production_note && (
+        <div className="pt-2 border-t border-gray-100">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1">Ghi chú kỹ thuật SX</p>
+          <p className="text-xs text-gray-700 whitespace-pre-wrap">{project.production_note}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -617,14 +660,34 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   const moveStage = async (stageId) => {
     try {
-      const { data } = await api.patch(`${MOD.apiPrefix}/projects/${id}/stage`, { stage_id: stageId });
-      const p = data.project;
+      let body;
+      if (moduleKey === 'vc') {
+        // stageId là logistics_pipeline_stages.id → gửi vc_stage_id
+        // Tìm thêm workflow_stage_id nếu có
+        const vcStage = pipelineStages.find((s) => s.id === stageId);
+        body = { vc_stage_id: stageId };
+        if (vcStage?.workflow_stage_id) body.stage_id = vcStage.workflow_stage_id;
+        // Nếu là cột intake, dùng move_to_intake
+        if (vcStage?.bucket_slug === 'delivery_pending') {
+          body = { move_to_intake: true };
+        }
+      } else {
+        body = { stage_id: stageId };
+      }
+      const { data } = await api.patch(`${MOD.apiPrefix}/projects/${id}/stage`, body);
+      const p = data.project || data;
       setProject((prev) => (prev && p ? {
         ...prev,
         status: p.status,
         current_stage_id: p.current_stage_id,
+        vc_kanban_column_id: p.vc_kanban_column_id ?? prev.vc_kanban_column_id,
         current_stage: p.current_stage || prev.current_stage,
       } : prev));
+      if (typeof window !== 'undefined' && id) {
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('crm-project-badges-refresh', { detail: { projectId: String(id) } }));
+        }, 280);
+      }
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
     }
@@ -806,7 +869,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       ? project.workshopPipeline
       : defaultPipelineStages;
 
-  const currentStageId = project.current_stage_id || project.current_stage?.id;
+  // VC dùng vc_kanban_column_id (logistics_pipeline_stages.id) để match stepper
+  // SX dùng current_stage_id (workflow_stages.id) hoặc stage ID từ fallback
+  const currentStageId = moduleKey === 'vc'
+    ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
+    : (project.current_stage_id || project.current_stage?.id);
   const primaryCrmDeal = project.crmDeals?.[0];
   const crmLeadId = primaryCrmDeal?.id;
   const displayCode = primaryCrmDeal?.code || project.code;
@@ -916,7 +983,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Cột trái — giống LeadDetail */}
         <div className="lg:col-span-1 space-y-4">
-          <WorkshopInfoPanel project={project} onUpdate={refreshProjectSilently} />
+          <WorkshopInfoPanel project={project} onUpdate={refreshProjectSilently} moduleKey={moduleKey} />
 
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center">

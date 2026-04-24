@@ -14,10 +14,22 @@ const {
   enrichProjectsForSx,
   buildPipelineSummary,
   syncCrmLeadSxPipelineFromProject,
+  syncVcPipelineStageToLead,
   getCrmVcDeliveryStageId,
+  emitCrmBadgeUpdateForProject,
 } = require('../helpers/workshopKanban');
 const { applyWorkshopTemplateToProject } = require('../helpers/workshopApplyTemplates');
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
+const {
+  buildPipelineStageSelect,
+  isHandoverMissingError,
+  isCrmTargetStageMissingError,
+  isCrmTargetStageEmbedRelationshipError,
+  markHandoverColumnMissing,
+  markCrmTargetStageColumnMissing,
+  markCrmTargetStageJoinMissing,
+  stripHandoverFields,
+} = require('../helpers/productionPipelineSchema');
 
 const r = Router();
 r.use(auth);
@@ -44,19 +56,36 @@ function isDocSharedToWorkshop(doc) {
   );
 }
 
+const ALLOWED_WORKFLOW_STAGE_CACHE_MS = 45_000;
+let _allowedWorkflowStageIdsCache = null;
+let _allowedWorkflowStageIdsAt = 0;
+
+function invalidateAllowedWorkflowStageIdsCache() {
+  _allowedWorkflowStageIdsCache = null;
+  _allowedWorkflowStageIdsAt = 0;
+}
+
 async function allowedWorkflowStageIdsForPatch() {
+  const now = Date.now();
+  if (_allowedWorkflowStageIdsCache && now - _allowedWorkflowStageIdsAt < ALLOWED_WORKFLOW_STAGE_CACHE_MS) {
+    return _allowedWorkflowStageIdsCache;
+  }
   const ids = new Set();
-  const { data: pipeRows, error: pipeErr } = await supabase
-    .from('production_pipeline_stages')
-    .select('workflow_stage_id')
-    .not('workflow_stage_id', 'is', null);
+  const [{ data: pipeRows, error: pipeErr }, { ids: workshop }] = await Promise.all([
+    supabase
+      .from('production_pipeline_stages')
+      .select('workflow_stage_id')
+      .not('workflow_stage_id', 'is', null),
+    getWorkshopStageMap(),
+  ]);
   if (!pipeErr) {
     (pipeRows || []).forEach((r) => {
       if (r.workflow_stage_id) ids.add(String(r.workflow_stage_id));
     });
   }
-  const { ids: workshop } = await getWorkshopStageMap();
-  workshop.forEach((id) => ids.add(String(id)));
+  workshop.forEach((wid) => ids.add(String(wid)));
+  _allowedWorkflowStageIdsCache = ids;
+  _allowedWorkflowStageIdsAt = now;
   return ids;
 }
 
@@ -97,27 +126,81 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       .order('order_index', { ascending: false })
       .limit(1);
     const nextOrder = (last?.[0]?.order_index ?? 0) + 1;
+    const isIntake = b.bucket_slug === INTAKE_BUCKET;
     const insertPayload = {
       name: b.name.trim(),
       color: b.color || '#0f766e',
       icon: b.icon || '📋',
       order_index: b.order_index ?? nextOrder,
       is_active: b.is_active !== false,
-      workflow_stage_id: b.workflow_stage_id || null,
+      workflow_stage_id: isIntake ? null : (b.workflow_stage_id || null),
       bucket_slug: b.bucket_slug || null,
-      is_handover_to_logistics: b.bucket_slug === INTAKE_BUCKET ? false : (b.is_handover_to_logistics || false),
+      is_handover_to_logistics: isIntake ? false : (b.is_handover_to_logistics || false),
+      crm_sync_type: isIntake ? null : (b.crm_sync_type || null),
+      crm_target_stage_id: isIntake ? null : (b.crm_target_stage_id || null),
     };
-    if (insertPayload.bucket_slug === INTAKE_BUCKET) insertPayload.workflow_stage_id = null;
 
-    const { data, error } = await supabase
+    let ins = stripHandoverFields({ ...insertPayload });
+    let { data, error } = await supabase
       .from('production_pipeline_stages')
-      .insert(insertPayload)
-      .select(`
-        id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, is_handover_to_logistics,
-        workflow_stage:workflow_stages(id, slug, name, color, icon)
-      `)
+      .insert(ins)
+      .select(buildPipelineStageSelect())
       .single();
+    if (error && isHandoverMissingError(error)) {
+      markHandoverColumnMissing();
+      ins = stripHandoverFields({ ...insertPayload });
+      const r2 = await supabase
+        .from('production_pipeline_stages')
+        .insert(ins)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = r2.data;
+      error = r2.error;
+    }
+    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
+      markCrmTargetStageJoinMissing();
+      const rJ = await supabase
+        .from('production_pipeline_stages')
+        .insert(ins)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = rJ.data;
+      error = rJ.error;
+    }
+    if (error && isCrmTargetStageMissingError(error)) {
+      markCrmTargetStageColumnMissing();
+      ins = stripHandoverFields({ ...insertPayload });
+      const r2b = await supabase
+        .from('production_pipeline_stages')
+        .insert(ins)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = r2b.data;
+      error = r2b.error;
+    }
+    // Nếu crm_sync_type chưa tồn tại trong DB → thử lại không có field đó
+    if (error && error.message?.includes('crm_sync_type')) {
+      const { crm_sync_type: _omit, ...insWithout } = ins;
+      const r3 = await supabase
+        .from('production_pipeline_stages')
+        .insert(insWithout)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = r3.data;
+      error = r3.error;
+    }
+    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
+      markCrmTargetStageJoinMissing();
+      const rF = await supabase
+        .from('production_pipeline_stages')
+        .insert(ins)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = rF.data;
+      error = rF.error;
+    }
     if (error) throw error;
+    invalidateAllowedWorkflowStageIdsCache();
     res.status(201).json(data);
   } catch (e) {
     console.error(e);
@@ -134,26 +217,86 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       .eq('id', req.params.id)
       .single();
     const update = {};
-    ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug', 'is_handover_to_logistics'].forEach((f) => {
+    ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
+      'is_handover_to_logistics', 'crm_sync_type', 'crm_target_stage_id'].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
       update.workflow_stage_id = null;
       update.is_handover_to_logistics = false;
+      update.crm_sync_type = null;
+      update.crm_target_stage_id = null;
     }
     if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET) {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
     }
-    const { data, error } = await supabase
+    let u = stripHandoverFields({ ...update });
+    let { data, error } = await supabase
       .from('production_pipeline_stages')
-      .update(update)
+      .update(u)
       .eq('id', req.params.id)
-      .select(`
-        id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, is_handover_to_logistics,
-        workflow_stage:workflow_stages(id, slug, name, color, icon)
-      `)
+      .select(buildPipelineStageSelect())
       .single();
+    if (error && isHandoverMissingError(error)) {
+      markHandoverColumnMissing();
+      u = stripHandoverFields({ ...update });
+      const r2 = await supabase
+        .from('production_pipeline_stages')
+        .update(u)
+        .eq('id', req.params.id)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = r2.data;
+      error = r2.error;
+    }
+    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
+      markCrmTargetStageJoinMissing();
+      const rJ = await supabase
+        .from('production_pipeline_stages')
+        .update(u)
+        .eq('id', req.params.id)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = rJ.data;
+      error = rJ.error;
+    }
+    if (error && isCrmTargetStageMissingError(error)) {
+      markCrmTargetStageColumnMissing();
+      u = stripHandoverFields({ ...update });
+      const r2b = await supabase
+        .from('production_pipeline_stages')
+        .update(u)
+        .eq('id', req.params.id)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = r2b.data;
+      error = r2b.error;
+    }
+    // Nếu crm_sync_type chưa tồn tại trong DB → thử lại không có field đó
+    if (error && error.message?.includes('crm_sync_type')) {
+      const { crm_sync_type: _omit, ...uWithout } = u;
+      const r3 = await supabase
+        .from('production_pipeline_stages')
+        .update(uWithout)
+        .eq('id', req.params.id)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = r3.data;
+      error = r3.error;
+    }
+    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
+      markCrmTargetStageJoinMissing();
+      const rF = await supabase
+        .from('production_pipeline_stages')
+        .update(u)
+        .eq('id', req.params.id)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = rF.data;
+      error = rF.error;
+    }
     if (error) throw error;
+    invalidateAllowedWorkflowStageIdsCache();
     res.json(data);
   } catch (e) {
     console.error(e);
@@ -172,6 +315,7 @@ r.delete('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (r
       return res.status(400).json({ error: 'Không xóa cột deal thắng — chỉ có thể ẩn' });
     }
     await supabase.from('production_pipeline_stages').delete().eq('id', req.params.id);
+    invalidateAllowedWorkflowStageIdsCache();
     res.json({ message: 'Đã xóa' });
   } catch (e) {
     console.error(e);
@@ -185,7 +329,21 @@ r.put('/pipeline-stages-reorder', requirePermission('projects', 'edit'), async (
     for (const s of stages || []) {
       await supabase.from('production_pipeline_stages').update({ order_index: s.order_index }).eq('id', s.id);
     }
+    invalidateAllowedWorkflowStageIdsCache();
     res.json({ message: 'Đã sắp xếp lại' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Thêm cột mẫu pipeline SX đầy đủ (bản vẽ → vật tư → CNC → lắp ráp → sơn → QC → đóng gói → bàn giao VC nếu chưa có cột handover) — idempotent */
+r.post('/pipeline-stages/seed-samples', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const { ensureSampleProductionPipelineStages } = require('../helpers/productionPipelineSampleStages');
+    const out = await ensureSampleProductionPipelineStages(supabase);
+    invalidateAllowedWorkflowStageIdsCache();
+    res.json(out);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -278,9 +436,10 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       .from('projects')
       .select(`
         id, code, name, estimated_value, priority, deadline, created_at, status, notes,
-        production_deadline, production_note,
+        production_deadline, production_note, vc_kanban_column_id,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
+        vc_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug),
         customer:customers(id, full_name, phone),
         company:companies(id, name, short_name),
         production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
@@ -326,12 +485,19 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       .range(offset, offset + parsedLimit - 1);
 
     let { data: projects, error, count } = await query;
-    if (error && error.message?.includes('production_deadline')) {
-      // Migration 76 not yet applied — retry without new columns
+    const needsFallback = error && (
+      error.message?.includes('production_deadline') ||
+      error.message?.includes('vc_kanban_column_id') ||
+      error.message?.includes('logistics_pipeline_stages') ||
+      error.message?.includes('relationship')
+    );
+    if (needsFallback) {
+      // Migration not yet applied or FK not ready — retry without new columns
       let fallbackQuery = supabase
         .from('projects')
         .select(`
           id, code, name, estimated_value, priority, deadline, created_at, status, notes,
+          production_deadline, production_note,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name, phone),
@@ -627,6 +793,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
 });
 
 // ─── PATCH /production/projects/:id/stage ──
+// Tối ưu: song song truy vấn validation, cache allowed stages; trả JSON ngay sau khi ghi DB,
+// đồng bộ CRM / handover / thông báo / socket chạy nền (setImmediate) để giảm thời gian HTTP.
 r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { id } = req.params;
@@ -645,12 +813,14 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
     /** Kéo về cột «Chờ vào xưởng» — không có workflow_stage_id trên cột intake */
     if (move_to_intake === true || move_to_intake === 'true') {
-      const wonIds = await getWonDealProjectIds();
+      const [wonIds, { ids: workshopIds }] = await Promise.all([
+        getWonDealProjectIds(),
+        getWorkshopStageMap(),
+      ]);
       const wonSet = new Set(wonIds);
       if (!wonSet.has(id)) {
         return res.status(400).json({ error: 'Chỉ dự án deal thắng mới kéo về cột chờ xưởng' });
       }
-      const { ids: workshopIds } = await getWorkshopStageMap();
       const wasOnWorkshop = !project.current_stage_id || workshopIds.includes(String(project.current_stage_id));
 
       const { error: updateError } = await supabase
@@ -672,12 +842,6 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         console.warn('[production] stage_transitions intake:', te.message);
       }
 
-      try {
-        await syncCrmLeadSxPipelineFromProject(id);
-      } catch (syncErr) {
-        console.warn('[production] syncCrmLeadSxPipelineFromProject:', syncErr.message);
-      }
-
       const { data: updated } = await supabase
         .from('projects')
         .select(`
@@ -687,23 +851,46 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         .eq('id', id)
         .single();
 
-      return res.json({ project: updated, moved_to_intake: true, was_on_workshop: wasOnWorkshop });
+      res.json({ project: updated, moved_to_intake: true, was_on_workshop: wasOnWorkshop });
+
+      const ioIntake = req.app.get('io');
+      setImmediate(() => {
+        void (async () => {
+          try {
+            await syncCrmLeadSxPipelineFromProject(id);
+          } catch (syncErr) {
+            console.warn('[production] syncCrmLeadSxPipelineFromProject (intake):', syncErr.message);
+          }
+          try {
+            if (ioIntake) await emitCrmBadgeUpdateForProject(id, ioIntake);
+          } catch (emitErr) {
+            console.warn('[production] emitCrmBadgeUpdateForProject (intake):', emitErr.message);
+          }
+        })();
+      });
+      return;
     }
 
     if (!stage_id) {
       return res.status(400).json({ error: 'stage_id required' });
     }
 
-    const allowed = await allowedWorkflowStageIdsForPatch();
+    const [allowed, targetRes] = await Promise.all([
+      allowedWorkflowStageIdsForPatch(),
+      supabase
+        .from('workflow_stages')
+        .select('id, slug')
+        .eq('id', stage_id)
+        .single(),
+    ]);
+    const { data: targetStage, error: targetStageErr } = targetRes;
+
     if (!allowed.has(String(stage_id))) {
       return res.status(400).json({ error: 'Giai đoạn không hợp lệ cho pipeline sản xuất' });
     }
-
-    const { data: targetStage } = await supabase
-      .from('workflow_stages')
-      .select('id, slug')
-      .eq('id', stage_id)
-      .single();
+    if (targetStageErr || !targetStage) {
+      return res.status(400).json({ error: 'Giai đoạn workflow không tồn tại' });
+    }
 
     const statusMap = {
       production: 'producing',
@@ -712,7 +899,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     };
 
     const updatePayload = { current_stage_id: stage_id };
-    if (statusMap[targetStage?.slug]) updatePayload.status = statusMap[targetStage.slug];
+    if (statusMap[targetStage.slug]) updatePayload.status = statusMap[targetStage.slug];
 
     const { error: updateError } = await supabase
       .from('projects')
@@ -737,104 +924,149 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       .eq('id', id)
       .single();
 
-    try {
-      await syncCrmLeadSxPipelineFromProject(id);
-    } catch (syncErr) {
-      console.warn('[production] syncCrmLeadSxPipelineFromProject:', syncErr.message);
-    }
-
-    // Kiểm tra cột SX có cờ is_handover_to_logistics → chuyển sang module VC
-    try {
-      // Graceful degradation: nếu cột is_handover_to_logistics chưa tồn tại (migration 78 chưa chạy),
-      // thử query không có cột đó và bỏ qua tính năng handover tự động
-      let sxPipeStage = null;
-      const { data: sxPipeStageRaw, error: sxPipeErr } = await supabase
-        .from('production_pipeline_stages')
-        .select('id, is_handover_to_logistics, name')
-        .eq('workflow_stage_id', stage_id)
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
-      if (sxPipeErr && sxPipeErr.message?.includes('is_handover_to_logistics')) {
-        console.warn('[production/stage] is_handover_to_logistics column missing — run migration 78');
-      } else {
-        sxPipeStage = sxPipeStageRaw;
-      }
-
-      if (sxPipeStage?.is_handover_to_logistics) {
-        // Đổi status project sang 'shipping' để lọc trong VC module
-        await supabase.from('projects').update({ status: 'shipping' }).eq('id', id);
-
-        // Đồng bộ CRM deal sang cột "Vận chuyển" nếu cấu hình
-        try {
-          const vcDeliveryStageId = await getCrmVcDeliveryStageId();
-          if (vcDeliveryStageId) {
-            const { data: leads } = await supabase
-              .from('crm_leads')
-              .select('id')
-              .eq('project_id', id)
-              .eq('type', 'deal');
-            for (const lead of leads || []) {
-              await supabase.from('crm_leads').update({ stage_id: vcDeliveryStageId }).eq('id', lead.id);
-            }
-          }
-        } catch (crmErr) {
-          console.warn('[production/handover] sync CRM VC delivery:', crmErr.message);
-        }
-
-        // Thông báo nhân viên VC
-        const { data: vcUsers } = await supabase
-          .from('users')
-          .select('id')
-          .in('role', ['logistics', 'installer', 'manager'])
-          .eq('is_active', true);
-        const vcRecipients = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
-        if (vcRecipients.length) {
-          await notifyMultipleShared(
-            req,
-            vcRecipients,
-            'workshop_new_deal',
-            `🚚 Vận chuyển: Deal mới từ Xưởng`,
-            `Dự án ${updated.code || updated.name} đã hoàn thành sản xuất, chuyển sang Vận chuyển & Lắp đặt`,
-            'project',
-            id,
-          );
-        }
-      }
-    } catch (handoverErr) {
-      console.warn('[production/stage] handover to logistics:', handoverErr.message);
-    }
-
-    // Thông báo đến toàn bộ nhân viên xưởng (production + manager), trừ người thực hiện
-    try {
-      const { data: workshopUsers } = await supabase
-        .from('users')
-        .select('id')
-        .in('role', ['production', 'manager'])
-        .eq('is_active', true);
-      const recipientIds = (workshopUsers || [])
-        .map((u) => u.id)
-        .filter((id) => id !== userId);
-      if (recipientIds.length) {
-        const stageName = updated.current_stage?.name || '';
-        await notifyMultipleShared(
-          req,
-          recipientIds,
-          'workshop_new_deal',
-          `🏭 Xưởng: ${stageName}`,
-          `Dự án ${updated.code || updated.name} vừa chuyển sang giai đoạn "${stageName}"`,
-          'project',
-          id,
-        );
-      }
-    } catch (notifErr) {
-      console.warn('[production/stage] notify workshop staff:', notifErr.message);
-    }
-
     const io = req.app.get('io');
     if (io) io.emit('project:stage_changed', updated);
 
     res.json({ project: updated });
+    const projectId = id;
+    const toStageId = stage_id;
+    const updatedSnapshot = updated;
+    const reqRef = req;
+
+    setImmediate(() => {
+      void (async () => {
+        try {
+          await syncCrmLeadSxPipelineFromProject(projectId);
+        } catch (syncErr) {
+          console.warn('[production] syncCrmLeadSxPipelineFromProject:', syncErr.message);
+        }
+
+        // Kiểm tra cột SX có cờ is_handover_to_logistics → chuyển sang module VC
+        try {
+          let sxPipeStage = null;
+          let { data: sxPipeStageRaw, error: sxPipeErr } = await supabase
+            .from('production_pipeline_stages')
+            .select('id, is_handover_to_logistics, name')
+            .eq('workflow_stage_id', toStageId)
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+          if (sxPipeErr && isHandoverMissingError(sxPipeErr)) {
+            markHandoverColumnMissing();
+            const r2 = await supabase
+              .from('production_pipeline_stages')
+              .select('id, name')
+              .eq('workflow_stage_id', toStageId)
+              .eq('is_active', true)
+              .limit(1)
+              .maybeSingle();
+            sxPipeStageRaw = r2.data;
+            sxPipeErr = r2.error;
+          }
+          if (!sxPipeErr) {
+            sxPipeStage = sxPipeStageRaw;
+          }
+
+          if (sxPipeStage?.is_handover_to_logistics) {
+            let autoVcStageId = null;
+            try {
+              const { data: vcIntake } = await supabase
+                .from('logistics_pipeline_stages')
+                .select('id')
+                .eq('bucket_slug', 'delivery_pending')
+                .eq('is_active', true)
+                .order('order_index')
+                .limit(1)
+                .maybeSingle();
+              if (!vcIntake) {
+                const { data: vcFirst } = await supabase
+                  .from('logistics_pipeline_stages').select('id').eq('is_active', true).order('order_index').limit(1).maybeSingle();
+                autoVcStageId = vcFirst?.id || null;
+              } else {
+                autoVcStageId = vcIntake.id;
+              }
+            } catch (_e) { /* ignore */ }
+
+            const autoUpd = { status: 'shipping' };
+            if (autoVcStageId) autoUpd.vc_kanban_column_id = autoVcStageId;
+            const { error: autoUpdErr } = await supabase.from('projects').update(autoUpd).eq('id', projectId);
+            if (autoUpdErr && autoUpdErr.message?.includes('vc_kanban_column_id')) {
+              await supabase.from('projects').update({ status: 'shipping' }).eq('id', projectId);
+            }
+
+            try {
+              const vcDeliveryStageId = await getCrmVcDeliveryStageId();
+              if (vcDeliveryStageId) {
+                const { data: leads } = await supabase
+                  .from('crm_leads')
+                  .select('id')
+                  .eq('project_id', projectId)
+                  .eq('type', 'deal');
+                await Promise.all(
+                  (leads || []).map((lead) =>
+                    supabase.from('crm_leads').update({ stage_id: vcDeliveryStageId, vc_pipeline_stage_id: autoVcStageId }).eq('id', lead.id),
+                  ),
+                );
+              }
+            } catch (crmErr) {
+              console.warn('[production/handover] sync CRM VC delivery:', crmErr.message);
+            }
+
+            const { data: vcUsers } = await supabase
+              .from('users')
+              .select('id')
+              .in('role', ['logistics', 'installer', 'manager'])
+              .eq('is_active', true);
+            const vcRecipients = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
+            if (vcRecipients.length) {
+              await notifyMultipleShared(
+                reqRef,
+                vcRecipients,
+                'workshop_new_deal',
+                `🚚 Vận chuyển: Deal mới từ Xưởng`,
+                `Dự án ${updatedSnapshot.code || updatedSnapshot.name} đã hoàn thành sản xuất, chuyển sang Vận chuyển & Lắp đặt`,
+                'project',
+                projectId,
+              );
+            }
+          }
+        } catch (handoverErr) {
+          console.warn('[production/stage] handover to logistics:', handoverErr.message);
+        }
+
+        try {
+          const { data: workshopUsers } = await supabase
+            .from('users')
+            .select('id')
+            .in('role', ['production', 'manager'])
+            .eq('is_active', true);
+          const recipientIds = (workshopUsers || [])
+            .map((u) => u.id)
+            .filter((uid) => uid !== userId);
+          if (recipientIds.length) {
+            const stageName = updatedSnapshot.current_stage?.name || '';
+            await notifyMultipleShared(
+              reqRef,
+              recipientIds,
+              'workshop_new_deal',
+              `🏭 Xưởng: ${stageName}`,
+              `Dự án ${updatedSnapshot.code || updatedSnapshot.name} vừa chuyển sang giai đoạn "${stageName}"`,
+              'project',
+              projectId,
+            );
+          }
+        } catch (notifErr) {
+          console.warn('[production/stage] notify workshop staff:', notifErr.message);
+        }
+
+        // Emit sau sync + handover CRM để thẻ Kanban CRM luôn nhận đúng SX/VC (một lần, đủ dữ liệu)
+        try {
+          if (io) await emitCrmBadgeUpdateForProject(projectId, io);
+        } catch (emitErr) {
+          console.warn('[production/stage] emitCrmBadgeUpdateForProject:', emitErr.message);
+        }
+      })();
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -855,13 +1087,68 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       .single();
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    // Đổi status sang 'shipping' và xoá current_stage_id
-    // để project rơi vào cột "Chờ vận chuyển" trong VC Kanban
+    // ── 0. Lấy SX pipeline stage hiện tại (trước khi clear current_stage_id) ──
+    let sxHandoverPipelineStageId = null;
+    try {
+      if (project.current_stage_id) {
+        const { data: sxPipeRow } = await supabase
+          .from('production_pipeline_stages')
+          .select('id')
+          .eq('workflow_stage_id', project.current_stage_id)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        sxHandoverPipelineStageId = sxPipeRow?.id || null;
+      }
+    } catch (_e) { /* ignore */ }
+
+    // ── 1. Lấy cột intake của VC pipeline ──────────────────────────────────
+    let vcStageId = null;
+    try {
+      const { data: vcIntakeRow } = await supabase
+        .from('logistics_pipeline_stages')
+        .select('id, name')
+        .eq('bucket_slug', 'delivery_pending')
+        .eq('is_active', true)
+        .order('order_index')
+        .limit(1)
+        .maybeSingle();
+      if (!vcIntakeRow) {
+        const { data: vcFirstRow } = await supabase
+          .from('logistics_pipeline_stages')
+          .select('id')
+          .eq('is_active', true)
+          .order('order_index')
+          .limit(1)
+          .maybeSingle();
+        vcStageId = vcFirstRow?.id || null;
+      } else {
+        vcStageId = vcIntakeRow.id;
+      }
+    } catch (stageErr) {
+      console.warn('[production/handover-vc] lookup VC intake stage:', stageErr.message);
+    }
+
+    // ── 2. Đổi status sang 'shipping', xoá current_stage_id, gán vc_kanban_column_id ──
+    const projectUpdate = { status: 'shipping', current_stage_id: null };
+    if (vcStageId) projectUpdate.vc_kanban_column_id = vcStageId;
+
     const { error: updateError } = await supabase
       .from('projects')
-      .update({ status: 'shipping', current_stage_id: null })
+      .update(projectUpdate)
       .eq('id', id);
-    if (updateError) throw updateError;
+    if (updateError) {
+      // Nếu vc_kanban_column_id column chưa tồn tại, thử lại không có nó
+      if (updateError.message?.includes('vc_kanban_column_id')) {
+        const { error: retryErr } = await supabase
+          .from('projects')
+          .update({ status: 'shipping', current_stage_id: null })
+          .eq('id', id);
+        if (retryErr) throw retryErr;
+      } else {
+        throw updateError;
+      }
+    }
 
     // Ghi stage_transition
     try {
@@ -874,14 +1161,33 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       });
     } catch (te) { console.warn('[production/handover-vc] stage_transitions:', te.message); }
 
-    // Đồng bộ CRM deal sang cột "Vận chuyển" nếu cấu hình
+    // ── 3. Đồng bộ CRM deal: cột stage_id + sx_pipeline_stage_id + vc_pipeline_stage_id ──
     try {
       const vcDeliveryStageId = await getCrmVcDeliveryStageId();
-      if (vcDeliveryStageId) {
-        const { data: leads } = await supabase
-          .from('crm_leads').select('id').eq('project_id', id).eq('type', 'deal');
-        for (const lead of leads || []) {
-          await supabase.from('crm_leads').update({ stage_id: vcDeliveryStageId }).eq('id', lead.id);
+      const { data: leads } = await supabase
+        .from('crm_leads').select('id').eq('project_id', id).eq('type', 'deal');
+
+      for (const lead of leads || []) {
+        // Thử update đầy đủ kể cả vc/sx_pipeline_stage_id
+        const fullUpd = {};
+        if (vcStageId) fullUpd.vc_pipeline_stage_id = vcStageId;
+        if (sxHandoverPipelineStageId) fullUpd.sx_pipeline_stage_id = sxHandoverPipelineStageId;
+        if (vcDeliveryStageId) fullUpd.stage_id = vcDeliveryStageId;
+
+        const { error: leadErr } = await supabase.from('crm_leads').update(fullUpd).eq('id', lead.id);
+
+        if (leadErr) {
+          // Nếu lỗi do column chưa tồn tại → chỉ cập nhật stage_id (cột CRM)
+          const isColErr = leadErr.message?.includes('vc_pipeline_stage_id') || leadErr.message?.includes('sx_pipeline_stage_id');
+          if (isColErr && vcDeliveryStageId) {
+            const { error: simpleErr } = await supabase.from('crm_leads').update({ stage_id: vcDeliveryStageId }).eq('id', lead.id);
+            if (simpleErr) console.warn('[production/handover-vc] simple CRM update:', simpleErr.message);
+            else console.log(`[production/handover-vc] CRM deal ${lead.id} → stage_id=${vcDeliveryStageId} (columns not migrated yet)`);
+          } else {
+            console.warn('[production/handover-vc] CRM update lead', lead.id, ':', leadErr.message);
+          }
+        } else {
+          console.log(`[production/handover-vc] CRM deal ${lead.id} synced → vcStage=${vcStageId}, crmCol=${vcDeliveryStageId || '(not configured)'}`);
         }
       }
     } catch (crmErr) {
@@ -912,6 +1218,9 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
 
     const io = req.app.get('io');
     if (io) io.emit('project:stage_changed', updated);
+
+    // Emit badge update cho CRM deals liên quan sau khi sync vc_pipeline_stage_id
+    emitCrmBadgeUpdateForProject(id, io).catch(() => {});
 
     res.json({ project: updated, handed_over: true });
   } catch (e) {

@@ -1,5 +1,38 @@
 const jwt = require('jsonwebtoken');
 const config = require('../config');
+const { supabase } = require('../config/supabase');
+
+const COMPANY_CACHE_MS = 60_000;
+const _companyCache = new Map(); // userId -> { company_id, at }
+
+async function resolveCompanyIdForUser(userId) {
+  if (!userId) return null;
+  const key = String(userId);
+  const hit = _companyCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < COMPANY_CACHE_MS) return hit.company_id || null;
+  try {
+    const { data: u } = await supabase
+      .from('users')
+      .select('company_id, department_id')
+      .eq('id', userId)
+      .maybeSingle();
+    let company_id = u?.company_id || null;
+    if (!company_id && u?.department_id) {
+      const { data: dept } = await supabase
+        .from('departments')
+        .select('company_id')
+        .eq('id', u.department_id)
+        .maybeSingle();
+      company_id = dept?.company_id || null;
+    }
+    _companyCache.set(key, { company_id, at: now });
+    return company_id;
+  } catch {
+    _companyCache.set(key, { company_id: null, at: now });
+    return null;
+  }
+}
 
 function auth(req, res, next) {
   const h = req.headers.authorization;
@@ -10,6 +43,14 @@ function auth(req, res, next) {
     // Một số route (push, preferences) dùng userId; token cũ có thể chỉ có id
     if (req.user.userId == null && req.user.id != null) req.user.userId = req.user.id;
     if (req.user.id == null && req.user.userId != null) req.user.id = req.user.userId;
+    // Backward-compat: token hiện tại không chứa company_id
+    if (req.user.company_id == null) {
+      resolveCompanyIdForUser(req.user.userId).then((cid) => {
+        if (cid) req.user.company_id = cid;
+        next();
+      }).catch(() => next());
+      return;
+    }
     next();
   } catch { res.status(401).json({ error: 'Token hết hạn' }); }
 }

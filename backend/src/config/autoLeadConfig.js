@@ -17,6 +17,10 @@ const DEFAULT_CONFIG = {
   recreate_deleted_leads: false,
   notify_on_new_lead: true,
   notify_on_phone_found: true,
+  /** Lead tạo từ Facebook sẽ thuộc công ty nào (fallback nếu page chưa set default_company_id) */
+  default_company_id: null,
+  /** Loại Lead mặc định (company-scoped) */
+  default_lead_type_id: null,
 };
 
 // In-memory cache (tránh query DB mỗi lần webhook đến)

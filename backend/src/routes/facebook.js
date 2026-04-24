@@ -15,10 +15,10 @@ const {
 /** Số contact xử lý mỗi lần gọi batch (50–500). Giảm nếu Graph hay 429. */
 const AUTO_BATCH_SIZE = Math.min(500, Math.max(50, parseInt(process.env.FB_AUTO_BATCH_SIZE || '300', 10) || 300));
 const AUTO_SYNC_TIMEOUT_SEC = Math.min(300, Math.max(30, parseInt(process.env.FB_AUTO_SYNC_TIMEOUT_SEC || '90', 10) || 90));
-/** Pool tối đa khi load contact cho pipeline (mặc định 10000). ENV: FB_PIPELINE_POOL_LIMIT */
-const FB_PIPELINE_POOL_LIMIT = Math.min(50_000, Math.max(2_000, parseInt(process.env.FB_PIPELINE_POOL_LIMIT || '10000', 10) || 10_000));
-/** Luôn ưu tiên tối đa N contact chưa có lead (dù cũ) để không bỏ sót. ENV: FB_PIPELINE_NEEDY_NO_LEAD_CAP */
-const FB_PIPELINE_NEEDY_NO_LEAD_CAP = Math.min(5_000, Math.max(0, parseInt(process.env.FB_PIPELINE_NEEDY_NO_LEAD_CAP || '1000', 10) || 1000));
+/** Pool tối đa khi load contact cho pipeline (mặc định 2000; tăng ENV FB_PIPELINE_POOL_LIMIT nếu cần quét sâu). */
+const FB_PIPELINE_POOL_LIMIT = Math.min(50_000, Math.max(500, parseInt(process.env.FB_PIPELINE_POOL_LIMIT || '2000', 10) || 2_000));
+/** Ưu tiên contact chưa có lead (mặc định 500; ENV: FB_PIPELINE_NEEDY_NO_LEAD_CAP). */
+const FB_PIPELINE_NEEDY_NO_LEAD_CAP = Math.min(5_000, Math.max(0, parseInt(process.env.FB_PIPELINE_NEEDY_NO_LEAD_CAP || '500', 10) || 500));
 /**
  * Batch đồng bộ: số trang Graph/contact (mỗi trang ~100 tin). Mặc định 3 → nhẹ; tăng ENV FB_SYNC_BATCH_GRAPH_MAX_PAGES khi cần kéo sâu hơn.
  * Đồng bộ 1 contact tay vẫn dùng FB_SYNC_SINGLE_MAX_PAGES (25).
@@ -34,10 +34,10 @@ const STALE_NO_CUSTOMER_REPLY_MS = AUTO_PIPELINE_RECENT_HOURS * 60 * 60 * 1000;
 /** Graph: lấy nhiều trang tin (mặc định FB chỉ trả ~100/trang). SĐT nằm trong text ở tin cũ vẫn cần kéo đủ. */
 const FB_GRAPH_MESSAGES_FIELDS = 'message,from,created_time,attachments';
 
-/** GET /facebook/analytics — PostgREST mặc định ~1000 dòng/request; phân trang để tải hết. ENV: FB_ANALYTICS_PAGE_SIZE */
+/** GET /facebook/analytics — mặc định 500 dòng/trang; ENV: FB_ANALYTICS_PAGE_SIZE (500–2000). */
 const FB_ANALYTICS_PAGE_SIZE = Math.min(
-  5000,
-  Math.max(500, parseInt(process.env.FB_ANALYTICS_PAGE_SIZE || '1000', 10) || 1000),
+  2000,
+  Math.max(200, parseInt(process.env.FB_ANALYTICS_PAGE_SIZE || '500', 10) || 500),
 );
 const FB_ANALYTICS_CONTACT_IN_BATCH = Math.min(
   200,
@@ -241,13 +241,13 @@ async function loadFacebookContactsForBatchPipeline({ recentHours = 0, applyStal
 
 const DEFAULT_FB_PIPELINE_CONFIG = {
   /**
-   * full_cycle (mặc định): lô batch-sync-messages + batch-extract-phones (như nút tay) → Tạo Lead → Refresh → Xóa trùng → sync-contact-phones → lặp ngay (mặc định không nghỉ).
+   * full_cycle (mặc định): lô batch-sync-messages + batch-extract-phones (như nút tay) → Tạo Lead → Refresh → Xóa trùng → sync-contact-phones → nghỉ (mặc định 5p) rồi lặp.
    * chain: Sync→Quét từng user (runSyncThenExtractPhonesJob). legacy: chỉ lô đồng bộ + quét, không CRM sau.
    */
   engine: 'full_cycle',
   /** Tối đa số user mới nhất (đồng bộ+quét) mỗi vòng trước Tạo Lead… Pool đã sort mới→cũ. 0 = không giới hạn (hết pool). */
-  full_cycle_max_users_per_round: 100,
-  chain_chunk_users: 100,
+  full_cycle_max_users_per_round: 50,
+  chain_chunk_users: 50,
   /** newest_first | oldest_first */
   chain_sort: 'newest_first',
   /** 0 = không lọc theo giờ (cả pool). >0 = giờ hoạt động gần đây. */
@@ -257,8 +257,8 @@ const DEFAULT_FB_PIPELINE_CONFIG = {
   chain_final_lead_sync: true,
   chain_run_graph_sync: true,
   chain_run_extract: true,
-  /** Nghỉ giữa mỗi vòng Auto (giây). 0 = lặp liền (không chờ). */
-  auto_loop_pause_sec: 0,
+  /** Nghỉ giữa mỗi vòng Auto (giây). 0 = lặp liền (không chờ). Mặc định 300 = 5 phút. */
+  auto_loop_pause_sec: 300,
 };
 
 let fbPipelineConfigCache = { ...DEFAULT_FB_PIPELINE_CONFIG };
@@ -1317,6 +1317,8 @@ const _createLeadLocks = new Map();
 async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   const page = await getPageConfig(pageId);
   if (!page) return null;
+  const { getConfig: getAutoLeadConfig } = require('../config/autoLeadConfig');
+  const autoLeadCfg = getAutoLeadConfig();
 
   // ── LOCK theo contact.id: chỉ 1 request được tạo lead cho 1 contact ──
   const lockKey = contact.id;
@@ -1462,6 +1464,25 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     if (page.default_company_id) companyId = page.default_company_id;
   } catch (e) { /* column may not exist */ }
 
+  // Fallback company từ auto-lead-config (nếu page chưa set)
+  if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
+
+  // Default lead type (company-scoped)
+  let leadTypeId = null;
+  if (autoLeadCfg?.default_lead_type_id && companyId) {
+    const { data: lt } = await supabase
+      .from('crm_lead_types')
+      .select('id, company_id, applies_to, is_active')
+      .eq('id', autoLeadCfg.default_lead_type_id)
+      .maybeSingle();
+    if (lt
+      && String(lt.company_id || '') === String(companyId || '')
+      && lt.is_active !== false
+      && ['lead', 'both'].includes(String(lt.applies_to || 'both'))) {
+      leadTypeId = lt.id;
+    }
+  }
+
   const leadData = {
     code,
     title: `[FB] ${extraData.full_name || contact.fb_name || 'KH Facebook'}`,
@@ -1470,6 +1491,7 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     source_id: resolvedSourceId,
     stage_id: stageId,
     company_id: companyId,
+    lead_type_id: leadTypeId,
     install_address: extraData.address || null,
     description: `Nguồn: Facebook ${source}\nTên: ${extraData.full_name || contact.fb_name || ''}\nSĐT: ${extraData.phone || contact.phone || ''}\nĐịa chỉ: ${extraData.address || ''}`.trim(),
     lead_owner_id: page.default_lead_owner_id || page.created_by,
@@ -3160,13 +3182,23 @@ r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
 
 r.post('/sync-source-ids', authMiddleware, async (req, res) => {
   try {
-    const { data: contacts } = await supabase.from('facebook_contacts')
-      .select('lead_id, page_id')
-      .not('lead_id', 'is', null)
-      .not('page_id', 'is', null);
+    // Phân trang 1000 dòng/lần thay vì tải toàn bộ 1 lần
+    const allContacts = [];
+    let pageFrom = 0;
+    while (true) {
+      const { data: page } = await supabase.from('facebook_contacts')
+        .select('lead_id, page_id')
+        .not('lead_id', 'is', null)
+        .not('page_id', 'is', null)
+        .range(pageFrom, pageFrom + 999);
+      if (!page?.length) break;
+      allContacts.push(...page);
+      if (page.length < 1000) break;
+      pageFrom += 1000;
+    }
 
     const leadPageMap = new Map();
-    for (const row of (contacts || [])) {
+    for (const row of allContacts) {
       if (!row.lead_id || !row.page_id || leadPageMap.has(row.lead_id)) continue;
       leadPageMap.set(row.lead_id, row.page_id);
     }
@@ -3194,11 +3226,16 @@ r.post('/sync-source-ids', authMiddleware, async (req, res) => {
 r.post('/batch-create-leads', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
-    // Lấy tất cả contacts chưa có lead
+    // Giới hạn số contact tải mỗi lần để tránh egress lớn (ENV: FB_BATCH_LEADS_CAP, mặc định 500)
+    const BATCH_CAP = Math.min(5000, Math.max(50, parseInt(process.env.FB_BATCH_LEADS_CAP || '500', 10) || 500));
+
+    // Lấy contacts chưa có lead — giới hạn BATCH_CAP, ưu tiên hoạt động gần nhất
     const { data: contactsRaw } = await supabase.from('facebook_contacts')
-      .select('*').is('lead_id', null)
+      .select('id, fb_name, phone, page_id, last_message_at, created_at, lead_id')
+      .is('lead_id', null)
       .order('last_message_at', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(BATCH_CAP);
     const contacts = sortFacebookContactsNewestFirst(contactsRaw);
 
     if (!contacts?.length) return res.json({ created: 0, updated: 0, message: 'Không có contact nào cần xử lý' });
@@ -3207,14 +3244,20 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     const results = [];
     const total = contacts.length;
 
-    // Pre-fetch messages cho tất cả contacts 1 lần
+    // Pre-fetch messages theo batch 200 ID mỗi lần để tránh IN(..) quá lớn
     const contactIds = contacts.map(c => c.id);
-    const { data: allMsgs } = await supabase.from('facebook_messages')
-      .select('contact_id, content')
-      .in('contact_id', contactIds)
-      .eq('direction', 'inbound')
-      .order('created_at', { ascending: false })
-      .limit(50000);
+    const MSG_BATCH = 200;
+    const allMsgs = [];
+    for (let b = 0; b < contactIds.length; b += MSG_BATCH) {
+      const batchIds = contactIds.slice(b, b + MSG_BATCH);
+      const { data: batchMsgs } = await supabase.from('facebook_messages')
+        .select('contact_id, content')
+        .in('contact_id', batchIds)
+        .eq('direction', 'inbound')
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (batchMsgs?.length) allMsgs.push(...batchMsgs);
+    }
     const msgsByContact = {};
     (allMsgs || []).forEach(m => {
       if (!msgsByContact[m.contact_id]) msgsByContact[m.contact_id] = [];
@@ -4258,7 +4301,7 @@ async function saveFbPipelineConfig(partial) {
   };
   if (!['chain', 'legacy', 'full_cycle'].includes(merged.engine)) merged.engine = 'full_cycle';
   merged.full_cycle_max_users_per_round = Math.min(500_000, Math.max(0, parseInt(merged.full_cycle_max_users_per_round, 10) || 0));
-  merged.chain_chunk_users = Math.min(500, Math.max(1, parseInt(merged.chain_chunk_users, 10) || 100));
+  merged.chain_chunk_users = Math.min(500, Math.max(1, parseInt(merged.chain_chunk_users, 10) || 50));
   merged.chain_sort = merged.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
   merged.chain_recent_hours = Math.min(168, Math.max(0, parseInt(merged.chain_recent_hours, 10) || 0));
   merged.chain_graph_pages = Math.min(30, Math.max(1, parseInt(merged.chain_graph_pages, 10) || FB_SYNC_SINGLE_MAX_PAGES));

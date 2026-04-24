@@ -110,8 +110,10 @@ export default function NotificationCenter({ socket }) {
 
   useEffect(() => {
     loadCount();
-    const interval = setInterval(loadCount, 30000);
-    return () => clearInterval(interval);
+    const tick = () => { if (!document.hidden) loadCount(); };
+    const interval = setInterval(tick, 60_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(interval); document.removeEventListener('visibilitychange', tick); };
   }, []);
 
   useEffect(() => {

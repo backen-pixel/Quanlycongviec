@@ -50,8 +50,11 @@ export default function FacebookChatTab({ leadId }) {
   }, [loadMessages]);
 
   useEffect(() => {
-    const timer = setInterval(loadMessages, 15000);
-    return () => clearInterval(timer);
+    const INTERVAL = 30_000;
+    const tick = () => { if (!document.hidden) loadMessages(); };
+    const timer = setInterval(tick, INTERVAL);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
   }, [loadMessages]);
 
   const sendReply = async () => {

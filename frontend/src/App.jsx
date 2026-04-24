@@ -121,6 +121,7 @@ import CategoriesPage from './pages/CategoriesPage';
 import PrivacyPage from './pages/PrivacyPage';
 import VoiceRecordingsPage from './pages/VoiceRecordingsPage';
 import MessengerHubPage from './pages/MessengerHubPage';
+import RequestMonitorPage from './pages/RequestMonitorPage';
 
 import { Settings } from 'lucide-react';
 
@@ -129,6 +130,7 @@ import { ThemeProvider } from './components/ThemeProvider';
 import ThemeSettingsPage from './pages/ThemeSettingsPage';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
+import MessengerDock from './components/MessengerDock';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
@@ -262,6 +264,7 @@ export default function App() {
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/settings/misa" element={<MisaSettingsPage />} />
             <Route path="/settings/api-keys" element={<ApiKeysSettingsPage />} />
+            <Route path="/settings/request-monitor" element={<RequestMonitorPage />} />
             <Route path="/crm/customers" element={<CustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/task-templates" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><CRMTemplatesPage /></Suspense>} />
@@ -305,6 +308,7 @@ export default function App() {
           </Route>
         </Routes>
         
+        <MessengerDock />
         </ThemeProvider>
         </MessengerDockProvider>
       </BrowserRouter>

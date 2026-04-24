@@ -7,38 +7,29 @@ const INTAKE = 'delivery_pending';
 const COLORS = ['#f97316', '#ea580c', '#d97706', '#0f766e', '#3B82F6', '#8B5CF6', '#10B981', '#64748b'];
 const ICONS = ['🚚', '📦', '🔧', '🤝', '⏳', '📋', '✅', '🎯', '🏗️', '🛻'];
 
-const CRM_SYNC_OPTIONS = [
-  { value: '', label: '— Không đồng bộ CRM —' },
-  { value: 'delivery', label: '📋 Vận chuyển thành công → CRM: Vận chuyển' },
-  { value: 'installation', label: '🔧 Lắp đặt thành công → CRM: Lắp đặt' },
-  { value: 'customer_care', label: '🤝 Hoàn thành → CRM: Chăm sóc KH' },
-];
-
-const CRM_SYNC_LABEL = {
-  delivery: '📋 → CRM: Vận chuyển',
-  installation: '🔧 → CRM: Lắp đặt',
-  customer_care: '🤝 → CRM: CSKH',
-};
-
 export default function LogisticsPipelineSettingsPage() {
   const [stages, setStages] = useState([]);
   const [workflowStages, setWorkflowStages] = useState([]);
+  const [crmStages, setCrmStages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({
-    name: '', color: COLORS[0], icon: '📦', workflow_stage_id: '', is_active: true, crm_sync_type: '',
+    name: '', color: COLORS[0], icon: '📦', workflow_stage_id: '', is_active: true,
+    crm_sync_type: '', crm_target_stage_id: '',
   });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [pipeRes, stRes] = await Promise.all([
+      const [pipeRes, stRes, crmRes] = await Promise.all([
         api.get('/logistics/pipeline-stages', { params: { all: 'true' } }),
         api.get('/stages').catch(() => api.get('/users/stages').catch(() => ({ data: { stages: [] } }))),
+        api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
       ]);
       setStages(pipeRes.data || []);
       setWorkflowStages(stRes.data?.stages || []);
+      setCrmStages((crmRes.data || []).filter((s) => s.pipeline_type === 'deal' || !s.pipeline_type));
     } catch {
       setStages([]);
     }
@@ -54,7 +45,7 @@ export default function LogisticsPipelineSettingsPage() {
     setEditId(null);
     setForm({
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
-      workflow_stage_id: '', is_active: true, crm_sync_type: '',
+      workflow_stage_id: '', is_active: true, crm_sync_type: '', crm_target_stage_id: '',
     });
   };
 
@@ -68,6 +59,7 @@ export default function LogisticsPipelineSettingsPage() {
       workflow_stage_id: stage.workflow_stage_id || stage.workflow_stage?.id || '',
       is_active: stage.is_active !== false,
       crm_sync_type: stage.crm_sync_type || '',
+      crm_target_stage_id: stage.crm_target_stage_id || '',
     });
   };
 
@@ -78,7 +70,8 @@ export default function LogisticsPipelineSettingsPage() {
         name: form.name.trim(), color: form.color, icon: form.icon,
         workflow_stage_id: form.workflow_stage_id || null,
         is_active: form.is_active,
-        crm_sync_type: form.crm_sync_type || null,
+        crm_sync_type: form.crm_target_stage_id ? null : (form.crm_sync_type || null),
+        crm_target_stage_id: form.crm_target_stage_id || null,
       });
       setAdding(false);
       load();
@@ -93,7 +86,8 @@ export default function LogisticsPipelineSettingsPage() {
         name: form.name.trim(), color: form.color, icon: form.icon,
         workflow_stage_id: intakeRow ? null : (form.workflow_stage_id || null),
         is_active: form.is_active,
-        crm_sync_type: intakeRow ? null : (form.crm_sync_type || null),
+        crm_sync_type: intakeRow ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: intakeRow ? null : (form.crm_target_stage_id || null),
       });
       setEditId(null);
       load();
@@ -117,11 +111,15 @@ export default function LogisticsPipelineSettingsPage() {
   };
 
   const moveStage = async (stage, dir) => {
+    if (stage.bucket_slug === INTAKE) return; // Cột chờ vận chuyển luôn đứng đầu
     const list = [...stages].sort((a, b) => a.order_index - b.order_index);
     const idx = list.findIndex((s) => s.id === stage.id);
-    if ((dir === -1 && idx === 0) || (dir === 1 && idx === list.length - 1)) return;
-    [list[idx], list[idx + dir]] = [list[idx + dir], list[idx]];
-    const reorder = list.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+    if (idx < 0 || (dir === -1 && idx === 0) || (dir === 1 && idx === list.length - 1)) return;
+    // Không cho nhảy lên trước cột INTAKE
+    if (dir === -1 && list[idx - 1]?.bucket_slug === INTAKE) return;
+    const newList = [...list];
+    [newList[idx], newList[idx + dir]] = [newList[idx + dir], newList[idx]];
+    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
     try {
       await api.put('/logistics/pipeline-stages-reorder', { stages: reorder });
       load();
@@ -130,6 +128,18 @@ export default function LogisticsPipelineSettingsPage() {
 
   const sorted = [...stages].sort((a, b) => a.order_index - b.order_index);
   const editingIntake = editId && sorted.find((s) => s.id === editId)?.bucket_slug === INTAKE;
+
+  const getCrmStageBadge = (stage) => {
+    if (stage.crm_target_stage) {
+      const cs = stage.crm_target_stage;
+      return `📋 → CRM: ${cs.icon ? cs.icon + ' ' : ''}${cs.name}`;
+    }
+    if (stage.crm_sync_type) {
+      const map = { delivery: '📋 → CRM: Vận chuyển', installation: '🔧 → CRM: Lắp đặt', customer_care: '🤝 → CRM: CSKH' };
+      return map[stage.crm_sync_type] || stage.crm_sync_type;
+    }
+    return null;
+  };
 
   return (
     <div className="space-y-4 max-w-4xl">
@@ -149,8 +159,9 @@ export default function LogisticsPipelineSettingsPage() {
       </div>
 
       <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 text-sm text-orange-900">
-        <strong>Đồng bộ CRM:</strong> Chọn <em>«Đồng bộ CRM»</em> cho cột VC thì khi deal tới cột đó, hệ thống tự cập nhật cột CRM tương ứng (Vận chuyển / Lắp đặt / CSKH).
-        Nhớ cấu hình <em>sync_role</em> ở CRM Pipeline Settings để map đúng cột.
+        <strong>Đồng bộ CRM tự động:</strong> Chọn cột CRM mục tiêu cho từng bước VC.
+        Khi deal đến bước đó, hệ thống sẽ <strong>tự động chuyển</strong> deal CRM sang đúng cột đã cấu hình.
+        Nhớ chạy migration <code className="text-xs bg-white/80 px-1 rounded">database/91_pipeline_crm_target_stage.sql</code> trên Supabase để kích hoạt tính năng này.
       </div>
 
       {loading ? (
@@ -186,7 +197,7 @@ export default function LogisticsPipelineSettingsPage() {
                     {s.icon && <span className="mr-1">{s.icon}</span>}
                     {s.name}
                     {s.bucket_slug === INTAKE && <span className="ml-1 text-[10px] font-normal">(chờ VC)</span>}
-                    {s.crm_sync_type && <span className="ml-1 text-[9px] font-normal opacity-70">↔CRM</span>}
+                    {(s.crm_target_stage_id || s.crm_sync_type) && <span className="ml-1 text-[9px] font-normal opacity-70">↔CRM</span>}
                   </button>
                   {i < sorted.length - 1 && <ChevronRight className="h-4 w-4 text-gray-300 mx-0.5 shrink-0" />}
                 </div>
@@ -196,47 +207,54 @@ export default function LogisticsPipelineSettingsPage() {
 
           {/* Stage list */}
           <div className="border-t">
-            {sorted.map((s, i) => (
-              <div key={s.id}
-                className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50 ${!s.is_active ? 'opacity-50' : ''}`}>
-                <div className="flex flex-col gap-0.5">
-                  <button type="button" onClick={() => moveStage(s, -1)} disabled={i === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
-                  <button type="button" onClick={() => moveStage(s, 1)} disabled={i === sorted.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
+            {sorted.map((s, i) => {
+              const crmBadge = getCrmStageBadge(s);
+              return (
+                <div key={s.id}
+                  className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50 ${!s.is_active ? 'opacity-50' : ''}`}>
+                  <div className="flex flex-col gap-0.5">
+                    <button type="button" onClick={() => moveStage(s, -1)}
+                      disabled={i === 0 || s.bucket_slug === INTAKE || sorted[i - 1]?.bucket_slug === INTAKE}
+                      className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
+                    <button type="button" onClick={() => moveStage(s, 1)}
+                      disabled={i === sorted.length - 1 || s.bucket_slug === INTAKE}
+                      className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
+                  </div>
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0" style={{ backgroundColor: s.color || '#f97316' }}>
+                    {s.order_index}
+                  </div>
+                  <span className="text-lg shrink-0">{s.icon || '📦'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-2 flex-wrap">
+                      {s.name}
+                      {crmBadge && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                          {crmBadge}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[10px] text-gray-400 truncate">
+                      {s.bucket_slug === INTAKE
+                        ? 'Bucket: dự án bàn giao từ sản xuất, chờ VC'
+                        : (s.workflow_stage?.name || s.workflow_stage_id
+                          ? `Workflow: ${s.workflow_stage?.name || s.workflow_stage_id}`
+                          : 'Chưa gắn workflow — kéo Kanban sẽ không đổi giai đoạn')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button type="button" onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer text-[10px] text-gray-500">
+                      {s.is_active ? 'Ẩn' : 'Hiện'}
+                    </button>
+                    <button type="button" onClick={() => startEdit(s)} className="p-1.5 rounded hover:bg-orange-50 text-orange-600 cursor-pointer">
+                      <Save className="h-3.5 w-3.5" />
+                    </button>
+                    <button type="button" onClick={() => del(s.id, s.bucket_slug)} className="p-1.5 rounded hover:bg-red-50 text-red-500 cursor-pointer">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
-                <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0" style={{ backgroundColor: s.color || '#f97316' }}>
-                  {s.order_index}
-                </div>
-                <span className="text-lg shrink-0">{s.icon || '📦'}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                    {s.name}
-                    {s.crm_sync_type && (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
-                        {CRM_SYNC_LABEL[s.crm_sync_type] || s.crm_sync_type}
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-[10px] text-gray-400 truncate">
-                    {s.bucket_slug === INTAKE
-                      ? 'Bucket: dự án bàn giao từ sản xuất, chờ VC'
-                      : (s.workflow_stage?.name || s.workflow_stage_id
-                        ? `Workflow: ${s.workflow_stage?.name || s.workflow_stage_id}`
-                        : 'Chưa gắn workflow — kéo Kanban sẽ không đổi giai đoạn')}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button type="button" onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer text-[10px] text-gray-500">
-                    {s.is_active ? 'Ẩn' : 'Hiện'}
-                  </button>
-                  <button type="button" onClick={() => startEdit(s)} className="p-1.5 rounded hover:bg-orange-50 text-orange-600 cursor-pointer">
-                    <Save className="h-3.5 w-3.5" />
-                  </button>
-                  <button type="button" onClick={() => del(s.id, s.bucket_slug)} className="p-1.5 rounded hover:bg-red-50 text-red-500 cursor-pointer">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Add / Edit form */}
@@ -262,23 +280,27 @@ export default function LogisticsPipelineSettingsPage() {
                 </div>
               </div>
 
-              {/* CRM sync */}
+              {/* CRM sync — trực tiếp chọn CRM stage */}
               {!editingIntake && (
-                <div>
-                  <label className="text-[10px] font-medium text-gray-500 block mb-1">
-                    Đồng bộ CRM khi deal VC tới cột này ✅
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-medium text-blue-700 block">
+                    📋 Khi deal đến cột này → CRM deal tự chuyển sang:
                   </label>
                   <select
-                    value={form.crm_sync_type}
-                    onChange={(e) => setForm((f) => ({ ...f, crm_sync_type: e.target.value }))}
-                    className="w-full h-8 px-2 border rounded-lg text-sm bg-white"
+                    value={form.crm_target_stage_id || ''}
+                    onChange={(e) => setForm((f) => ({ ...f, crm_target_stage_id: e.target.value, crm_sync_type: e.target.value ? '' : f.crm_sync_type }))}
+                    className="w-full h-8 px-2 border rounded-lg text-sm bg-white border-blue-200 focus:border-blue-400"
                   >
-                    {CRM_SYNC_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
+                    <option value="">— Không tự chuyển CRM —</option>
+                    {crmStages.filter((cs) => !cs.is_lost && !cs.is_won).map((cs) => (
+                      <option key={cs.id} value={cs.id}>
+                        {cs.icon ? `${cs.icon} ` : ''}{cs.name}
+                        {cs.sync_role ? ` [${cs.sync_role}]` : ''}
+                      </option>
                     ))}
                   </select>
-                  <p className="text-[10px] text-gray-400 mt-1">
-                    Khi chọn, deal CRM liên kết sẽ tự động nhảy sang cột CRM tương ứng và thông báo nhân viên sale.
+                  <p className="text-[10px] text-gray-500">
+                    Khi deal VC đến cột này, deal CRM liên kết sẽ tự chuyển sang cột đã chọn và thông báo nhân viên sale.
                   </p>
                 </div>
               )}
@@ -315,7 +337,7 @@ export default function LogisticsPipelineSettingsPage() {
 
           {!adding && !editId && !hasIntake && (
             <div className="p-4 text-xs text-amber-700 bg-amber-50 border-t border-amber-100">
-              Chưa có cột «chờ vận chuyển». Thêm migration hoặc tạo thủ công với <code>bucket_slug: &apos;delivery_pending&apos;</code>.
+              Chưa có cột «chờ vận chuyển». Tạo cột với <code>bucket_slug: &apos;delivery_pending&apos;</code>.
             </div>
           )}
         </div>

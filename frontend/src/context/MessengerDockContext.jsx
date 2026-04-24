@@ -1,5 +1,4 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import MessengerDock from '../components/MessengerDock';
 import { useAuth } from '../lib/auth';
 import { messengerThreadKey, messengerUnreadKey, messengerUnreadGroupKey } from '../lib/messengerHubStorage';
 
@@ -351,7 +350,6 @@ export function MessengerDockProvider({ children }) {
   return (
     <MessengerDockContext.Provider value={value}>
       {children}
-      <MessengerDock />
     </MessengerDockContext.Provider>
   );
 }

@@ -60,10 +60,17 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const addTask = async (stageSlug) => {
     if (!newTask.title.trim()) return;
     try {
-      await api.post(`/crm/leads/${leadId}/tasks`, { ...newTask, stage_slug: stageSlug, order_index: tasks.filter(t => t.stage_slug === stageSlug).length });
+      const { data } = await api.post(`/crm/leads/${leadId}/tasks`, {
+        ...newTask,
+        stage_slug: stageSlug,
+        order_index: tasks.filter(t => t.stage_slug === stageSlug).length,
+      });
       setNewTask({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
       setShowAdd(null);
-      loadTasks();
+      if (data?.id) {
+        setTasks((prev) => [...prev, data]);
+        if (data.stage_slug) setExpandedStages((s) => ({ ...s, [data.stage_slug]: true }));
+      } else loadTasks();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
@@ -71,15 +78,26 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/tasks/from-template`, { template_id: templateId });
       alert(`Đã tạo ${data.count} công việc từ bộ mẫu`);
-      loadTasks();
+      const created = data.tasks || [];
+      if (created.length) {
+        setTasks((prev) => [...prev, ...created]);
+        const stages = {};
+        created.forEach((t) => { if (t.stage_slug) stages[t.stage_slug] = true; });
+        setExpandedStages((s) => ({ ...s, ...stages }));
+      } else loadTasks();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const updateTask = async (taskId, updates) => {
+    const prevTasks = tasks;
+    setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...updates } : t)));
     try {
-      await api.put(`/crm/leads/${leadId}/tasks/${taskId}`, updates);
-      loadTasks();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+      const { data } = await api.put(`/crm/leads/${leadId}/tasks/${taskId}`, updates);
+      setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
+    } catch (e) {
+      setTasks(prevTasks);
+      alert(e.response?.data?.error || 'Lỗi');
+    }
   };
 
   const toggleStatus = (task) => {
@@ -89,7 +107,14 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
 
   const deleteTask = async (taskId) => {
     if (!confirm('Xóa công việc này?')) return;
-    try { await api.delete(`/crm/leads/${leadId}/tasks/${taskId}`); loadTasks(); } catch (e) { alert('Lỗi'); }
+    const prevTasks = tasks;
+    setTasks((p) => p.filter((t) => t.id !== taskId));
+    try {
+      await api.delete(`/crm/leads/${leadId}/tasks/${taskId}`);
+    } catch (e) {
+      setTasks(prevTasks);
+      alert('Lỗi');
+    }
   };
 
   const openEditModal = (task) => {
@@ -107,8 +132,9 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
 
   const saveEdit = async () => {
     if (!editForm.title.trim()) return alert('Nhập tên nhiệm vụ');
+    const taskId = editingTask.id;
     try {
-      await api.put(`/crm/leads/${leadId}/tasks/${editingTask.id}`, {
+      const { data } = await api.put(`/crm/leads/${leadId}/tasks/${taskId}`, {
         title: editForm.title,
         description: editForm.description,
         priority: editForm.priority,
@@ -118,7 +144,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
         stage_slug: editForm.stage_slug,
       });
       setEditingTask(null);
-      loadTasks();
+      setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
   };
 
@@ -667,6 +693,9 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
 
   return (
     <div className="space-y-4">
+      <p className="text-sm text-red-600 font-medium">
+        Tích vào ô nhiệm vụ trong chi tiết deal và lead
+      </p>
       {/* Header: Stats + Views + Templates */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3">

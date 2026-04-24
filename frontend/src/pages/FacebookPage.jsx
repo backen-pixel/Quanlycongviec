@@ -1621,14 +1621,44 @@ function AnalyticsTab() {
 // ═══════════════════════════════════════════════════════════════
 
 function AutoLeadTab() {
+  const { user } = useAuth();
   const [config, setConfig] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [companies, setCompanies] = useState([]);
+  const [leadTypes, setLeadTypes] = useState([]);
+  const [leadTypesLoading, setLeadTypesLoading] = useState(false);
 
   useEffect(() => {
     fetch(`${API}/api/facebook/auto-lead-config`, { headers: hdr() })
       .then(r => r.ok ? r.json() : null).then(setConfig).catch(() => {});
   }, []);
+
+  // Load companies list for admin setup
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    fetch(`${API}/api/companies`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : null)
+      .then((d) => {
+        const list = d?.companies || d || [];
+        setCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setCompanies([]));
+  }, [user?.role]);
+
+  // Load lead types when default_company_id changes
+  useEffect(() => {
+    const cid = config?.default_company_id;
+    if (!cid) { setLeadTypes([]); return; }
+    let cancelled = false;
+    setLeadTypesLoading(true);
+    fetch(`${API}/api/crm/lead-types?company_id=${encodeURIComponent(cid)}&all=true`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : [])
+      .then((d) => { if (!cancelled) setLeadTypes(Array.isArray(d) ? d : []); })
+      .catch(() => { if (!cancelled) setLeadTypes([]); })
+      .finally(() => { if (!cancelled) setLeadTypesLoading(false); });
+    return () => { cancelled = true; };
+  }, [config?.default_company_id]);
 
   const save = async () => {
     setSaving(true);
@@ -1765,6 +1795,67 @@ function AutoLeadTab() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* ═══ COMPANY + LEAD TYPE DEFAULTS ═══ */}
+      <div className="bg-white border rounded-xl p-5 shadow-sm mb-4">
+        <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+          <span className="w-6 h-6 bg-indigo-100 rounded-lg flex items-center justify-center text-xs">4</span>
+          Công ty & loại Lead mặc định
+        </h3>
+        {user?.role !== 'admin' ? (
+          <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Chỉ Admin được cấu hình công ty/loại mặc định cho auto tạo lead từ Facebook.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">🏢 Công ty mặc định</label>
+              <select
+                value={config.default_company_id || ''}
+                onChange={(e) => {
+                  const next = e.target.value || null;
+                  set('default_company_id', next);
+                  // reset type when company changes
+                  set('default_lead_type_id', null);
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
+              >
+                <option value="">— Không đặt (dùng theo Page nếu có) —</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-500 mt-1">
+                Nếu từng Page đã set <strong>default_company_id</strong> thì Page sẽ được ưu tiên.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">🏷️ Loại Lead mặc định</label>
+              <select
+                value={config.default_lead_type_id || ''}
+                onChange={(e) => set('default_lead_type_id', e.target.value || null)}
+                disabled={!config.default_company_id || leadTypesLoading}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white disabled:opacity-60"
+              >
+                <option value="">— Không bắt buộc —</option>
+                {leadTypes
+                  .filter((t) => t.is_active !== false)
+                  .filter((t) => t.applies_to === 'both' || t.applies_to === 'lead')
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+              </select>
+              {!config.default_company_id && (
+                <p className="text-[10px] text-amber-600 mt-1">Chọn công ty trước để load danh sách loại.</p>
+              )}
+              <p className="text-[10px] text-gray-500 mt-1">
+                Hệ thống sẽ chỉ áp dụng loại nếu loại đó thuộc đúng công ty & áp dụng cho Lead.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ═══ HÀNH VI KHÁC ═══ */}

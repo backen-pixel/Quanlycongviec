@@ -65,6 +65,7 @@ const MENU_GROUPS = [
       { to: '/settings/theme', icon: Settings, label: 'Giao diện & Hình nền' },
       { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice' },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp' },
+      { to: '/settings/request-monitor', icon: Activity, label: 'Theo dõi Request' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
       { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },

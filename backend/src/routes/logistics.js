@@ -8,7 +8,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
 const { notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
-const { syncCrmLeadFromLogisticsStage } = require('../helpers/workshopKanban');
+const { syncCrmLeadFromLogisticsStage, syncVcPipelineStageToLead, emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
 
 const r = Router();
 r.use(auth);
@@ -47,10 +47,20 @@ async function loadLogisticsPipelineRows(includeInactive = false) {
   let q = supabase
     .from(VC_PIPELINE_TABLE)
     .select(`id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type,
+      crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
       workflow_stage:workflow_stages(id, slug, name, color, icon)`)
     .order('order_index');
   if (!includeInactive) q = q.eq('is_active', true);
-  const { data, error } = await q;
+  let { data, error } = await q;
+  // Graceful: crm_target_stage_id column may not exist yet
+  if (error && error.message?.includes('crm_target_stage_id')) {
+    let q2 = supabase
+      .from(VC_PIPELINE_TABLE)
+      .select('id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)')
+      .order('order_index');
+    if (!includeInactive) q2 = q2.eq('is_active', true);
+    ({ data, error } = await q2);
+  }
   if (error) {
     console.warn('[logistics] logistics_pipeline_stages not ready:', error.message);
     return null;
@@ -81,25 +91,41 @@ async function getResolvedLogisticsStages() {
 }
 
 function enrichProjectsForLogistics(projects, sortedKanban) {
+  const intakeCol = sortedKanban.find((c) => c.bucket_slug === INTAKE_BUCKET);
+  const firstCol = sortedKanban[0] || null;
+  const colIdSet = new Set(sortedKanban.map((c) => String(c.id)));
+
   return projects.map((project) => {
     const stageSlug = project.current_stage?.slug;
     const status = project.status;
     let matchedCol = null;
-    for (const col of sortedKanban) {
-      if (col.bucket_slug === INTAKE_BUCKET) continue;
-      const ws = col.workflow_stage;
-      if (ws && (ws.slug === stageSlug)) { matchedCol = col; break; }
-      if (col.slug === stageSlug) { matchedCol = col; break; }
-      if (col.slug === status) { matchedCol = col; break; }
+
+    // 1. Ưu tiên: vc_kanban_column_id đã lưu trong DB (từ lần kéo thả trước)
+    if (project.vc_kanban_column_id && colIdSet.has(String(project.vc_kanban_column_id))) {
+      matchedCol = sortedKanban.find((c) => String(c.id) === String(project.vc_kanban_column_id)) || null;
     }
-    // Fallback: intake if status not in logistics pipeline
+
+    // 2. Fallback: khớp theo workflow_stage slug hoặc status (bỏ qua cột intake)
+    if (!matchedCol) {
+      for (const col of sortedKanban) {
+        if (col.bucket_slug === INTAKE_BUCKET) continue;
+        const ws = col.workflow_stage;
+        if (ws && ws.slug === stageSlug) { matchedCol = col; break; }
+        if (col.slug === stageSlug) { matchedCol = col; break; }
+        if (col.slug === status) { matchedCol = col; break; }
+      }
+    }
+
+    // 3. Nếu vẫn không có → cột intake hoặc cột đầu tiên (vừa bàn giao từ SX)
     const inScope = LOGISTICS_STATUSES.includes(status) || LOGISTICS_STAGE_SLUGS.includes(stageSlug);
-    const intakeCol = sortedKanban.find((c) => c.bucket_slug === INTAKE_BUCKET);
-    if (!matchedCol && inScope && intakeCol) matchedCol = intakeCol;
+    if (!matchedCol && inScope) {
+      matchedCol = intakeCol || firstCol;
+    }
+
     return {
       ...project,
-      vc_kanban_column_id: matchedCol?.id || null,
-      vc_intake: matchedCol?.bucket_slug === INTAKE_BUCKET,
+      vc_kanban_column_id: matchedCol?.id || project.vc_kanban_column_id || null,
+      vc_intake: !matchedCol?.workflow_stage_id || matchedCol?.bucket_slug === INTAKE_BUCKET,
     };
   });
 }
@@ -150,22 +176,30 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
     const { data: last } = await supabase
       .from(VC_PIPELINE_TABLE).select('order_index').order('order_index', { ascending: false }).limit(1);
     const nextOrder = (last?.[0]?.order_index ?? 0) + 1;
+    const isIntakeRow = b.bucket_slug === INTAKE_BUCKET;
     const insertPayload = {
       name: b.name.trim(),
       color: b.color || '#f97316',
       icon: b.icon || '📦',
       order_index: b.order_index ?? nextOrder,
       is_active: b.is_active !== false,
-      workflow_stage_id: b.workflow_stage_id || null,
+      workflow_stage_id: isIntakeRow ? null : (b.workflow_stage_id || null),
       bucket_slug: b.bucket_slug || null,
-      crm_sync_type: b.bucket_slug === INTAKE_BUCKET ? null : (b.crm_sync_type || null),
+      crm_sync_type: isIntakeRow ? null : (b.crm_sync_type || null),
+      crm_target_stage_id: isIntakeRow ? null : (b.crm_target_stage_id || null),
     };
-    if (insertPayload.bucket_slug === INTAKE_BUCKET) insertPayload.workflow_stage_id = null;
-    const { data, error } = await supabase
+    const vcSelect = 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)';
+    let { data, error } = await supabase
       .from(VC_PIPELINE_TABLE)
       .insert(insertPayload)
-      .select('id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)')
+      .select(`${vcSelect}, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index)`)
       .single();
+    // Graceful: crm_target_stage_id column may not exist yet
+    if (error && error.message?.includes('crm_target_stage_id')) {
+      const { crm_target_stage_id: _t, ...payloadWithout } = insertPayload;
+      const r2 = await supabase.from(VC_PIPELINE_TABLE).insert(payloadWithout).select(vcSelect).single();
+      data = r2.data; error = r2.error;
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
@@ -180,22 +214,31 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     const { data: existingRow } = await supabase
       .from(VC_PIPELINE_TABLE).select('bucket_slug').eq('id', req.params.id).single();
     const update = {};
-    ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug', 'crm_sync_type'].forEach((f) => {
+    ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
+      'crm_sync_type', 'crm_target_stage_id'].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
       update.workflow_stage_id = null;
       update.crm_sync_type = null;
+      update.crm_target_stage_id = null;
     }
     if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET) {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
     }
-    const { data, error } = await supabase
+    const vcSelect = 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)';
+    let { data, error } = await supabase
       .from(VC_PIPELINE_TABLE)
       .update(update)
       .eq('id', req.params.id)
-      .select('id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)')
+      .select(`${vcSelect}, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index)`)
       .single();
+    // Graceful: crm_target_stage_id column may not exist yet
+    if (error && error.message?.includes('crm_target_stage_id')) {
+      const { crm_target_stage_id: _t, ...updateWithout } = update;
+      const r2 = await supabase.from(VC_PIPELINE_TABLE).update(updateWithout).eq('id', req.params.id).select(vcSelect).single();
+      data = r2.data; error = r2.error;
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) {
@@ -247,7 +290,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     let query = supabase
       .from('projects')
       .select(`id, code, name, estimated_value, status, deadline, created_at,
-        current_stage_id,
+        current_stage_id, vc_kanban_column_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name),
         company:companies(id, name, short_name),
@@ -257,7 +300,22 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.eq('company_id', company_id);
 
-    const { data: projects = [] } = await query.order('created_at', { ascending: false });
+    let { data: projectsRaw, error: dashErr } = await query.order('created_at', { ascending: false });
+    // Graceful degradation nếu vc_kanban_column_id chưa tồn tại
+    if (dashErr && dashErr.message?.includes('vc_kanban_column_id')) {
+      const r2 = await supabase
+        .from('projects')
+        .select(`id, code, name, estimated_value, status, deadline, created_at,
+          current_stage_id,
+          current_stage:workflow_stages(id, slug, name, color, icon),
+          customer:customers(id, full_name),
+          company:companies(id, name, short_name),
+          tasks(id, status)`)
+        .or(orFilter)
+        .order('created_at', { ascending: false });
+      projectsRaw = r2.data;
+    }
+    const projects = projectsRaw || [];
 
     const enhanced = enrichProjectsForLogistics(projects, sortedKanban).map((p) => ({
       ...p,
@@ -307,7 +365,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     let query = supabase
       .from('projects')
       .select(`id, code, name, estimated_value, priority, deadline, created_at, status, notes,
-        current_stage_id,
+        current_stage_id, vc_kanban_column_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
         company:companies(id, name, short_name),
@@ -322,26 +380,53 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.eq('company_id', company_id);
 
-    let { data: projects = [], error } = await query
+    let { data: projectsRaw, error } = await query
       .order('created_at', { ascending: false })
       .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
 
-    // Fallback if logistics_person column doesn't exist yet
-    if (error && error.message?.includes('logistics_person_id')) {
-      const fallback = await supabase
+    let projects = projectsRaw || [];
+
+    // Fallback if logistics_person column / FK doesn't exist yet
+    const isLogisticsPersonError = (err) =>
+      err?.message?.includes('logistics_person_id') ||
+      err?.message?.includes('logistics_person') ||
+      err?.message?.includes('projects_logistics_person') ||
+      (err?.message?.includes('relationship') && err?.message?.includes('users'));
+    if (error && isLogisticsPersonError(error)) {
+      // Thử lại không có logistics_person join
+      const fb2 = await supabase
         .from('projects')
         .select(`id, code, name, estimated_value, priority, deadline, created_at, status,
-          current_stage_id,
+          current_stage_id, vc_kanban_column_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name, phone),
           company:companies(id, name, short_name),
-          production_person:users!projects_production_person_id_fkey(id, full_name),
           tasks(id, status)`, { count: 'exact' })
         .or(orFilter)
         .order('created_at', { ascending: false })
         .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
-      projects = fallback.data || [];
+
+      if (!fb2.error) {
+        projects = fb2.data || [];
+        error = null;
+      } else {
+        // Thử lại tiếp không có bất kỳ user join nào
+        const fb3 = await supabase
+          .from('projects')
+          .select(`id, code, name, estimated_value, priority, deadline, created_at, status,
+            current_stage_id,
+            current_stage:workflow_stages(id, slug, name, color, icon),
+            customer:customers(id, full_name, phone),
+            tasks(id, status)`)
+          .or(orFilter)
+          .order('created_at', { ascending: false })
+          .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
+        projects = fb3.data || [];
+        error = fb3.error;
+      }
     }
+
+    if (error && projects.length === 0) throw error;
 
     const enhanced = enrichProjectsForLogistics(projects, sortedKanban).map((p) => ({
       ...p,
@@ -366,7 +451,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       .from('projects')
       .select(`
         id, code, name, estimated_value, status, deadline, created_at, notes, priority,
-        production_deadline, production_note,
+        production_deadline, production_note, install_address, vc_kanban_column_id,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address),
@@ -390,7 +475,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         .from('projects')
         .select(`
           id, code, name, estimated_value, status, deadline, created_at, notes, priority,
-          production_deadline, production_note,
+          production_deadline, production_note, install_address, vc_kanban_column_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name, phone, email, address),
@@ -495,7 +580,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
 r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { stage_id, move_to_intake } = req.body;
+    // stage_id = workflow_stages.id (tùy chọn), vc_stage_id = logistics_pipeline_stages.id (ưu tiên)
+    const { stage_id, vc_stage_id, move_to_intake } = req.body;
     const userId = req.user.userId;
 
     const { data: project } = await supabase
@@ -506,34 +592,54 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     if (move_to_intake === true || move_to_intake === 'true') {
-      await supabase.from('projects').update({ current_stage_id: null }).eq('id', id);
+      // Tìm cột intake/first để lưu vc_kanban_column_id
+      const { stages: kStages } = await getResolvedLogisticsStages().catch(() => ({ stages: [] }));
+      const intakeCol = kStages.find((c) => c.bucket_slug === INTAKE_BUCKET) || kStages[0] || null;
+      const intakeColId = intakeCol?.id && !String(intakeCol.id).startsWith('__') ? intakeCol.id : null;
+
+      const intakeUpdate = { current_stage_id: null };
+      if (intakeColId) intakeUpdate.vc_kanban_column_id = intakeColId;
+      await supabase.from('projects').update(intakeUpdate).eq('id', id)
+        .catch(() => supabase.from('projects').update({ current_stage_id: null }).eq('id', id));
+
       try {
         await supabase.from('stage_transitions').insert({
           project_id: id, from_stage_id: project.current_stage_id, to_stage_id: null,
           notes: 'Kéo về cột chờ vận chuyển (Kanban VC)', transitioned_by: userId,
         });
       } catch (te) { console.warn('[logistics] stage_transitions intake:', te.message); }
+
+      if (intakeColId) {
+        await syncVcPipelineStageToLead(id, intakeColId).catch((ve) => console.warn('[logistics/intake] sync vc stage:', ve.message));
+      }
+
       const { data: updated } = await supabase
-        .from('projects').select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)').eq('id', id).single();
-      return res.json({ project: updated });
+        .from('projects').select('id, code, name, status, current_stage_id, vc_kanban_column_id, current_stage:workflow_stages(id, slug, name, color)').eq('id', id).single()
+        .catch(() => supabase.from('projects').select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)').eq('id', id).single());
+      return res.json({ project: updated?.data || updated });
     }
 
-    if (!stage_id) return res.status(400).json({ error: 'Cần stage_id hoặc move_to_intake' });
+    // Cần ít nhất một trong: stage_id (workflow_stages) hoặc vc_stage_id (logistics_pipeline_stages)
+    if (!stage_id && !vc_stage_id) return res.status(400).json({ error: 'Cần stage_id hoặc vc_stage_id hoặc move_to_intake' });
 
-    // Kiểm tra stage có trong logistics pipeline không
-    const { data: pipeRows } = await supabase
-      .from(VC_PIPELINE_TABLE).select('workflow_stage_id').not('workflow_stage_id', 'is', null);
-    const allowed = new Set((pipeRows || []).map((r) => String(r.workflow_stage_id)));
-    // Thêm logistics workflow stages
-    const { ids: logisticsStageIds } = await getLogisticsStageMap();
-    logisticsStageIds.forEach((id) => allowed.add(String(id)));
-
-    if (!allowed.has(String(stage_id))) {
-      return res.status(400).json({ error: 'Stage không thuộc pipeline VC' });
+    // Nếu chỉ có vc_stage_id, tìm workflow_stage_id tương ứng (nếu có)
+    let resolvedStageId = stage_id || null;
+    let vcPipeStageRow = null;
+    if (vc_stage_id) {
+      const { data: vcRow } = await supabase
+        .from(VC_PIPELINE_TABLE)
+        .select('id, name, crm_sync_type, crm_target_stage_id, workflow_stage_id')
+        .eq('id', vc_stage_id)
+        .maybeSingle();
+      vcPipeStageRow = vcRow;
+      if (vcRow?.workflow_stage_id && !resolvedStageId) {
+        resolvedStageId = vcRow.workflow_stage_id;
+      }
     }
 
-    const { data: targetStage } = await supabase
-      .from('workflow_stages').select('id, slug').eq('id', stage_id).single();
+    const targetStage = resolvedStageId
+      ? (await supabase.from('workflow_stages').select('id, slug').eq('id', resolvedStageId).single()).data
+      : null;
 
     const statusMap = {
       delivery: 'shipping',
@@ -541,37 +647,59 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       'customer-care': 'warranty',
     };
 
-    const updatePayload = { current_stage_id: stage_id };
+    const updatePayload = {};
+    if (resolvedStageId) updatePayload.current_stage_id = resolvedStageId;
+    if (vc_stage_id) updatePayload.vc_kanban_column_id = vc_stage_id;
     if (statusMap[targetStage?.slug]) updatePayload.status = statusMap[targetStage.slug];
 
-    const { error: updateError } = await supabase
-      .from('projects').update(updatePayload).eq('id', id);
+    // Thử update với vc_kanban_column_id; nếu cột chưa tồn tại, fallback không có cột đó
+    let { error: updateError } = await supabase.from('projects').update(updatePayload).eq('id', id);
+    if (updateError && updateError.message?.includes('vc_kanban_column_id')) {
+      const fallbackPayload = { ...updatePayload };
+      delete fallbackPayload.vc_kanban_column_id;
+      ({ error: updateError } = await supabase.from('projects').update(fallbackPayload).eq('id', id));
+    }
     if (updateError) throw updateError;
 
     await supabase.from('stage_transitions').insert({
       project_id: id,
       from_stage_id: project.current_stage_id,
-      to_stage_id: stage_id,
+      to_stage_id: resolvedStageId || null,
       transitioned_by: userId,
     }).catch((e) => console.warn('[logistics] stage_transitions:', e.message));
 
     const { data: updated } = await supabase
       .from('projects')
-      .select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)')
-      .eq('id', id).single();
+      .select('id, code, name, status, current_stage_id, vc_kanban_column_id, current_stage:workflow_stages(id, slug, name, color)')
+      .eq('id', id).single()
+      .catch(() => supabase.from('projects').select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)').eq('id', id).single());
 
     // Kiểm tra cột VC có cờ crm_sync_type → đồng bộ CRM deal
     try {
-      const { data: vcPipeStage } = await supabase
-        .from(VC_PIPELINE_TABLE)
-        .select('id, crm_sync_type, name')
-        .eq('workflow_stage_id', stage_id)
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
+      // Dùng vcPipeStageRow từ lookup trên nếu đã có
+      let vcPipeStage = vcPipeStageRow;
+      if (!vcPipeStage && resolvedStageId) {
+        const { data } = await supabase
+          .from(VC_PIPELINE_TABLE)
+          .select('id, crm_sync_type, name')
+          .eq('workflow_stage_id', resolvedStageId)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        vcPipeStage = data;
+      }
 
-      if (vcPipeStage?.crm_sync_type) {
-        await syncCrmLeadFromLogisticsStage(id, vcPipeStage.crm_sync_type);
+      // Luôn cập nhật vc_pipeline_stage_id cho deal CRM
+      const syncId = vcPipeStage?.id || vc_stage_id || null;
+      if (syncId) {
+        await syncVcPipelineStageToLead(id, syncId);
+        const io = req.app.get('io');
+        emitCrmBadgeUpdateForProject(id, io).catch(() => {});
+      }
+
+      if (vcPipeStage?.crm_sync_type || vcPipeStage?.crm_target_stage_id) {
+        // Truyền full row để syncCrmLeadFromLogisticsStage ưu tiên crm_target_stage_id
+        await syncCrmLeadFromLogisticsStage(id, vcPipeStage);
 
         // Thông báo CRM/sale team biết deal đổi trạng thái
         try {
@@ -579,9 +707,10 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
             .from('users').select('id').in('role', ['sale', 'manager']).eq('is_active', true);
           const saleRecipients = (saleUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
           const labelMap = { delivery: 'Vận chuyển', installation: 'Lắp đặt', customer_care: 'Chăm sóc KH' };
+          const syncLabel = vcPipeStage.crm_sync_type ? (labelMap[vcPipeStage.crm_sync_type] || vcPipeStage.crm_sync_type) : 'CRM';
           if (saleRecipients.length) {
             await notifyMultipleShared(req, saleRecipients, 'crm_stage_changed',
-              `📋 CRM: Deal chuyển sang ${labelMap[vcPipeStage.crm_sync_type] || vcPipeStage.crm_sync_type}`,
+              `📋 CRM: Deal chuyển sang ${syncLabel}`,
               `Dự án ${updated.code || updated.name} đã đạt mốc "${vcPipeStage.name}" — deal CRM tự động cập nhật`,
               'project', id);
           }

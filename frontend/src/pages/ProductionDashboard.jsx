@@ -12,6 +12,14 @@ import NewProductionProjectModal from '../components/NewProductionProjectModal';
 
 const INTAKE_BUCKET = 'won_pending';
 
+function scheduleCrmBadgeRefresh(projectId) {
+  if (!projectId || typeof window === 'undefined') return;
+  const pid = String(projectId);
+  window.setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('crm-project-badges-refresh', { detail: { projectId: pid } }));
+  }, 280);
+}
+
 const PRIORITY_COLORS = {
   high: 'bg-red-100 text-red-700',
   medium: 'bg-amber-100 text-amber-700',
@@ -159,6 +167,7 @@ export default function ProductionDashboard() {
     const wid = targetCol?.workflow_stage_id;
     const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET
       || String(targetCol?.id || '').startsWith('__fb_');
+    const isHandover = targetCol?.is_handover_to_logistics === true;
 
     if (isIntake) {
       setProjects((prev) => prev.map((p) => (p.id === projectId
@@ -166,6 +175,22 @@ export default function ProductionDashboard() {
         : p)));
       try {
         await api.patch(`/production/projects/${projectId}/stage`, { move_to_intake: true });
+        scheduleCrmBadgeRefresh(projectId);
+      } catch (e) {
+        console.error(e);
+        load();
+      }
+      return;
+    }
+
+    // Cột được đánh dấu "bàn giao VC" → gọi handover-vc, giữ card trong cột
+    if (isHandover) {
+      setProjects((prev) => prev.map((p) => (p.id === projectId
+        ? { ...p, status: 'shipping', sx_kanban_column_id: targetCol.id }
+        : p)));
+      try {
+        await api.patch(`/production/projects/${projectId}/handover-vc`);
+        await load();
       } catch (e) {
         console.error(e);
         load();
@@ -189,6 +214,7 @@ export default function ProductionDashboard() {
 
     try {
       await api.patch(`/production/projects/${projectId}/stage`, { stage_id: wid });
+      scheduleCrmBadgeRefresh(projectId);
     } catch (e) {
       console.error(e);
       load();
@@ -196,10 +222,14 @@ export default function ProductionDashboard() {
   }, [load]);
 
   const handleHandoverVC = useCallback(async (projectId, projectName) => {
-    if (!confirm(`Bàn giao dự án "${projectName}" sang module Vận chuyển & Lắp đặt?\n\nDự án sẽ chuyển sang cột "Chờ vận chuyển" và không còn hiển thị trong Xưởng SX.`)) return;
+    if (!confirm(`Bàn giao dự án "${projectName}" sang module Vận chuyển & Lắp đặt?\n\nDự án sẽ giữ nguyên trong cột này và hiển thị trạng thái VC.`)) return;
     try {
-      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      // Cập nhật optimistic: đổi status thành shipping, GIỮ trong kanban
+      setProjects((prev) => prev.map((p) => (p.id === projectId
+        ? { ...p, status: 'shipping' }
+        : p)));
       await api.patch(`/production/projects/${projectId}/handover-vc`);
+      await load(); // Refresh để lấy vc_stage info
     } catch (e) {
       console.error(e);
       load();
@@ -541,6 +571,9 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-lg shrink-0">{stage.icon || '📌'}</span>
             <h3 className="font-semibold text-gray-900 truncate">{stage.name}</h3>
+            {stage.is_handover_to_logistics && (
+              <span className="ml-1 px-1.5 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded border border-orange-200 shrink-0">→VC</span>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs font-bold rounded">{items.length}</span>
@@ -731,7 +764,33 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
-      {/* Nút Bàn giao VC — hiện khi hover */}
+      {/* Badge trạng thái VC — hiển thị khi đã bàn giao (giống CRM) */}
+      {(item.status === 'shipping' || item.status === 'installing' || item.status === 'warranty') && (
+        <div className="mt-2 flex flex-col gap-1">
+          {item.vc_stage ? (
+            <div
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold"
+              style={{
+                background: `${item.vc_stage.color || '#f97316'}18`,
+                borderColor: `${item.vc_stage.color || '#f97316'}40`,
+                color: item.vc_stage.color || '#ea580c',
+              }}
+            >
+              <span>{item.vc_stage.icon || '🚚'}</span>
+              <span className="text-[10px] font-bold opacity-70">VC:</span>
+              <span>{item.vc_stage.name}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold bg-orange-50 border-orange-200 text-orange-700">
+              <Truck className="h-3 w-3" />
+              <span className="text-[10px] font-bold opacity-70">VC:</span>
+              <span>{item.status === 'shipping' ? 'Đang vận chuyển' : item.status === 'installing' ? 'Đang lắp đặt' : 'Bảo hành'}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Nút Bàn giao VC — hiện khi hover, ẩn khi đã bàn giao */}
       {onHandoverVC && item.status !== 'shipping' && item.status !== 'installing' && item.status !== 'warranty' && item.status !== 'completed' && (
         <button
           type="button"
