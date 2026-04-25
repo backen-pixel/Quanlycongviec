@@ -151,16 +151,21 @@ export default function LeadDetail() {
   const load = async () => {
     setLoading(true);
     try {
-      const [leadRes, actRes, docRes, stagesLeadRes, stagesDealRes, flowsRes, usersRes, taskDocRes] = await Promise.all([
+      const [leadRes, actRes, docRes, flowsRes, usersRes, taskDocRes] = await Promise.all([
         api.get(`/crm/leads/${id}/detail`).then(r => r.data),
         api.get(`/crm/leads/${id}/activities`).catch(() => ({ data: [] })),
         api.get(`/crm/leads/${id}/documents`).catch(() => ({ data: [] })),
-        api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
-        api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
         api.get('/flows').then(r => r.data?.flows || r.data || []).catch(() => []),
         api.get('/users').then(r => r.data?.users || []).catch(() => []),
         api.get(`/crm/leads/${id}/task-documents`).catch(() => ({ data: [] })),
       ]);
+
+      const stageParams = leadRes?.pipeline_id ? { pipeline_id: leadRes.pipeline_id } : undefined;
+      const [stagesLeadRes, stagesDealRes] = await Promise.all([
+        api.get('/crm/pipeline-stages', { params: { type: 'lead', ...(stageParams || {}) } }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: { type: 'deal', ...(stageParams || {}) } }).catch(() => ({ data: [] })),
+      ]);
+
       setLead(leadRes);
       setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);

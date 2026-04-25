@@ -2228,15 +2228,14 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     result.forEach(c => {
       c.display_phone = c.phone || c.customer?.phone || null;
     });
-    // Chưa đọc + hoạt động mới nhất (tin hoặc lúc tạo contact) lên trước — tránh “kẹt” ở user cũ có SĐT
+    // Ưu tiên contact hoạt động mới nhất lên đầu; unread chỉ là tie-breaker.
     result.sort((a, b) => {
-      const ua = (a.unread_count || 0) > 0 ? 1 : 0;
-      const ub = (b.unread_count || 0) > 0 ? 1 : 0;
-      if (ub !== ua) return ub - ua;
       const act = activityTimestampMs(b) - activityTimestampMs(a);
       if (act !== 0) return act;
-      const ap = a.display_phone ? 1 : 0;
+      const ub = Number(b.unread_count || 0) - Number(a.unread_count || 0);
+      if (ub !== 0) return ub;
       const bp = b.display_phone ? 1 : 0;
+      const ap = a.display_phone ? 1 : 0;
       if (bp !== ap) return bp - ap;
       return 0;
     });
