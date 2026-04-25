@@ -13,7 +13,7 @@ r.post('/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Thiếu email/mật khẩu' });
 
-    const { data } = await supabase.from('users').select('*').eq('email', email).eq('is_active', true).limit(1);
+    const { data } = await supabase.from('users').select('*').eq('email', email).neq('is_active', false).limit(1);
     if (!data?.length) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
 
     const user = data[0];

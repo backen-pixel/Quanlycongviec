@@ -261,7 +261,7 @@ r.get('/', async (req, res) => {
         let q = supabase.from('users')
           .select('id, full_name, email, phone, avatar, role, department_id, position')
           .in('department_id', deptIds);
-        if (!include_inactive) q = q.eq('is_active', true);
+        if (!include_inactive) q = q.neq('is_active', false);
         if (role) q = q.eq('role', role);
         if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
         const { data: users, error } = await q.order('full_name');
@@ -291,7 +291,7 @@ r.get('/', async (req, res) => {
         let q = supabase.from('users')
           .select('id, full_name, email, phone, avatar, role, department_id, position')
           .in('department_id', deptIds);
-        if (!include_inactive) q = q.eq('is_active', true);
+        if (!include_inactive) q = q.neq('is_active', false);
         if (role) q = q.eq('role', role);
         if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
         const { data: users, error } = await q.order('full_name');
@@ -362,7 +362,7 @@ r.get('/', async (req, res) => {
           let q = supabase.from('users')
             .select('id,email,full_name,phone,avatar,role,position,department_id,is_active,department:departments!users_department_id_fkey(id,name,color)')
             .in('id', userIds);
-          if (!include_inactive) q = q.eq('is_active', true);
+          if (!include_inactive) q = q.neq('is_active', false);
           if (role) q = q.eq('role', role);
           if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
           const { data: users, error } = await q.order('full_name');
@@ -386,7 +386,7 @@ r.get('/', async (req, res) => {
         let q = supabase.from('users')
           .select('id,email,full_name,phone,avatar,role,position,department_id,is_active,department:departments!users_department_id_fkey(id,name,color)')
           .in('department_id', deptIds);
-        if (!include_inactive) q = q.eq('is_active', true);
+        if (!include_inactive) q = q.neq('is_active', false);
         if (role) q = q.eq('role', role);
         if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
         const { data: users, error } = await q.order('full_name');
@@ -407,7 +407,7 @@ r.get('/', async (req, res) => {
     let data = null, error = null;
 
     let q = supabase.from('users').select(fullCols);
-    if (!include_inactive) q = q.eq('is_active', true);
+    if (!include_inactive) q = q.neq('is_active', false);
     if (role) q = q.eq('role', role);
     if (department_id === 'none') q = q.is('department_id', null);
     else if (department_id) q = q.eq('department_id', department_id);
@@ -435,7 +435,7 @@ r.get('/', async (req, res) => {
     if (error) {
       console.warn('Users full select failed, trying basic+dept:', error.message);
       let q2 = supabase.from('users').select(basicCols);
-      if (!include_inactive) q2 = q2.eq('is_active', true);
+      if (!include_inactive) q2 = q2.neq('is_active', false);
       if (role) q2 = q2.eq('role', role);
       if (department_id === 'none') q2 = q2.is('department_id', null);
       else if (department_id) q2 = q2.eq('department_id', department_id);
@@ -446,7 +446,7 @@ r.get('/', async (req, res) => {
     if (error) {
       console.warn('Users basic+dept select failed, trying no-dept:', error.message);
       let q3 = supabase.from('users').select(basicColsNoDept);
-      if (!include_inactive) q3 = q3.eq('is_active', true);
+      if (!include_inactive) q3 = q3.neq('is_active', false);
       if (role) q3 = q3.eq('role', role);
       if (department_id === 'none') q3 = q3.is('department_id', null);
       else if (department_id) q3 = q3.eq('department_id', department_id);
