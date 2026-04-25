@@ -1,13 +1,20 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Truck } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Truck, Building2 } from 'lucide-react';
+import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 
 const INTAKE = 'delivery_pending';
+const LS_VC_PIPE_COMPANY = 'vc_pipeline_settings_company_id';
 const COLORS = ['#f97316', '#ea580c', '#d97706', '#0f766e', '#3B82F6', '#8B5CF6', '#10B981', '#64748b'];
 const ICONS = ['🚚', '📦', '🔧', '🤝', '⏳', '📋', '✅', '🎯', '🏗️', '🛻'];
 
 export default function LogisticsPipelineSettingsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [companies, setCompanies] = useState([]);
+  const [settingsCompanyId, setSettingsCompanyId] = useState('');
   const [stages, setStages] = useState([]);
   const [workflowStages, setWorkflowStages] = useState([]);
   const [crmStages, setCrmStages] = useState([]);
@@ -20,10 +27,16 @@ export default function LogisticsPipelineSettingsPage() {
   });
 
   const load = useCallback(async () => {
+    if (!settingsCompanyId) {
+      setStages([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
+      const pipeParams = { all: 'true', company_id: settingsCompanyId };
       const [pipeRes, stRes, crmRes] = await Promise.all([
-        api.get('/logistics/pipeline-stages', { params: { all: 'true' } }),
+        api.get('/logistics/pipeline-stages', { params: pipeParams }),
         api.get('/stages').catch(() => api.get('/users/stages').catch(() => ({ data: { stages: [] } }))),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
       ]);
@@ -34,9 +47,42 @@ export default function LogisticsPipelineSettingsPage() {
       setStages([]);
     }
     setLoading(false);
-  }, []);
+  }, [settingsCompanyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    api.get('/companies', { params: { for_module: 'logistics' } }).then((r) => {
+      const list = r.data?.companies || r.data || [];
+      const arr = Array.isArray(list) ? list : [];
+      setCompanies(arr);
+      if (isAdmin) {
+        try {
+          const s = localStorage.getItem(LS_VC_PIPE_COMPANY);
+          if (s && arr.some((c) => String(c.id) === String(s))) {
+            setSettingsCompanyId(s);
+            return;
+          }
+        } catch { /* ignore */ }
+        if (arr.length) setSettingsCompanyId(String(arr[0].id));
+      } else if (user?.company_id) {
+        setSettingsCompanyId(String(user.company_id));
+      }
+    }).catch(() => setCompanies([]));
+  }, [isAdmin, user?.company_id]);
+
+  useEffect(() => {
+    if (!isAdmin || !settingsCompanyId) return;
+    try {
+      localStorage.setItem(LS_VC_PIPE_COMPANY, settingsCompanyId);
+    } catch { /* ignore */ }
+  }, [isAdmin, settingsCompanyId]);
+
+  const settingsCompanyLabel = useMemo(() => {
+    if (!settingsCompanyId) return '';
+    const c = companies.find((x) => String(x.id) === String(settingsCompanyId));
+    return c?.short_name || c?.name || settingsCompanyId;
+  }, [companies, settingsCompanyId]);
 
   const hasIntake = stages.some((s) => s.bucket_slug === INTAKE);
 
@@ -72,6 +118,7 @@ export default function LogisticsPipelineSettingsPage() {
         is_active: form.is_active,
         crm_sync_type: form.crm_target_stage_id ? null : (form.crm_sync_type || null),
         crm_target_stage_id: form.crm_target_stage_id || null,
+        company_id: settingsCompanyId,
       });
       setAdding(false);
       load();
@@ -156,6 +203,29 @@ export default function LogisticsPipelineSettingsPage() {
         <Link to="/vc/dashboard" className="text-sm font-medium text-orange-700 hover:text-orange-900 border border-orange-200 rounded-lg px-3 py-2 bg-white">
           ← Về dashboard VC
         </Link>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-orange-200 bg-white shadow-sm">
+        <Building2 className="h-5 w-5 text-orange-600 shrink-0" />
+        <div className="flex-1 min-w-[200px]">
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Công ty (phân loại loại dự án)</p>
+          {isAdmin ? (
+            <select
+              value={settingsCompanyId}
+              onChange={(e) => setSettingsCompanyId(e.target.value)}
+              className="mt-1 w-full max-w-md h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+            >
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name || c.id}</option>
+              ))}
+            </select>
+          ) : (
+            <p className="mt-1 text-sm font-medium text-gray-900">{settingsCompanyLabel || 'Theo tài khoản'}</p>
+          )}
+          <p className="text-[11px] text-gray-500 mt-1">
+            Cột Kanban VC phía dưới là pipeline của công ty đã chọn (giống CRM). Nếu chưa có cột riêng, hệ thống dùng pipeline mặc định chung. Phần «Loại dự án» cuối trang cũng theo công ty này.
+          </p>
+        </div>
       </div>
 
       <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 text-sm text-orange-900">
@@ -341,6 +411,14 @@ export default function LogisticsPipelineSettingsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {!loading && (
+        <WorkshopTypeSettingsSection
+          moduleContext="logistics"
+          accent="orange"
+          {...(isAdmin ? { companyId: settingsCompanyId, onCompanyIdChange: setSettingsCompanyId } : {})}
+        />
       )}
     </div>
   );

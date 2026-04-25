@@ -67,7 +67,7 @@ export function LeadMembersTab({ leadId }) {
 
   useEffect(() => {
     void load();
-    api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
+    api.get('/companies', { params: { for_module: 'crm' } }).then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
   }, [leadId, load]);
 
   const addToQueue = () => {

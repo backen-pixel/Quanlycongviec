@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatVND, formatDate } from '../lib/utils';
+import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 
 // ─── List View ───────────────────────────────────────────────────────────────
 export function LogisticsListView({ pipeline, calculateDays }) {
   const navigate = useNavigate();
+  const goProject = (id) => {
+    markWorkshopPipelineCardFocus(id, 'vc');
+    navigate(`/vc/projects/${id}`);
+  };
   const allProjects = pipeline?.flatMap((s) => s.items.map((p) => ({ ...p, _stageName: s.name, _stageColor: s.color }))) || [];
 
   return (
@@ -22,7 +27,7 @@ export function LogisticsListView({ pipeline, calculateDays }) {
             <tr><td colSpan={8} className="text-center text-gray-400 py-12 text-sm">Không có dự án nào</td></tr>
           ) : (
             allProjects.map((p) => (
-              <tr key={p.id} onClick={() => navigate(`/vc/projects/${p.id}`)}
+              <tr key={p.id} onClick={() => goProject(p.id)}
                 className="border-b last:border-b-0 hover:bg-orange-50 cursor-pointer transition-colors">
                 <td className="px-4 py-3">
                   <span className="text-xs font-mono font-semibold text-orange-600">{p.code}</span>
@@ -67,6 +72,10 @@ export function LogisticsListView({ pipeline, calculateDays }) {
 // ─── Planner View (nhóm theo người phụ trách VC) ────────────────────────────
 export function LogisticsPlannerView({ pipeline }) {
   const navigate = useNavigate();
+  const goProject = (id) => {
+    markWorkshopPipelineCardFocus(id, 'vc');
+    navigate(`/vc/projects/${id}`);
+  };
   const allProjects = pipeline?.flatMap((s) => s.items.map((p) => ({ ...p, _stageName: s.name, _stageColor: s.color }))) || [];
 
   const byPerson = {};
@@ -104,7 +113,7 @@ export function LogisticsPlannerView({ pipeline }) {
             </div>
             <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {g.projects.map((p) => (
-                <div key={p.id} onClick={() => navigate(`/vc/projects/${p.id}`)}
+                <div key={p.id} onClick={() => goProject(p.id)}
                   className="border rounded-lg p-3 cursor-pointer hover:shadow-md transition-shadow hover:-translate-y-0.5"
                   style={{ borderLeft: `3px solid ${p._stageColor || '#f97316'}` }}>
                   <div className="flex items-center justify-between mb-1">
@@ -132,6 +141,10 @@ export function LogisticsPlannerView({ pipeline }) {
 // ─── Calendar View (xem theo deadline) ──────────────────────────────────────
 export function LogisticsCalendarView({ pipeline }) {
   const navigate = useNavigate();
+  const goProject = (id) => {
+    markWorkshopPipelineCardFocus(id, 'vc');
+    navigate(`/vc/projects/${id}`);
+  };
   const allProjects = pipeline?.flatMap((s) => s.items.map((p) => ({ ...p, _stageColor: s.color, _stageName: s.name }))) || [];
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
@@ -191,7 +204,7 @@ export function LogisticsCalendarView({ pipeline }) {
                   </div>
                   <div className="space-y-0.5">
                     {projects.slice(0, 3).map((p) => (
-                      <div key={p.id} onClick={() => navigate(`/vc/projects/${p.id}`)}
+                      <div key={p.id} onClick={() => goProject(p.id)}
                         className="text-[10px] px-1.5 py-0.5 rounded truncate cursor-pointer hover:opacity-80 font-medium"
                         style={{ backgroundColor: `${p._stageColor || '#f97316'}20`, color: p._stageColor || '#f97316' }}
                         title={p.name}>

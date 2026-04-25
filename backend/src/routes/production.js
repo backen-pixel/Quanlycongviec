@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
+const { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
 const {
   WORKSHOP_STAGE_SLUGS,
   WORKSHOP_STATUSES,
@@ -34,6 +35,83 @@ const {
 const r = Router();
 r.use(auth);
 
+/** Cột VC intake theo công ty dự án (có fallback pipeline global). */
+async function resolveLogisticsVcIntakeColumnId(companyId) {
+  const cid = normalizeWorkshopCompanyId(companyId);
+  try {
+    if (cid) {
+      const r1 = await supabase
+        .from('logistics_pipeline_stages')
+        .select('id')
+        .eq('bucket_slug', 'delivery_pending')
+        .eq('is_active', true)
+        .eq('company_id', cid)
+        .order('order_index')
+        .limit(1)
+        .maybeSingle();
+      if (r1.data?.id) return r1.data.id;
+    }
+    const r2 = await supabase
+      .from('logistics_pipeline_stages')
+      .select('id')
+      .eq('bucket_slug', 'delivery_pending')
+      .eq('is_active', true)
+      .is('company_id', null)
+      .order('order_index')
+      .limit(1)
+      .maybeSingle();
+    if (r2.data?.id) return r2.data.id;
+    const { data: vcFirst } = await supabase
+      .from('logistics_pipeline_stages')
+      .select('id')
+      .eq('is_active', true)
+      .order('order_index')
+      .limit(1)
+      .maybeSingle();
+    return vcFirst?.id || null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/** Cột SX theo workflow_stage_id, ưu tiên pipeline của công ty dự án. */
+async function findSxPipelineStageRowForWorkflow(workflowStageId, projectCompanyId) {
+  const pcid = normalizeWorkshopCompanyId(projectCompanyId);
+  const pick = async (companyScope) => {
+    let q = supabase
+      .from('production_pipeline_stages')
+      .select('id, is_handover_to_logistics, name')
+      .eq('workflow_stage_id', workflowStageId)
+      .eq('is_active', true);
+    if (companyScope === 'company') q = q.eq('company_id', pcid);
+    if (companyScope === 'global') q = q.is('company_id', null);
+    let { data, error } = await q.limit(1).maybeSingle();
+    if (error && isHandoverMissingError(error)) {
+      markHandoverColumnMissing();
+      let q2 = supabase
+        .from('production_pipeline_stages')
+        .select('id, name')
+        .eq('workflow_stage_id', workflowStageId)
+        .eq('is_active', true);
+      if (companyScope === 'company') q2 = q2.eq('company_id', pcid);
+      if (companyScope === 'global') q2 = q2.is('company_id', null);
+      ({ data, error } = await q2.limit(1).maybeSingle());
+      if (data) data = { ...data, is_handover_to_logistics: false };
+    }
+    if (error || !data) return null;
+    return data;
+  };
+  try {
+    if (pcid) {
+      const scoped = await pick('company');
+      if (scoped) return scoped;
+    }
+    return await pick('global');
+  } catch (_e) {
+    return null;
+  }
+}
+
 function calcTaskProgress(tasks) {
   if (!tasks?.length) return 0;
   return Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100);
@@ -58,33 +136,36 @@ function isDocSharedToWorkshop(doc) {
 
 const ALLOWED_WORKFLOW_STAGE_CACHE_MS = 45_000;
 let _allowedWorkflowStageIdsCache = null;
+let _allowedWorkflowStageIdsCacheKey = '';
 let _allowedWorkflowStageIdsAt = 0;
 
 function invalidateAllowedWorkflowStageIdsCache() {
   _allowedWorkflowStageIdsCache = null;
+  _allowedWorkflowStageIdsCacheKey = '';
   _allowedWorkflowStageIdsAt = 0;
 }
 
-async function allowedWorkflowStageIdsForPatch() {
+async function allowedWorkflowStageIdsForPatch(companyId = null) {
+  const cacheKey = String(companyId || '__global__');
   const now = Date.now();
-  if (_allowedWorkflowStageIdsCache && now - _allowedWorkflowStageIdsAt < ALLOWED_WORKFLOW_STAGE_CACHE_MS) {
+  if (
+    _allowedWorkflowStageIdsCache
+    && _allowedWorkflowStageIdsCacheKey === cacheKey
+    && now - _allowedWorkflowStageIdsAt < ALLOWED_WORKFLOW_STAGE_CACHE_MS
+  ) {
     return _allowedWorkflowStageIdsCache;
   }
   const ids = new Set();
-  const [{ data: pipeRows, error: pipeErr }, { ids: workshop }] = await Promise.all([
-    supabase
-      .from('production_pipeline_stages')
-      .select('workflow_stage_id')
-      .not('workflow_stage_id', 'is', null),
+  const [pipeRows, { ids: workshop }] = await Promise.all([
+    loadProductionPipelineStagesRows(true, companyId),
     getWorkshopStageMap(),
   ]);
-  if (!pipeErr) {
-    (pipeRows || []).forEach((r) => {
-      if (r.workflow_stage_id) ids.add(String(r.workflow_stage_id));
-    });
-  }
+  (pipeRows || []).forEach((r) => {
+    if (r.workflow_stage_id) ids.add(String(r.workflow_stage_id));
+  });
   workshop.forEach((wid) => ids.add(String(wid)));
   _allowedWorkflowStageIdsCache = ids;
+  _allowedWorkflowStageIdsCacheKey = cacheKey;
   _allowedWorkflowStageIdsAt = now;
   return ids;
 }
@@ -93,9 +174,10 @@ async function allowedWorkflowStageIdsForPatch() {
 r.get('/pipeline-stages', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const includeInactive = req.query.all === 'true';
-    const rows = await loadProductionPipelineStagesRows(includeInactive);
+    const company_id = effectiveWorkshopCompanyId(req, req.query.company_id);
+    const rows = await loadProductionPipelineStagesRows(includeInactive, company_id);
     if (rows === null) {
-      const { stages } = await getResolvedKanbanStages();
+      const { stages } = await getResolvedKanbanStages(company_id);
       return res.json(stages);
     }
     res.json(rows || []);
@@ -109,23 +191,16 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
   try {
     const b = req.body;
     if (!b.name?.trim()) return res.status(400).json({ error: 'Thiếu tên cột' });
+    const insertCompanyId = effectiveWorkshopCompanyId(req, b.company_id);
     if (b.bucket_slug && b.bucket_slug !== INTAKE_BUCKET) {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
     }
+    const scopedStages = await loadProductionPipelineStagesRows(true, insertCompanyId);
     if (b.bucket_slug === INTAKE_BUCKET) {
-      const { data: existing } = await supabase
-        .from('production_pipeline_stages')
-        .select('id')
-        .eq('bucket_slug', INTAKE_BUCKET)
-        .limit(1);
-      if (existing?.length) return res.status(400).json({ error: 'Đã có cột chờ vào xưởng' });
+      const hasIntake = (scopedStages || []).some((r) => r.bucket_slug === INTAKE_BUCKET);
+      if (hasIntake) return res.status(400).json({ error: 'Đã có cột chờ vào xưởng trong phạm vi công ty này' });
     }
-    const { data: last } = await supabase
-      .from('production_pipeline_stages')
-      .select('order_index')
-      .order('order_index', { ascending: false })
-      .limit(1);
-    const nextOrder = (last?.[0]?.order_index ?? 0) + 1;
+    const nextOrder = (scopedStages || []).reduce((m, r) => Math.max(m, Number(r.order_index) || 0), 0) + 1;
     const isIntake = b.bucket_slug === INTAKE_BUCKET;
     const insertPayload = {
       name: b.name.trim(),
@@ -138,6 +213,7 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       is_handover_to_logistics: isIntake ? false : (b.is_handover_to_logistics || false),
       crm_sync_type: isIntake ? null : (b.crm_sync_type || null),
       crm_target_stage_id: isIntake ? null : (b.crm_target_stage_id || null),
+      company_id: insertCompanyId || null,
     };
 
     let ins = stripHandoverFields({ ...insertPayload });
@@ -341,7 +417,8 @@ r.put('/pipeline-stages-reorder', requirePermission('projects', 'edit'), async (
 r.post('/pipeline-stages/seed-samples', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { ensureSampleProductionPipelineStages } = require('../helpers/productionPipelineSampleStages');
-    const out = await ensureSampleProductionPipelineStages(supabase);
+    const company_id = effectiveWorkshopCompanyId(req, req.body?.company_id);
+    const out = await ensureSampleProductionPipelineStages(supabase, company_id);
     invalidateAllowedWorkflowStageIdsCache();
     res.json(out);
   } catch (e) {
@@ -353,31 +430,35 @@ r.post('/pipeline-stages/seed-samples', requirePermission('projects', 'edit'), a
 // ─── GET /production/dashboard ──
 r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
   try {
-    const { division_id, company_id } = req.query;
+    const { division_id, company_id: companyIdQuery, workshop_type_id } = req.query;
+    const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
-    const { stages: kanbanStages } = await getResolvedKanbanStages();
+    const { stages: kanbanStages } = await getResolvedKanbanStages(company_id);
     const sortedKanban = [...kanbanStages].sort((a, b) => a.order_index - b.order_index);
 
     const orFilter = buildScopeOrFilter(stageIds, wonIds);
     let query = supabase
       .from('projects')
       .select(`
-        id, code, name, estimated_value, status, deadline, created_at,
+        id, code, name, estimated_value, status, deadline, created_at, company_id,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name),
         company:companies(id, name, short_name),
+        workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)
       `)
       .or(orFilter);
 
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.eq('company_id', company_id);
+    if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
 
     const { data: projects = [] } = await query.order('created_at', { ascending: false });
 
-    const enhancedProjects = enrichProjectsForSx(projects, sortedKanban, wonIds).map((project) => ({
+    const enriched = await enrichProjectsForSx(projects, wonIds, company_id);
+    const enhancedProjects = enriched.map((project) => ({
       ...project,
       progress: calcTaskProgress(project.tasks),
       task_total: project.tasks?.length || 0,
@@ -422,20 +503,21 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
 r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const {
-      search, priority, page = 1, limit = 100, division_id, company_id, stage_slug, sx_intake,
+      search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, stage_slug, sx_intake, workshop_type_id,
     } = req.query;
+    const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
     const offset = (parsedPage - 1) * parsedLimit;
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
-    const { stages: kanbanStages } = await getResolvedKanbanStages();
+    const { stages: kanbanStages } = await getResolvedKanbanStages(company_id);
     const sortedKanban = [...kanbanStages].sort((a, b) => a.order_index - b.order_index);
 
     let query = supabase
       .from('projects')
       .select(`
-        id, code, name, estimated_value, priority, deadline, created_at, status, notes,
+        id, code, name, estimated_value, priority, deadline, created_at, status, notes, company_id,
         production_deadline, production_note, vc_kanban_column_id,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -445,6 +527,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         supervisor:users!projects_supervisor_id_fkey(id, full_name),
+        workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)
       `, { count: 'exact' });
 
@@ -462,6 +545,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.eq('company_id', company_id);
+    if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
 
     if (search) {
       const searchPattern = `%${search}%`;
@@ -489,6 +573,8 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       error.message?.includes('production_deadline') ||
       error.message?.includes('vc_kanban_column_id') ||
       error.message?.includes('logistics_pipeline_stages') ||
+      error.message?.includes('workshop_project_types') ||
+      error.message?.includes('workshop_type_id') ||
       error.message?.includes('relationship')
     );
     if (needsFallback) {
@@ -497,7 +583,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         .from('projects')
         .select(`
           id, code, name, estimated_value, priority, deadline, created_at, status, notes,
-          production_deadline, production_note,
+          production_deadline, production_note, workshop_type_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name, phone),
@@ -516,12 +602,16 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       }
       if (search) fallbackQuery = fallbackQuery.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
       if (priority) fallbackQuery = fallbackQuery.eq('priority', priority);
+      if (division_id) fallbackQuery = fallbackQuery.eq('division_id', division_id);
+      if (company_id) fallbackQuery = fallbackQuery.eq('company_id', company_id);
+      if (workshop_type_id) fallbackQuery = fallbackQuery.eq('workshop_type_id', workshop_type_id);
       fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
       ({ data: projects, error, count } = await fallbackQuery);
     }
     if (error) throw error;
 
-    const enhanced = enrichProjectsForSx(projects, sortedKanban, wonIds).map((project) => ({
+    const enrichedSx = await enrichProjectsForSx(projects, wonIds, company_id);
+    const enhanced = enrichedSx.map((project) => ({
       ...project,
       progress: calcTaskProgress(project.tasks),
       task_total: project.tasks?.length || 0,
@@ -548,7 +638,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 const MIGRATION_76_COLS = 'production_deadline, production_note,';
 
 const PROJECT_DETAIL_SELECT = `
-        id, code, name, description, estimated_value, priority, deadline, ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, priority, deadline, ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
@@ -751,9 +841,10 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     });
 
     const workshopPipeline = WORKSHOP_STAGE_SLUGS.map((slug) => bySlug[slug]).filter(Boolean);
-    const { stages: kStages } = await getResolvedKanbanStages();
+    const pcid = project.company_id || project.company?.id || null;
+    const { stages: kStages } = await getResolvedKanbanStages(pcid ? String(pcid) : null);
     const sortedK = [...kStages].sort((a, b) => a.order_index - b.order_index);
-    const [sxRow] = enrichProjectsForSx([project], sortedK, wonIds);
+    const [sxRow] = await enrichProjectsForSx([project], wonIds, pcid ? String(pcid) : null);
 
     res.json({
       project: {
@@ -803,7 +894,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, current_stage_id, code, name, status')
+      .select('id, current_stage_id, code, name, status, company_id')
       .eq('id', id)
       .single();
 
@@ -876,7 +967,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     }
 
     const [allowed, targetRes] = await Promise.all([
-      allowedWorkflowStageIdsForPatch(),
+      allowedWorkflowStageIdsForPatch(project.company_id),
       supabase
         .from('workflow_stages')
         .select('id, slug')
@@ -943,47 +1034,16 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
         // Kiểm tra cột SX có cờ is_handover_to_logistics → chuyển sang module VC
         try {
-          let sxPipeStage = null;
-          let { data: sxPipeStageRaw, error: sxPipeErr } = await supabase
-            .from('production_pipeline_stages')
-            .select('id, is_handover_to_logistics, name')
-            .eq('workflow_stage_id', toStageId)
-            .eq('is_active', true)
-            .limit(1)
-            .maybeSingle();
-          if (sxPipeErr && isHandoverMissingError(sxPipeErr)) {
-            markHandoverColumnMissing();
-            const r2 = await supabase
-              .from('production_pipeline_stages')
-              .select('id, name')
-              .eq('workflow_stage_id', toStageId)
-              .eq('is_active', true)
-              .limit(1)
-              .maybeSingle();
-            sxPipeStageRaw = r2.data;
-            sxPipeErr = r2.error;
-          }
-          if (!sxPipeErr) {
-            sxPipeStage = sxPipeStageRaw;
-          }
+          const sxPipeStage = await findSxPipelineStageRowForWorkflow(toStageId, project.company_id);
 
           if (sxPipeStage?.is_handover_to_logistics) {
             let autoVcStageId = null;
             try {
-              const { data: vcIntake } = await supabase
-                .from('logistics_pipeline_stages')
-                .select('id')
-                .eq('bucket_slug', 'delivery_pending')
-                .eq('is_active', true)
-                .order('order_index')
-                .limit(1)
-                .maybeSingle();
-              if (!vcIntake) {
+              autoVcStageId = await resolveLogisticsVcIntakeColumnId(project.company_id);
+              if (!autoVcStageId) {
                 const { data: vcFirst } = await supabase
                   .from('logistics_pipeline_stages').select('id').eq('is_active', true).order('order_index').limit(1).maybeSingle();
                 autoVcStageId = vcFirst?.id || null;
-              } else {
-                autoVcStageId = vcIntake.id;
               }
             } catch (_e) { /* ignore */ }
 

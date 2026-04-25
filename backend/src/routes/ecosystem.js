@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { KNOWN_MODULE_KEYS, buildMyModuleAccessMap } = require('../helpers/ecosystemModuleScope');
 
 const r = Router();
 r.use(auth);
@@ -587,9 +588,11 @@ r.post('/projects/:projectId/units', async (req, res) => {
 // GET companies chưa liên kết (hoặc tất cả)
 r.get('/available-companies', async (req, res) => {
   try {
-    const { data: companies, error } = await supabase.from('companies')
+    const { data: companies, error } = await supabase
+      .from('companies')
       .select('id, name, short_name, code, logo, is_active')
-      .eq('is_active', true).order('name');
+      .or('is_active.eq.true,is_active.is.null')
+      .order('name');
     if (error) throw error;
 
     // Đánh dấu đã liên kết
@@ -767,6 +770,58 @@ r.post('/setup-wizard', async (req, res) => {
     });
   } catch (e) {
     console.error('Wizard setup error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// MODULE ↔ KHỐI (ecosystem_module_scopes)
+// ═══════════════════════════════════════════════
+
+r.get('/my-module-access', async (req, res) => {
+  try {
+    const payload = await buildMyModuleAccessMap(req.user);
+    res.set('Cache-Control', 'private, no-store');
+    res.json(payload);
+  } catch (e) {
+    console.error('GET /ecosystem/my-module-access', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/module-scopes', async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
+    const { data, error } = await supabase.from('ecosystem_module_scopes').select('*');
+    if (error) throw error;
+    res.json({ scopes: data || [] });
+  } catch (e) {
+    console.error('GET /ecosystem/module-scopes', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/module-scopes/:moduleKey', async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
+    const moduleKey = String(req.params.moduleKey || '').trim();
+    if (!KNOWN_MODULE_KEYS.includes(moduleKey)) {
+      return res.status(400).json({ error: `module_key phải là một trong: ${KNOWN_MODULE_KEYS.join(', ')}` });
+    }
+    const { division_unit_ids: rawIds } = req.body;
+    const ids = Array.isArray(rawIds) ? rawIds.map((x) => String(x).trim()).filter(Boolean) : [];
+
+    const { error: delErr } = await supabase.from('ecosystem_module_scopes').delete().eq('module_key', moduleKey);
+    if (delErr) throw delErr;
+
+    if (ids.length) {
+      const rows = ids.map((division_unit_id) => ({ module_key: moduleKey, division_unit_id }));
+      const { error: insErr } = await supabase.from('ecosystem_module_scopes').insert(rows);
+      if (insErr) throw insErr;
+    }
+    res.json({ ok: true, module_key: moduleKey, division_count: ids.length });
+  } catch (e) {
+    console.error('PUT /ecosystem/module-scopes', e);
     res.status(500).json({ error: e.message });
   }
 });

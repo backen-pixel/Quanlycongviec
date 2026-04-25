@@ -8,6 +8,8 @@ let handoverToLogisticsColumnAvailable = true;
 let crmTargetStageColumnAvailable = true;
 /** Khi false: vẫn select crm_target_stage_id nhưng không embed crm_target_stage (tránh lỗi relationship) */
 let crmTargetStageJoinAvailable = true;
+/** Cột company_id (migration 101) — tắt nếu DB chưa migrate */
+let productionCompanyIdColumnAvailable = true;
 
 function isHandoverMissingError(err) {
   if (!err) return false;
@@ -77,8 +79,24 @@ function isCrmTargetStageJoinInSchema() {
   return crmTargetStageJoinAvailable;
 }
 
+function isProductionCompanyIdMissingError(err) {
+  if (!err || !productionCompanyIdColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('company_id') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markProductionCompanyIdColumnMissing() {
+  if (productionCompanyIdColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột company_id chưa tồn tại. Chạy database/101_sx_vc_pipeline_company_id.sql trên Supabase.',
+    );
+  }
+  productionCompanyIdColumnAvailable = false;
+}
+
 /** Chuỗi .select() cho bảng production_pipeline_stages (+ join workflow_stage) */
 function buildPipelineStageSelect() {
+  const cid = productionCompanyIdColumnAvailable ? 'company_id, ' : '';
   const h = handoverToLogisticsColumnAvailable ? 'is_handover_to_logistics, ' : '';
   let t = '';
   if (crmTargetStageColumnAvailable) {
@@ -88,7 +106,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Bỏ field khỏi object insert/update nếu DB không có cột */
@@ -107,6 +125,7 @@ function _resetForTests() {
   handoverToLogisticsColumnAvailable = true;
   crmTargetStageColumnAvailable = true;
   crmTargetStageJoinAvailable = true;
+  productionCompanyIdColumnAvailable = true;
 }
 
 module.exports = {
@@ -116,6 +135,8 @@ module.exports = {
   markHandoverColumnMissing,
   markCrmTargetStageColumnMissing,
   markCrmTargetStageJoinMissing,
+  isProductionCompanyIdMissingError,
+  markProductionCompanyIdColumnMissing,
   isHandoverColumnInSchema,
   isCrmTargetStageColumnInSchema,
   isCrmTargetStageJoinInSchema,

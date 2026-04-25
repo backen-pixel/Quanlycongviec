@@ -1351,7 +1351,7 @@ function AddDocumentModal({ onClose, onSave }) {
 
   useEffect(() => {
     Promise.all([
-      api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {}),
+      api.get('/companies', { params: { for_module: 'crm' } }).then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {}),
       api.get('/departments').then(r => setDepartments(r.data?.departments || r.data || [])).catch(() => {}),
     ]);
   }, []);
@@ -1499,7 +1499,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
   // Load sources + companies
   useEffect(() => {
     api.get('/crm/sources').then(r => setSources(r.data?.sources || (Array.isArray(r.data) ? r.data : []))).catch(() => {});
-    api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
+    api.get('/companies', { params: { for_module: 'crm' } }).then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -1964,7 +1964,7 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
   useEffect(() => {
     (async () => {
       try {
-        const r = await api.get('/companies');
+        const r = await api.get('/companies', { params: { for_module: 'crm' } });
         const list = r.data.companies || r.data || [];
         setCompanies(list);
         // Auto-select company from lead

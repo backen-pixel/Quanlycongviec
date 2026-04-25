@@ -9,8 +9,9 @@ import EmployeePicker from '../components/EmployeePicker';
 import {
   ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
-  Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign, Pin
+  Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign, Pin, ShoppingCart,
 } from 'lucide-react';
+import ProjectOrdersTab from '../components/ProjectOrdersTab';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import UserSelect from '../components/UserSelect';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
@@ -47,6 +48,7 @@ export default function ProjectDetail() {
   const [commentFiles, setCommentFiles] = useState([]);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [approvalRule, setApprovalRule] = useState(null); // { mode: 'auto'|'manual' }
+  const [orderCount, setOrderCount] = useState(0);
   const [showAdvance, setShowAdvance] = useState(false);
   const [showApprovalRequest, setShowApprovalRequest] = useState(false);
   const [showPeople, setShowPeople] = useState(false);
@@ -60,6 +62,7 @@ export default function ProjectDetail() {
   const load = () => {
     setLoading(true);
     api.get(`/projects/${id}`).then(r => setProject(r.data.project)).catch(() => {}).finally(() => setLoading(false));
+    api.get(`/projects/${id}/orders`).then(r => setOrderCount((r.data.orders || []).length)).catch(() => setOrderCount(0));
     // Load pending approval count
     api.get(`/approvals/project/${id}`).then(r => {
       const pending = (r.data.approvals || []).filter(a => a.status === 'pending').length;
@@ -538,6 +541,7 @@ export default function ProjectDetail() {
       <div className="flex gap-1 border-b border-gray-200">
         {[
           { id: 'tasks', label: 'Công việc', icon: CheckSquare, count: totalTasks },
+          { id: 'orders', label: 'Đơn hàng', icon: ShoppingCart, count: orderCount || undefined },
           { id: 'flow', label: 'Luồng', icon: ArrowRight },
           { id: 'documents', label: 'Tài liệu', icon: FileText },
           { id: 'approvals', label: 'Duyệt', icon: Shield, count: pendingApprovalCount || undefined },
@@ -741,6 +745,10 @@ export default function ProjectDetail() {
           {/* Shared CRM Notes — ghi chú từ Khối Kinh doanh */}
           <SharedCRMNotes projectId={id} />
         </div>
+      )}
+
+      {activeTab === 'orders' && (
+        <ProjectOrdersTab projectId={id} users={allUsers} onChanged={load} />
       )}
 
       {/* ─── Approvals (Duyệt) Tab ─── */}

@@ -321,6 +321,15 @@ export default function CRMDashboard() {
 
   useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee, filterCompany, filterLeadType]);
 
+  // Admin: công ty đang lọc không còn trong danh sách (sau giới hạn khối theo module CRM) → bỏ lọc
+  useEffect(() => {
+    if (!isAdmin || !filterCompany || !companies?.length) return;
+    if (!companies.some((c) => String(c.id) === String(filterCompany))) {
+      setFilterCompany('');
+      try { localStorage.removeItem(LS_CRM_DASH_COMPANY); } catch { /* ignore */ }
+    }
+  }, [isAdmin, filterCompany, companies]);
+
   // Admin: khi đổi filterCompany thì nạp đúng stages của pipeline công ty đó (không reload toàn bộ Kanban)
   useEffect(() => {
     if (!isAdmin) return;
@@ -599,7 +608,7 @@ export default function CRMDashboard() {
         api.get('/crm/sources').catch(() => ({ data: [] })),
         api.get('/crm/lead-types', { params: { ...(filterCompany ? { company_id: filterCompany } : {}) } }).catch(() => ({ data: [] })),
         api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
-        api.get('/companies').catch(() => ({ data: { companies: [] } })),
+        api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
         api.get('/users').catch(() => ({ data: [] })),
         api.get('/crm/leads', { params: buildCountParams('lead', 'has_phone') }).catch(() => ({ data: {} })),
         api.get('/crm/leads', { params: buildCountParams('lead', 'no_phone') }).catch(() => ({ data: {} })),

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
+import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { useAuth } from '../lib/auth';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
@@ -313,6 +314,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   const { id } = useParams();
   const navigate = useNavigate();
+  const goToDashboard = () => {
+    if (id) markWorkshopPipelineCardFocus(id, moduleKey === 'vc' ? 'vc' : 'sx');
+    navigate(`${MOD.routePrefix}/dashboard`);
+  };
   const { socket, user } = useAuth();
   const { setCrmNotesAnchor } = useCrmNotesFab();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -478,13 +483,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     return () => { cancelled = true; };
   }, [project?.crmDeals?.[0]?.id]);
 
-  // Load module pipeline stages once
+  // Pipeline SX/VC theo công ty dự án
   useEffect(() => {
-    api.get(`${MOD.apiPrefix}/pipeline-stages`).then((r) => {
+    const cid = project?.company_id || project?.company?.id;
+    if (!cid) return;
+    api.get(`${MOD.apiPrefix}/pipeline-stages`, { params: { company_id: cid } }).then((r) => {
       const rows = r.data || [];
       if (rows.length) setProductionStages(rows);
     }).catch(() => {});
-  }, []);
+  }, [MOD.apiPrefix, project?.company_id, project?.company?.id]);
 
   const loadProjectDocs = useCallback(async (projectId) => {
     try {
@@ -823,7 +830,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             </Link>
             <button
               type="button"
-            onClick={() => navigate(`${MOD.routePrefix}/dashboard`)}
+            onClick={goToDashboard}
             className="inline-flex h-10 px-4 items-center rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
               Về dashboard
@@ -833,7 +840,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         {!isDealNoProject && (
           <button
             type="button"
-            onClick={() => navigate(`${MOD.routePrefix}/dashboard`)}
+            onClick={goToDashboard}
             className="h-10 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
             Về dashboard
@@ -903,7 +910,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => navigate(`${MOD.routePrefix}/dashboard`)}
+            onClick={goToDashboard}
             className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
           >
             <ArrowLeft className="h-5 w-5" />

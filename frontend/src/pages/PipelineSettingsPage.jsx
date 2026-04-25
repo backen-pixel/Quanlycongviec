@@ -111,11 +111,9 @@ export default function PipelineSettingsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [pipelinesRes, companiesRes, sxRes, vcRes] = await Promise.all([
+      const [pipelinesRes, companiesRes] = await Promise.all([
         api.get('/crm/pipelines').catch(() => ({ data: [] })),
-        api.get('/companies').catch(() => ({ data: { companies: [] } })),
-        api.get('/production/pipeline-stages', { params: { all: 'true' } }).catch(() => ({ data: [] })),
-        api.get('/logistics/pipeline-stages', { params: { all: 'true' } }).catch(() => ({ data: [] })),
+        api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
       ]);
       const pls = Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [];
       setPipelines(pls);
@@ -125,6 +123,12 @@ export default function PipelineSettingsPage() {
       // Resolve selectedCompanyId (admin: keep existing; non-admin: lock to user.company_id)
       const lockedCompanyId = !isAdmin ? (user?.company_id ? String(user.company_id) : '') : '';
       const companyIdToUse = lockedCompanyId || selectedCompanyId || (isAdmin ? '' : '');
+      const cidWx = companyIdToUse || (isAdmin && cos[0]?.id ? String(cos[0].id) : '');
+      const wxParams = { all: 'true', ...(cidWx ? { company_id: cidWx } : {}) };
+      const [sxRes, vcRes] = await Promise.all([
+        api.get('/production/pipeline-stages', { params: wxParams }).catch(() => ({ data: [] })),
+        api.get('/logistics/pipeline-stages', { params: wxParams }).catch(() => ({ data: [] })),
+      ]);
       if (!lockedCompanyId && selectedCompanyId === '' && isAdmin && cos?.length) {
         // Admin default: pick first company in list if none selected yet
         const firstC = (Array.isArray(cos) ? cos : [])[0];

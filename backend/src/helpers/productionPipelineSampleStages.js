@@ -21,18 +21,26 @@ const SAMPLES = [
   { slug: 'sx-sample-handover-vc', name: 'Bàn giao Vận chuyển', color: '#DC2626', icon: '🚚', wsOrder: 57, crm_sync_type: null, handover: true },
 ];
 
-async function ensureSampleProductionPipelineStages(supabase) {
-  const handoverCountRes = await supabase
+async function ensureSampleProductionPipelineStages(supabase, companyId = null) {
+  const cid = companyId != null && String(companyId).trim() ? String(companyId).trim() : null;
+
+  let hcQ = supabase
     .from('production_pipeline_stages')
     .select('id', { count: 'exact', head: true })
     .eq('is_handover_to_logistics', true);
+  if (cid) hcQ = hcQ.eq('company_id', cid);
+  else hcQ = hcQ.is('company_id', null);
+  const handoverCountRes = await hcQ;
   const handoverCols = handoverCountRes.error ? 0 : (handoverCountRes.count ?? 0);
 
-  const { data: maxRow } = await supabase
+  let maxQ = supabase
     .from('production_pipeline_stages')
     .select('order_index')
     .order('order_index', { ascending: false })
     .limit(1);
+  if (cid) maxQ = maxQ.eq('company_id', cid);
+  else maxQ = maxQ.is('company_id', null);
+  const { data: maxRow } = await maxQ;
   let nextOrder = (maxRow?.[0]?.order_index != null ? Number(maxRow[0].order_index) : 0) + 1;
 
   const inserted = [];
@@ -73,11 +81,13 @@ async function ensureSampleProductionPipelineStages(supabase) {
     }
 
     const wid = ws.id;
-    const { data: existingPipe, error: exErr } = await supabase
+    let exQ = supabase
       .from('production_pipeline_stages')
       .select('id, name')
-      .eq('workflow_stage_id', wid)
-      .maybeSingle();
+      .eq('workflow_stage_id', wid);
+    if (cid) exQ = exQ.eq('company_id', cid);
+    else exQ = exQ.is('company_id', null);
+    const { data: existingPipe, error: exErr } = await exQ.maybeSingle();
     if (exErr) throw new Error(`production_pipeline_stages: ${exErr.message}`);
 
     if (existingPipe) {
@@ -95,6 +105,7 @@ async function ensureSampleProductionPipelineStages(supabase) {
       bucket_slug: null,
       is_handover_to_logistics: !!s.handover,
       crm_sync_type: s.crm_sync_type || null,
+      company_id: cid,
     };
 
     let ins = stripHandoverFields({ ...payload });
