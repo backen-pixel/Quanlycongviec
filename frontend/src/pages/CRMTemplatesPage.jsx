@@ -68,7 +68,7 @@ export default function CRMTemplatesPage() {
     try {
       const [tplRes, compRes, deptRes] = await Promise.all([
         api.get('/crm/task-templates'),
-        api.get('/companies').catch(() => ({ data: [] })),
+        api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: [] })),
         api.get('/departments').catch(() => ({ data: [] })),
       ]);
       setTemplates(tplRes.data || []);

@@ -1,5 +1,6 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import api from '../lib/api';
 import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor } from '../lib/utils';
 import {
@@ -7,9 +8,9 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key
+  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle,
 } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -31,9 +32,9 @@ const MENU_GROUPS = [
     title: '2. Không gian làm việc',
     emoji: '🏢',
     items: [
-      { to: '/projects', icon: FolderKanban, label: 'Dự án' },
-      { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV', adminOnly: true },
-      { to: '/customers', icon: UserCircle, label: 'Khách hàng', adminOnly: true },
+      { to: '/projects', icon: FolderKanban, label: 'Dự án', moduleKey: 'projects' },
+      { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV', adminOnly: true, moduleKey: 'tasks' },
+      { to: '/customers', icon: UserCircle, label: 'Khách hàng', adminOnly: true, moduleKey: 'customers' },
       { to: '/products', icon: Package, label: 'Sản phẩm', adminOnly: true },
       { to: '/workflow-hub', icon: GitBranch, label: 'Quản lý quy trình', adminOnly: true },
     ]
@@ -45,6 +46,7 @@ const MENU_GROUPS = [
     adminOnly: true,
     items: [
       { to: '/ecosystem', icon: Network, label: 'Cấu trúc công ty' },
+      { to: '/ecosystem/modules', icon: Puzzle, label: 'Module & Khối' },
       { to: '/companies', icon: Building2, label: 'Công ty' },
       { to: '/departments', icon: Building, label: 'Phòng ban' },
       { to: '/teams', icon: Users, label: 'Team' },
@@ -78,6 +80,7 @@ const MENU_GROUPS = [
 const CRM_MENU_GROUPS = [
   {
     id: 'crm-overview',
+    moduleKey: 'crm',
     title: '1. Tổng quan',
     emoji: '📊',
     items: [
@@ -90,6 +93,7 @@ const CRM_MENU_GROUPS = [
   },
   {
     id: 'crm-sales',
+    moduleKey: 'crm',
     title: '2. Bán hàng',
     emoji: '💰',
     items: [
@@ -102,6 +106,7 @@ const CRM_MENU_GROUPS = [
   },
   {
     id: 'crm-data',
+    moduleKey: 'crm',
     title: '3. Dữ liệu',
     emoji: '📋',
     items: [
@@ -125,6 +130,7 @@ const CRM_MENU_GROUPS = [
 const SX_MENU_GROUPS = [
   {
     id: 'sx-overview',
+    moduleKey: 'production',
     title: '1. Tổng quan',
     emoji: '🏭',
     items: [
@@ -133,6 +139,7 @@ const SX_MENU_GROUPS = [
   },
   {
     id: 'sx-projects',
+    moduleKey: 'production',
     title: '2. Điều hành xưởng',
     emoji: '📦',
     items: [
@@ -148,6 +155,7 @@ const SX_MENU_GROUPS = [
 const VC_MENU_GROUPS = [
   {
     id: 'vc-overview',
+    moduleKey: 'logistics',
     title: '1. Tổng quan',
     emoji: '🚚',
     items: [
@@ -156,6 +164,7 @@ const VC_MENU_GROUPS = [
   },
   {
     id: 'vc-projects',
+    moduleKey: 'logistics',
     title: '2. Điều hành VC',
     emoji: '📦',
     items: [
@@ -185,11 +194,17 @@ function SideLink({ to, icon: Icon, label, collapsed, end }) {
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin }) {
+function MenuGroup({ group, collapsed, isAdmin, canAccessModule }) {
   const [open, setOpen] = useState(true);
-  
-  // Filter items based on role
-  const items = group.items.filter(item => !item.adminOnly || isAdmin);
+
+  if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return null;
+
+  // Filter items based on role + ecosystem module scope
+  const items = group.items.filter((item) => {
+    if (item.adminOnly && !isAdmin) return false;
+    if (item.moduleKey && canAccessModule && !canAccessModule(item.moduleKey)) return false;
+    return true;
+  });
   
   // Hide entire group if no items visible
   if (items.length === 0) return null;
@@ -226,10 +241,25 @@ export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
+  const [moduleAccess, setModuleAccess] = useState(null);
   const appSwitcherRef = useRef(null);
   const { user, logout, socket } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    if (!user) return;
+    api.get('/ecosystem/my-module-access')
+      .then((r) => setModuleAccess(r.data))
+      .catch(() => setModuleAccess({ allowAll: true }));
+  }, [user]);
+
+  const canAccessModule = useCallback((key) => {
+    if (!key) return true;
+    if (!moduleAccess) return true;
+    if (moduleAccess.allowAll) return true;
+    return moduleAccess.modules?.[key] !== false;
+  }, [moduleAccess]);
 
   // Auto-collapse sidebar on quotation form pages (need more screen space)
   useEffect(() => {
@@ -278,7 +308,7 @@ export default function Sidebar() {
             </div>
             <div className="flex-1 p-5 space-y-3">
               {/* Công việc */}
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${!isCRM && !isSX ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${!isCRM && !isSX && !isVC ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
                 <button onClick={() => { setShowAppSwitcher(false); navigate('/dashboard'); }}
                   className="flex items-center gap-4 flex-1 cursor-pointer">
                   <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
@@ -290,7 +320,7 @@ export default function Sidebar() {
                   </div>
                 </button>
                 <div className="flex flex-col items-center gap-1 ml-auto">
-                  {!isCRM && !isSX && <span className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  {!isCRM && !isSX && !isVC && <span className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
                   <button onClick={(e) => { e.stopPropagation(); pinModule('/dashboard'); }}
                     title={pinnedModule === '/dashboard' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
                     className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/dashboard' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
@@ -299,6 +329,7 @@ export default function Sidebar() {
                 </div>
               </div>
               {/* CRM */}
+              {canAccessModule('crm') && (
               <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isCRM ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50'}`}>
                 <button onClick={() => { setShowAppSwitcher(false); navigate('/crm'); }}
                   className="flex items-center gap-4 flex-1 cursor-pointer">
@@ -319,7 +350,9 @@ export default function Sidebar() {
                   </button>
                 </div>
               </div>
+              )}
               {/* Sản xuất */}
+              {canAccessModule('production') && (
               <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isSX ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200 hover:border-orange-400 hover:bg-orange-50'}`}>
                 <button onClick={() => { setShowAppSwitcher(false); navigate('/sx'); }}
                   className="flex items-center gap-4 flex-1 cursor-pointer">
@@ -340,7 +373,9 @@ export default function Sidebar() {
                   </button>
                 </div>
               </div>
+              )}
               {/* Vận chuyển & Lắp đặt */}
+              {canAccessModule('logistics') && (
               <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isVC ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-200 hover:border-amber-400 hover:bg-amber-50'}`}>
                 <button onClick={() => { setShowAppSwitcher(false); navigate('/vc'); }}
                   className="flex items-center gap-4 flex-1 cursor-pointer">
@@ -361,6 +396,7 @@ export default function Sidebar() {
                   </button>
                 </div>
               </div>
+              )}
             </div>
             <div className="px-5 py-3 border-t border-gray-100">
               <p className="text-[10px] text-gray-400 text-center">TuBep Pro © 2026</p>
@@ -384,15 +420,18 @@ export default function Sidebar() {
         </button>
         {/* Active app indicator — click cycles through 4 modules */}
         {(() => {
-          const modules = [
-            { key: 'work',  label: 'Công việc',  emoji: '📋', path: '/dashboard', color: 'bg-blue-500/20 hover:bg-blue-500/30',    dot: 'bg-blue-500/30'    },
-            { key: 'crm',   label: 'CRM',         emoji: '💼', path: '/crm',       color: 'bg-emerald-500/20 hover:bg-emerald-500/30', dot: 'bg-emerald-500/40' },
-            { key: 'sx',    label: 'Xưởng SX',    emoji: '🏭', path: '/sx',        color: 'bg-orange-500/20 hover:bg-orange-500/30',   dot: 'bg-orange-500/40'  },
-            { key: 'vc',    label: 'Vận chuyển',  emoji: '🚚', path: '/vc',        color: 'bg-amber-500/20 hover:bg-amber-500/30',    dot: 'bg-amber-500/40'   },
-          ];
-          const curIdx = isCRM ? 1 : isSX ? 2 : isVC ? 3 : 0;
-          const cur = modules[curIdx];
-          const next = modules[(curIdx + 1) % modules.length];
+          const modList = [
+            { key: 'work', mod: null, label: 'Công việc', emoji: '📋', path: '/dashboard', color: 'bg-blue-500/20 hover:bg-blue-500/30', dot: 'bg-blue-500/30' },
+            { key: 'crm', mod: 'crm', label: 'CRM', emoji: '💼', path: '/crm', color: 'bg-emerald-500/20 hover:bg-emerald-500/30', dot: 'bg-emerald-500/40' },
+            { key: 'sx', mod: 'production', label: 'Xưởng SX', emoji: '🏭', path: '/sx', color: 'bg-orange-500/20 hover:bg-orange-500/30', dot: 'bg-orange-500/40' },
+            { key: 'vc', mod: 'logistics', label: 'Vận chuyển', emoji: '🚚', path: '/vc', color: 'bg-amber-500/20 hover:bg-amber-500/30', dot: 'bg-amber-500/40' },
+          ].filter((m) => !m.mod || canAccessModule(m.mod));
+          if (!modList.length) return null;
+          const activeKey = isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
+          let curIdx = modList.findIndex((m) => m.key === activeKey);
+          if (curIdx < 0) curIdx = 0;
+          const cur = modList[curIdx];
+          const next = modList[(curIdx + 1) % modList.length];
           return (
             <button
               onClick={() => navigate(next.path)}
@@ -423,7 +462,7 @@ export default function Sidebar() {
         {activeMenuGroups.map(group => {
           // Hide admin-only groups for non-admin
           if (group.adminOnly && !isAdmin) return null;
-          return <MenuGroup key={group.id} group={group} collapsed={collapsed} isAdmin={isAdmin} />;
+          return <MenuGroup key={group.id} group={group} collapsed={collapsed} isAdmin={isAdmin} canAccessModule={canAccessModule} />;
         })}
       </div>
 

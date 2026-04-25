@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 
 function formatVND(v) {
   if (!v) return '0đ';
@@ -14,6 +15,10 @@ function formatDate(d) {
 /** Danh sách dạng bảng — giống CRM ListView, điều hướng chi tiết xưởng */
 export function ProductionListView({ pipeline, calculateDays }) {
   const navigate = useNavigate();
+  const goProject = (projectId) => {
+    markWorkshopPipelineCardFocus(projectId, 'sx');
+    navigate(`/sx/projects/${projectId}`);
+  };
   const allItems = pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s })));
   if (!allItems.length) {
     return <p className="text-center text-gray-400 py-12 text-sm">Không có dự án xưởng</p>;
@@ -41,7 +46,7 @@ export function ProductionListView({ pipeline, calculateDays }) {
             return (
               <tr
                 key={item.id}
-                onClick={() => navigate(`/sx/projects/${item.id}`)}
+                onClick={() => goProject(item.id)}
                 className="hover:bg-teal-50/60 cursor-pointer transition-colors"
               >
                 <td className="px-4 py-2.5 text-teal-600 font-medium whitespace-nowrap">{item.code}</td>
@@ -79,6 +84,10 @@ export function ProductionListView({ pipeline, calculateDays }) {
 /** Calendar view — lịch tháng hiển thị production_deadline và deadline của dự án */
 export function ProductionCalendarView({ pipeline }) {
   const navigate = useNavigate();
+  const goProject = (projectId) => {
+    markWorkshopPipelineCardFocus(projectId, 'sx');
+    navigate(`/sx/projects/${projectId}`);
+  };
   const allItems = useMemo(
     () => pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s }))),
     [pipeline],
@@ -170,7 +179,7 @@ export function ProductionCalendarView({ pipeline }) {
                   return (
                     <div
                       key={item.id}
-                      onClick={() => navigate(`/sx/projects/${item.id}`)}
+                      onClick={() => goProject(item.id)}
                       title={`${item.code} — ${item.name}${usePD ? ' (Giao xưởng)' : ' (Deadline)'}`}
                       className={`truncate text-[10px] px-1.5 py-0.5 rounded cursor-pointer font-medium ${
                         isOverdue
@@ -207,6 +216,10 @@ export function ProductionCalendarView({ pipeline }) {
 /** Planner theo người phụ trách sản xuất — giống CRM PlannerView */
 export function ProductionPlannerView({ pipeline }) {
   const navigate = useNavigate();
+  const goProject = (projectId) => {
+    markWorkshopPipelineCardFocus(projectId, 'sx');
+    navigate(`/sx/projects/${projectId}`);
+  };
   const allItems = pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s })));
 
   const groups = useMemo(() => {
@@ -233,7 +246,7 @@ export function ProductionPlannerView({ pipeline }) {
   const renderCard = (item) => (
     <div
       key={item.id}
-      onClick={() => navigate(`/sx/projects/${item.id}`)}
+      onClick={() => goProject(item.id)}
       className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md transition-all cursor-pointer group"
     >
       <div className="flex items-start justify-between gap-2">

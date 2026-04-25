@@ -1,14 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Search } from 'lucide-react';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 
 export default function NewProductionProjectModal({ onClose }) {
+  const { user } = useAuth();
+  const [workTypes, setWorkTypes] = useState([]);
   const [formData, setFormData] = useState({
     name: '',
     estimated_value: '',
     priority: 'medium',
     deadline: '',
     production_person_id: '',
+    workshop_type_id: '',
   });
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerResults, setCustomerResults] = useState([]);
@@ -22,6 +26,17 @@ export default function NewProductionProjectModal({ onClose }) {
     nameRef.current?.focus();
     api.get('/users').then(r => setUsers(r.data?.users || r.data || [])).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const cid = user?.company_id;
+    if (!cid) {
+      setWorkTypes([]);
+      return;
+    }
+    api.get('/workshop/project-types', { params: { company_id: cid, module: 'production' } })
+      .then((r) => setWorkTypes(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setWorkTypes([]));
+  }, [user?.company_id]);
 
   useEffect(() => {
     if (!customerSearch.trim()) { setCustomerResults([]); return; }
@@ -45,10 +60,12 @@ export default function NewProductionProjectModal({ onClose }) {
       await api.post('/projects', {
         name: formData.name.trim(),
         customer_id: selectedCustomer?.id || null,
+        company_id: user?.company_id || null,
         estimated_value: formData.estimated_value ? Number(formData.estimated_value) : null,
         priority: formData.priority,
         deadline: formData.deadline || null,
         production_person_id: formData.production_person_id || null,
+        workshop_type_id: formData.workshop_type_id || null,
         status: 'producing',
       });
       onClose();
@@ -134,6 +151,20 @@ export default function NewProductionProjectModal({ onClose }) {
               </div>
             )}
           </div>
+
+          {workTypes.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Loại dự án</label>
+              <select
+                value={formData.workshop_type_id}
+                onChange={(e) => set('workshop_type_id', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+              >
+                <option value="">— Không chọn —</option>
+                {workTypes.map((wt) => <option key={wt.id} value={wt.id}>{wt.name}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* Giá trị & Ưu tiên */}
           <div className="grid grid-cols-2 gap-3">

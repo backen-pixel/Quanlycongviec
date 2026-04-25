@@ -4,11 +4,12 @@ import { useAuth } from '../lib/auth';
 import Modal from '../components/Modal';
 import EcosystemSetupWizard from '../components/EcosystemSetupWizard';
 import EcosystemListView from '../components/EcosystemListView';
+import { Link } from 'react-router-dom';
 import {
   Plus, ChevronRight, ChevronDown, Users, Trash2, Layers,
   Edit, Shield, FolderKanban, Network, Save, X, UserPlus, Crown, User,
   ArrowDownRight, Copy, FileText, ChevronUp, ZoomIn, ZoomOut, Maximize2, Move,
-  List, GitBranch, HelpCircle
+  List, GitBranch, HelpCircle, Puzzle,
 } from 'lucide-react';
 
 const RL = { director: 'Giám đốc', manager: 'Quản lý', team_lead: 'Trưởng nhóm', member: 'Nhân viên' };
@@ -71,7 +72,16 @@ export default function EcosystemPage() {
           <p className="text-xs text-gray-500 mt-0.5">{units.length} đơn vị · {levels.length} cấp bậc</p>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin && (
+            <Link
+              to="/ecosystem/modules"
+              className="h-9 px-3 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-800 text-sm font-medium flex items-center gap-2 hover:bg-indigo-100"
+            >
+              <Puzzle className="h-4 w-4" />
+              Module &amp; Khối
+            </Link>
+          )}
 
           {/* View mode toggle */}
           <div className="flex bg-gray-100 rounded-lg p-1">

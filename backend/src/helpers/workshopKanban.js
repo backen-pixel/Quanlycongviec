@@ -1,12 +1,15 @@
 const { supabase } = require('../config/supabase');
+const { normalizeWorkshopCompanyId } = require('./workshopCompanyScope');
 const {
   buildPipelineStageSelect,
   isHandoverMissingError,
   isCrmTargetStageMissingError,
   isCrmTargetStageEmbedRelationshipError,
+  isProductionCompanyIdMissingError,
   markHandoverColumnMissing,
   markCrmTargetStageColumnMissing,
   markCrmTargetStageJoinMissing,
+  markProductionCompanyIdColumnMissing,
 } = require('./productionPipelineSchema');
 
 const WORKSHOP_STAGE_SLUGS = ['production', 'delivery', 'customer-care'];
@@ -78,46 +81,81 @@ function buildScopeOrFilter(stageIds, wonIds) {
   return parts.join(',');
 }
 
-async function loadProductionPipelineStagesRows(includeInactive = false) {
-  const run = () => {
+async function loadProductionPipelineStagesRows(includeInactive = false, companyId = null, legacyUnscoped = false) {
+  const cid = legacyUnscoped ? null : normalizeWorkshopCompanyId(companyId);
+
+  const runBase = (scope) => {
     let q = supabase
       .from('production_pipeline_stages')
       .select(buildPipelineStageSelect())
       .order('order_index');
     if (!includeInactive) q = q.eq('is_active', true);
+    if (!legacyUnscoped && cid && scope === 'scoped') q = q.eq('company_id', cid);
+    if (!legacyUnscoped && scope === 'global') q = q.is('company_id', null);
     return q;
   };
-  let { data, error } = await run();
-  if (error && isHandoverMissingError(error)) {
-    markHandoverColumnMissing();
-    const retry = await run();
-    data = retry.data;
-    error = retry.error;
+
+  const runWithRetries = async (scope) => {
+    let { data, error } = await runBase(scope);
+    if (error && isProductionCompanyIdMissingError(error)) {
+      markProductionCompanyIdColumnMissing();
+      return loadProductionPipelineStagesRows(includeInactive, companyId, true);
+    }
+    if (error && isHandoverMissingError(error)) {
+      markHandoverColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
+      markCrmTargetStageJoinMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isCrmTargetStageMissingError(error)) {
+      markCrmTargetStageColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    return { data, error };
+  };
+
+  let data;
+  if (legacyUnscoped || !cid) {
+    const r = await runWithRetries(legacyUnscoped ? 'all' : 'global');
+    if (r.error) {
+      console.warn('[workshopKanban] production_pipeline_stages:', r.error.message);
+      return null;
+    }
+    data = r.data;
+  } else {
+    const scoped = await runWithRetries('scoped');
+    if (scoped.error) {
+      console.warn('[workshopKanban] production_pipeline_stages:', scoped.error.message);
+      return null;
+    }
+    if ((scoped.data || []).length) {
+      data = scoped.data;
+    } else {
+      const g = await runWithRetries('global');
+      if (g.error) {
+        console.warn('[workshopKanban] production_pipeline_stages:', g.error.message);
+        return null;
+      }
+      data = g.data;
+    }
   }
-  if (error && isCrmTargetStageEmbedRelationshipError(error)) {
-    markCrmTargetStageJoinMissing();
-    const retry = await run();
-    data = retry.data;
-    error = retry.error;
-  }
-  if (error && isCrmTargetStageMissingError(error)) {
-    markCrmTargetStageColumnMissing();
-    const retry = await run();
-    data = retry.data;
-    error = retry.error;
-  }
-  if (error) {
-    console.warn('[workshopKanban] production_pipeline_stages:', error.message);
-    return null;
-  }
+
   return (data || []).map((row) => ({
     ...row,
     is_handover_to_logistics: row.is_handover_to_logistics ?? false,
   }));
 }
 
-async function getResolvedKanbanStages() {
-  const rows = await loadProductionPipelineStagesRows(false);
+async function getResolvedKanbanStages(companyId = null) {
+  const rows = await loadProductionPipelineStagesRows(false, companyId);
   const { stages: ws, bySlug, ids: workshopIds } = await getWorkshopStageMap();
 
   if (!rows?.length) {
@@ -165,30 +203,43 @@ function kanbanColumnIdForProject(project, sortedStages, wonIdSet) {
   return null;
 }
 
-function enrichProjectsForSx(projects, sortedStages, wonIds) {
-  const wonSet = new Set(wonIds);
-  // Cột đánh dấu bàn giao VC (is_handover_to_logistics = true)
+function enrichOneSxProject(project, sortedStages, wonSet) {
   const handoverCol = sortedStages.find((s) => s.is_handover_to_logistics === true);
   const VC_STATUSES = new Set(['shipping', 'installing', 'warranty']);
+  let colId = kanbanColumnIdForProject(project, sortedStages, wonSet);
+  if (!colId && VC_STATUSES.has(project.status) && handoverCol) {
+    colId = handoverCol.id;
+  }
+  const intakeCol = sortedStages.find((s) => s.bucket_slug === INTAKE_BUCKET);
+  const inIntake = intakeCol && colId === intakeCol.id;
+  return {
+    ...project,
+    sx_won_deal: wonSet.has(project.id),
+    sx_kanban_column_id: colId,
+    sx_intake: Boolean(inIntake),
+  };
+}
 
-  return (projects || []).map((project) => {
-    let colId = kanbanColumnIdForProject(project, sortedStages, wonSet);
-
-    // Project đã bàn giao VC (status=shipping/installing/warranty) nhưng chưa khớp cột nào
-    // → gắn vào cột handover để tiếp tục hiển thị ở SX Kanban
-    if (!colId && VC_STATUSES.has(project.status) && handoverCol) {
-      colId = handoverCol.id;
-    }
-
-    const intakeCol = sortedStages.find((s) => s.bucket_slug === INTAKE_BUCKET);
-    const inIntake = intakeCol && colId === intakeCol.id;
-    return {
-      ...project,
-      sx_won_deal: wonSet.has(project.id),
-      sx_kanban_column_id: colId,
-      sx_intake: Boolean(inIntake),
-    };
-  });
+/**
+ * Gắn sx_kanban_column_id theo pipeline đã cấu hình (theo công ty dự án, hoặc filterCompanyId khi dashboard lọc 1 công ty).
+ */
+async function enrichProjectsForSx(projects, wonIds, filterCompanyId = null) {
+  const wonSet = new Set(wonIds);
+  const f = normalizeWorkshopCompanyId(filterCompanyId);
+  const keyFor = (p) => {
+    if (f) return `__f:${f}`;
+    const id = p.company_id || p.company?.id;
+    return id ? String(id) : '__global__';
+  };
+  const keys = f ? [`__f:${f}`] : [...new Set((projects || []).map(keyFor))];
+  const cache = new Map();
+  for (const key of keys) {
+    const cid = key.startsWith('__f:') ? key.slice(4) : (key === '__global__' ? null : key);
+    const { stages } = await getResolvedKanbanStages(cid);
+    const sorted = [...stages].sort((a, b) => a.order_index - b.order_index);
+    cache.set(key, sorted);
+  }
+  return (projects || []).map((p) => enrichOneSxProject(p, cache.get(keyFor(p)), wonSet));
 }
 
 function buildPipelineSummary(sortedStages, enhancedProjects) {
@@ -209,31 +260,35 @@ function buildPipelineSummary(sortedStages, enhancedProjects) {
   }));
 }
 
-/** UUID hàng production_pipeline_stages (cột chờ), hoặc null */
-async function getDbIntakeStageId() {
-  const { data } = await supabase
-    .from('production_pipeline_stages')
-    .select('id')
-    .eq('bucket_slug', INTAKE_BUCKET)
-    .eq('is_active', true)
-    .limit(1)
-    .maybeSingle();
-  return data?.id || null;
+/** UUID hàng production_pipeline_stages (cột chờ), hoặc null — theo phạm vi công ty */
+async function getDbIntakeStageId(companyId = null) {
+  const rows = await loadProductionPipelineStagesRows(false, companyId);
+  const intake = (rows || []).find((r) => r.bucket_slug === INTAKE_BUCKET && r.is_active !== false);
+  return intake?.id || null;
 }
 
 /**
  * Map id cột Kanban (có thể là __fb_intake__) → UUID lưu DB trên crm_leads.
  */
 async function resolveSxPipelineStageUuidForProject(project) {
+  let compId = project?.company_id;
+  if (!compId && project?.id) {
+    const { data: pr } = await supabase
+      .from('projects')
+      .select('company_id')
+      .eq('id', project.id)
+      .maybeSingle();
+    compId = pr?.company_id;
+  }
   const wonIds = await getWonDealProjectIds();
   const wonSet = new Set(wonIds);
-  const { stages: kanbanStages } = await getResolvedKanbanStages();
+  const { stages: kanbanStages } = await getResolvedKanbanStages(compId ? String(compId) : null);
   const sortedKanban = [...kanbanStages].sort((a, b) => a.order_index - b.order_index);
   const colId = kanbanColumnIdForProject(project, sortedKanban, wonSet);
   if (!colId) return null;
   const s = String(colId);
   if (s.startsWith('__fb_')) {
-    return getDbIntakeStageId();
+    return getDbIntakeStageId(compId ? String(compId) : null);
   }
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) {
     return s;
@@ -398,34 +453,18 @@ async function getCrmThangStageId() {
 async function syncCrmLeadSxPipelineFromProject(projectId) {
   const { data: project } = await supabase
     .from('projects')
-    .select('id, current_stage_id, status')
+    .select('id, current_stage_id, status, company_id')
     .eq('id', projectId)
     .single();
   if (!project) return;
 
-  const prodSelectCols = 'workflow_stage_id, crm_sync_type, crm_target_stage_id, order_index';
-  const [stageUuid, prodPipeFirst] = await Promise.all([
+  const [stageUuid, pipeRows] = await Promise.all([
     resolveSxPipelineStageUuidForProject(project),
-    supabase
-      .from('production_pipeline_stages')
-      .select(prodSelectCols)
-      .not('workflow_stage_id', 'is', null)
-      .eq('is_active', true)
-      .order('order_index', { ascending: true }),
+    loadProductionPipelineStagesRows(true, project.company_id),
   ]);
-  let prodPipeRows = prodPipeFirst.data;
-  let prodPipeErr = prodPipeFirst.error;
-  // Graceful: crm_target_stage_id may not exist yet
-  if (prodPipeErr && prodPipeErr.message?.includes('crm_target_stage_id')) {
-    ({ data: prodPipeRows } = await supabase
-      .from('production_pipeline_stages')
-      .select('workflow_stage_id, crm_sync_type, order_index')
-      .not('workflow_stage_id', 'is', null)
-      .eq('is_active', true)
-      .order('order_index', { ascending: true }));
-  }
-
-  const prodPipeList = prodPipeRows || [];
+  const prodPipeList = (pipeRows || [])
+    .filter((r) => r.workflow_stage_id)
+    .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
   const prodWorkflowStageIds = new Set(
     prodPipeList.map((r) => r.workflow_stage_id).filter(Boolean).map(String),
   );

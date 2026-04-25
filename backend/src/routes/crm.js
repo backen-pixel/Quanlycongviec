@@ -2229,14 +2229,22 @@ r.get('/leads', async (req, res) => {
     const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(assigned_to) || forcedLeadSelf);
     const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
 
+    // RPC `crm_leads_page_ids` (database/58_...) không có tham số p_lead_type_id — gửi thêm sẽ khiến PostgREST
+    // không resolve được function → 500. Lọc theo lead_type_id chỉ dùng legacy.
+    if (uuidQueryOrNull(lead_type_id)) {
+      const legacy = await getCrmLeadsListLegacy(mergedQuery, {
+        assigneeStrict: rpcAssigneeStrict,
+        viewerUserId: req.user?.userId,
+      });
+      return res.json(legacy);
+    }
+
     const rpcParams = {
       p_type: type,
       p_stage_id: uuidQueryOrNull(stage_id),
       p_assigned_to: uuidQueryOrNull(assigned_to),
       p_source_id: uuidQueryOrNull(source_id),
       p_company_id: uuidQueryOrNull(company_id),
-      // RPC hiện có thể chưa hỗ trợ lead_type_id; giữ lại để forward-compat (RPC sẽ ignore nếu không dùng)
-      p_lead_type_id: uuidQueryOrNull(lead_type_id),
       p_date_from: sanitizeIsoDateQueryParam(date_from),
       p_date_to: sanitizeIsoDateQueryParam(date_to),
       p_search: search || null,
@@ -2246,7 +2254,16 @@ r.get('/leads', async (req, res) => {
       p_assigned_strict: rpcAssigneeStrict,
     };
 
-    const { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
+    let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
+    // DB cũ (database/51): function 11 tham số, không có p_assigned_strict — PostgREST báo không tìm thấy function.
+    if (rpcError && /crm_leads_page_ids|does not exist|Could not find/i.test(String(rpcError.message || ''))) {
+      const { p_assigned_strict: _s, ...rpcLegacy } = rpcParams;
+      const r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
+      if (!r2.error) {
+        rpcData = r2.data;
+        rpcError = null;
+      }
+    }
 
     const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
     const rpcOk = !!parsedRpc;

@@ -3,16 +3,34 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { syncCompanyToEcosystem } = require('../helpers/ecosystemSync');
+const { getRestrictedDivisionIdsForModule, KNOWN_MODULE_KEYS } = require('../helpers/ecosystemModuleScope');
 
 const r = Router();
 r.use(auth);
 
 // ═══ LIST COMPANIES ═══
+// Query: for_module = crm | production | logistics | … — chỉ trả công ty thuộc khối được phép trong /ecosystem/modules (nếu có cấu hình scope)
 r.get('/', async (req, res) => {
   try {
-    const { search } = req.query;
-    let q = supabase.from('companies').select('*').eq('is_active', true).order('name');
+    const { search, for_module } = req.query;
+    const mod = String(for_module || '').trim().toLowerCase();
+    const useModuleFilter = mod && KNOWN_MODULE_KEYS.includes(mod);
+
+    // Coi NULL như đang hoạt động (dữ liệu cũ / import thiếu cột) — chỉ ẩn khi is_active = false rõ ràng
+    let q = supabase
+      .from('companies')
+      .select('*')
+      .or('is_active.eq.true,is_active.is.null')
+      .order('name');
     if (search) q = q.or(`name.ilike.%${search}%,short_name.ilike.%${search}%`);
+
+    if (useModuleFilter) {
+      const restricted = await getRestrictedDivisionIdsForModule(mod);
+      if (restricted && restricted.size > 0) {
+        q = q.in('division_unit_id', [...restricted]);
+      }
+    }
+
     const { data, error } = await q;
     if (error) throw error;
     res.json({ companies: data || [] });

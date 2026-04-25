@@ -68,6 +68,7 @@ import TeamsPage from './pages/TeamsPage';
 import WorkflowSettings from './pages/WorkflowSettings';
 import ApprovalRulesPage from './pages/ApprovalRulesPage';
 import EcosystemPage from './pages/EcosystemPage';
+import EcosystemModulesPage from './pages/EcosystemModulesPage';
 import EcosystemLevelsPage from './pages/EcosystemLevelsPage';
 import CRMDashboard from './pages/CRMDashboard';
 import LeadJourneyPage from './pages/LeadJourneyPage';
@@ -230,6 +231,7 @@ export default function App() {
             <Route path="/workflow-settings" element={<WorkflowSettings />} />
             <Route path="/approval-rules" element={<ApprovalRulesPage />} />
             <Route path="/ecosystem" element={<EcosystemPage />} />
+            <Route path="/ecosystem/modules" element={<EcosystemModulesPage />} />
             <Route path="/ecosystem-levels" element={<EcosystemLevelsPage />} />
             <Route path="/stage-groups" element={<StageGroupsPage />} />
             <Route path="/workflow-hub" element={<WorkflowHubPage />} />

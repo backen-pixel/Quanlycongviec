@@ -1,13 +1,20 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2 } from 'lucide-react';
+import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 
 const INTAKE = 'won_pending';
+const LS_SX_PIPE_COMPANY = 'sx_pipeline_settings_company_id';
 const COLORS = ['#0f766e', '#14b8a6', '#5eead4', '#64748b', '#3B82F6', '#8B5CF6', '#F59E0B', '#10B981'];
 const ICONS = ['🏭', '🚚', '🤝', '⏳', '📋', '✅', '🎯', '🔧', '📦'];
 
 export default function ProductionPipelineSettingsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [companies, setCompanies] = useState([]);
+  const [settingsCompanyId, setSettingsCompanyId] = useState('');
   const [stages, setStages] = useState([]);
   const [workflowStages, setWorkflowStages] = useState([]);
   const [crmStages, setCrmStages] = useState([]);
@@ -21,10 +28,16 @@ export default function ProductionPipelineSettingsPage() {
   });
 
   const load = useCallback(async () => {
+    if (!settingsCompanyId) {
+      setStages([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
+      const pipeParams = { all: 'true', company_id: settingsCompanyId };
       const [pipeRes, stRes, crmRes] = await Promise.all([
-        api.get('/production/pipeline-stages', { params: { all: 'true' } }),
+        api.get('/production/pipeline-stages', { params: pipeParams }),
         api.get('/stages').catch(() => api.get('/users/stages').catch(() => ({ data: { stages: [] } }))),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
       ]);
@@ -35,9 +48,42 @@ export default function ProductionPipelineSettingsPage() {
       setStages([]);
     }
     setLoading(false);
-  }, []);
+  }, [settingsCompanyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    api.get('/companies', { params: { for_module: 'production' } }).then((r) => {
+      const list = r.data?.companies || r.data || [];
+      const arr = Array.isArray(list) ? list : [];
+      setCompanies(arr);
+      if (isAdmin) {
+        try {
+          const s = localStorage.getItem(LS_SX_PIPE_COMPANY);
+          if (s && arr.some((c) => String(c.id) === String(s))) {
+            setSettingsCompanyId(s);
+            return;
+          }
+        } catch { /* ignore */ }
+        if (arr.length) setSettingsCompanyId(String(arr[0].id));
+      } else if (user?.company_id) {
+        setSettingsCompanyId(String(user.company_id));
+      }
+    }).catch(() => setCompanies([]));
+  }, [isAdmin, user?.company_id]);
+
+  useEffect(() => {
+    if (!isAdmin || !settingsCompanyId) return;
+    try {
+      localStorage.setItem(LS_SX_PIPE_COMPANY, settingsCompanyId);
+    } catch { /* ignore */ }
+  }, [isAdmin, settingsCompanyId]);
+
+  const settingsCompanyLabel = useMemo(() => {
+    if (!settingsCompanyId) return '';
+    const c = companies.find((x) => String(x.id) === String(settingsCompanyId));
+    return c?.short_name || c?.name || settingsCompanyId;
+  }, [companies, settingsCompanyId]);
 
   const hasIntake = stages.some((s) => s.bucket_slug === INTAKE);
 
@@ -78,6 +124,7 @@ export default function ProductionPipelineSettingsPage() {
         is_handover_to_logistics: form.is_handover_to_logistics,
         crm_sync_type: form.crm_target_stage_id ? null : (form.crm_sync_type || null),
         crm_target_stage_id: form.crm_target_stage_id || null,
+        company_id: settingsCompanyId,
       });
       setAdding(false);
       load();
@@ -131,7 +178,7 @@ export default function ProductionPipelineSettingsPage() {
     if (!confirm('Thêm 5 cột mẫu (nhận bản vẽ, CNC, lắp ráp, sơn, nghiệm thu nội bộ)? Có thể chạy lại an toàn — cột đã tồn tại sẽ bỏ qua.')) return;
     setSeeding(true);
     try {
-      const { data } = await api.post('/production/pipeline-stages/seed-samples');
+      const { data } = await api.post('/production/pipeline-stages/seed-samples', { company_id: settingsCompanyId });
       const parts = [];
       if (data.inserted > 0) {
         parts.push(`Đã thêm ${data.inserted} cột: ${(data.insertedNames || []).join(', ')}`);
@@ -188,6 +235,29 @@ export default function ProductionPipelineSettingsPage() {
         >
           ← Về dashboard xưởng
         </Link>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-teal-200 bg-white shadow-sm">
+        <Building2 className="h-5 w-5 text-teal-600 shrink-0" />
+        <div className="flex-1 min-w-[200px]">
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Công ty (phân loại loại dự án)</p>
+          {isAdmin ? (
+            <select
+              value={settingsCompanyId}
+              onChange={(e) => setSettingsCompanyId(e.target.value)}
+              className="mt-1 w-full max-w-md h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+            >
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name || c.id}</option>
+              ))}
+            </select>
+          ) : (
+            <p className="mt-1 text-sm font-medium text-gray-900">{settingsCompanyLabel || 'Theo tài khoản'}</p>
+          )}
+          <p className="text-[11px] text-gray-500 mt-1">
+            Cột Kanban phía dưới là pipeline của công ty đã chọn (giống CRM). Nếu chưa có cột riêng, hệ thống dùng pipeline mặc định chung. Phần «Loại dự án» cuối trang cũng theo công ty này.
+          </p>
+        </div>
       </div>
 
       <div className="bg-teal-50 border border-teal-100 rounded-xl p-4 text-sm text-teal-900">
@@ -460,6 +530,14 @@ export default function ProductionPipelineSettingsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {!loading && (
+        <WorkshopTypeSettingsSection
+          moduleContext="production"
+          accent="teal"
+          {...(isAdmin ? { companyId: settingsCompanyId, onCompanyIdChange: setSettingsCompanyId } : {})}
+        />
       )}
     </div>
   );

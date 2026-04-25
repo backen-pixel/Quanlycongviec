@@ -8,6 +8,13 @@ try { autoFlow = require('../helpers/autoFlow'); } catch (e) { autoFlow = null; 
 let stageFlow;
 try { stageFlow = require('../helpers/stageFlow'); } catch (e) { stageFlow = null; }
 const { requirePermission, getAccessibleUnits, checkPermission } = require('../middleware/newPermission');
+const {
+  ORDER_PHASES,
+  nextDhCode,
+  findMasterDealForProject,
+  createFulfillmentChildDeal,
+  pushOrderToLogistics,
+} = require('../helpers/projectOrderFulfillment');
 
 const r = Router();
 r.use(auth);
@@ -202,6 +209,158 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
 
     res.json({ projects: data, total: count, page: p, totalPages: Math.ceil((count||0)/l) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ─── ĐƠN HÀNG CON (tab Đơn hàng — pipeline + deal nhiệm vụ + đẩy VC) ───────
+r.get('/:id/orders', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const pid = req.params.id;
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('project_id', pid)
+      .order('sort_index', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json({ orders: orders || [] });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+r.post('/:id/orders', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const pid = req.params.id;
+    const userId = req.user.userId;
+    const { display_label: displayLabel, title, total } = req.body || {};
+    const label = (displayLabel || title || '').trim();
+    if (!label) return res.status(400).json({ error: 'Nhập tên đơn (vd: Đơn 1)' });
+
+    const { data: proj, error: pe } = await supabase
+      .from('projects')
+      .select('id, name, customer_id')
+      .eq('id', pid)
+      .single();
+    if (pe || !proj) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+
+    let cust = {};
+    if (proj.customer_id) {
+      const { data: c } = await supabase
+        .from('customers')
+        .select('full_name, phone, address')
+        .eq('id', proj.customer_id)
+        .maybeSingle();
+      if (c) cust = c;
+    }
+
+    const masterDeal = await findMasterDealForProject(pid);
+    if (!masterDeal) {
+      return res.status(400).json({
+        error: 'Dự án chưa có Deal CRM gắn (crm_leads type=deal, project_id). Tạo/chốt deal trước khi thêm đơn hàng con.',
+      });
+    }
+
+    const { data: lastSort } = await supabase
+      .from('orders')
+      .select('sort_index')
+      .eq('project_id', pid)
+      .order('sort_index', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const sortIndex = (lastSort?.sort_index ?? -1) + 1;
+
+    const code = await nextDhCode();
+    const childLeadId = await createFulfillmentChildDeal({
+      parentDeal: masterDeal,
+      masterProjectId: pid,
+      displayLabel: label,
+      userId,
+      estimatedValue: total != null ? Number(total) : 0,
+    });
+
+    const { data: order, error: insErr } = await supabase
+      .from('orders')
+      .insert({
+        code,
+        title: title?.trim() || label,
+        display_label: label,
+        sort_index: sortIndex,
+        order_phase: 'draft',
+        project_id: pid,
+        lead_id: masterDeal.id,
+        fulfillment_lead_id: childLeadId,
+        customer_id: proj.customer_id,
+        customer_name: cust.full_name || null,
+        customer_phone: cust.phone || null,
+        customer_address: cust.address || null,
+        total: total != null ? Number(total) : 0,
+        subtotal: total != null ? Number(total) : 0,
+        status: 'draft',
+        created_by: userId,
+      })
+      .select('*')
+      .single();
+    if (insErr) throw insErr;
+
+    await logActivity(userId, 'created', 'order', order.id, `Tạo đơn con ${code} trên dự án ${pid}: ${label}`);
+
+    res.status(201).json(order);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+r.put('/:id/orders/:orderId', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const pid = req.params.id;
+    const oid = req.params.orderId;
+    const { display_label, title, order_phase: orderPhase, sort_index: sortIndex, notes } = req.body || {};
+
+    const { data: existing, error: exErr } = await supabase
+      .from('orders')
+      .select('id, project_id')
+      .eq('id', oid)
+      .single();
+    if (exErr || !existing || String(existing.project_id) !== String(pid)) {
+      return res.status(404).json({ error: 'Không tìm thấy đơn trên dự án này' });
+    }
+
+    const updates = { updated_at: new Date().toISOString() };
+    if (display_label !== undefined) updates.display_label = display_label?.trim() || null;
+    if (title !== undefined) updates.title = title?.trim() || null;
+    if (notes !== undefined) updates.notes = notes;
+    if (sortIndex !== undefined) updates.sort_index = Math.max(0, parseInt(sortIndex, 10) || 0);
+    if (orderPhase !== undefined) {
+      const p = String(orderPhase).trim();
+      if (!ORDER_PHASES.includes(p)) {
+        return res.status(400).json({ error: `order_phase phải là một trong: ${ORDER_PHASES.join(', ')}` });
+      }
+      updates.order_phase = p;
+    }
+
+    const { data, error } = await supabase.from('orders').update(updates).eq('id', oid).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+r.post('/:id/orders/:orderId/push-to-logistics', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const pid = req.params.id;
+    const oid = req.params.orderId;
+    const userId = req.user.userId;
+    const result = await pushOrderToLogistics({ orderId: oid, projectId: pid, userId });
+    await logActivity(userId, 'updated', 'order', oid, `Đẩy đơn sang VC — logistics_project=${result.logistics_project_id || ''}`);
+    res.json(result);
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: e.message || 'Lỗi' });
+  }
 });
 
 // ─── GET PROJECT DETAIL ──
@@ -411,6 +570,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       shipping_person_id: b.shipping_person_id || null,
       installation_person_id: b.installation_person_id || null,
       care_person_id: b.care_person_id || null,
+      workshop_type_id: b.workshop_type_id || null,
       // Quotation files
       quotation_files: b.quotation_files || [],
       consult_date: new Date().toISOString(),
@@ -993,7 +1153,7 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
 
     const { data: old } = await supabase.from('projects').select('status,name').eq('id', req.params.id).single();
