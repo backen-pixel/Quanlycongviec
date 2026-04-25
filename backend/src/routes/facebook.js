@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const r = express.Router();
 const { supabase } = require('../config/supabase');
+const axios = require('axios');
 const {
   activityTimestampMs,
   sortFacebookContactsNewestFirst,
@@ -287,6 +288,8 @@ const autoPipeline = {
   step: -1,
   totalSteps: 2,
   stepLabel: null,
+  /** Nếu đang nghỉ giữa chu kỳ: timestamp ms (Date.now()+pauseMs); null nếu không nghỉ. */
+  pauseUntilMs: null,
   cycleCount: 0,
   batchIndex: 0,
   totalBatches: 0,
@@ -307,6 +310,8 @@ function pushAutoLog(text, status = 'info') {
 }
 
 function getAutoState() {
+  const pauseUntilMs = typeof autoPipeline.pauseUntilMs === 'number' ? autoPipeline.pauseUntilMs : null;
+  const pauseRemainingMs = pauseUntilMs ? Math.max(0, pauseUntilMs - Date.now()) : 0;
   return {
     enabled: autoPipeline.enabled,
     running: autoPipeline.running,
@@ -314,6 +319,8 @@ function getAutoState() {
     step: autoPipeline.step,
     totalSteps: autoPipeline.totalSteps,
     stepLabel: autoPipeline.stepLabel,
+    pauseUntilMs,
+    pauseRemainingMs,
     cycleCount: autoPipeline.cycleCount,
     batchIndex: autoPipeline.batchIndex,
     totalBatches: autoPipeline.totalBatches,
@@ -842,6 +849,12 @@ async function runAutoPipelineLoop() {
     if (!autoPipeline.enabled || autoPipeline.stopRequested) break;
 
     if (pauseMs > 0) {
+      autoPipeline.phase = 'pause';
+      autoPipeline.pauseUntilMs = Date.now() + pauseMs;
+      autoPipeline.lastUpdatedAt = new Date().toISOString();
+      // stepLabel dùng cho UI; countdown sẽ dựa vào pauseUntilMs
+      autoPipeline.stepLabel = `⏳ Nghỉ ${Math.round(pauseMs / 1000)}s giữa các chu kỳ`;
+      emitAutoState();
       if (pcfg.engine === 'full_cycle') {
         pushAutoLog(`⏭️ Full cycle: nghỉ ${pauseMs / 1000}s rồi lặp (từ đầu pool / đủ N user)`);
       } else if (pcfg.engine !== 'chain') {
@@ -851,6 +864,8 @@ async function runAutoPipelineLoop() {
       }
       pushAutoLog(`♻️ Nghỉ ${pauseMs / 1000}s rồi lặp chu kỳ ${autoPipeline.cycleCount + 1}...`);
       await new Promise((resolve) => setTimeout(resolve, pauseMs));
+      // Hết nghỉ
+      autoPipeline.pauseUntilMs = null;
     } else {
       pushAutoLog(`⏭️ Chu kỳ tiếp theo (${autoPipeline.cycleCount + 1}) — chạy liền, không nghỉ giữa vòng`);
     }
@@ -2389,17 +2404,67 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     const { data: page } = await supabase.from('facebook_pages')
       .select('*').eq('page_id', contact.page_id).single();
 
-    // Lấy stage "Mới" (default)
+    const { getConfig: getAutoLeadConfig } = require('../config/autoLeadConfig');
+    const autoLeadCfg = getAutoLeadConfig();
+
+    // Company: body override → page default → auto-lead-config default
+    let companyId = req.body.company_id || null;
+    if (!companyId && page?.default_company_id) companyId = page.default_company_id;
+    if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
+
+    // Default lead type (company-scoped): page default → auto-lead-config default
+    let leadTypeId = null;
+    const candidateLeadTypeId = (page?.default_lead_type_id || autoLeadCfg?.default_lead_type_id) || null;
+    if (candidateLeadTypeId && companyId) {
+      try {
+        const { data: lt } = await supabase
+          .from('crm_lead_types')
+          .select('id, company_id, applies_to, is_active')
+          .eq('id', candidateLeadTypeId)
+          .maybeSingle();
+        if (
+          lt
+          && String(lt.company_id || '') === String(companyId || '')
+          && lt.is_active !== false
+          && ['lead', 'both'].includes(String(lt.applies_to || 'both'))
+        ) {
+          leadTypeId = lt.id;
+        }
+      } catch (_) { /* ignore */ }
+    }
+
+    // Stage: page default → first stage of default pipeline (company) → global first lead stage
     let stageId = page?.default_stage_id || null;
+    if (!stageId && companyId) {
+      try {
+        const { data: defPipe } = await supabase
+          .from('crm_pipelines')
+          .select('id')
+          .eq('company_id', companyId)
+          .eq('is_active', true)
+          .order('is_default', { ascending: false })
+          .order('created_at')
+          .limit(1)
+          .maybeSingle();
+        if (defPipe?.id) {
+          const { data: firstStage } = await supabase
+            .from('crm_pipeline_stages')
+            .select('id')
+            .eq('pipeline_id', defPipe.id)
+            .eq('pipeline_type', 'lead')
+            .eq('is_active', true)
+            .order('order_index')
+            .limit(1)
+            .maybeSingle();
+          stageId = firstStage?.id || null;
+        }
+      } catch (_) { /* ignore */ }
+    }
     if (!stageId) {
       const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
         .select('id').eq('pipeline_type', 'lead').order('order_index').limit(1).single();
       stageId = defaultStage?.id || null;
     }
-
-    // Company
-    let companyId = req.body.company_id || null;
-    if (!companyId && page?.default_company_id) companyId = page.default_company_id;
 
     // Extract phone/address từ TẤT CẢ tin nhắn cũ
     let extractedPhone = contact.phone || null;
@@ -2447,26 +2512,20 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
 
     const resolvedSourceId = await resolveFacebookSourceId(page);
 
-    // Tạo lead code
-    const { count } = await supabase.from('crm_leads')
-      .select('id', { count: 'exact', head: true }).eq('type', 'lead');
-    const code = `LEAD-${String((count || 0) + 1).padStart(4, '0')}`;
-
-    const { data: lead, error } = await supabase.from('crm_leads').insert({
-      code,
+    const ownerId = page?.default_lead_owner_id || page?.created_by || req.user.userId;
+    // IMPORTANT: tạo lead qua API CRM chuẩn để auto-gen tasks + tạo Đơn 1 (fulfillment)
+    const port = process.env.PORT || 3000;
+    const { data: lead } = await axios.post(`http://localhost:${port}/api/crm/leads`, {
       title: `[FB] ${contact.fb_name || 'KH Facebook'}`,
-      type: 'lead',
-      customer_id: customerId,
-      stage_id: stageId,
-      company_id: companyId,
-      source_id: resolvedSourceId,
-      install_address: extractedAddress,
+      customer_id: customerId || null,
+      stage_id: stageId || null,
+      company_id: companyId || null,
+      lead_type_id: leadTypeId || null,
+      source_id: resolvedSourceId || null,
+      install_address: extractedAddress || null,
       description: `Từ Facebook Messenger\nTên: ${contact.fb_name || ''}\nSĐT: ${extractedPhone || ''}\nĐịa chỉ: ${extractedAddress || ''}`.trim(),
-      lead_owner_id: req.user.userId,
-      assigned_to: req.user.userId,
-      created_by: req.user.userId,
-    }).select('id, code, title').single();
-    if (error) throw error;
+      assigned_to: ownerId || null,
+    }, { headers: { authorization: req.headers.authorization } });
 
     // Link contact → lead + messages
     await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
@@ -4992,6 +5051,7 @@ r.post('/auto-pipeline/start', authMiddleware, async (_req, res) => {
       autoPipeline.phase = 'idle';
       autoPipeline.step = -1;
       autoPipeline.stepLabel = null;
+      autoPipeline.pauseUntilMs = null;
       emitAutoState();
     });
   } else {
@@ -5004,6 +5064,7 @@ r.post('/auto-pipeline/start', authMiddleware, async (_req, res) => {
 r.post('/auto-pipeline/stop', authMiddleware, async (_req, res) => {
   autoPipeline.stopRequested = true;
   autoPipeline.enabled = false;
+  autoPipeline.pauseUntilMs = null;
   pushAutoLog('🛑 Đã yêu cầu dừng auto pipeline');
   res.json({ ok: true, state: getAutoState() });
 });
