@@ -1499,6 +1499,36 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     }
   }
 
+  // ── Resolve pipeline_id theo company (giống POST /api/crm/leads) ──
+  let pipelineId = null;
+  if (companyId) {
+    try {
+      const { data: defPipe } = await supabase
+        .from('crm_pipelines')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at')
+        .limit(1)
+        .maybeSingle();
+      pipelineId = defPipe?.id || null;
+      // Resolve first stage from company pipeline nếu chưa có stageId
+      if (pipelineId && !stageId) {
+        const { data: firstStage } = await supabase
+          .from('crm_pipeline_stages')
+          .select('id')
+          .eq('pipeline_id', pipelineId)
+          .eq('pipeline_type', 'lead')
+          .eq('is_active', true)
+          .order('order_index')
+          .limit(1)
+          .maybeSingle();
+        if (firstStage?.id) stageId = firstStage.id;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   const leadData = {
     code,
     title: `[FB] ${extraData.full_name || contact.fb_name || 'KH Facebook'}`,
@@ -1506,6 +1536,7 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     customer_id: customerId,
     source_id: resolvedSourceId,
     stage_id: stageId,
+    pipeline_id: pipelineId,
     company_id: companyId,
     lead_type_id: leadTypeId,
     install_address: extraData.address || null,
@@ -1522,6 +1553,13 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
 
   // Link contact → lead
   await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
+
+  // ── Auto-gen CRM tasks (giống logic tạo thủ công) ──
+  try {
+    const { autoGenCrmTasks } = require('../helpers/autoGenCrmTasks');
+    const created = await autoGenCrmTasks(lead.id, 'lead', page.created_by);
+    if (created) console.log(`[FB] ✅ Auto-gen ${created} tasks for lead ${lead.code}`);
+  } catch (e) { console.warn('[FB] Auto-gen tasks error:', e.message); }
 
   console.log(`[FB] Lead created: ${lead.code} — ${lead.title}`);
 
