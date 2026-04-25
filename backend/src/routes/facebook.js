@@ -1469,11 +1469,12 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
 
   // Default lead type (company-scoped)
   let leadTypeId = null;
-  if (autoLeadCfg?.default_lead_type_id && companyId) {
+  const candidateLeadTypeId = (page?.default_lead_type_id || autoLeadCfg?.default_lead_type_id) || null;
+  if (candidateLeadTypeId && companyId) {
     const { data: lt } = await supabase
       .from('crm_lead_types')
       .select('id, company_id, applies_to, is_active')
-      .eq('id', autoLeadCfg.default_lead_type_id)
+      .eq('id', candidateLeadTypeId)
       .maybeSingle();
     if (lt
       && String(lt.company_id || '') === String(companyId || '')
@@ -2164,16 +2165,21 @@ r.get('/pages', authMiddleware, async (req, res) => {
   try {
     // Try with all columns first
     let { data, error } = await supabase.from('facebook_pages')
-      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, created_at, webhook_verify_token')
+      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, default_lead_type_id, created_at, webhook_verify_token')
       .order('created_at', { ascending: false });
     
     // Fallback: if column doesn't exist, retry without it
     if (error && (error.message?.includes('default_lead_owner_id') || error.code === '42703')) {
       ({ data, error } = await supabase.from('facebook_pages')
-        .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_company_id, created_at, webhook_verify_token')
+        .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_company_id, default_lead_type_id, created_at, webhook_verify_token')
         .order('created_at', { ascending: false }));
     }
     if (error && (error.message?.includes('default_company_id') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('facebook_pages')
+        .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_type_id, created_at, webhook_verify_token')
+        .order('created_at', { ascending: false }));
+    }
+    if (error && (error.message?.includes('default_lead_type_id') || error.code === '42703')) {
       ({ data, error } = await supabase.from('facebook_pages')
         .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, created_at, webhook_verify_token')
         .order('created_at', { ascending: false }));
@@ -2185,7 +2191,7 @@ r.get('/pages', authMiddleware, async (req, res) => {
 
 r.post('/pages', authMiddleware, async (req, res) => {
   try {
-    const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id, default_company_id, default_lead_owner_id } = req.body;
+    const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id, default_company_id, default_lead_owner_id, default_lead_type_id } = req.body;
     const insertData = {
       page_id, page_name, access_token,
       webhook_verify_token: webhook_verify_token || 'tubep_pro_verify_2024',
@@ -2197,12 +2203,14 @@ r.post('/pages', authMiddleware, async (req, res) => {
     };
     if (default_company_id) insertData.default_company_id = default_company_id;
     if (default_lead_owner_id) insertData.default_lead_owner_id = default_lead_owner_id;
+    if (default_lead_type_id) insertData.default_lead_type_id = default_lead_type_id;
 
     let { data, error } = await supabase.from('facebook_pages').insert(insertData).select().single();
     // Retry without optional columns if they don't exist
-    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id')) {
+    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id')) {
       delete insertData.default_company_id;
       delete insertData.default_lead_owner_id;
+      delete insertData.default_lead_type_id;
       ({ data, error } = await supabase.from('facebook_pages').insert(insertData).select().single());
     }
     if (error) throw error;
@@ -2214,14 +2222,15 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
   try {
     const update = {};
     ['page_name', 'access_token', 'is_active', 'auto_create_lead', 'auto_reply_message',
-     'webhook_verify_token', 'default_source_id', 'default_stage_id', 'default_pipeline_id', 'default_company_id', 'default_lead_owner_id'].forEach(f => {
+     'webhook_verify_token', 'default_source_id', 'default_stage_id', 'default_pipeline_id', 'default_company_id', 'default_lead_owner_id', 'default_lead_type_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     update.updated_at = new Date().toISOString();
     let { data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single();
-    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id')) {
+    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id')) {
       delete update.default_company_id;
       delete update.default_lead_owner_id;
+      delete update.default_lead_type_id;
       ({ data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single());
     }
     if (error) throw error;

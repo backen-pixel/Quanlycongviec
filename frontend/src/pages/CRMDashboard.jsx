@@ -6,7 +6,7 @@ import { getSocket, connectSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
 import {
   TrendingUp, Users, User, DollarSign, Target, Phone, Mail, MapPin,
-  Plus, Search, Filter, X, ChevronRight, MoreHorizontal, Calendar,
+  Plus, Search, Filter, X, ChevronLeft, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck
@@ -85,6 +85,10 @@ const TIME_PRESETS = [
 
 const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
 
+/** Bộ lọc công ty + phân loại lead/deal: lưu lâu dài (vẫn dùng khi đi trang khác / tab mới; session vẫn lưu qua saveCrmPipelineSnapshot) */
+const LS_CRM_DASH_COMPANY = 'crm_dash_filter_company_id';
+const LS_CRM_DASH_LEAD_TYPE = 'crm_dash_filter_lead_type_id';
+
 /** Lead/Deal đang trên pipeline (chưa cột Thắng / Thua) — dùng stage từ API, không dùng is_won ở root. */
 function isActiveCrmPipelineItem(item) {
   const st = item?.stage;
@@ -126,6 +130,8 @@ export default function CRMDashboard() {
   const [filterSource, setFilterSource] = useState(() => P?.filterSource ?? '');
   const [filterStage, setFilterStage] = useState(() => P?.filterStage ?? '');
   const [filterLeadType, setFilterLeadType] = useState(() => P?.filterLeadType ?? '');
+  const companyFilterFromLsRef = useRef(false);
+  const leadTypeFilterFromLsRef = useRef(false);
   // Mặc định luôn chỉ hiện lead đã có SĐT; không phục hồi giá trị '' (tất cả)
   const [filterPhone, setFilterPhone] = useState(() => {
     const v = P?.filterPhone;
@@ -276,7 +282,44 @@ export default function CRMDashboard() {
     loadCompanyEmployees();
   }, []);
 
-  useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee]);
+  // Phục hồi bộ lọc công ty (admin) + phân loại từ localStorage khi không có session snapshot
+  useEffect(() => {
+    if (user == null) return;
+    if (companyFilterFromLsRef.current) return;
+    if (P?.filterCompany) {
+      companyFilterFromLsRef.current = true;
+      return;
+    }
+    if (!isAdmin) {
+      companyFilterFromLsRef.current = true;
+      return;
+    }
+    companyFilterFromLsRef.current = true;
+    try {
+      const s = localStorage.getItem(LS_CRM_DASH_COMPANY);
+      if (s) setFilterCompany(s);
+    } catch {
+      // ignore
+    }
+  }, [isAdmin, user, P?.filterCompany]);
+
+  useEffect(() => {
+    if (user == null) return;
+    if (leadTypeFilterFromLsRef.current) return;
+    if (P?.filterLeadType) {
+      leadTypeFilterFromLsRef.current = true;
+      return;
+    }
+    leadTypeFilterFromLsRef.current = true;
+    try {
+      const s = localStorage.getItem(LS_CRM_DASH_LEAD_TYPE);
+      if (s) setFilterLeadType(s);
+    } catch {
+      // ignore
+    }
+  }, [user, P?.filterLeadType]);
+
+  useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee, filterCompany, filterLeadType]);
 
   // Admin: khi đổi filterCompany thì nạp đúng stages của pipeline công ty đó (không reload toàn bộ Kanban)
   useEffect(() => {
@@ -324,6 +367,14 @@ export default function CRMDashboard() {
     const ok = (list || []).some((s) => String(s.id) === String(filterStage));
     if (!ok) setFilterStage('');
   }, [filterStage, pipelineType, stagesLead, stagesDeal]);
+
+  // Reset phân loại nếu không còn trong lead types (đúng công ty + lead/deal tab)
+  useEffect(() => {
+    if (!filterLeadType || !leadTypes.length) return;
+    const list = leadTypes.filter((t) => t.applies_to === 'both' || t.applies_to === pipelineType);
+    const ok = list.some((t) => String(t.id) === String(filterLeadType));
+    if (!ok) setFilterLeadType('');
+  }, [filterLeadType, leadTypes, pipelineType]);
 
   // ── Realtime: cập nhật badge SX/VC khi project thay đổi stage ──
   useEffect(() => {
@@ -833,7 +884,18 @@ export default function CRMDashboard() {
       viewMode,
       kanbanLoadLimit,
     });
+    try {
+      if (isAdmin) {
+        if (filterCompany) localStorage.setItem(LS_CRM_DASH_COMPANY, String(filterCompany));
+        else localStorage.removeItem(LS_CRM_DASH_COMPANY);
+      }
+      if (filterLeadType) localStorage.setItem(LS_CRM_DASH_LEAD_TYPE, String(filterLeadType));
+      else localStorage.removeItem(LS_CRM_DASH_LEAD_TYPE);
+    } catch {
+      // ignore
+    }
   }, [
+    isAdmin,
     filterCompany,
     searchText,
     filterAssignee,
@@ -1217,6 +1279,12 @@ export default function CRMDashboard() {
               setFilterLeadType('');
               setFilterPhone('has_phone');
               handleTimePresetChange('');
+              try {
+                localStorage.removeItem(LS_CRM_DASH_COMPANY);
+                localStorage.removeItem(LS_CRM_DASH_LEAD_TYPE);
+              } catch {
+                // ignore
+              }
             }}
               className="h-10 px-4 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-sm font-medium flex items-center gap-1.5 cursor-pointer transition-all border border-red-200">
               <X className="h-3.5 w-3.5" /> Xóa bộ lọc
@@ -2519,22 +2587,148 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
 
 // Kanban View Container - MISA Style
 function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect, compact }) {
+  const kanbanHScrollRef = useRef(null);
+  const kanbanWrapRef = useRef(null);
+  const pipelineDraggingRef = useRef(false);
+  const scrollRafRef = useRef(0);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
+  const [isDraggingCard, setIsDraggingCard] = useState(false);
+
+  useEffect(() => {
+    const isOurCard = (e) => !!e.target?.closest?.('[data-crm-pipeline-card]');
+
+    const onDragStart = (e) => {
+      if (isOurCard(e)) {
+        pipelineDraggingRef.current = true;
+        setIsDraggingCard(true);
+      }
+    };
+    const onDragEnd = () => {
+      pipelineDraggingRef.current = false;
+      setIsDraggingCard(false);
+      if (scrollRafRef.current) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = 0;
+      }
+    };
+
+    const runScroll = () => {
+      scrollRafRef.current = 0;
+      if (!pipelineDraggingRef.current) return;
+      const sc = kanbanHScrollRef.current;
+      const wrap = kanbanWrapRef.current;
+      if (!sc || !wrap) return;
+      const { x } = lastPointerRef.current;
+      const r = wrap.getBoundingClientRect();
+      const margin = 56;
+      if (x < r.left + margin) {
+        sc.scrollLeft = Math.max(0, sc.scrollLeft - 14);
+        scrollRafRef.current = requestAnimationFrame(runScroll);
+      } else if (x > r.right - margin) {
+        sc.scrollLeft = Math.min(sc.scrollWidth - sc.clientWidth, sc.scrollLeft + 14);
+        scrollRafRef.current = requestAnimationFrame(runScroll);
+      }
+    };
+
+    const onDragOver = (e) => {
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
+      if (!pipelineDraggingRef.current) return;
+      e.preventDefault();
+      if (scrollRafRef.current) return;
+      const wrap = kanbanWrapRef.current;
+      if (!wrap) return;
+      const r = wrap.getBoundingClientRect();
+      const margin = 56;
+      if (e.clientX < r.left + margin || e.clientX > r.right - margin) {
+        scrollRafRef.current = requestAnimationFrame(runScroll);
+      }
+    };
+
+    document.addEventListener('dragstart', onDragStart, true);
+    document.addEventListener('dragend', onDragEnd, true);
+    document.addEventListener('dragover', onDragOver, true);
+    return () => {
+      document.removeEventListener('dragstart', onDragStart, true);
+      document.removeEventListener('dragend', onDragEnd, true);
+      document.removeEventListener('dragover', onDragOver, true);
+      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
+    };
+  }, []);
+
+  const nudge = (dir) => {
+    const sc = kanbanHScrollRef.current;
+    if (!sc) return;
+    const w = 280;
+    sc.scrollLeft = Math.max(0, Math.min(sc.scrollWidth - sc.clientWidth, sc.scrollLeft + (dir === 'right' ? w : -w)));
+  };
+
   return (
-    <div className="overflow-x-auto pb-4">
-      <div className={`flex min-w-max ${compact ? 'gap-2.5' : 'gap-4'}`}>
-        {pipeline.map(stage => (
-          <KanbanStageCard
-            key={stage.id}
-            stage={stage}
-            items={stage.items}
-            onMoveStage={onMoveStage}
-            pipelineType={pipelineType}
-            calculateDays={calculateDays}
-            mergeSelectedIds={mergeSelectedIds}
-            onToggleMergeSelect={onToggleMergeSelect}
-            compact={compact}
+    <div ref={kanbanWrapRef} className="relative">
+      <div
+        className="pointer-events-none absolute left-0 top-0 bottom-4 z-20 flex w-12 items-stretch sm:w-14"
+        aria-hidden
+      >
+        <div
+          className={`flex w-full items-center justify-center bg-gradient-to-r from-slate-200/95 via-slate-100/40 to-transparent pl-0.5 transition-opacity duration-200 ${
+            isDraggingCard ? 'opacity-100' : 'opacity-40'
+          }`}
+        >
+          <ChevronLeft
+            className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10"
+            strokeWidth={2.25}
+            aria-hidden
           />
-        ))}
+        </div>
+      </div>
+      <div
+        className="pointer-events-none absolute right-0 top-0 bottom-4 z-20 flex w-12 items-stretch sm:w-14"
+        aria-hidden
+      >
+        <div
+          className={`ml-auto flex w-full items-center justify-center bg-gradient-to-l from-slate-200/95 via-slate-100/40 to-transparent pr-0.5 transition-opacity duration-200 ${
+            isDraggingCard ? 'opacity-100' : 'opacity-40'
+          }`}
+        >
+          <ChevronRight
+            className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10"
+            strokeWidth={2.25}
+            aria-hidden
+          />
+        </div>
+      </div>
+      <button
+        type="button"
+        className={`absolute left-0 top-0 bottom-4 z-[21] w-10 border-0 bg-transparent p-0 sm:w-12 ${
+          isDraggingCard ? 'pointer-events-none cursor-default' : 'cursor-pointer'
+        }`}
+        title="Kéo thẻ tới mép này để tự cuộn sang cột bên trái — hoặc bấm (khi không kéo) để cuộn nhanh"
+        onClick={() => nudge('left')}
+      />
+      <button
+        type="button"
+        className={`absolute right-0 top-0 bottom-4 z-[21] w-10 border-0 bg-transparent p-0 sm:w-12 ${
+          isDraggingCard ? 'pointer-events-none cursor-default' : 'cursor-pointer'
+        }`}
+        title="Kéo thẻ tới mép này để tự cuộn sang cột bên phải — hoặc bấm (khi không kéo) để cuộn nhanh"
+        onClick={() => nudge('right')}
+      />
+
+      <div ref={kanbanHScrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
+        <div className={`flex min-w-max ${compact ? 'gap-2.5' : 'gap-4'}`}>
+          {pipeline.map((stage) => (
+            <KanbanStageCard
+              key={stage.id}
+              stage={stage}
+              items={stage.items}
+              onMoveStage={onMoveStage}
+              pipelineType={pipelineType}
+              calculateDays={calculateDays}
+              mergeSelectedIds={mergeSelectedIds}
+              onToggleMergeSelect={onToggleMergeSelect}
+              compact={compact}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

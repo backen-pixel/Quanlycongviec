@@ -2262,19 +2262,67 @@ function SettingsTab() {
   const [pages, setPages] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [stages, setStages] = useState([]);
+  const [stagesLoading, setStagesLoading] = useState(false);
   const [users, setUsers] = useState([]);
+  const [leadTypes, setLeadTypes] = useState([]);
+  const [leadTypesLoading, setLeadTypesLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_company_id: '', default_stage_id: '', default_lead_owner_id: '' };
+  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_company_id: '', default_lead_type_id: '', default_stage_id: '', default_lead_owner_id: '' };
   const [form, setForm] = useState({ ...emptyForm });
 
   const load = () => { fetch(`${API}/api/facebook/pages`, { headers: hdr() }).then(r => r.ok ? r.json() : []).then(setPages).catch(() => {}); };
   useEffect(() => {
     load();
     api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
-    api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).then(r => setStages(r.data || [])).catch(() => {});
     api.get('/users').then(r => setUsers(r.data?.users || r.data || [])).catch(() => {});
   }, []);
+
+  // Giai đoạn (lead) theo pipeline CRM của công ty đang chọn
+  useEffect(() => {
+    const cid = form.default_company_id;
+    if (!cid) {
+      setStages([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setStagesLoading(true);
+      try {
+        const { data: pls } = await api.get('/crm/pipelines');
+        const list = Array.isArray(pls) ? pls : [];
+        const forCo = list.filter((p) => String(p.company_id || '') === String(cid));
+        const pl = forCo.find((p) => p.is_default) || forCo[0];
+        if (!pl?.id) {
+          if (!cancelled) {
+            setStages([]);
+            setForm((prev) => (prev.default_stage_id ? { ...prev, default_stage_id: '' } : prev));
+          }
+          return;
+        }
+        const { data: st } = await api.get('/crm/pipeline-stages', {
+          params: { type: 'lead', pipeline_id: pl.id, all: 'true' },
+        });
+        const arr = Array.isArray(st) ? st : [];
+        if (!cancelled) {
+          setStages(arr);
+          setForm((prev) => {
+            if (!prev.default_stage_id) return prev;
+            if (arr.some((s) => String(s.id) === String(prev.default_stage_id))) return prev;
+            return { ...prev, default_stage_id: '' };
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setStages([]);
+          setForm((prev) => (prev.default_stage_id ? { ...prev, default_stage_id: '' } : prev));
+        }
+      } finally {
+        if (!cancelled) setStagesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [form.default_company_id]);
 
   const addPage = async () => {
     if (!form.page_id || !form.access_token) return alert('Cần nhập Page ID và Access Token');
@@ -2290,32 +2338,88 @@ function SettingsTab() {
     await fetch(`${API}/api/facebook/pages/${id}`, { method: 'DELETE', headers: hdr() });
     setPages(prev => prev.filter(p => p.id !== id));
   };
-  const startEdit = (p) => { setEditingId(p.id); setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead, default_company_id: p.default_company_id || '', default_stage_id: p.default_stage_id || '', default_lead_owner_id: p.default_lead_owner_id || '' }); };
+  const startEdit = (p) => { setEditingId(p.id); setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead, default_company_id: p.default_company_id || '', default_lead_type_id: p.default_lead_type_id || '', default_stage_id: p.default_stage_id || '', default_lead_owner_id: p.default_lead_owner_id || '' }); };
   const saveEdit = async (id) => {
     const updates = { ...form }; if (!updates.access_token) delete updates.access_token;
-    await fetch(`${API}/api/facebook/pages/${id}`, { method: 'PUT', headers: hdr(), body: JSON.stringify(updates) });
+            await fetch(`${API}/api/facebook/pages/${id}`, { method: 'PUT', headers: hdr(), body: JSON.stringify(updates) });
     setEditingId(null); load();
   };
 
   const webhookUrl = `${window.location.origin.replace(/:\d+$/, '').replace('http://', 'https://').replace('frontend-s30w', 'backend')}/api/facebook/webhook`;
 
+  // Load lead types when default_company_id changes (for Page setup)
+  useEffect(() => {
+    const cid = form.default_company_id;
+    if (!cid) {
+      setLeadTypes([]);
+      if (form.default_lead_type_id) setForm((prev) => ({ ...prev, default_lead_type_id: '' }));
+      return;
+    }
+    let cancelled = false;
+    setLeadTypesLoading(true);
+    api.get('/crm/lead-types', { params: { company_id: cid, all: 'true' } })
+      .then((r) => {
+        if (cancelled) return;
+        setLeadTypes(Array.isArray(r.data) ? r.data : []);
+      })
+      .catch(() => { if (!cancelled) setLeadTypes([]); })
+      .finally(() => { if (!cancelled) setLeadTypesLoading(false); });
+    return () => { cancelled = true; };
+  }, [form.default_company_id]);
+
   const CompanyStageSelectors = () => (
     <div className="grid grid-cols-2 gap-3">
       <div>
         <label className="text-xs text-gray-600 mb-1 block">Công ty mặc định (Lead vào)</label>
-        <select value={form.default_company_id} onChange={e => setForm({...form, default_company_id: e.target.value})}
-          className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
+        <select
+          value={form.default_company_id}
+          onChange={(e) =>
+            setForm({ ...form, default_company_id: e.target.value, default_lead_type_id: '', default_stage_id: '' })
+          }
+          className="w-full px-3 py-2 text-sm border rounded cursor-pointer"
+        >
           <option value="">-- Không chọn --</option>
           {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
         </select>
       </div>
       <div>
-        <label className="text-xs text-gray-600 mb-1 block">Giai đoạn mặc định</label>
-        <select value={form.default_stage_id} onChange={e => setForm({...form, default_stage_id: e.target.value})}
-          className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
-          <option value="">-- Tự động (Mới) --</option>
-          {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        <label className="text-xs text-gray-600 mb-1 block">Loại Lead mặc định</label>
+        <select
+          value={form.default_lead_type_id}
+          onChange={e => setForm({ ...form, default_lead_type_id: e.target.value })}
+          disabled={!form.default_company_id || leadTypesLoading}
+          className="w-full px-3 py-2 text-sm border rounded cursor-pointer disabled:opacity-60"
+        >
+          <option value="">-- Không chọn --</option>
+          {leadTypes
+            .filter((t) => t.is_active !== false)
+            .filter((t) => t.applies_to === 'both' || t.applies_to === 'lead')
+            .map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
+        {!form.default_company_id && <p className="text-[10px] text-gray-400 mt-1">Chọn công ty để load phân loại</p>}
+      </div>
+      <div className="col-span-2">
+        <label className="text-xs text-gray-600 mb-1 block">Giai đoạn mặc định (pipeline lead của công ty)</label>
+        <select
+          value={form.default_stage_id}
+          onChange={(e) => setForm({ ...form, default_stage_id: e.target.value })}
+          disabled={!form.default_company_id || stagesLoading}
+          className="w-full px-3 py-2 text-sm border rounded cursor-pointer disabled:opacity-60"
+        >
+          <option value="">{stagesLoading ? 'Đang tải…' : '-- Tự động (Mới) --'}</option>
+          {stages.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.icon ? `${s.icon} ` : ''}
+              {s.name}
+            </option>
+          ))}
+        </select>
+        {!form.default_company_id && (
+          <p className="text-[10px] text-gray-400 mt-1">Chọn công ty để xem giai đoạn Lead đúng pipeline</p>
+        )}
+        {form.default_company_id && !stagesLoading && stages.length === 0 && (
+          <p className="text-[10px] text-amber-600 mt-1">Công ty này chưa có pipeline / giai đoạn Lead. Kiểm tra Cài đặt pipeline CRM.</p>
+        )}
       </div>
       <div className="col-span-2">
         <label className="text-xs text-gray-600 mb-1 block">👤 Người chịu trách nhiệm Lead mặc định</label>
@@ -2389,6 +2493,7 @@ function SettingsTab() {
                   </button>
                   {p.auto_reply_message && <span className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200">💬 "{p.auto_reply_message.substring(0, 25)}..."</span>}
                   {p.default_company_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">🏢 {companies.find(c => c.id === p.default_company_id)?.short_name || companies.find(c => c.id === p.default_company_id)?.name || 'Công ty'}</span>}
+                  {p.default_lead_type_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">🏷️ Loại Lead</span>}
                   {p.default_lead_owner_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">👤 {users.find(u => u.id === p.default_lead_owner_id)?.full_name || 'Người phụ trách'}</span>}
                 </div>
               </div>
