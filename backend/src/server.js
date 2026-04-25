@@ -464,7 +464,7 @@ server.listen(config.port, () => {
         if (leadErr) { console.error('[Scan] Lead create error:', leadErr.message); continue; }
 
         await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
-        await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
+        // Không đồng bộ message nền để giảm egress; chỉ link contact -> lead.
         created++;
         console.log(`[Scan] ✅ Lead auto-created: ${lead.code} — ${contact.fb_name}`);
       }
@@ -479,7 +479,6 @@ server.listen(config.port, () => {
   setTimeout(checkDeadlines, 60000);
   setInterval(checkDeadlines, 15 * 60 * 1000);
 
-  // Run missing leads scan 90s after start, then every 5 minutes
-  setTimeout(scanMissingLeads, 90000);
-  setInterval(scanMissingLeads, 5 * 60 * 1000);
+  // Tắt scanMissingLeads chạy nền ở server startup để giảm egress.
+  // Lead scan tự động chỉ chạy qua công cụ /facebook/lead-scan/config với timer riêng.
 });
