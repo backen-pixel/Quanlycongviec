@@ -806,7 +806,7 @@ function ContactsTab() {
   const [batchProgress, setBatchProgress] = useState(null);
   const [audit, setAudit] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [limitSize, setLimitSize] = useState(1000);
+  const limitSize = 200;
   /** Số user xử lý (mới→cũ): đồng bộ Graph → quét SĐT từng user một */
   const [chainUserLimit, setChainUserLimit] = useState(50);
   /** Vị trí trong pool server (0, 50, 100, …) — khớp API offset */
@@ -832,7 +832,7 @@ function ContactsTab() {
     if (search) p.set('search', search);
     if (filter === 'has_lead') p.set('has_lead', 'true');
     if (filter === 'no_lead') p.set('has_lead', 'false');
-    p.set('limit', String(limitSize));
+    p.set('limit', '200');
     p.set('offset', append ? String(meta.nextOffset || 0) : '0');
     fetch(`${API}/api/facebook/contacts?${p}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
@@ -846,7 +846,7 @@ function ContactsTab() {
         setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       })
       .catch(() => {});
-  }, [search, filter, limitSize, meta.nextOffset, sortContacts]);
+  }, [search, filter, meta.nextOffset, sortContacts]);
 
   useEffect(() => { load(false); }, [load]);
 
@@ -894,8 +894,8 @@ function ContactsTab() {
             const exists = list.some((c) => String(c.id) === String(fresh.id));
             if (exists) return sortContacts(list.map((c) => (String(c.id) === String(fresh.id) ? { ...fresh, unread_count: Math.max(c.unread_count || 0, fresh.unread_count || 0) } : c)));
             const inserted = sortContacts([{ ...fresh, last_message_at: fresh.last_message_at || now }, ...list]);
-            // Giữ list không phình quá lớn khi realtime (theo limitSize hiện tại)
-            return inserted.slice(0, Math.max(200, Number(limitSize) || 1000));
+            // Giữ danh bạ ở mức tối đa 200 contact mới nhất.
+            return inserted.slice(0, 200);
           });
         })
         .catch(() => {});
@@ -922,7 +922,7 @@ function ContactsTab() {
       socket.off('batch_progress', onBatchProgress);
       socket.off('batch_done', onBatchDone);
     };
-  }, [socket, load, sortContacts, search, filter, limitSize]);
+  }, [socket, load, sortContacts, search, filter]);
 
   const startEdit = (c) => { setEditing(c.id); setForm({ fb_name: c.fb_name || '', phone: c.phone || '', email: c.email || '', notes: c.notes || '' }); };
 
@@ -1387,11 +1387,9 @@ function ContactsTab() {
           </tbody>
         </table>
         {!contacts.length && <p className="text-center text-gray-400 py-8 text-sm">Chưa có liên hệ nào</p>}
-        {meta.hasMore && (
-          <div className="p-4 border-t bg-gray-50">
-            <button onClick={() => load(true)} className="w-full text-xs bg-blue-50 text-blue-700 py-2 rounded-lg hover:bg-blue-100 font-medium">
-              Tải thêm {Math.min(limitSize, (meta.total || 0) - contacts.length)} contact
-            </button>
+        {meta.total > 200 && (
+          <div className="p-4 border-t bg-gray-50 text-xs text-gray-500">
+            Đang hiển thị 200 contact mới nhất.
           </div>
         )}
       </div>

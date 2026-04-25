@@ -2212,7 +2212,7 @@ r.delete('/pages/:id', authMiddleware, async (req, res) => {
 r.get('/contacts', authMiddleware, async (req, res) => {
   try {
     const { page_id, has_lead, search, limit: rawLimit, offset: rawOffset } = req.query;
-    const maxLimit = Math.min(parseInt(rawLimit) || 1000, 5000);
+    const maxLimit = Math.min(parseInt(rawLimit, 10) || 200, 200);
     const offset = Math.max(parseInt(rawOffset) || 0, 0);
     let q = supabase.from('facebook_contacts')
       .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)');
