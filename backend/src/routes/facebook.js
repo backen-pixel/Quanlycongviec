@@ -2662,7 +2662,7 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
       });
       if (lead) {
         leadCreated = lead;
-        await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
+        // Không backfill lead_id cho toàn bộ messages khi sync lịch sử để giảm egress.
         console.log(`[FB Sync] ✅ Lead auto-created: ${lead.code} — ${contact.fb_name}`);
       }
     }
@@ -4824,8 +4824,10 @@ async function scanAndCreateLeads() {
 function startScanTimer() {
   if (scanTimer) clearInterval(scanTimer);
   if (!scanConfig.enabled || !scanConfig.interval_minutes) return;
-  const ms = scanConfig.interval_minutes * 60 * 1000;
-  console.log(`[LeadScan] ⏰ Timer started — every ${scanConfig.interval_minutes} minutes`);
+  const intervalMinutes = Math.max(15, parseInt(scanConfig.interval_minutes, 10) || 15);
+  const ms = intervalMinutes * 60 * 1000;
+  scanConfig.interval_minutes = intervalMinutes;
+  console.log(`[LeadScan] ⏰ Timer started — every ${intervalMinutes} minutes`);
   scanTimer = setInterval(() => scanAndCreateLeads(), ms);
 }
 
@@ -4834,9 +4836,8 @@ function stopScanTimer() {
   console.log('[LeadScan] ⏹️ Timer stopped');
 }
 
-// Auto-start on load
+// Không auto-start khi boot để tránh scan nền ngoài ý muốn.
 loadScanConfig();
-if (scanConfig.enabled) startScanTimer();
 
 // GET /facebook/audit-phone-sync — đối soát contact/customer/lead
 r.get('/audit-phone-sync', authMiddleware, async (req, res) => {
@@ -4931,7 +4932,7 @@ r.put('/lead-scan/config', authMiddleware, async (req, res) => {
     const { enabled, interval_minutes } = req.body;
     const cfg = await saveScanConfig({
       ...(enabled !== undefined && { enabled }),
-      ...(interval_minutes && { interval_minutes: Math.max(5, parseInt(interval_minutes) || 60) }),
+      ...(interval_minutes && { interval_minutes: Math.max(15, parseInt(interval_minutes, 10) || 15) }),
     });
     // Restart timer
     stopScanTimer();
