@@ -818,6 +818,20 @@ function ContactsTab() {
   const [chainPoolOffset, setChainPoolOffset] = useState(0);
   const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
 
+  const sortContacts = useCallback((list) => {
+    const deduped = (list || []).filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
+    return [...deduped].sort((a, b) => {
+      const ua = (a.unread_count || 0) > 0 ? 1 : 0;
+      const ub = (b.unread_count || 0) > 0 ? 1 : 0;
+      if (ub !== ua) return ub - ua;
+      const act = fbActivityTs(b) - fbActivityTs(a);
+      if (act !== 0) return act;
+      const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
+      const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
+      return bp - ap;
+    });
+  }, []);
+
   const load = useCallback((append = false) => {
     const p = new URLSearchParams();
     if (search) p.set('search', search);
@@ -829,28 +843,68 @@ function ContactsTab() {
       .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
       .then(payload => {
         const rows = payload?.data || [];
-        const merged = append ? [...contacts, ...rows] : rows;
-        const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
-        const sorted = [...deduped].sort((a, b) => {
-          const ua = (a.unread_count || 0) > 0 ? 1 : 0;
-          const ub = (b.unread_count || 0) > 0 ? 1 : 0;
-          if (ub !== ua) return ub - ua;
-          const act = fbActivityTs(b) - fbActivityTs(a);
-          if (act !== 0) return act;
-          const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
-          const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
-          return bp - ap;
-        });
-        setContacts(sorted);
+        if (append) {
+          setContacts((prev) => sortContacts([...(prev || []), ...rows]));
+        } else {
+          setContacts(sortContacts(rows));
+        }
         setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       })
       .catch(() => {});
-  }, [search, filter, limitSize, meta.nextOffset, contacts]);
+  }, [search, filter, limitSize, meta.nextOffset, sortContacts]);
 
   useEffect(() => { load(false); }, [load]);
 
   useEffect(() => {
     if (!socket) return;
+
+    // Realtime: khi có tin nhắn mới, cập nhật/đẩy contact lên đầu danh sách.
+    // Lưu ý: event thường chỉ chứa contact_id + message.created_at → nếu contact chưa có trong list thì fetch chi tiết rồi insert.
+    const onFbMessage = (data) => {
+      const contactId = data?.contact_id;
+      if (!contactId) return;
+
+      const now = data?.message?.created_at || new Date().toISOString();
+
+      // Nếu đang search/filter đặc biệt, tránh insert bừa; fallback reload nhẹ.
+      const hasSpecialFilter = !!search || filter !== 'all';
+      if (hasSpecialFilter) {
+        // Debounce rất nhẹ: chỉ reload nếu contact này đang nằm trong list (để update) hoặc user đang xem lọc.
+        load(false);
+        return;
+      }
+
+      setContacts((prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        const ex = list.find((c) => String(c.id) === String(contactId));
+        if (ex) {
+          const up = {
+            ...ex,
+            last_message_at: now,
+            unread_count: (ex.unread_count || 0) + 1,
+          };
+          return sortContacts([up, ...list.filter((c) => String(c.id) !== String(contactId))]);
+        }
+        // Contact chưa có trong list: giữ nguyên, rồi async fetch + insert.
+        return list;
+      });
+
+      // Fetch & insert nếu chưa có trong list.
+      fetch(`${API}/api/facebook/contacts/${encodeURIComponent(contactId)}`, { headers: hdr() })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((fresh) => {
+          if (!fresh) return;
+          setContacts((prev) => {
+            const list = Array.isArray(prev) ? prev : [];
+            const exists = list.some((c) => String(c.id) === String(fresh.id));
+            if (exists) return sortContacts(list.map((c) => (String(c.id) === String(fresh.id) ? { ...fresh, unread_count: Math.max(c.unread_count || 0, fresh.unread_count || 0) } : c)));
+            const inserted = sortContacts([{ ...fresh, last_message_at: fresh.last_message_at || now }, ...list]);
+            // Giữ list không phình quá lớn khi realtime (theo limitSize hiện tại)
+            return inserted.slice(0, Math.max(200, Number(limitSize) || 1000));
+          });
+        })
+        .catch(() => {});
+    };
 
     const onBatchProgress = (data) => {
       if (data.type === 'extract_phones' || data.type === 'sync_then_extract_phones') {
@@ -865,13 +919,15 @@ function ContactsTab() {
       load();
     };
 
+    socket.on('fb_message', onFbMessage);
     socket.on('batch_progress', onBatchProgress);
     socket.on('batch_done', onBatchDone);
     return () => {
+      socket.off('fb_message', onFbMessage);
       socket.off('batch_progress', onBatchProgress);
       socket.off('batch_done', onBatchDone);
     };
-  }, [socket, load]);
+  }, [socket, load, sortContacts, search, filter, limitSize]);
 
   const startEdit = (c) => { setEditing(c.id); setForm({ fb_name: c.fb_name || '', phone: c.phone || '', email: c.email || '', notes: c.notes || '' }); };
 
