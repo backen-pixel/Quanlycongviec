@@ -949,70 +949,28 @@ async function getPageConfig(pageId) {
   return data;
 }
 
-async function getOrCreateContact(pageId, psid, name, profilePic) {
+async function getOrCreateContact(pageId, psid, name, _profilePic) {
   // Tìm contact đã có
   let { data: contact } = await supabase.from('facebook_contacts')
     .select('*').eq('page_id', pageId).eq('psid', psid).single();
-  
-  if (contact) {
-    // Lần đầu lấy tên thật nếu vẫn là "Facebook User"
-    if (contact.fb_name === 'Facebook User' || !contact.fb_name) {
-      const profile = await fetchProfileViaConversations(pageId, psid);
-      if (profile?.name) {
-        const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
-        if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
-        await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
-        contact.fb_name = profile.name;
-        if (profile.profilePic) contact.fb_profile_pic = profile.profilePic;
-        console.log(`[FB] Updated name: ${profile.name} (psid: ${psid})`);
 
-        // Cập nhật lead title nếu có
-        if (contact.lead_id) {
-          await supabase.from('crm_leads')
-            .update({ title: `[FB] ${profile.name}` })
-            .eq('id', contact.lead_id)
-            .ilike('title', '%Facebook User%');
-          // Cập nhật customer name
-          const { data: leadData } = await supabase.from('crm_leads')
-            .select('customer_id').eq('id', contact.lead_id).single();
-          if (leadData?.customer_id) {
-            await supabase.from('customers')
-              .update({ full_name: profile.name })
-              .eq('id', leadData.customer_id)
-              .ilike('full_name', '%Facebook%');
-          }
-        }
-      }
-    }
-    // Cập nhật tên/ảnh nếu caller truyền vào
-    if ((name && name !== contact.fb_name) || (profilePic && profilePic !== contact.fb_profile_pic)) {
-      const upd = {};
-      if (name) upd.fb_name = name;
-      if (profilePic) upd.fb_profile_pic = profilePic;
-      upd.updated_at = new Date().toISOString();
-      await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
+  if (contact) {
+    // Không tự fetch tên/avatar từ Facebook để giảm request ngoài.
+    if (name && name !== contact.fb_name) {
+      await supabase.from('facebook_contacts').update({
+        fb_name: name,
+        updated_at: new Date().toISOString(),
+      }).eq('id', contact.id);
+      contact.fb_name = name;
     }
     return contact;
   }
 
-  // Contact mới → tạo trước với "Facebook User", rồi async lấy tên
-  // Khi webhook đến, FB đã có conversation → nhưng cần delay nhỏ để API sẵn sàng
-
-  // Thử lấy tên ngay
-  if (!name) {
-    const profile = await fetchProfileViaConversations(pageId, psid);
-    if (profile?.name) {
-      name = profile.name;
-      if (profile.profilePic) profilePic = profile.profilePic;
-    }
-  }
-
-  // Tạo contact mới
+  // Contact mới: tạo tối giản, không fetch profile/avatar nền.
   const { data: newContact, error } = await supabase.from('facebook_contacts')
-    .insert({ page_id: pageId, psid, fb_name: name || 'Facebook User', fb_profile_pic: profilePic })
+    .insert({ page_id: pageId, psid, fb_name: name || 'Facebook User' })
     .select().single();
   if (error) {
-    // Race condition: contact đã được tạo bởi request khác → select lại
     if (error.message.includes('duplicate key') || error.code === '23505') {
       const { data: existing } = await supabase.from('facebook_contacts')
         .select('*').eq('page_id', pageId).eq('psid', psid).single();
@@ -1020,51 +978,6 @@ async function getOrCreateContact(pageId, psid, name, profilePic) {
     }
     console.error('[FB] Create contact error:', error.message);
     return null;
-  }
-
-  // Nếu vẫn "Facebook User" → retry 3 lần, mỗi lần cách nhau 5 giây
-  if (!name || name === 'Facebook User') {
-    let retryCount = 0;
-    const retryFetch = async () => {
-      try {
-        const profile = await fetchProfileViaConversations(pageId, psid);
-        if (profile?.name && profile.name !== 'Facebook User') {
-          const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
-          if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
-          await supabase.from('facebook_contacts').update(upd).eq('id', newContact.id);
-          console.log(`[FB] ✅ Background name update: ${profile.name} (psid: ${psid})`);
-
-          // Cập nhật lead + customer nếu đã tạo
-          const { data: freshContact } = await supabase.from('facebook_contacts')
-            .select('lead_id').eq('id', newContact.id).single();
-          if (freshContact?.lead_id) {
-            await supabase.from('crm_leads')
-              .update({ title: `[FB] ${profile.name}` })
-              .eq('id', freshContact.lead_id)
-              .ilike('title', '%Facebook User%');
-            const { data: leadData } = await supabase.from('crm_leads')
-              .select('customer_id').eq('id', freshContact.lead_id).single();
-            if (leadData?.customer_id) {
-              await supabase.from('customers')
-                .update({ full_name: profile.name })
-                .eq('id', leadData.customer_id)
-                .ilike('full_name', '%Facebook%');
-            }
-            console.log(`[FB] ✅ Background lead+customer update: ${profile.name}`);
-          }
-        } else if (retryCount < 2) {
-          retryCount++;
-          setTimeout(retryFetch, 5000); // Retry sau 5s
-        }
-      } catch (e) { 
-        console.warn('[FB] Background profile fetch failed:', e.message);
-        if (retryCount < 2) {
-          retryCount++;
-          setTimeout(retryFetch, 5000);
-        }
-      }
-    };
-    setTimeout(retryFetch, 5000);
   }
 
   return newContact;
@@ -1938,27 +1851,7 @@ async function handleMessaging(pageId, event, io) {
                 await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
               }
 
-              // Fetch profile tên thật SAU khi đã tạo lead (background)
-              if (autoLeadCfg.auto_update_name && (!contact.fb_name || contact.fb_name === autoLeadCfg.default_customer_name || contact.fb_name === 'User' || contact.fb_name === 'Facebook User')) {
-                fetchProfileViaConversations(pageId, contact.psid || senderId).then(async (profile) => {
-                  if (profile?.name && profile.name !== contactName) {
-                    const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
-                    if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
-                    await supabase.from('facebook_contacts').update(upd).eq('id', contact.id);
-                    await supabase.from('crm_leads').update({
-                      title: `[FB] ${profile.name}`,
-                      updated_at: new Date().toISOString(),
-                    }).eq('id', lead.id);
-                    if (lead.customer_id) {
-                      await supabase.from('customers').update({
-                        full_name: profile.name,
-                        updated_at: new Date().toISOString(),
-                      }).eq('id', lead.customer_id);
-                    }
-                    console.log(`[FB] 🔄 Background: name "${contactName}" → "${profile.name}"`);
-                  }
-                }).catch(e => console.warn('[FB] Background profile fetch:', e.message));
-              }
+              // Không fetch profile/avatar nền để giảm request Facebook.
 
               // Notification đã được gửi trong createLeadFromFacebook() — không cần gửi lại
             } else {
