@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import { Activity, MessageCircle, Phone, Users, AlertTriangle, Clock, ChevronDown, ChevronUp, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════
@@ -14,6 +14,14 @@ function formatDuration(startedAt) {
   if (m < 60) return `${m}p ${s % 60}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}p`;
+}
+
+function formatCountdown(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m <= 0) return `${r}s`;
+  return `${m}p ${String(r).padStart(2, '0')}s`;
 }
 
 function StatusIcon({ status }) {
@@ -123,8 +131,20 @@ function FullCyclePostSteps({ post }) {
 
 export default function AutoPipelineMonitor({ auto }) {
   const [showTable, setShowTable] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const { kpi, batchResults, startedAt, running, cycleCount, totalContacts, batchIndex, totalBatches } = auto;
+  const pauseRemainingMs = useMemo(() => {
+    if (!auto) return 0;
+    if (typeof auto.pauseRemainingMs === 'number') return auto.pauseRemainingMs;
+    if (typeof auto.pauseUntilMs === 'number') return Math.max(0, auto.pauseUntilMs - nowMs);
+    return 0;
+  }, [auto, nowMs]);
 
   if (!running && (!batchResults || batchResults.length === 0)) return null;
 
@@ -164,7 +184,13 @@ export default function AutoPipelineMonitor({ auto }) {
           label="Thời gian"
           value={formatDuration(startedAt)}
           color="amber"
-          sub={running ? `Chu kỳ ${cycleCount}` : 'Đã dừng'}
+          sub={
+            pauseRemainingMs > 0
+              ? `⏳ Nghỉ còn ${formatCountdown(pauseRemainingMs)} • Chu kỳ ${cycleCount}`
+              : running
+                ? `Chu kỳ ${cycleCount}`
+                : 'Đã dừng'
+          }
         />
       </div>
 
