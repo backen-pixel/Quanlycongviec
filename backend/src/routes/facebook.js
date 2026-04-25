@@ -1551,8 +1551,14 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   
   if (error) { console.error('[FB] Create lead error:', error.message); return null; }
 
-  // Link contact → lead
-  await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
+  // Link contact → lead và dừng sync sâu contact này để giảm egress.
+  await supabase.from('facebook_contacts').update({
+    lead_id: lead.id,
+    sync_paused: true,
+    sync_pause_reason: 'lead_created',
+    phone_resolved_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', contact.id);
 
   // ── Auto-gen CRM tasks (giống logic tạo thủ công) ──
   try {
@@ -1903,7 +1909,11 @@ async function handleMessaging(pageId, event, io) {
             const contactName = contact.fb_name || autoLeadCfg.default_customer_name || 'User';
 
             if (extractedPhone && !contact.phone) {
-              await supabase.from('facebook_contacts').update({ phone: extractedPhone }).eq('id', contact.id);
+              await supabase.from('facebook_contacts').update({
+                phone: extractedPhone,
+                phone_resolved_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }).eq('id', contact.id);
               contact.phone = extractedPhone;
             }
 
@@ -1918,6 +1928,12 @@ async function handleMessaging(pageId, event, io) {
             if (lead) {
               console.log(`[FB] ✅ Lead created: ${lead.code} — "${contactName}"`);
               contact.lead_id = lead.id;
+              await supabase.from('facebook_contacts').update({
+                sync_paused: true,
+                sync_pause_reason: 'lead_created',
+                phone_resolved_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }).eq('id', contact.id);
               if (savedMsg) {
                 await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
               }
@@ -3337,8 +3353,9 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 
     // Lấy contacts chưa có lead — giới hạn BATCH_CAP, ưu tiên hoạt động gần nhất
     const { data: contactsRaw } = await supabase.from('facebook_contacts')
-      .select('id, fb_name, phone, page_id, last_message_at, created_at, lead_id')
+      .select('id, fb_name, phone, page_id, last_message_at, created_at, lead_id, sync_paused')
       .is('lead_id', null)
+      .neq('sync_paused', true)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(BATCH_CAP);
@@ -4776,6 +4793,7 @@ async function scanAndCreateLeads() {
       .select('*')
       .not('phone', 'is', null).neq('phone', '')
       .is('lead_id', null)
+      .neq('sync_paused', true)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
 
@@ -4953,9 +4971,10 @@ r.post('/lead-scan/run', authMiddleware, async (req, res) => {
 r.get('/lead-scan/preview', authMiddleware, async (req, res) => {
   try {
     const { data: contactsRaw } = await supabase.from('facebook_contacts')
-      .select('id, fb_name, phone, page_id, updated_at, created_at, last_message_at')
+      .select('id, fb_name, phone, page_id, updated_at, created_at, last_message_at, sync_paused')
       .not('phone', 'is', null).neq('phone', '')
-      .is('lead_id', null);
+      .is('lead_id', null)
+      .neq('sync_paused', true);
 
     const contacts = sortFacebookContactsNewestFirst(contactsRaw || []);
     const pageIds = [...new Set(contacts.map(c => c.page_id).filter(Boolean))];

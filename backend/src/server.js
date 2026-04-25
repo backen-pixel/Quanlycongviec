@@ -375,8 +375,9 @@ server.listen(config.port, () => {
 
       // Contacts chưa có lead_id — xử lý từ hoạt động mới nhất (tin / tạo hồ sơ) để user mới không bị “xếp sau” hàng cũ
       const { data: contactsRaw } = await supabase.from('facebook_contacts')
-        .select('id, fb_name, phone, page_id, psid, lead_id, customer_id, last_message_at, created_at')
-        .is('lead_id', null);
+        .select('id, fb_name, phone, page_id, psid, lead_id, customer_id, last_message_at, created_at, sync_paused')
+        .is('lead_id', null)
+        .neq('sync_paused', true);
 
       const contacts = sortFacebookContactsNewestFirst(contactsRaw || []);
       if (!contacts.length) return;
