@@ -9,6 +9,10 @@ const FALLBACK_LEAD_TASKS = [
   { title: 'Tư vấn sản phẩm & vật liệu', description: 'Tư vấn chất liệu, phụ kiện phù hợp', priority: 'high', stage_slug: 'consulting', order_index: 2, deadline_days: 1 },
   { title: 'Khảo sát thực tế (nếu cần)', description: 'Đo đạc kích thước, kiểm tra hiện trạng', priority: 'medium', stage_slug: 'consulting', order_index: 3, deadline_days: 2 },
   { title: 'Ghi nhận nhu cầu chi tiết', description: 'Tổng hợp yêu cầu, xác nhận lại với KH', priority: 'medium', stage_slug: 'consulting', order_index: 4, deadline_days: 2 },
+  // Đơn hàng
+  { title: 'Lập đơn hàng', description: 'Tạo đơn hàng từ thông tin KH, sản phẩm yêu cầu', priority: 'high', stage_slug: 'order', order_index: 1, deadline_days: 3 },
+  { title: 'Xác nhận đơn hàng với KH', description: 'Gửi đơn hàng cho KH xác nhận số lượng, giá', priority: 'high', stage_slug: 'order', order_index: 2, deadline_days: 4 },
+  { title: 'Theo dõi tiến độ đơn hàng', description: 'Cập nhật trạng thái ĐH, phối hợp sản xuất/giao hàng', priority: 'medium', stage_slug: 'order', order_index: 3, deadline_days: 7 },
 ];
 
 const FALLBACK_DEAL_TASKS = [
@@ -23,6 +27,10 @@ const FALLBACK_DEAL_TASKS = [
   { title: 'Soạn hợp đồng', description: 'Soạn HĐ từ mẫu, điền thông tin', priority: 'high', stage_slug: 'contract', order_index: 1, deadline_days: 1 },
   { title: 'Ký hợp đồng', description: 'Hẹn KH ký HĐ', priority: 'urgent', stage_slug: 'contract', order_index: 2, deadline_days: 5 },
   { title: 'Thu tiền đặt cọc', description: 'Thu cọc theo tỷ lệ trong HĐ', priority: 'urgent', stage_slug: 'contract', order_index: 3, deadline_days: 5 },
+  // Đơn hàng
+  { title: 'Lập đơn hàng', description: 'Tạo ĐH từ báo giá hoặc thông tin deal', priority: 'high', stage_slug: 'order', order_index: 1, deadline_days: 6 },
+  { title: 'Xác nhận đơn hàng với KH', description: 'Gửi ĐH cho KH xác nhận, kiểm tra số lượng & giá', priority: 'high', stage_slug: 'order', order_index: 2, deadline_days: 7 },
+  { title: 'Theo dõi tiến độ đơn hàng', description: 'Cập nhật trạng thái ĐH, phối hợp SX/giao hàng', priority: 'medium', stage_slug: 'order', order_index: 3, deadline_days: 14 },
 ];
 
 async function autoGenCrmTasks(leadId, type, userId) {
