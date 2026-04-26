@@ -990,6 +990,47 @@ async function getOrCreateContact(pageId, psid, name, _profilePic) {
   return newContact;
 }
 
+/** Tên tạm / rỗng — cần resolve qua Graph (Conversations API). */
+function isPlaceholderFacebookName(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return true;
+  return (
+    n === 'facebook user'
+    || n === 'user'
+    || n === 'unknown'
+    || n === 'khách'
+  );
+}
+
+const _fbMessengerNameResolveInFlight = new Set();
+
+/** Một request Conversations API / contact; emit socket để UI đổi tên ngay. */
+async function tryResolveMessengerDisplayName(pageId, psid, contactId, io) {
+  if (!pageId || !psid || !contactId || _fbMessengerNameResolveInFlight.has(contactId)) return;
+  _fbMessengerNameResolveInFlight.add(contactId);
+  try {
+    const profile = await fetchProfileViaConversations(pageId, psid);
+    if (!profile?.name || isPlaceholderFacebookName(profile.name)) return;
+    const upd = {
+      fb_name: profile.name,
+      updated_at: new Date().toISOString(),
+    };
+    if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+    await supabase.from('facebook_contacts').update(upd).eq('id', contactId);
+    if (io) {
+      io.emit('fb_contact_updated', {
+        contact_id: contactId,
+        fb_name: profile.name,
+        fb_profile_pic: profile.profilePic || null,
+      });
+    }
+  } catch (e) {
+    console.warn('[FB] tryResolveMessengerDisplayName:', e.message);
+  } finally {
+    _fbMessengerNameResolveInFlight.delete(contactId);
+  }
+}
+
 // Helper: ghi kết quả fetch tên vào webhook logs
 async function logFetchResult(pageId, psid, status, details) {
   if (FB_DISABLE_WEBHOOK_LOGS) return;
@@ -1648,9 +1689,15 @@ async function handleMessaging(pageId, event, io) {
 
   console.log(`\n[FB] 📨 Incoming message from PSID: ${senderId}`);
 
+  // Webhook thường chỉ có sender.id; nếu có thêm name (hiếm) thì dùng luôn.
+  const senderLabel = event.sender?.name || null;
   // Get or create contact
-  const contact = await getOrCreateContact(pageId, senderId);
+  const contact = await getOrCreateContact(pageId, senderId, senderLabel);
   if (!contact) return;
+
+  if (isPlaceholderFacebookName(contact.fb_name)) {
+    void tryResolveMessengerDisplayName(pageId, senderId, contact.id, io);
+  }
 
   console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
 
@@ -2224,13 +2271,16 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     const { page_id, has_lead, search, limit: rawLimit, offset: rawOffset } = req.query;
     const maxLimit = Math.min(parseInt(rawLimit, 10) || 200, 200);
     const offset = Math.max(parseInt(rawOffset) || 0, 0);
-    let q = supabase.from('facebook_contacts')
-      .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)');
-    
-    if (page_id) q = q.eq('page_id', page_id);
-    if (has_lead === 'true') q = q.not('lead_id', 'is', null);
-    if (has_lead === 'false') q = q.is('lead_id', null);
-    if (search) q = q.or(`fb_name.ilike.%${search}%,phone.ilike.%${search}%`);
+    const base = () => {
+      let q = supabase
+        .from('facebook_contacts')
+        .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)');
+      if (page_id) q = q.eq('page_id', page_id);
+      if (has_lead === 'true') q = q.not('lead_id', 'is', null);
+      if (has_lead === 'false') q = q.is('lead_id', null);
+      if (search) q = q.or(`fb_name.ilike.%${search}%,phone.ilike.%${search}%`);
+      return q;
+    };
 
     /**
      * Lấy rộng hơn để sort rồi mới paginate.
@@ -2240,25 +2290,33 @@ r.get('/contacts', authMiddleware, async (req, res) => {
      * → Fetch 2 nhóm (có last_message_at, và last_message_at=null) rồi merge để luôn hiển thị user mới.
      */
     const [withMsgRes, noMsgRes] = await Promise.all([
-      q
+      base()
         .not('last_message_at', 'is', null)
         .order('last_message_at', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(3500),
-      q
+      base()
         .is('last_message_at', null)
         .order('created_at', { ascending: false })
         .limit(2500),
     ]);
-    let result = [...(withMsgRes.data || []), ...(noMsgRes.data || [])];
+    const merged = [...(withMsgRes.data || []), ...(noMsgRes.data || [])];
+    // Dedup by id (tránh trường hợp query overlap do filter).
+    const seen = new Set();
+    let result = [];
+    for (const row of merged) {
+      const id = row?.id;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      result.push(row);
+    }
     result.forEach(c => {
       c.display_phone = c.phone || c.customer?.phone || null;
     });
-    // Ưu tiên contact hoạt động mới nhất lên đầu; unread chỉ là tie-breaker.
+    // Ưu tiên contact hoạt động mới nhất lên đầu.
     result.sort((a, b) => {
       const act = activityTimestampMs(b) - activityTimestampMs(a);
       if (act !== 0) return act;
-      const ub = Number(b.unread_count || 0) - Number(a.unread_count || 0);
-      if (ub !== 0) return ub;
       const bp = b.display_phone ? 1 : 0;
       const ap = a.display_phone ? 1 : 0;
       if (bp !== ap) return bp - ap;
