@@ -1026,6 +1026,16 @@ async function getOrCreateContact(pageId, psid, name, _profilePic) {
     return null;
   }
 
+  // Realtime: báo UI có contact mới để danh bạ cập nhật ngay (kể cả chưa có fb_message).
+  try {
+    if (r?._ioRef && newContact) {
+      r._ioRef.emit('fb_contact_created', {
+        contact_id: newContact.id,
+        contact: newContact,
+      });
+    }
+  } catch (_) { /* ignore */ }
+
   return newContact;
 }
 
@@ -1871,7 +1881,9 @@ async function handleMessaging(pageId, event, io) {
 
     if (!isEcho) {
       // Update last message + unread count + preview
-      const preview = content ? content.substring(0, 100) : (attachments?.length ? '[Tệp đính kèm]' : '');
+      const preview = content
+        ? content.substring(0, 100)
+        : (msg.attachments?.length ? '[Tệp đính kèm]' : '');
       await supabase.from('facebook_contacts').update({
         last_message_at: new Date().toISOString(),
         last_message_preview: preview,
@@ -3418,25 +3430,9 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     const results = [];
     const total = contacts.length;
 
-    // Pre-fetch messages theo batch 200 ID mỗi lần để tránh IN(..) quá lớn
-    const contactIds = contacts.map(c => c.id);
-    const MSG_BATCH = 200;
-    const allMsgs = [];
-    for (let b = 0; b < contactIds.length; b += MSG_BATCH) {
-      const batchIds = contactIds.slice(b, b + MSG_BATCH);
-      const { data: batchMsgs } = await supabase.from('facebook_messages')
-        .select('contact_id, content')
-        .in('contact_id', batchIds)
-        .eq('direction', 'inbound')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      if (batchMsgs?.length) allMsgs.push(...batchMsgs);
-    }
-    const msgsByContact = {};
-    (allMsgs || []).forEach(m => {
-      if (!msgsByContact[m.contact_id]) msgsByContact[m.contact_id] = [];
-      msgsByContact[m.contact_id].push(m);
-    });
+    // Không prefetch theo .in(..).limit(K) vì LIMIT áp dụng cho cả batch → đa số contact sẽ không có tin.
+    // Thay vào đó: với mỗi contact, lấy K tin gần nhất trong DB để extract SĐT/địa chỉ.
+    const MSG_PER_CONTACT = Math.min(400, Math.max(20, parseInt(process.env.FB_CREATE_LEADS_MSG_PER_CONTACT || '120', 10) || 120));
 
     // Cache page configs
     const pageConfigCache = {};
@@ -3466,8 +3462,18 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
         let extractedPhone = contact.phone || null;
         let extractedAddress = null;
 
-        const messages = msgsByContact[contact.id] || [];
+        const { data: messages } = await supabase.from('facebook_messages')
+          .select('content, direction, created_at')
+          .eq('contact_id', contact.id)
+          .order('created_at', { ascending: false })
+          .limit(MSG_PER_CONTACT);
         
+        // Ưu tiên inbound nhưng fallback cho trường hợp direction bị lưu sai.
+        const inboundInfo = extractInboundContactInfo(messages || [], { allowAnyDirection: true });
+        if (!extractedPhone && inboundInfo.phone) extractedPhone = inboundInfo.phone;
+        if (!extractedAddress && inboundInfo.address) extractedAddress = inboundInfo.address;
+
+        // Fallback thêm: nếu vẫn thiếu, thử scan thô từng dòng (giữ logic cũ).
         for (const msg of (messages || [])) {
           if (msg.content) {
             const { phone, address } = extractContactInfo(msg.content);
@@ -3500,6 +3506,7 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
           
           created++;
           results.push({
+            contact_id: contact.id,
             contact: contact.fb_name,
             phone: extractedPhone || null,
             lead_code: lead.code,
@@ -3508,12 +3515,12 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
           if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'created', code: lead.code, phone: extractedPhone });
           console.log(`[FB Batch] ✅ Lead ${lead.code} — ${contact.fb_name} (phone: ${extractedPhone || 'N/A'})`);
         } else {
-          results.push({ contact: contact.fb_name, status: 'failed', reason: 'createLeadFromFacebook returned null' });
+          results.push({ contact_id: contact.id, contact: contact.fb_name, status: 'failed', reason: 'createLeadFromFacebook returned null' });
           skipped++;
           if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'failed' });
         }
       } catch (e) {
-        results.push({ contact: contact.fb_name, status: 'error', reason: e.message });
+        results.push({ contact_id: contact.id, contact: contact.fb_name, status: 'error', reason: e.message });
         skipped++;
         if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'error' });
         console.error(`[FB Batch] ❌ ${contact.fb_name}:`, e.message);
