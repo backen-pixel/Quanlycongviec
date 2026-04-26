@@ -478,11 +478,26 @@ function getAutoLoopPauseMsFromConfig(pcfg) {
 }
 
 async function autoPipelineInternalPostJson(apiPath, body = {}) {
-  const resp = await fetch(`http://127.0.0.1:${config.port}/api${apiPath}`, {
+  const url = `http://127.0.0.1:${config.port}/api${apiPath}`;
+  const init = {
     method: 'POST',
     headers: getInternalAutoHeaders(),
     body: JSON.stringify(body),
-  });
+  };
+  let resp;
+  const attempts = 4;
+  const baseMs = 200;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      resp = await fetch(url, init);
+      break;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      const retryable = msg.includes('fetch failed') || msg.includes('ECONNREFUSED');
+      if (!retryable || i === attempts - 1) throw e;
+      await new Promise((r) => setTimeout(r, baseMs * (i + 1)));
+    }
+  }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
   return data;
@@ -1028,13 +1043,23 @@ let _hasSyncPausedColumn = null;
 async function ensureSyncPausedColumnDetected() {
   if (_hasSyncPausedColumn !== null) return _hasSyncPausedColumn;
   const { error } = await supabase.from('facebook_contacts').select('sync_paused').limit(1);
-  _hasSyncPausedColumn = !error;
-  if (!_hasSyncPausedColumn) {
-    console.warn('[FB] ⚠️ Column facebook_contacts.sync_paused chưa có — bỏ qua filter. Chạy database/103_facebook_contacts_sync_flags.sql để bật.');
-  } else {
+  if (!error) {
+    _hasSyncPausedColumn = true;
     console.log('[FB] ✅ Column facebook_contacts.sync_paused OK');
+    return true;
   }
-  return _hasSyncPausedColumn;
+  const msg = String(error.message || '');
+  const missingCol =
+    error.code === '42703'
+    || /column.*sync_paused|sync_paused.*does not exist|undefined column/i.test(msg);
+  if (missingCol) {
+    _hasSyncPausedColumn = false;
+    console.warn('[FB] ⚠️ Column facebook_contacts.sync_paused chưa có — bỏ qua filter. Chạy database/103_facebook_contacts_sync_flags.sql để bật.');
+    return false;
+  }
+  // Lỗi mạng / tạm thời: không cache false để lần sau thử lại cột
+  console.warn('[FB] sync_paused probe (không cache, sẽ thử lại):', msg);
+  return false;
 }
 function hasSyncPausedColumnSync() { return _hasSyncPausedColumn === true; }
 ensureSyncPausedColumnDetected().catch(() => {});
