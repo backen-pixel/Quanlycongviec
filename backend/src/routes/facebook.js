@@ -3455,19 +3455,18 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
           .order('created_at', { ascending: false })
           .limit(MSG_PER_CONTACT);
         
-        // Ưu tiên inbound nhưng fallback cho trường hợp direction bị lưu sai.
-        const inboundInfo = extractInboundContactInfo(messages || [], { allowAnyDirection: true });
+        // Chỉ tin inbound (KH FB). Không fallback quét outbound — tránh lấy SĐT từ tin page / template.
+        const inboundInfo = extractInboundContactInfo(messages || [], {});
         if (!extractedPhone && inboundInfo.phone) extractedPhone = inboundInfo.phone;
         if (!extractedAddress && inboundInfo.address) extractedAddress = inboundInfo.address;
 
-        // Fallback thêm: nếu vẫn thiếu, thử scan thô từng dòng (giữ logic cũ).
+        // Fallback bổ sung: vẫn chỉ các tin direction === 'inbound' (phòng DB lưu sai chiều hiếm gặp thì đã xử lý ở trên).
         for (const msg of (messages || [])) {
-          if (msg.content) {
-            const { phone, address } = extractContactInfo(msg.content);
-            if (phone && !extractedPhone) extractedPhone = phone;
-            if (address && !extractedAddress) extractedAddress = address;
-            if (extractedPhone && extractedAddress) break;
-          }
+          if (msg.direction !== 'inbound' || !msg.content) continue;
+          const { phone, address } = extractContactInfo(msg.content);
+          if (phone && !extractedPhone) extractedPhone = phone;
+          if (address && !extractedAddress) extractedAddress = address;
+          if (extractedPhone && extractedAddress) break;
         }
 
         // Cập nhật phone vào contact nếu tìm được
@@ -3850,7 +3849,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(MSG_PAGE);
 
-      let inboundInfo = extractInboundContactInfo(messages || [], { allowAnyDirection: true });
+      let inboundInfo = extractInboundContactInfo(messages || [], {});
       let extractedPhone = inboundInfo.phone;
       let extractedAddress = inboundInfo.address;
       let extraPhones = inboundInfo.extraPhones;
@@ -3866,7 +3865,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
         if (older?.length) {
           const merged = [...(messages || []), ...older];
-          inboundInfo = extractInboundContactInfo(merged, { allowAnyDirection: true });
+          inboundInfo = extractInboundContactInfo(merged, {});
           extractedPhone = inboundInfo.phone;
           extractedAddress = inboundInfo.address;
           extraPhones = inboundInfo.extraPhones;
@@ -4195,7 +4194,7 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
     .order('created_at', { ascending: false })
     .limit(800);
 
-  const inboundInfo = extractInboundContactInfo(messages || [], { allowAnyDirection: true });
+  const inboundInfo = extractInboundContactInfo(messages || [], {});
   let extractedPhone = inboundInfo.phone;
   let extractedAddress = inboundInfo.address;
   const extraPhones = inboundInfo.extraPhones;
