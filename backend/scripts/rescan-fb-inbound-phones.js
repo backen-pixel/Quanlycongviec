@@ -3,6 +3,8 @@
  * Quét lại SĐT từ tin nhắn Facebook của KH (inbound), không đọc tin page/outbound.
  * extractContactInfo đã loại bỏ URL (http, m.me, zalo.me, …) trước khi tách SĐT.
  *
+ * Thứ tự xử lý: hoạt động mới nhất → cũ (max(last_message_at, created_at)), giống danh bạ.
+ *
  * Chạy từ thư mục backend:
  *   node scripts/rescan-fb-inbound-phones.js --limit 50
  *   node scripts/rescan-fb-inbound-phones.js --limit 100 --filter all --replace
@@ -22,6 +24,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { supabase } = require('../src/config/supabase');
 const { extractInboundContactInfo } = require('../src/helpers/facebookPhoneExtract');
+const { sortFacebookContactsNewestFirst } = require('../src/helpers/facebookContactActivity');
 
 function usage() {
   console.log(`
@@ -115,7 +118,7 @@ async function fetchContactsMatching(opts) {
     dbOffset += page;
     if (data.length < page) break;
   }
-  return pool;
+  return sortFacebookContactsNewestFirst(pool);
 }
 
 async function loadInboundMessages(contactId, maxRows) {
