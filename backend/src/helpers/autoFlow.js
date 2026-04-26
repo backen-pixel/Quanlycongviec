@@ -115,6 +115,12 @@ async function createProjectFromLead(lead, userId, overrideFlowId) {
     } catch (e) { console.error('Auto tasks consulting:', e.message); }
   }
 
+  try {
+    const { ensureDefaultOrderOneForProject } = require('./projectOrderFulfillment');
+    const o1 = await ensureDefaultOrderOneForProject({ projectId: project.id, userId, defaultLabel: 'Đơn 1' });
+    if (o1?.created) console.log(`[createProjectFromLead] ${o1.order?.code} Đơn 1`);
+  } catch (e) { console.warn('[createProjectFromLead] ensure Đơn 1:', e.message); }
+
   return project;
 }
 

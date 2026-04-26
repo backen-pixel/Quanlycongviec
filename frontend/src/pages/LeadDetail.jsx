@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser, saveCrmPipelineSnapshot, loadCrmPipelineSnapshot } from '../lib/crmPipelineStorage';
+import { parseShareModules } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import LeadDealWorkTab from '../components/LeadDealWorkTab';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import EmployeePicker from '../components/EmployeePicker';
@@ -53,6 +55,8 @@ export default function LeadDetail() {
   const [activities, setActivities] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [taskDocuments, setTaskDocuments] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   const [flows, setFlows] = useState([]);
@@ -79,6 +83,7 @@ export default function LeadDetail() {
   const [savingLeadTitle, setSavingLeadTitle] = useState(false);
   const [approvalForm, setApprovalForm] = useState({ type: 'drawing', title: '', note: '' });
   const [zaloQuickSendLoading, setZaloQuickSendLoading] = useState(false);
+  const [movingStage, setMovingStage] = useState(false);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -127,6 +132,13 @@ export default function LeadDetail() {
       'voice_crm',
       'approvals',
     ]);
+    if (t === 'orders') {
+      setActiveTab('tasks');
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+      return;
+    }
     if (!allowed.has(t)) {
       const next = new URLSearchParams(searchParams);
       next.delete('tab');
@@ -160,12 +172,36 @@ export default function LeadDetail() {
         api.get(`/crm/leads/${id}/task-documents`).catch(() => ({ data: [] })),
       ]);
 
+<<<<<<< Updated upstream
       const stageParams = leadRes?.pipeline_id ? { pipeline_id: leadRes.pipeline_id } : undefined;
       const [stagesLeadRes, stagesDealRes] = await Promise.all([
         api.get('/crm/pipeline-stages', { params: { type: 'lead', ...(stageParams || {}) } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal', ...(stageParams || {}) } }).catch(() => ({ data: [] })),
       ]);
 
+=======
+      const leadCompanyId = leadRes?.company_id || leadRes?.company?.id || null;
+      const leadPipelineId = leadRes?.pipeline_id || null;
+      const stagesParamsBase =
+        leadPipelineId
+          ? { pipeline_id: leadPipelineId }
+          : (leadCompanyId ? { company_id: leadCompanyId } : {});
+      const [stagesLeadRes, stagesDealRes] = await Promise.all([
+        api.get('/crm/pipeline-stages', { params: { type: 'lead', ...stagesParamsBase } }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: { type: 'deal', ...stagesParamsBase } }).catch(() => ({ data: [] })),
+      ]);
+      // Orders for Deal (orders.lead_id = deal.id)
+      setOrdersLoading(true);
+      if (leadRes?.type === 'deal') {
+        api.get('/crm/orders', { params: { lead_id: leadRes.id, limit: 200 } })
+          .then((r) => setOrders(Array.isArray(r.data) ? r.data : []))
+          .catch(() => setOrders([]))
+          .finally(() => setOrdersLoading(false));
+      } else {
+        setOrders([]);
+        setOrdersLoading(false);
+      }
+>>>>>>> Stashed changes
       setLead(leadRes);
       setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);
@@ -190,6 +226,18 @@ export default function LeadDetail() {
     } catch (e) { console.error(e); }
     setLoading(false);
   };
+
+  const reloadOrders = useCallback(async () => {
+    if (!id) return;
+    setOrdersLoading(true);
+    try {
+      const { data } = await api.get('/crm/orders', { params: { lead_id: id, limit: 200 } });
+      setOrders(Array.isArray(data) ? data : []);
+    } catch {
+      setOrders([]);
+    }
+    setOrdersLoading(false);
+  }, [id]);
 
   loadRef.current = load;
 
@@ -284,24 +332,25 @@ export default function LeadDetail() {
       return;
     }
 
+    if (movingStage) return;
+    setMovingStage(true);
+    // Optimistic UI: stepper cập nhật ngay, rồi load lại để đồng bộ badge/fields
+    setLead((prev) => (prev ? { ...prev, stage_id: stageId } : prev));
     try {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId, ...extraData });
-      if (data.requires_conversion) {
-        setShowConvertModal(true);
-      } else if (data.deal_won && !lead?.project_id) {
-        autoCreateProject(id);
-        load();
-      } else if (data.deal_won && lead?.project_id) {
-        load();
-      } else {
-        load();
-      }
+      if (data?.requires_conversion) setShowConvertModal(true);
+      if (data?.deal_won && !lead?.project_id) autoCreateProject(id);
+      await loadRef.current?.();
     } catch (e) {
       if (e.response?.data?.requires_conversion) {
         setShowConvertModal(true);
-        return;
+      } else {
+        // rollback optimistic stage if server rejects
+        await loadRef.current?.();
+        alert(e.response?.data?.error || 'Lỗi');
       }
-      alert(e.response?.data?.error || 'Lỗi');
+    } finally {
+      setMovingStage(false);
     }
   };
 
@@ -743,8 +792,11 @@ export default function LeadDetail() {
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
+                title={lead?.type === 'deal' ? 'Nhiệm vụ deal + đơn hàng từng lượt (gộp ở đây)' : 'Công việc theo nhiệm vụ'}
               >
-                ✅ Công việc
+                {lead?.type === 'deal'
+                  ? `✅ Công việc & đơn${orders.length ? ` (${orders.length})` : ''}`
+                  : '✅ Công việc'}
               </button>
               <button
                 onClick={() => setActiveTab('documents')}
@@ -844,7 +896,20 @@ export default function LeadDetail() {
             {/* Tab Content */}
             <div className="p-5">
               {activeTab === 'tasks' ? (
-                <CRMTasksTab leadId={id} leadType={lead?.type || 'lead'} users={allUsers} />
+                lead?.type === 'deal' ? (
+                  <LeadDealWorkTab
+                    dealLeadId={id}
+                    projectId={lead?.project_id || null}
+                    useOrderTasks={!!lead?.use_order_tasks}
+                    users={allUsers}
+                    orders={orders}
+                    ordersLoading={ordersLoading}
+                    onOrdersRefresh={reloadOrders}
+                    onProjectRefresh={load}
+                  />
+                ) : (
+                  <CRMTasksTab leadId={id} leadType={lead?.type || 'lead'} users={allUsers} />
+                )
               ) : activeTab === 'documents' ? (
                 <>
                   <div className="flex items-center justify-between mb-4">
@@ -1218,6 +1283,12 @@ const DOC_TYPES = [
   { value: 'other', label: 'Khác', icon: '📎' },
 ];
 
+const SHARE_MODULE_OPTIONS = [
+  { id: 'production', label: '🏭 Sản xuất (SX)' },
+  { id: 'logistics', label: '🚚 Vận chuyển (VC)' },
+  { id: 'workshop', label: '📁 Công việc dự án' },
+];
+
 function getFileIcon(name) {
   if (!name) return '📄';
   const ext = name.split('.').pop()?.toLowerCase();
@@ -1227,6 +1298,14 @@ function getFileIcon(name) {
 
 function DocumentRow({ doc, onDelete }) {
   const [expanded, setExpanded] = useState(false);
+  const [showVis, setShowVis] = useState(false);
+  const [companies, setCompanies] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [allowedCompanies, setAllowedCompanies] = useState([]);
+  const [allowedDepts, setAllowedDepts] = useState([]);
+  const [savingVis, setSavingVis] = useState(false);
+  const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
+  const [allowedShareModules, setAllowedShareModules] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
   const typeInfo = DOC_TYPES.find(t => t.value === doc.doc_type) || DOC_TYPES[5];
   const fileHref = doc.file_url ? publicFileUrl(doc.file_url) : '';
   const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: doc.file_name }) : null;
@@ -1234,6 +1313,58 @@ function DocumentRow({ doc, onDelete }) {
   const isImage = isFile && (doc.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_name || doc.file_url || ''));
   const isVideo = isFile && (doc.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(doc.file_name || doc.file_url || ''));
   const hasExtra = doc.notes || isImage || isVideo;
+
+  useEffect(() => {
+    setAllowedCompanies(Array.isArray(doc.allowed_companies) ? doc.allowed_companies : []);
+    setAllowedDepts(Array.isArray(doc.allowed_departments) ? doc.allowed_departments : []);
+    setSharedToWorkshop(!!doc.shared_to_workshop);
+    setAllowedShareModules(parseShareModules(doc.allowed_share_modules) || []);
+  }, [doc.allowed_companies, doc.allowed_departments, doc.shared_to_workshop, doc.allowed_share_modules]);
+
+  const openVisibility = async () => {
+    setShowVis(true);
+    if (companies.length || departments.length) return;
+    try {
+      const [cRes, dRes] = await Promise.all([
+        api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: [] })),
+        api.get('/departments').catch(() => ({ data: { departments: [] } })),
+      ]);
+      setCompanies(cRes.data?.companies || cRes.data || []);
+      setDepartments(dRes.data?.departments || dRes.data || []);
+    } catch (_) {}
+  };
+
+  const toggleCompany = (id) => {
+    setAllowedCompanies(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const toggleDept = (id) => {
+    setAllowedDepts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const toggleShareModule = (id) => {
+    setAllowedShareModules((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const saveVisibility = async () => {
+    setSavingVis(true);
+    try {
+      const { data } = await api.put(`/crm/documents/${doc.id}/visibility`, {
+        allowed_companies: allowedCompanies.length ? allowedCompanies : null,
+        allowed_departments: allowedDepts.length ? allowedDepts : null,
+        shared_to_workshop: !!sharedToWorkshop,
+        allowed_share_modules: sharedToWorkshop && allowedShareModules.length ? allowedShareModules : null,
+      });
+      // reflect immediately in UI (LeadDetail keeps doc objects)
+      doc.allowed_companies = data.allowed_companies;
+      doc.allowed_departments = data.allowed_departments;
+      doc.shared_to_workshop = data.shared_to_workshop;
+      doc.allowed_share_modules = data.allowed_share_modules;
+      setShowVis(false);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu phân quyền');
+    }
+    setSavingVis(false);
+  };
 
   return (
     <div className="bg-gray-50 rounded-lg border overflow-hidden">
@@ -1251,6 +1382,11 @@ function DocumentRow({ doc, onDelete }) {
               {(doc.allowed_departments?.length > 0 || doc.allowed_companies?.length > 0) && (
                 <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full font-medium" title="Nhãn phòng/công ty — không ẩn với team CRM trên trang này">🏷️ Nhãn PB/Cty</span>
               )}
+              {doc.shared_to_workshop && Array.isArray(doc.allowed_share_modules) && doc.allowed_share_modules.length > 0 && (
+                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium" title="Chỉ hiện ở một số module xưởng">
+                  🧩 {doc.allowed_share_modules.join(', ')}
+                </span>
+              )}
             </div>
           </div>
           {isFile && !isImage && !isVideo && fileOpenProps && (
@@ -1260,6 +1396,14 @@ function DocumentRow({ doc, onDelete }) {
           )}
           {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
         </div>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); openVisibility(); }}
+          className="p-1 hover:bg-slate-200 text-slate-600 rounded ml-1 cursor-pointer"
+          title="Chia sẻ xưởng & phân quyền xem"
+        >
+          ⚙️
+        </button>
         <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer">
           <Trash2 className="h-3.5 w-3.5" />
         </button>
@@ -1289,6 +1433,99 @@ function DocumentRow({ doc, onDelete }) {
           {doc.notes && (
             <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>
           )}
+        </div>
+      )}
+
+      {showVis && (
+        <div className="px-3 pb-3">
+          <div className="bg-white border rounded-xl p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold text-gray-700">🔐 Chia sẻ & phân quyền</p>
+              <button type="button" onClick={() => setShowVis(false)} className="text-xs text-gray-500 hover:underline">Đóng</button>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={sharedToWorkshop} onChange={(e) => setSharedToWorkshop(e.target.checked)} />
+              <span>Chia sẻ sang xưởng (SX/VC)</span>
+            </label>
+
+            {sharedToWorkshop && (
+              <div>
+                <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">🧩 Module được xem tài liệu</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {SHARE_MODULE_OPTIONS.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => toggleShareModule(m.id)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all ${
+                        allowedShareModules.includes(m.id)
+                          ? 'bg-teal-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Không chọn = hiển thị ở cả SX, VC và trang Công việc dự án (như trước).
+                </p>
+              </div>
+            )}
+
+            <div>
+              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">🏢 Công ty được xem</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(companies || []).map(c => (
+                  <button key={c.id} type="button" onClick={() => toggleCompany(c.id)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all ${
+                      allowedCompanies.includes(c.id)
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}>
+                    {c.short_name || c.name}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">Không chọn = không giới hạn theo công ty.</p>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">🏷️ Phòng ban được xem</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(departments || []).map(d => (
+                  <button key={d.id} type="button" onClick={() => toggleDept(d.id)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all ${
+                      allowedDepts.includes(d.id)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}>
+                    {d.name}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">Không chọn = không giới hạn theo phòng ban.</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { setAllowedCompanies([]); setAllowedDepts([]); }}
+                className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Bỏ giới hạn
+              </button>
+              <button
+                type="button"
+                onClick={saveVisibility}
+                disabled={savingVis}
+                className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+              >
+                {savingVis ? 'Đang lưu…' : 'Lưu'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

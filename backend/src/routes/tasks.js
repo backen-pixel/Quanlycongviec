@@ -3,6 +3,10 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
+const {
+  taskAttachmentVisibleForModuleAndUser,
+  canViewerSeeByCompanyAndDept,
+} = require('../helpers/documentShareScope');
 
 const r = Router();
 r.use(auth);
@@ -516,22 +520,33 @@ r.delete('/:taskId/comments/:commentId', async (req, res) => {
 // ─── TASK ATTACHMENTS (for production tasks) ──
 r.get('/:id/attachments', async (req, res) => {
   try {
+    const forModule = String(req.query.for_module || '').toLowerCase().trim();
+    const useMod = ['production', 'logistics', 'workshop'].includes(forModule) ? forModule : null;
     const { data } = await supabase.from('file_attachments')
       .select('*, uploader:users!file_attachments_uploaded_by_fkey(id,full_name)')
       .eq('entity_type', 'task').eq('entity_id', req.params.id)
       .order('created_at', { ascending: false });
-    res.json({ attachments: data || [] });
+    let list = data || [];
+    list = list.filter((a) => (useMod
+      ? taskAttachmentVisibleForModuleAndUser(a, useMod, req.user)
+      : canViewerSeeByCompanyAndDept(a, req.user)));
+    res.json({ attachments: list });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
 r.post('/:id/attachments/bulk', async (req, res) => {
   try {
-    const items = (req.body.items || []).map(f => ({
-      entity_type: 'task', entity_id: req.params.id,
-      file_name: f.original_name || f.file_name, file_url: f.file_url,
-      file_size: f.file_size, mime_type: f.mime_type,
-      uploaded_by: req.user.userId,
-    }));
+    const items = (req.body.items || []).map((f) => {
+      const row = {
+        entity_type: 'task', entity_id: req.params.id,
+        file_name: f.original_name || f.file_name, file_url: f.file_url,
+        file_size: f.file_size, mime_type: f.mime_type,
+        uploaded_by: req.user.userId,
+      };
+      if (f.allowed_companies !== undefined) row.allowed_companies = f.allowed_companies || null;
+      if (f.allowed_share_modules !== undefined) row.allowed_share_modules = f.allowed_share_modules || null;
+      return row;
+    });
     if (!items.length) return res.status(400).json({ error: 'Không có file' });
     const { data, error } = await supabase.from('file_attachments').insert(items).select();
     if (error) throw error;

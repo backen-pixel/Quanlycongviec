@@ -31,6 +31,7 @@ const {
   markCrmTargetStageJoinMissing,
   stripHandoverFields,
 } = require('../helpers/productionPipelineSchema');
+const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
 
 const r = Router();
 r.use(auth);
@@ -777,7 +778,9 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     ]);
 
     const documents = documentsRes.data || [];
-    const sharedDocuments = documents.filter(isDocSharedToWorkshop);
+    const sharedDocuments = documents.filter(
+      (d) => isDocSharedToWorkshop(d) && leadDocVisibleForModuleAndUser(d, 'production', req.user),
+    );
     const hiddenDocuments = documents.filter((doc) => !isDocSharedToWorkshop(doc));
 
     let crmSummary = [];

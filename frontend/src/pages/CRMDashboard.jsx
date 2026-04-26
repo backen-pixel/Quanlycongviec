@@ -9,7 +9,7 @@ import {
   Plus, Search, Filter, X, ChevronLeft, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
-  Clock, List, LayoutGrid, GitMerge, UserCheck
+  Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
 import EmployeePicker from '../components/EmployeePicker';
@@ -162,6 +162,8 @@ export default function CRMDashboard() {
   const [manualMergeIds, setManualMergeIds] = useState([]);
   const [manualMergeModalOpen, setManualMergeModalOpen] = useState(false);
   const [bulkAssignModalOpen, setBulkAssignModalOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const loadRef = useRef(null);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
     const fromP = P?.kanbanLoadLimit != null ? String(P.kanbanLoadLimit) : null;
@@ -199,6 +201,26 @@ export default function CRMDashboard() {
       return [...s];
     });
   }, []);
+
+  const bulkDeleteSelected = useCallback(async () => {
+    const ids = [...new Set((manualMergeIds || []).map((x) => String(x)).filter(Boolean))];
+    if (!ids.length) return;
+    const label = pipelineType === 'deal' ? 'deal' : 'lead';
+    if (!window.confirm(`Xóa ${ids.length} ${label} đã chọn?\n\nLưu ý: thao tác xóa sẽ xóa luôn dữ liệu liên quan (tài liệu / hoạt động / dự án liên kết nếu có).`)) return;
+    setBulkDeleting(true);
+    try {
+      for (const id of ids) {
+        // Backend dùng chung DELETE /crm/leads/:id cho cả lead & deal
+        // (deal con đã bị ẩn khỏi list; checkbox chỉ chọn lead/deal gốc)
+        await api.delete(`/crm/leads/${encodeURIComponent(id)}`);
+      }
+      setManualMergeIds([]);
+      await loadRef.current?.();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi xóa');
+    }
+    setBulkDeleting(false);
+  }, [manualMergeIds, pipelineType]);
 
   useEffect(() => {
     setManualMergeIds([]);
@@ -1029,6 +1051,7 @@ export default function CRMDashboard() {
       setWonAssigning(false);
     }
   };
+  loadRef.current = load;
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
@@ -1608,6 +1631,15 @@ export default function CRMDashboard() {
           >
             <UserCheck className="h-3.5 w-3.5 shrink-0" />
             Gán phụ trách
+          </button>
+          <button
+            type="button"
+            onClick={bulkDeleteSelected}
+            disabled={bulkDeleting}
+            className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
+          >
+            <Trash2 className="h-3.5 w-3.5 shrink-0" />
+            {bulkDeleting ? 'Đang xóa…' : `Xóa (${manualMergeIds.length})`}
           </button>
           <button
             type="button"
