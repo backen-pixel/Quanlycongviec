@@ -840,8 +840,12 @@ function ContactsTab() {
   const limitSize = 200;
   /** Số user xử lý (mới→cũ): đồng bộ Graph → quét SĐT từng user một */
   const [chainUserLimit, setChainUserLimit] = useState(50);
-  /** Vị trí trong pool server (0, 50, 100, …) — khớp API offset */
+  /** Vị trí trong pool server (0, 50, 100, …) — pipeline v2 không dùng offset */
   const [chainPoolOffset, setChainPoolOffset] = useState(0);
+  /** Pipeline v2: không quét được SĐT inbound mới → xóa SĐT cũ (trừ khi SĐT mới trùng cũ). */
+  const [v2ClearPhoneNoInbound, setV2ClearPhoneNoInbound] = useState(true);
+  const [v2DeleteLeadNoPhone, setV2DeleteLeadNoPhone] = useState(false);
+  const [v2CleanupWithLead, setV2CleanupWithLead] = useState(false);
   const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
 
   // ── Tool: Quét lại SĐT (rescan-phones) ───────────────────────────
@@ -852,6 +856,7 @@ function ContactsTab() {
     overwrite: true,       // ghi đè SĐT cũ nếu tìm thấy SĐT mới khác
     sort: 'newest_first',  // 'newest_first' | 'oldest_first'
     sync_customer: true,   // đồng bộ SĐT mới sang customer.phone
+    delete_lead_when_no_phone: false, // inbound không trích được SĐT → xóa lead (kể cả đang lưu SĐT cũ), điều kiện an toàn
   });
   const [rescanStatus, setRescanStatus] = useState(null); // { loading, result, error }
   const [rescanProgress, setRescanProgress] = useState(null);
@@ -1068,28 +1073,28 @@ function ContactsTab() {
     }
   };
 
-  /** Đồng bộ tin nhắn từ Facebook rồi quét SĐT ngay cho từng user (mới → cũ, giới hạn N user). */
+  /** Pipeline v2: từng contact chưa lead — Graph → quét inbound → tạo lead (không nối batch HTTP cũ). */
   const batchSyncThenExtractPhones = async () => {
     const n = Math.min(500, Math.max(1, Number(chainUserLimit) || 50));
-    const off = Math.max(0, Number(chainPoolOffset) || 0);
-    if (!confirm(`Từ offset pool ${off}: tối đa ${n} liên hệ (mỗi người (1) đồng bộ tin Facebook (2) quét SĐT). Tiếp tục?`)) return;
+    if (!confirm(`Chạy pipeline v2 cho tối đa ${n} liên hệ chưa có lead (đồng bộ tin → quét SĐT → tạo lead nếu đủ điều kiện). Tiếp tục?`)) return;
     setBatchProgress(null);
     setBatchStatus({ type: 'sync_then_phones', loading: true, result: null });
     try {
-      const res = await fetch(`${API}/api/facebook/batch-sync-then-extract-phones`, {
+      const res = await fetch(`${API}/api/facebook/pipeline-v2/run`, {
         method: 'POST',
         headers: { ...hdr(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           limit: n,
-          offset: off,
-          recent_hours: 0,
-          skip_stale_customer_reply: false,
+          graph_pages: 12,
+          clear_phone_when_no_new_inbound: v2ClearPhoneNoInbound,
+          delete_lead_when_no_phone_after_clear: v2DeleteLeadNoPhone,
+          cleanup_contacts_with_lead: v2CleanupWithLead,
+          cleanup_limit: n,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || res.statusText);
-      if (data.done_pool) setChainPoolOffset(0);
-      else if (typeof data.next_offset === 'number') setChainPoolOffset(data.next_offset);
+      setChainPoolOffset(0);
       setBatchProgress(null);
       setBatchStatus({ type: 'sync_then_phones', loading: false, result: data });
       load();
@@ -1232,6 +1237,20 @@ function ContactsTab() {
               Chạy
             </button>
           </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-600 w-full max-w-xl">
+            <label className="inline-flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" checked={v2ClearPhoneNoInbound} onChange={(e) => setV2ClearPhoneNoInbound(e.target.checked)} />
+              Xóa SĐT cũ nếu không quét được SĐT inbound mới (giữ nếu mới trùng cũ)
+            </label>
+            <label className="inline-flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" checked={v2DeleteLeadNoPhone} onChange={(e) => setV2DeleteLeadNoPhone(e.target.checked)} disabled={!v2ClearPhoneNoInbound} />
+              Xóa lead an toàn sau khi hết SĐT
+            </label>
+            <label className="inline-flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" checked={v2CleanupWithLead} onChange={(e) => setV2CleanupWithLead(e.target.checked)} disabled={!v2ClearPhoneNoInbound} />
+              Thêm lượt contact đã có lead (dọn SĐT sai)
+            </label>
+          </div>
           <button onClick={batchCreateLeads} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
             {batchStatus?.type === 'leads' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" /> : '🆕'}
@@ -1341,16 +1360,38 @@ function ContactsTab() {
                 <span>✅ {batchStatus.result.message}</span>
               ) : batchStatus.type === 'sync_then_phones' ? (
                 <span>
-                  ✅ Đã xử lý <strong>{batchStatus.result.processed || 0}</strong> user (sync→quét) — <strong>{batchStatus.result.total_messages_synced || 0}</strong> tin mới từ Facebook,
-                  cập nhật quét: <strong>{batchStatus.result.extract_updated || 0}</strong>, bỏ qua đã có SĐT: <strong>{batchStatus.result.extract_skipped_has_phone || 0}</strong>
-                  {batchStatus.result.pool_total != null && (
-                    <span className="block text-xs mt-1 text-green-900/80 font-normal">
-                      Pool server: <strong>{batchStatus.result.pool_total}</strong>
-                      {typeof batchStatus.result.next_offset === 'number' && (
-                        <> · Offset tiếp (đã gán vào ô «off»): <strong>{batchStatus.result.next_offset}</strong></>
+                  {batchStatus.result.leadsCreated != null ? (
+                    <>
+                      ✅ Pipeline v2: <strong>{batchStatus.result.processed || 0}</strong> contact — <strong>{batchStatus.result.messagesSynced || 0}</strong> tin mới,
+                      quét cập nhật: <strong>{batchStatus.result.extractUpdated || 0}</strong>, lead mới: <strong>{batchStatus.result.leadsCreated || 0}</strong>
+                      {(batchStatus.result.phonesClearedNoInbound > 0 || batchStatus.result.leadsDeletedAfterClear > 0) && (
+                        <span className="block text-xs mt-1 text-amber-800 font-normal">
+                          Đã xóa SĐT lưu (không có inbound mới): <strong>{batchStatus.result.phonesClearedNoInbound || 0}</strong>
+                          {' · '}
+                          Lead đã xóa (sau dọn SĐT): <strong>{batchStatus.result.leadsDeletedAfterClear || 0}</strong>
+                          {batchStatus.result.cleanup_processed ? (
+                            <> · Contact đã lead (lượt dọn): <strong>{batchStatus.result.cleanup_processed}</strong></>
+                          ) : null}
+                        </span>
                       )}
-                      {batchStatus.result.done_pool ? ' · Đã hết pool lần này' : ''}
-                    </span>
+                      {batchStatus.result.message ? (
+                        <span className="block text-xs mt-1 text-green-900/80 font-normal">{batchStatus.result.message}</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      ✅ Đã xử lý <strong>{batchStatus.result.processed || 0}</strong> user (sync→quét) — <strong>{batchStatus.result.total_messages_synced || 0}</strong> tin mới từ Facebook,
+                      cập nhật quét: <strong>{batchStatus.result.extract_updated || 0}</strong>, bỏ qua đã có SĐT: <strong>{batchStatus.result.extract_skipped_has_phone || 0}</strong>
+                      {batchStatus.result.pool_total != null && (
+                        <span className="block text-xs mt-1 text-green-900/80 font-normal">
+                          Pool server: <strong>{batchStatus.result.pool_total}</strong>
+                          {typeof batchStatus.result.next_offset === 'number' && (
+                            <> · Offset tiếp (đã gán vào ô «off»): <strong>{batchStatus.result.next_offset}</strong></>
+                          )}
+                          {batchStatus.result.done_pool ? ' · Đã hết pool lần này' : ''}
+                        </span>
+                      )}
+                    </>
                   )}
                 </span>
               ) : (
@@ -1566,6 +1607,9 @@ function ContactsTab() {
                     </button>
                   ))}
                 </div>
+                <p className="text-[10px] text-gray-500 mt-1.5 leading-snug">
+                  «Mới nhất» = <strong>hoạt động gần nhất</strong> giữa tin nhắn cuối và lúc tạo hồ sơ (khớp danh bạ). Server lấy tối đa 40× số lượng rồi sắp lại đúng thứ tự trước khi quét.
+                </p>
               </div>
 
               <div className="flex flex-col gap-2 bg-gray-50 rounded-lg p-3">
@@ -1589,6 +1633,18 @@ function ContactsTab() {
                   />
                   <span>Đồng bộ SĐT mới sang <strong>customer.phone</strong> (nếu contact đã có khách hàng liên kết)</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer text-sm border-t border-rose-100/80 pt-2 mt-1">
+                  <input
+                    type="checkbox"
+                    checked={!!rescanForm.delete_lead_when_no_phone}
+                    onChange={(e) => setRescanForm((f) => ({ ...f, delete_lead_when_no_phone: e.target.checked }))}
+                    disabled={rescanStatus?.loading}
+                    className="rounded text-rose-600 focus:ring-rose-300"
+                  />
+                  <span>
+                    <strong className="text-rose-800">Xóa lead</strong> nếu quét inbound <strong>không trích được SĐT</strong> (kể cả contact vẫn đang có SĐT cũ trên hồ sơ) — chỉ lead dạng thường, không dự án/đơn/báo giá, không gắn thêm contact FB khác.
+                  </span>
+                </label>
               </div>
 
               {rescanProgress && rescanStatus?.loading && (
@@ -1606,11 +1662,27 @@ function ContactsTab() {
 
               {rescanStatus?.result && !rescanStatus.error && (
                 <div className="space-y-2">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  {(rescanStatus.result.sort_note || typeof rescanStatus.result.pool_fetched === 'number') && (
+                    <div className="text-[11px] text-gray-600 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
+                      {rescanStatus.result.sort_note && <span>{rescanStatus.result.sort_note}</span>}
+                      {typeof rescanStatus.result.pool_fetched === 'number' && rescanStatus.result.pool_fetched > (rescanStatus.result.limit || 0) && (
+                        <span className="block mt-0.5 text-slate-500">
+                          Đã xét {rescanStatus.result.pool_fetched} contact trong pool tải về → quét đúng {rescanStatus.result.limit || rescanStatus.result.scanned} theo thứ tự trên.
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
                     <div className="bg-gray-50 rounded p-2"><div className="text-gray-500">Đã quét</div><div className="font-bold text-base">{rescanStatus.result.scanned}</div></div>
                     <div className="bg-green-50 rounded p-2"><div className="text-green-700">Set SĐT mới</div><div className="font-bold text-base text-green-700">{rescanStatus.result.updated_set || 0}</div></div>
                     <div className="bg-amber-50 rounded p-2"><div className="text-amber-700">Ghi đè</div><div className="font-bold text-base text-amber-700">{rescanStatus.result.updated_replaced || 0}</div></div>
                     <div className="bg-gray-100 rounded p-2"><div className="text-gray-600">Không tìm SĐT</div><div className="font-bold text-base">{rescanStatus.result.no_phone_found || 0}</div></div>
+                    {(rescanStatus.result.leads_deleted ?? 0) > 0 && (
+                      <div className="bg-red-50 rounded p-2"><div className="text-red-700">Đã xóa lead</div><div className="font-bold text-base text-red-800">{rescanStatus.result.leads_deleted}</div></div>
+                    )}
+                    {(rescanStatus.result.leads_delete_blocked ?? 0) > 0 && (
+                      <div className="bg-orange-50 rounded p-2"><div className="text-orange-800">Lead giữ lại</div><div className="font-bold text-base text-orange-900">{rescanStatus.result.leads_delete_blocked}</div><div className="text-[9px] text-orange-700 mt-0.5">Không đủ điều kiện xóa</div></div>
+                    )}
                   </div>
                   {Array.isArray(rescanStatus.result.results) && rescanStatus.result.results.length > 0 && (
                     <div className="border rounded-lg overflow-hidden max-h-72 overflow-y-auto">
@@ -1631,6 +1703,7 @@ function ContactsTab() {
                                   r.action === 'replaced' ? 'text-amber-700' :
                                   r.action === 'unchanged_same' ? 'text-gray-500' :
                                   r.action === 'kept_existing' ? 'text-blue-700' :
+                                  r.action === 'lead_deleted' ? 'text-red-700' :
                                   r.action === 'error' ? 'text-red-700' :
                                   'text-gray-400'
                                 }>
@@ -1638,7 +1711,9 @@ function ContactsTab() {
                                    r.action === 'replaced' ? '🔁 Ghi đè' :
                                    r.action === 'unchanged_same' ? '⏸ Trùng SĐT cũ' :
                                    r.action === 'kept_existing' ? '⏭ Giữ SĐT cũ' :
+                                   r.action === 'lead_deleted' ? `🗑 Đã xóa lead${r.deleted_lead_id ? ` (${String(r.deleted_lead_id).slice(0, 8)}…)` : ''}` :
                                    r.action === 'error' ? `❌ ${r.error || ''}` :
+                                   r.lead_delete_blocked ? `— Không SĐT · lead giữ (${r.lead_delete_blocked})` :
                                    '— Không tìm SĐT'}
                                 </span>
                               </td>
@@ -1906,7 +1981,7 @@ function AnalyticsTab() {
       </div>
 
       {/* Page Breakdown */}
-      {data.pageBreakdown?.length > 1 && (
+      {data.pageBreakdown?.length > 0 && (
         <div className="bg-white rounded-xl border p-5">
           <h3 className="text-sm font-bold text-gray-700 mb-4">📄 Theo Page</h3>
           <div className="overflow-x-auto">
@@ -2575,6 +2650,7 @@ function RescanPhonesSchedulePanel() {
     sort: 'newest_first',
     page_id: null,
     sync_customer: true,
+    delete_lead_when_no_phone: false,
     timer_armed: false,
     running: false,
     next_run_at: null,
@@ -2610,6 +2686,7 @@ function RescanPhonesSchedulePanel() {
         overwrite: merged.overwrite !== false,
         sort: merged.sort,
         sync_customer: merged.sync_customer !== false,
+        delete_lead_when_no_phone: !!merged.delete_lead_when_no_phone,
         page_id: merged.page_id && String(merged.page_id).trim() ? String(merged.page_id).trim() : null,
       };
       const res = await fetch(`${API}/api/facebook/rescan-phones/schedule/config`, {
@@ -2811,10 +2888,21 @@ function RescanPhonesSchedulePanel() {
               />
               Đồng bộ sang customer.phone khi có khách hàng liên kết
             </label>
+            <label className="flex items-center gap-2 cursor-pointer text-rose-900">
+              <input
+                type="checkbox"
+                checked={!!cfg.delete_lead_when_no_phone}
+                onChange={(e) => saveCfg({ delete_lead_when_no_phone: e.target.checked })}
+                disabled={saving}
+                className="rounded text-rose-600"
+              />
+              Xóa lead nếu inbound không trích được SĐT (kể cả contact còn SĐT cũ; điều kiện an toàn)
+            </label>
           </div>
 
           <p className="text-[10px] text-gray-500 leading-snug">
             Lần đầu sau khi bật hoặc sau khi đổi cấu hình: chạy sau khoảng 5 giây. Sau mỗi lần quét xong mới bắt đầu đếm thời gian nghỉ. Có thể vẫn dùng nút quét thủ công trong tab Danh bạ bất cứ lúc nào.
+            {' '}Thứ tự «mới nhất» = max(tin cuối, lúc tạo hồ sơ), giống danh bạ.
           </p>
         </div>
       )}
