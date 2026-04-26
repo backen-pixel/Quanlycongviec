@@ -1219,7 +1219,7 @@ function normalizeUnicodeDigitsToAscii(s) {
     .replace(/[\u06F0-\u06F9]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x06f0 + 0x30));
 }
 
-/** Chuỗi chỉ gồm chữ số, 10 hoặc 11 số, bắt đầu 0 — cố định 02x + di động 03x–09x (không siết 0[3-9] để tránh loại nhầm 02…). */
+/** Chuỗi chỉ gồm chữ số, 10 hoặc 11 số, bắt đầu 0 — cố định 02x + di động 03x–09x. */
 function isLikelyVnSubscriberNumber(digitsOnly) {
   const s = String(digitsOnly || '').replace(/\D/g, '');
   if (/^0[1-9]\d{8}$/.test(s)) return true;
@@ -1227,15 +1227,24 @@ function isLikelyVnSubscriberNumber(digitsOnly) {
   return false;
 }
 
-function firstVnPhoneInDigitString(digits) {
-  const d = String(digits || '').replace(/\D/g, '');
-  for (let i = 0; i < d.length; i++) {
-    if (d[i] !== '0') continue;
-    for (const len of [11, 10]) {
-      const slice = d.slice(i, i + len);
-      if (slice.length === len && isLikelyVnSubscriberNumber(slice)) return slice;
-    }
-  }
+function stripUrlLikeSegments(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\bhttps?:\/\/\S+/gi, ' ')
+    .replace(/\bwww\.\S+/gi, ' ')
+    .replace(/\b(?:m\.me|fb\.me|zalo\.me|facebook\.com|messenger\.com|bit\.ly|tinyurl\.com|t\.co)\/\S*/gi, ' ');
+}
+
+function normalizeVietnamPhoneCandidate(rawCandidate) {
+  if (!rawCandidate) return null;
+  let digits = normalizeUnicodeDigitsToAscii(String(rawCandidate)).replace(/\D/g, '');
+  if (!digits) return null;
+
+  if (digits.startsWith('0084')) digits = '0' + digits.slice(4);
+  else if (digits.startsWith('84')) digits = '0' + digits.slice(2);
+  else if (digits.length === 9 && /^[3-9]\d{8}$/.test(digits)) digits = '0' + digits;
+
+  if (isLikelyVnSubscriberNumber(digits)) return digits;
   return null;
 }
 
@@ -1245,23 +1254,21 @@ function extractContactInfo(text) {
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     .replace(/\u00A0/g, ' ')
     .trim();
+  const sanitized = stripUrlLikeSegments(raw);
 
-  // SĐT VN: 10–11 số (sau chuẩn hóa về dạng 0…).
+  // Chỉ lấy SĐT chuẩn Việt Nam từ text thường; tuyệt đối không lấy từ URL.
   const phonePatterns = [
-    /(?:0|\+84)(?:\d[\s.\-\/]?){9,10}/g,
-    /(?:^|[^\d])84(?:\d[\s.\-\/]?){9,10}(?:[^\d]|$)/g,
+    /(?:0|\+84)(?:\d[\s().\-\/]?){9,10}/g,
+    /(?:^|[^\d])84(?:\d[\s().\-\/]?){9,10}(?:[^\d]|$)/g,
+    /(?:^|[^\d])([3-9]\d{8})(?:[^\d]|$)/g,
   ];
 
   let phone = null;
   for (const pattern of phonePatterns) {
-    const matches = raw.match(pattern);
-    if (!matches?.length) continue;
-    for (const chunk of matches) {
-      let normalized = chunk.replace(/[^\d+]/g, '');
-      if (normalized.startsWith('+84')) normalized = '0' + normalized.slice(3);
-      else if (normalized.startsWith('84')) normalized = '0' + normalized.slice(2);
-      normalized = normalized.replace(/\D/g, '');
-      if (isLikelyVnSubscriberNumber(normalized)) {
+    const matches = sanitized.match(pattern) || [];
+    for (const matched of matches) {
+      const normalized = normalizeVietnamPhoneCandidate(matched);
+      if (normalized) {
         phone = normalized;
         break;
       }
@@ -1269,28 +1276,11 @@ function extractContactInfo(text) {
     if (phone) break;
   }
 
-  // Fallback: 9 số di động (không 0 đầu) → thêm 0
-  if (!phone) {
-    const bareMatch = raw.match(/(?:^|[^\d])([3-9]\d{8})(?:[^\d]|$)/);
-    if (bareMatch?.[1]) {
-      const normalized = '0' + bareMatch[1];
-      if (isLikelyVnSubscriberNumber(normalized)) phone = normalized;
-    }
-  }
-
-  // Fallback 2: gom dải chữ số — tìm 0… đầu tiên hợp lệ (10 hoặc 11 số)
-  if (!phone) {
-    let digits = raw.replace(/\D/g, '');
-    if (digits.startsWith('0084')) digits = '0' + digits.slice(4);
-    else if (digits.startsWith('84') && digits.length >= 10) digits = '0' + digits.slice(2);
-    phone = firstVnPhoneInDigitString(digits);
-  }
-
   // Address patterns (keywords)
   const addressKeywords = ['địa chỉ', 'đ/c', 'dc:', 'address:', 'ship:', 'giao:', 'giao hàng', 'nhận hàng'];
   let address = null;
 
-  const lines = raw.split('\n');
+  const lines = sanitized.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].toLowerCase();
     if (addressKeywords.some(kw => line.includes(kw))) {
@@ -1304,43 +1294,29 @@ function extractContactInfo(text) {
     }
   }
 
-  if (!address && /\d+.*(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)/i.test(raw)) {
-    const match = raw.match(/\d+[^.!?\n]{10,100}(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)[^.!?\n]{0,50}/i);
+  if (!address && /\d+.*(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)/i.test(sanitized)) {
+    const match = sanitized.match(/\d+[^.!?\n]{10,100}(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)[^.!?\n]{0,50}/i);
     if (match) address = match[0].trim();
   }
 
   return { phone, address };
 }
 
-function extractInboundContactInfo(messages = [], opts = {}) {
-  const { allowAnyDirection = false } = opts;
+function extractInboundContactInfo(messages = [], _opts = {}) {
   let phone = null;
   let address = null;
   const extraPhones = [];
 
-  const sorted = [...(messages || [])].sort((a, b) => {
-    const pri = (m) => (m.direction === 'inbound' ? 0 : 1);
-    const dp = pri(a) - pri(b);
-    if (dp !== 0) return dp;
-    return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
-  });
-
-  const scan = (onlyInbound) => {
-    for (const msg of sorted) {
-      if (onlyInbound && msg.direction && msg.direction !== 'inbound') continue;
-      if (!msg.content) continue;
-      const extracted = extractContactInfo(msg.content);
-      if (extracted.phone && !phone) phone = extracted.phone;
-      else if (extracted.phone && extracted.phone !== phone && !extraPhones.includes(extracted.phone)) {
-        extraPhones.push(extracted.phone);
-      }
-      if (extracted.address && !address) address = extracted.address;
-      if (phone && address) break;
-    }
-  };
-
-  scan(true);
-  if (allowAnyDirection && !phone && !address) scan(false);
+  for (const msg of (messages || [])) {
+    // Chỉ quét đúng tin nhắn user/inbound; mọi chiều khác hoặc thiếu direction đều bỏ qua.
+    if (msg.direction !== 'inbound') continue;
+    if (!msg.content) continue;
+    const extracted = extractContactInfo(msg.content);
+    if (extracted.phone && !phone) phone = extracted.phone;
+    else if (extracted.phone && extracted.phone !== phone && !extraPhones.includes(extracted.phone)) extraPhones.push(extracted.phone);
+    if (extracted.address && !address) address = extracted.address;
+    if (phone && address) break;
+  }
 
   return { phone, address, extraPhones };
 }
