@@ -12,6 +12,7 @@ const {
 const {
   extractContactInfo,
   extractInboundContactInfo,
+  validateVnSubscriberPhoneStored,
 } = require('../helpers/facebookPhoneExtract');
 
 // Disable DB logging to facebook_webhook_logs to reduce Supabase egress.
@@ -1362,6 +1363,23 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
       await supabase.from('facebook_contacts').update({ lead_id: samePsid[0].lead_id }).eq('id', contact.id);
       return { id: samePsid[0].lead_id };
     }
+  }
+
+  // 3.5 — Có SĐT thì phải đúng chuẩn VN mới tạo lead; chuẩn hóa 0xxxx… vào extraData
+  const rawVin = (extraData.phone != null && String(extraData.phone).trim())
+    ? String(extraData.phone).trim()
+    : (freshContact?.phone && String(freshContact.phone).trim())
+      ? String(freshContact.phone).trim()
+      : (contact.phone && String(contact.phone).trim())
+        ? String(contact.phone).trim()
+        : '';
+  if (rawVin) {
+    const v = validateVnSubscriberPhoneStored(rawVin);
+    if (!v.valid) {
+      console.log(`[FB] ⏭️ Không tạo lead — SĐT không đúng quy định VN (${source}): "${rawVin}"`);
+      return null;
+    }
+    extraData = { ...extraData, phone: v.normalized };
   }
 
   // 4. Check trùng theo SĐT (nếu có phone → tìm lead/customer trùng SĐT)
