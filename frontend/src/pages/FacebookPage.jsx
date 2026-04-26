@@ -82,7 +82,6 @@ export default function FacebookPage() {
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
-    { id: 'logs', label: 'Logs', icon: Eye },
     { id: 'settings', label: 'Cài đặt', icon: Settings },
   ];
 
@@ -129,7 +128,6 @@ export default function FacebookPage() {
         {tab === 'comments' && <CommentsTab />}
         {tab === 'settings' && <SettingsTab />}
         {tab === 'auto-lead' && <AutoLeadTab />}
-        {tab === 'logs' && <WebhookLogsTab />}
       </div>
     </div>
   );
@@ -2351,124 +2349,8 @@ function LeadScanPanel() {
 }
 
 // ═══ WEBHOOK LOGS TAB ═══
-function WebhookLogsTab() {
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API}/api/facebook/webhook-logs`, { headers: hdr() });
-      if (res.ok) setLogs(await res.json());
-    } catch (e) { console.error(e); }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const clearLogs = async () => {
-    if (!confirm('Xóa toàn bộ logs?')) return;
-    await fetch(`${API}/api/facebook/webhook-logs`, { method: 'DELETE', headers: hdr() });
-    load();
-  };
-
-  const fmtTime = (t) => {
-    if (!t) return '';
-    const d = new Date(t);
-    return d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
-  };
-
-  // Extract useful info from payload
-  const extractInfo = (payload, result) => {
-    if (!payload) return { type: '?', sender: '?', content: '?' };
-    // Log xử lý tin nhắn
-    if (payload.type === 'message_processed') {
-      const name = result?.contact_name || payload.psid;
-      const lead = result?.has_lead ? `✅ Lead ${result.lead_id?.substring(0,8)}` : '❌ Chưa có lead';
-      return { type: '⚙️ Xử lý', sender: name, content: `PSID: ${payload.psid} | ${lead}` };
-    }
-    // Log fetch tên
-    if (payload.type === 'fetch_name') {
-      const name = payload.name || '?';
-      return { type: '🔍 Tìm tên', sender: payload.psid, content: name !== '?' ? `✅ ${name}` : '❌ Không lấy được' };
-    }
-    // Webhook raw
-    if (payload.messaging) {
-      const m = payload.messaging[0];
-      const sender = m?.sender?.id || '?';
-      const text = m?.message?.text || m?.message?.attachments?.[0]?.type || (m?.read ? 'read receipt' : (m?.delivery ? 'delivery' : '?'));
-      return { type: '📩 Webhook', sender, content: text?.substring(0, 100) || '' };
-    }
-    if (payload.changes) {
-      const c = payload.changes[0];
-      if (c?.field === 'leadgen') return { type: '📝 Lead Ad', sender: c.value?.leadgen_id, content: 'form: ' + c.value?.form_id };
-      if (c?.field === 'feed') return { type: '💬 Comment', sender: c.value?.from?.name, content: c.value?.message?.substring(0, 100) };
-      return { type: c?.field || '?', sender: '?', content: JSON.stringify(c?.value)?.substring(0, 100) };
-    }
-    return { type: '?', sender: '?', content: JSON.stringify(payload)?.substring(0, 100) };
-  };
-
-  return (
-    <div className="p-6 overflow-y-auto h-full">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-lg font-bold">📡 Facebook Webhook Logs</h2>
-          <p className="text-xs text-gray-500">Dữ liệu thô từ Facebook gửi về và kết quả xử lý</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={clearLogs} className="px-3 py-1.5 text-xs bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 cursor-pointer">🗑️ Xóa logs</button>
-          <button onClick={load} disabled={loading} className="px-3 py-1.5 text-xs bg-white border rounded-lg hover:bg-gray-50 flex items-center gap-1.5 cursor-pointer">
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Làm mới
-          </button>
-        </div>
-      </div>
-
-      {!logs.length && !loading && (
-        <div className="text-center py-16 text-gray-400">
-          <Eye size={40} className="mx-auto mb-3 opacity-30" />
-          <p className="text-sm">Chưa có webhook log nào</p>
-          <p className="text-xs mt-1">Khi có người nhắn tin trên Facebook, log sẽ hiển ở đây</p>
-        </div>
-      )}
-
-      <div className="space-y-2">
-        {logs.map(log => {
-          const info = extractInfo(log.payload, log.result);
-          const isOpen = expanded === log.id;
-          return (
-            <div key={log.id} className="bg-white border rounded-xl overflow-hidden shadow-sm">
-              <div className="flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50" onClick={() => setExpanded(isOpen ? null : log.id)}>
-                <span className="text-xs text-gray-400 whitespace-nowrap w-28">{fmtTime(log.processed_at)}</span>
-                <span className="text-xs font-medium w-24">{info.type}</span>
-                <span className="text-xs text-gray-500 w-32 truncate" title={info.sender}>PSID: {info.sender}</span>
-                <span className="text-xs text-gray-600 flex-1 truncate">{info.content}</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full ${log.status === 'received' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{log.status}</span>
-                <ChevronRight size={14} className={`text-gray-400 transition ${isOpen ? 'rotate-90' : ''}`} />
-              </div>
-              {isOpen && (
-                <div className="border-t px-4 py-3 bg-gray-50">
-                  <p className="text-[10px] font-bold text-gray-500 mb-1 uppercase">Raw Payload</p>
-                  <pre className="text-[11px] text-gray-700 bg-white p-3 rounded-lg border overflow-x-auto max-h-64 whitespace-pre-wrap break-all">
-                    {JSON.stringify(log.payload, null, 2)}
-                  </pre>
-                  {log.result && (
-                    <>
-                      <p className="text-[10px] font-bold text-gray-500 mb-1 mt-3 uppercase">Result</p>
-                      <pre className="text-[11px] text-gray-700 bg-white p-3 rounded-lg border overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
-                        {JSON.stringify(log.result, null, 2)}
-                      </pre>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+// Disabled: không hiển thị/không gọi API logs nữa.
+function WebhookLogsTab() { return null; }
 
 function SettingsTab() {
   const [pages, setPages] = useState([]);
