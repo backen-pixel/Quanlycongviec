@@ -487,6 +487,7 @@ async function runAutoLegacySyncExtractPhase(pipelineBodyBase, maxUsersCap = 0) 
       status: 'synced',
       mode: 'manual_batch',
     };
+    const syncDetails = Array.isArray(syncData?.details) ? syncData.details : [];
 
     autoPipeline.step = 1;
     autoPipeline.stepLabel = `📞 Quét SĐT (lô) • Batch ${autoPipeline.batchIndex}`;
@@ -536,7 +537,45 @@ async function runAutoLegacySyncExtractPhase(pipelineBodyBase, maxUsersCap = 0) 
       batchEntry.customerPhones = data.updatedCustomerPhone || 0;
       batchEntry.leadPhones = data.leadsUpdatedPhone || 0;
       batchEntry.status = 'done';
-      batchEntry.scan_details = compactExtractPhoneResultsForAuto(data.results);
+      const extractRows = Array.isArray(data?.results) ? data.results : [];
+      const syncMap = new Map();
+      for (const s of syncDetails) {
+        const id = s?.contact_id;
+        if (!id) continue;
+        syncMap.set(String(id), s);
+      }
+      const used = new Set();
+      const combined = [];
+      for (const r of extractRows) {
+        const id = r?.contact_id;
+        if (!id) continue;
+        used.add(String(id));
+        const s = syncMap.get(String(id)) || null;
+        combined.push({
+          contact_id: id,
+          name: r.contact || s?.name || '',
+          synced: typeof s?.synced === 'number' ? s.synced : 0,
+          sync_status: s?.sync_status || null,
+          extract: r.status,
+          phone: r.phone || null,
+          address: r.address || null,
+          extraPhones: r.extraPhones,
+        });
+      }
+      // Nếu sync có nhưng extract không có row (hiếm) → vẫn hiển thị.
+      for (const s of syncDetails) {
+        const id = s?.contact_id;
+        if (!id || used.has(String(id))) continue;
+        combined.push({
+          contact_id: id,
+          name: s?.name || '',
+          synced: typeof s?.synced === 'number' ? s.synced : 0,
+          sync_status: s?.sync_status || null,
+          extract: '—',
+          phone: null,
+        });
+      }
+      batchEntry.scan_details = compactSyncExtractStepsForAuto(combined);
       phaseExtract += batchEntry.contactPhones;
       pushAutoLog(
         `✅ Batch ${autoPipeline.batchIndex}: SĐT contact=${batchEntry.contactPhones}, KH=${batchEntry.customerPhones}, lead=${batchEntry.leadPhones}`,
@@ -4649,6 +4688,8 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         }
         const token = pageTokens[contact.page_id];
         if (!token) {
+          const row = { contact_id: contact.id, name: contact.fb_name, synced: 0, sync_status: 'no_token' };
+          results.push(row);
           if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: 'no_token' });
           continue;
         }
@@ -4659,6 +4700,8 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         });
         const convData = await convResp.json();
         if (!convData.data?.[0]?.id) {
+          const row = { contact_id: contact.id, name: contact.fb_name, synced: 0, sync_status: 'no_conv' };
+          results.push(row);
           if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: 'no_conv' });
           continue;
         }
@@ -4670,6 +4713,8 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
           limitPerPage: 100,
         });
         if (!msgList.length) {
+          const row = { contact_id: contact.id, name: contact.fb_name, synced: 0, sync_status: 'no_msg' };
+          results.push(row);
           if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: 'no_msg' });
           continue;
         }
@@ -4714,12 +4759,24 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
 
         totalSynced += synced;
         processedCount++;
-        if (synced > 0) results.push({ contact: contact.fb_name, synced });
+        results.push({
+          contact_id: contact.id,
+          name: contact.fb_name,
+          synced,
+          sync_status: synced > 0 ? 'synced' : 'up_to_date',
+        });
         if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: synced > 0 ? 'synced' : 'up_to_date', synced });
       } catch (err) {
         totalErrors++;
         // Vẫn đánh dấu đã sync để không retry liên tục
         try { await supabase.from('facebook_contacts').update({ last_synced_at: new Date().toISOString() }).eq('id', contact.id); } catch (_) {}
+        results.push({
+          contact_id: contact.id,
+          name: contact.fb_name,
+          synced: 0,
+          sync_status: 'error',
+          error: err.message,
+        });
         if (io) io.emit('batch_progress', { type: 'sync_messages', current: i + 1, total, name: contact.fb_name, status: 'error', error: err.message });
       }
 
