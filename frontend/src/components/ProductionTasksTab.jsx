@@ -19,7 +19,14 @@ function taskStatus(t) {
   return 'pending';
 }
 
-export default function ProductionTasksTab({ projectId, stages = [], users = [], onReload }) {
+export default function ProductionTasksTab({
+  projectId,
+  stages = [],
+  users = [],
+  onReload,
+  /** 'production' | 'logistics' — lọc đính kèm & gắn mặc định khi upload */
+  shareModule = 'production',
+}) {
   const [tasks, setTasks] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -62,7 +69,9 @@ export default function ProductionTasksTab({ projectId, stages = [], users = [],
 
   const loadAttachments = async (taskId) => {
     try {
-      const { data } = await api.get(`/tasks/${taskId}/attachments`);
+      const { data } = await api.get(`/tasks/${taskId}/attachments`, {
+        params: { for_module: shareModule },
+      });
       setTaskAttachments(p => ({ ...p, [taskId]: data?.attachments || [] }));
     } catch (e) { console.error(e); }
   };
@@ -166,6 +175,7 @@ export default function ProductionTasksTab({ projectId, stages = [], users = [],
           file_url: up.file_url,
           file_size: up.file_size,
           mime_type: up.mime_type,
+          allowed_share_modules: [shareModule],
         }));
         await api.post(`/tasks/${taskId}/attachments/bulk`, { items });
         loadAttachments(taskId);

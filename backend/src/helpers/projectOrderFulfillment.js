@@ -57,15 +57,20 @@ async function resolveVcIntakeStageId() {
   }
 }
 
+/**
+ * Lead/deal gốc gắn dự án (không phải deal con/fulfillment): ưu tiên deal, sau đó lead
+ * (dự án tạo từ lead tự động — createProjectFromLead — chỉ có type=lead).
+ */
 async function findMasterDealForProject(projectId) {
   const { data: rows } = await supabase
     .from('crm_leads')
-    .select('id, title, customer_id, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, estimated_value, parent_lead_id')
+    .select('id, type, code, title, customer_id, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, estimated_value, parent_lead_id, created_at')
     .eq('project_id', projectId)
-    .eq('type', 'deal')
-    .order('created_at', { ascending: true });
+    .is('parent_lead_id', null);
   const list = rows || [];
-  return list.find((d) => !d.parent_lead_id) || list[0] || null;
+  const deal = list.find((r) => r.type === 'deal');
+  if (deal) return deal;
+  return list.find((r) => r.type === 'lead') || list[0] || null;
 }
 
 /**
@@ -79,12 +84,18 @@ async function createFulfillmentChildDeal({
   estimatedValue,
 }) {
   const code = await nextDealCode();
-  const title = `${(parentDeal.title || 'Deal').trim()} — ${(displayLabel || 'Đơn').trim()}`;
+  const label = (displayLabel || 'Đơn con').trim();
+  const title = label;
+  const parentHint = (parentDeal.title || parentDeal.code || '').trim();
+  const description = parentHint
+    ? `Đơn hàng con — deal cha: ${parentHint}`
+    : 'Đơn hàng con (fulfillment)';
   const { data, error } = await supabase
     .from('crm_leads')
     .insert({
       code,
       title,
+      description,
       type: 'deal',
       customer_id: parentDeal.customer_id,
       company_id: parentDeal.company_id,
@@ -106,12 +117,16 @@ async function createFulfillmentChildDeal({
 async function pushOrderToLogistics({ orderId, projectId, userId }) {
   const { data: order, error: oErr } = await supabase
     .from('orders')
-    .select('id, project_id, fulfillment_lead_id, logistics_project_id, display_label, code, title, total')
+    .select('id, project_id, fulfillment_lead_id, logistics_project_id, display_label, code, title, total, order_phase')
     .eq('id', orderId)
     .single();
   if (oErr || !order) throw new Error('Không tìm thấy đơn hàng');
   if (String(order.project_id) !== String(projectId)) {
     throw new Error('Đơn không thuộc dự án này');
+  }
+  // Không cho nhảy thẳng VC/LĐ: phải qua SX trước, sau đó chuyển trạng thái sang 'ready_logistics'
+  if (String(order.order_phase || 'draft') !== 'ready_logistics') {
+    throw new Error('Chưa thể đẩy VC/LĐ. Hãy chuyển sang Sản xuất trước và đưa đơn về trạng thái "Chờ VC".');
   }
   if (order.logistics_project_id) {
     return { already: true, logistics_project_id: order.logistics_project_id, fulfillment_lead_id: order.fulfillment_lead_id };
@@ -215,11 +230,149 @@ async function pushOrderToLogistics({ orderId, projectId, userId }) {
   };
 }
 
+/**
+ * Tạo đơn hàng con trên dự án (đồng bộ với POST /projects/:id/orders).
+ * @param {{ projectId: string, userId: string, displayLabel: string, title?: string, total?: number }} p
+ */
+async function createChildOrderOnProject(p) {
+  const { projectId, userId, displayLabel, title, total } = p;
+  const label = String(displayLabel || title || '').trim();
+  if (!label) throw new Error('Nhập tên đơn');
+
+  const { data: proj, error: pe } = await supabase
+    .from('projects')
+    .select('id, name, customer_id')
+    .eq('id', projectId)
+    .single();
+  if (pe || !proj) throw new Error('Không tìm thấy dự án');
+
+  let cust = {};
+  if (proj.customer_id) {
+    const { data: c } = await supabase
+      .from('customers')
+      .select('full_name, phone, address')
+      .eq('id', proj.customer_id)
+      .maybeSingle();
+    if (c) cust = c;
+  }
+
+  const master = await findMasterDealForProject(projectId);
+  if (!master) {
+    throw new Error('Dự án chưa có Lead/Deal CRM gắn (crm_leads.project_id, không phải deal con).');
+  }
+
+  const { data: lastSort } = await supabase
+    .from('orders')
+    .select('sort_index')
+    .eq('project_id', projectId)
+    .order('sort_index', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const sortIndex = (lastSort?.sort_index ?? -1) + 1;
+
+  const code = await nextDhCode();
+  const childLeadId = await createFulfillmentChildDeal({
+    parentDeal: master,
+    masterProjectId: projectId,
+    displayLabel: label,
+    userId,
+    estimatedValue: total != null ? Number(total) : 0,
+  });
+
+  const { data: order, error: insErr } = await supabase
+    .from('orders')
+    .insert({
+      code,
+      title: (title && String(title).trim()) || label,
+      display_label: label,
+      sort_index: sortIndex,
+      order_phase: 'draft',
+      project_id: projectId,
+      lead_id: master.id,
+      fulfillment_lead_id: childLeadId,
+      customer_id: proj.customer_id,
+      customer_name: cust.full_name || null,
+      customer_phone: cust.phone || null,
+      customer_address: cust.address || null,
+      total: total != null ? Number(total) : 0,
+      subtotal: total != null ? Number(total) : 0,
+      status: 'draft',
+      created_by: userId,
+    })
+    .select('*')
+    .single();
+  if (insErr) throw insErr;
+  return order;
+}
+
+/**
+ * Nếu dự án chưa có đơn từng lượt nào, tạo sẵn "Đơn 1" (1 bộ nhiệm vụ = 1 bản ghi order + deal fulfillment).
+ * Gọi sau mọi luồng tạo dự án từ Lead/Deal.
+ */
+async function ensureDefaultOrderOneForProject({ projectId, userId, defaultLabel = 'Đơn 1' }) {
+  if (!projectId || !userId) {
+    return { created: false, reason: 'missing params' };
+  }
+  const { data: anyOrder, error: cErr } = await supabase
+    .from('orders')
+    .select('id')
+    .eq('project_id', projectId)
+    .limit(1);
+  if (cErr) {
+    console.warn('[ensureDefaultOrderOneForProject] query orders', cErr.message);
+    return { created: false, reason: cErr.message };
+  }
+  if (anyOrder?.length) {
+    return { created: false, reason: 'already_has_orders' };
+  }
+  if (!(await findMasterDealForProject(projectId))) {
+    return { created: false, reason: 'no_parent_crm_lead' };
+  }
+  try {
+    const master = await findMasterDealForProject(projectId);
+    const orderTitle =
+      master?.title && String(master.title).trim()
+        ? `${String(master.title).trim()} — ${defaultLabel}`
+        : master?.code
+          ? `${String(master.code).trim()} — ${defaultLabel}`
+          : defaultLabel;
+    const order = await createChildOrderOnProject({
+      projectId,
+      userId,
+      displayLabel: defaultLabel,
+      title: orderTitle,
+      total: 0,
+    });
+    try {
+      await supabase.from('activity_logs').insert({
+        user_id: userId, action: 'created', entity_type: 'order', entity_id: order.id,
+        description: `Hệ thống tạo sẵn ${defaultLabel} (đơn hàng & nhiệm vụ đầu) trên dự án ${projectId}`,
+      });
+    } catch (_) { /* bảng optional */ }
+    if (master?.id) {
+      try {
+        await supabase.from('crm_activities').insert({
+          lead_id: master.id, type: 'note',
+          title: `📦 ${defaultLabel} (tự động)`,
+          description: `Hệ thống tạo sẵn bộ nhiệm vụ từng lượt — **${defaultLabel}**. Thêm **Đơn 2, 3…** khi có đợt bàn giao mới.`,
+          created_by: userId,
+        });
+      } catch (_) { /* optional */ }
+    }
+    return { created: true, order };
+  } catch (e) {
+    console.warn('[ensureDefaultOrderOneForProject]', e.message);
+    return { created: false, reason: e.message || 'create_failed' };
+  }
+}
+
 module.exports = {
   ORDER_PHASES,
   nextDhCode,
   findMasterDealForProject,
+  createChildOrderOnProject,
   createFulfillmentChildDeal,
+  ensureDefaultOrderOneForProject,
   pushOrderToLogistics,
   resolveVcIntakeStageId,
 };

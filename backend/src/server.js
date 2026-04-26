@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const http = require('http');
+const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 require('dotenv').config();
@@ -449,20 +450,28 @@ server.listen(config.port, () => {
           }
         }
 
-        const { data: lead, error: leadErr } = await supabase.from('crm_leads').insert({
-          code,
-          title: '[FB] ' + (contact.fb_name || 'KH Facebook'),
-          type: 'lead',
-          customer_id: customerId,
-          source_id: page.data.default_source_id || fbSource?.id || null,
-          stage_id: stageId,
-          company_id: page.data.default_company_id || null,
-          lead_owner_id: page.data.default_lead_owner_id || page.data.created_by,
-          assigned_to: page.data.default_lead_owner_id || page.data.created_by,
-          created_by: page.data.created_by,
-        }).select().single();
-
-        if (leadErr) { console.error('[Scan] Lead create error:', leadErr.message); continue; }
+        // IMPORTANT: tạo lead qua API CRM chuẩn để auto-gen tasks + tạo Đơn 1 (fulfillment)
+        const port = process.env.PORT || 3000;
+        const token = jwt.sign(
+          { userId: page.data.created_by, role: 'admin', fullName: 'Auto Pipeline' },
+          config.jwtSecret,
+          { expiresIn: '15m' },
+        );
+        let lead = null;
+        try {
+          const r = await axios.post(`http://localhost:${port}/api/crm/leads`, {
+            title: '[FB] ' + (contact.fb_name || 'KH Facebook'),
+            customer_id: customerId || null,
+            source_id: page.data.default_source_id || fbSource?.id || null,
+            stage_id: stageId || null,
+            company_id: page.data.default_company_id || null,
+            assigned_to: page.data.default_lead_owner_id || page.data.created_by,
+          }, { headers: { authorization: `Bearer ${token}` } });
+          lead = r.data;
+        } catch (e) {
+          console.error('[Scan] Lead create error:', e.response?.data?.error || e.message);
+          continue;
+        }
 
         await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
         // Không đồng bộ message nền để giảm egress; chỉ link contact -> lead.
@@ -480,6 +489,12 @@ server.listen(config.port, () => {
   setTimeout(checkDeadlines, 60000);
   setInterval(checkDeadlines, 15 * 60 * 1000);
 
+<<<<<<< Updated upstream
   // Tắt scanMissingLeads chạy nền ở server startup để giảm egress.
   // Lead scan tự động chỉ chạy qua công cụ /facebook/lead-scan/config với timer riêng.
+=======
+  // Run missing leads scan 90s after start, then every 10 minutes (khi bật công cụ tự động)
+  setTimeout(scanMissingLeads, 90000);
+  setInterval(scanMissingLeads, 10 * 60 * 1000);
+>>>>>>> Stashed changes
 });

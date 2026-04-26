@@ -30,7 +30,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
     try {
       // Parallel fetch — 2 requests only (no N+1!)
       const [leadDocsRes, approvalsRes] = await Promise.allSettled([
-        api.get(`/crm/project/${projectId}/lead-documents`),
+        api.get(`/crm/project/${projectId}/lead-documents`, { params: { for_module: 'workshop' } }),
         api.get(`/approvals/project/${projectId}`),
       ]);
 

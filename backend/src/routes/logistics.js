@@ -10,6 +10,7 @@ const { requirePermission } = require('../middleware/newPermission');
 const { notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { syncCrmLeadFromLogisticsStage, syncVcPipelineStageToLead, emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
 const { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
+const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
 
 const r = Router();
 r.use(auth);
@@ -564,12 +565,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 
 // ─── Project detail ─────────────────────────────────────────────────────────
 
-r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) => {
-  try {
-    const { id } = req.params;
-    let { data: project, error } = await supabase
-      .from('projects')
-      .select(`
+const LOGISTICS_DETAIL_SELECT_FULL = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
         production_deadline, production_note, install_address, vc_kanban_column_id,
         current_stage_id,
@@ -584,86 +580,213 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         assignee:users!projects_assigned_to_fkey(id, full_name),
         delivery_team:workshop_teams!projects_delivery_team_id_fkey(id, name, color, type),
         installation_team:workshop_teams!projects_installation_team_id_fkey(id, name, color, type),
-        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))
-      `)
-      .eq('id', id)
-      .single();
+        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
 
-    // Graceful degradation: nếu các cột mới chưa tồn tại (migration 79 chưa chạy)
-    if (error && (error.message?.includes('installer_person_id') || error.message?.includes('workshop_teams') || error.message?.includes('delivery_team'))) {
-      const fallback = await supabase
-        .from('projects')
-        .select(`
-          id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
-          production_deadline, production_note, install_address, vc_kanban_column_id,
-          current_stage_id,
-          current_stage:workflow_stages(id, slug, name, color, icon),
-          customer:customers(id, full_name, phone, email, address),
-          company:companies(id, name, short_name),
-          logistics_person:users!projects_logistics_person_id_fkey(id, full_name, avatar),
-          production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
-          sales_person:users!projects_sales_person_id_fkey(id, full_name),
-          supervisor:users!projects_supervisor_id_fkey(id, full_name),
-          assignee:users!projects_assigned_to_fkey(id, full_name),
-          tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))
-        `)
-        .eq('id', id)
-        .single();
-      if (!fallback.error) { project = fallback.data; error = null; }
+const LOGISTICS_DETAIL_SELECT_NO_TEAMS = `
+        id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
+        production_deadline, production_note, install_address, vc_kanban_column_id,
+        current_stage_id,
+        current_stage:workflow_stages(id, slug, name, color, icon),
+        customer:customers(id, full_name, phone, email, address),
+        company:companies(id, name, short_name),
+        logistics_person:users!projects_logistics_person_id_fkey(id, full_name, avatar),
+        production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name),
+        supervisor:users!projects_supervisor_id_fkey(id, full_name),
+        assignee:users!projects_assigned_to_fkey(id, full_name),
+        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
+
+const LOGISTICS_DETAIL_SELECT_NO_VC_K = `
+        id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
+        production_deadline, production_note, install_address,
+        current_stage_id,
+        current_stage:workflow_stages(id, slug, name, color, icon),
+        customer:customers(id, full_name, phone, email, address),
+        company:companies(id, name, short_name),
+        production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name),
+        supervisor:users!projects_supervisor_id_fkey(id, full_name),
+        assignee:users!projects_assigned_to_fkey(id, full_name),
+        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
+
+// Fallback cực thấp: DB chưa có FK projects → users / workshop_teams
+const LOGISTICS_DETAIL_SELECT_NO_USERS = `
+        id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
+        production_deadline, production_note, install_address, vc_kanban_column_id,
+        current_stage_id,
+        current_stage:workflow_stages(id, slug, name, color, icon),
+        customer:customers(id, full_name, phone, email, address),
+        company:companies(id, name, short_name),
+        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
+
+async function fetchLogisticsProjectRow(projectUuid) {
+  const tries = [
+    LOGISTICS_DETAIL_SELECT_FULL,
+    LOGISTICS_DETAIL_SELECT_NO_TEAMS,
+    LOGISTICS_DETAIL_SELECT_NO_VC_K,
+    LOGISTICS_DETAIL_SELECT_NO_USERS,
+  ];
+  let lastErr = null;
+  for (const sel of tries) {
+    const { data, error } = await supabase.from('projects').select(sel).eq('id', projectUuid).single();
+    if (!error && data) return { data, error: null };
+    lastErr = error;
+    if (error?.code === 'PGRST116') return { data: null, error };
+    const msg = String(error?.message || '');
+    // Missing relationship between projects and users (schema cache) → retry without any user joins
+    if (msg.includes("relationship between 'projects' and 'users'")) continue;
+    if (msg.includes('schema cache') && msg.includes('projects') && msg.includes('users')) continue;
+    if (msg.includes('vc_kanban_column_id') && sel !== LOGISTICS_DETAIL_SELECT_NO_VC_K) continue;
+    if (
+      msg.includes('installer_person_id')
+      || msg.includes('workshop_teams')
+      || msg.includes('delivery_team')
+      || msg.includes('installation_team')
+    ) continue;
+    if (
+      msg.includes('logistics_person_id')
+      || msg.includes('logistics_person')
+      || msg.includes('projects_logistics_person')
+    ) continue;
+    return { data: null, error };
+  }
+  return { data: null, error: lastErr };
+}
+
+r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const rawId = String(req.params.id || '').trim();
+    let projectId = rawId;
+    let { data: project, error } = await fetchLogisticsProjectRow(projectId);
+
+    if (error || !project) {
+      const { data: leadRow, error: leadErr } = await supabase
+        .from('crm_leads')
+        .select('project_id, title, type')
+        .eq('id', rawId)
+        .maybeSingle();
+      if (!leadErr && leadRow?.project_id) {
+        projectId = leadRow.project_id;
+        ({ data: project, error } = await fetchLogisticsProjectRow(projectId));
+      }
     }
 
     if (error || !project) {
+      // Distinguish "not found" vs "select failed" (missing columns/relationships)
+      try {
+        const { data: bare, error: bareErr } = await supabase
+          .from('projects')
+          .select('id, code, status, current_stage_id, vc_kanban_column_id')
+          .eq('id', projectId)
+          .maybeSingle();
+        if (!bareErr && bare?.id && error && error.code !== 'PGRST116') {
+          console.error('[logistics/projects/:id] select failed for existing project:', error);
+          return res.status(500).json({
+            error: 'Lỗi tải chi tiết dự án VC/LĐ',
+            details: error.message || String(error),
+            project_id: bare.id,
+            project_code: bare.code || null,
+          });
+        }
+      } catch (_) { /* ignore */ }
       return res.status(404).json({ error: 'Dự án không tồn tại' });
     }
 
-    // Kiểm tra dự án có trong scope VC không
+    const rowId = project.id;
+
+    // Kiểm tra dự án có trong scope VC (đồng bộ với list + dự án chỉ có Kanban VC / đơn bàn giao)
     const { ids: stageIds } = await getLogisticsStageMap();
-    const inScope = LOGISTICS_STATUSES.includes(project.status)
+    const stageSlug = project.current_stage?.slug;
+    let inScope = LOGISTICS_STATUSES.includes(project.status)
+      || (stageSlug && LOGISTICS_STAGE_SLUGS.includes(stageSlug))
       || stageIds.includes(String(project.current_stage_id));
+
+    if (!inScope && project.vc_kanban_column_id) {
+      inScope = true;
+    }
+    if (!inScope) {
+      const { count, error: ocErr } = await supabase
+        .from('orders')
+        .select('id', { count: 'exact', head: true })
+        .eq('logistics_project_id', rowId);
+      if (!ocErr && (count || 0) > 0) inScope = true;
+    }
+
     if (!inScope) {
       return res.status(403).json({ error: 'Dự án này chưa ở giai đoạn vận chuyển' });
     }
 
-    // Tài liệu
-    const { data: docs = [] } = await supabase
-      .from('project_documents')
-      .select('id, name, file_url, file_type, notes, created_at, shared_to_workshop')
-      .eq('project_id', id)
+    // A) VC/LĐ dùng chung tài liệu CRM (lead_documents) đã chia sẻ sang xưởng.
+    // (Tài liệu nội bộ VC nếu có sẽ nằm trong file_attachments / dự án đầy đủ.)
+    const { data: sharedRaw, error: sharedErr } = await supabase
+      .from('lead_documents')
+      .select('id, lead_id, project_id, name, doc_type, file_url, file_name, file_size, mime_type, notes, created_at, created_by, allowed_departments, allowed_companies, allowed_share_modules, shared_to_workshop')
+      .eq('project_id', rowId)
+      .eq('shared_to_workshop', true)
       .order('created_at', { ascending: false });
-
-    const sharedDocs = docs.filter((d) => d.shared_to_workshop);
+    if (sharedErr) console.warn('[logistics/projects/:id] lead_documents shared:', sharedErr.message);
+    const sharedDocs = (Array.isArray(sharedRaw) ? sharedRaw : []).filter((d) =>
+      leadDocVisibleForModuleAndUser(d, 'logistics', req.user),
+    );
+    const docs = [];
 
     // CRM deals
-    const { data: crmDeals = [] } = await supabase
+    const { data: crmDealsRaw, error: crmDealsErr } = await supabase
       .from('crm_leads')
       .select('id, name, type, stage:crm_pipeline_stages(id, name, color, is_won)')
-      .eq('project_id', id)
+      .eq('project_id', rowId)
       .eq('type', 'deal');
+    if (crmDealsErr) console.warn('[logistics/projects/:id] crm_leads:', crmDealsErr.message);
+    const crmDeals = Array.isArray(crmDealsRaw) ? crmDealsRaw : [];
 
     // Stage transitions
-    const { data: transitions = [] } = await supabase
+    const { data: transitionsRaw, error: transErr } = await supabase
       .from('stage_transitions')
       .select('id, from_stage_id, to_stage_id, created_at, notes, transitioned_by, from_stage:workflow_stages!stage_transitions_from_stage_id_fkey(id,name), to_stage:workflow_stages!stage_transitions_to_stage_id_fkey(id,name)')
-      .eq('project_id', id)
+      .eq('project_id', rowId)
       .order('created_at', { ascending: false })
       .limit(20);
+    if (transErr) console.warn('[logistics/projects/:id] stage_transitions:', transErr.message);
+    const transitions = Array.isArray(transitionsRaw) ? transitionsRaw : [];
 
-    // Comments
-    const { data: comments = [] } = await supabase
-      .from('project_comments')
-      .select('id, content, created_at, user:users(id, full_name, avatar)')
-      .eq('project_id', id)
-      .order('created_at', { ascending: false })
-      .limit(30);
+    // Comments (DB có thể thiếu relationship projects↔users, fallback không join user)
+    let comments = [];
+    try {
+      const c1 = await supabase
+        .from('project_comments')
+        .select('id, content, created_at, user:users(id, full_name, avatar)')
+        .eq('project_id', rowId)
+        .order('created_at', { ascending: false })
+        .limit(30);
+      if (c1.error && String(c1.error.message || '').includes("relationship between 'project_comments' and 'users'")) {
+        const c2 = await supabase
+          .from('project_comments')
+          .select('id, content, created_at, user_id')
+          .eq('project_id', rowId)
+          .order('created_at', { ascending: false })
+          .limit(30);
+        if (c2.error) console.warn('[logistics/projects/:id] project_comments fb:', c2.error.message);
+        comments = Array.isArray(c2.data) ? c2.data : [];
+      } else {
+        if (c1.error) console.warn('[logistics/projects/:id] project_comments:', c1.error.message);
+        comments = Array.isArray(c1.data) ? c1.data : [];
+      }
+    } catch (ce) {
+      console.warn('[logistics/projects/:id] project_comments catch:', ce.message);
+      comments = [];
+    }
 
     // Incidents
-    const { data: incidents = [] } = await supabase
-      .from('project_incidents')
-      .select('*')
-      .eq('project_id', id)
-      .order('created_at', { ascending: false })
-      .limit(20)
-      .catch(() => ({ data: [] }));
+    let incidents = [];
+    try {
+      const incRes = await supabase
+        .from('project_incidents')
+        .select('*')
+        .eq('project_id', rowId)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      incidents = incRes.data || [];
+    } catch (_) { /* bảng chưa có hoặc lỗi tạm thời */ }
 
     const pcid = project.company_id || project.company?.id || null;
     const { stages: kStages } = await getResolvedLogisticsStages(pcid ? String(pcid) : null);
@@ -783,18 +906,34 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     }
     if (updateError) throw updateError;
 
-    await supabase.from('stage_transitions').insert({
-      project_id: id,
-      from_stage_id: project.current_stage_id,
-      to_stage_id: resolvedStageId || null,
-      transitioned_by: userId,
-    }).catch((e) => console.warn('[logistics] stage_transitions:', e.message));
+    try {
+      await supabase.from('stage_transitions').insert({
+        project_id: id,
+        from_stage_id: project.current_stage_id,
+        to_stage_id: resolvedStageId || null,
+        transitioned_by: userId,
+      });
+    } catch (e) {
+      console.warn('[logistics] stage_transitions:', e.message);
+    }
 
-    const { data: updated } = await supabase
-      .from('projects')
-      .select('id, code, name, status, current_stage_id, vc_kanban_column_id, current_stage:workflow_stages(id, slug, name, color)')
-      .eq('id', id).single()
-      .catch(() => supabase.from('projects').select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)').eq('id', id).single());
+    let updated = null;
+    try {
+      const r1 = await supabase
+        .from('projects')
+        .select('id, code, name, status, current_stage_id, vc_kanban_column_id, current_stage:workflow_stages(id, slug, name, color)')
+        .eq('id', id)
+        .single();
+      if (!r1.error) updated = r1.data;
+      else throw r1.error;
+    } catch (_) {
+      const r2 = await supabase
+        .from('projects')
+        .select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)')
+        .eq('id', id)
+        .single();
+      updated = r2.data;
+    }
 
     // Kiểm tra cột VC có cờ crm_sync_type → đồng bộ CRM deal
     try {

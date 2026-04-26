@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { isLeadDocVisibleInModule } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { ClipboardList, X, ChevronDown, ChevronRight, UserPlus, Trash2, Save } from 'lucide-react';
 
@@ -66,9 +67,12 @@ export default function WorkshopProjectTasksPanel({
   const [crmSharedTaskNotes, setCrmSharedTaskNotes] = useState([]);
 
   const filtered = filterProjectTasksByWorkArea(tasks, workArea);
+  const shareMod = workArea === 'logistics' ? 'logistics' : 'production';
   const sharedCrmDocs = useMemo(
-    () => (crmDealDocs || []).filter(isCrmDocSharedToWorkshop),
-    [crmDealDocs],
+    () => (crmDealDocs || []).filter(
+      (d) => isCrmDocSharedToWorkshop(d) && isLeadDocVisibleInModule(d, shareMod),
+    ),
+    [crmDealDocs, shareMod],
   );
 
   const loadTemplates = useCallback(async () => {

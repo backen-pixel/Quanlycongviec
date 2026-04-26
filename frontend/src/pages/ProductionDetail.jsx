@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
 import ProductionTasksTab from '../components/ProductionTasksTab';
+import ProjectOrdersTab from '../components/ProjectOrdersTab';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
@@ -323,10 +324,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [orderCount, setOrderCount] = useState(0);
   const tabFromUrl = searchParams.get('tab');
   const normalizedUrlTab = LEGACY_TAB_MAP[tabFromUrl] || tabFromUrl;
+  const tabAllowed = (t) => {
+    if (DEAL_TAB_KEYS.has(t)) return true;
+    return t === 'orders';
+  };
   const [activeTab, setActiveTab] = useState(
-    DEAL_TAB_KEYS.has(normalizedUrlTab) ? normalizedUrlTab : 'tasks',
+    tabAllowed(normalizedUrlTab) ? normalizedUrlTab : 'tasks',
   );
   const [crmUsers, setCrmUsers] = useState([]);
   const [crmActivities, setCrmActivities] = useState([]);
@@ -432,9 +438,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   useEffect(() => {
     const t = searchParams.get('tab');
     const next = LEGACY_TAB_MAP[t] || t;
-    if (DEAL_TAB_KEYS.has(next)) setActiveTab(next);
+    if (tabAllowed(next)) setActiveTab(next);
     else setActiveTab('tasks');
-  }, [id, searchParams]);
+  }, [id, searchParams, moduleKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -445,7 +451,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     // Load VC teams (chỉ cần cho module VC)
     if (moduleKey === 'vc') {
       api.get('/workshop-teams').then((r) => {
-        if (!cancelled) setVcTeams(r.data || []);
+        if (cancelled) return;
+        const rows = r.data?.teams || r.data || [];
+        setVcTeams(Array.isArray(rows) ? rows : []);
       }).catch(() => {});
     }
     return () => { cancelled = true; };
@@ -502,10 +510,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   const loadTaskFiles = useCallback(async (projectId) => {
     try {
-      const { data } = await api.get(`/projects/${projectId}/task-files`);
+      const forModule = moduleKey === 'vc' ? 'logistics' : 'production';
+      const { data } = await api.get(`/projects/${projectId}/task-files`, { params: { for_module: forModule } });
       setTaskFiles(data?.taskFiles || []);
     } catch (_) { setTaskFiles([]); }
-  }, []);
+  }, [moduleKey]);
 
   const loadProjectActivities = useCallback(async (projectId) => {
     try {
@@ -528,6 +537,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
       ]);
       const proj = projRes.data?.project;
+      if (proj?.id && String(proj.id) !== String(id)) {
+        setLoading(false);
+        navigate(`${MOD.routePrefix}/projects/${proj.id}`, { replace: true });
+        return;
+      }
       const list = tasksRes.data?.tasks || tasksRes.data || [];
       const total = Array.isArray(list) ? list.length : 0;
       const completed = Array.isArray(list) ? list.filter((t) => t.status === 'done').length : 0;
@@ -538,6 +552,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       loadProjectDocs(id);
       loadTaskFiles(id);
       loadProjectActivities(id);
+      api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => setOrderCount(0));
     } catch (e) {
       console.error(e);
       const st = e.response?.status;
@@ -606,10 +621,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
+      api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => {});
     } catch (_) {
       /* giữ state cũ */
     }
-  }, [id]);
+  }, [id, moduleKey]);
 
   const setProductionPerson = useCallback(async (userId) => {
     if (!project?.id) return;
@@ -858,6 +874,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     );
   }
 
+  const safeVcTeams = Array.isArray(vcTeams) ? vcTeams : [];
+  const safeTaskUsers = (Array.isArray(allUsers) && allUsers.length)
+    ? allUsers
+    : (Array.isArray(crmUsers) ? crmUsers : []);
+  const safeProjectDocs = Array.isArray(projectDocs) ? projectDocs : [];
+  const safeTaskFiles = Array.isArray(taskFiles) ? taskFiles : [];
+
   const defaultPipelineStages = moduleKey === 'vc'
     ? [
         { id: null, slug: 'delivery_pending', name: 'Chờ vận chuyển', color: '#f97316', icon: '📦' },
@@ -875,6 +898,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     : project.workshopPipeline?.length
       ? project.workshopPipeline
       : defaultPipelineStages;
+  const safePipelineStages = Array.isArray(pipelineStages) ? pipelineStages : [];
 
   // VC dùng vc_kanban_column_id (logistics_pipeline_stages.id) để match stepper
   // SX dùng current_stage_id (workflow_stages.id) hoặc stage ID từ fallback
@@ -886,7 +910,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const displayCode = primaryCrmDeal?.code || project.code;
   const displayTitle = primaryCrmDeal?.title || project.name;
   const taskCount = productionTaskSummary.total || 0;
-  const taskUsers = allUsers.length ? allUsers : crmUsers;
+  const taskUsers = safeTaskUsers;
 
   const tabBtn = (tab, label) => (
     <button
@@ -982,7 +1006,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
       {/* Pipeline — shared PipelineStepper component */}
       <PipelineStepper
-        stages={pipelineStages}
+        stages={safePipelineStages}
         currentStageId={currentStageId}
         onMoveToStage={moveStage}
       />
@@ -1059,7 +1083,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                       className="w-full h-9 px-3 border border-orange-200 rounded-lg text-sm bg-orange-50/40 focus:ring-2 focus:ring-orange-400 disabled:opacity-60"
                     >
                       <option value="">— Chưa gán đội —</option>
-                      {vcTeams.filter((t) => t.type === 'delivery').map((t) => (
+                      {safeVcTeams.filter((t) => t.type === 'delivery').map((t) => (
                         <option key={t.id} value={t.id}>{t.name}</option>
                       ))}
                     </select>
@@ -1098,7 +1122,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                       className="w-full h-9 px-3 border border-amber-200 rounded-lg text-sm bg-amber-50/40 focus:ring-2 focus:ring-amber-400 disabled:opacity-60"
                     >
                       <option value="">— Chưa gán đội —</option>
-                      {vcTeams.filter((t) => t.type === 'installation').map((t) => (
+                      {safeVcTeams.filter((t) => t.type === 'installation').map((t) => (
                         <option key={t.id} value={t.id}>{t.name}</option>
                       ))}
                     </select>
@@ -1128,7 +1152,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             {/* Tab bar — giống LeadDetail, bỏ Facebook và Tổng đài */}
             <div className="flex border-b flex-wrap">
               {tabBtn('tasks', '✅ Công việc')}
-              {tabBtn('documents', `📋 Tài liệu (${projectDocs.length + (project.sharedDocuments?.length || 0) + taskFiles.length})`)}
+              {tabBtn('orders', `🛒 Đơn hàng${orderCount ? ` (${orderCount})` : ''}`)}
+              {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + (project.sharedDocuments?.length || 0) + safeTaskFiles.length})`)}
               {tabBtn('activities', `💬 Hoạt động (${crmLeadId ? sharedActivities.length : projectActivities.length})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
               {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
@@ -1150,8 +1175,18 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     stages={pipelineStages}
                     users={taskUsers}
                     onReload={refreshProjectSilently}
+                    shareModule={moduleKey === 'vc' ? 'logistics' : 'production'}
                   />
                 )
+              )}
+
+              {activeTab === 'orders' && (
+                <ProjectOrdersTab
+                  projectId={project.id}
+                  users={taskUsers}
+                  logisticsView={moduleKey === 'vc'}
+                  onChanged={() => { refreshProjectSilently(); api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => {}); }}
+                />
               )}
 
               {/* Tài liệu */}

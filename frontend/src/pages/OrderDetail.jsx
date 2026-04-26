@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import { ArrowLeft, ShoppingCart, Receipt, User, Phone, MapPin, Package, Calendar, Truck, Download, Loader2, Pencil } from 'lucide-react';
+import CRMTasksTab from '../components/CRMTasksTab';
 
 const STATUS_MAP = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
 const STATUS_COLORS = { draft: 'bg-gray-100 text-gray-600', confirmed: 'bg-blue-100 text-blue-700', processing: 'bg-amber-100 text-amber-700', shipped: 'bg-indigo-100 text-indigo-700', delivered: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-red-100 text-red-700' };
@@ -64,6 +65,7 @@ export default function OrderDetail() {
   const currentStep = STATUS_STEPS.indexOf(order.status);
   const remaining = (order.total || 0) - (order.paid_amount || 0);
   const totalVat = (order.items || []).reduce((s, i) => s + (i.vat_amount || (i.amount || 0) * (i.vat_rate || 0) / 100), 0);
+  const taskLeadId = order.fulfillment_lead_id || order.lead_id || null;
 
   return (
     <div className="space-y-4 w-full">
@@ -187,6 +189,16 @@ export default function OrderDetail() {
               <div className="flex justify-between border-t pt-2 text-base font-bold"><span>TỔNG CỘNG</span><span className="text-emerald-600">{formatVND(order.total)}</span></div>
             </div>
           </div>
+        </div>
+
+        {/* Tasks for this order (fulfillment deal) */}
+        <div className="bg-white rounded-xl border p-4">
+          <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">✅ Nhiệm vụ đơn hàng</h3>
+          {taskLeadId ? (
+            <CRMTasksTab leadId={taskLeadId} leadType="deal" users={[]} />
+          ) : (
+            <div className="text-sm text-gray-500">Đơn chưa có deal nhiệm vụ.</div>
+          )}
         </div>
       </div>
     </div>

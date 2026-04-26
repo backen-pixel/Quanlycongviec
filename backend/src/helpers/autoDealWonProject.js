@@ -3,6 +3,7 @@ const { generateStepTasks } = require('./generateFlowTasks');
 const { notifyMultiple } = require('./notifications');
 const { syncCrmLeadSxPipelineFromProject } = require('./workshopKanban');
 const { applyDefaultWorkshopTemplatesForNewProject } = require('./workshopApplyTemplates');
+const { isPostgresUniqueViolation, nextTbProjectCode } = require('./projectCode');
 
 /**
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
@@ -47,15 +48,11 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId }) {
     return { ok: false, error: 'Chưa có luồng quy trình nào. Vui lòng tạo luồng trước.', statusCode: 400 };
   }
 
-  const yr = new Date().getFullYear();
-  const { data: lastP } = await supabase.from('projects').select('code').like('code', `TB-${yr}-%`).order('code', { ascending: false }).limit(1);
-  const lastNum = lastP?.[0]?.code ? parseInt(lastP[0].code.split('-').pop(), 10) || 0 : 0;
-  const code = `TB-${yr}-${String(lastNum + 1).padStart(3, '0')}`;
-
   const { data: firstStage } = await supabase.from('workflow_stages')
     .select('id').eq('slug', 'consulting').single();
 
-  const { data: project, error: projErr } = await supabase.from('projects').insert({
+  const yr = new Date().getFullYear();
+  const baseRow = (code) => ({
     code,
     name: deal.title || 'Dự án mới',
     description: deal.description || null,
@@ -69,8 +66,26 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId }) {
     priority: config?.default_priority || deal.priority || 'medium',
     sales_person_id: deal.assigned_to || userId,
     consult_date: new Date().toISOString(),
-  }).select('*').single();
-  if (projErr) throw projErr;
+  });
+
+  let project;
+  let lastInsertErr;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const code = await nextTbProjectCode(supabase, yr);
+    const { data, error: projErr } = await supabase
+      .from('projects')
+      .insert(baseRow(code))
+      .select('*')
+      .single();
+    if (!projErr) {
+      project = data;
+      break;
+    }
+    lastInsertErr = projErr;
+    if (isPostgresUniqueViolation(projErr)) continue;
+    throw projErr;
+  }
+  if (!project) throw lastInsertErr || new Error('Không tạo dự án: trùng mã code');
 
   const projectId = project.id;
 
@@ -174,7 +189,7 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId }) {
     await supabase.from('crm_activities').insert({
       lead_id: dealId, type: 'note',
       title: '📋 Dự án tự động tạo',
-      description: `Dự án ${code} đã được tạo tự động với ${totalTasks} nhiệm vụ${workshopTemplateTaskCount ? ` (gồm ${workshopTemplateTaskCount} từ bộ mẫu xưởng)` : ''}`,
+      description: `Dự án ${project.code} đã được tạo tự động với ${totalTasks} nhiệm vụ${workshopTemplateTaskCount ? ` (gồm ${workshopTemplateTaskCount} từ bộ mẫu xưởng)` : ''}`,
       created_by: userId,
     });
   } catch (_) {}
@@ -185,17 +200,25 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId }) {
     if (adminIds.length) {
       await notifyMultiple(req, adminIds, 'project_created',
         '📋 Dự án mới từ Deal',
-        `Dự án ${code} — "${deal.title}" (${allCreatedTasks.length + workshopTemplateTaskCount} nhiệm vụ)`,
+        `Dự án ${project.code} — "${deal.title}" (${allCreatedTasks.length + workshopTemplateTaskCount} nhiệm vụ)`,
         'project', projectId);
     }
   } catch (_) {}
 
-  console.log(`[auto-project] Deal ${dealId} → Project ${code} (${allCreatedTasks.length + workshopTemplateTaskCount} tasks)`);
+  try {
+    const { ensureDefaultOrderOneForProject } = require('./projectOrderFulfillment');
+    const r1 = await ensureDefaultOrderOneForProject({ projectId, userId, defaultLabel: 'Đơn 1' });
+    if (r1.created) console.log(`[auto-project] ${r1.order?.code} — Đơn 1 (nhiệm vụ từng lượt)`);
+  } catch (e) {
+    console.warn('[auto-project] ensure Đơn 1:', e.message);
+  }
+
+  console.log(`[auto-project] Deal ${dealId} → Project ${project.code} (${allCreatedTasks.length + workshopTemplateTaskCount} tasks)`);
 
   return {
     ok: true,
     project_id: projectId,
-    project_code: code,
+    project_code: project.code,
     project_name: project.name,
     tasks_created: allCreatedTasks.length + workshopTemplateTaskCount,
   };
