@@ -844,6 +844,37 @@ function ContactsTab() {
   const [chainPoolOffset, setChainPoolOffset] = useState(0);
   const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
 
+  // ── Tool: Quét lại SĐT (rescan-phones) ───────────────────────────
+  const [rescanOpen, setRescanOpen] = useState(false);
+  const [rescanForm, setRescanForm] = useState({
+    limit: 100,
+    mode: 'all',           // 'all' | 'with_phone' | 'without_phone'
+    overwrite: true,       // ghi đè SĐT cũ nếu tìm thấy SĐT mới khác
+    sort: 'newest_first',  // 'newest_first' | 'oldest_first'
+    sync_customer: true,   // đồng bộ SĐT mới sang customer.phone
+  });
+  const [rescanStatus, setRescanStatus] = useState(null); // { loading, result, error }
+  const [rescanProgress, setRescanProgress] = useState(null);
+  const runRescanPhones = async () => {
+    setRescanStatus({ loading: true, result: null, error: null });
+    setRescanProgress({ current: 0, total: rescanForm.limit, name: '' });
+    try {
+      const res = await fetch(`${API}/api/facebook/rescan-phones`, {
+        method: 'POST',
+        headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(rescanForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setRescanStatus({ loading: false, result: data, error: null });
+      load(false);
+    } catch (e) {
+      setRescanStatus({ loading: false, result: null, error: e.message });
+    } finally {
+      setRescanProgress(null);
+    }
+  };
+
   const sortContacts = useCallback((list) => {
     const deduped = (list || []).filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
     return [...deduped].sort((a, b) => {
@@ -974,17 +1005,20 @@ function ContactsTab() {
         return sorted.slice(0, 200);
       });
     };
+    const onRescanProgress = (p) => { setRescanProgress(p); };
     socket.on('fb_message', onFbMessage);
     socket.on('fb_contact_updated', onContactUpdated);
     socket.on('fb_contact_created', onContactCreated);
     socket.on('batch_progress', onBatchProgress);
     socket.on('batch_done', onBatchDone);
+    socket.on('rescan_phones_progress', onRescanProgress);
     return () => {
       socket.off('fb_message', onFbMessage);
       socket.off('fb_contact_updated', onContactUpdated);
       socket.off('fb_contact_created', onContactCreated);
       socket.off('batch_progress', onBatchProgress);
       socket.off('batch_done', onBatchDone);
+      socket.off('rescan_phones_progress', onRescanProgress);
     };
   }, [socket, load, sortContacts, search, filter]);
 
@@ -1218,6 +1252,15 @@ function ContactsTab() {
             title="Chỉ đọc tin đã lưu DB — không kéo tin mới từ Facebook">
             {batchStatus?.type === 'phones' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full" /> : '📞'}
             Quét SĐT (DB)
+          </button>
+          <button
+            onClick={() => setRescanOpen(true)}
+            disabled={rescanStatus?.loading}
+            className="px-3 py-1.5 text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 rounded-lg hover:bg-rose-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+            title="Quét lại SĐT (chỉ tin của user FB, bỏ qua link, có thể ghi đè SĐT cũ)"
+          >
+            {rescanStatus?.loading ? <span className="animate-spin h-3 w-3 border-2 border-rose-600 border-t-transparent rounded-full" /> : '🔁'}
+            Quét lại SĐT
           </button>
           <select value={limitSize} onChange={e => setLimitSize(Number(e.target.value))} className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700">
             <option value={1000}>1000</option>
@@ -1457,6 +1500,177 @@ function ContactsTab() {
           </div>
         )}
       </div>
+
+      {rescanOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => !rescanStatus?.loading && setRescanOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 border-b flex items-center justify-between sticky top-0 bg-white">
+              <div>
+                <h3 className="text-lg font-bold text-rose-700">🔁 Quét lại SĐT từ tin nhắn user</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Chỉ quét tin user FB (inbound) · không quét tin mình gửi · không quét link</p>
+              </div>
+              <button onClick={() => !rescanStatus?.loading && setRescanOpen(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Số lượng cần quét (1 — 1000)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={rescanForm.limit}
+                  onChange={(e) => setRescanForm((f) => ({ ...f, limit: Math.min(1000, Math.max(1, parseInt(e.target.value, 10) || 1)) }))}
+                  disabled={rescanStatus?.loading}
+                  className="w-32 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-rose-300 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">Phạm vi quét</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { v: 'all', l: 'Tất cả', d: 'Quét cả user đã có lẫn chưa có SĐT' },
+                    { v: 'without_phone', l: 'Chỉ chưa có SĐT', d: 'Tìm SĐT cho contact trống' },
+                    { v: 'with_phone', l: 'Chỉ đã có SĐT', d: 'Tìm SĐT mới (xác minh/cập nhật)' },
+                  ].map(opt => (
+                    <button
+                      key={opt.v}
+                      type="button"
+                      disabled={rescanStatus?.loading}
+                      onClick={() => setRescanForm((f) => ({ ...f, mode: opt.v }))}
+                      className={`p-2 text-left rounded-lg border text-xs ${rescanForm.mode === opt.v ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-gray-200 bg-white hover:bg-gray-50'}`}
+                    >
+                      <div className="font-semibold">{opt.l}</div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">{opt.d}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">Sắp xếp</label>
+                <div className="flex gap-2">
+                  {[
+                    { v: 'newest_first', l: 'Hoạt động mới nhất trước' },
+                    { v: 'oldest_first', l: 'Hoạt động cũ nhất trước' },
+                  ].map(opt => (
+                    <button
+                      key={opt.v}
+                      type="button"
+                      disabled={rescanStatus?.loading}
+                      onClick={() => setRescanForm((f) => ({ ...f, sort: opt.v }))}
+                      className={`px-3 py-1.5 rounded-lg border text-xs ${rescanForm.sort === opt.v ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-gray-200 bg-white hover:bg-gray-50'}`}
+                    >
+                      {opt.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 bg-gray-50 rounded-lg p-3">
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={rescanForm.overwrite}
+                    onChange={(e) => setRescanForm((f) => ({ ...f, overwrite: e.target.checked }))}
+                    disabled={rescanStatus?.loading}
+                    className="rounded text-rose-600 focus:ring-rose-300"
+                  />
+                  <span><strong>Ghi đè SĐT cũ</strong> nếu phát hiện SĐT mới khác trong tin nhắn</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={rescanForm.sync_customer}
+                    onChange={(e) => setRescanForm((f) => ({ ...f, sync_customer: e.target.checked }))}
+                    disabled={rescanStatus?.loading}
+                    className="rounded text-rose-600 focus:ring-rose-300"
+                  />
+                  <span>Đồng bộ SĐT mới sang <strong>customer.phone</strong> (nếu contact đã có khách hàng liên kết)</span>
+                </label>
+              </div>
+
+              {rescanProgress && rescanStatus?.loading && (
+                <div className="text-xs text-gray-600 space-y-1">
+                  <div>Đang quét: <span className="font-medium">{rescanProgress.name || '...'}</span> ({rescanProgress.current || 0}/{rescanProgress.total || 0})</div>
+                  <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                    <div className="h-full bg-rose-500 rounded-full transition-all" style={{ width: `${rescanProgress.total ? Math.round(((rescanProgress.current || 0) / rescanProgress.total) * 100) : 0}%` }} />
+                  </div>
+                </div>
+              )}
+
+              {rescanStatus?.error && (
+                <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">❌ {rescanStatus.error}</div>
+              )}
+
+              {rescanStatus?.result && !rescanStatus.error && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    <div className="bg-gray-50 rounded p-2"><div className="text-gray-500">Đã quét</div><div className="font-bold text-base">{rescanStatus.result.scanned}</div></div>
+                    <div className="bg-green-50 rounded p-2"><div className="text-green-700">Set SĐT mới</div><div className="font-bold text-base text-green-700">{rescanStatus.result.updated_set || 0}</div></div>
+                    <div className="bg-amber-50 rounded p-2"><div className="text-amber-700">Ghi đè</div><div className="font-bold text-base text-amber-700">{rescanStatus.result.updated_replaced || 0}</div></div>
+                    <div className="bg-gray-100 rounded p-2"><div className="text-gray-600">Không tìm SĐT</div><div className="font-bold text-base">{rescanStatus.result.no_phone_found || 0}</div></div>
+                  </div>
+                  {Array.isArray(rescanStatus.result.results) && rescanStatus.result.results.length > 0 && (
+                    <div className="border rounded-lg overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-[11px]">
+                        <thead className="bg-gray-100 sticky top-0">
+                          <tr><th className="text-left p-1.5">User FB</th><th className="text-left p-1.5">SĐT cũ</th><th className="text-left p-1.5">SĐT mới</th><th className="text-left p-1.5">Tin quét</th><th className="text-left p-1.5">Action</th></tr>
+                        </thead>
+                        <tbody>
+                          {rescanStatus.result.results.map((r, i) => (
+                            <tr key={i} className="border-t hover:bg-gray-50">
+                              <td className="p-1.5 truncate max-w-[160px]" title={r.fb_name}>{r.fb_name || '—'}</td>
+                              <td className="p-1.5 font-mono text-gray-500">{r.old_phone || '—'}</td>
+                              <td className="p-1.5 font-mono text-rose-700">{r.new_phone || '—'}</td>
+                              <td className="p-1.5 text-gray-500">{r.messages_scanned ?? 0}</td>
+                              <td className="p-1.5">
+                                <span className={
+                                  r.action === 'set_new' ? 'text-green-700' :
+                                  r.action === 'replaced' ? 'text-amber-700' :
+                                  r.action === 'unchanged_same' ? 'text-gray-500' :
+                                  r.action === 'kept_existing' ? 'text-blue-700' :
+                                  r.action === 'error' ? 'text-red-700' :
+                                  'text-gray-400'
+                                }>
+                                  {r.action === 'set_new' ? '✅ Set SĐT mới' :
+                                   r.action === 'replaced' ? '🔁 Ghi đè' :
+                                   r.action === 'unchanged_same' ? '⏸ Trùng SĐT cũ' :
+                                   r.action === 'kept_existing' ? '⏭ Giữ SĐT cũ' :
+                                   r.action === 'error' ? `❌ ${r.error || ''}` :
+                                   '— Không tìm SĐT'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t bg-gray-50 flex items-center justify-end gap-2 sticky bottom-0">
+              <button
+                onClick={() => !rescanStatus?.loading && setRescanOpen(false)}
+                disabled={rescanStatus?.loading}
+                className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={runRescanPhones}
+                disabled={rescanStatus?.loading}
+                className="px-4 py-2 text-sm font-semibold bg-rose-600 text-white rounded-lg hover:bg-rose-700 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {rescanStatus?.loading ? <><span className="animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full" /> Đang quét…</> : '🔁 Bắt đầu quét'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2061,6 +2275,9 @@ function AutoLeadTab() {
       {/* ══ LEAD SCAN — Quét SĐT → Tạo lead theo lịch ══ */}
       <LeadScanPanel />
 
+      {/* ══ RESCAN PHONES — Quét lại SĐT từ tin inbound theo lịch ══ */}
+      <RescanPhonesSchedulePanel />
+
       {/* ══ AUTO PIPELINE — Đồng bộ + quét + hậu xử lý (realtime) ══ */}
       <AutoPipelinePanel />
     </div>
@@ -2342,6 +2559,263 @@ function LeadScanPanel() {
           {result.errors?.length > 0 && (
             <div className="mt-1 text-xs text-red-600">{result.errors.join('; ')}</div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RescanPhonesSchedulePanel() {
+  const empty = {
+    enabled: false,
+    interval_minutes: 60,
+    limit: 50,
+    mode: 'all',
+    overwrite: true,
+    sort: 'newest_first',
+    page_id: null,
+    sync_customer: true,
+    timer_armed: false,
+    running: false,
+    next_run_at: null,
+  };
+  const [cfg, setCfg] = useState(empty);
+  const [saving, setSaving] = useState(false);
+  const [pages, setPages] = useState([]);
+
+  const loadCfg = useCallback(() => {
+    fetch(`${API}/api/facebook/rescan-phones/schedule/config`, { headers: hdr() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setCfg({ ...empty, ...d }))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadCfg();
+    fetch(`${API}/api/facebook/pages`, { headers: hdr() })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setPages(Array.isArray(d) ? d : []))
+      .catch(() => setPages([]));
+  }, [loadCfg]);
+
+  const saveCfg = async (patch) => {
+    setSaving(true);
+    try {
+      const merged = { ...cfg, ...patch };
+      const body = {
+        enabled: !!merged.enabled,
+        interval_minutes: merged.interval_minutes,
+        limit: merged.limit,
+        mode: merged.mode,
+        overwrite: merged.overwrite !== false,
+        sort: merged.sort,
+        sync_customer: merged.sync_customer !== false,
+        page_id: merged.page_id && String(merged.page_id).trim() ? String(merged.page_id).trim() : null,
+      };
+      const res = await fetch(`${API}/api/facebook/rescan-phones/schedule/config`, {
+        method: 'PUT',
+        headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setCfg({ ...empty, ...d });
+      } else {
+        const e = await res.json().catch(() => ({}));
+        alert(e.error || 'Lỗi lưu lịch quét SĐT');
+      }
+    } catch (e) {
+      alert('Lỗi: ' + e.message);
+    }
+    setSaving(false);
+  };
+
+  const INTERVALS = [
+    { value: 15, label: 'Nghỉ 15 phút giữa các lần' },
+    { value: 30, label: 'Nghỉ 30 phút' },
+    { value: 60, label: 'Nghỉ 1 giờ' },
+    { value: 120, label: 'Nghỉ 2 giờ' },
+    { value: 360, label: 'Nghỉ 6 giờ' },
+    { value: 720, label: 'Nghỉ 12 giờ' },
+    { value: 1440, label: 'Nghỉ 24 giờ' },
+  ];
+
+  const intervalSelectOptions = useMemo(() => {
+    const v = Math.max(15, parseInt(cfg.interval_minutes, 10) || 60);
+    if (INTERVALS.some((i) => i.value === v)) return INTERVALS;
+    return [...INTERVALS, { value: v, label: `Nghỉ ${v} phút` }].sort((a, b) => a.value - b.value);
+  }, [cfg.interval_minutes]);
+
+  const nextLabel = cfg.next_run_at
+    ? new Date(cfg.next_run_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '—';
+
+  return (
+    <div className="bg-white border rounded-xl p-5 shadow-sm mt-4 border-rose-100">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+            🔁 Quét lại SĐT từ tin nhắn (lịch tự động)
+          </h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Mỗi lần chạy đọc tin inbound đã lưu, cập nhật SĐT contact (giống công cụ trong Danh bạ). Sau mỗi lần xong, hệ thống nghỉ đủ số phút bạn chọn rồi chạy tiếp.
+          </p>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer ml-4 shrink-0">
+          <div
+            onClick={() => { if (saving) return; saveCfg({ enabled: !cfg.enabled }); }}
+            className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
+              cfg.enabled ? 'bg-rose-500' : 'bg-gray-300'
+            } ${saving ? 'opacity-50 pointer-events-none' : ''}`}
+          >
+            <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${cfg.enabled ? 'translate-x-6' : ''}`} />
+          </div>
+          <span className={`text-xs font-medium whitespace-nowrap ${cfg.enabled ? 'text-rose-700' : 'text-gray-500'}`}>
+            {cfg.enabled ? 'Đang bật' : 'Tắt'}
+          </span>
+        </label>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-3 text-[11px]">
+        <span className={`px-2 py-0.5 rounded-full font-medium ${cfg.running ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'}`}>
+          {cfg.running ? 'Đang chạy một lượt' : 'Rảnh'}
+        </span>
+        <span className={`px-2 py-0.5 rounded-full font-medium ${cfg.timer_armed ? 'bg-rose-100 text-rose-800' : 'bg-gray-100 text-gray-500'}`}>
+          {cfg.timer_armed ? 'Đã hẹn lượt tiếp' : 'Chưa hẹn'}
+        </span>
+        <span className="text-gray-500">
+          Lượt tiếp (dự kiến): <strong className="text-gray-800">{nextLabel}</strong>
+        </span>
+        <button
+          type="button"
+          onClick={loadCfg}
+          disabled={saving}
+          className="ml-auto text-xs text-rose-600 hover:underline cursor-pointer disabled:opacity-50"
+        >
+          Làm mới trạng thái
+        </button>
+      </div>
+
+      {cfg.enabled && (
+        <div className="space-y-3 p-3 bg-rose-50/60 rounded-lg border border-rose-100">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-700 whitespace-nowrap">Nghỉ giữa hai lần chạy:</span>
+            <select
+              value={Math.max(15, parseInt(cfg.interval_minutes, 10) || 60)}
+              onChange={(e) => saveCfg({ interval_minutes: parseInt(e.target.value, 10) })}
+              disabled={saving}
+              className="flex-1 min-w-[200px] px-2 py-1.5 text-xs border rounded-lg bg-white cursor-pointer disabled:opacity-50"
+            >
+              {intervalSelectOptions.map((i) => (
+                <option key={i.value} value={i.value}>{i.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <span className="text-xs text-gray-700 block mb-1">Số contact mỗi lần (1–1000)</span>
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={cfg.limit}
+              onChange={(e) => setCfg((c) => ({ ...c, limit: Math.min(1000, Math.max(1, parseInt(e.target.value, 10) || 1)) }))}
+              onBlur={(e) => {
+                const v = Math.min(1000, Math.max(1, parseInt(e.target.value, 10) || 50));
+                setCfg((c) => ({ ...c, limit: v }));
+                saveCfg({ limit: v });
+              }}
+              disabled={saving}
+              className="w-28 px-2 py-1.5 text-xs border rounded-lg disabled:opacity-50"
+            />
+          </div>
+
+          <div>
+            <span className="text-xs text-gray-700 block mb-1">Phạm vi</span>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { v: 'all', l: 'Tất cả' },
+                { v: 'without_phone', l: 'Chưa có SĐT' },
+                { v: 'with_phone', l: 'Đã có SĐT' },
+              ].map((opt) => (
+                <button
+                  key={opt.v}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => saveCfg({ mode: opt.v })}
+                  className={`px-2 py-1 rounded-md text-[11px] border cursor-pointer disabled:opacity-50 ${
+                    cfg.mode === opt.v ? 'border-rose-500 bg-white text-rose-800' : 'border-gray-200 bg-white/80 text-gray-600 hover:bg-white'
+                  }`}
+                >
+                  {opt.l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <span className="text-xs text-gray-700 block mb-1">Thứ tự</span>
+            <div className="flex gap-1.5">
+              {[
+                { v: 'newest_first', l: 'Mới nhất trước' },
+                { v: 'oldest_first', l: 'Cũ nhất trước' },
+              ].map((opt) => (
+                <button
+                  key={opt.v}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => saveCfg({ sort: opt.v })}
+                  className={`px-2 py-1 rounded-md text-[11px] border cursor-pointer disabled:opacity-50 ${
+                    cfg.sort === opt.v ? 'border-rose-500 bg-white text-rose-800' : 'border-gray-200 bg-white/80 text-gray-600 hover:bg-white'
+                  }`}
+                >
+                  {opt.l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <span className="text-xs text-gray-700 block mb-1">Giới hạn Page (tuỳ chọn)</span>
+            <select
+              value={cfg.page_id || ''}
+              onChange={(e) => saveCfg({ page_id: e.target.value || null })}
+              disabled={saving}
+              className="w-full max-w-md px-2 py-1.5 text-xs border rounded-lg bg-white cursor-pointer disabled:opacity-50"
+            >
+              <option value="">Tất cả Page</option>
+              {(pages || []).map((p) => (
+                <option key={p.page_id} value={p.page_id}>{p.page_name || p.page_id}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5 text-xs">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cfg.overwrite !== false}
+                onChange={(e) => saveCfg({ overwrite: e.target.checked })}
+                disabled={saving}
+                className="rounded text-rose-600"
+              />
+              Ghi đè SĐT cũ nếu tìm SĐT mới khác
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cfg.sync_customer !== false}
+                onChange={(e) => saveCfg({ sync_customer: e.target.checked })}
+                disabled={saving}
+                className="rounded text-rose-600"
+              />
+              Đồng bộ sang customer.phone khi có khách hàng liên kết
+            </label>
+          </div>
+
+          <p className="text-[10px] text-gray-500 leading-snug">
+            Lần đầu sau khi bật hoặc sau khi đổi cấu hình: chạy sau khoảng 5 giây. Sau mỗi lần quét xong mới bắt đầu đếm thời gian nghỉ. Có thể vẫn dùng nút quét thủ công trong tab Danh bạ bất cứ lúc nào.
+          </p>
         </div>
       )}
     </div>

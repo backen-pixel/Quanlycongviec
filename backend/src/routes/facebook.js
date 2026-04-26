@@ -21,6 +21,12 @@ const FB_DISABLE_WEBHOOK_LOGS = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.FB_DISABLE_WEBHOOK_LOGS || '').toLowerCase(),
 );
 
+// Sau reboot, auto pipeline không tự chạy lại (mặc định tắt).
+// Đặt FB_AUTO_PIPELINE_RESUME_ON_BOOT=1 để tiếp tục chạy nếu DB đang lưu bật.
+const FB_AUTO_PIPELINE_RESUME_ON_BOOT = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.FB_AUTO_PIPELINE_RESUME_ON_BOOT || '').toLowerCase(),
+);
+
 // ═══════════════════════════════════════════════════════════════
 // AUTO PIPELINE STATE (backend-managed, realtime)
 // ═══════════════════════════════════════════════════════════════
@@ -255,8 +261,13 @@ const DEFAULT_FB_PIPELINE_CONFIG = {
   /**
    * full_cycle (mặc định): lô batch-sync-messages + batch-extract-phones (như nút tay) → Tạo Lead → Refresh → Xóa trùng → sync-contact-phones → nghỉ (mặc định 5p) rồi lặp.
    * chain: Sync→Quét từng user (runSyncThenExtractPhonesJob). legacy: chỉ lô đồng bộ + quét, không CRM sau.
+   *
+   * full_cycle_rescan_phones: khi true, sau khi kéo tin gửi force_rescan_phones vào batch-extract → quét inbound đủ contact trong lô,
+   * cập nhật/ghi đè SĐT contact & customer giống luồng "Quét lại SĐT" (không bỏ qua lead đã có SĐT).
    */
   engine: 'full_cycle',
+  /** Bật = quét SĐT inbound đầy đủ + cho phép ghi đè sau khi đồng bộ tin (full_cycle / legacy). */
+  full_cycle_rescan_phones: true,
   /** Tối đa số user mới nhất (đồng bộ+quét) mỗi vòng trước Tạo Lead… Pool đã sort mới→cũ. 0 = không giới hạn (hết pool). */
   full_cycle_max_users_per_round: 50,
   /**
@@ -304,7 +315,7 @@ function getFbPipelineConfigSync() {
   return { ...fbPipelineConfigCache };
 }
 
-// ── Persist auto-pipeline enabled flag (auto-resume sau reboot) ──
+// ── Persist auto-pipeline enabled flag (resume sau reboot chỉ khi FB_AUTO_PIPELINE_RESUME_ON_BOOT) ──
 async function loadAutoPipelineEnabledFromDb() {
   try {
     const { data } = await supabase.from('app_settings')
@@ -687,8 +698,9 @@ async function runAutoPipelineLoop() {
     const bootLim = Math.min(500, Math.max(1, parseInt(pcfgBoot.chain_chunk_users, 10) || AUTO_BATCH_SIZE));
     const bootCap = Math.min(500_000, Math.max(0, parseInt(pcfgBoot.full_cycle_max_users_per_round, 10) || 0));
     const capLabel = bootCap > 0 ? `tối đa ${bootCap} user mới nhất/vòng` : 'hết pool/vòng';
+    const rescanNote = pcfgBoot.full_cycle_rescan_phones !== false ? ' (kéo tin + quét inbound đầy đủ, ghi đè SĐT nếu khác)' : ' (kéo tin + quét ưu tiên thiếu SĐT)';
     pushAutoLog(
-      `🚀 Auto (giống nút tay): lô đồng bộ + lô quét (${bootLim}/batch, ${capLabel}, pool ${AUTO_PIPELINE_RECENT_HOURS}h) → Tạo Lead → Refresh → Xóa trùng → Sync SĐT danh bạ→Lead • nghỉ ${bootPauseSec}s/vòng`,
+      `🚀 Auto (giống nút tay): lô đồng bộ + lô quét${rescanNote} — ${bootLim}/batch, ${capLabel}, pool ${AUTO_PIPELINE_RECENT_HOURS}h → Tạo Lead → Refresh → Xóa trùng → Sync SĐT danh bạ→Lead • nghỉ ${bootPauseSec}s/vòng`,
     );
   } else if (pcfgBoot.engine === 'chain') {
     pushAutoLog(
@@ -700,10 +712,14 @@ async function runAutoPipelineLoop() {
     );
   }
 
-  const pipelineBodyBase = () => ({
-    recent_hours: AUTO_PIPELINE_RECENT_HOURS,
-    skip_stale_customer_reply: true,
-  });
+  const pipelineBodyBase = () => {
+    const p = getFbPipelineConfigSync();
+    return {
+      recent_hours: AUTO_PIPELINE_RECENT_HOURS,
+      skip_stale_customer_reply: true,
+      force_rescan_phones: p.full_cycle_rescan_phones !== false,
+    };
+  };
 
   while (autoPipeline.enabled && !autoPipeline.stopRequested) {
     await loadFbPipelineConfigFromDb();
@@ -3909,9 +3925,16 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       }
 
       const contactUpd = { updated_at: new Date().toISOString() };
-      if (extractedPhone && !contact.phone) {
-        contactUpd.phone = extractedPhone;
-        foundPhones++;
+      if (extractedPhone) {
+        const had = contact.phone && String(contact.phone).trim();
+        const same = had && String(contact.phone).trim() === String(extractedPhone).trim();
+        if (!had) {
+          contactUpd.phone = extractedPhone;
+          foundPhones++;
+        } else if (forceRescanPhones && !same) {
+          contactUpd.phone = extractedPhone;
+          foundPhones++;
+        }
       }
       if (Object.keys(contactUpd).length > 1) {
         await supabase.from('facebook_contacts').update(contactUpd).eq('id', contact.id);
@@ -3927,7 +3950,14 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       }
       if (leadCustId) {
         const custUpd = {};
-        if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) custUpd.phone = effectivePhone;
+        if (extractedPhone) {
+          if (!cust?.phone || !String(cust.phone).trim()) custUpd.phone = extractedPhone;
+          else if (forceRescanPhones && String(cust.phone).trim() !== String(extractedPhone).trim()) {
+            custUpd.phone = extractedPhone;
+          }
+        } else if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) {
+          custUpd.phone = effectivePhone;
+        }
         if (extractedAddress && extractedAddress !== cust?.address) {
           custUpd.address = extractedAddress;
           foundAddresses++;
@@ -3936,8 +3966,9 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
           await supabase.from('customers').update(custUpd).eq('id', leadCustId);
           if (custUpd.phone) {
             updatedCustomerPhone++;
-            if (custMap[leadCustId]) custMap[leadCustId].phone = effectivePhone;
-            else custMap[leadCustId] = { id: leadCustId, phone: effectivePhone };
+            const newPh = custUpd.phone;
+            if (custMap[leadCustId]) custMap[leadCustId].phone = newPh;
+            else custMap[leadCustId] = { id: leadCustId, phone: newPh };
           }
           if (custUpd.address) updatedCustomerAddress++;
         }
@@ -4554,6 +4585,7 @@ async function saveFbPipelineConfig(partial) {
   merged.chain_run_graph_sync = merged.chain_run_graph_sync !== false;
   merged.chain_run_extract = merged.chain_run_extract !== false;
   merged.auto_loop_pause_sec = Math.min(3600, Math.max(0, parseInt(merged.auto_loop_pause_sec, 10) || 0));
+  merged.full_cycle_rescan_phones = merged.full_cycle_rescan_phones !== false;
   await supabase.from('app_settings').upsert({
     key: 'fb_auto_pipeline_config',
     value: merged,
@@ -4957,11 +4989,13 @@ async function saveScanConfig(cfg) {
 loadScanConfig().then(() => console.log('[LeadScan] ✅ Config loaded'));
 loadFbPipelineConfigFromDb().then(async () => {
   console.log('[FB] ✅ Auto pipeline config loaded');
-  // Auto-resume nếu trước khi reboot đang bật
   try {
     const wasEnabled = await loadAutoPipelineEnabledFromDb();
-    if (wasEnabled && !autoPipeline.running) {
-      console.log('[FB] ▶️ Auto-resume auto pipeline (persisted=ON)');
+    if (wasEnabled && !FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
+      console.log('[FB] ⏸️ Auto pipeline không tự resume sau reboot (mặc định). Set FB_AUTO_PIPELINE_RESUME_ON_BOOT=1 để resume. Đồng bộ DB → OFF.');
+      saveAutoPipelineEnabledToDb(false).catch(() => {});
+    } else if (wasEnabled && !autoPipeline.running && FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
+      console.log('[FB] ▶️ Auto-resume auto pipeline (persisted=ON + FB_AUTO_PIPELINE_RESUME_ON_BOOT)');
       autoPipeline.enabled = true;
       runAutoPipelineLoop().catch(err => {
         console.error('[AutoPipeline] FATAL on resume', err.message);
@@ -5065,6 +5099,134 @@ function stopScanTimer() {
 // (Nếu muốn tắt hẳn chạy nền, set enabled=false qua /facebook/lead-scan/config)
 loadScanConfig().then((cfg) => {
   if (cfg?.enabled) startScanTimer();
+}).catch(() => {});
+
+// ═══════════════════════════════════════════════════════════════
+// SCHEDULED RESCAN PHONES — Quét lại SĐT từ tin inbound theo lịch
+// ═══════════════════════════════════════════════════════════════
+const DEFAULT_RESCAN_PHONES_SCHEDULE = {
+  enabled: false,
+  interval_minutes: 60,
+  limit: 50,
+  mode: 'all',
+  overwrite: true,
+  sort: 'newest_first',
+  page_id: null,
+  sync_customer: true,
+};
+let rescanPhonesSchedule = { ...DEFAULT_RESCAN_PHONES_SCHEDULE };
+let rescanPhonesScheduleTimeoutId = null;
+let rescanPhonesScheduleRunning = false;
+let rescanPhonesScheduleNextAtMs = null;
+
+async function loadRescanPhonesScheduleConfig() {
+  try {
+    const { data } = await supabase.from('app_settings')
+      .select('value').eq('key', 'fb_rescan_phones_schedule').maybeSingle();
+    if (data?.value && typeof data.value === 'object') {
+      rescanPhonesSchedule = { ...DEFAULT_RESCAN_PHONES_SCHEDULE, ...data.value };
+    }
+  } catch (e) {
+    console.warn('[RescanSchedule] DB load:', e.message);
+  }
+  return rescanPhonesSchedule;
+}
+
+async function saveRescanPhonesScheduleConfig(patch) {
+  const merged = { ...rescanPhonesSchedule, ...patch };
+  merged.interval_minutes = Math.max(15, parseInt(merged.interval_minutes, 10) || 60);
+  merged.limit = Math.max(1, Math.min(1000, parseInt(merged.limit, 10) || 50));
+  merged.mode = ['all', 'with_phone', 'without_phone'].includes(merged.mode) ? merged.mode : 'all';
+  merged.sort = merged.sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
+  merged.overwrite = merged.overwrite !== false;
+  merged.sync_customer = merged.sync_customer !== false;
+  merged.enabled = !!merged.enabled;
+  if (merged.page_id != null && String(merged.page_id).trim() !== '') {
+    merged.page_id = String(merged.page_id).trim();
+  } else {
+    merged.page_id = null;
+  }
+  rescanPhonesSchedule = merged;
+  await supabase.from('app_settings').upsert({
+    key: 'fb_rescan_phones_schedule',
+    value: rescanPhonesSchedule,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'key' });
+  return rescanPhonesSchedule;
+}
+
+function clearRescanPhonesScheduleTimer() {
+  if (rescanPhonesScheduleTimeoutId) {
+    clearTimeout(rescanPhonesScheduleTimeoutId);
+    rescanPhonesScheduleTimeoutId = null;
+  }
+  rescanPhonesScheduleNextAtMs = null;
+}
+
+function armRescanPhonesSchedule(delayMs) {
+  clearRescanPhonesScheduleTimer();
+  if (!rescanPhonesSchedule.enabled) return;
+  const d = Math.max(0, Number(delayMs) || 0);
+  rescanPhonesScheduleNextAtMs = Date.now() + d;
+  rescanPhonesScheduleTimeoutId = setTimeout(() => {
+    rescanPhonesScheduleTimeoutId = null;
+    runRescanPhonesScheduledTick().catch(() => {});
+  }, d);
+}
+
+async function runRescanPhonesScheduledTick() {
+  if (!rescanPhonesSchedule.enabled) return;
+  if (rescanPhonesScheduleRunning) {
+    console.warn('[RescanSchedule] tick skipped — still running, retry in 60s');
+    armRescanPhonesSchedule(60_000);
+    return;
+  }
+  rescanPhonesScheduleRunning = true;
+  try {
+    const body = {
+      limit: rescanPhonesSchedule.limit,
+      mode: rescanPhonesSchedule.mode,
+      overwrite: rescanPhonesSchedule.overwrite,
+      sort: rescanPhonesSchedule.sort,
+      page_id: rescanPhonesSchedule.page_id,
+      sync_customer: rescanPhonesSchedule.sync_customer,
+    };
+    console.log('[RescanSchedule] ▶ tick', body);
+    await runRescanPhonesBatch(body, r._ioRef);
+  } catch (e) {
+    console.error('[RescanSchedule] tick error:', e.message);
+  } finally {
+    rescanPhonesScheduleRunning = false;
+    if (rescanPhonesSchedule.enabled) {
+      const rest = Math.max(15, parseInt(rescanPhonesSchedule.interval_minutes, 10) || 60) * 60 * 1000;
+      armRescanPhonesSchedule(rest);
+    }
+  }
+}
+
+/** @param {boolean} immediateFirst — lần chạy đầu sau ~5s khi vừa bật trong UI; false = chờ đủ một chu kỳ (boot server). */
+function startRescanPhonesSchedule(immediateFirst) {
+  clearRescanPhonesScheduleTimer();
+  if (!rescanPhonesSchedule.enabled) return;
+  const intervalMs = Math.max(15, parseInt(rescanPhonesSchedule.interval_minutes, 10) || 60) * 60 * 1000;
+  const firstMs = immediateFirst ? 5000 : intervalMs;
+  console.log(`[RescanSchedule] ⏰ armed — first run in ${firstMs / 1000}s, rest ${intervalMs / 60000} min between runs`);
+  armRescanPhonesSchedule(firstMs);
+}
+
+function getRescanPhonesScheduleStatus() {
+  return {
+    ...rescanPhonesSchedule,
+    timer_armed: !!rescanPhonesScheduleTimeoutId,
+    running: rescanPhonesScheduleRunning,
+    next_run_at: rescanPhonesScheduleNextAtMs
+      ? new Date(rescanPhonesScheduleNextAtMs).toISOString()
+      : null,
+  };
+}
+
+loadRescanPhonesScheduleConfig().then((cfg) => {
+  if (cfg?.enabled) startRescanPhonesSchedule(false);
 }).catch(() => {});
 
 // GET /facebook/audit-phone-sync — đối soát contact/customer/lead
@@ -5347,7 +5509,7 @@ r.post('/auto-pipeline/stop', authMiddleware, async (_req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// TOOL: Quét lại SĐT theo số lượng yêu cầu
+// TOOL: Quét lại SĐT theo số lượng yêu cầu (+ lịch tự động)
 // POST /facebook/rescan-phones
 // Body:
 //   limit: số contact cần quét (1..1000, default 50)
@@ -5360,133 +5522,161 @@ r.post('/auto-pipeline/stop', authMiddleware, async (_req, res) => {
 // Logic: chỉ quét tin nhắn direction='inbound' (tin của user FB),
 // extractContactInfo đã loại URL bằng stripUrlLikeSegments.
 // ═══════════════════════════════════════════════════════════════
-r.post('/rescan-phones', authMiddleware, async (req, res) => {
-  try {
-    const limit = Math.max(1, Math.min(1000, parseInt(req.body?.limit, 10) || 50));
-    const mode = ['all', 'with_phone', 'without_phone'].includes(req.body?.mode) ? req.body.mode : 'all';
-    const overwrite = req.body?.overwrite !== false;
-    const sort = req.body?.sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
-    const pageId = req.body?.page_id || null;
-    const syncCustomer = req.body?.sync_customer !== false;
+async function runRescanPhonesBatch(body, ioRef) {
+  const b = body && typeof body === 'object' ? body : {};
+  const limit = Math.max(1, Math.min(1000, parseInt(b.limit, 10) || 50));
+  const mode = ['all', 'with_phone', 'without_phone'].includes(b.mode) ? b.mode : 'all';
+  const overwrite = b.overwrite !== false;
+  const sort = b.sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
+  const pageId = b.page_id || null;
+  const syncCustomer = b.sync_customer !== false;
+  const io = ioRef || r._ioRef;
 
-    console.log(`[Rescan] mode=${mode} limit=${limit} overwrite=${overwrite} sort=${sort} page=${pageId || '*'}`);
+  console.log(`[Rescan] mode=${mode} limit=${limit} overwrite=${overwrite} sort=${sort} page=${pageId || '*'}`);
 
-    // 1) Build query dựa trên mode + sort
-    let q = supabase.from('facebook_contacts')
-      .select('id, fb_name, phone, page_id, last_message_at, created_at, customer_id, lead_id');
-    if (pageId) q = q.eq('page_id', pageId);
-    if (mode === 'with_phone') q = q.not('phone', 'is', null).neq('phone', '');
-    if (mode === 'without_phone') q = q.or('phone.is.null,phone.eq.');
-    if (sort === 'newest_first') {
-      q = q.order('last_message_at', { ascending: false, nullsFirst: false })
-           .order('created_at', { ascending: false });
-    } else {
-      q = q.order('last_message_at', { ascending: true, nullsFirst: true })
-           .order('created_at', { ascending: true });
-    }
-    q = q.limit(limit);
+  let q = supabase.from('facebook_contacts')
+    .select('id, fb_name, phone, page_id, last_message_at, created_at, customer_id, lead_id');
+  if (pageId) q = q.eq('page_id', pageId);
+  if (mode === 'with_phone') q = q.not('phone', 'is', null).neq('phone', '');
+  if (mode === 'without_phone') q = q.or('phone.is.null,phone.eq.');
+  if (sort === 'newest_first') {
+    q = q.order('last_message_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false });
+  } else {
+    q = q.order('last_message_at', { ascending: true, nullsFirst: true })
+      .order('created_at', { ascending: true });
+  }
+  q = q.limit(limit);
 
-    const { data: contacts, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
+  const { data: contacts, error } = await q;
+  if (error) throw new Error(error.message);
 
-    const totalToScan = (contacts || []).length;
-    const counters = { scanned: 0, updated_set: 0, updated_replaced: 0, unchanged_same: 0, kept_existing: 0, no_phone_found: 0, errors: 0 };
-    const results = [];
+  const totalToScan = (contacts || []).length;
+  const counters = { scanned: 0, updated_set: 0, updated_replaced: 0, unchanged_same: 0, kept_existing: 0, no_phone_found: 0, errors: 0 };
+  const results = [];
 
-    for (const c of contacts || []) {
-      counters.scanned += 1;
-      try {
-        const { data: msgs } = await supabase.from('facebook_messages')
-          .select('content, direction, created_at')
-          .eq('contact_id', c.id)
-          .eq('direction', 'inbound')
-          .order('created_at', { ascending: false })
-          .limit(500);
+  for (const c of contacts || []) {
+    counters.scanned += 1;
+    try {
+      const { data: msgs } = await supabase.from('facebook_messages')
+        .select('content, direction, created_at')
+        .eq('contact_id', c.id)
+        .eq('direction', 'inbound')
+        .order('created_at', { ascending: false })
+        .limit(500);
 
-        const inbound = (msgs || []).filter(m => m && m.content && m.direction === 'inbound');
-        const found = extractInboundContactInfo(inbound);
-        const newPhone = found?.phone || null;
+      const inbound = (msgs || []).filter(m => m && m.content && m.direction === 'inbound');
+      const found = extractInboundContactInfo(inbound);
+      const newPhone = found?.phone || null;
 
-        const item = {
-          contact_id: c.id,
-          fb_name: c.fb_name,
-          page_id: c.page_id,
-          old_phone: c.phone || null,
-          new_phone: newPhone,
-          messages_scanned: inbound.length,
-          extra_phones: found?.extraPhones || [],
-          action: 'no_phone_found',
-        };
+      const item = {
+        contact_id: c.id,
+        fb_name: c.fb_name,
+        page_id: c.page_id,
+        old_phone: c.phone || null,
+        new_phone: newPhone,
+        messages_scanned: inbound.length,
+        extra_phones: found?.extraPhones || [],
+        action: 'no_phone_found',
+      };
 
-        if (!newPhone) {
-          counters.no_phone_found += 1;
-        } else if (!c.phone) {
-          const { error: updErr } = await supabase.from('facebook_contacts')
-            .update({ phone: newPhone, updated_at: new Date().toISOString() })
-            .eq('id', c.id);
-          if (updErr) {
-            item.action = 'error';
-            item.error = updErr.message;
-            counters.errors += 1;
-          } else {
-            item.action = 'set_new';
-            counters.updated_set += 1;
-            if (syncCustomer && c.customer_id) {
-              await supabase.from('customers')
-                .update({ phone: newPhone, updated_at: new Date().toISOString() })
-                .eq('id', c.customer_id)
-                .then(() => {}, () => {});
-            }
-          }
-        } else if (String(c.phone).trim() === String(newPhone).trim()) {
-          item.action = 'unchanged_same';
-          counters.unchanged_same += 1;
-        } else if (overwrite) {
-          const { error: updErr } = await supabase.from('facebook_contacts')
-            .update({ phone: newPhone, updated_at: new Date().toISOString() })
-            .eq('id', c.id);
-          if (updErr) {
-            item.action = 'error';
-            item.error = updErr.message;
-            counters.errors += 1;
-          } else {
-            item.action = 'replaced';
-            counters.updated_replaced += 1;
-            if (syncCustomer && c.customer_id) {
-              await supabase.from('customers')
-                .update({ phone: newPhone, updated_at: new Date().toISOString() })
-                .eq('id', c.customer_id)
-                .then(() => {}, () => {});
-            }
-          }
+      if (!newPhone) {
+        counters.no_phone_found += 1;
+      } else if (!c.phone) {
+        const { error: updErr } = await supabase.from('facebook_contacts')
+          .update({ phone: newPhone, updated_at: new Date().toISOString() })
+          .eq('id', c.id);
+        if (updErr) {
+          item.action = 'error';
+          item.error = updErr.message;
+          counters.errors += 1;
         } else {
-          item.action = 'kept_existing';
-          counters.kept_existing += 1;
+          item.action = 'set_new';
+          counters.updated_set += 1;
+          if (syncCustomer && c.customer_id) {
+            await supabase.from('customers')
+              .update({ phone: newPhone, updated_at: new Date().toISOString() })
+              .eq('id', c.customer_id)
+              .then(() => {}, () => {});
+          }
         }
+      } else if (String(c.phone).trim() === String(newPhone).trim()) {
+        item.action = 'unchanged_same';
+        counters.unchanged_same += 1;
+      } else if (overwrite) {
+        const { error: updErr } = await supabase.from('facebook_contacts')
+          .update({ phone: newPhone, updated_at: new Date().toISOString() })
+          .eq('id', c.id);
+        if (updErr) {
+          item.action = 'error';
+          item.error = updErr.message;
+          counters.errors += 1;
+        } else {
+          item.action = 'replaced';
+          counters.updated_replaced += 1;
+          if (syncCustomer && c.customer_id) {
+            await supabase.from('customers')
+              .update({ phone: newPhone, updated_at: new Date().toISOString() })
+              .eq('id', c.customer_id)
+              .then(() => {}, () => {});
+          }
+        }
+      } else {
+        item.action = 'kept_existing';
+        counters.kept_existing += 1;
+      }
 
-        results.push(item);
+      results.push(item);
 
-        // Realtime progress
-        try {
-          if (r._ioRef) r._ioRef.emit('rescan_phones_progress', {
+      try {
+        if (io) {
+          io.emit('rescan_phones_progress', {
             current: counters.scanned, total: totalToScan,
             name: c.fb_name, action: item.action,
           });
-        } catch (_) {}
-      } catch (e) {
-        counters.errors += 1;
-        results.push({ contact_id: c.id, fb_name: c.fb_name, action: 'error', error: e.message });
-      }
+        }
+      } catch (_) {}
+    } catch (e) {
+      counters.errors += 1;
+      results.push({ contact_id: c.id, fb_name: c.fb_name, action: 'error', error: e.message });
     }
+  }
 
-    res.json({
-      ok: true,
-      mode, overwrite, sort, limit, page_id: pageId || null,
-      total_to_scan: totalToScan,
-      ...counters,
-      total_updated: counters.updated_set + counters.updated_replaced,
-      results: results.slice(0, 500),
-    });
+  return {
+    ok: true,
+    mode, overwrite, sort, limit, page_id: pageId || null,
+    total_to_scan: totalToScan,
+    ...counters,
+    total_updated: counters.updated_set + counters.updated_replaced,
+    results: results.slice(0, 500),
+  };
+}
+
+r.get('/rescan-phones/schedule/config', authMiddleware, async (_req, res) => {
+  await loadRescanPhonesScheduleConfig();
+  res.json(getRescanPhonesScheduleStatus());
+});
+
+r.put('/rescan-phones/schedule/config', authMiddleware, async (req, res) => {
+  try {
+    const prevEnabled = rescanPhonesSchedule.enabled;
+    clearRescanPhonesScheduleTimer();
+    await saveRescanPhonesScheduleConfig(req.body || {});
+    if (rescanPhonesSchedule.enabled) {
+      const justTurnedOn = !prevEnabled && rescanPhonesSchedule.enabled;
+      // Vừa bật → chạy sớm; đang bật chỉ đổi tham số → hẹn lại ~5s để áp dụng cấu hình mới
+      startRescanPhonesSchedule(justTurnedOn || prevEnabled);
+    }
+    res.json(getRescanPhonesScheduleStatus());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/rescan-phones', authMiddleware, async (req, res) => {
+  try {
+    const out = await runRescanPhonesBatch(req.body || {}, r._ioRef);
+    res.json(out);
   } catch (e) {
     console.error('[Rescan] error', e);
     res.status(500).json({ error: e.message });
