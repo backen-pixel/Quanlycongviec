@@ -102,6 +102,13 @@ function FullCyclePostSteps({ post }) {
   return (
     <div className="mt-2 text-[10px] text-gray-700 space-y-1 border-t border-gray-200 pt-2">
       <div className="font-semibold text-sky-800">Sau đồng bộ + quét lô (mỗi vòng)</div>
+      {post.pool_sync && (post.pool_sync.rounds > 0 || post.pool_sync.messages > 0) && (
+        <div>
+          Pool Graph→Quét (sau v2): <span className="font-mono text-indigo-700">{post.pool_sync.rounds ?? 0}</span> lô, +{post.pool_sync.messages ?? 0} tin, quét +{post.pool_sync.extract_updated ?? 0},{' '}
+          <span className="font-mono">{post.pool_sync.contacts_processed ?? 0}</span> contact, offset{' '}
+          <span className="font-mono">{post.pool_sync.next_offset ?? 0}</span>
+        </div>
+      )}
       {post.create_leads && (
         <div className="space-y-1">
           <div>
