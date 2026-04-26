@@ -287,11 +287,24 @@ function InboxTab({ pageStats }) {
           : sel,
       );
     };
+    const onContactCreated = (data) => {
+      const fresh = data?.contact;
+      if (!fresh?.id) return;
+      setContacts((prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        const exists = list.some((c) => String(c.id) === String(fresh.id));
+        if (exists) return list.map((c) => (String(c.id) === String(fresh.id) ? { ...c, ...fresh } : c));
+        const ts = fresh.last_message_at || fresh.created_at || new Date().toISOString();
+        return [{ ...fresh, last_message_at: ts }, ...list];
+      });
+    };
     socket.on('fb_message', h);
     socket.on('fb_contact_updated', onContactProfile);
+    socket.on('fb_contact_created', onContactCreated);
     return () => {
       socket.off('fb_message', h);
       socket.off('fb_contact_updated', onContactProfile);
+      socket.off('fb_contact_created', onContactCreated);
     };
   }, [socket]);
 
@@ -948,13 +961,30 @@ function ContactsTab() {
         ),
       );
     };
+    const onContactCreated = (data) => {
+      const fresh = data?.contact;
+      if (!fresh?.id) return;
+      const hasSpecialFilter = !!search || filter !== 'all';
+      if (hasSpecialFilter) return;
+      setContacts((prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        const exists = list.some((c) => String(c.id) === String(fresh.id));
+        const merged = exists
+          ? list.map((c) => (String(c.id) === String(fresh.id) ? { ...c, ...fresh } : c))
+          : [{ ...fresh, last_message_at: fresh.last_message_at || fresh.created_at || new Date().toISOString() }, ...list];
+        const sorted = sortContacts(merged);
+        return sorted.slice(0, 200);
+      });
+    };
     socket.on('fb_message', onFbMessage);
     socket.on('fb_contact_updated', onContactUpdated);
+    socket.on('fb_contact_created', onContactCreated);
     socket.on('batch_progress', onBatchProgress);
     socket.on('batch_done', onBatchDone);
     return () => {
       socket.off('fb_message', onFbMessage);
       socket.off('fb_contact_updated', onContactUpdated);
+      socket.off('fb_contact_created', onContactCreated);
       socket.off('batch_progress', onBatchProgress);
       socket.off('batch_done', onBatchDone);
     };
