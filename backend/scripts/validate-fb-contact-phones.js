@@ -30,7 +30,7 @@ function usage() {
 Usage: node scripts/validate-fb-contact-phones.js [options]
 
   --limit N              Số contact (mặc định 200)
-  --offset N             Supabase .range offset (mặc định 0)
+  --offset N             Bỏ qua N contact đầu sau sort mới→cũ (mặc định 0)
   --fill-missing         Điền SĐT từ tin inbound khi contact đang trống
   --sync-customer-match  Xóa customers.phone nếu trùng chuỗi SĐT sai vừa xóa trên contact
   --dry-run
@@ -90,10 +90,12 @@ async function clearCustomerIfSame(custId, exactString, dry) {
   console.log('Opts:', JSON.stringify(opts));
 
   const need = opts.offset + opts.limit;
+  // Lấy đủ contact rồi sort theo activity: cần cửa sổ > need để top offset+limit gần đúng thứ tự toàn DB.
+  const targetPool = Math.min(20_000, Math.max(need, 500));
   const pool = [];
   let dbFrom = 0;
   const page = 250;
-  while (pool.length < need) {
+  while (pool.length < targetPool) {
     const { data, error } = await supabase
       .from('facebook_contacts')
       .select('id, fb_name, phone, customer_id, lead_id, last_message_at, created_at')
@@ -113,7 +115,7 @@ async function clearCustomerIfSame(custId, exactString, dry) {
 
   const sorted = sortFacebookContactsNewestFirst(pool);
   const contacts = sorted.slice(opts.offset, opts.offset + opts.limit);
-  console.log(`Loaded ${contacts.length} contacts (pool ${pool.length}, sort=newest_activity_first).\n`);
+  console.log(`Loaded ${contacts.length} contacts (scanned ${pool.length}, sort=newest_activity_first).\n`);
 
   let cleared = 0;
   let normalized = 0;
