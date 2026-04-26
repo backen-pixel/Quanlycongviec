@@ -374,11 +374,16 @@ server.listen(config.port, () => {
 
       const { sortFacebookContactsNewestFirst } = require('./helpers/facebookContactActivity');
 
-      // Contacts chưa có lead_id — xử lý từ hoạt động mới nhất (tin / tạo hồ sơ) để user mới không bị “xếp sau” hàng cũ
-      const { data: contactsRaw } = await supabase.from('facebook_contacts')
-        .select('id, fb_name, phone, page_id, psid, lead_id, customer_id, last_message_at, created_at, sync_paused')
-        .is('lead_id', null)
-        .neq('sync_paused', true);
+      // Contacts chưa có lead_id — xử lý từ hoạt động mới nhất (tin / tạo hồ sơ) để user mới không bị "xếp sau" hàng cũ
+      const { data: probeRow } = await supabase.from('facebook_contacts').select('sync_paused').limit(1);
+      const _hasPaused = Array.isArray(probeRow);
+      let scanQuery2 = supabase.from('facebook_contacts')
+        .select(_hasPaused
+          ? 'id, fb_name, phone, page_id, psid, lead_id, customer_id, last_message_at, created_at, sync_paused'
+          : 'id, fb_name, phone, page_id, psid, lead_id, customer_id, last_message_at, created_at')
+        .is('lead_id', null);
+      if (_hasPaused) scanQuery2 = scanQuery2.neq('sync_paused', true);
+      const { data: contactsRaw } = await scanQuery2;
 
       const contacts = sortFacebookContactsNewestFirst(contactsRaw || []);
       if (!contacts.length) return;

@@ -283,6 +283,11 @@ async function loadFbPipelineConfigFromDb() {
     const { data } = await supabase.from('app_settings').select('value').eq('key', 'fb_auto_pipeline_config').maybeSingle();
     if (data?.value && typeof data.value === 'object') {
       fbPipelineConfigCache = { ...DEFAULT_FB_PIPELINE_CONFIG, ...data.value };
+      // Back-compat: engine "legacy" cũ KHÔNG chạy CRM steps → tự ép sang full_cycle để tạo Lead.
+      if (fbPipelineConfigCache.engine === 'legacy' || !fbPipelineConfigCache.engine) {
+        console.log('[FB pipeline config] migrate engine "legacy" → "full_cycle" (legacy không tạo Lead)');
+        fbPipelineConfigCache.engine = 'full_cycle';
+      }
     }
   } catch (e) {
     console.warn('[FB pipeline config] load:', e.message);
@@ -714,7 +719,7 @@ async function runAutoPipelineLoop() {
 
     let done = false;
 
-    if (pcfg.engine === 'full_cycle') {
+    if (pcfg.engine === 'full_cycle' || pcfg.engine === 'legacy' || !pcfg.engine || pcfg.engine === '') {
       const userCap = Math.min(500_000, Math.max(0, parseInt(pcfg.full_cycle_max_users_per_round, 10) || 0));
       const phase = await runAutoLegacySyncExtractPhase(pipelineBodyBase, userCap);
       const usersPhase = phase.usersPhase;
@@ -917,9 +922,14 @@ async function runAutoPipelineLoop() {
         emitAutoState();
       }
     } else {
-      /** Legacy engine: chỉ lô đồng bộ + lô quét (cùng hàm với bước đầu full_cycle). */
+      /** Engine không xác định → fallback full_cycle để đảm bảo lead vẫn được tạo. */
+      pushAutoLog(`⚠️ Engine "${pcfg.engine}" không hỗ trợ — fallback full_cycle`, 'error');
       const userCap = Math.min(500_000, Math.max(0, parseInt(pcfg.full_cycle_max_users_per_round, 10) || 0));
       await runAutoLegacySyncExtractPhase(pipelineBodyBase, userCap);
+      try { await autoPipelineInternalPostJson('/facebook/batch-create-leads', {}); } catch (e) { console.error('[AutoPipeline] batch-create-leads (fallback)', e.message); }
+      try { await autoPipelineInternalPostJson('/facebook/refresh-names', {}); } catch (e) { console.error('[AutoPipeline] refresh-names (fallback)', e.message); }
+      try { await autoPipelineInternalPostJson('/facebook/dedup-leads', {}); } catch (e) { console.error('[AutoPipeline] dedup-leads (fallback)', e.message); }
+      try { await autoPipelineInternalPostJson('/facebook/sync-contact-phones', {}); } catch (e) { console.error('[AutoPipeline] sync-contact-phones (fallback)', e.message); }
       done = true;
     }
 
@@ -964,7 +974,6 @@ async function runAutoPipelineLoop() {
 // ── Auto-migration: thêm cột mới nếu chưa có ──
 (async () => {
   try {
-    // Test thêm cột default_lead_owner_id
     const { error } = await supabase.from('facebook_pages')
       .select('default_lead_owner_id').limit(1);
     if (error?.message?.includes('default_lead_owner_id')) {
@@ -974,6 +983,22 @@ async function runAutoPipelineLoop() {
     }
   } catch (e) { /* ignore */ }
 })();
+
+// ── Detect optional facebook_contacts.sync_paused column (database/103_*.sql) ──
+let _hasSyncPausedColumn = null;
+async function ensureSyncPausedColumnDetected() {
+  if (_hasSyncPausedColumn !== null) return _hasSyncPausedColumn;
+  const { error } = await supabase.from('facebook_contacts').select('sync_paused').limit(1);
+  _hasSyncPausedColumn = !error;
+  if (!_hasSyncPausedColumn) {
+    console.warn('[FB] ⚠️ Column facebook_contacts.sync_paused chưa có — bỏ qua filter. Chạy database/103_facebook_contacts_sync_flags.sql để bật.');
+  } else {
+    console.log('[FB] ✅ Column facebook_contacts.sync_paused OK');
+  }
+  return _hasSyncPausedColumn;
+}
+function hasSyncPausedColumnSync() { return _hasSyncPausedColumn === true; }
+ensureSyncPausedColumnDetected().catch(() => {});
 
 // Migration endpoint — chạy 1 lần để thêm cột mới
 r.post('/migrate', async (req, res) => {
@@ -1542,10 +1567,17 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
 
   const resolvedSourceId = await resolveFacebookSourceId(page);
 
-  // Tạo lead code
-  const { count } = await supabase.from('crm_leads')
-    .select('id', { count: 'exact', head: true }).eq('type', 'lead');
-  const code = `LEAD-${String((count || 0) + 1).padStart(4, '0')}`;
+  // Tạo lead code — lấy code MAX hiện có để tránh race condition (count() có thể bị stale).
+  const { data: maxLead } = await supabase
+    .from('crm_leads')
+    .select('code')
+    .eq('type', 'lead')
+    .like('code', 'LEAD-%')
+    .order('code', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const _maxNum = maxLead?.code ? parseInt(String(maxLead.code).replace(/^LEAD-/, ''), 10) : 0;
+  const code = `LEAD-${String((_maxNum || 0) + 1).padStart(4, '0')}`;
 
   // Default stage: từ page config hoặc stage đầu tiên của pipeline lead
   let stageId = page.default_stage_id || null;
@@ -1628,19 +1660,33 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     created_by: page.created_by,
   };
 
-  const { data: lead, error } = await supabase.from('crm_leads')
-    .insert(leadData).select().single();
-  
-  if (error) { console.error('[FB] Create lead error:', error.message); return null; }
+  let lead = null;
+  let lastErr = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const tryCode = `LEAD-${String((_maxNum || 0) + 1 + attempt).padStart(4, '0')}`;
+    const tryData = { ...leadData, code: tryCode };
+    const { data, error } = await supabase.from('crm_leads').insert(tryData).select().single();
+    if (!error) { lead = data; break; }
+    lastErr = error;
+    if (!String(error.message || '').toLowerCase().includes('duplicate')) {
+      console.error('[FB] Create lead error:', error.message);
+      return null;
+    }
+    console.warn(`[FB] Lead code ${tryCode} trùng — retry attempt ${attempt + 1}`);
+  }
+  if (!lead) {
+    console.error('[FB] Create lead failed sau 5 lần thử:', lastErr?.message);
+    return null;
+  }
 
-  // Link contact → lead và dừng sync sâu contact này để giảm egress.
-  await supabase.from('facebook_contacts').update({
-    lead_id: lead.id,
-    sync_paused: true,
-    sync_pause_reason: 'lead_created',
-    phone_resolved_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }).eq('id', contact.id);
+  // Link contact → lead (và dừng sync sâu nếu cột đã có).
+  const _linkUpd = { lead_id: lead.id, updated_at: new Date().toISOString() };
+  if (hasSyncPausedColumnSync()) {
+    _linkUpd.sync_paused = true;
+    _linkUpd.sync_pause_reason = 'lead_created';
+    _linkUpd.phone_resolved_at = new Date().toISOString();
+  }
+  await supabase.from('facebook_contacts').update(_linkUpd).eq('id', contact.id);
 
   // ── Auto-gen CRM tasks (giống logic tạo thủ công) ──
   try {
@@ -2001,11 +2047,9 @@ async function handleMessaging(pageId, event, io) {
             const contactName = contact.fb_name || autoLeadCfg.default_customer_name || 'User';
 
             if (extractedPhone && !contact.phone) {
-              await supabase.from('facebook_contacts').update({
-                phone: extractedPhone,
-                phone_resolved_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              }).eq('id', contact.id);
+              const _phoneUpd = { phone: extractedPhone, updated_at: new Date().toISOString() };
+              if (hasSyncPausedColumnSync()) _phoneUpd.phone_resolved_at = new Date().toISOString();
+              await supabase.from('facebook_contacts').update(_phoneUpd).eq('id', contact.id);
               contact.phone = extractedPhone;
             }
 
@@ -3461,18 +3505,23 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     }
 
     // Lấy contacts chưa có lead — giới hạn BATCH_CAP, ưu tiên hoạt động gần nhất
+    await ensureSyncPausedColumnDetected();
+    const _useSyncPaused = hasSyncPausedColumnSync();
+    const _selectCols = _useSyncPaused
+      ? 'id, fb_name, phone, page_id, last_message_at, created_at, lead_id, sync_paused, customer_id'
+      : 'id, fb_name, phone, page_id, last_message_at, created_at, lead_id, customer_id';
     let baseQuery = supabase.from('facebook_contacts')
-      .select('id, fb_name, phone, page_id, last_message_at, created_at, lead_id, sync_paused, customer_id')
+      .select(_selectCols)
       .is('lead_id', null)
-      .neq('sync_paused', true)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(BATCH_CAP);
-    // has_phone: chỉ xét contact đã có phone trên DB (phone từ extract đã lưu sẵn)
+    if (_useSyncPaused) baseQuery = baseQuery.neq('sync_paused', true);
     if (triggerMode === 'has_phone') {
       baseQuery = baseQuery.not('phone', 'is', null).neq('phone', '');
     }
-    const { data: contactsRaw } = await baseQuery;
+    const { data: contactsRaw, error: baseErr } = await baseQuery;
+    if (baseErr) console.error('[FB Batch] query error:', baseErr.message);
     const contacts = sortFacebookContactsNewestFirst(contactsRaw);
 
     if (!contacts?.length) return res.json({ created: 0, updated: 0, skipped: 0, total: 0, results: [], message: 'Không có contact nào cần xử lý' });
@@ -5037,13 +5086,15 @@ async function scanAndCreateLeads() {
     const autoLeadCfg = getAutoLeadConfig();
 
     // Lấy tất cả contacts có phone, chưa có lead
-    const { data: contactsRaw, error } = await supabase.from('facebook_contacts')
+    await ensureSyncPausedColumnDetected();
+    let scanQuery = supabase.from('facebook_contacts')
       .select('*')
       .not('phone', 'is', null).neq('phone', '')
       .is('lead_id', null)
-      .neq('sync_paused', true)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
+    if (hasSyncPausedColumnSync()) scanQuery = scanQuery.neq('sync_paused', true);
+    const { data: contactsRaw, error } = await scanQuery;
 
     if (error) { results.errors.push(error.message); return results; }
     const contacts = sortFacebookContactsNewestFirst(contactsRaw);
@@ -5225,11 +5276,16 @@ r.post('/lead-scan/run', authMiddleware, async (req, res) => {
 // GET /facebook/lead-scan/preview — xem trước contacts sẽ được tạo lead
 r.get('/lead-scan/preview', authMiddleware, async (req, res) => {
   try {
-    const { data: contactsRaw } = await supabase.from('facebook_contacts')
-      .select('id, fb_name, phone, page_id, updated_at, created_at, last_message_at, sync_paused')
+    await ensureSyncPausedColumnDetected();
+    const _selectColsPreview = hasSyncPausedColumnSync()
+      ? 'id, fb_name, phone, page_id, updated_at, created_at, last_message_at, sync_paused'
+      : 'id, fb_name, phone, page_id, updated_at, created_at, last_message_at';
+    let previewQuery = supabase.from('facebook_contacts')
+      .select(_selectColsPreview)
       .not('phone', 'is', null).neq('phone', '')
-      .is('lead_id', null)
-      .neq('sync_paused', true);
+      .is('lead_id', null);
+    if (hasSyncPausedColumnSync()) previewQuery = previewQuery.neq('sync_paused', true);
+    const { data: contactsRaw } = await previewQuery;
 
     const contacts = sortFacebookContactsNewestFirst(contactsRaw || []);
     const pageIds = [...new Set(contacts.map(c => c.page_id).filter(Boolean))];
