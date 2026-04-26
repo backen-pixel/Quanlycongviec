@@ -2223,9 +2223,24 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (has_lead === 'false') q = q.is('lead_id', null);
     if (search) q = q.or(`fb_name.ilike.%${search}%,phone.ilike.%${search}%`);
 
-    // Lấy rộng hơn để sort ưu tiên record có SĐT rồi mới paginate.
-    const { data } = await q.order('last_message_at', { ascending: false, nullsFirst: false }).limit(5000);
-    let result = data || [];
+    /**
+     * Lấy rộng hơn để sort rồi mới paginate.
+     *
+     * Lưu ý: Nếu ORDER theo last_message_at trước khi LIMIT, các contact "mới tạo" nhưng chưa có last_message_at
+     * (event read/delivery, hoặc hồ sơ mới) sẽ bị đẩy xuống cuối và có thể không lọt vào LIMIT khi tổng contact lớn.
+     * → Fetch 2 nhóm (có last_message_at, và last_message_at=null) rồi merge để luôn hiển thị user mới.
+     */
+    const [withMsgRes, noMsgRes] = await Promise.all([
+      q
+        .not('last_message_at', 'is', null)
+        .order('last_message_at', { ascending: false })
+        .limit(3500),
+      q
+        .is('last_message_at', null)
+        .order('created_at', { ascending: false })
+        .limit(2500),
+    ]);
+    let result = [...(withMsgRes.data || []), ...(noMsgRes.data || [])];
     result.forEach(c => {
       c.display_phone = c.phone || c.customer?.phone || null;
     });
