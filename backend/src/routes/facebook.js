@@ -367,6 +367,7 @@ function compactExtractPhoneResultsForAuto(results) {
   if (!Array.isArray(results)) return [];
   return results.slice(0, AUTO_PIPELINE_SCAN_DETAILS_CAP).map((r) => ({
     name: r.contact,
+    contact_id: r.contact_id || null,
     phone: r.phone || null,
     address: r.address || null,
     extract: r.status,
@@ -3655,17 +3656,40 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       let cust = lead ? custMap[lead.customer_id] : null;
 
       console.log(`[ExtractPhones] Scan ${i + 1}/${total}: ${contact.fb_name || contact.id}`);
+      const MSG_PAGE = 800;
       const { data: messages } = await supabase.from('facebook_messages')
         .select('id, content, direction, created_at')
         .eq('contact_id', contact.id)
         .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
-        .limit(800);
+        .limit(MSG_PAGE);
 
-      const inboundInfo = extractInboundContactInfo(messages || []);
+      let inboundInfo = extractInboundContactInfo(messages || []);
       let extractedPhone = inboundInfo.phone;
       let extractedAddress = inboundInfo.address;
-      const extraPhones = inboundInfo.extraPhones;
+      let extraPhones = inboundInfo.extraPhones;
+
+      // Fallback: nếu page tin nhắn mới nhất chưa thấy SĐT/địa chỉ,
+      // thử quét thêm 1 page tin nhắn cũ hơn (giảm trường hợp KH gửi SĐT ở đoạn chat cũ).
+      if ((!extractedPhone && !extractedAddress) && (messages || []).length === MSG_PAGE) {
+        const { data: older } = await supabase.from('facebook_messages')
+          .select('id, content, direction, created_at')
+          .eq('contact_id', contact.id)
+          .eq('direction', 'inbound')
+          .order('created_at', { ascending: false })
+          .range(MSG_PAGE, MSG_PAGE * 2 - 1);
+
+        if (older?.length) {
+          const merged = [...(messages || []), ...older];
+          inboundInfo = extractInboundContactInfo(merged);
+          extractedPhone = inboundInfo.phone;
+          extractedAddress = inboundInfo.address;
+          extraPhones = inboundInfo.extraPhones;
+          if (extractedPhone || extractedAddress) {
+            console.log(`[ExtractPhones] Fallback older-page hit: phone=${extractedPhone || '—'} addr=${extractedAddress ? 'Y' : '—'} contact=${contact.id}`);
+          }
+        }
+      }
 
       if (extractedPhone) {
         const sourceMsg = (messages || []).find(m => m.content && extractContactInfo(m.content).phone === extractedPhone);
@@ -3677,7 +3701,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
       if (!effectivePhone && !extractedAddress && extraPhones.length === 0) {
         noInfo++;
-        results.push({ contact: contact.fb_name, status: 'no_info_found' });
+        results.push({ contact_id: contact.id, contact: contact.fb_name, phone: null, address: null, status: 'no_info_found' });
         if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'no_info' });
         continue;
       }
@@ -3760,6 +3784,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
       updated++;
       results.push({
+        contact_id: contact.id,
         contact: contact.fb_name,
         phone: effectivePhone || cust?.phone || null,
         address: extractedAddress || cust?.address || lead?.install_address || null,
@@ -4746,8 +4771,11 @@ function stopScanTimer() {
   console.log('[LeadScan] ⏹️ Timer stopped');
 }
 
-// Không auto-start khi boot để tránh scan nền ngoài ý muốn.
-loadScanConfig();
+// Auto-start theo cấu hình đã lưu: nếu enabled=true thì bật timer sau khi boot.
+// (Nếu muốn tắt hẳn chạy nền, set enabled=false qua /facebook/lead-scan/config)
+loadScanConfig().then((cfg) => {
+  if (cfg?.enabled) startScanTimer();
+}).catch(() => {});
 
 // GET /facebook/audit-phone-sync — đối soát contact/customer/lead
 r.get('/audit-phone-sync', authMiddleware, async (req, res) => {

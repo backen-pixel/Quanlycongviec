@@ -10,14 +10,10 @@ const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlo
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
 const { syncCrmLeadSxPipelineFromProject, emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
 const { userSeesAllCrmDeals, userSeesAllCrmLeads, normalizeCrmUserRole } = require('../helpers/crmAccessRoles');
-<<<<<<< Updated upstream
-const { applyDefaultWorkshopTemplatesForNewProject } = require('../helpers/workshopApplyTemplates');
-const { autoGenCrmTasks, FALLBACK_LEAD_TASKS, FALLBACK_DEAL_TASKS } = require('../helpers/autoGenCrmTasks');
-=======
 const { applyDefaultWorkshopTemplatesForNewProject, applyWorkshopTemplateToProject } = require('../helpers/workshopApplyTemplates');
+const { autoGenCrmTasks, FALLBACK_LEAD_TASKS, FALLBACK_DEAL_TASKS } = require('../helpers/autoGenCrmTasks');
 const { createFulfillmentChildDeal } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
->>>>>>> Stashed changes
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
 let misaService = null;
@@ -402,156 +398,7 @@ async function createNotification(req, userId, type, title, message, entityType,
   return await createNotif(req, userId, type, title, message, entityType, entityId, metadata || null);
 }
 
-<<<<<<< Updated upstream
 // ─── autoGenCrmTasks + FALLBACK_*_TASKS: imported from helpers/autoGenCrmTasks.js ──
-=======
-// ─── HELPER: Auto generate CRM tasks from templates ──
-// type = 'lead' | 'deal'
-const FALLBACK_LEAD_TASKS = [
-  { title: 'Tiếp nhận yêu cầu khách hàng', description: 'Ghi nhận thông tin KH, nhu cầu sử dụng', priority: 'high', stage_slug: 'consulting', order_index: 1, deadline_days: 0 },
-  { title: 'Tư vấn sản phẩm & vật liệu', description: 'Tư vấn chất liệu, phụ kiện phù hợp', priority: 'high', stage_slug: 'consulting', order_index: 2, deadline_days: 1 },
-  { title: 'Khảo sát thực tế (nếu cần)', description: 'Đo đạc kích thước, kiểm tra hiện trạng', priority: 'medium', stage_slug: 'consulting', order_index: 3, deadline_days: 2 },
-  { title: 'Ghi nhận nhu cầu chi tiết', description: 'Tổng hợp yêu cầu, xác nhận lại với KH', priority: 'medium', stage_slug: 'consulting', order_index: 4, deadline_days: 2 },
-];
-
-const FALLBACK_DEAL_TASKS = [
-  { title: 'Xác nhận yêu cầu từ Lead', description: 'Review thông tin từ giai đoạn Lead', priority: 'high', stage_slug: 'consulting', order_index: 1, deadline_days: 0 },
-  { title: 'Tư vấn chi tiết sản phẩm', description: 'Tư vấn chuyên sâu, báo giá sơ bộ', priority: 'high', stage_slug: 'consulting', order_index: 2, deadline_days: 1 },
-  { title: 'Thiết kế bản vẽ sơ bộ', description: 'Bản vẽ 2D/3D sơ bộ theo yêu cầu', priority: 'high', stage_slug: 'design', order_index: 1, deadline_days: 3 },
-  { title: 'Gửi bản vẽ cho KH duyệt', description: 'Gửi bản vẽ, hẹn feedback', priority: 'high', stage_slug: 'design', order_index: 2, deadline_days: 4 },
-  { title: 'Hoàn thiện bản vẽ kỹ thuật', description: 'Bản vẽ chi tiết cho sản xuất', priority: 'high', stage_slug: 'design', order_index: 3, deadline_days: 7 },
-  { title: 'Lập báo giá chi tiết', description: 'Báo giá theo hạng mục, breakdown chi tiết', priority: 'high', stage_slug: 'quotation', order_index: 1, deadline_days: 2 },
-  { title: 'Gửi báo giá cho KH', description: 'Gửi báo giá, giải thích', priority: 'high', stage_slug: 'quotation', order_index: 2, deadline_days: 2 },
-  { title: 'Thương lượng & chốt giá', description: 'Đàm phán chiết khấu, điều khoản', priority: 'medium', stage_slug: 'quotation', order_index: 3, deadline_days: 5 },
-  { title: 'Soạn hợp đồng', description: 'Soạn HĐ từ mẫu, điền thông tin', priority: 'high', stage_slug: 'contract', order_index: 1, deadline_days: 1 },
-  { title: 'Ký hợp đồng', description: 'Hẹn KH ký HĐ', priority: 'urgent', stage_slug: 'contract', order_index: 2, deadline_days: 5 },
-  { title: 'Thu tiền đặt cọc', description: 'Thu cọc theo tỷ lệ trong HĐ', priority: 'urgent', stage_slug: 'contract', order_index: 3, deadline_days: 5 },
-];
-
-async function autoGenCrmTasks(leadId, type, userId) {
-  // ═══ CHECK DUPLICATE: Nếu đã có tasks thì không gen lại ═══
-  const { count: existingCount } = await supabase.from('crm_tasks')
-    .select('id', { count: 'exact', head: true })
-    .eq('lead_id', leadId);
-  if (existingCount > 0) {
-    console.log(`[AUTO-TASK] Skip: ${type} ${leadId} already has ${existingCount} tasks`);
-    return 0;
-  }
-
-  const pipelineFilter = type === 'deal'
-    ? 'pipeline_type.eq.deal,pipeline_type.eq.both,pipeline_type.is.null'
-    : 'pipeline_type.eq.lead,pipeline_type.eq.both,pipeline_type.is.null';
-
-  // Step 1: Get default templates (is_default=true)
-  let { data: templates, error: tplErr } = await supabase
-    .from('crm_task_templates')
-    .select('id, name, stage_slug, pipeline_type')
-    .eq('is_default', true).eq('is_active', true)
-    .or(pipelineFilter)
-    .order('order_index');
-
-  // Filter by stage_slug pattern: deal templates start with 'deal_', lead templates don't
-  if (templates?.length) {
-    templates = templates.filter(t => {
-      const isDealSlug = t.stage_slug?.startsWith('deal_');
-      return type === 'deal' ? true : !isDealSlug; // Lead: chỉ lấy non-deal slugs. Deal: lấy tất cả
-    });
-  }
-
-  console.log(`[AUTO-TASK] ${type} ${leadId}: found ${templates?.length || 0} default templates, err=${tplErr?.message || 'none'}`);
-
-  // Fallback: nếu không có default → lấy tất cả active templates
-  if (!templates?.length) {
-    let { data: allTemplates } = await supabase
-      .from('crm_task_templates')
-      .select('id, name, stage_slug, pipeline_type')
-      .eq('is_active', true)
-      .or(pipelineFilter)
-      .order('order_index');
-    // Same stage_slug filter
-    if (allTemplates?.length) {
-      allTemplates = allTemplates.filter(t => {
-        const isDealSlug = t.stage_slug?.startsWith('deal_');
-        return type === 'deal' ? true : !isDealSlug;
-      });
-    }
-    templates = allTemplates || [];
-    console.log(`[AUTO-TASK] ${type} ${leadId}: fallback all active = ${templates.length} templates`);
-  }
-
-  if (templates?.length) {
-    templates.forEach(t => console.log(`  → template: "${t.name}" stage=${t.stage_slug} pipeline=${t.pipeline_type}`));
-  }
-
-  let inserts = [];
-  const now = new Date();
-
-  if (templates?.length) {
-    // Step 2: Get ALL items
-    const tplIds = templates.map(t => t.id);
-    const { data: allItems, error: itemErr } = await supabase
-      .from('crm_task_template_items')
-      .select('*')
-      .in('template_id', tplIds)
-      .order('order_index');
-
-    console.log(`[AUTO-TASK] ${type} ${leadId}: found ${allItems?.length || 0} template items, err=${itemErr?.message || 'none'}`);
-
-    if (allItems?.length) {
-      const tplMap = {};
-      templates.forEach(t => { tplMap[t.id] = t; });
-
-      // Deduplicate: tránh trường hợp cấu hình nhiều templates trùng items (UI sẽ thấy mỗi task lặp 2 lần)
-      const seen = new Set();
-      inserts = [];
-      for (const item of allItems) {
-        const stageSlug = tplMap[item.template_id]?.stage_slug || null;
-        const title = item.title;
-        const key = `${stageSlug || ''}||${item.order_index ?? ''}||${String(title || '').trim().toLowerCase()}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        inserts.push({
-          lead_id: leadId,
-          title,
-          description: item.description || null,
-          priority: item.priority || 'medium',
-          stage_slug: stageSlug,
-          order_index: item.order_index,
-          deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-          created_by: userId,
-        });
-      }
-    }
-  }
-
-  // Fallback: nếu không có templates trong DB → dùng hardcode
-  if (!inserts.length) {
-    const fallback = type === 'deal' ? FALLBACK_DEAL_TASKS : FALLBACK_LEAD_TASKS;
-    inserts = fallback.map(item => ({
-      lead_id: leadId,
-      title: item.title,
-      description: item.description || null,
-      priority: item.priority || 'medium',
-      stage_slug: item.stage_slug,
-      order_index: item.order_index,
-      deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
-      created_by: userId,
-    }));
-    console.log(`[AUTO-TASK] No templates in DB, using ${inserts.length} fallback ${type} tasks`);
-  }
-
-  if (inserts.length) {
-    const { error } = await supabase.from('crm_tasks').insert(inserts);
-    if (error) {
-      console.error(`[AUTO-TASK] Insert error:`, error.message);
-      return 0;
-    }
-    console.log(`[AUTO-TASK] ✅ Created ${inserts.length} tasks for ${type} ${leadId}`);
-    return inserts.length;
-  }
-  return 0;
-}
->>>>>>> Stashed changes
 
 /**
  * Sau khi Lead/Deal được auto-gen tasks, gom toàn bộ tasks đó thành "Đơn 1":

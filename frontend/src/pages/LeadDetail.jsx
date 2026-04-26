@@ -172,14 +172,6 @@ export default function LeadDetail() {
         api.get(`/crm/leads/${id}/task-documents`).catch(() => ({ data: [] })),
       ]);
 
-<<<<<<< Updated upstream
-      const stageParams = leadRes?.pipeline_id ? { pipeline_id: leadRes.pipeline_id } : undefined;
-      const [stagesLeadRes, stagesDealRes] = await Promise.all([
-        api.get('/crm/pipeline-stages', { params: { type: 'lead', ...(stageParams || {}) } }).catch(() => ({ data: [] })),
-        api.get('/crm/pipeline-stages', { params: { type: 'deal', ...(stageParams || {}) } }).catch(() => ({ data: [] })),
-      ]);
-
-=======
       const leadCompanyId = leadRes?.company_id || leadRes?.company?.id || null;
       const leadPipelineId = leadRes?.pipeline_id || null;
       const stagesParamsBase =
@@ -201,7 +193,6 @@ export default function LeadDetail() {
         setOrders([]);
         setOrdersLoading(false);
       }
->>>>>>> Stashed changes
       setLead(leadRes);
       setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);
