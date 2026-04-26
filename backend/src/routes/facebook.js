@@ -302,6 +302,11 @@ const DEFAULT_FB_PIPELINE_CONFIG = {
   engine: 'full_cycle',
   /** Bật = quét SĐT inbound đầy đủ + cho phép ghi đè sau khi đồng bộ tin (full_cycle / legacy). */
   full_cycle_rescan_phones: true,
+  /**
+   * Sau pipeline v2 (chỉ contact chưa lead): thêm vài lô Sync→Quét trên pool danh bạ (gồm đã lead) để kéo tin Graph.
+   * Số lô tối đa mỗi vòng auto (mỗi lô ≤ chain_chunk_users contact).
+   */
+  full_cycle_pool_sync_rounds: 12,
   /** Tối đa số user mới nhất (đồng bộ+quét) mỗi vòng trước Tạo Lead… Pool đã sort mới→cũ. 0 = không giới hạn (hết pool). */
   full_cycle_max_users_per_round: 50,
   /**
@@ -394,6 +399,8 @@ const autoPipeline = {
   batchResults: [],
   kpi: { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 },
   startedAt: null,
+  /** full_cycle: offset cho lô pool sync→quét (xoay vòng khi hết pool). */
+  fullCycleSyncExtractOffset: 0,
 };
 
 function pushAutoLog(text, status = 'info') {
@@ -739,7 +746,7 @@ async function runAutoPipelineLoop() {
     const bootCap = Math.min(500_000, Math.max(0, parseInt(pcfgBoot.full_cycle_max_users_per_round, 10) || 0));
     const capLabel = bootCap > 0 ? `tối đa ${bootCap} contact/vòng` : 'mặc định 150 contact/vòng';
     pushAutoLog(
-      `🚀 Auto — Pipeline v2: Graph→quét inbound→lead (nội bộ, không batch HTTP) • ${capLabel} → Refresh → Dedup → Sync SĐT • nghỉ ${bootPauseSec}s/vòng`,
+      `🚀 Auto — Pipeline v2 (chưa lead) + pool Sync→Quét (gồm đã lead, nếu bật rescan) • ${capLabel} → Refresh → Dedup → Sync SĐT • nghỉ ${bootPauseSec}s/vòng`,
     );
   } else if (pcfgBoot.engine === 'chain') {
     pushAutoLog(
@@ -782,15 +789,85 @@ async function runAutoPipelineLoop() {
         v2 = { ok: false, error: e.message, processed: 0, messagesSynced: 0, extractUpdated: 0, leadsCreated: 0, details: [] };
       }
       const usersPhase = v2.processed || 0;
-      const phaseMsgs = v2.messagesSynced || 0;
-      const phaseExtract = v2.extractUpdated || 0;
+      const v2Msgs = v2.messagesSynced || 0;
+      const v2Extract = v2.extractUpdated || 0;
       const created = v2.leadsCreated || 0;
       if (!v2.ok) {
         pushAutoLog(`⚠️ Pipeline v2: ${v2.error || 'lỗi'}`, 'error');
         autoPipeline.kpi.errors += 1;
       }
+      autoPipeline.kpi.messagesSynced += v2Msgs;
+      autoPipeline.kpi.contactsProcessed += usersPhase;
+      autoPipeline.kpi.contactPhones += v2Extract;
+      autoPipeline.kpi.leadPhones += created;
+
+      let poolMsgs = 0;
+      let poolExtract = 0;
+      let poolProcessedSum = 0;
+      let poolRounds = 0;
+      if (pcfg.full_cycle_rescan_phones !== false) {
+        autoPipeline.step = 0;
+        autoPipeline.stepLabel = '📲 Pool: Graph→quét (cả đã có lead)';
+        emitAutoState();
+        const chunkPool = Math.min(500, Math.max(20, parseInt(pcfg.chain_chunk_users, 10) || 80));
+        const rhPool = Math.min(168, Math.max(0, parseInt(pcfg.chain_recent_hours, 10) || AUTO_PIPELINE_RECENT_HOURS));
+        const maxPoolRounds = Math.min(100, Math.max(1, parseInt(pcfg.full_cycle_pool_sync_rounds, 10) || 12));
+        let offPool = Number.isFinite(autoPipeline.fullCycleSyncExtractOffset)
+          ? Math.max(0, autoPipeline.fullCycleSyncExtractOffset)
+          : 0;
+        const graphPagesPool = Math.min(30, Math.max(1, parseInt(pcfg.chain_graph_pages, 10) || gp));
+        const skipFinalPool = !pcfg.chain_final_lead_sync;
+        for (let pr = 0; pr < maxPoolRounds; pr++) {
+          let summaryPool;
+          try {
+            summaryPool = await runSyncThenExtractPhonesJob({
+              io: null,
+              limit: chunkPool,
+              offset: offPool,
+              recentHours: rhPool,
+              applyStaleFilter: !!pcfg.chain_skip_stale,
+              graphPages: graphPagesPool,
+              forceRescanPhones: true,
+              sortOrder: pcfg.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first',
+              skipFinalRound: skipFinalPool,
+              runGraphSync: pcfg.chain_run_graph_sync !== false,
+              runExtract: pcfg.chain_run_extract !== false,
+              emitBatchSocketEvents: false,
+            });
+          } catch (e) {
+            console.error('[AutoPipeline] full_cycle pool sync', e);
+            pushAutoLog(`❌ Pool Sync→Quét: ${e.message}`, 'error');
+            autoPipeline.kpi.errors += 1;
+            break;
+          }
+          if (!summaryPool || summaryPool.ok === false) {
+            pushAutoLog(`❌ Pool Sync→Quét: ${summaryPool?.error || 'lỗi'}`, 'error');
+            autoPipeline.kpi.errors += 1;
+            break;
+          }
+          poolRounds += 1;
+          poolMsgs += summaryPool.total_messages_synced || 0;
+          poolExtract += summaryPool.extract_updated || 0;
+          poolProcessedSum += summaryPool.processed || 0;
+          offPool = summaryPool.next_offset != null ? summaryPool.next_offset : offPool + (summaryPool.processed || 0);
+          autoPipeline.fullCycleSyncExtractOffset = summaryPool.done_pool ? 0 : offPool;
+          if (summaryPool.done_pool || !(summaryPool.processed > 0)) break;
+        }
+        autoPipeline.kpi.messagesSynced += poolMsgs;
+        autoPipeline.kpi.contactsProcessed += poolProcessedSum;
+        autoPipeline.kpi.contactPhones += poolExtract;
+        if (poolRounds > 0) {
+          pushAutoLog(
+            `📲 Pool Sync→Quét (${poolRounds} lô, offset tiếp ${autoPipeline.fullCycleSyncExtractOffset}): +${poolMsgs} tin, quét +${poolExtract}, ${poolProcessedSum} contact`,
+            'ok',
+          );
+        }
+      }
+
+      const phaseMsgs = v2Msgs + poolMsgs;
+      const phaseExtract = v2Extract + poolExtract;
       pushAutoLog(
-        `📊 Vòng ${autoPipeline.cycleCount}: pipeline v2 — ${usersPhase} contact, +${phaseMsgs} tin mới, quét cập nhật ${phaseExtract}, lead ${created}`,
+        `📊 Vòng ${autoPipeline.cycleCount}: v2 ${usersPhase} contact (+${v2Msgs} tin / quét ${v2Extract}) + pool +${poolMsgs} tin / quét ${poolExtract} → lead ${created}`,
         'ok',
       );
 
@@ -861,7 +938,7 @@ async function runAutoPipelineLoop() {
           cycle: autoPipeline.cycleCount,
           ts: Date.now(),
           mode: 'full_cycle_summary',
-          contactsProcessed: usersPhase,
+          contactsProcessed: usersPhase + poolProcessedSum,
           messagesSynced: phaseMsgs,
           contactPhones: phaseExtract,
           customerPhones: 0,
@@ -869,6 +946,16 @@ async function runAutoPipelineLoop() {
           status: 'done',
           post_steps: {
             create_leads: { created, skipped: createSkipped, details_sample: createLeadDetailsSample },
+            pool_sync:
+              pcfg.full_cycle_rescan_phones === false
+                ? null
+                : {
+                    rounds: poolRounds,
+                    messages: poolMsgs,
+                    extract_updated: poolExtract,
+                    contacts_processed: poolProcessedSum,
+                    next_offset: autoPipeline.fullCycleSyncExtractOffset,
+                  },
             refresh_names: { updated: refreshUpdated, total: refreshTotal },
             dedup: { merged: dedupMerged, message: dedupMessage },
             sync_phones: { updated: syncPhonesUpdated, total: syncPhonesTotal },
@@ -876,7 +963,7 @@ async function runAutoPipelineLoop() {
         },
       ];
 
-      pushAutoLog(`🏁 Vòng ${autoPipeline.cycleCount} xong (pipeline v2 + CRM sau)`, 'ok');
+      pushAutoLog(`🏁 Vòng ${autoPipeline.cycleCount} xong (v2 + pool đồng bộ + CRM sau)`, 'ok');
       done = true;
       emitAutoState();
     } else if (pcfg.engine === 'chain') {
@@ -4719,6 +4806,7 @@ async function saveFbPipelineConfig(partial) {
   merged.chain_run_extract = merged.chain_run_extract !== false;
   merged.auto_loop_pause_sec = Math.min(3600, Math.max(0, parseInt(merged.auto_loop_pause_sec, 10) || 0));
   merged.full_cycle_rescan_phones = merged.full_cycle_rescan_phones !== false;
+  merged.full_cycle_pool_sync_rounds = Math.min(100, Math.max(1, parseInt(merged.full_cycle_pool_sync_rounds, 10) || 12));
   await supabase.from('app_settings').upsert({
     key: 'fb_auto_pipeline_config',
     value: merged,

@@ -10,6 +10,8 @@ const PIPELINE_FORM_EMPTY = {
   full_cycle_max_users_per_round: 50,
   /** Khi bật: sau khi kéo tin, quét inbound đủ lô (ghi đè SĐT nếu khác) — tích hợp luồng “Quét lại SĐT” vào auto. */
   full_cycle_rescan_phones: true,
+  /** full_cycle: số lô pool Sync→Quét sau v2 (mỗi lô ≤ chunk user). */
+  full_cycle_pool_sync_rounds: 12,
   auto_loop_pause_sec: 300,
   chain_chunk_users: 50,
   chain_sort: 'newest_first',
@@ -67,6 +69,7 @@ export default function BatchActionsBar({ onComplete = null }) {
         engine,
         full_cycle_max_users_per_round: parseIntBounded(plForm.full_cycle_max_users_per_round, { min: 0, max: 500000, fallback: 50 }),
         full_cycle_rescan_phones: !!plForm.full_cycle_rescan_phones,
+        full_cycle_pool_sync_rounds: parseIntBounded(plForm.full_cycle_pool_sync_rounds, { min: 1, max: 100, fallback: 12 }),
         auto_loop_pause_sec: parseIntBounded(plForm.auto_loop_pause_sec, { min: 0, max: 3600, fallback: 300 }),
         chain_chunk_users: parseIntBounded(plForm.chain_chunk_users, { min: 1, max: 500, fallback: 50 }),
         chain_sort: plForm.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first',
@@ -146,7 +149,7 @@ export default function BatchActionsBar({ onComplete = null }) {
             <p className="font-semibold text-gray-800">Thứ tự mỗi vòng Auto</p>
             <ol className="list-decimal list-inside space-y-1.5 text-gray-600 leading-relaxed">
               <li>
-                <strong className="text-gray-800">Pipeline v2</strong> — đồng bộ Graph → quét inbound → tạo lead (nội bộ, không nối batch HTTP cũ).
+                <strong className="text-gray-800">Pipeline v2</strong> (chưa lead) + <strong className="text-gray-800">pool Sync→Quét</strong> (gồm đã lead, nếu bật quét inbound đầy đủ) — kéo tin Graph rồi quét SĐT.
               </li>
               <li>
                 <strong className="text-gray-800">🔄 Refresh tên</strong>
@@ -159,7 +162,7 @@ export default function BatchActionsBar({ onComplete = null }) {
               </li>
             </ol>
             <p className="text-[10px] text-gray-500 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100 leading-relaxed">
-              Engine <strong>full_cycle / legacy</strong> dùng pipeline v2 nội bộ. Engine <strong>Chain</strong> vẫn là <code className="text-[9px]">batch-sync-then-extract-phones</code> (offset pool). Nút «Đồng bộ + quét» trên danh bạ gọi <code className="text-[9px]">pipeline-v2/run</code>.
+              <strong>full_cycle</strong>: v2 (chưa lead) rồi thêm vài lô Graph→quét trên pool danh bạ (kể cả đã lead) để kéo tin quét SĐT. <strong>Chain</strong> chỉ <code className="text-[9px]">batch-sync-then-extract-phones</code>. Nút danh bạ: <code className="text-[9px]">pipeline-v2/run</code>.
             </p>
           </div>
 
@@ -195,8 +198,19 @@ export default function BatchActionsBar({ onComplete = null }) {
                   />
                   <span>
                     <strong>Quét SĐT inbound đầy đủ</strong> sau khi kéo tin (giống công cụ Quét lại SĐT): xử lý cả contact đã có SĐT trên lead,{' '}
-                    <strong>ghi đè</strong> SĐT contact/customer nếu tin tìm được số khác. Tắt = chỉ quét ưu tiên trường hợp thiếu SĐT (nhẹ hơn).
+                    <strong>ghi đè</strong> SĐT contact/customer nếu tin tìm được số khác. Khi bật, auto <strong>full_cycle</strong> còn chạy thêm pool Graph→Quét (contact đã Lead vẫn được kéo tin). Tắt = chỉ v2 (chưa lead) + nhẹ hơn.
                   </span>
+                </label>
+                <label className="flex flex-col gap-0.5 text-[11px]">
+                  <span className="text-gray-600">Số lô pool sau v2 (1–100, mặc định 12; mỗi lô ≤ chunk user)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    className="border rounded-md px-2 py-1 max-w-[120px]"
+                    value={plForm.full_cycle_pool_sync_rounds ?? 12}
+                    onChange={(e) => setPlForm((f) => ({ ...f, full_cycle_pool_sync_rounds: e.target.value }))}
+                  />
                 </label>
                 <label className="inline-flex items-center gap-2 text-[10px] text-gray-700 cursor-pointer select-none">
                   <input
