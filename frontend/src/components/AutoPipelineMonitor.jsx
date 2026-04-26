@@ -98,13 +98,51 @@ function BatchScanDetails({ batch }) {
 
 function FullCyclePostSteps({ post }) {
   if (!post || typeof post !== 'object') return null;
+  const leadDetails = Array.isArray(post?.create_leads?.details_sample) ? post.create_leads.details_sample : [];
   return (
     <div className="mt-2 text-[10px] text-gray-700 space-y-1 border-t border-gray-200 pt-2">
       <div className="font-semibold text-sky-800">Sau đồng bộ + quét lô (mỗi vòng)</div>
       {post.create_leads && (
-        <div>
-          Tạo lead: <span className="font-mono text-green-700">{post.create_leads.created ?? 0}</span> mới, bỏ qua{' '}
-          <span className="font-mono">{post.create_leads.skipped ?? 0}</span>
+        <div className="space-y-1">
+          <div>
+            Tạo lead: <span className="font-mono text-green-700">{post.create_leads.created ?? 0}</span> mới, bỏ qua{' '}
+            <span className="font-mono">{post.create_leads.skipped ?? 0}</span>
+          </div>
+          {leadDetails.length > 0 && (
+            <details className="group">
+              <summary className="cursor-pointer select-none text-violet-700 font-medium hover:text-violet-900 list-none flex items-center gap-1 [&::-webkit-details-marker]:hidden">
+                <ChevronDown size={12} className="shrink-0 transition group-open:rotate-180" />
+                Chi tiết tạo lead ({leadDetails.length})
+              </summary>
+              <div className="mt-1.5 max-h-44 overflow-auto rounded border border-gray-200 bg-white shadow-sm">
+                <table className="w-full text-[10px]">
+                  <thead className="bg-gray-100 sticky top-0 text-gray-600">
+                    <tr>
+                      <th className="text-left px-2 py-1 font-semibold">Tên / ID</th>
+                      <th className="text-left px-2 py-1 font-semibold">Trạng thái</th>
+                      <th className="text-left px-2 py-1 font-semibold">SĐT</th>
+                      <th className="text-left px-2 py-1 font-semibold">Lead</th>
+                      <th className="text-left px-2 py-1 font-semibold">Lý do</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leadDetails.map((r, j) => (
+                      <tr key={j} className="border-t border-gray-100 odd:bg-white even:bg-gray-50/80">
+                        <td className="px-2 py-1 text-gray-800 max-w-[140px] truncate" title={r.contact || r.name || r.contact_id}>
+                          {r.contact || r.name || '—'}
+                          {(r.contact_id || r.id) ? <span className="text-gray-400 font-mono ml-0.5">#{String(r.contact_id || r.id).slice(0, 8)}</span> : null}
+                        </td>
+                        <td className="px-2 py-1 font-mono text-gray-700">{r.status || '—'}</td>
+                        <td className="px-2 py-1 font-mono text-green-800">{r.phone || '—'}</td>
+                        <td className="px-2 py-1 font-mono text-blue-800">{r.lead_code || r.code || '—'}</td>
+                        <td className="px-2 py-1 text-gray-600 max-w-[160px] truncate" title={r.reason || r.error}>{r.reason || r.error || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
         </div>
       )}
       {post.refresh_names && (
