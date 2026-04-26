@@ -5160,6 +5160,7 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
 
 r.get('/webhook-logs', authMiddleware, async (req, res) => {
   try {
+    if (FB_DISABLE_WEBHOOK_LOGS) return res.json([]);
     const { data } = await supabase.from('facebook_webhook_logs')
       .select('*')
       .order('processed_at', { ascending: false })
@@ -5170,6 +5171,7 @@ r.get('/webhook-logs', authMiddleware, async (req, res) => {
 
 r.delete('/webhook-logs', authMiddleware, async (req, res) => {
   try {
+    if (FB_DISABLE_WEBHOOK_LOGS) return res.json({ ok: true, disabled: true });
     await supabase.from('facebook_webhook_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
