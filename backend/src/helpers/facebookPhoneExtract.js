@@ -24,7 +24,9 @@ function stripUrlLikeSegments(text) {
   return String(text)
     .replace(/\bhttps?:\/\/\S+/gi, ' ')
     .replace(/\bwww\.\S+/gi, ' ')
-    .replace(/\b(?:m\.me|fb\.me|zalo\.me|facebook\.com|messenger\.com|bit\.ly|tinyurl\.com|t\.co)\/\S*/gi, ' ');
+    .replace(/\b(?:m\.me|fb\.me|zalo\.me|facebook\.com|messenger\.com|bit\.ly|tinyurl\.com|t\.co)\/\S*/gi, ' ')
+    // Domain + path không có scheme (vd: shopee.vn/.../0909…) — hay chứa dãy số giống SĐT trong URL
+    .replace(/\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.(?:com|vn|net|org|io|info|co|me|shop|store|app)(?:\/[^\s]*)?/gi, ' ');
 }
 
 function normalizeVietnamPhoneCandidate(rawCandidate) {
@@ -42,6 +44,10 @@ function normalizeVietnamPhoneCandidate(rawCandidate) {
 
 function extractContactInfo(text) {
   if (!text) return { phone: null, address: null };
+  const oneLine = String(text).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  // Chỉ một dòng URL → không trích SĐT (tránh số trong query/path sau khi strip không hết)
+  if (/^https?:\/\/\S+$/i.test(oneLine)) return { phone: null, address: null };
+
   const raw = normalizeUnicodeDigitsToAscii(String(text))
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     .replace(/\u00A0/g, ' ')
