@@ -254,6 +254,14 @@ const DEFAULT_FB_PIPELINE_CONFIG = {
   engine: 'full_cycle',
   /** Tối đa số user mới nhất (đồng bộ+quét) mỗi vòng trước Tạo Lead… Pool đã sort mới→cũ. 0 = không giới hạn (hết pool). */
   full_cycle_max_users_per_round: 50,
+  /**
+   * Full-cycle: số trang Graph/contact khi batch sync (mỗi trang ~100 tin).
+   * Tăng để kéo sâu lịch sử (SĐT thường nằm tin cũ).
+   */
+  full_cycle_graph_pages_per_contact: 10,
+  /** Retry deep-sync (giới hạn) khi synced=0 & contact chưa có phone. */
+  full_cycle_deep_retry_cap: 20,
+  full_cycle_deep_retry_pages: 15,
   chain_chunk_users: 50,
   /** newest_first | oldest_first */
   chain_sort: 'newest_first',
@@ -264,8 +272,8 @@ const DEFAULT_FB_PIPELINE_CONFIG = {
   chain_final_lead_sync: true,
   chain_run_graph_sync: true,
   chain_run_extract: true,
-  /** Nghỉ giữa mỗi vòng Auto (giây). 0 = lặp liền (không chờ). Mặc định 300 = 5 phút. */
-  auto_loop_pause_sec: 300,
+  /** Nghỉ giữa mỗi vòng Auto (giây). 0 = lặp liền (không chờ). */
+  auto_loop_pause_sec: 0,
 };
 
 let fbPipelineConfigCache = { ...DEFAULT_FB_PIPELINE_CONFIG };
@@ -284,6 +292,30 @@ async function loadFbPipelineConfigFromDb() {
 
 function getFbPipelineConfigSync() {
   return { ...fbPipelineConfigCache };
+}
+
+// ── Persist auto-pipeline enabled flag (auto-resume sau reboot) ──
+async function loadAutoPipelineEnabledFromDb() {
+  try {
+    const { data } = await supabase.from('app_settings')
+      .select('value').eq('key', 'fb_auto_pipeline_enabled').maybeSingle();
+    return !!(data?.value?.enabled);
+  } catch (e) {
+    console.warn('[AutoPipeline] load enabled flag:', e.message);
+    return false;
+  }
+}
+
+async function saveAutoPipelineEnabledToDb(enabled) {
+  try {
+    await supabase.from('app_settings').upsert({
+      key: 'fb_auto_pipeline_enabled',
+      value: { enabled: !!enabled },
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'key' });
+  } catch (e) {
+    console.warn('[AutoPipeline] save enabled flag:', e.message);
+  }
 }
 
 const autoPipeline = {
@@ -702,10 +734,12 @@ async function runAutoPipelineLoop() {
       emitAutoState();
       let created = 0;
       let createSkipped = 0;
+      let createLeadDetailsSample = [];
       try {
         const cr = await autoPipelineInternalPostJson('/facebook/batch-create-leads', {});
         created = cr.created || 0;
         createSkipped = cr.skipped || 0;
+        createLeadDetailsSample = Array.isArray(cr?.results) ? cr.results.slice(0, 120) : [];
         pushAutoLog(`✅ Tạo Lead: ${created} mới (bỏ qua ${createSkipped})`, 'ok');
       } catch (e) {
         console.error('[AutoPipeline] batch-create-leads', e);
@@ -779,7 +813,7 @@ async function runAutoPipelineLoop() {
           leadPhones: created,
           status: 'done',
           post_steps: {
-            create_leads: { created, skipped: createSkipped },
+            create_leads: { created, skipped: createSkipped, details_sample: createLeadDetailsSample },
             refresh_names: { updated: refreshUpdated, total: refreshTotal },
             dedup: { merged: dedupMerged, message: dedupMessage },
             sync_phones: { updated: syncPhonesUpdated, total: syncPhonesTotal },
@@ -3414,17 +3448,34 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     // Giới hạn số contact tải mỗi lần để tránh egress lớn (ENV: FB_BATCH_LEADS_CAP, mặc định 500)
     const BATCH_CAP = Math.min(5000, Math.max(50, parseInt(process.env.FB_BATCH_LEADS_CAP || '500', 10) || 500));
 
+    // ── Tôn trọng auto-lead-config (giống webhook) để tránh tạo lead "rác" ──
+    const { getConfig: getAutoLeadConfig } = require('../config/autoLeadConfig');
+    const autoLeadCfg = getAutoLeadConfig();
+    const triggerMode = String(autoLeadCfg?.trigger || 'first_message');
+    if (triggerMode === 'manual') {
+      return res.json({
+        created: 0, updated: 0, skipped: 0, total: 0,
+        results: [],
+        message: 'Auto-lead trigger = manual → bỏ qua batch tạo lead',
+      });
+    }
+
     // Lấy contacts chưa có lead — giới hạn BATCH_CAP, ưu tiên hoạt động gần nhất
-    const { data: contactsRaw } = await supabase.from('facebook_contacts')
-      .select('id, fb_name, phone, page_id, last_message_at, created_at, lead_id, sync_paused')
+    let baseQuery = supabase.from('facebook_contacts')
+      .select('id, fb_name, phone, page_id, last_message_at, created_at, lead_id, sync_paused, customer_id')
       .is('lead_id', null)
       .neq('sync_paused', true)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(BATCH_CAP);
+    // has_phone: chỉ xét contact đã có phone trên DB (phone từ extract đã lưu sẵn)
+    if (triggerMode === 'has_phone') {
+      baseQuery = baseQuery.not('phone', 'is', null).neq('phone', '');
+    }
+    const { data: contactsRaw } = await baseQuery;
     const contacts = sortFacebookContactsNewestFirst(contactsRaw);
 
-    if (!contacts?.length) return res.json({ created: 0, updated: 0, message: 'Không có contact nào cần xử lý' });
+    if (!contacts?.length) return res.json({ created: 0, updated: 0, skipped: 0, total: 0, results: [], message: 'Không có contact nào cần xử lý' });
 
     let created = 0, updated = 0, skipped = 0;
     const results = [];
@@ -3490,6 +3541,41 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
             updated_at: new Date().toISOString(),
           }).eq('id', contact.id);
           updated++;
+        }
+
+        // ── Gate theo autoLeadCfg.trigger (giống webhook) ──
+        if (triggerMode === 'has_phone') {
+          const finalPhone = extractedPhone || (contact.phone && String(contact.phone).trim() ? contact.phone : null);
+          if (!finalPhone) {
+            results.push({
+              contact_id: contact.id,
+              contact: contact.fb_name,
+              phone: null,
+              status: 'skipped',
+              reason: 'trigger=has_phone, chưa tìm thấy SĐT',
+            });
+            skipped++;
+            if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'skipped' });
+            continue;
+          }
+        } else if (triggerMode === 'message_count') {
+          const threshold = Math.max(1, parseInt(autoLeadCfg?.message_count_threshold, 10) || 2);
+          const { count: msgCount } = await supabase.from('facebook_messages')
+            .select('id', { count: 'exact', head: true })
+            .eq('contact_id', contact.id)
+            .eq('direction', 'inbound');
+          if ((msgCount || 0) < threshold) {
+            results.push({
+              contact_id: contact.id,
+              contact: contact.fb_name,
+              phone: extractedPhone || null,
+              status: 'skipped',
+              reason: `trigger=message_count, ${msgCount || 0}/${threshold} tin`,
+            });
+            skipped++;
+            if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'skipped' });
+            continue;
+          }
         }
 
         // Tạo lead
@@ -4503,6 +4589,9 @@ async function saveFbPipelineConfig(partial) {
   };
   if (!['chain', 'legacy', 'full_cycle'].includes(merged.engine)) merged.engine = 'full_cycle';
   merged.full_cycle_max_users_per_round = Math.min(500_000, Math.max(0, parseInt(merged.full_cycle_max_users_per_round, 10) || 0));
+  merged.full_cycle_graph_pages_per_contact = Math.min(30, Math.max(1, parseInt(merged.full_cycle_graph_pages_per_contact, 10) || 10));
+  merged.full_cycle_deep_retry_cap = Math.min(200, Math.max(0, parseInt(merged.full_cycle_deep_retry_cap, 10) || 0));
+  merged.full_cycle_deep_retry_pages = Math.min(30, Math.max(1, parseInt(merged.full_cycle_deep_retry_pages, 10) || merged.full_cycle_graph_pages_per_contact));
   merged.chain_chunk_users = Math.min(500, Math.max(1, parseInt(merged.chain_chunk_users, 10) || 50));
   merged.chain_sort = merged.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
   merged.chain_recent_hours = Math.min(168, Math.max(0, parseInt(merged.chain_recent_hours, 10) || 0));
@@ -4672,6 +4761,11 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
     let totalErrors = 0;
     let processedCount = 0;
     const results = [];
+    const pcfg = getFbPipelineConfigSync();
+    const basePages = Math.min(30, Math.max(1, parseInt(pcfg.full_cycle_graph_pages_per_contact, 10) || FB_SYNC_BATCH_GRAPH_MAX_PAGES));
+    const retryPages = Math.min(30, Math.max(basePages, parseInt(pcfg.full_cycle_deep_retry_pages, 10) || basePages));
+    const retryCap = Math.min(200, Math.max(0, parseInt(pcfg.full_cycle_deep_retry_cap, 10) || 0));
+    let retryUsed = 0;
 
     if (io) io.emit('batch_progress', { type: 'sync_messages', phase: 'start', total, current: 0 });
 
@@ -4715,8 +4809,8 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
 
         // Get messages (nhiều trang — đồng bộ đủ text cũ có SĐT)
         const convId = convData.data[0].id;
-        const msgList = await graphFetchConversationMessages(convId, token, {
-          maxPages: FB_SYNC_BATCH_GRAPH_MAX_PAGES,
+        let msgList = await graphFetchConversationMessages(convId, token, {
+          maxPages: basePages,
           limitPerPage: 100,
         });
         if (!msgList.length) {
@@ -4754,6 +4848,42 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
             created_at: msg.created_time || new Date().toISOString(),
           });
           synced++;
+        }
+
+        // Adaptive deep-sync: nếu không sync được gì và contact chưa có phone → thử kéo sâu hơn (giới hạn cap/batch).
+        if (synced === 0 && !contact.phone && retryCap > 0 && retryPages > basePages && retryUsed < retryCap) {
+          retryUsed += 1;
+          msgList = await graphFetchConversationMessages(convId, token, {
+            maxPages: retryPages,
+            limitPerPage: 100,
+          });
+          for (const msg of msgList) {
+            const fbMsgId = msg.id;
+            if (!acquireMidLock(fbMsgId)) continue;
+            const { data: existing } = await supabase.from('facebook_messages')
+              .select('id').eq('fb_message_id', fbMsgId).limit(1);
+            if (existing?.length) continue;
+
+            const isFromPage = msg.from?.id === contact.page_id;
+            let attachmentUrl = null;
+            let messageType = 'text';
+            if (msg.attachments?.data?.[0]) {
+              const att = msg.attachments.data[0];
+              attachmentUrl = att.image_data?.url || att.file_url || att.url || null;
+              messageType = att.mime_type?.startsWith('image') ? 'image' : att.mime_type?.startsWith('video') ? 'video' : att.mime_type?.startsWith('audio') ? 'audio' : 'file';
+            }
+            await supabase.from('facebook_messages').insert({
+              contact_id: contact.id,
+              lead_id: contact.lead_id,
+              fb_message_id: fbMsgId,
+              direction: isFromPage ? 'outbound' : 'inbound',
+              message_type: messageType,
+              content: msg.message || (attachmentUrl ? `[${messageType}]` : ''),
+              attachment_url: attachmentUrl,
+              created_at: msg.created_time || new Date().toISOString(),
+            });
+            synced += 1;
+          }
         }
 
         // Update last_message_at + last_synced_at
@@ -4872,7 +5002,28 @@ async function saveScanConfig(cfg) {
 
 // Preload
 loadScanConfig().then(() => console.log('[LeadScan] ✅ Config loaded'));
-loadFbPipelineConfigFromDb().then(() => console.log('[FB] ✅ Auto pipeline config loaded'));
+loadFbPipelineConfigFromDb().then(async () => {
+  console.log('[FB] ✅ Auto pipeline config loaded');
+  // Auto-resume nếu trước khi reboot đang bật
+  try {
+    const wasEnabled = await loadAutoPipelineEnabledFromDb();
+    if (wasEnabled && !autoPipeline.running) {
+      console.log('[FB] ▶️ Auto-resume auto pipeline (persisted=ON)');
+      autoPipeline.enabled = true;
+      runAutoPipelineLoop().catch(err => {
+        console.error('[AutoPipeline] FATAL on resume', err.message);
+        pushAutoLog(`❌ Auto pipeline lỗi nghiêm trọng: ${err.message}`, 'error');
+        autoPipeline.running = false;
+        autoPipeline.enabled = false;
+        autoPipeline.phase = 'idle';
+        autoPipeline.step = -1;
+        autoPipeline.stepLabel = null;
+        autoPipeline.pauseUntilMs = null;
+        emitAutoState();
+      });
+    }
+  } catch (e) { console.warn('[FB] auto-resume check:', e.message); }
+});
 
 /**
  * scanAndCreateLeads — Quét facebook_contacts có SĐT nhưng chưa có lead → tạo lead
@@ -4901,10 +5052,14 @@ async function scanAndCreateLeads() {
 
     for (const contact of (contacts || [])) {
       try {
-        // Kiểm tra lead cũ bị xóa
-        if (!autoLeadCfg.recreate_deleted_leads) {
+        // Kiểm tra lead cũ bị xóa — chỉ check khi contact đã gắn customer (tránh lỗi với null)
+        if (!autoLeadCfg.recreate_deleted_leads && contact.customer_id) {
           const { data: oldLead } = await supabase.from('crm_leads')
-            .select('id').eq('customer_id', contact.customer_id).limit(1).single();
+            .select('id')
+            .eq('customer_id', contact.customer_id)
+            .eq('type', 'lead')
+            .limit(1)
+            .maybeSingle();
           if (oldLead) {
             results.skipped++;
             continue;
@@ -5218,6 +5373,7 @@ r.post('/auto-pipeline/start', authMiddleware, async (_req, res) => {
     autoPipeline.enabled = true;
     emitAutoState();
   }
+  saveAutoPipelineEnabledToDb(true).catch(() => {});
   res.json({ ok: true, state: getAutoState() });
 });
 
@@ -5225,6 +5381,7 @@ r.post('/auto-pipeline/stop', authMiddleware, async (_req, res) => {
   autoPipeline.stopRequested = true;
   autoPipeline.enabled = false;
   autoPipeline.pauseUntilMs = null;
+  saveAutoPipelineEnabledToDb(false).catch(() => {});
   pushAutoLog('🛑 Đã yêu cầu dừng auto pipeline');
   res.json({ ok: true, state: getAutoState() });
 });
