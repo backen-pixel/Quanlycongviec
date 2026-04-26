@@ -5,6 +5,8 @@
  * - SĐt hợp lệ nhưng sai định dạng → ghi dạng chuẩn 0xxxxxxxxx.
  * - Chưa có SĐT: với --fill-missing, quét tin inbound (KH FB) để điền nếu có số hợp lệ.
  *
+ * Thứ tự xử lý: hoạt động mới nhất → cũ (max(last_message_at, created_at)).
+ *
  * Chạy từ thư mục backend:
  *   node scripts/validate-fb-contact-phones.js --limit 200 --dry-run
  *   node scripts/validate-fb-contact-phones.js --limit 500 --fill-missing
@@ -21,6 +23,7 @@ const {
   validateVnSubscriberPhoneStored,
   extractInboundContactInfo,
 } = require('../src/helpers/facebookPhoneExtract');
+const { sortFacebookContactsNewestFirst } = require('../src/helpers/facebookContactActivity');
 
 function usage() {
   console.log(`
@@ -86,21 +89,31 @@ async function clearCustomerIfSame(custId, exactString, dry) {
 
   console.log('Opts:', JSON.stringify(opts));
 
-  const { data: rows, error } = await supabase
-    .from('facebook_contacts')
-    .select('id, fb_name, phone, customer_id, lead_id, last_message_at')
-    .not('psid', 'is', null)
-    .order('last_message_at', { ascending: false, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .range(opts.offset, opts.offset + opts.limit - 1);
-
-  if (error) {
-    console.error(error.message);
-    process.exit(1);
+  const need = opts.offset + opts.limit;
+  const pool = [];
+  let dbFrom = 0;
+  const page = 250;
+  while (pool.length < need) {
+    const { data, error } = await supabase
+      .from('facebook_contacts')
+      .select('id, fb_name, phone, customer_id, lead_id, last_message_at, created_at')
+      .not('psid', 'is', null)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .range(dbFrom, dbFrom + page - 1);
+    if (error) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    if (!data?.length) break;
+    pool.push(...data);
+    dbFrom += page;
+    if (data.length < page) break;
   }
 
-  const contacts = rows || [];
-  console.log(`Loaded ${contacts.length} contacts.\n`);
+  const sorted = sortFacebookContactsNewestFirst(pool);
+  const contacts = sorted.slice(opts.offset, opts.offset + opts.limit);
+  console.log(`Loaded ${contacts.length} contacts (pool ${pool.length}, sort=newest_activity_first).\n`);
 
   let cleared = 0;
   let normalized = 0;
