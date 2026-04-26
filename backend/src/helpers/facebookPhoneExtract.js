@@ -136,12 +136,30 @@ function extractInboundContactInfo(messages = [], _opts = {}) {
   return { phone, address, extraPhones };
 }
 
+/**
+ * Chuẩn hóa SĐT trước khi tạo lead: ưu tiên normalize VN, sau đó các dạng 84/0084/9 số.
+ * Không dùng rule “thuê bao VN” cứng như validateVnSubscriberPhoneStored.
+ */
+function normalizePhoneForLeadCreation(rawVin) {
+  if (rawVin == null || String(rawVin).trim() === '') return { ok: true, normalized: null };
+  const n = normalizeVietnamPhoneCandidate(rawVin);
+  if (n) return { ok: true, normalized: n };
+  let digits = normalizeUnicodeDigitsToAscii(String(rawVin)).replace(/\D/g, '');
+  if (!digits) return { ok: false, normalized: null };
+  if (digits.startsWith('0084')) digits = '0' + digits.slice(4);
+  else if (digits.startsWith('84')) digits = '0' + digits.slice(2);
+  else if (digits.length === 9 && /^[3-9]\d{8}$/.test(digits)) digits = '0' + digits;
+  if (digits.startsWith('0') && digits.length >= 10 && digits.length <= 11) return { ok: true, normalized: digits };
+  return { ok: false, normalized: null };
+}
+
 module.exports = {
   normalizeUnicodeDigitsToAscii,
   isLikelyVnSubscriberNumber,
   stripUrlLikeSegments,
   normalizeVietnamPhoneCandidate,
   validateVnSubscriberPhoneStored,
+  normalizePhoneForLeadCreation,
   extractContactInfo,
   extractInboundContactInfo,
 };

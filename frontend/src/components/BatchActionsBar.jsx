@@ -146,12 +146,7 @@ export default function BatchActionsBar({ onComplete = null }) {
             <p className="font-semibold text-gray-800">Thứ tự mỗi vòng Auto</p>
             <ol className="list-decimal list-inside space-y-1.5 text-gray-600 leading-relaxed">
               <li>
-                <strong className="text-gray-800">Đồng bộ tin nhắn + Quét SĐT</strong> — cùng API với chạy tay:{' '}
-                <code className="text-[9px] bg-gray-100 px-0.5 rounded">batch-sync-messages</code> (mode all theo offset) rồi{' '}
-                <code className="text-[9px] bg-gray-100 px-0.5 rounded">batch-extract-phones</code> (lô), lặp hết pool pipeline.
-              </li>
-              <li>
-                <strong className="text-gray-800">🆕 Tạo Lead hàng loạt</strong>
+                <strong className="text-gray-800">Pipeline v2</strong> — đồng bộ Graph → quét inbound → tạo lead (nội bộ, không nối batch HTTP cũ).
               </li>
               <li>
                 <strong className="text-gray-800">🔄 Refresh tên</strong>
@@ -164,8 +159,7 @@ export default function BatchActionsBar({ onComplete = null }) {
               </li>
             </ol>
             <p className="text-[10px] text-gray-500 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100 leading-relaxed">
-              Không còn luồng «Sync→Quét từng contact» riêng: Auto = gọi lần lượt các endpoint giống thao tác thủ công. Engine <strong>Chain</strong> trong cấu hình vẫn là đồng bộ+quét kiểu Danh bạ (từng user). Lọc stale cần SQL{' '}
-              <code className="text-[9px]">50_fb_last_inbound_rpc.sql</code> nếu dùng.
+              Engine <strong>full_cycle / legacy</strong> dùng pipeline v2 nội bộ. Engine <strong>Chain</strong> vẫn là <code className="text-[9px]">batch-sync-then-extract-phones</code> (offset pool). Nút «Đồng bộ + quét» trên danh bạ gọi <code className="text-[9px]">pipeline-v2/run</code>.
             </p>
           </div>
 
