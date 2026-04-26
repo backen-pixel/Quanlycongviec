@@ -15,8 +15,13 @@
  *   --offset N     Bỏ qua N contact đầu sau khi sort mới→cũ (theo hoạt động)
  *   --filter all|missing|has   all = cả có/không SĐT; missing = chưa có SĐT; has = đã có SĐT
  *   --replace      Ghi đè SĐT contact + KH + mô tả lead khi quét được số mới khác số đang lưu
+ *   --clear-phone-if-not-found  Quét không thấy SĐT inbound mới → xóa SĐT cũ trên contact (+ KH trùng chuỗi, gỡ dòng SĐT trong mô tả lead)
+ *   --delete-lead-without-phone Sau bước trên, contact không còn SĐT mà vẫn có lead → xóa lead (chỉ type=lead,
+ *                  không project, không báo giá/đơn, không lead con; không xóa nếu lead còn gắn contact khác)
  *   --dry-run      Chỉ in kết quả, không ghi DB
  *   --messages N   Số tin inbound tối đa mỗi contact (mặc định 1600, tối đa 3200)
+ *
+ * SĐT quét được trùng SĐT đang lưu → bỏ qua (không ghi DB).
  */
 
 const path = require('path');
@@ -34,10 +39,12 @@ Options:
   --limit N        Contacts to process (default 50)
   --offset N       Skip first N after newest-first activity sort (default 0)
   --filter MODE    all | missing | has  (default all)
-  --replace        Overwrite stored phone when inbound scan finds a different valid VN number
-  --dry-run        Print actions only
-  --messages N     Max inbound messages per contact (default 1600, max 3200)
-  --help           Show help
+  --replace                   Overwrite stored phone when inbound scan finds a different valid VN number
+  --clear-phone-if-not-found  No new inbound phone → clear stored phone on contact
+  --delete-lead-without-phone Delete CRM lead when contact ends with no phone (guarded)
+  --dry-run                   Print actions only
+  --messages N                Max inbound messages per contact (default 1600, max 3200)
+  --help                      Show help
 `);
 }
 
@@ -47,6 +54,8 @@ function parseArgs(argv) {
     offset: 0,
     filter: 'all',
     replace: false,
+    clearPhoneIfNotFound: false,
+    deleteLeadWithoutPhone: false,
     dryRun: false,
     messages: 1600,
   };
@@ -54,6 +63,8 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { out.help = true; continue; }
     if (a === '--replace') { out.replace = true; continue; }
+    if (a === '--clear-phone-if-not-found') { out.clearPhoneIfNotFound = true; continue; }
+    if (a === '--delete-lead-without-phone') { out.deleteLeadWithoutPhone = true; continue; }
     if (a === '--dry-run') { out.dryRun = true; continue; }
     const next = () => (argv[++i] || '');
     if (a === '--limit') out.limit = Math.max(1, parseInt(next(), 10) || 50);
@@ -138,13 +149,68 @@ async function loadInboundMessages(contactId, maxRows) {
   return rows;
 }
 
+function stripStoredPhonesFromLeadDescription(desc) {
+  let d = desc || '';
+  d = d.replace(/\n?SĐT khác:\s*[^\n]*/gi, '');
+  d = d.replace(/SĐT:\s*\S+/g, 'SĐT:');
+  return d.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+async function deleteLeadIfAllowed(leadId, contactId) {
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('id, type, project_id, parent_lead_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!lead) return { ok: false, reason: 'lead_missing' };
+  if (lead.type !== 'lead') return { ok: false, reason: 'not_type_lead' };
+  if (lead.project_id) return { ok: false, reason: 'has_project' };
+  if (lead.parent_lead_id) return { ok: false, reason: 'is_child_lead' };
+
+  const { count: ch } = await supabase
+    .from('crm_leads')
+    .select('id', { count: 'exact', head: true })
+    .eq('parent_lead_id', leadId);
+  if ((ch || 0) > 0) return { ok: false, reason: 'has_child_leads' };
+
+  const { count: q } = await supabase
+    .from('quotations')
+    .select('id', { count: 'exact', head: true })
+    .eq('lead_id', leadId);
+  if ((q || 0) > 0) return { ok: false, reason: 'has_quotations' };
+
+  const { count: o } = await supabase
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('lead_id', leadId);
+  if ((o || 0) > 0) return { ok: false, reason: 'has_orders' };
+
+  const { count: other } = await supabase
+    .from('facebook_contacts')
+    .select('id', { count: 'exact', head: true })
+    .eq('lead_id', leadId)
+    .neq('id', contactId);
+  if ((other || 0) > 0) return { ok: false, reason: 'other_fb_contacts_share_lead' };
+
+  await supabase.from('facebook_contacts').update({ lead_id: null, updated_at: new Date().toISOString() }).eq('id', contactId);
+  await supabase.from('facebook_messages').update({ lead_id: null }).eq('lead_id', leadId);
+  try { await supabase.from('crm_tasks').delete().eq('lead_id', leadId); } catch (_) {}
+  try { await supabase.from('crm_activities').delete().eq('lead_id', leadId); } catch (_) {}
+  try { await supabase.from('lead_documents').delete().eq('lead_id', leadId); } catch (_) {}
+  try { await supabase.from('lead_members').delete().eq('lead_id', leadId); } catch (_) {}
+  try { await supabase.from('lead_messages').delete().eq('lead_id', leadId); } catch (_) {}
+  const { error } = await supabase.from('crm_leads').delete().eq('id', leadId);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true };
+}
+
 async function loadLeadAndCustomer(contact) {
   let lead = null;
   let cust = null;
   if (contact.lead_id) {
     const { data: ld } = await supabase
       .from('crm_leads')
-      .select('id, customer_id, description, install_address, title')
+      .select('id, customer_id, description, install_address, title, type, project_id, parent_lead_id')
       .eq('id', contact.lead_id)
       .maybeSingle();
     lead = ld;
@@ -198,16 +264,8 @@ async function applyOne(contact, opts) {
   const extractedAddress = info.address || null;
   const extraPhones = info.extraPhones || [];
 
-  const oldPhone = contact.phone && String(contact.phone).trim() ? contact.phone : null;
+  const oldPhone = contact.phone && String(contact.phone).trim() ? String(contact.phone).trim() : null;
   const { lead, cust } = await loadLeadAndCustomer(contact);
-
-  let shouldWriteContact = false;
-  if (extractedPhone) {
-    if (!oldPhone) shouldWriteContact = true;
-    else if (opts.replace && !phonesEqual(oldPhone, extractedPhone)) shouldWriteContact = true;
-  }
-
-  const effectivePhone = extractedPhone || oldPhone || null;
 
   const row = {
     contact_id: contact.id,
@@ -218,36 +276,84 @@ async function applyOne(contact, opts) {
     action: 'skip',
   };
 
-  if (!extractedPhone && !extractedAddress && !extraPhones.length) {
+  // Trùng SĐT quét được với SĐT đang lưu → không làm gì
+  if (extractedPhone && oldPhone && phonesEqual(oldPhone, extractedPhone)) {
+    row.action = 'skip_duplicate_phone';
+    return row;
+  }
+
+  const hasExtracted = !!(extractedPhone || extractedAddress || extraPhones.length);
+  const wantClear = opts.clearPhoneIfNotFound && !extractedPhone && oldPhone;
+  const wantDeleteOnly = !!(opts.deleteLeadWithoutPhone && !oldPhone && !extractedPhone && contact.lead_id);
+  const wantAnyWork = hasExtracted || wantClear || wantDeleteOnly;
+
+  if (!wantAnyWork) {
     row.action = 'no_inbound_info';
     return row;
   }
 
-  if (!shouldWriteContact && !extractedAddress && !extraPhones.length) {
-    row.action = extractedPhone ? 'unchanged_phone' : 'no_phone_change';
-    return row;
+  let shouldWriteContactPhone = false;
+  let newContactPhone = oldPhone;
+  if (extractedPhone) {
+    if (!oldPhone) {
+      shouldWriteContactPhone = true;
+      newContactPhone = extractedPhone;
+    } else if (opts.replace && !phonesEqual(oldPhone, extractedPhone)) {
+      shouldWriteContactPhone = true;
+      newContactPhone = extractedPhone;
+    }
+  } else if (wantClear) {
+    shouldWriteContactPhone = true;
+    newContactPhone = null;
   }
+
+  const effectivePhoneForDesc = newContactPhone || extractedPhone || oldPhone || null;
 
   if (opts.dryRun) {
-    row.action = shouldWriteContact ? 'would_update_contact' : 'would_update_meta_only';
+    if (shouldWriteContactPhone && newContactPhone) row.action = 'would_update_contact_phone';
+    else if (shouldWriteContactPhone && !newContactPhone) row.action = 'would_clear_contact_phone';
+    else if (extractedAddress || extraPhones.length) row.action = 'would_update_meta_only';
+    else if (wantDeleteOnly) row.action = 'would_delete_lead_no_phone';
+    else row.action = 'dry_run_noop';
+    if (opts.deleteLeadWithoutPhone && !newContactPhone && contact.lead_id) {
+      row.would_try_delete_lead = true;
+    }
     return row;
   }
 
-  if (shouldWriteContact && extractedPhone) {
+  if (shouldWriteContactPhone) {
     const { error: e1 } = await supabase
       .from('facebook_contacts')
-      .update({ phone: extractedPhone, updated_at: new Date().toISOString() })
+      .update({
+        phone: newContactPhone,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', contact.id);
     if (e1) throw e1;
-    row.action = 'updated_contact_phone';
+    row.action = newContactPhone ? 'updated_contact_phone' : 'cleared_contact_phone';
   }
 
   const leadCustId = lead?.customer_id || contact.customer_id;
-  if (leadCustId && extractedPhone) {
+
+  if (wantClear && oldPhone && leadCustId) {
+    const custPhoneStr = cust?.phone != null ? String(cust.phone).trim() : '';
+    if (custPhoneStr && custPhoneStr === oldPhone) {
+      const { error: ec } = await supabase
+        .from('customers')
+        .update({ phone: '', updated_at: new Date().toISOString() })
+        .eq('id', leadCustId);
+      if (ec) throw ec;
+      row.customer_phone_cleared = true;
+    }
+  }
+
+  if (leadCustId) {
     const custUpd = {};
-    const custPhoneEmpty = !cust?.phone || !String(cust.phone).trim();
-    if (custPhoneEmpty || opts.replace) {
-      if (!phonesEqual(cust?.phone, extractedPhone)) custUpd.phone = extractedPhone;
+    if (extractedPhone) {
+      const custPhoneEmpty = !cust?.phone || !String(cust.phone).trim();
+      if (custPhoneEmpty || opts.replace) {
+        if (!phonesEqual(cust?.phone, extractedPhone)) custUpd.phone = extractedPhone;
+      }
     }
     if (extractedAddress && extractedAddress !== cust?.address) custUpd.address = extractedAddress;
     if (Object.keys(custUpd).length) {
@@ -262,7 +368,15 @@ async function applyOne(contact, opts) {
     if (extractedAddress && extractedAddress !== lead.install_address) {
       leadUpd.install_address = extractedAddress;
     }
-    const newDesc = mergeLeadDescription(lead, effectivePhone, extractedAddress, extraPhones);
+    let newDesc;
+    if (wantClear && !extractedPhone) {
+      newDesc = stripStoredPhonesFromLeadDescription(lead.description || '');
+      if (extractedAddress) {
+        newDesc = mergeLeadDescription({ ...lead, description: newDesc }, null, extractedAddress, []);
+      }
+    } else {
+      newDesc = mergeLeadDescription(lead, effectivePhoneForDesc, extractedAddress, extraPhones);
+    }
     if (newDesc !== (lead.description || '')) leadUpd.description = newDesc;
     if (Object.keys(leadUpd).length > 1) {
       const { error: e3 } = await supabase.from('crm_leads').update(leadUpd).eq('id', contact.lead_id);
@@ -271,7 +385,13 @@ async function applyOne(contact, opts) {
     }
   }
 
-  if (row.action === 'skip' && (row.customer_updated || row.lead_updated)) {
+  if (opts.deleteLeadWithoutPhone && !newContactPhone && contact.lead_id) {
+    const del = await deleteLeadIfAllowed(contact.lead_id, contact.id);
+    row.lead_delete = del;
+    if (del.ok) row.action = row.action === 'cleared_contact_phone' ? 'cleared_phone_and_deleted_lead' : 'deleted_lead_no_phone';
+  }
+
+  if (row.action === 'skip' && (row.customer_updated || row.lead_updated || row.customer_phone_cleared)) {
     row.action = 'updated_crm_only';
   }
   return row;
