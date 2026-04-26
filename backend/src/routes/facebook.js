@@ -1102,58 +1102,80 @@ async function fetchProfileViaConversations(pageId, psid) {
 }
 
 // ── Helper: Extract phone & address từ text (chỉ text — không OCR ảnh) ──
+/** Đổi chữ số toàn dụng / Ả Rập → ASCII (Messenger hay dính font lạ). */
+function normalizeUnicodeDigitsToAscii(s) {
+  if (s == null || s === '') return '';
+  return String(s)
+    .replace(/[\uFF10-\uFF19]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30))
+    .replace(/[\u0660-\u0669]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x0660 + 0x30))
+    .replace(/[\u06F0-\u06F9]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x06f0 + 0x30));
+}
+
+/** Chuỗi chỉ gồm chữ số, 10 hoặc 11 số, bắt đầu 0 — cố định 02x + di động 03x–09x (không siết 0[3-9] để tránh loại nhầm 02…). */
+function isLikelyVnSubscriberNumber(digitsOnly) {
+  const s = String(digitsOnly || '').replace(/\D/g, '');
+  if (/^0[1-9]\d{8}$/.test(s)) return true;
+  if (/^0[1-9]\d{9}$/.test(s)) return true;
+  return false;
+}
+
+function firstVnPhoneInDigitString(digits) {
+  const d = String(digits || '').replace(/\D/g, '');
+  for (let i = 0; i < d.length; i++) {
+    if (d[i] !== '0') continue;
+    for (const len of [11, 10]) {
+      const slice = d.slice(i, i + len);
+      if (slice.length === len && isLikelyVnSubscriberNumber(slice)) return slice;
+    }
+  }
+  return null;
+}
+
 function extractContactInfo(text) {
   if (!text) return { phone: null, address: null };
-  const raw = String(text)
+  const raw = normalizeUnicodeDigitsToAscii(String(text))
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     .replace(/\u00A0/g, ' ')
     .trim();
 
-  // Chỉ chấp nhận số điện thoại VN chuẩn hóa đúng 10 số.
+  // SĐT VN: 10–11 số (sau chuẩn hóa về dạng 0…).
   const phonePatterns = [
-    /(?:0|\+84)(?:\d[\s.\-\/]?){9}/g,
-    /(?:84)(?:\d[\s.\-\/]?){9}/g,
+    /(?:0|\+84)(?:\d[\s.\-\/]?){9,10}/g,
+    /(?:^|[^\d])84(?:\d[\s.\-\/]?){9,10}(?:[^\d]|$)/g,
   ];
 
   let phone = null;
   for (const pattern of phonePatterns) {
     const matches = raw.match(pattern);
-    if (matches?.[0]) {
-      let normalized = matches[0].replace(/[^\d+]/g, '');
+    if (!matches?.length) continue;
+    for (const chunk of matches) {
+      let normalized = chunk.replace(/[^\d+]/g, '');
       if (normalized.startsWith('+84')) normalized = '0' + normalized.slice(3);
       else if (normalized.startsWith('84')) normalized = '0' + normalized.slice(2);
       normalized = normalized.replace(/\D/g, '');
-      if (/^0\d{9}$/.test(normalized)) {
+      if (isLikelyVnSubscriberNumber(normalized)) {
         phone = normalized;
         break;
       }
     }
+    if (phone) break;
   }
 
-  // Fallback: tìm đúng 9 số đầu 3-9 rồi thêm prefix 0 -> thành 10 số
+  // Fallback: 9 số di động (không 0 đầu) → thêm 0
   if (!phone) {
     const bareMatch = raw.match(/(?:^|[^\d])([3-9]\d{8})(?:[^\d]|$)/);
     if (bareMatch?.[1]) {
       const normalized = '0' + bareMatch[1];
-      if (/^0\d{9}$/.test(normalized)) phone = normalized;
+      if (isLikelyVnSubscriberNumber(normalized)) phone = normalized;
     }
   }
 
-  // Fallback 2: gom toàn bộ chữ số — xử lý “dính” số khác (lấy 0xxxxxxxxx đầu tiên hợp lệ)
+  // Fallback 2: gom dải chữ số — tìm 0… đầu tiên hợp lệ (10 hoặc 11 số)
   if (!phone) {
     let digits = raw.replace(/\D/g, '');
     if (digits.startsWith('0084')) digits = '0' + digits.slice(4);
-    else if (digits.startsWith('84') && digits.length >= 11) digits = '0' + digits.slice(2);
-    const candidates = digits.match(/0\d{9}/g);
-    if (candidates?.length) {
-      for (const c of candidates) {
-        if (/^0[3-9]\d{8}$/.test(c)) {
-          phone = c;
-          break;
-        }
-      }
-      if (!phone && /^0\d{9}$/.test(candidates[0])) phone = candidates[0];
-    }
+    else if (digits.startsWith('84') && digits.length >= 10) digits = '0' + digits.slice(2);
+    phone = firstVnPhoneInDigitString(digits);
   }
 
   // Address patterns (keywords)
@@ -1182,20 +1204,35 @@ function extractContactInfo(text) {
   return { phone, address };
 }
 
-function extractInboundContactInfo(messages = []) {
+function extractInboundContactInfo(messages = [], opts = {}) {
+  const { allowAnyDirection = false } = opts;
   let phone = null;
   let address = null;
   const extraPhones = [];
 
-  for (const msg of (messages || [])) {
-    if (msg.direction && msg.direction !== 'inbound') continue;
-    if (!msg.content) continue;
-    const extracted = extractContactInfo(msg.content);
-    if (extracted.phone && !phone) phone = extracted.phone;
-    else if (extracted.phone && extracted.phone !== phone && !extraPhones.includes(extracted.phone)) extraPhones.push(extracted.phone);
-    if (extracted.address && !address) address = extracted.address;
-    if (phone && address) break;
-  }
+  const sorted = [...(messages || [])].sort((a, b) => {
+    const pri = (m) => (m.direction === 'inbound' ? 0 : 1);
+    const dp = pri(a) - pri(b);
+    if (dp !== 0) return dp;
+    return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+  });
+
+  const scan = (onlyInbound) => {
+    for (const msg of sorted) {
+      if (onlyInbound && msg.direction && msg.direction !== 'inbound') continue;
+      if (!msg.content) continue;
+      const extracted = extractContactInfo(msg.content);
+      if (extracted.phone && !phone) phone = extracted.phone;
+      else if (extracted.phone && extracted.phone !== phone && !extraPhones.includes(extracted.phone)) {
+        extraPhones.push(extracted.phone);
+      }
+      if (extracted.address && !address) address = extracted.address;
+      if (phone && address) break;
+    }
+  };
+
+  scan(true);
+  if (allowAnyDirection && !phone && !address) scan(false);
 
   return { phone, address, extraPhones };
 }
@@ -3742,11 +3779,10 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       const { data: messages } = await supabase.from('facebook_messages')
         .select('id, content, direction, created_at')
         .eq('contact_id', contact.id)
-        .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
         .limit(MSG_PAGE);
 
-      let inboundInfo = extractInboundContactInfo(messages || []);
+      let inboundInfo = extractInboundContactInfo(messages || [], { allowAnyDirection: true });
       let extractedPhone = inboundInfo.phone;
       let extractedAddress = inboundInfo.address;
       let extraPhones = inboundInfo.extraPhones;
@@ -3757,13 +3793,12 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         const { data: older } = await supabase.from('facebook_messages')
           .select('id, content, direction, created_at')
           .eq('contact_id', contact.id)
-          .eq('direction', 'inbound')
           .order('created_at', { ascending: false })
           .range(MSG_PAGE, MSG_PAGE * 2 - 1);
 
         if (older?.length) {
           const merged = [...(messages || []), ...older];
-          inboundInfo = extractInboundContactInfo(merged);
+          inboundInfo = extractInboundContactInfo(merged, { allowAnyDirection: true });
           extractedPhone = inboundInfo.phone;
           extractedAddress = inboundInfo.address;
           extraPhones = inboundInfo.extraPhones;
@@ -4089,11 +4124,10 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
   const { data: messages } = await supabase.from('facebook_messages')
     .select('id, content, direction, created_at')
     .eq('contact_id', fresh.id)
-    .eq('direction', 'inbound')
     .order('created_at', { ascending: false })
     .limit(800);
 
-  const inboundInfo = extractInboundContactInfo(messages || []);
+  const inboundInfo = extractInboundContactInfo(messages || [], { allowAnyDirection: true });
   let extractedPhone = inboundInfo.phone;
   let extractedAddress = inboundInfo.address;
   const extraPhones = inboundInfo.extraPhones;
