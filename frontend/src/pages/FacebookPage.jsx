@@ -271,8 +271,28 @@ function InboxTab({ pageStats }) {
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       }
     };
+    const onContactProfile = (data) => {
+      const id = data?.contact_id;
+      if (!id) return;
+      setContacts((prev) =>
+        prev.map((c) =>
+          String(c.id) === String(id)
+            ? { ...c, fb_name: data.fb_name || c.fb_name, fb_profile_pic: data.fb_profile_pic ?? c.fb_profile_pic }
+            : c,
+        ),
+      );
+      setSelected((sel) =>
+        sel && String(sel.id) === String(id)
+          ? { ...sel, fb_name: data.fb_name || sel.fb_name, fb_profile_pic: data.fb_profile_pic ?? sel.fb_profile_pic }
+          : sel,
+      );
+    };
     socket.on('fb_message', h);
-    return () => { socket.off('fb_message', h); };
+    socket.on('fb_contact_updated', onContactProfile);
+    return () => {
+      socket.off('fb_message', h);
+      socket.off('fb_contact_updated', onContactProfile);
+    };
   }, [socket]);
 
   useEffect(() => {
@@ -816,11 +836,12 @@ function ContactsTab() {
   const sortContacts = useCallback((list) => {
     const deduped = (list || []).filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
     return [...deduped].sort((a, b) => {
+      const act = fbActivityTs(b) - fbActivityTs(a);
+      if (act !== 0) return act;
+      // Tie-breaker: unread only (keep "newest-first" as primary sort)
       const ua = (a.unread_count || 0) > 0 ? 1 : 0;
       const ub = (b.unread_count || 0) > 0 ? 1 : 0;
       if (ub !== ua) return ub - ua;
-      const act = fbActivityTs(b) - fbActivityTs(a);
-      if (act !== 0) return act;
       const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
       const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
       return bp - ap;
@@ -914,11 +935,26 @@ function ContactsTab() {
       load();
     };
 
+    const onContactUpdated = (data) => {
+      const id = data?.contact_id;
+      if (!id) return;
+      setContacts((prev) =>
+        sortContacts(
+          prev.map((c) =>
+            String(c.id) === String(id)
+              ? { ...c, fb_name: data.fb_name || c.fb_name, fb_profile_pic: data.fb_profile_pic ?? c.fb_profile_pic }
+              : c,
+          ),
+        ),
+      );
+    };
     socket.on('fb_message', onFbMessage);
+    socket.on('fb_contact_updated', onContactUpdated);
     socket.on('batch_progress', onBatchProgress);
     socket.on('batch_done', onBatchDone);
     return () => {
       socket.off('fb_message', onFbMessage);
+      socket.off('fb_contact_updated', onContactUpdated);
       socket.off('batch_progress', onBatchProgress);
       socket.off('batch_done', onBatchDone);
     };
