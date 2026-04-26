@@ -489,12 +489,6 @@ server.listen(config.port, () => {
   setTimeout(checkDeadlines, 60000);
   setInterval(checkDeadlines, 15 * 60 * 1000);
 
-<<<<<<< Updated upstream
   // Tắt scanMissingLeads chạy nền ở server startup để giảm egress.
   // Lead scan tự động chỉ chạy qua công cụ /facebook/lead-scan/config với timer riêng.
-=======
-  // Run missing leads scan 90s after start, then every 10 minutes (khi bật công cụ tự động)
-  setTimeout(scanMissingLeads, 90000);
-  setInterval(scanMissingLeads, 10 * 60 * 1000);
->>>>>>> Stashed changes
 });
