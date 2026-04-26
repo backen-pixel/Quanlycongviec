@@ -1660,22 +1660,41 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     created_by: page.created_by,
   };
 
+  // Tạo lead với mã duy nhất — DB hiện chưa có UNIQUE constraint trên code
+  // (xem migration 108_crm_leads_code_unique.sql), nên cần pre-check application-level
+  // để tránh race condition giữa các tick auto-pipeline / API thủ công.
   let lead = null;
   let lastErr = null;
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 10; attempt++) {
     const tryCode = `LEAD-${String((_maxNum || 0) + 1 + attempt).padStart(4, '0')}`;
+
+    // Pre-check: code này đã tồn tại chưa
+    const { data: existing } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .eq('type', 'lead')
+      .eq('code', tryCode)
+      .limit(1)
+      .maybeSingle();
+    if (existing) {
+      console.warn(`[FB] Lead code ${tryCode} đã tồn tại — thử mã kế tiếp (attempt ${attempt + 1})`);
+      continue;
+    }
+
     const tryData = { ...leadData, code: tryCode };
     const { data, error } = await supabase.from('crm_leads').insert(tryData).select().single();
     if (!error) { lead = data; break; }
     lastErr = error;
-    if (!String(error.message || '').toLowerCase().includes('duplicate')) {
+    const isDup = String(error.message || '').toLowerCase().includes('duplicate')
+               || String(error.code || '') === '23505';
+    if (!isDup) {
       console.error('[FB] Create lead error:', error.message);
       return null;
     }
-    console.warn(`[FB] Lead code ${tryCode} trùng — retry attempt ${attempt + 1}`);
+    console.warn(`[FB] Lead code ${tryCode} race-collision — retry attempt ${attempt + 1}`);
   }
   if (!lead) {
-    console.error('[FB] Create lead failed sau 5 lần thử:', lastErr?.message);
+    console.error('[FB] Create lead failed sau 10 lần thử:', lastErr?.message);
     return null;
   }
 
