@@ -12,7 +12,7 @@
  *
  * Tham số:
  *   --limit N      Số contact xử lý (mặc định 50)
- *   --offset N     Bỏ qua N contact khớp filter (theo thứ tự hoạt động mới nhất)
+ *   --offset N     Bỏ qua N contact đầu sau khi sort mới→cũ (theo hoạt động)
  *   --filter all|missing|has   all = cả có/không SĐT; missing = chưa có SĐT; has = đã có SĐT
  *   --replace      Ghi đè SĐT contact + KH + mô tả lead khi quét được số mới khác số đang lưu
  *   --dry-run      Chỉ in kết quả, không ghi DB
@@ -32,7 +32,7 @@ Usage: node scripts/rescan-fb-inbound-phones.js [options]
 
 Options:
   --limit N        Contacts to process (default 50)
-  --offset N       Skip first N matching contacts (default 0)
+  --offset N       Skip first N after newest-first activity sort (default 0)
   --filter MODE    all | missing | has  (default all)
   --replace        Overwrite stored phone when inbound scan finds a different valid VN number
   --dry-run        Print actions only
@@ -90,9 +90,10 @@ async function fetchContactsMatching(opts) {
   const pool = [];
   let dbOffset = 0;
   const page = 250;
-  let skipped = 0;
+  // Gom đủ contact khớp filter rồi sort theo hoạt động mới nhất; --offset áp sau sort (không theo thứ tự trang DB).
+  const target = Math.min(20_000, Math.max(offset + limit + 400, 600));
 
-  while (pool.length < limit) {
+  while (pool.length < target) {
     const { data, error } = await supabase
       .from('facebook_contacts')
       .select('id, fb_name, phone, lead_id, customer_id, last_message_at, created_at')
@@ -108,17 +109,13 @@ async function fetchContactsMatching(opts) {
       const hasP = hasMeaningfulPhone(c.phone);
       if (filter === 'missing' && hasP) continue;
       if (filter === 'has' && !hasP) continue;
-      if (skipped < offset) {
-        skipped += 1;
-        continue;
-      }
       pool.push(c);
-      if (pool.length >= limit) break;
     }
     dbOffset += page;
     if (data.length < page) break;
   }
-  return sortFacebookContactsNewestFirst(pool);
+  const sorted = sortFacebookContactsNewestFirst(pool);
+  return sorted.slice(offset, offset + limit);
 }
 
 async function loadInboundMessages(contactId, maxRows) {
