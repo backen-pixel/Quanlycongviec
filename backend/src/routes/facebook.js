@@ -10,6 +10,12 @@ const {
   enrichContactActivityFields,
 } = require('../helpers/facebookContactActivity');
 
+// Disable DB logging to facebook_webhook_logs to reduce Supabase egress.
+// Set FB_DISABLE_WEBHOOK_LOGS=1 (or true/yes/on) in env to enable.
+const FB_DISABLE_WEBHOOK_LOGS = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.FB_DISABLE_WEBHOOK_LOGS || '').toLowerCase(),
+);
+
 // ═══════════════════════════════════════════════════════════════
 // AUTO PIPELINE STATE (backend-managed, realtime)
 // ═══════════════════════════════════════════════════════════════
@@ -986,6 +992,7 @@ async function getOrCreateContact(pageId, psid, name, _profilePic) {
 
 // Helper: ghi kết quả fetch tên vào webhook logs
 async function logFetchResult(pageId, psid, status, details) {
+  if (FB_DISABLE_WEBHOOK_LOGS) return;
   try {
     await supabase.from('facebook_webhook_logs').insert({
       page_id: pageId,
@@ -1593,7 +1600,7 @@ r.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
   // Ghi log vào DB
-  if (body.object === 'page' && body.entry) {
+  if (!FB_DISABLE_WEBHOOK_LOGS && body.object === 'page' && body.entry) {
     for (const entry of body.entry) {
       await supabase.from('facebook_webhook_logs').insert({
         page_id: entry.id,
@@ -1648,18 +1655,20 @@ async function handleMessaging(pageId, event, io) {
   console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
 
   // Log kết quả xử lý vào DB
-  await supabase.from('facebook_webhook_logs').upsert({
-    page_id: pageId,
-    payload: { type: 'message_processed', psid: senderId, event },
-    status: 'processed',
-    result: {
-      contact_id: contact.id,
-      contact_name: contact.fb_name,
-      has_lead: !!contact.lead_id,
-      lead_id: contact.lead_id,
-      avatar: contact.fb_profile_pic || null,
-    },
-  }, { ignoreDuplicates: true }).then(() => {}).catch(() => {});
+  if (!FB_DISABLE_WEBHOOK_LOGS) {
+    await supabase.from('facebook_webhook_logs').upsert({
+      page_id: pageId,
+      payload: { type: 'message_processed', psid: senderId, event },
+      status: 'processed',
+      result: {
+        contact_id: contact.id,
+        contact_name: contact.fb_name,
+        has_lead: !!contact.lead_id,
+        lead_id: contact.lead_id,
+        avatar: contact.fb_profile_pic || null,
+      },
+    }, { ignoreDuplicates: true }).then(() => {}).catch(() => {});
+  }
 
   if (event.message) {
     const msg = event.message;
