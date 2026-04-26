@@ -8,6 +8,8 @@ import AutoPipelineMonitor from './AutoPipelineMonitor';
 const PIPELINE_FORM_EMPTY = {
   engine: 'full_cycle',
   full_cycle_max_users_per_round: 50,
+  /** Khi bật: sau khi kéo tin, quét inbound đủ lô (ghi đè SĐT nếu khác) — tích hợp luồng “Quét lại SĐT” vào auto. */
+  full_cycle_rescan_phones: true,
   auto_loop_pause_sec: 300,
   chain_chunk_users: 50,
   chain_sort: 'newest_first',
@@ -37,6 +39,7 @@ export default function BatchActionsBar({ onComplete = null }) {
     try {
       const { data } = await api.get('/facebook/auto-pipeline/config');
       const merged = { ...PIPELINE_FORM_EMPTY, ...(data?.defaults || {}), ...(data?.config || {}) };
+      merged.full_cycle_rescan_phones = merged.full_cycle_rescan_phones !== false;
       setPlForm(merged);
       setShowAdvancedEngines(merged.engine === 'chain' || merged.engine === 'legacy');
     } catch {
@@ -63,6 +66,7 @@ export default function BatchActionsBar({ onComplete = null }) {
       await saveFbAutoPipelineConfig({
         engine,
         full_cycle_max_users_per_round: parseIntBounded(plForm.full_cycle_max_users_per_round, { min: 0, max: 500000, fallback: 50 }),
+        full_cycle_rescan_phones: !!plForm.full_cycle_rescan_phones,
         auto_loop_pause_sec: parseIntBounded(plForm.auto_loop_pause_sec, { min: 0, max: 3600, fallback: 300 }),
         chain_chunk_users: parseIntBounded(plForm.chain_chunk_users, { min: 1, max: 500, fallback: 50 }),
         chain_sort: plForm.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first',
@@ -188,6 +192,18 @@ export default function BatchActionsBar({ onComplete = null }) {
                 <p className="text-[10px] text-gray-600 pt-2 leading-relaxed">
                   Mỗi vòng: đồng bộ + quét <strong>tối đa N user mới nhất</strong> (pool mới→cũ), theo chunk, rồi Tạo Lead → Refresh → Xóa trùng → Sync SĐT. <strong>0 user/vòng</strong> = không giới hạn (chạy hết pool). Mặc định <strong>50 user/vòng</strong>, nghỉ <strong>5 phút</strong> giữa các vòng; có thể chỉnh số user hoặc đặt nghỉ 0 (lặp liền).
                 </p>
+                <label className="flex items-start gap-2 text-[11px] text-gray-800 cursor-pointer select-none pt-1">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 rounded border-gray-300"
+                    checked={!!plForm.full_cycle_rescan_phones}
+                    onChange={(e) => setPlForm((f) => ({ ...f, full_cycle_rescan_phones: e.target.checked }))}
+                  />
+                  <span>
+                    <strong>Quét SĐT inbound đầy đủ</strong> sau khi kéo tin (giống công cụ Quét lại SĐT): xử lý cả contact đã có SĐT trên lead,{' '}
+                    <strong>ghi đè</strong> SĐT contact/customer nếu tin tìm được số khác. Tắt = chỉ quét ưu tiên trường hợp thiếu SĐT (nhẹ hơn).
+                  </span>
+                </label>
                 <label className="inline-flex items-center gap-2 text-[10px] text-gray-700 cursor-pointer select-none">
                   <input
                     type="checkbox"
