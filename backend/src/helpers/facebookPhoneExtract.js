@@ -42,6 +42,21 @@ function normalizeVietnamPhoneCandidate(rawCandidate) {
   return null;
 }
 
+/**
+ * Kiểm tra chuỗi đang lưu (contact / form) có phải SĐT thuê bao VN hợp lệ không.
+ * Trả về dạng chuẩn 0xxxxxxxxx (10–11 số) hoặc valid=false.
+ */
+function validateVnSubscriberPhoneStored(raw) {
+  if (raw == null || String(raw).trim() === '') return { valid: false, normalized: null };
+  let digits = normalizeUnicodeDigitsToAscii(String(raw)).replace(/\D/g, '');
+  if (!digits) return { valid: false, normalized: null };
+  if (digits.startsWith('0084')) digits = '0' + digits.slice(4);
+  else if (digits.startsWith('84')) digits = '0' + digits.slice(2);
+  else if (digits.length === 9 && /^[3-9]\d{8}$/.test(digits)) digits = '0' + digits;
+  if (isLikelyVnSubscriberNumber(digits)) return { valid: true, normalized: digits };
+  return { valid: false, normalized: null };
+}
+
 function extractContactInfo(text) {
   if (!text) return { phone: null, address: null };
   const oneLine = String(text).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
@@ -126,6 +141,7 @@ module.exports = {
   isLikelyVnSubscriberNumber,
   stripUrlLikeSegments,
   normalizeVietnamPhoneCandidate,
+  validateVnSubscriberPhoneStored,
   extractContactInfo,
   extractInboundContactInfo,
 };
