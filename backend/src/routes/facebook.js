@@ -1125,65 +1125,61 @@ async function fetchProfileViaConversations(pageId, psid) {
 }
 
 // ── Helper: Extract phone & address từ text (chỉ text — không OCR ảnh) ──
+const VN_MOBILE_PHONE_REGEX = /^0(?:3|5|7|8|9)\d{8}$/;
+
+function stripUrlLikeSegments(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\bhttps?:\/\/\S+/gi, ' ')
+    .replace(/\bwww\.\S+/gi, ' ')
+    .replace(/\b(?:m\.me|fb\.me|zalo\.me|facebook\.com|messenger\.com|bit\.ly|tinyurl\.com|t\.co)\/\S*/gi, ' ');
+}
+
+function normalizeVietnamPhoneCandidate(rawCandidate) {
+  if (!rawCandidate) return null;
+  let digits = String(rawCandidate).replace(/\D/g, '');
+  if (!digits) return null;
+
+  if (digits.startsWith('0084')) digits = '0' + digits.slice(4);
+  else if (digits.startsWith('84')) digits = '0' + digits.slice(2);
+  else if (digits.length === 9 && /^[35789]\d{8}$/.test(digits)) digits = '0' + digits;
+
+  if (VN_MOBILE_PHONE_REGEX.test(digits)) return digits;
+  return null;
+}
+
 function extractContactInfo(text) {
   if (!text) return { phone: null, address: null };
   const raw = String(text)
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     .replace(/\u00A0/g, ' ')
     .trim();
+  const sanitized = stripUrlLikeSegments(raw);
 
-  // Chỉ chấp nhận số điện thoại VN chuẩn hóa đúng 10 số.
+  // Chỉ lấy số di động Việt Nam hợp lệ, bỏ qua số xuất hiện trong link/URL.
   const phonePatterns = [
-    /(?:0|\+84)(?:\d[\s.\-\/]?){9}/g,
-    /(?:84)(?:\d[\s.\-\/]?){9}/g,
+    /(?:\+84|84|0)(?:[\s().\-\/]*\d){8,10}/g,
+    /(?:^|[^\d])([35789]\d{8})(?:[^\d]|$)/g,
   ];
 
   let phone = null;
   for (const pattern of phonePatterns) {
-    const matches = raw.match(pattern);
-    if (matches?.[0]) {
-      let normalized = matches[0].replace(/[^\d+]/g, '');
-      if (normalized.startsWith('+84')) normalized = '0' + normalized.slice(3);
-      else if (normalized.startsWith('84')) normalized = '0' + normalized.slice(2);
-      normalized = normalized.replace(/\D/g, '');
-      if (/^0\d{9}$/.test(normalized)) {
+    const matches = sanitized.match(pattern) || [];
+    for (const matched of matches) {
+      const normalized = normalizeVietnamPhoneCandidate(matched);
+      if (normalized) {
         phone = normalized;
         break;
       }
     }
-  }
-
-  // Fallback: tìm đúng 9 số đầu 3-9 rồi thêm prefix 0 -> thành 10 số
-  if (!phone) {
-    const bareMatch = raw.match(/(?:^|[^\d])([3-9]\d{8})(?:[^\d]|$)/);
-    if (bareMatch?.[1]) {
-      const normalized = '0' + bareMatch[1];
-      if (/^0\d{9}$/.test(normalized)) phone = normalized;
-    }
-  }
-
-  // Fallback 2: gom toàn bộ chữ số — xử lý “dính” số khác (lấy 0xxxxxxxxx đầu tiên hợp lệ)
-  if (!phone) {
-    let digits = raw.replace(/\D/g, '');
-    if (digits.startsWith('0084')) digits = '0' + digits.slice(4);
-    else if (digits.startsWith('84') && digits.length >= 11) digits = '0' + digits.slice(2);
-    const candidates = digits.match(/0\d{9}/g);
-    if (candidates?.length) {
-      for (const c of candidates) {
-        if (/^0[3-9]\d{8}$/.test(c)) {
-          phone = c;
-          break;
-        }
-      }
-      if (!phone && /^0\d{9}$/.test(candidates[0])) phone = candidates[0];
-    }
+    if (phone) break;
   }
 
   // Address patterns (keywords)
   const addressKeywords = ['địa chỉ', 'đ/c', 'dc:', 'address:', 'ship:', 'giao:', 'giao hàng', 'nhận hàng'];
   let address = null;
 
-  const lines = raw.split('\n');
+  const lines = sanitized.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].toLowerCase();
     if (addressKeywords.some(kw => line.includes(kw))) {
@@ -1197,8 +1193,8 @@ function extractContactInfo(text) {
     }
   }
 
-  if (!address && /\d+.*(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)/i.test(raw)) {
-    const match = raw.match(/\d+[^.!?\n]{10,100}(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)[^.!?\n]{0,50}/i);
+  if (!address && /\d+.*(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)/i.test(sanitized)) {
+    const match = sanitized.match(/\d+[^.!?\n]{10,100}(?:đường|phường|quận|phố|thành phố|tỉnh|huyện)[^.!?\n]{0,50}/i);
     if (match) address = match[0].trim();
   }
 
@@ -1211,7 +1207,8 @@ function extractInboundContactInfo(messages = []) {
   const extraPhones = [];
 
   for (const msg of (messages || [])) {
-    if (msg.direction && msg.direction !== 'inbound') continue;
+    // Chỉ quét đúng tin nhắn user/inbound; mọi chiều khác hoặc thiếu direction đều bỏ qua.
+    if (msg.direction !== 'inbound') continue;
     if (!msg.content) continue;
     const extracted = extractContactInfo(msg.content);
     if (extracted.phone && !phone) phone = extracted.phone;
