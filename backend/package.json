@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "fb:rescan-inbound-phones": "node scripts/rescan-fb-inbound-phones.js",
     "build:frontend": "cd ../frontend && npm ci --prefer-offline --no-audit && npm run build"
   },
   "keywords": [],
