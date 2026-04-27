@@ -6144,4 +6144,65 @@ r.post('/rescan-phones', authMiddleware, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// AUTO TOOL v2 — Công cụ tự động mới (đơn giản)
+// ═══════════════════════════════════════════════════════════════
+const autoTool = require('../helpers/autoTool');
+
+// Inject core functions vào autoTool
+autoTool.injectCoreFunctions({
+  graphSyncMessagesForContactRow,
+  extractInboundContactInfo,
+  createLeadFromFacebook: createLeadFromFacebook,
+  extractContactInfo,
+  inboundMessageEligibleForPhoneScan,
+});
+
+// Inject socket.io khi _ioRef được set
+const _origDefProp = Object.defineProperty;
+let _autoToolIoInjected = false;
+setInterval(() => {
+  if (!_autoToolIoInjected && r._ioRef) {
+    autoTool.setIO(r._ioRef);
+    _autoToolIoInjected = true;
+  }
+}, 500);
+
+// Load config from DB on startup
+autoTool.loadConfigFromDb().then(() => console.log('[AutoTool] ✅ Config loaded'));
+
+r.get('/auto-tool/status', authMiddleware, async (_req, res) => {
+  res.json(autoTool.getState());
+});
+
+r.get('/auto-tool/config', authMiddleware, async (_req, res) => {
+  res.json({ config: autoTool.getConfig() });
+});
+
+r.put('/auto-tool/config', authMiddleware, async (req, res) => {
+  try {
+    autoTool.setConfig(req.body || {});
+    res.json({ ok: true, config: autoTool.getConfig() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/auto-tool/start', authMiddleware, async (_req, res) => {
+  const st = autoTool.getState();
+  if (!st.running) {
+    autoTool.startLoop().catch(err => {
+      console.error('[AutoTool] FATAL', err.message);
+    });
+  }
+  // Wait a tick for state to update
+  await new Promise(r2 => setTimeout(r2, 100));
+  res.json({ ok: true, state: autoTool.getState() });
+});
+
+r.post('/auto-tool/stop', authMiddleware, async (_req, res) => {
+  autoTool.stop();
+  res.json({ ok: true, state: autoTool.getState() });
+});
+
 module.exports = r;

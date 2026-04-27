@@ -8,9 +8,9 @@ import {
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
   Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3
 } from 'lucide-react';
-import BatchActionsBar from '../components/BatchActionsBar';
+import AutoToolPanel from '../components/AutoToolPanel';
 import CrmAppChannelPrefsBanner from '../components/CrmAppChannelPrefsBanner';
-import AutoPipelineMonitor from '../components/AutoPipelineMonitor';
+import AutoToolPanelInline from '../components/AutoToolPanel';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -1187,7 +1187,7 @@ function ContactsTab() {
   return (
     <div className="p-6 overflow-y-auto h-full">
       <div className="mb-4 shrink-0" data-tour="fb-contacts-auto-tools">
-        <BatchActionsBar onComplete={() => load(false)} />
+        <AutoToolPanel onComplete={() => load(false)} />
       </div>
       <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <div>
@@ -2440,102 +2440,8 @@ function AutoLeadTab() {
       {/* ══ RESCAN PHONES — Quét lại SĐT từ tin inbound theo lịch ══ */}
       <RescanPhonesSchedulePanel />
 
-      {/* ══ AUTO PIPELINE — Đồng bộ + quét + hậu xử lý (realtime) ══ */}
-      <AutoPipelinePanel />
-    </div>
-  );
-}
-
-function AutoPipelinePanel() {
-  const { socket } = useAuth();
-  const [auto, setAuto] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [stopping, setStopping] = useState(false);
-
-  const loadStatus = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API}/api/facebook/auto-pipeline/status`, { headers: hdr() });
-      if (res.ok) setAuto(await res.json());
-    } catch (e) {
-      // ignore
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { loadStatus(); }, [loadStatus]);
-
-  useEffect(() => {
-    if (!socket) return;
-    const h = (state) => setAuto(state);
-    socket.on('auto_pipeline_state', h);
-    return () => socket.off('auto_pipeline_state', h);
-  }, [socket]);
-
-  const start = async () => {
-    setStarting(true);
-    try {
-      const res = await fetch(`${API}/api/facebook/auto-pipeline/start`, { method: 'POST', headers: hdr() });
-      if (res.ok) setAuto(await res.json());
-      await loadStatus();
-    } catch (e) {
-      alert('Lỗi start auto: ' + e.message);
-    }
-    setStarting(false);
-  };
-
-  const stop = async () => {
-    setStopping(true);
-    try {
-      const res = await fetch(`${API}/api/facebook/auto-pipeline/stop`, { method: 'POST', headers: hdr() });
-      if (res.ok) setAuto(await res.json());
-      await loadStatus();
-    } catch (e) {
-      alert('Lỗi stop auto: ' + e.message);
-    }
-    setStopping(false);
-  };
-
-  return (
-    <div className="bg-white border rounded-xl p-5 shadow-sm mt-4">
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div>
-          <h3 className="text-sm font-bold text-gray-900">⚙️ Auto pipeline (đồng bộ + quét + hậu xử lý)</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Trạng thái realtime khi backend đang chạy tự động (batch-sync → batch-extract → tạo lead/refresh/dedup/sync SĐT).
-          </p>
-        </div>
-        <div className="flex gap-2 shrink-0">
-          <button
-            onClick={loadStatus}
-            disabled={loading}
-            className="px-3 py-1.5 text-xs bg-white border rounded-lg hover:bg-gray-50 flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-          >
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Làm mới
-          </button>
-          <button
-            onClick={start}
-            disabled={starting || auto?.running}
-            className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 cursor-pointer"
-          >
-            {starting ? 'Đang bật…' : '▶️ Start'}
-          </button>
-          <button
-            onClick={stop}
-            disabled={stopping || !auto?.running}
-            className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 cursor-pointer"
-          >
-            {stopping ? 'Đang dừng…' : '⏹️ Stop'}
-          </button>
-        </div>
-      </div>
-
-      {auto ? (
-        <AutoPipelineMonitor auto={auto} />
-      ) : (
-        <div className="text-xs text-gray-400 py-4">Chưa lấy được trạng thái auto pipeline.</div>
-      )}
+      {/* ══ AUTO TOOL v2 — Đồng bộ + quét SĐT + tạo lead (realtime) ══ */}
+      <AutoToolPanelInline />
     </div>
   );
 }
