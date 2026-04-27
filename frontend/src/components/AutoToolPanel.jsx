@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Zap, Loader2, ChevronDown, ChevronUp, Settings2, RefreshCw, Play, Square } from 'lucide-react';
+import { Zap, Loader2, ChevronDown, ChevronUp, Settings2, Play } from 'lucide-react';
 import api from '../lib/api';
 import { connectSocket, getSocket } from '../lib/socket';
 
 // ═══════════════════════════════════════════════════════════════
-// Auto Tool v2 — Công cụ tự động Facebook → Lead (đơn giản)
+// Auto Tool v2 — Công cụ tự động Facebook → Lead
 // ═══════════════════════════════════════════════════════════════
 
 const EMPTY_STATE = {
@@ -14,14 +14,18 @@ const EMPTY_STATE = {
   currentContact: null,
   processed: 0,
   totalContacts: 0,
+  totalPool: 0,
+  offset: 0,
   synced: 0,
+  syncErrors: 0,
   phonesFound: 0,
   leadsCreated: 0,
+  leadsUpdated: 0,
   errors: 0,
   startedAt: null,
   lastUpdatedAt: null,
   logs: [],
-  config: { limit: 100, graphPages: 10, pauseSec: 300, delayMs: 50 },
+  config: { limit: 100, graphPages: 10, pauseSec: 60, cyclePauseSec: 300, delayMs: 100 },
 };
 
 let _state = { ...EMPTY_STATE };
@@ -107,8 +111,9 @@ export default function AutoToolPanel({ onComplete = null }) {
   const [form, setForm] = useState({
     limit: 100,
     graphPages: 10,
-    pauseSec: 300,
-    delayMs: 50,
+    pauseSec: 60,
+    cyclePauseSec: 300,
+    delayMs: 100,
   });
   const [saving, setSaving] = useState(false);
   const logsEndRef = useRef(null);
@@ -143,8 +148,9 @@ export default function AutoToolPanel({ onComplete = null }) {
       await saveAutoToolConfig({
         limit: parseInt(form.limit, 10) || 100,
         graphPages: parseInt(form.graphPages, 10) || 10,
-        pauseSec: parseInt(form.pauseSec, 10) || 300,
-        delayMs: parseInt(form.delayMs, 10) || 50,
+        pauseSec: parseInt(form.pauseSec, 10) || 60,
+        cyclePauseSec: parseInt(form.cyclePauseSec, 10) || 300,
+        delayMs: parseInt(form.delayMs, 10) || 100,
       });
     } finally {
       setSaving(false);
@@ -152,8 +158,11 @@ export default function AutoToolPanel({ onComplete = null }) {
   };
 
   const running = auto.running;
-  const progress = auto.totalContacts > 0
-    ? Math.round((auto.processed / auto.totalContacts) * 100)
+  // Progress: offset (đã xong) + processed trong batch hiện tại / tổng pool
+  const totalDone = (auto.offset || 0) - (auto.totalContacts || 0) + (auto.processed || 0);
+  const pool = auto.totalPool || 0;
+  const progress = pool > 0
+    ? Math.min(100, Math.round(((auto.offset > 0 ? auto.offset - auto.totalContacts : 0) + auto.processed) / pool * 100))
     : 0;
 
   return (
@@ -166,11 +175,12 @@ export default function AutoToolPanel({ onComplete = null }) {
           className="flex items-center gap-2 hover:bg-gray-50 transition cursor-pointer rounded-lg px-1 py-0.5"
         >
           <Zap className="h-4 w-4 text-amber-500" />
-          <span className="text-sm font-semibold text-gray-800">⚡ Công cụ tự động Facebook → Lead</span>
+          <span className="text-sm font-semibold text-gray-800">⚡ Công cụ tự động</span>
           {running && (
             <span className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full animate-pulse">
               <Loader2 className="h-3 w-3 animate-spin" />
               Vòng {auto.cycleCount} • {auto.processed}/{auto.totalContacts}
+              {auto.totalPool > 0 && ` (pool ${auto.totalPool})`}
               {auto.currentContact && ` • ${auto.currentContact}`}
             </span>
           )}
@@ -184,7 +194,7 @@ export default function AutoToolPanel({ onComplete = null }) {
             disabled={running}
             className="px-3 py-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer transition"
           >
-            <Play size={12} /> Chạy ngay
+            <Play size={12} /> Chạy
           </button>
 
           <button
@@ -213,17 +223,12 @@ export default function AutoToolPanel({ onComplete = null }) {
         <div className="border-t border-gray-100 px-4 pb-4 space-y-3">
           {/* Description */}
           <div className="pt-3 text-[11px] text-gray-700 space-y-2">
-            <p className="font-semibold text-gray-800">Luồng mỗi vòng</p>
-            <ol className="list-decimal list-inside space-y-1 text-gray-600 leading-relaxed">
-              <li><strong>Kéo contacts</strong> — lấy danh sách FB contacts có PSID</li>
-              <li><strong>Đồng bộ tin nhắn</strong> — kéo tin từ Graph API → DB</li>
-              <li><strong>Quét SĐT</strong> — trích SĐT từ tin nhắn inbound</li>
-              <li><strong>Tạo Lead</strong> — nếu có SĐT + chưa có lead → tạo lead</li>
-            </ol>
+            <p className="font-semibold text-gray-800">Luồng: Kéo contacts → Sync tin nhắn Graph → Quét SĐT inbound → Tạo Lead</p>
+            <p className="text-gray-500">Chạy liên tục theo batch. User mới nhất trước. Khi hết pool sẽ tự lặp lại.</p>
           </div>
 
-          {/* KPI Cards */}
-          {running && (
+          {/* KPI Cards — always show when has data */}
+          {(running || auto.processed > 0) && (
             <div className="space-y-2">
               {/* Progress bar */}
               <div className="w-full bg-gray-100 rounded-full h-2">
@@ -232,10 +237,14 @@ export default function AutoToolPanel({ onComplete = null }) {
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
+              <div className="grid grid-cols-3 sm:grid-cols-7 gap-2 text-center">
                 <div className="bg-blue-50 rounded-lg p-2">
-                  <div className="text-lg font-bold text-blue-700">{auto.processed}/{auto.totalContacts}</div>
-                  <div className="text-[10px] text-blue-600">Contacts</div>
+                  <div className="text-lg font-bold text-blue-700">{auto.processed}</div>
+                  <div className="text-[10px] text-blue-600">Đã xử lý</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-2">
+                  <div className="text-lg font-bold text-slate-700">{auto.totalPool || '—'}</div>
+                  <div className="text-[10px] text-slate-500">Tổng pool</div>
                 </div>
                 <div className="bg-green-50 rounded-lg p-2">
                   <div className="text-lg font-bold text-green-700">{auto.synced}</div>
@@ -247,16 +256,22 @@ export default function AutoToolPanel({ onComplete = null }) {
                 </div>
                 <div className="bg-purple-50 rounded-lg p-2">
                   <div className="text-lg font-bold text-purple-700">{auto.leadsCreated}</div>
-                  <div className="text-[10px] text-purple-600">Lead tạo mới</div>
+                  <div className="text-[10px] text-purple-600">Lead mới</div>
+                </div>
+                <div className="bg-teal-50 rounded-lg p-2">
+                  <div className="text-lg font-bold text-teal-700">{auto.leadsUpdated || 0}</div>
+                  <div className="text-[10px] text-teal-600">Lead cập nhật</div>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-2">
                   <div className="text-lg font-bold text-gray-700">{formatDuration(auto.startedAt)}</div>
                   <div className="text-[10px] text-gray-500">Thời gian</div>
                 </div>
               </div>
-              {auto.errors > 0 && (
+              {(auto.errors > 0 || auto.syncErrors > 0) && (
                 <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-1.5">
-                  ⚠️ {auto.errors} lỗi
+                  ⚠️ {auto.errors > 0 && `${auto.errors} lỗi`}
+                  {auto.errors > 0 && auto.syncErrors > 0 && ' • '}
+                  {auto.syncErrors > 0 && `${auto.syncErrors} sync lỗi (vẫn quét SĐT từ DB)`}
                 </div>
               )}
             </div>
@@ -277,9 +292,9 @@ export default function AutoToolPanel({ onComplete = null }) {
             </button>
             {cfgOpen && (
               <div className="px-3 pb-3 pt-0 space-y-2 border-t border-amber-100/80 bg-white/60">
-                <div className="grid grid-cols-2 gap-2 text-[11px] pt-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] pt-2">
                   <label className="flex flex-col gap-0.5">
-                    <span className="text-gray-600">Contacts mỗi vòng (1–1000)</span>
+                    <span className="text-gray-600">Contacts/batch (1–1000)</span>
                     <input
                       type="number" min={1} max={1000}
                       className="border rounded-md px-2 py-1"
@@ -288,7 +303,7 @@ export default function AutoToolPanel({ onComplete = null }) {
                     />
                   </label>
                   <label className="flex flex-col gap-0.5">
-                    <span className="text-gray-600">Trang Graph / contact (1–30)</span>
+                    <span className="text-gray-600">Trang Graph/contact (1–30)</span>
                     <input
                       type="number" min={1} max={30}
                       className="border rounded-md px-2 py-1"
@@ -297,7 +312,7 @@ export default function AutoToolPanel({ onComplete = null }) {
                     />
                   </label>
                   <label className="flex flex-col gap-0.5">
-                    <span className="text-gray-600">Nghỉ giữa vòng (giây, 0–3600)</span>
+                    <span className="text-gray-600">Nghỉ giữa batch (giây)</span>
                     <input
                       type="number" min={0} max={3600}
                       className="border rounded-md px-2 py-1"
@@ -306,7 +321,16 @@ export default function AutoToolPanel({ onComplete = null }) {
                     />
                   </label>
                   <label className="flex flex-col gap-0.5">
-                    <span className="text-gray-600">Delay giữa contacts (ms, 0–5000)</span>
+                    <span className="text-gray-600">Nghỉ cuối vòng (giây)</span>
+                    <input
+                      type="number" min={0} max={3600}
+                      className="border rounded-md px-2 py-1"
+                      value={form.cyclePauseSec}
+                      onChange={e => setForm(f => ({ ...f, cyclePauseSec: e.target.value }))}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5">
+                    <span className="text-gray-600">Delay/contact (ms)</span>
                     <input
                       type="number" min={0} max={5000}
                       className="border rounded-md px-2 py-1"
