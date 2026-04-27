@@ -5992,7 +5992,6 @@ autoTool.injectCoreFunctions({
 });
 
 // Inject socket.io khi _ioRef được set
-const _origDefProp = Object.defineProperty;
 let _autoToolIoInjected = false;
 setInterval(() => {
   if (!_autoToolIoInjected && r._ioRef) {
