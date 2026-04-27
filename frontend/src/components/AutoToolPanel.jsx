@@ -13,6 +13,7 @@ const EMPTY_STATE = {
   cycleCount: 0,
   currentContact: null,
   processed: 0,
+  processedTotal: 0,
   totalContacts: 0,
   totalPool: 0,
   offset: 0,
@@ -161,8 +162,8 @@ export default function AutoToolPanel({ onComplete = null }) {
   // Progress: offset (đã xong) + processed trong batch hiện tại / tổng pool
   const totalDone = (auto.offset || 0) - (auto.totalContacts || 0) + (auto.processed || 0);
   const pool = auto.totalPool || 0;
-  const progress = pool > 0
-    ? Math.min(100, Math.round(((auto.offset > 0 ? auto.offset - auto.totalContacts : 0) + auto.processed) / pool * 100))
+  const progress = auto.totalContacts > 0
+    ? Math.min(100, Math.round((auto.processed / auto.totalContacts) * 100))
     : 0;
 
   return (
@@ -239,12 +240,12 @@ export default function AutoToolPanel({ onComplete = null }) {
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-7 gap-2 text-center">
                 <div className="bg-blue-50 rounded-lg p-2">
-                  <div className="text-lg font-bold text-blue-700">{auto.processed}</div>
-                  <div className="text-[10px] text-blue-600">Đã xử lý</div>
+                  <div className="text-lg font-bold text-blue-700">{auto.processed}/{auto.totalContacts}</div>
+                  <div className="text-[10px] text-blue-600">Batch hiện tại</div>
                 </div>
                 <div className="bg-slate-50 rounded-lg p-2">
-                  <div className="text-lg font-bold text-slate-700">{auto.totalPool || '—'}</div>
-                  <div className="text-[10px] text-slate-500">Tổng pool</div>
+                  <div className="text-lg font-bold text-slate-700">{auto.processedTotal || 0}</div>
+                  <div className="text-[10px] text-slate-500">Tổng đã xử lý</div>
                 </div>
                 <div className="bg-green-50 rounded-lg p-2">
                   <div className="text-lg font-bold text-green-700">{auto.synced}</div>

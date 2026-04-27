@@ -21,6 +21,7 @@ const state = {
   cycleCount: 0,
   currentContact: null,
   processed: 0,
+  processedTotal: 0,
   totalContacts: 0,
   totalPool: 0,
   offset: 0,
@@ -65,6 +66,7 @@ function getState() {
     cycleCount: state.cycleCount,
     currentContact: state.currentContact,
     processed: state.processed,
+    processedTotal: state.processedTotal,
     totalContacts: state.totalContacts,
     totalPool: state.totalPool,
     offset: state.offset,
@@ -176,6 +178,8 @@ async function runOneBatch() {
   let batchUpdated = 0;
   let batchErrors = 0;
 
+  state.processed = 0;
+
   for (let i = 0; i < contacts.length; i++) {
     if (state.stopRequested) {
       pushLog('🛑 Đã dừng theo yêu cầu');
@@ -184,7 +188,8 @@ async function runOneBatch() {
 
     const contact = contacts[i];
     state.currentContact = contact.fb_name || contact.id;
-    state.processed++;
+    state.processed = i + 1;
+    state.processedTotal++;
     emit();
 
     try {
@@ -358,6 +363,7 @@ async function startLoop() {
   state.cycleCount = 0;
   state.offset = 0;
   state.processed = 0;
+  state.processedTotal = 0;
   state.synced = 0;
   state.syncErrors = 0;
   state.phonesFound = 0;
