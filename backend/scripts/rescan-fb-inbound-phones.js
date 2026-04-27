@@ -137,7 +137,7 @@ async function loadInboundMessages(contactId, maxRows) {
     const to = Math.min(from + PAGE - 1, maxRows - 1);
     const { data, error } = await supabase
       .from('facebook_messages')
-      .select('id, content, direction, message_type, created_at')
+      .select('id, content, direction, created_at')
       .eq('contact_id', contactId)
       .eq('direction', 'inbound')
       .order('created_at', { ascending: false })

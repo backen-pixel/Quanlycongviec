@@ -1,7 +1,7 @@
 /**
  * Trích SĐT / địa chỉ từ nội dung tin nhắn text (dùng chung webhook, batch-extract, script CLI).
  * - stripUrlLikeSegments + extractContactInfo: không lấy số từ URL/link.
- * - extractInboundContactInfo: chỉ inbound (khách); bỏ qua ảnh/video/file/sticker và tin chỉ URL/placeholder.
+ * - extractInboundContactInfo: chỉ xử lý msg.direction === 'inbound' (tin phía user FB).
  */
 
 function normalizeUnicodeDigitsToAscii(s) {
@@ -55,27 +55,6 @@ function validateVnSubscriberPhoneStored(raw) {
   else if (digits.length === 9 && /^[3-9]\d{8}$/.test(digits)) digits = '0' + digits;
   if (isLikelyVnSubscriberNumber(digits)) return { valid: true, normalized: digits };
   return { valid: false, normalized: null };
-}
-
-const NON_TEXT_MESSAGE_TYPES = new Set(['image', 'video', 'audio', 'file', 'sticker']);
-
-/**
- * Có dùng tin này để trích SĐT/địa chỉ không: chỉ inbound, không media, không chỉ link/placeholder.
- * @param {{ direction?: string, message_type?: string|null, content?: string|null }} msg
- */
-function inboundMessageEligibleForPhoneScan(msg) {
-  if (!msg || msg.direction !== 'inbound') return false;
-  const mt = String(msg.message_type || 'text').toLowerCase();
-  if (NON_TEXT_MESSAGE_TYPES.has(mt)) return false;
-  const raw = String(msg.content || '').trim();
-  if (!raw) return false;
-  const oneLine = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
-  if (/^https?:\/\/\S+$/i.test(oneLine)) return false;
-  if (/^\[(?:image|video|audio|file|sticker)(?:\]|[:])/i.test(raw)) {
-    const after = raw.replace(/^\[(?:image|video|audio|file|sticker)(?:\]|[:])\s*/i, '').trim();
-    if (after.length < 6 || !/\d/.test(after)) return false;
-  }
-  return true;
 }
 
 function extractContactInfo(text) {
@@ -143,7 +122,8 @@ function extractInboundContactInfo(messages = [], _opts = {}) {
   const extraPhones = [];
 
   for (const msg of messages || []) {
-    if (!inboundMessageEligibleForPhoneScan(msg)) continue;
+    if (msg.direction !== 'inbound') continue;
+    if (!msg.content) continue;
     const extracted = extractContactInfo(msg.content);
     if (extracted.phone && !phone) phone = extracted.phone;
     else if (extracted.phone && extracted.phone !== phone && !extraPhones.includes(extracted.phone)) {
@@ -182,5 +162,4 @@ module.exports = {
   normalizePhoneForLeadCreation,
   extractContactInfo,
   extractInboundContactInfo,
-  inboundMessageEligibleForPhoneScan,
 };

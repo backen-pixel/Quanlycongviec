@@ -12,7 +12,6 @@ const {
 const {
   extractContactInfo,
   extractInboundContactInfo,
-  inboundMessageEligibleForPhoneScan,
   normalizePhoneForLeadCreation,
 } = require('../helpers/facebookPhoneExtract');
 const { deleteLeadIfAllowedForRescan } = require('../helpers/facebookLeadDeleteWhenNoPhone');
@@ -1059,81 +1058,6 @@ async function runAutoPipelineLoop() {
         }
         emitAutoState();
       }
-
-      // Chain: cùng chuỗi CRM sau cùng như full_cycle (trước nay chỉ có Sync→Quét → thiếu 3 bước dưới)
-      if (autoPipeline.enabled && !autoPipeline.stopRequested) {
-        autoPipeline.totalSteps = 4;
-        autoPipeline.step = 2;
-        autoPipeline.stepLabel = '🔄 Refresh tên';
-        emitAutoState();
-        let refreshU = 0;
-        let refreshN = 0;
-        try {
-          const rn = await autoPipelineInternalPostJson('/facebook/refresh-names', {});
-          refreshU = rn.updated || 0;
-          refreshN = rn.total || 0;
-          pushAutoLog(`✅ (Chain) Refresh tên: ${refreshU}/${refreshN}`, 'ok');
-        } catch (e) {
-          console.error('[AutoPipeline chain] refresh-names', e);
-          pushAutoLog(`❌ (Chain) Refresh tên: ${e.message}`, 'error');
-          autoPipeline.kpi.errors += 1;
-        }
-        emitAutoState();
-
-        autoPipeline.step = 3;
-        autoPipeline.stepLabel = '🔍 Xóa Lead trùng';
-        emitAutoState();
-        let dMer = 0;
-        let dMsg = '';
-        try {
-          const dd = await autoPipelineInternalPostJson('/facebook/dedup-leads', {});
-          dMer = dd.merged || 0;
-          dMsg = dd.message || '';
-          pushAutoLog(`✅ (Chain) Xóa lead trùng: ${dMer} lead (${dMsg})`, 'ok');
-        } catch (e) {
-          console.error('[AutoPipeline chain] dedup-leads', e);
-          pushAutoLog(`❌ (Chain) Xóa lead trùng: ${e.message}`, 'error');
-          autoPipeline.kpi.errors += 1;
-        }
-        emitAutoState();
-
-        autoPipeline.step = 4;
-        autoPipeline.stepLabel = '🔗 Sync SĐT danh bạ → Lead';
-        emitAutoState();
-        let spU = 0;
-        let spN = 0;
-        try {
-          const sp = await autoPipelineInternalPostJson('/facebook/sync-contact-phones', {});
-          spU = sp.updated ?? 0;
-          spN = sp.total ?? 0;
-          pushAutoLog(`✅ (Chain) Sync SĐT danh bạ → Lead: ${spU}/${spN || 0}`, 'ok');
-        } catch (e) {
-          console.error('[AutoPipeline chain] sync-contact-phones', e);
-          pushAutoLog(`❌ (Chain) Sync SĐT: ${e.message}`, 'error');
-          autoPipeline.kpi.errors += 1;
-        }
-        emitAutoState();
-        pushAutoLog(
-          `🏁 Chu kỳ ${autoPipeline.cycleCount} (chain) — hậu trường: refresh ${refreshU}/${refreshN} · gộp ${dMer} · sync ${spU}/${spN || 0}`,
-          'ok',
-        );
-        autoPipeline.batchResults = [
-          ...autoPipeline.batchResults.slice(-98),
-          {
-            batch: 'chain_crm',
-            cycle: autoPipeline.cycleCount,
-            ts: Date.now(),
-            mode: 'chain_post_crm',
-            post_steps: {
-              refresh_names: { updated: refreshU, total: refreshN },
-              dedup: { merged: dMer, message: dMsg },
-              sync_phones: { updated: spU, total: spN },
-            },
-            status: 'done',
-          },
-        ];
-        emitAutoState();
-      }
     } else {
       /** Engine không xác định → fallback pipeline v2. */
       pushAutoLog(`⚠️ Engine "${pcfg.engine}" không hỗ trợ — fallback pipeline v2`, 'error');
@@ -1980,24 +1904,6 @@ function messengerPartnerPsid(pageId, event) {
   return null;
 }
 
-/** Sau tin inbound: kéo thêm lịch sử Graph + quét inbound DB (khi contact chưa có SĐT). */
-async function enqueuePostInboundGraphSyncAndExtract(contactId) {
-  try {
-    const { data: c } = await supabase
-      .from('facebook_contacts')
-      .select('id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, last_synced_at, created_at')
-      .eq('id', contactId)
-      .single();
-    if (!c?.psid || !c.page_id) return;
-    const pageTokens = {};
-    const gp = Math.min(12, Math.max(3, FB_SYNC_BATCH_GRAPH_MAX_PAGES));
-    await graphSyncMessagesForContactRow(c, pageTokens, { maxGraphPages: gp });
-    await applyExtractFromDbMessagesForContact(c, { forceRescanPhones: true });
-  } catch (e) {
-    console.warn('[FB] post-inbound graph+extract', String(contactId), e.message);
-  }
-}
-
 async function handleMessaging(pageId, event, io) {
   const partnerPsid = messengerPartnerPsid(pageId, event);
   if (!partnerPsid) return;
@@ -2144,11 +2050,10 @@ async function handleMessaging(pageId, event, io) {
         updated_at: new Date().toISOString(),
       }).eq('id', contact.id);
 
-      // ── Extract phone & address từ tin inbound text (không media/link-only) TRƯỚC khi tạo lead ──
+      // ── Extract phone & address từ tin nhắn TRƯỚC khi tạo lead ──
       let extractedPhone = null;
       let extractedAddress = null;
-      const liveForScan = { direction: 'inbound', message_type: messageType, content };
-      if (inboundMessageEligibleForPhoneScan(liveForScan)) {
+      if (content && content.length > 5) {
         const extracted = extractContactInfo(content);
         extractedPhone = extracted.phone;
         extractedAddress = extracted.address;
@@ -2292,16 +2197,14 @@ async function handleMessaging(pageId, event, io) {
       // Nếu không tìm thấy SĐT trong tin nhắn hiện tại, quét tin nhắn cũ nếu lead chưa có phone
       if (!extractedPhone && contact.lead_id && !contact.phone) {
         const { data: oldMsgs } = await supabase.from('facebook_messages')
-          .select('content, message_type, direction')
-          .eq('contact_id', contact.id)
-          .eq('direction', 'inbound')
-          .order('created_at', { ascending: false })
-          .limit(500);
+          .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
+          .order('created_at', { ascending: false }).limit(500);
         for (const m of (oldMsgs || [])) {
-          if (!inboundMessageEligibleForPhoneScan(m)) continue;
-          const ex = extractContactInfo(m.content);
-          if (ex.phone) { extractedPhone = ex.phone; break; }
-          if (ex.address && !extractedAddress) extractedAddress = ex.address;
+          if (m.content) {
+            const ex = extractContactInfo(m.content);
+            if (ex.phone) { extractedPhone = ex.phone; break; }
+            if (ex.address && !extractedAddress) extractedAddress = ex.address;
+          }
         }
         if (extractedPhone) console.log(`[FB] 📞 Found phone in old messages: ${extractedPhone}`);
       }
@@ -2385,14 +2288,6 @@ async function handleMessaging(pageId, event, io) {
       } catch (e) { /* ignore */ }
 
       console.log(`[FB] Messenger inbound: ${contact.fb_name} → "${content.substring(0, 50)}"`);
-
-      const { data: phoneSnap } = await supabase.from('facebook_contacts').select('phone').eq('id', contact.id).maybeSingle();
-      const digitsLen = String(phoneSnap?.phone || '').replace(/\D/g, '').length;
-      if (digitsLen < 9) {
-        setImmediate(() => {
-          enqueuePostInboundGraphSyncAndExtract(contact.id).catch(() => {});
-        });
-      }
     }
   }
 
@@ -2848,15 +2743,17 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     let extractedPhone = contact.phone || null;
     let extractedAddress = null;
     const { data: messages } = await supabase.from('facebook_messages')
-      .select('content, direction, message_type')
-      .eq('contact_id', contact.id)
-      .eq('direction', 'inbound')
-      .order('created_at', { ascending: false })
-      .limit(500);
+      .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
+      .order('created_at', { ascending: false }).limit(500);
 
-    const fromInbound = extractInboundContactInfo(messages || [], {});
-    if (!extractedPhone && fromInbound.phone) extractedPhone = fromInbound.phone;
-    if (!extractedAddress && fromInbound.address) extractedAddress = fromInbound.address;
+    for (const msg of (messages || [])) {
+      if (msg.content) {
+        const { phone, address } = extractContactInfo(msg.content);
+        if (phone && !extractedPhone) extractedPhone = phone;
+        if (address && !extractedAddress) extractedAddress = address;
+        if (extractedPhone && extractedAddress) break;
+      }
+    }
 
     console.log(`[FB] Manual create lead — name: ${contact.fb_name}, phone: ${extractedPhone}, address: ${extractedAddress}`);
 
@@ -3019,15 +2916,17 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
       let extractedPhone = contact.phone || null;
       let extractedAddress = null;
       const { data: allMsgs } = await supabase.from('facebook_messages')
-        .select('content, direction, message_type')
-        .eq('contact_id', contact.id)
-        .eq('direction', 'inbound')
-        .order('created_at', { ascending: false })
-        .limit(500);
-
-      const syncInbound = extractInboundContactInfo(allMsgs || [], {});
-      if (!extractedPhone && syncInbound.phone) extractedPhone = syncInbound.phone;
-      if (!extractedAddress && syncInbound.address) extractedAddress = syncInbound.address;
+        .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
+        .order('created_at', { ascending: false }).limit(500);
+      
+      for (const m of (allMsgs || [])) {
+        if (m.content) {
+          const { phone, address } = extractContactInfo(m.content);
+          if (phone && !extractedPhone) extractedPhone = phone;
+          if (address && !extractedAddress) extractedAddress = address;
+          if (extractedPhone && extractedAddress) break;
+        }
+      }
 
       // Update contact phone
       if (extractedPhone && !contact.phone) {
@@ -3800,7 +3699,7 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
         let extractedAddress = null;
 
         const { data: messages } = await supabase.from('facebook_messages')
-          .select('content, direction, message_type, created_at')
+          .select('content, direction, created_at')
           .eq('contact_id', contact.id)
           .order('created_at', { ascending: false })
           .limit(MSG_PER_CONTACT);
@@ -3810,9 +3709,9 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
         if (!extractedPhone && inboundInfo.phone) extractedPhone = inboundInfo.phone;
         if (!extractedAddress && inboundInfo.address) extractedAddress = inboundInfo.address;
 
-        // Fallback bổ sung: vẫn chỉ inbound đủ điều kiện (không media/link-only).
+        // Fallback bổ sung: vẫn chỉ các tin direction === 'inbound' (phòng DB lưu sai chiều hiếm gặp thì đã xử lý ở trên).
         for (const msg of (messages || [])) {
-          if (!inboundMessageEligibleForPhoneScan(msg)) continue;
+          if (msg.direction !== 'inbound' || !msg.content) continue;
           const { phone, address } = extractContactInfo(msg.content);
           if (phone && !extractedPhone) extractedPhone = phone;
           if (address && !extractedAddress) extractedAddress = address;
@@ -4046,14 +3945,6 @@ r.post('/sync-contact-phones', authMiddleware, async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // BATCH: Extract SĐT từ tin nhắn cho contacts ĐÃ CÓ lead nhưng thiếu phone
-/** So sánh SĐT (chuỗi lưu) có cùng dãy số VN hay không — dùng khi ghi đè sau quét lại. */
-function phoneDigitsComparable(p) {
-  let d = String(p || '').replace(/\D/g, '');
-  if (d.startsWith('0084')) d = '0' + d.slice(4);
-  else if (d.startsWith('84') && d.length >= 10) d = '0' + d.slice(2);
-  return d;
-}
-
 // POST /facebook/batch-extract-phones
 // ═══════════════════════════════════════════════════════════════
 
@@ -4137,7 +4028,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
     let updatedCustomerAddress = 0;
     let updatedLeadAddress = 0;
     let updatedLeadDescription = 0;
-    let phonesReplacedWrong = 0;
     const results = [];
 
     // ── Fix #3: Phân trang leadIds/custIds theo batch 500 để tránh Supabase 1000-row limit ──
@@ -4203,7 +4093,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       console.log(`[ExtractPhones] Scan ${i + 1}/${total}: ${contact.fb_name || contact.id}`);
       const MSG_PAGE = 800;
       const { data: messages } = await supabase.from('facebook_messages')
-        .select('id, content, direction, message_type, created_at')
+        .select('id, content, direction, created_at')
         .eq('contact_id', contact.id)
         .order('created_at', { ascending: false })
         .limit(MSG_PAGE);
@@ -4212,20 +4102,18 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       let extractedPhone = inboundInfo.phone;
       let extractedAddress = inboundInfo.address;
       let extraPhones = inboundInfo.extraPhones;
-      let mergedForScan = null;
 
       // Fallback: nếu page tin nhắn mới nhất chưa thấy SĐT/địa chỉ,
       // thử quét thêm 1 page tin nhắn cũ hơn (giảm trường hợp KH gửi SĐT ở đoạn chat cũ).
       if ((!extractedPhone && !extractedAddress) && (messages || []).length === MSG_PAGE) {
         const { data: older } = await supabase.from('facebook_messages')
-          .select('id, content, direction, message_type, created_at')
+          .select('id, content, direction, created_at')
           .eq('contact_id', contact.id)
           .order('created_at', { ascending: false })
           .range(MSG_PAGE, MSG_PAGE * 2 - 1);
 
         if (older?.length) {
           const merged = [...(messages || []), ...older];
-          mergedForScan = merged;
           inboundInfo = extractInboundContactInfo(merged, {});
           extractedPhone = inboundInfo.phone;
           extractedAddress = inboundInfo.address;
@@ -4236,28 +4124,9 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         }
       }
 
-      const scanBase = mergedForScan || messages || [];
-      const scanSummary = {
-        messages_loaded: scanBase.length,
-        inbound_total: scanBase.filter((m) => m.direction === 'inbound').length,
-        outbound_total: scanBase.filter((m) => m.direction === 'outbound').length,
-        inbound_eligible_text: scanBase.filter((m) => inboundMessageEligibleForPhoneScan(m)).length,
-        primary_from_inbound: extractedPhone || null,
-        extra_phones: extraPhones.length ? extraPhones : undefined,
-        contact_phone_before: contact.phone && String(contact.phone).trim() ? String(contact.phone).trim() : null,
-        customer_phone_before: cust?.phone && String(cust.phone).trim() ? String(cust.phone).trim() : null,
-        source_message_id: null,
-        source_preview: null,
-      };
       if (extractedPhone) {
-        const sourceMsg = scanBase.find(
-          (m) => inboundMessageEligibleForPhoneScan(m) && extractContactInfo(m.content).phone === extractedPhone,
-        );
-        if (sourceMsg) {
-          scanSummary.source_message_id = sourceMsg.id;
-          scanSummary.source_preview = String(sourceMsg.content || '').replace(/\s+/g, ' ').trim().slice(0, 160);
-          console.log(`[ExtractPhones] inbound phone ${extractedPhone} from msg ${sourceMsg.id} contact=${contact.id}`);
-        }
+        const sourceMsg = (messages || []).find(m => m.content && extractContactInfo(m.content).phone === extractedPhone);
+        if (sourceMsg) console.log(`[ExtractPhones] inbound phone ${extractedPhone} from msg ${sourceMsg.id} contact=${contact.id}`);
       }
 
       // ── Fix #1 & #4: Fallback sang contact.phone nếu tin nhắn không tìm được số mới ──
@@ -4265,14 +4134,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
 
       if (!effectivePhone && !extractedAddress && extraPhones.length === 0) {
         noInfo++;
-        results.push({
-          contact_id: contact.id,
-          contact: contact.fb_name,
-          phone: null,
-          address: null,
-          status: 'no_info_found',
-          scan_summary: scanSummary,
-        });
+        results.push({ contact_id: contact.id, contact: contact.fb_name, phone: null, address: null, status: 'no_info_found' });
         if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'no_info' });
         continue;
       }
@@ -4280,14 +4142,13 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       const contactUpd = { updated_at: new Date().toISOString() };
       if (extractedPhone) {
         const had = contact.phone && String(contact.phone).trim();
-        const sameDigits = had && phoneDigitsComparable(contact.phone) === phoneDigitsComparable(extractedPhone);
+        const same = had && String(contact.phone).trim() === String(extractedPhone).trim();
         if (!had) {
           contactUpd.phone = extractedPhone;
           foundPhones++;
-        } else if (forceRescanPhones && !sameDigits) {
+        } else if (forceRescanPhones && !same) {
           contactUpd.phone = extractedPhone;
           foundPhones++;
-          phonesReplacedWrong += 1;
         }
       }
       if (Object.keys(contactUpd).length > 1) {
@@ -4302,12 +4163,11 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         const { data: freshCust } = await supabase.from('customers').select('id, phone, address').eq('id', leadCustId).single();
         if (freshCust) { cust = freshCust; custMap[leadCustId] = freshCust; }
       }
-      let customerPhoneAfterScan = cust?.phone && String(cust.phone).trim() ? String(cust.phone).trim() : null;
       if (leadCustId) {
         const custUpd = {};
         if (extractedPhone) {
           if (!cust?.phone || !String(cust.phone).trim()) custUpd.phone = extractedPhone;
-          else if (forceRescanPhones && phoneDigitsComparable(cust.phone) !== phoneDigitsComparable(extractedPhone)) {
+          else if (forceRescanPhones && String(cust.phone).trim() !== String(extractedPhone).trim()) {
             custUpd.phone = extractedPhone;
           }
         } else if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) {
@@ -4321,7 +4181,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
           await supabase.from('customers').update(custUpd).eq('id', leadCustId);
           if (custUpd.phone) {
             updatedCustomerPhone++;
-            customerPhoneAfterScan = custUpd.phone;
             const newPh = custUpd.phone;
             if (custMap[leadCustId]) custMap[leadCustId].phone = newPh;
             else custMap[leadCustId] = { id: leadCustId, phone: newPh };
@@ -4371,13 +4230,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         }
       }
 
-      scanSummary.contact_phone_after = contactUpd.phone != null
-        ? contactUpd.phone
-        : (contact.phone && String(contact.phone).trim() ? String(contact.phone).trim() : null);
-      scanSummary.customer_phone_after = customerPhoneAfterScan;
-      scanSummary.phone_replaced = !!(extractedPhone && contact.phone && String(contact.phone).trim()
-        && phoneDigitsComparable(contact.phone) !== phoneDigitsComparable(extractedPhone) && forceRescanPhones);
-
       updated++;
       results.push({
         contact_id: contact.id,
@@ -4386,7 +4238,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         address: extractedAddress || cust?.address || lead?.install_address || null,
         extraPhones: extraPhones.length ? extraPhones : undefined,
         status: extractedPhone ? 'updated_phone' : (effectivePhone && !extractedPhone) ? 'synced_existing' : extractedAddress ? 'updated_address' : 'refreshed',
-        scan_summary: scanSummary,
       });
       if (io) io.emit('batch_progress', {
         type: 'extract_phones',
@@ -4396,7 +4247,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         status: 'found',
         phone: extractedPhone || contact.phone || cust?.phone || null,
         address: extractedAddress || cust?.address || lead?.install_address || null,
-        scan_summary: scanSummary,
       });
     }
 
@@ -4480,7 +4330,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       updatedCustomerAddress,
       updatedLeadAddress,
       updatedLeadDescription,
-      phones_replaced_on_rescan: phonesReplacedWrong,
       // Vòng cuối: lead sync
       leadsUpdatedPhone: leadsUpdated.length,
       leadsWithPhone,
@@ -4608,7 +4457,7 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
   }
 
   const { data: messages } = await supabase.from('facebook_messages')
-    .select('id, content, direction, message_type, created_at')
+    .select('id, content, direction, created_at')
     .eq('contact_id', fresh.id)
     .order('created_at', { ascending: false })
     .limit(800);
@@ -4623,14 +4472,8 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
     return { outcome: 'no_info' };
   }
 
-  const hadContactPhone = !!(fresh.phone && String(fresh.phone).trim());
-  const writeContactPhone = extractedPhone && (
-    !hadContactPhone
-    || (forceRescanPhones && phoneDigitsComparable(fresh.phone) !== phoneDigitsComparable(extractedPhone))
-  );
-
   const contactUpd = { updated_at: new Date().toISOString() };
-  if (writeContactPhone) contactUpd.phone = extractedPhone;
+  if (extractedPhone && !fresh.phone) contactUpd.phone = extractedPhone;
   if (Object.keys(contactUpd).length > 1) {
     await supabase.from('facebook_contacts').update(contactUpd).eq('id', fresh.id);
   }
@@ -4642,14 +4485,7 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
       if (freshCust) cust = freshCust;
     }
     const custUpd = {};
-    if (extractedPhone) {
-      if (!cust?.phone || !String(cust.phone).trim()) custUpd.phone = extractedPhone;
-      else if (forceRescanPhones && phoneDigitsComparable(cust.phone) !== phoneDigitsComparable(extractedPhone)) {
-        custUpd.phone = extractedPhone;
-      }
-    } else if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) {
-      custUpd.phone = effectivePhone;
-    }
+    if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) custUpd.phone = effectivePhone;
     if (extractedAddress && extractedAddress !== cust?.address) custUpd.address = extractedAddress;
     if (Object.keys(custUpd).length) {
       await supabase.from('customers').update(custUpd).eq('id', leadCustId);
@@ -4669,9 +4505,7 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
     if (effectivePhone) {
       if (/SĐT:/.test(desc)) {
         const oldMatch = desc.match(/SĐT:\s*(\S*)/);
-        if (!oldMatch?.[1] || phoneDigitsComparable(oldMatch[1]) !== phoneDigitsComparable(effectivePhone)) {
-          desc = desc.replace(/SĐT:.*$/m, `SĐT: ${effectivePhone}`);
-        }
+        if (!oldMatch?.[1] || oldMatch[1] !== effectivePhone) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${effectivePhone}`);
       } else {
         desc = `${desc.trimEnd()}\nSĐT: ${effectivePhone}`.trim();
       }
@@ -4695,7 +4529,6 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
     phone: effectivePhone || cust?.phone || null,
     address: extractedAddress || cust?.address || lead?.install_address || null,
     extractedPhone: !!extractedPhone,
-    phone_replaced: !!(writeContactPhone && hadContactPhone),
   };
 }
 
@@ -6006,14 +5839,14 @@ async function runRescanPhonesBatch(body, ioRef) {
     counters.scanned += 1;
     try {
       const { data: msgs } = await supabase.from('facebook_messages')
-        .select('content, direction, message_type, created_at')
+        .select('content, direction, created_at')
         .eq('contact_id', c.id)
         .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
         .limit(500);
 
-      const inbound = (msgs || []).filter((m) => inboundMessageEligibleForPhoneScan(m));
-      const found = extractInboundContactInfo(msgs || [], {});
+      const inbound = (msgs || []).filter(m => m && m.content && m.direction === 'inbound');
+      const found = extractInboundContactInfo(inbound);
       const newPhone = found?.phone || null;
 
       const item = {
