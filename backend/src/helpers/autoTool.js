@@ -12,6 +12,7 @@
  */
 
 const { supabase } = require('../config/supabase');
+const { sortFacebookContactsNewestFirst } = require('./facebookContactActivity');
 
 // ── State ──
 const state = {
@@ -131,22 +132,41 @@ async function countTotalContacts() {
   return count || 0;
 }
 
-// ── Load contacts with offset (mới nhất trước) ──
+// ── Load contacts with newest activity first ──
 async function loadContacts(limit, offset) {
   const lim = Math.min(1000, Math.max(1, limit));
   const off = Math.max(0, offset);
-  const { data, error } = await supabase
-    .from('facebook_contacts')
-    .select('id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, created_at')
-    .not('psid', 'is', null)
-    .order('last_message_at', { ascending: false, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .range(off, off + lim - 1);
-  if (error) {
-    console.error('[AutoTool] loadContacts:', error.message);
+
+  // Lấy 2 nhóm rồi sort lại bằng helper chuẩn:
+  // 1) có last_message_at
+  // 2) chưa có last_message_at nhưng mới tạo
+  // Nếu chỉ ORDER BY last_message_at rồi LIMIT thì có thể bỏ sót user mới tạo.
+  const pick = 'id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, created_at';
+
+  const [{ data: withMsg, error: err1 }, { data: noMsg, error: err2 }] = await Promise.all([
+    supabase
+      .from('facebook_contacts')
+      .select(pick)
+      .not('psid', 'is', null)
+      .not('last_message_at', 'is', null)
+      .order('last_message_at', { ascending: false })
+      .limit(Math.max(lim * 3, 300)),
+    supabase
+      .from('facebook_contacts')
+      .select(pick)
+      .not('psid', 'is', null)
+      .is('last_message_at', null)
+      .order('created_at', { ascending: false })
+      .limit(Math.max(lim * 3, 300)),
+  ]);
+
+  if (err1 || err2) {
+    console.error('[AutoTool] loadContacts:', err1?.message || err2?.message || 'unknown');
     return [];
   }
-  return data || [];
+
+  const merged = sortFacebookContactsNewestFirst([...(withMsg || []), ...(noMsg || [])]);
+  return merged.slice(off, off + lim);
 }
 
 // ── Run one batch ──
