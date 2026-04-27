@@ -851,8 +851,6 @@ function ContactsTab() {
   const [v2ClearPhoneNoInbound, setV2ClearPhoneNoInbound] = useState(true);
   const [v2DeleteLeadNoPhone, setV2DeleteLeadNoPhone] = useState(false);
   const [v2CleanupWithLead, setV2CleanupWithLead] = useState(false);
-  /** Quét SĐT (DB): ghi đè contact/customer nếu số inbound khác số đang lưu (force_rescan_phones). */
-  const [forceRescanExtractDb, setForceRescanExtractDb] = useState(false);
   const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
 
   // ── Tool: Quét lại SĐT (rescan-phones) ───────────────────────────
@@ -1073,21 +1071,15 @@ function ContactsTab() {
 
   // Batch: quét SĐT + thông tin từ tin nhắn (chỉ DB, không gọi Graph)
   const batchExtractPhones = async () => {
-    const rescanHint = forceRescanExtractDb ? ' Bật ghi đè: nếu SĐT inbound khác số đang lưu sẽ cập nhật lại.' : '';
-    if (!confirm(`Đọc tin nhắn đã lưu trong hệ thống để tìm SĐT/địa chỉ (không đồng bộ mới từ Facebook).${rescanHint} Tiếp tục?`)) return;
+    if (!confirm('Đọc tin nhắn đã lưu trong hệ thống để tìm SĐT/địa chỉ (không đồng bộ mới từ Facebook). Tiếp tục?')) return;
     setBatchProgress(null);
     setBatchStatus({ type: 'phones', loading: true, result: null });
     try {
-      const res = await fetch(`${API}/api/facebook/batch-extract-phones`, {
-        method: 'POST',
-        headers: { ...hdr(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force_rescan_phones: !!forceRescanExtractDb }),
-      });
+      const res = await fetch(`${API}/api/facebook/batch-extract-phones`, { method: 'POST', headers: hdr() });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-      setBatchProgress(null);
-      setBatchStatus({ type: 'phones', loading: false, result: data });
-      load();
+      if (!data?.total) {
+        setBatchStatus({ type: 'phones', loading: false, result: data });
+      }
     } catch (e) {
       setBatchStatus({ type: 'phones', loading: false, result: { error: e.message } });
     }
@@ -1286,13 +1278,9 @@ function ContactsTab() {
             {batchStatus?.type === 'dedup' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" /> : '🔍'}
             Xóa Lead trùng
           </button>
-          <label className="inline-flex items-center gap-1 text-[10px] text-blue-900 cursor-pointer select-none" title="Nếu quét inbound ra số khác số đang lưu → ghi đè contact + KH + mô tả lead">
-            <input type="checkbox" checked={forceRescanExtractDb} onChange={(e) => setForceRescanExtractDb(e.target.checked)} disabled={batchStatus?.loading} />
-            Ghi đè SĐT sai
-          </label>
           <button onClick={batchExtractPhones} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-            title="Chỉ đọc tin đã lưu DB — không kéo tin mới từ Facebook. Bật «Ghi đè SĐT sai» để cập nhật khi quét lại khác số cũ.">
+            title="Chỉ đọc tin đã lưu DB — không kéo tin mới từ Facebook">
             {batchStatus?.type === 'phones' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full" /> : '📞'}
             Quét SĐT (DB)
           </button>
@@ -1428,14 +1416,11 @@ function ContactsTab() {
           {/* Chi tiết kết quả quét SĐT */}
           {batchStatus.type === 'phones' && !batchStatus.result.error && batchStatus.result.leadsUpdatedPhone != null && (
             <div className="mt-3 space-y-2">
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                 <div className="bg-white rounded-lg p-2 border">Contact SĐT mới: <strong className="text-green-700">{batchStatus.result.updatedContactPhone || 0}</strong></div>
                 <div className="bg-white rounded-lg p-2 border">Customer SĐT mới: <strong className="text-blue-700">{batchStatus.result.updatedCustomerPhone || 0}</strong></div>
                 <div className="bg-white rounded-lg p-2 border">Địa chỉ KH: <strong className="text-purple-700">{batchStatus.result.updatedCustomerAddress || 0}</strong></div>
                 <div className="bg-white rounded-lg p-2 border">Không tìm thấy: <strong className="text-gray-500">{batchStatus.result.noInfo || 0}</strong></div>
-                <div className="bg-amber-50 rounded-lg p-2 border border-amber-200" title="Đã bật ghi đè và số inbound khác số đang lưu trên contact">
-                  Ghi đè SĐT sai: <strong className="text-amber-800">{batchStatus.result.phones_replaced_on_rescan ?? 0}</strong>
-                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 text-xs">
                 <div className="bg-green-100 rounded-lg p-2 border border-green-300">🎯 Lead được gắn SĐT: <strong className="text-green-800">{batchStatus.result.leadsUpdatedPhone}</strong></div>
@@ -1462,65 +1447,6 @@ function ContactsTab() {
                             <td className="px-2 py-1.5 text-green-700 font-mono">{l.phone}</td>
                           </tr>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-              )}
-              {Array.isArray(batchStatus.result.results) && batchStatus.result.results.length > 0 && (
-                <details className="text-xs mt-2">
-                  <summary className="cursor-pointer text-blue-800 font-medium hover:underline">
-                    📊 Chi tiết quét theo user (tối đa 200 / {batchStatus.result.results.length} dòng) — inbound/outbound, SĐT trích từ KH, contact và KH trước/sau, mẫu tin
-                  </summary>
-                  <div className="mt-2 max-h-96 overflow-auto border rounded-lg bg-white text-[11px]">
-                    <table className="w-full min-w-[720px]">
-                      <thead className="bg-slate-50 sticky top-0 z-10">
-                        <tr>
-                          <th className="text-left px-2 py-1.5 font-semibold text-slate-700">User</th>
-                          <th className="text-left px-2 py-1.5 font-semibold text-slate-700">TT</th>
-                          <th className="text-left px-2 py-1.5 font-semibold text-slate-700">Tin (in / out / đủ ĐK)</th>
-                          <th className="text-left px-2 py-1.5 font-semibold text-slate-700">SĐT từ KH</th>
-                          <th className="text-left px-2 py-1.5 font-semibold text-slate-700">Contact trước → sau</th>
-                          <th className="text-left px-2 py-1.5 font-semibold text-slate-700">KH trước → sau</th>
-                          <th className="text-left px-2 py-1.5 font-semibold text-slate-700">Mẫu tin (inbound)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {batchStatus.result.results.slice(0, 200).map((row, idx) => {
-                          const s = row.scan_summary;
-                          const tin = s
-                            ? `${s.inbound_total ?? '—'} / ${s.outbound_total ?? '—'} / ${s.inbound_eligible_text ?? '—'}`
-                            : '—';
-                          const cBefore = s?.contact_phone_before || '—';
-                          const cAfter = s?.contact_phone_after ?? '—';
-                          const kBefore = s?.customer_phone_before || '—';
-                          const kAfter = s?.customer_phone_after ?? '—';
-                          const prev = (a) => (a && String(a).trim() ? String(a).trim() : '—');
-                          return (
-                            <tr key={idx} className="border-t border-slate-100 hover:bg-slate-50/80 align-top">
-                              <td className="px-2 py-1.5 max-w-[140px]">
-                                <div className="font-medium text-slate-800 truncate" title={row.contact || ''}>{row.contact || '—'}</div>
-                                <div className="text-[10px] text-slate-500 font-mono truncate" title={row.contact_id}>{row.contact_id}</div>
-                              </td>
-                              <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">{row.status || '—'}</td>
-                              <td className="px-2 py-1.5 font-mono text-slate-700 whitespace-nowrap">{tin}</td>
-                              <td className="px-2 py-1.5 font-mono text-emerald-800 whitespace-nowrap">{prev(s?.primary_from_inbound)}</td>
-                              <td className="px-2 py-1.5 font-mono text-slate-700">
-                                <span className="text-slate-500">{prev(cBefore)}</span>
-                                <span className="mx-0.5 text-slate-400">→</span>
-                                <span className={cAfter !== cBefore && cAfter !== '—' ? 'text-emerald-700 font-semibold' : ''}>{prev(cAfter)}</span>
-                              </td>
-                              <td className="px-2 py-1.5 font-mono text-slate-700">
-                                <span className="text-slate-500">{prev(kBefore)}</span>
-                                <span className="mx-0.5 text-slate-400">→</span>
-                                <span className={kAfter !== kBefore && kAfter !== '—' ? 'text-emerald-700 font-semibold' : ''}>{prev(kAfter)}</span>
-                              </td>
-                              <td className="px-2 py-1.5 text-slate-600 max-w-[220px] break-words" title={s?.source_preview || ''}>
-                                {s?.source_preview || (row.status === 'no_info_found' ? '(không trích được từ inbound đủ ĐK)' : '—')}
-                              </td>
-                            </tr>
-                          );
-                        })}
                       </tbody>
                     </table>
                   </div>
