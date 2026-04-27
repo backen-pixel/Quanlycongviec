@@ -127,14 +127,17 @@ export default function BatchActionsBar({ onComplete = null }) {
 
           <button
             type="button"
+            role="switch"
+            aria-checked={!!auto.enabled}
             onClick={toggleBatchAuto}
-            className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${
+            className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
               auto.enabled ? 'bg-green-500' : 'bg-gray-300'
             }`}
-            title={auto.enabled ? 'Tự động: Bật (backend realtime)' : 'Tự động: Tắt'}
+            title={auto.enabled ? 'Tự động: Bật — bấm để tắt' : 'Tự động: Tắt — bấm để bật và chạy pipeline trên server'}
           >
             <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+              aria-hidden
+              className={`pointer-events-none absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
                 auto.enabled ? 'translate-x-5' : 'translate-x-0'
               }`}
             />
@@ -162,7 +165,7 @@ export default function BatchActionsBar({ onComplete = null }) {
               </li>
             </ol>
             <p className="text-[10px] text-gray-500 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100 leading-relaxed">
-              <strong>full_cycle</strong>: v2 (chưa lead) rồi thêm vài lô Graph→quét trên pool danh bạ (kể cả đã lead) để kéo tin quét SĐT. <strong>Chain</strong> chỉ <code className="text-[9px]">batch-sync-then-extract-phones</code>. Nút danh bạ: <code className="text-[9px]">pipeline-v2/run</code>.
+              <strong>full_cycle</strong>: v2 (chưa lead) rồi thêm lô pool Graph→quét (cả đã lead, nếu bật rescan) → Refresh → Gộp → Sync SĐT. <strong>chain</strong>: cùng chuỗi Graph→quét từng lô, sau khi xử lý xong mỗi vòng cũng chạy hậu trường Refresh tên, Xóa trùng, Sync SĐT. Nút tay danh bạ: <code className="text-[9px]">pipeline-v2/run</code>.
             </p>
           </div>
 
