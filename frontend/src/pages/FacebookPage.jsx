@@ -521,9 +521,10 @@ function InboxTab({ pageStats }) {
               className={`flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-gray-50 transition-all ${
                 selected?.id === c.id ? 'bg-blue-50 border-l-3 border-l-blue-500' : 'hover:bg-gray-50'
               }`}>
-              <div className="relative shrink-0 w-6">
+              <div className="relative">
+                <FBAvatar name={c.fb_name} pic={c.fb_profile_pic} size={11} />
                 {c.unread_count > 0 && (
-                  <span className="absolute top-0 left-0 bg-red-500 text-white text-[9px] rounded-full w-5 h-5 flex items-center justify-center font-bold shadow">{c.unread_count}</span>
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] rounded-full w-5 h-5 flex items-center justify-center font-bold shadow">{c.unread_count}</span>
                 )}
               </div>
               <div className="flex-1 min-w-0">
@@ -579,6 +580,7 @@ function InboxTab({ pageStats }) {
                 <button onClick={() => setSelected(null)} className="md:hidden text-gray-400 hover:text-gray-600 cursor-pointer mr-1">
                   <ArrowLeft size={20} />
                 </button>
+                <FBAvatar name={selected.fb_name} pic={selected.fb_profile_pic} size={10} />
                 <div>
                   <p className="font-semibold text-sm text-gray-800">{selected.fb_name}</p>
                   <div className="flex items-center gap-2 text-[11px] text-gray-400">
@@ -775,8 +777,11 @@ function InboxTab({ pageStats }) {
 }
 
 // ── Helper: Avatar ──
-function FBAvatar() {
-  return null;
+function FBAvatar({ name, pic, size = 11 }) {
+  const cls = `w-${size} h-${size} rounded-full flex items-center justify-center text-white font-bold shrink-0 shadow-sm`;
+  const textSize = size >= 10 ? 'text-sm' : 'text-xs';
+  if (pic) return <img src={pic} alt="" className={`w-${size} h-${size} rounded-full object-cover shrink-0 shadow-sm`} />;
+  return <div className={`${cls} bg-gradient-to-br from-blue-400 to-blue-600 ${textSize}`}>{(name || 'F')[0].toUpperCase()}</div>;
 }
 
 // ── Helper: Nút sync lịch sử tin nhắn cũ từ Facebook ──
@@ -1568,6 +1573,7 @@ function ContactsTab() {
                         onClick={() => navigate(`/facebook?tab=inbox&contact=${c.id}`)}
                         className="flex items-center gap-2 text-left cursor-pointer hover:opacity-80"
                       >
+                        <FBAvatar name={c.fb_name} pic={c.fb_profile_pic} size={8} />
                         <div>
                           <span className="font-medium text-gray-800">{c.fb_name}</span>
                           {c.unread_count > 0 && <span className="ml-1.5 bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">{c.unread_count} mới</span>}

@@ -153,6 +153,13 @@ export default function FacebookChatTab({ leadId }) {
       {contact && (
         <div className="flex items-center justify-between pb-3 border-b mb-3 shrink-0">
           <div className="flex items-center gap-2">
+            {contact.fb_profile_pic ? (
+              <img src={contact.fb_profile_pic} className="w-9 h-9 rounded-full shadow-sm" alt="" />
+            ) : (
+              <div className="w-9 h-9 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm">
+                {(contact.fb_name || 'FB')[0]}
+              </div>
+            )}
             <div>
               <p className="font-semibold text-sm text-gray-800">{contact.fb_name}</p>
               <div className="flex items-center gap-2 text-[11px] text-gray-400">
