@@ -855,6 +855,7 @@ function ContactsTab() {
   const [forceRescanExtractDb, setForceRescanExtractDb] = useState(false);
   const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
 
+<<<<<<< HEAD
   // ── Tool: Quét lại SĐT (rescan-phones) ───────────────────────────
   const [rescanOpen, setRescanOpen] = useState(false);
   const [rescanForm, setRescanForm] = useState({
@@ -902,6 +903,8 @@ function ContactsTab() {
     });
   }, []);
 
+=======
+>>>>>>> parent of 2c208f6 (fix: realtime upsert newest Facebook contacts list)
   const load = useCallback((append = false) => {
     const p = new URLSearchParams();
     if (search) p.set('search', search);
@@ -913,21 +916,34 @@ function ContactsTab() {
       .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
       .then(payload => {
         const rows = payload?.data || [];
-        if (append) {
-          setContacts((prev) => sortContacts([...(prev || []), ...rows]));
-        } else {
-          setContacts(sortContacts(rows));
-        }
+        const merged = append ? [...contacts, ...rows] : rows;
+        const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
+        const sorted = [...deduped].sort((a, b) => {
+          const ua = (a.unread_count || 0) > 0 ? 1 : 0;
+          const ub = (b.unread_count || 0) > 0 ? 1 : 0;
+          if (ub !== ua) return ub - ua;
+          const act = fbActivityTs(b) - fbActivityTs(a);
+          if (act !== 0) return act;
+          const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
+          const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
+          return bp - ap;
+        });
+        setContacts(sorted);
         setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       })
       .catch(() => {});
+<<<<<<< HEAD
   }, [search, filter, meta.nextOffset, sortContacts]);
+=======
+  }, [search, filter, limitSize, meta.nextOffset, contacts]);
+>>>>>>> parent of 2c208f6 (fix: realtime upsert newest Facebook contacts list)
 
   useEffect(() => { load(false); }, [load]);
 
   useEffect(() => {
     if (!socket) return;
 
+<<<<<<< HEAD
     // Realtime: khi có tin nhắn mới, cập nhật/đẩy contact lên đầu danh sách.
     // Lưu ý: event thường chỉ chứa contact_id + message.created_at → nếu contact chưa có trong list thì fetch chi tiết rồi insert.
     const onFbMessage = (data) => {
@@ -976,6 +992,8 @@ function ContactsTab() {
         .catch(() => {});
     };
 
+=======
+>>>>>>> parent of 2c208f6 (fix: realtime upsert newest Facebook contacts list)
     const onBatchProgress = (data) => {
       if (data.type === 'extract_phones' || data.type === 'sync_then_extract_phones') {
         setBatchProgress(data);
@@ -989,6 +1007,7 @@ function ContactsTab() {
       load();
     };
 
+<<<<<<< HEAD
     const onContactUpdated = (data) => {
       const id = data?.contact_id;
       if (!id) return;
@@ -1021,18 +1040,27 @@ function ContactsTab() {
     socket.on('fb_message', onFbMessage);
     socket.on('fb_contact_updated', onContactUpdated);
     socket.on('fb_contact_created', onContactCreated);
+=======
+>>>>>>> parent of 2c208f6 (fix: realtime upsert newest Facebook contacts list)
     socket.on('batch_progress', onBatchProgress);
     socket.on('batch_done', onBatchDone);
     socket.on('rescan_phones_progress', onRescanProgress);
     return () => {
+<<<<<<< HEAD
       socket.off('fb_message', onFbMessage);
       socket.off('fb_contact_updated', onContactUpdated);
       socket.off('fb_contact_created', onContactCreated);
+=======
+>>>>>>> parent of 2c208f6 (fix: realtime upsert newest Facebook contacts list)
       socket.off('batch_progress', onBatchProgress);
       socket.off('batch_done', onBatchDone);
       socket.off('rescan_phones_progress', onRescanProgress);
     };
+<<<<<<< HEAD
   }, [socket, load, sortContacts, search, filter]);
+=======
+  }, [socket, load]);
+>>>>>>> parent of 2c208f6 (fix: realtime upsert newest Facebook contacts list)
 
   const startEdit = (c) => { setEditing(c.id); setForm({ fb_name: c.fb_name || '', phone: c.phone || '', email: c.email || '', notes: c.notes || '' }); };
 
