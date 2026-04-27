@@ -5986,9 +5986,7 @@ const autoTool = require('../helpers/autoTool');
 autoTool.injectCoreFunctions({
   graphSyncMessagesForContactRow,
   extractInboundContactInfo,
-  createLeadFromFacebook: createLeadFromFacebook,
-  extractContactInfo,
-  inboundMessageEligibleForPhoneScan,
+  createLeadFromFacebook,
 });
 
 // Inject socket.io khi _ioRef được set
