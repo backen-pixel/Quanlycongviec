@@ -47,7 +47,7 @@ async function reconcileInboundPhoneAfterScan(supabase, contactId, opts = {}) {
 
   const { data: messages } = await supabase
     .from('facebook_messages')
-    .select('id, content, direction, created_at')
+    .select('id, content, direction, message_type, created_at')
     .eq('contact_id', contactId)
     .eq('direction', 'inbound')
     .order('created_at', { ascending: false })
