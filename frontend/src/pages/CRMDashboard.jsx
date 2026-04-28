@@ -1477,19 +1477,32 @@ export default function CRMDashboard() {
               {(pipelineType === 'lead' ? stagesLead : stagesDeal).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
 
-            {/* Lead/Deal type */}
-            {leadTypes.length > 0 && (
+            {/* Lead/Deal type (always visible; disabled when chưa cấu hình) */}
+            <div className="flex items-center gap-2">
               <select
                 value={filterLeadType}
                 onChange={e => setFilterLeadType(e.target.value)}
-                className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                disabled={leadTypes.length === 0}
+                className={`h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${
+                  leadTypes.length === 0 ? 'opacity-70 cursor-not-allowed' : ''
+                }`}
+                title={leadTypes.length === 0 ? 'Chưa có danh mục phân loại (Lead/Deal types) cho công ty' : 'Lọc theo phân loại'}
               >
-                <option value="">🏷️ Tất cả loại</option>
+                <option value="">🏷️ {leadTypes.length === 0 ? 'Chưa cấu hình loại' : 'Tất cả loại'}</option>
                 {leadTypes
                   .filter((t) => t.applies_to === 'both' || t.applies_to === pipelineType)
                   .map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
-            )}
+              {leadTypes.length === 0 && (
+                <button
+                  onClick={() => navigate('/crm/pipeline-settings')}
+                  className="h-9 px-3 rounded-lg text-xs font-medium bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 cursor-pointer"
+                  title="Mở Pipeline Settings để thêm phân loại"
+                >
+                  Cấu hình
+                </button>
+              )}
+            </div>
 
             {/* Phone filter */}
             <select value={filterPhone} onChange={e => setFilterPhone(e.target.value)}
