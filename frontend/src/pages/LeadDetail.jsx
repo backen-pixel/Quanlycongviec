@@ -59,6 +59,7 @@ export default function LeadDetail() {
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
+  const [headerLeadTypes, setHeaderLeadTypes] = useState([]);
   const [flows, setFlows] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -115,6 +116,20 @@ export default function LeadDetail() {
   };
 
   useEffect(() => { load(); }, [id]);
+
+  // Lead/Deal types (phân loại) cho header: load theo company của lead (fallback company user)
+  useEffect(() => {
+    const cid = lead?.company_id || user?.company_id;
+    if (!cid) { setHeaderLeadTypes([]); return; }
+    let cancelled = false;
+    api.get('/crm/lead-types', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        setHeaderLeadTypes(Array.isArray(r.data) ? r.data : []);
+      })
+      .catch(() => { if (!cancelled) setHeaderLeadTypes([]); });
+    return () => { cancelled = true; };
+  }, [lead?.company_id, user?.company_id]);
 
   /** Mở đúng tab từ URL (?tab=chat|facebook|calls|voice_crm|approvals|…) — app mobile / liên kết ngoài. */
   useEffect(() => {
@@ -609,11 +624,11 @@ export default function LeadDetail() {
               {(() => {
                 const typeName =
                   lead?.lead_type_id
-                    ? (leadTypes.find((t) => String(t.id) === String(lead.lead_type_id))?.name || '')
+                    ? (headerLeadTypes.find((t) => String(t.id) === String(lead.lead_type_id))?.name || '')
                     : '';
                 const showName = !!typeName;
-                const showMissing = !lead?.lead_type_id && leadTypes.length > 0;
-                const showNoCatalog = leadTypes.length === 0;
+                const showMissing = !lead?.lead_type_id && headerLeadTypes.length > 0;
+                const showNoCatalog = headerLeadTypes.length === 0;
                 if (!showName && !showMissing && !showNoCatalog) return null;
                 return (
                   <div className="flex items-center gap-2 flex-wrap">
