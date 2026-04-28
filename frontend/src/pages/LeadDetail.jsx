@@ -604,6 +604,37 @@ export default function LeadDetail() {
                 </button>
               </div>
             )}
+            {/* Phân loại (Loại lead/deal) — hiển thị dưới tên */}
+            <div className="mt-1">
+              {(() => {
+                const typeName =
+                  lead?.lead_type_id
+                    ? (leadTypes.find((t) => String(t.id) === String(lead.lead_type_id))?.name || '')
+                    : '';
+                const showName = !!typeName;
+                const showMissing = !lead?.lead_type_id && leadTypes.length > 0;
+                const showNoCatalog = leadTypes.length === 0;
+                if (!showName && !showMissing && !showNoCatalog) return null;
+                return (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-semibold text-gray-500">🏷️ Phân loại:</span>
+                    {showName ? (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                        {typeName}
+                      </span>
+                    ) : showMissing ? (
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-200">
+                        Chưa chọn
+                      </span>
+                    ) : (
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-200">
+                        Chưa cấu hình
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1736,16 +1767,18 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
   }, []);
 
   useEffect(() => {
-    if (!lead?.company_id) { setLeadTypes([]); return; }
+    // Fallback: nhiều lead cũ chưa set company_id → vẫn load theo company của user để hiện danh mục phân loại
+    const cid = lead?.company_id || currentUser?.company_id;
+    if (!cid) { setLeadTypes([]); return; }
     let cancelled = false;
-    api.get('/crm/lead-types', { params: { company_id: lead.company_id } })
+    api.get('/crm/lead-types', { params: { company_id: cid } })
       .then((r) => {
         if (cancelled) return;
         setLeadTypes(Array.isArray(r.data) ? r.data : []);
       })
       .catch(() => { if (!cancelled) setLeadTypes([]); });
     return () => { cancelled = true; };
-  }, [lead?.company_id]);
+  }, [lead?.company_id, currentUser?.company_id]);
 
   const saveField = async (field, value) => {
     setSaving(true);
@@ -1778,6 +1811,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
 
   const EditableRow = ({ icon, label, field, value, displayValue, type = 'text', options }) => {
     const isEditing = editing === field;
+    const isSelectEmpty = type === 'select' && ((options || []).length === 0);
     return (
       <div className="group">
         <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
@@ -1794,6 +1828,9 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
                     autoFocus
                   >
                     <option value="">-- Chọn --</option>
+                    {isSelectEmpty && (
+                      <option value="" disabled>(Chưa có lựa chọn)</option>
+                    )}
                     {(options || []).map(o => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
@@ -1902,7 +1939,13 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
 
       <EditableRow icon="🏷️" label="Loại" field="lead_type_id"
         value={lead?.lead_type_id || ''}
-        displayValue={lead?.lead_type_id ? (leadTypes.find(t => t.id === lead.lead_type_id)?.name || null) : null}
+        displayValue={
+          lead?.lead_type_id
+            ? (leadTypes.find(t => t.id === lead.lead_type_id)?.name || null)
+            : (leadTypes.length === 0
+              ? <span className="text-sm text-amber-600">Chưa cấu hình phân loại (vào Pipeline Settings)</span>
+              : null)
+        }
         type="select"
         options={leadTypes
           .filter((t) => t.applies_to === 'both' || t.applies_to === (lead?.type === 'deal' ? 'deal' : 'lead'))
