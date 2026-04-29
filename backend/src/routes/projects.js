@@ -1383,10 +1383,14 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
         `Chuyển trạng thái: ${old.status} → ${update.status}`,
         { status: old.status }, { status: update.status });
 
-      // Production project → only production_person; CRM → team
-      const notifyIds = data.production_person_id
+      // Production project → chỉ production_person; CRM → team (NVKD không nhận TB khi nhảy sang trạng thái xưởng/VC)
+      let notifyIds = data.production_person_id
         ? [data.production_person_id]
         : [data.sales_person_id, data.designer_id, data.project_manager_id].filter(Boolean);
+      const workshopStatuses = new Set(['producing', 'shipping', 'installing', 'warranty']);
+      if (!data.production_person_id && workshopStatuses.has(update.status) && data.sales_person_id) {
+        notifyIds = notifyIds.filter((id) => String(id) !== String(data.sales_person_id));
+      }
       const filteredIds = [...new Set(notifyIds)].filter(id => id !== req.user.userId);
       await notifyMultiple(req, filteredIds, 'project_updated',
         '📋 Cập nhật dự án', `Dự án ${data.code || data.name} chuyển từ "${old.status}" → "${update.status}"`,
@@ -1546,9 +1550,12 @@ r.put('/:id/stage', async (req, res) => {
       { status: old?.status }, { status: new_status, stage: stage.name });
 
     // ── THÔNG BÁO chuyển giai đoạn ──
-    // Production project → only production_person; CRM project → CRM team
+    const WORKSHOP_SLUG_PREFIXES = ['production', 'delivery', 'shipping', 'installation', 'customer-care'];
+    const slugBaseForNotify = (stage_slug || '').split('-')[0];
+    const isWorkshopPipelineStage = WORKSHOP_SLUG_PREFIXES.includes(slugBaseForNotify);
+
     if (fullProj) {
-      const notifyIds = fullProj.production_person_id
+      let notifyIds = fullProj.production_person_id
         ? [fullProj.production_person_id]
         : [
             fullProj.consulting_person_id, fullProj.design_person_id, fullProj.quotation_person_id,
@@ -1556,6 +1563,9 @@ r.put('/:id/stage', async (req, res) => {
             fullProj.installation_person_id, fullProj.care_person_id,
             fullProj.sales_person_id, fullProj.designer_id, fullProj.project_manager_id,
           ].filter(Boolean);
+      if (!fullProj.production_person_id && isWorkshopPipelineStage && fullProj.sales_person_id) {
+        notifyIds = notifyIds.filter((id) => String(id) !== String(fullProj.sales_person_id));
+      }
       const filteredIds = [...new Set(notifyIds)].filter(id => id !== req.user.userId);
       await notifyMultiple(req, filteredIds, 'project_stage_changed',
         `🔄 Chuyển giai đoạn: ${stage.name}`,

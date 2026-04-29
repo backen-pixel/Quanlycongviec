@@ -321,12 +321,17 @@ r.patch('/:id/status', async (req, res) => {
         if (allDone) {
           const { data: proj } = await supabase.from('projects')
             .select('code,name,sales_person_id,designer_id,project_manager_id,production_person_id,current_stage_id').eq('id', data.project_id).single();
-          const { data: stage } = await supabase.from('workflow_stages').select('name').eq('id', data.stage_id).single();
+          const { data: stage } = await supabase.from('workflow_stages').select('name,slug').eq('id', data.stage_id).single();
           if (proj) {
-            // Production project → only production person; CRM → full team
-            const teamIds = proj.production_person_id
+            const WS_PREFIX = ['production', 'delivery', 'shipping', 'installation', 'customer-care'];
+            const slugBase = (stage?.slug || '').split('-')[0];
+            const isWs = WS_PREFIX.includes(slugBase);
+            let teamIds = proj.production_person_id
               ? [proj.production_person_id]
               : [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
+            if (!proj.production_person_id && isWs && proj.sales_person_id) {
+              teamIds = teamIds.filter((id) => String(id) !== String(proj.sales_person_id));
+            }
             await notifyMultiple(req, teamIds, 'project_stage_changed',
               `🎉 Hoàn thành giai đoạn "${stage?.name}"`,
               `Tất cả công việc giai đoạn "${stage?.name}" của dự án ${proj.code} đã hoàn thành. Sẵn sàng chuyển giai đoạn tiếp theo!`,
