@@ -16,6 +16,7 @@ let prefs = {
   deal_new: true,
   production_deadlines: true,
   crm_lead_deadlines: true,
+  logistics_deadlines: true,
 };
 
 /**
@@ -66,6 +67,7 @@ const PREF_KEYS = new Set([
   'deal_new',
   'production_deadlines',
   'crm_lead_deadlines',
+  'logistics_deadlines',
 ]);
 
 export function preferenceKeyForNotificationType(type, entityType) {
@@ -81,6 +83,16 @@ export function preferenceKeyForNotificationType(type, entityType) {
     type === 'crm_deadline_set'
   ) {
     return 'crm_lead_deadlines';
+  }
+
+  if (type === 'production_task_deadline_warning' || type === 'production_task_deadline_overdue') {
+    return 'production_deadlines';
+  }
+  if (type === 'logistics_task_deadline_warning' || type === 'logistics_task_deadline_overdue') {
+    return 'logistics_deadlines';
+  }
+  if (type === 'project_pipeline_deadline_warning' || type === 'project_pipeline_deadline_overdue') {
+    return 'deadline_warning';
   }
 
   if (type === 'deadline_warning' || type === 'deadline_overdue' || type === 'deadline_reminder') {

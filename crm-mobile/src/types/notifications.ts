@@ -32,4 +32,5 @@ export type NotificationPrefs = {
   deal_new?: boolean;
   production_deadlines?: boolean;
   crm_lead_deadlines?: boolean;
+  logistics_deadlines?: boolean;
 };
