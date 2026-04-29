@@ -217,7 +217,8 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
 });
 
 // ─── ĐƠN HÀNG CON (tab Đơn hàng — pipeline + deal nhiệm vụ + đẩy VC) ───────
-r.get('/:id/orders', requirePermission('projects', 'view'), async (req, res) => {
+// Không bọc requirePermission: thao tác đơn/nhiệm vụ theo đơn chỉ cần đăng nhập (auth middleware).
+r.get('/:id/orders', async (req, res) => {
   try {
     const pid = String(req.params.id || '').replace(/"/g, '');
     // Đơn gắn dự án SX (project_id) hoặc đơn đã đẩy VC (logistics_project_id = dự án con)
@@ -235,7 +236,7 @@ r.get('/:id/orders', requirePermission('projects', 'view'), async (req, res) => 
   }
 });
 
-r.post('/:id/orders', requirePermission('projects', 'edit'), async (req, res) => {
+r.post('/:id/orders', async (req, res) => {
   try {
     const pid = req.params.id;
     const userId = req.user.userId;
@@ -267,7 +268,7 @@ r.post('/:id/orders', requirePermission('projects', 'edit'), async (req, res) =>
   }
 });
 
-r.put('/:id/orders/:orderId', requirePermission('projects', 'edit'), async (req, res) => {
+r.put('/:id/orders/:orderId', async (req, res) => {
   try {
     const pid = req.params.id;
     const oid = req.params.orderId;
@@ -304,7 +305,7 @@ r.put('/:id/orders/:orderId', requirePermission('projects', 'edit'), async (req,
   }
 });
 
-r.post('/:id/orders/:orderId/push-to-logistics', requirePermission('projects', 'edit'), async (req, res) => {
+r.post('/:id/orders/:orderId/push-to-logistics', async (req, res) => {
   try {
     const pid = req.params.id;
     const oid = req.params.orderId;
@@ -319,7 +320,7 @@ r.post('/:id/orders/:orderId/push-to-logistics', requirePermission('projects', '
 });
 
 /** Đẩy nhiều đơn sang VC/LĐ trong 1 lượt. */
-r.post('/:id/orders/push-to-logistics-bulk', requirePermission('projects', 'edit'), async (req, res) => {
+r.post('/:id/orders/push-to-logistics-bulk', async (req, res) => {
   try {
     const pid = req.params.id;
     const userId = req.user.userId;
@@ -345,7 +346,7 @@ r.post('/:id/orders/push-to-logistics-bulk', requirePermission('projects', 'edit
 });
 
 /** Chuyển đơn (fulfillment) sang module Sản xuất: lưu lịch SX + người dự kiến thi công + công ty SX. */
-r.post('/:id/orders/:orderId/push-to-production', requirePermission('projects', 'edit'), async (req, res) => {
+r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
   try {
     const pid = req.params.id;
     const oid = req.params.orderId;
@@ -380,7 +381,7 @@ r.post('/:id/orders/:orderId/push-to-production', requirePermission('projects', 
 });
 
 /** Chuyển nhiều đơn sang module Sản xuất. */
-r.post('/:id/orders/push-to-production-bulk', requirePermission('projects', 'edit'), async (req, res) => {
+r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
   try {
     const pid = req.params.id;
     const b = req.body || {};
@@ -418,7 +419,8 @@ r.post('/:id/orders/push-to-production-bulk', requirePermission('projects', 'edi
 });
 
 // ─── GET PROJECT DETAIL ──
-r.get('/:id', requirePermission('projects', 'view'), async (req, res) => {
+// Không requirePermission('projects','view'): tab đơn/nhiệm vụ trên deal cần tải project — chỉ cần auth.
+r.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase.from('projects').select(`
       *, customers(*),

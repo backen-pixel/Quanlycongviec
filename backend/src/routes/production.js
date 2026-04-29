@@ -36,6 +36,9 @@ const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScop
 const r = Router();
 r.use(auth);
 
+/** Tắt toàn bộ thông báo (DB + socket) phát ra từ module Sản xuất (/api/production). */
+const DISABLE_PRODUCTION_PUSH_NOTIFICATIONS = true;
+
 /** Cột VC intake theo công ty dự án (có fallback pipeline global). */
 async function resolveLogisticsVcIntakeColumnId(companyId) {
   const cid = normalizeWorkshopCompanyId(companyId);
@@ -1081,7 +1084,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
               .in('role', ['logistics', 'installer', 'manager'])
               .eq('is_active', true);
             const vcRecipients = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
-            if (vcRecipients.length) {
+            if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && vcRecipients.length) {
               await notifyMultipleShared(
                 reqRef,
                 vcRecipients,
@@ -1106,7 +1109,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           const recipientIds = (workshopUsers || [])
             .map((u) => u.id)
             .filter((uid) => uid !== userId);
-          if (recipientIds.length) {
+          if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && recipientIds.length) {
             const stageName = updatedSnapshot.current_stage?.name || '';
             await notifyMultipleShared(
               reqRef,
@@ -1262,7 +1265,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       const { data: vcUsers } = await supabase
         .from('users').select('id').in('role', ['logistics', 'installer', 'manager']).eq('is_active', true);
       const vcRecipients = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
-      if (vcRecipients.length) {
+      if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && vcRecipients.length) {
         await notifyMultipleShared(
           req, vcRecipients, 'workshop_new_deal',
           `🚚 Vận chuyển: Deal mới từ Xưởng`,
@@ -1541,7 +1544,7 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
         .in('role', ['manager', 'admin'])
         .eq('is_active', true);
       const recipientIds = (managers || []).map((u) => u.id).filter((uid) => uid !== userId);
-      if (recipientIds.length) {
+      if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && recipientIds.length) {
         const { notifyMultiple: notifyM } = require('../helpers/notifications');
         await notifyM(
           req, recipientIds, 'project_updated',
