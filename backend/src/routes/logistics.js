@@ -962,15 +962,15 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         // Truyền full row để syncCrmLeadFromLogisticsStage ưu tiên crm_target_stage_id
         await syncCrmLeadFromLogisticsStage(id, vcPipeStage);
 
-        // Thông báo CRM/sale team biết deal đổi trạng thái
+        // Thông báo đồng bộ CRM ← VC (không gửi role sale — tránh spam NVKD với tin kiểu xưởng/vận chuyển)
         try {
-          const { data: saleUsers } = await supabase
-            .from('users').select('id').in('role', ['sale', 'manager']).eq('is_active', true);
-          const saleRecipients = (saleUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
+          const { data: mgrUsers } = await supabase
+            .from('users').select('id').in('role', ['manager', 'admin']).eq('is_active', true);
+          const crmRecipients = (mgrUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
           const labelMap = { delivery: 'Vận chuyển', installation: 'Lắp đặt', customer_care: 'Chăm sóc KH' };
           const syncLabel = vcPipeStage.crm_sync_type ? (labelMap[vcPipeStage.crm_sync_type] || vcPipeStage.crm_sync_type) : 'CRM';
-          if (saleRecipients.length) {
-            await notifyMultipleShared(req, saleRecipients, 'crm_stage_changed',
+          if (crmRecipients.length) {
+            await notifyMultipleShared(req, crmRecipients, 'crm_stage_changed',
               `📋 CRM: Deal chuyển sang ${syncLabel}`,
               `Dự án ${updated.code || updated.name} đã đạt mốc "${vcPipeStage.name}" — deal CRM tự động cập nhật`,
               'project', id);
