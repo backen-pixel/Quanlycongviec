@@ -866,6 +866,7 @@ function ContactsTab() {
   const [pqSelectedDel, setPqSelectedDel] = useState([]);
   const [pqApplyLoading, setPqApplyLoading] = useState(false);
   const [pqDeleteCustomer, setPqDeleteCustomer] = useState(true);
+  const pqBulkDelHeaderRef = useRef(null);
 
   // ── Tool: Quét lại SĐT (rescan-phones) ───────────────────────────
   const [rescanOpen, setRescanOpen] = useState(false);
@@ -883,6 +884,56 @@ function ContactsTab() {
   });
   const [rescanStatus, setRescanStatus] = useState(null); // { loading, result, error }
   const [rescanProgress, setRescanProgress] = useState(null);
+  /** Tiến trình socket chung với rescan-phones */
+  const leadScanRunningRef = useRef(false);
+  const [leadScanOpen, setLeadScanOpen] = useState(false);
+  const [leadScanForm, setLeadScanForm] = useState({
+    lead_date_from: '',
+    lead_date_to: '',
+    limit: 300,
+    sync_graph_first: true,
+    graph_pages: 10,
+    include_contacts_without_lead_in_range: false,
+    sync_customer: true,
+  });
+  const [leadScanStatus, setLeadScanStatus] = useState(null);
+  const [leadScanProgress, setLeadScanProgress] = useState(null);
+
+  const runLeadScanByDate = async () => {
+    if (!leadScanForm.lead_date_from?.trim() || !leadScanForm.lead_date_to?.trim()) {
+      alert('Chọn đủ Từ ngày và Đến ngày');
+      return;
+    }
+    if (!confirm('Quét lead theo ngày: cập nhật SĐT từ tin user; nếu đang có SĐT mà quét không ra thì xóa lead (nếu được) và xóa user khỏi danh bạ. Tiếp tục?')) return;
+    setLeadScanStatus({ loading: true, result: null, error: null });
+    setLeadScanProgress({ current: 0, total: leadScanForm.limit, name: '' });
+    leadScanRunningRef.current = true;
+    try {
+      const res = await fetch(`${API}/api/facebook/scan-leads-by-date`, {
+        method: 'POST',
+        headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lead_date_from: leadScanForm.lead_date_from.trim(),
+          lead_date_to: leadScanForm.lead_date_to.trim(),
+          limit: leadScanForm.limit,
+          sync_graph_first: leadScanForm.sync_graph_first,
+          graph_pages: leadScanForm.graph_pages,
+          include_contacts_without_lead_in_range: leadScanForm.include_contacts_without_lead_in_range,
+          sync_customer: leadScanForm.sync_customer,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setLeadScanStatus({ loading: false, result: data, error: null });
+      load(false);
+    } catch (e) {
+      setLeadScanStatus({ loading: false, result: null, error: e.message });
+    } finally {
+      leadScanRunningRef.current = false;
+      setLeadScanProgress(null);
+    }
+  };
+
   const runRescanPhones = async () => {
     setRescanStatus({ loading: true, result: null, error: null });
     setRescanProgress({ current: 0, total: rescanForm.limit, name: '' });
@@ -1045,7 +1096,10 @@ function ContactsTab() {
         return sorted.slice(0, 200);
       });
     };
-    const onRescanProgress = (p) => { setRescanProgress(p); };
+    const onRescanProgress = (p) => {
+      setRescanProgress(p);
+      if (leadScanRunningRef.current) setLeadScanProgress(p);
+    };
     socket.on('fb_message', onFbMessage);
     socket.on('fb_contact_updated', onContactUpdated);
     socket.on('fb_contact_created', onContactCreated);
@@ -1183,10 +1237,32 @@ function ContactsTab() {
     setPqSelectedDel((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
-  const selectAllPqDeleteCandidates = () => {
-    if (!pqResult?.rows?.length) return;
-    const ids = pqResult.rows.filter((r) => !r.scanned_ok).map((r) => r.contact_id);
-    setPqSelectedDel(ids.map(String));
+  const pqDeleteCandidateIds = useMemo(
+    () => (pqResult?.rows || []).filter((r) => !r.scanned_ok).map((r) => String(r.contact_id)),
+    [pqResult],
+  );
+  const allPqDeleteSelected =
+    pqDeleteCandidateIds.length > 0 && pqDeleteCandidateIds.every((id) => pqSelectedDel.includes(id));
+  const pqDeleteSelectedInTable = pqDeleteCandidateIds.filter((id) => pqSelectedDel.includes(id)).length;
+
+  useEffect(() => {
+    const el = pqBulkDelHeaderRef.current;
+    if (!el) return;
+    el.indeterminate = pqDeleteSelectedInTable > 0 && pqDeleteSelectedInTable < pqDeleteCandidateIds.length;
+  }, [pqDeleteSelectedInTable, pqDeleteCandidateIds.length]);
+
+  /** Một cú nhấp: chọn hết các dòng đủ điều kiện xóa (để bấm Xóa ngay). */
+  const selectAllPqForDelete = () => {
+    if (!pqDeleteCandidateIds.length) return;
+    setPqSelectedDel([...pqDeleteCandidateIds]);
+  };
+  /** Alias tên cũ (tránh ReferenceError nếu còn tham chiếu / cache bundle). */
+  const selectAllPqDeleteCandidates = selectAllPqForDelete;
+
+  const togglePqDeleteSelectAllFromHeader = () => {
+    if (!pqDeleteCandidateIds.length) return;
+    if (allPqDeleteSelected) setPqSelectedDel([]);
+    else setPqSelectedDel([...pqDeleteCandidateIds]);
   };
 
   const applyPhoneQualityUpdates = async () => {
@@ -1221,7 +1297,7 @@ function ContactsTab() {
     if (!pqSelectedDel.length) return alert('Chọn ít nhất một dòng (ô xóa).');
     if (
       !confirm(
-        `Xóa lead (điều kiện an toàn) cho các contact đã chọn${pqDeleteCustomer ? ' và xóa KH mồ côi nếu được' : ''}?`,
+        `Xóa lead (nếu đủ điều kiện an toàn), xóa user khỏi danh bạ và toàn bộ tin nhắn — các dòng đã chọn${pqDeleteCustomer ? '; có thể xóa KH mồ côi nếu được' : ''}. Tiếp tục?`,
       )
     )
       return;
@@ -1239,8 +1315,20 @@ function ContactsTab() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      const blocked = data.delete_blocked || [];
+      const blockedLines =
+        blocked.length > 0
+          ? `\n\nKhông xóa được (${blocked.length}):\n${blocked
+              .slice(0, 10)
+              .map((b) => {
+                const cid = String(b.contact_id || '');
+                const short = cid.length > 12 ? `${cid.slice(0, 8)}…` : cid;
+                return `• ${short} — ${b.reason || '?'}`;
+              })
+              .join('\n')}${blocked.length > 10 ? `\n… và ${blocked.length - 10} dòng nữa` : ''}`
+          : '';
       alert(
-        `Đã xử lý xóa ${data.deleted?.length || 0} contact. Chặn: ${data.delete_blocked?.length || 0}. Xóa KH: ${data.customers_deleted?.length || 0}`,
+        `Đã xóa ${data.deleted?.length || 0} liên hệ khỏi danh bạ. Chặn: ${blocked.length}. Xóa KH: ${data.customers_deleted?.length || 0}.${blockedLines}`,
       );
       setPqSelectedDel([]);
       load(false);
@@ -1417,6 +1505,16 @@ function ContactsTab() {
             {rescanStatus?.loading ? <span className="animate-spin h-3 w-3 border-2 border-rose-600 border-t-transparent rounded-full" /> : '🔁'}
             Quét lại SĐT
           </button>
+          <button
+            type="button"
+            onClick={() => setLeadScanOpen(true)}
+            disabled={leadScanStatus?.loading}
+            className="px-3 py-1.5 text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+            title="Theo ngày tạo lead: đồng bộ tin (tùy chọn), quét SĐT; có SĐT mới → cập nhật lead; có SĐT nhưng không quét được → xóa lead + user FB"
+          >
+            {leadScanStatus?.loading ? <span className="animate-spin h-3 w-3 border-2 border-amber-700 border-t-transparent rounded-full" /> : '📅'}
+            Quét lead theo ngày
+          </button>
           <select value={limitSize} onChange={e => setLimitSize(Number(e.target.value))} className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700">
             <option value={1000}>1000</option>
             <option value={2000}>2000</option>
@@ -1561,10 +1659,12 @@ function ContactsTab() {
               </button>
               <button
                 type="button"
-                onClick={selectAllPqDeleteCandidates}
-                className="px-2 py-1 text-[10px] border border-violet-300 rounded-md text-violet-900 hover:bg-violet-100 cursor-pointer"
+                onClick={selectAllPqForDelete}
+                disabled={!pqDeleteCandidateIds.length || pqApplyLoading}
+                className="px-3 py-1.5 text-xs font-semibold border border-violet-400 rounded-lg text-violet-950 bg-violet-100/80 hover:bg-violet-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                title="Tick tất cả ô xóa (dòng không quét được SĐT đúng)"
               >
-                Chọn tất cả dòng «không quét được SĐT đúng»
+                Chọn tất cả để xóa
               </button>
               <label className="inline-flex items-center gap-1.5 text-[11px] text-violet-950 cursor-pointer">
                 <input type="checkbox" checked={pqDeleteCustomer} onChange={(e) => setPqDeleteCustomer(e.target.checked)} />
@@ -1583,7 +1683,18 @@ function ContactsTab() {
               <table className="w-full text-[11px]">
                 <thead className="bg-violet-100/80 sticky top-0">
                   <tr>
-                    <th className="text-left p-1.5 w-8"> </th>
+                    <th className="text-center p-1.5 w-10">
+                      <input
+                        ref={pqBulkDelHeaderRef}
+                        type="checkbox"
+                        className="rounded border-violet-500 cursor-pointer"
+                        checked={allPqDeleteSelected && pqDeleteCandidateIds.length > 0}
+                        disabled={!pqDeleteCandidateIds.length || pqApplyLoading}
+                        onChange={togglePqDeleteSelectAllFromHeader}
+                        title={allPqDeleteSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả để xóa'}
+                        aria-label="Chọn tất cả để xóa"
+                      />
+                    </th>
                     <th className="text-left p-1.5">Tên</th>
                     <th className="text-left p-1.5">SĐT đang lưu</th>
                     <th className="text-left p-1.5">Cảnh báo</th>
@@ -2125,6 +2236,161 @@ Content-Type: application/json
                 className="px-4 py-2 text-sm font-semibold bg-rose-600 text-white rounded-lg hover:bg-rose-700 disabled:opacity-50 flex items-center gap-1.5"
               >
                 {rescanStatus?.loading ? <><span className="animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full" /> Đang quét…</> : '🔁 Bắt đầu quét'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {leadScanOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => !leadScanStatus?.loading && setLeadScanOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 border-b flex items-center justify-between sticky top-0 bg-white">
+              <div>
+                <h3 className="text-lg font-bold text-amber-900">📅 Quét lead theo ngày</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Lọc theo <strong>ngày tạo lead CRM</strong> (UTC). Chưa có SĐT → bổ sung từ tin user; có SĐT mới → cập nhật contact + lead; có SĐT nhưng quét không ra → xóa lead (nếu được) và xóa user khỏi danh bạ.
+                </p>
+              </div>
+              <button type="button" onClick={() => !leadScanStatus?.loading && setLeadScanOpen(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-0.5 text-[11px]">
+                  <span className="text-gray-600 font-medium">Từ ngày</span>
+                  <input
+                    type="date"
+                    value={leadScanForm.lead_date_from}
+                    onChange={(e) => setLeadScanForm((f) => ({ ...f, lead_date_from: e.target.value }))}
+                    disabled={leadScanStatus?.loading}
+                    className="px-2 py-1.5 border border-amber-200 rounded-md text-sm bg-white"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 text-[11px]">
+                  <span className="text-gray-600 font-medium">Đến ngày</span>
+                  <input
+                    type="date"
+                    value={leadScanForm.lead_date_to}
+                    onChange={(e) => setLeadScanForm((f) => ({ ...f, lead_date_to: e.target.value }))}
+                    disabled={leadScanStatus?.loading}
+                    className="px-2 py-1.5 border border-amber-200 rounded-md text-sm bg-white"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 text-[11px]">
+                  <span className="text-gray-600 font-medium">Tối đa contact</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={2000}
+                    value={leadScanForm.limit}
+                    onChange={(e) => setLeadScanForm((f) => ({ ...f, limit: Math.min(2000, Math.max(1, parseInt(e.target.value, 10) || 300)) }))}
+                    disabled={leadScanStatus?.loading}
+                    className="w-20 px-2 py-1.5 border border-amber-200 rounded-md text-sm"
+                  />
+                </label>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  checked={leadScanForm.sync_graph_first}
+                  onChange={(e) => setLeadScanForm((f) => ({ ...f, sync_graph_first: e.target.checked }))}
+                  disabled={leadScanStatus?.loading}
+                  className="rounded text-amber-600"
+                />
+                <span>Đồng bộ tin từ Facebook trước khi quét (khuyến nghị; tắt = chỉ đọc tin đã lưu DB)</span>
+              </label>
+              {leadScanForm.sync_graph_first && (
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <span className="text-xs w-28">Trang Graph / contact</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={leadScanForm.graph_pages}
+                    onChange={(e) => setLeadScanForm((f) => ({ ...f, graph_pages: Math.min(30, Math.max(1, parseInt(e.target.value, 10) || 10)) }))}
+                    disabled={leadScanStatus?.loading}
+                    className="w-16 px-2 py-1 border rounded text-sm"
+                  />
+                </label>
+              )}
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  checked={leadScanForm.sync_customer}
+                  onChange={(e) => setLeadScanForm((f) => ({ ...f, sync_customer: e.target.checked }))}
+                  disabled={leadScanStatus?.loading}
+                  className="rounded text-amber-600"
+                />
+                <span>Đồng bộ SĐT sang <strong>customer.phone</strong></span>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer text-[13px] text-gray-800">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-amber-300"
+                  checked={leadScanForm.include_contacts_without_lead_in_range}
+                  onChange={(e) => setLeadScanForm((f) => ({ ...f, include_contacts_without_lead_in_range: e.target.checked }))}
+                  disabled={leadScanStatus?.loading}
+                />
+                <span>Gồm contact <strong>chưa có lead</strong> nhưng ngày tạo contact nằm trong khoảng (giống «Quét lại SĐT»)</span>
+              </label>
+
+              {leadScanProgress && leadScanStatus?.loading && (
+                <div className="text-xs text-gray-600 space-y-1">
+                  <div>
+                    Đang xử lý: <span className="font-medium">{leadScanProgress.name || '…'}</span> ({leadScanProgress.current || 0}/{leadScanProgress.total || 0})
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500 rounded-full transition-all"
+                      style={{ width: `${leadScanProgress.total ? Math.round(((leadScanProgress.current || 0) / leadScanProgress.total) * 100) : 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {leadScanStatus?.error && (
+                <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">❌ {leadScanStatus.error}</div>
+              )}
+
+              {leadScanStatus?.result && !leadScanStatus.error && (
+                <div className="space-y-2 text-xs">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    <div className="bg-gray-50 rounded p-2"><div className="text-gray-500">Đã quét</div><div className="font-bold">{leadScanStatus.result.scanned}</div></div>
+                    <div className="bg-green-50 rounded p-2"><div className="text-green-700">Set SĐT mới</div><div className="font-bold text-green-800">{leadScanStatus.result.updated_set ?? 0}</div></div>
+                    <div className="bg-amber-50 rounded p-2"><div className="text-amber-800">Đổi SĐT</div><div className="font-bold text-amber-900">{leadScanStatus.result.updated_replaced ?? 0}</div></div>
+                    <div className="bg-gray-100 rounded p-2"><div className="text-gray-600">Giữ nguyên (trùng)</div><div className="font-bold">{leadScanStatus.result.unchanged_same ?? 0}</div></div>
+                    <div className="bg-slate-50 rounded p-2"><div className="text-slate-600">Vẫn không có SĐT</div><div className="font-bold">{leadScanStatus.result.still_no_phone ?? 0}</div></div>
+                    <div className="bg-red-50 rounded p-2"><div className="text-red-700">Đã xóa user FB</div><div className="font-bold text-red-800">{leadScanStatus.result.deleted_contacts ?? 0}</div></div>
+                    <div className="bg-rose-50 rounded p-2"><div className="text-rose-800">Đã xóa lead</div><div className="font-bold">{leadScanStatus.result.leads_deleted ?? 0}</div></div>
+                    <div className="bg-orange-50 rounded p-2"><div className="text-orange-800">Lead không xóa được</div><div className="font-bold">{leadScanStatus.result.lead_delete_blocked ?? 0}</div></div>
+                    <div className="bg-purple-50 rounded p-2"><div className="text-purple-800">Đã xóa KH mồ côi</div><div className="font-bold">{leadScanStatus.result.customers_deleted ?? 0}</div></div>
+                  </div>
+                  {typeof leadScanStatus.result.graph_messages_synced === 'number' && leadScanStatus.result.graph_messages_synced > 0 && (
+                    <p className="text-[11px] text-gray-500">Tin mới từ Graph (ước lượng): +{leadScanStatus.result.graph_messages_synced}</p>
+                  )}
+                  {leadScanStatus.result.skipped_by_lead_date > 0 && (
+                    <p className="text-[11px] text-gray-500">Loại khỏi khoảng ngày: {leadScanStatus.result.skipped_by_lead_date}</p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t bg-amber-50/50 flex items-center justify-end gap-2 sticky bottom-0">
+              <button
+                type="button"
+                onClick={() => !leadScanStatus?.loading && setLeadScanOpen(false)}
+                disabled={leadScanStatus?.loading}
+                className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                onClick={() => void runLeadScanByDate()}
+                disabled={leadScanStatus?.loading}
+                className="px-4 py-2 text-sm font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {leadScanStatus?.loading ? <span className="animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full" /> : '📅'}
+                Chạy quét
               </button>
             </div>
           </div>

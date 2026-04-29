@@ -14,6 +14,7 @@ import { api } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from './AuthContext';
 import { isNotificationTypeEnabled } from '../lib/notificationPrefs';
+import { isExpiryDeadlineNotificationType } from '../lib/operationalNotifications';
 import { CRM_MOBILE_PREFS_CHANGED, loadCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
 import { rememberMessengerTargetFromNotification } from '../lib/messengerBubbleTarget';
 import { navigateFromAppNotification } from '../lib/navigateFromAppNotification';
@@ -230,6 +231,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     const onNotif = (raw: unknown) => {
       const n = raw as AppNotification;
+      if (isExpiryDeadlineNotificationType(n?.type)) return;
       if (!isNotificationTypeEnabled(prefsRef.current, n?.type, n?.entity_type)) return;
       setUnreadCount((c) => c + 1);
       if (isChatNotification(n)) setChatUnreadCount((c) => c + 1);

@@ -1,6 +1,10 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const {
+  isExpiryDeadlineNotificationType,
+  postgrestNotInTypesForDeadlines,
+} = require('../helpers/notificationOperationalFilter');
 
 const r = Router();
 r.use(auth);
@@ -13,12 +17,14 @@ const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 
 r.get('/', async (req, res) => {
   try {
+    const notInDeadlines = postgrestNotInTypesForDeadlines();
     const [{ count: unread }, { count: unreadChat }] = await Promise.all([
       supabase
         .from('notifications')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', req.user.userId)
-        .eq('is_read', false),
+        .eq('is_read', false)
+        .not('type', 'in', notInDeadlines),
       supabase
         .from('notifications')
         .select('*', { count: 'exact', head: true })
@@ -45,19 +51,22 @@ r.get('/', async (req, res) => {
 r.get('/notifications', async (req, res) => {
   try {
     const { unread, limit = 50 } = req.query;
+    const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+    const fetchCap = Math.min(lim * 10, 500);
     let q = supabase
       .from('notifications')
       .select('*')
       .eq('user_id', req.user.userId)
       .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
-    
+      .limit(fetchCap);
+
     if (unread === 'true') q = q.eq('is_read', false);
-    
+
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
-    
-    res.json({ notifications: data || [] });
+
+    const rows = (data || []).filter((n) => !isExpiryDeadlineNotificationType(n.type)).slice(0, lim);
+    res.json({ notifications: rows });
   } catch (e) {
     console.error('Dashboard notifications error:', e);
     res.status(500).json({ error: e.message });

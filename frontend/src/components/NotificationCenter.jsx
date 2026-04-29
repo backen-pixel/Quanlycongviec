@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
+import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
 import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
@@ -108,7 +109,8 @@ export default function NotificationCenter({ socket }) {
     try {
       const params = tab === 'unread' ? { unread: 'true' } : {};
       const { data } = await api.get('/dashboard/notifications', { params });
-      setNotifications(data.notifications || []);
+      const raw = data.notifications || [];
+      setNotifications(raw.filter((n) => !isExpiryDeadlineNotificationType(n.type)));
     } catch { }
     setLoading(false);
   };
@@ -167,6 +169,7 @@ export default function NotificationCenter({ socket }) {
   useEffect(() => {
     if (!socket) return;
     const handler = (notif) => {
+      if (isExpiryDeadlineNotificationType(notif?.type)) return;
       if (!isNotificationTypeEnabled(notif?.type, notif?.entity_type)) return;
 
       cancelNotificationSpeech();

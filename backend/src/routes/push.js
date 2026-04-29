@@ -3,6 +3,7 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isNotificationTypeAllowed } = require('../helpers/notificationPrefTypes');
 const { DEFAULT_PREFS, invalidateNotificationPrefsCache } = require('../helpers/notificationPrefsUser');
+const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOperationalFilter');
 let webpush;
 try { webpush = require('web-push'); } catch { webpush = null; }
 
@@ -174,6 +175,8 @@ async function sendWebPush(userId, notification) {
       console.log('Web push not configured, skipping');
       return;
     }
+
+    if (isExpiryDeadlineNotificationType(notification?.type)) return;
 
     // Get user subscriptions
     const { data: subscriptions } = await supabase.from('push_subscriptions')

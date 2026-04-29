@@ -3,12 +3,15 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 
+const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOperationalFilter');
+
 const r = Router();
 r.use(auth);
 
 // ─── HELPER ──
 async function createNotification(req, userId, type, title, message, entityType, entityId) {
   if (!userId || userId === req.user.userId) return;
+  if (isExpiryDeadlineNotificationType(type)) return null;
   const { data } = await supabase.from('notifications').insert({
     user_id: userId, type, title, message, entity_type: entityType, entity_id: entityId,
   }).select().single();
