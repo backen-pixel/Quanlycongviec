@@ -1637,14 +1637,16 @@ export default function CRMDashboard() {
               Gộp đã chọn
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setBulkAssignModalOpen(true)}
-            className="h-9 px-4 rounded-lg bg-white border border-amber-400 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer shadow-sm flex items-center gap-1.5"
-          >
-            <UserCheck className="h-3.5 w-3.5 shrink-0" />
-            Gán phụ trách
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setBulkAssignModalOpen(true)}
+              className="h-9 px-4 rounded-lg bg-white border border-amber-400 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer shadow-sm flex items-center gap-1.5"
+            >
+              <UserCheck className="h-3.5 w-3.5 shrink-0" />
+              Gán phụ trách
+            </button>
+          )}
           <button
             type="button"
             onClick={bulkDeleteSelected}

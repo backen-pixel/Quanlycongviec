@@ -47,6 +47,7 @@ export default function LeadDetail() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const { socket, user } = useAuth();
+  const isAdminUser = user?.role === 'admin';
   const { setCrmNotesAnchor } = useCrmNotesFab();
   const loadRef = useRef(null);
   const navigate = useNavigate();
@@ -329,9 +330,26 @@ export default function LeadDetail() {
     if (targetStage?.is_won && lead?.type !== 'deal') {
       const hasAssignee = !!(lead?.assigned_to || lead?.lead_owner_id);
       if (!hasAssignee) {
-        // Chưa có người phụ trách → chỉ hiện ô chọn nhân viên
-        setAssignBeforeWonUser('');
-        setShowAssignBeforeWonModal(true);
+        // Chưa có người phụ trách: chỉ admin chọn người; NV tự gắn phụ trách = chính mình (backend convert-to-deal fallback)
+        if (isAdminUser) {
+          setAssignBeforeWonUser('');
+          setShowAssignBeforeWonModal(true);
+        } else {
+          (async () => {
+            setAssigningForWon(true);
+            setAssignBeforeWonError('');
+            try {
+              const { data } = await api.post(`/crm/leads/${id}/convert-to-deal`, {
+                company_id: lead?.company_id || undefined,
+              });
+              navigateToCrmDealFocused(data?.deal?.id || data?.id || id);
+            } catch (e) {
+              alert(e.response?.data?.error || 'Lỗi chuyển sang Deal');
+            } finally {
+              setAssigningForWon(false);
+            }
+          })();
+        }
       } else {
         setShowConvertModal(true);
       }
@@ -798,7 +816,7 @@ export default function LeadDetail() {
           </div>
 
           {/* Lead Info — Editable inline */}
-          <LeadInfoPanel lead={lead} allUsers={allUsers} onUpdate={load} currentUser={user} />
+          <LeadInfoPanel lead={lead} allUsers={allUsers} onUpdate={load} currentUser={user} canAssignOwner={isAdminUser} />
 
           {/* Quick Stats Card */}
           <div className="grid grid-cols-3 gap-2">
@@ -1204,7 +1222,7 @@ export default function LeadDetail() {
       )}
 
       {/* Modal chọn người phụ trách trước khi chuyển sang Deal (won stage) */}
-      {showAssignBeforeWonModal && (
+      {showAssignBeforeWonModal && isAdminUser && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!assigningForWon) { setShowAssignBeforeWonModal(false); setAssignBeforeWonError(''); } }}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-1">
@@ -1746,7 +1764,7 @@ function AddDocumentModal({ onClose, onSave }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LeadInfoPanel — Inline editable fields (always visible)
 // ═══════════════════════════════════════════════════════════════════════════
-function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
+function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner = false }) {
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -1983,7 +2001,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
             </p>
             {!lead?.company_id ? (
               <p className="text-xs text-amber-500 italic">⚠️ Chọn công ty trước</p>
-            ) : (
+            ) : canAssignOwner ? (
               <EmployeePicker
                 companyId={lead?.company_id}
                 value={lead?.assigned_to || lead?.lead_owner_id || ''}
@@ -1991,6 +2009,13 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser }) {
                 placeholder="👤 Chọn nhân viên phụ trách..."
                 size="sm"
               />
+            ) : (
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-gray-900">
+                  {lead?.assignee?.full_name || lead?.lead_owner?.full_name || '—'}
+                </p>
+                <p className="text-[10px] text-gray-400">Chỉ admin mới đổi người phụ trách.</p>
+              </div>
             )}
           </div>
         </div>
@@ -2244,6 +2269,8 @@ function CustomerCreateForm({ leadId, onCreated }) {
 }
 
 function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose, onSuccess }) {
+  const { user: authUser } = useAuth();
+  const canPickOwner = authUser?.role === 'admin';
   const [converting, setConverting] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState('');
@@ -2270,7 +2297,7 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
     setConverting(true);
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`, {
-        assigned_to: selectedSales || undefined,
+        ...(canPickOwner && selectedSales ? { assigned_to: selectedSales } : {}),
         company_id: selectedCompany || undefined,
       });
       alert(`✅ ${data.message}`);
@@ -2320,19 +2347,29 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
             </div>
           )}
 
-          <div>
-            <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Người phụ trách sau khi chuyển Deal</label>
-            <EmployeePicker
-              companyId={selectedCompany}
-              value={selectedSales}
-              onChange={(userId) => setSelectedSales(userId || '')}
-              placeholder="Chọn nhân viên phụ trách..."
-              size="md"
-            />
-            {!selectedCompany && (
-              <p className="text-[10px] text-amber-500 mt-0.5">⚠️ Chọn công ty trước để lọc nhân viên</p>
-            )}
-          </div>
+          {canPickOwner ? (
+            <div>
+              <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Người phụ trách sau khi chuyển Deal</label>
+              <EmployeePicker
+                companyId={selectedCompany}
+                value={selectedSales}
+                onChange={(userId) => setSelectedSales(userId || '')}
+                placeholder="Chọn nhân viên phụ trách..."
+                size="md"
+              />
+              {!selectedCompany && (
+                <p className="text-[10px] text-amber-500 mt-0.5">⚠️ Chọn công ty trước để lọc nhân viên</p>
+              )}
+            </div>
+          ) : (
+            <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
+              <p className="text-xs font-bold text-gray-700 mb-1">👤 Người phụ trách sau khi chuyển Deal</p>
+              <p className="text-sm text-gray-800">
+                {lead?.assignee?.full_name || lead?.lead_owner?.full_name || 'Theo mặc định hệ thống (tài khoản của bạn nếu chưa có).'}
+              </p>
+              <p className="text-[10px] text-gray-500 mt-1">Chỉ admin mới được chọn người phụ trách khi chuyển Deal.</p>
+            </div>
+          )}
 
           <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
             <p className="text-sm text-blue-800">

@@ -364,13 +364,44 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
     const parts = p.split('/').filter(Boolean);
     const head = parts[0];
     if ((head !== 'leads' && head !== 'deals') || !parts[1] || !CRM_LEAD_ID_IN_PATH.test(parts[1])) return next();
+    // Nhiệm vụ CRM (.../tasks/...): không chặn theo phụ trách — chỉ cần đăng nhập (auth).
+    if (/\/tasks(\/|$)/.test(p)) return next();
     const leadId = parts[1];
-    const { data: lead, error } = await supabase.from('crm_leads').select('id, type, assigned_to, lead_owner_id').eq('id', leadId).maybeSingle();
+    const { data: lead, error } = await supabase
+      .from('crm_leads')
+      .select('id, type, assigned_to, lead_owner_id, parent_lead_id')
+      .eq('id', leadId)
+      .maybeSingle();
     if (error || !lead) return next();
     const uid = req.user?.userId;
+
+    /** Deal con (fulfillment theo đơn): NV sale phụ trách deal gốc vẫn cần xem/sửa tasks của deal con */
+    async function userOwnsDealViaAncestor(userId, row) {
+      if (!userId || !row) return false;
+      if (String(row.assigned_to || '') === String(userId)) return true;
+      let cur = row;
+      let g = 0;
+      while (cur?.parent_lead_id && g < 8) {
+        const { data: par } = await supabase
+          .from('crm_leads')
+          .select('id, type, assigned_to, lead_owner_id, parent_lead_id')
+          .eq('id', cur.parent_lead_id)
+          .maybeSingle();
+        if (!par) break;
+        if (par.type === 'deal' && String(par.assigned_to || '') === String(userId)) return true;
+        cur = par;
+        g += 1;
+      }
+      return false;
+    }
+
     if (lead.type === 'deal') {
       if (userSeesAllCrmDeals(req.user?.role)) return next();
-      if (!uid || String(lead.assigned_to || '') !== String(uid)) {
+      if (!uid) {
+        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
+      }
+      const ok = await userOwnsDealViaAncestor(uid, lead);
+      if (!ok) {
         return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
       }
       return next();
@@ -1815,6 +1846,10 @@ r.post('/leads/bulk-assign', async (req, res) => {
       ownerId = String(lead_owner_id).trim();
     }
 
+    if (!userIsAdmin(req.user?.role)) {
+      return res.status(403).json({ error: 'Chỉ admin mới được gán / điều chỉnh người phụ trách.' });
+    }
+
     const { data: olds, error: fErr } = await supabase
       .from('crm_leads')
       .select('id, type, assigned_to, lead_owner_id, title')
@@ -2711,6 +2746,14 @@ r.put('/leads/:id', async (req, res) => {
     delete safeBody.expected_production_end_date;
     if (Object.prototype.hasOwnProperty.call(req.body, 'assigned_to') || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id')) {
       unifyCrmLeadResponsibleFields(safeBody);
+    }
+
+    // Chỉ admin mới được đổi người phụ trách / gán nhân viên trên chi tiết Lead/Deal
+    const wantsOwnerChange =
+      Object.prototype.hasOwnProperty.call(req.body, 'assigned_to')
+      || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id');
+    if (wantsOwnerChange && !userIsAdmin(req.user?.role)) {
+      return res.status(403).json({ error: 'Chỉ admin mới được gán / điều chỉnh người phụ trách.' });
     }
 
     if (oldLead?.type === 'deal' && !userSeesAllCrmDeals(req.user.role)) {
