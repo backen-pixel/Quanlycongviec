@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2 } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 
 /** Hai mẫu theo tài liệu Zalo / ví dụ template ngắn — ID chỉ để thử form; OA thật cần template_id của bạn */
@@ -69,7 +69,16 @@ export default function PipelineSettingsPage() {
   const [activeType, setActiveType] = useState('lead');
   const [adding, setAdding] = useState(null);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ name: '', color: '#94A3B8', icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false, sync_role: '' });
+  const [form, setForm] = useState({
+    name: '',
+    color: '#94A3B8',
+    icon: '🆕',
+    is_won: false,
+    is_lost: false,
+    send_zalo_on_enter: false,
+    create_event_on_enter: false,
+    sync_role: '',
+  });
   const isAdmin = user?.role === 'admin';
   const [companies, setCompanies] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
@@ -379,6 +388,16 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  const toggleCreateEventColumn = async (stage) => {
+    if (stage.pipeline_type !== 'deal') return;
+    try {
+      await api.put(`/crm/pipeline-stages/${stage.id}`, { create_event_on_enter: !stage.create_event_on_enter });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
   const visiblePipelines = useMemo(() => {
     if (!isAdmin) return pipelines || [];
     if (!selectedCompanyId) return pipelines || [];
@@ -399,7 +418,16 @@ export default function PipelineSettingsPage() {
   const startAdd = (type) => {
     setAdding(type);
     setEditId(null);
-    setForm({ name: '', color: COLORS[filtered.length % COLORS.length], icon: '🆕', is_won: false, is_lost: false, send_zalo_on_enter: false, sync_role: '' });
+    setForm({
+      name: '',
+      color: COLORS[filtered.length % COLORS.length],
+      icon: '🆕',
+      is_won: false,
+      is_lost: false,
+      send_zalo_on_enter: false,
+      create_event_on_enter: false,
+      sync_role: '',
+    });
   };
 
   const startEdit = (stage) => {
@@ -412,6 +440,7 @@ export default function PipelineSettingsPage() {
       is_won: stage.is_won,
       is_lost: stage.is_lost,
       send_zalo_on_enter: !!stage.send_zalo_on_enter,
+      create_event_on_enter: !!stage.create_event_on_enter,
       sync_role: stage.sync_role || '',
     });
   };
@@ -564,19 +593,34 @@ export default function PipelineSettingsPage() {
             </div>
             <div className="flex items-center gap-1 shrink-0">
               {s.pipeline_type === 'deal' && (
-                <button
-                  type="button"
-                  onClick={() => toggleZaloColumn(s)}
-                  className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
-                    s.send_zalo_on_enter
-                      ? 'bg-sky-100 text-sky-800 border-sky-300'
-                      : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-sky-200'
-                  }`}
-                  title="Khi deal kéo vào cột này: gửi tin Zalo OA (khuyến nghị chỉ bật trên cột tên «Hoàn thành»; cần bật OA + token/template)"
-                >
-                  <MessageCircle className="h-3 w-3" />
-                  Zalo
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => toggleCreateEventColumn(s)}
+                    className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                      s.create_event_on_enter
+                        ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                        : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-emerald-200'
+                    }`}
+                    title="Khi deal chuyển vào cột này: mở bảng chọn giờ rồi tạo sự kiện (nội dung lấy từ deal)"
+                  >
+                    <Calendar className="h-3 w-3" />
+                    Sự kiện
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleZaloColumn(s)}
+                    className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                      s.send_zalo_on_enter
+                        ? 'bg-sky-100 text-sky-800 border-sky-300'
+                        : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-sky-200'
+                    }`}
+                    title="Khi deal kéo vào cột này: gửi tin Zalo OA (khuyến nghị chỉ bật trên cột tên «Hoàn thành»; cần bật OA + token/template)"
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    Zalo
+                  </button>
+                </>
               )}
               <button onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer" title={s.is_active ? 'Ẩn' : 'Hiện'}>
                 {s.is_active ? <Eye className="h-3.5 w-3.5 text-gray-400" /> : <EyeOff className="h-3.5 w-3.5 text-orange-400" />}
@@ -1223,6 +1267,17 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
               className="rounded border-sky-400"
             />
             <MessageCircle className="h-3.5 w-3.5" /> Tự gửi Zalo OA khi deal vào cột này
+          </label>
+        )}
+        {pipelineType === 'deal' && (
+          <label className="flex items-center gap-2 text-xs cursor-pointer text-emerald-900 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+            <input
+              type="checkbox"
+              checked={!!form.create_event_on_enter}
+              onChange={(e) => setForm((f) => ({ ...f, create_event_on_enter: e.target.checked }))}
+              className="rounded border-emerald-400"
+            />
+            <Calendar className="h-3.5 w-3.5 shrink-0" /> Hỏi tạo sự kiện khi deal chuyển vào cột này (chỉ chọn giờ)
           </label>
         )}
       </div>

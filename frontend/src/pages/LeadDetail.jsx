@@ -18,6 +18,7 @@ import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
+import DealStageEventModal from '../components/DealStageEventModal';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -86,6 +87,8 @@ export default function LeadDetail() {
   const [approvalForm, setApprovalForm] = useState({ type: 'drawing', title: '', note: '' });
   const [zaloQuickSendLoading, setZaloQuickSendLoading] = useState(false);
   const [movingStage, setMovingStage] = useState(false);
+  const [dealDetailEventCtx, setDealDetailEventCtx] = useState(null);
+  const [dealDetailEventBusy, setDealDetailEventBusy] = useState(false);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -314,6 +317,29 @@ export default function LeadDetail() {
     navigate('/crm');
   };
 
+  const patchLeadStage = async (stageId, extraData = {}) => {
+    if (movingStage) return null;
+    setMovingStage(true);
+    setLead((prev) => (prev ? { ...prev, stage_id: stageId } : prev));
+    try {
+      const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId, ...extraData });
+      if (data?.requires_conversion) setShowConvertModal(true);
+      if (data?.deal_won && !lead?.project_id) autoCreateProject(id);
+      await loadRef.current?.();
+      return data;
+    } catch (e) {
+      if (e.response?.data?.requires_conversion) {
+        setShowConvertModal(true);
+      } else {
+        await loadRef.current?.();
+        alert(e.response?.data?.error || 'Lỗi');
+      }
+      return null;
+    } finally {
+      setMovingStage(false);
+    }
+  };
+
   const moveStage = async (stageId, extraData = {}) => {
     const stages = lead?.type === 'deal' ? stagesDeal : stagesLead;
     const targetStage = stages.find(s => s.id === stageId);
@@ -356,25 +382,59 @@ export default function LeadDetail() {
       return;
     }
 
+    if (
+      lead?.type === 'deal' &&
+      targetStage &&
+      !targetStage.is_lost &&
+      targetStage.create_event_on_enter
+    ) {
+      setDealDetailEventCtx({ stageId, extraData, targetStage });
+      return;
+    }
+
     if (movingStage) return;
-    setMovingStage(true);
-    // Optimistic UI: stepper cập nhật ngay, rồi load lại để đồng bộ badge/fields
-    setLead((prev) => (prev ? { ...prev, stage_id: stageId } : prev));
+    await patchLeadStage(stageId, extraData);
+  };
+
+  const confirmDealDetailEvent = async ({ startIso, endIso, titlePreview, locPreview }) => {
+    const ctx = dealDetailEventCtx;
+    if (!ctx || !lead) return;
+    setDealDetailEventBusy(true);
     try {
-      const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId, ...extraData });
-      if (data?.requires_conversion) setShowConvertModal(true);
-      if (data?.deal_won && !lead?.project_id) autoCreateProject(id);
-      await loadRef.current?.();
-    } catch (e) {
-      if (e.response?.data?.requires_conversion) {
-        setShowConvertModal(true);
-      } else {
-        // rollback optimistic stage if server rejects
-        await loadRef.current?.();
-        alert(e.response?.data?.error || 'Lỗi');
+      const data = await patchLeadStage(ctx.stageId, ctx.extraData);
+      if (!data || data.requires_conversion) {
+        setDealDetailEventCtx(null);
+        return;
       }
+      await api.post('/events', {
+        title: titlePreview,
+        description: lead.description || null,
+        location: locPreview && locPreview !== '—' ? locPreview : null,
+        start_time: startIso,
+        end_time: endIso,
+        lead_id: id,
+        customer_id: lead.customer_id || null,
+        assignee_id: lead.assigned_to || lead.lead_owner_id || null,
+        event_type: 'site_visit',
+        status: 'planned',
+      });
+      setDealDetailEventCtx(null);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi tạo sự kiện');
     } finally {
-      setMovingStage(false);
+      setDealDetailEventBusy(false);
+    }
+  };
+
+  const skipDealDetailEvent = async () => {
+    const ctx = dealDetailEventCtx;
+    if (!ctx || !lead) return;
+    setDealDetailEventBusy(true);
+    try {
+      await patchLeadStage(ctx.stageId, ctx.extraData);
+    } finally {
+      setDealDetailEventBusy(false);
+      setDealDetailEventCtx(null);
     }
   };
 
@@ -1304,6 +1364,18 @@ export default function LeadDetail() {
           onClose={() => setShowExcelImport(false)}
         />
       )}
+
+      <DealStageEventModal
+        open={!!dealDetailEventCtx}
+        onClose={() => {
+          if (!dealDetailEventBusy) setDealDetailEventCtx(null);
+        }}
+        deal={lead?.type === 'deal' ? { ...lead, customer: lead.customer || customer } : null}
+        targetStageName={dealDetailEventCtx?.targetStage?.name}
+        onConfirm={confirmDealDetailEvent}
+        onMoveWithoutEvent={skipDealDetailEvent}
+        submitting={dealDetailEventBusy}
+      />
 
       {/* Modal lý do thua */}
       {showLostModal && (

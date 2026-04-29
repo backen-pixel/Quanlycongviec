@@ -153,6 +153,36 @@ function normalizePhoneForLeadCreation(rawVin) {
   return { ok: false, normalized: null };
 }
 
+/**
+ * SĐT đang lưu có vấn đề (không phải thuê bao VN chuẩn): dài bất thường, chuỗi số trong link, v.v.
+ * Dùng cho quét «SĐT sai / nghi từ link» trước khi cập nhật hoặc xóa lead/KH.
+ */
+function analyzeStoredPhoneIssue(raw) {
+  const trimmed = raw != null ? String(raw).trim() : '';
+  if (!trimmed) {
+    return {
+      is_bad: false,
+      digit_count: 0,
+      likely_from_link: false,
+      validate: { valid: false, normalized: null },
+    };
+  }
+  const validate = validateVnSubscriberPhoneStored(trimmed);
+  const digits = normalizeUnicodeDigitsToAscii(trimmed).replace(/\D/g, '');
+  const likelyFromLink =
+    /https?:\/\//i.test(trimmed)
+    || /(?:m\.me|fb\.me|zalo\.me|shopee\.|lazada\.|tiktok\.com)/i.test(trimmed)
+    || digits.length > 11
+    || (digits.length >= 10 && !validate.valid);
+  const is_bad = !validate.valid;
+  return {
+    is_bad,
+    digit_count: digits.length,
+    likely_from_link: !!(is_bad && likelyFromLink),
+    validate,
+  };
+}
+
 module.exports = {
   normalizeUnicodeDigitsToAscii,
   isLikelyVnSubscriberNumber,
@@ -162,4 +192,5 @@ module.exports = {
   normalizePhoneForLeadCreation,
   extractContactInfo,
   extractInboundContactInfo,
+  analyzeStoredPhoneIssue,
 };

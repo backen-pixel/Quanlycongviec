@@ -13,8 +13,10 @@ const {
   extractContactInfo,
   extractInboundContactInfo,
   normalizePhoneForLeadCreation,
+  validateVnSubscriberPhoneStored,
+  analyzeStoredPhoneIssue,
 } = require('../helpers/facebookPhoneExtract');
-const { deleteLeadIfAllowedForRescan } = require('../helpers/facebookLeadDeleteWhenNoPhone');
+const { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed } = require('../helpers/facebookLeadDeleteWhenNoPhone');
 const { reconcileInboundPhoneAfterScan } = require('../helpers/facebookInboundPhoneReconcile');
 
 // Disable DB logging to facebook_webhook_logs to reduce Supabase egress.
@@ -5370,6 +5372,10 @@ const DEFAULT_RESCAN_PHONES_SCHEDULE = {
   sync_customer: true,
   /** Khi true: inbound không trích được SĐT + có lead → thử xóa (kể cả contact còn SĐT cũ). Điều kiện an toàn trong helper. */
   delete_lead_when_no_phone: false,
+  delete_orphan_customer_no_phone: false,
+  lead_date_from: null,
+  lead_date_to: null,
+  include_contacts_without_lead_in_range: false,
 };
 let rescanPhonesSchedule = { ...DEFAULT_RESCAN_PHONES_SCHEDULE };
 let rescanPhonesScheduleTimeoutId = null;
@@ -5399,6 +5405,10 @@ async function saveRescanPhonesScheduleConfig(patch) {
   merged.sync_customer = merged.sync_customer !== false;
   merged.enabled = !!merged.enabled;
   merged.delete_lead_when_no_phone = !!merged.delete_lead_when_no_phone;
+  merged.delete_orphan_customer_no_phone = !!merged.delete_orphan_customer_no_phone;
+  merged.include_contacts_without_lead_in_range = !!merged.include_contacts_without_lead_in_range;
+  if (merged.lead_date_from != null && String(merged.lead_date_from).trim() === '') merged.lead_date_from = null;
+  if (merged.lead_date_to != null && String(merged.lead_date_to).trim() === '') merged.lead_date_to = null;
   if (merged.page_id != null && String(merged.page_id).trim() !== '') {
     merged.page_id = String(merged.page_id).trim();
   } else {
@@ -5449,6 +5459,10 @@ async function runRescanPhonesScheduledTick() {
       page_id: rescanPhonesSchedule.page_id,
       sync_customer: rescanPhonesSchedule.sync_customer,
       delete_lead_when_no_phone: !!rescanPhonesSchedule.delete_lead_when_no_phone,
+      delete_orphan_customer_no_phone: !!rescanPhonesSchedule.delete_orphan_customer_no_phone,
+      lead_date_from: rescanPhonesSchedule.lead_date_from || undefined,
+      lead_date_to: rescanPhonesSchedule.lead_date_to || undefined,
+      include_contacts_without_lead_in_range: !!rescanPhonesSchedule.include_contacts_without_lead_in_range,
     };
     console.log('[RescanSchedule] ▶ tick', body);
     await runRescanPhonesBatch(body, r._ioRef);
@@ -5778,11 +5792,97 @@ r.post('/auto-pipeline/stop', authMiddleware, async (_req, res) => {
 //   page_id: filter theo page (optional)
 //   sync_customer: true → đồng bộ SĐT mới sang customer.phone (default true)
 //   delete_lead_when_no_phone: true → inbound không trích được SĐT (kể cả contact vẫn đang lưu SĐT cũ), có lead_id → xóa lead nếu đủ điều kiện an toàn (type=lead, không project/đơn/báo giá/…).
+//   delete_orphan_customer_no_phone: true → sau khi xóa lead (khi bật delete_lead_when_no_phone), thử xóa customer không SĐT nếu chỉ gắn contact này và không còn lead/dự án/đơn/BG.
+//   lead_date_from / lead_date_to: YYYY-MM-DD (optional) — chỉ lấy contact có lead CRM type=lead với created_at trong khoảng (UTC). Contact chưa có lead bị loại trừ trừ khi include_contacts_without_lead_in_range.
+//   include_contacts_without_lead_in_range: khi có lead_date_* — gồm contact chưa lead nhưng created_at của contact nằm trong cùng khoảng ngày.
 //
 // Thứ tự: khớp danh bạ — max(last_message_at, created_at) (activityTimestampMs), không chỉ last_message_at.
 // Logic: chỉ quét tin nhắn direction='inbound' (tin của user FB),
 // extractContactInfo đã loại URL bằng stripUrlLikeSegments.
 // ═══════════════════════════════════════════════════════════════
+
+function parseUtcDayBoundary(fromStr, toStr) {
+  let fromMs = null;
+  let toMs = null;
+  if (fromStr && String(fromStr).trim()) {
+    const d = new Date(`${String(fromStr).trim()}T00:00:00.000Z`);
+    if (!Number.isNaN(d.getTime())) fromMs = d.getTime();
+  }
+  if (toStr && String(toStr).trim()) {
+    const d = new Date(`${String(toStr).trim()}T23:59:59.999Z`);
+    if (!Number.isNaN(d.getTime())) toMs = d.getTime();
+  }
+  return { fromMs, toMs };
+}
+
+async function loadLeadMapForContacts(supabaseClient, contactsList) {
+  const ids = [...new Set((contactsList || []).map((c) => c.lead_id).filter(Boolean))];
+  const map = {};
+  const chunk = 500;
+  for (let i = 0; i < ids.length; i += chunk) {
+    const slice = ids.slice(i, i + chunk);
+    const { data: leads, error } = await supabaseClient
+      .from('crm_leads')
+      .select('id, created_at, type')
+      .in('id', slice);
+    if (error) throw new Error(error.message);
+    (leads || []).forEach((L) => {
+      map[L.id] = L;
+    });
+  }
+  return map;
+}
+
+async function filterContactsByLeadDateRange(supabaseClient, contactsList, body) {
+  const fromS = body.lead_date_from && String(body.lead_date_from).trim();
+  const toS = body.lead_date_to && String(body.lead_date_to).trim();
+  if (!fromS && !toS) return { filtered: contactsList, skippedByDate: 0 };
+  const { fromMs, toMs } = parseUtcDayBoundary(fromS, toS);
+  const includeNoLead = !!body.include_contacts_without_lead_in_range;
+  const leadMap = await loadLeadMapForContacts(supabaseClient, contactsList);
+  const out = [];
+  let skippedByDate = 0;
+  for (const c of contactsList || []) {
+    const createdMs = c.created_at ? new Date(c.created_at).getTime() : null;
+    if (c.lead_id) {
+      const lead = leadMap[c.lead_id];
+      if (!lead || lead.type !== 'lead') {
+        skippedByDate += 1;
+        continue;
+      }
+      const t = lead.created_at ? new Date(lead.created_at).getTime() : NaN;
+      if (Number.isNaN(t)) {
+        skippedByDate += 1;
+        continue;
+      }
+      if (fromMs != null && t < fromMs) {
+        skippedByDate += 1;
+        continue;
+      }
+      if (toMs != null && t > toMs) {
+        skippedByDate += 1;
+        continue;
+      }
+      out.push(c);
+      continue;
+    }
+    if (includeNoLead && createdMs != null && !Number.isNaN(createdMs)) {
+      if (fromMs != null && createdMs < fromMs) {
+        skippedByDate += 1;
+        continue;
+      }
+      if (toMs != null && createdMs > toMs) {
+        skippedByDate += 1;
+        continue;
+      }
+      out.push(c);
+      continue;
+    }
+    skippedByDate += 1;
+  }
+  return { filtered: out, skippedByDate };
+}
+
 async function runRescanPhonesBatch(body, ioRef) {
   const b = body && typeof body === 'object' ? body : {};
   const limit = Math.max(1, Math.min(1000, parseInt(b.limit, 10) || 50));
@@ -5792,10 +5892,15 @@ async function runRescanPhonesBatch(body, ioRef) {
   const pageId = b.page_id || null;
   const syncCustomer = b.sync_customer !== false;
   const deleteLeadWhenNoPhone = !!b.delete_lead_when_no_phone;
+  const deleteOrphanCustomerNoPhone = !!b.delete_orphan_customer_no_phone && deleteLeadWhenNoPhone;
   const io = ioRef || r._ioRef;
 
+  const dateFilterActive = !!(b.lead_date_from && String(b.lead_date_from).trim()) || !!(b.lead_date_to && String(b.lead_date_to).trim());
+
   /** Lấy dư rồi sort theo hoạt động (mới→cũ) rồi cắt limit — tránh sai thứ tự chỉ với ORDER BY last_message_at. */
-  const fetchPoolCap = Math.min(10_000, Math.max(limit, limit * 40));
+  const fetchPoolCap = dateFilterActive
+    ? Math.min(50_000, Math.max(limit * 80, 5000))
+    : Math.min(10_000, Math.max(limit, limit * 40));
 
   let q = supabase.from('facebook_contacts')
     .select('id, fb_name, phone, page_id, last_message_at, created_at, customer_id, lead_id');
@@ -5816,6 +5921,12 @@ async function runRescanPhonesBatch(body, ioRef) {
 
   let contacts = contactsRaw || [];
   const poolFetched = contacts.length;
+
+  const dateFilterResult = await filterContactsByLeadDateRange(supabase, contacts, b);
+  contacts = dateFilterResult.filtered;
+  const skippedByLeadDate = dateFilterResult.skippedByDate;
+  const poolAfterDateFilter = contacts.length;
+
   if (sort === 'newest_first') {
     contacts = sortFacebookContactsNewestFirst(contacts).slice(0, limit);
   } else {
@@ -5826,12 +5937,21 @@ async function runRescanPhonesBatch(body, ioRef) {
     ? 'Thứ tự: hoạt động mới nhất trước — max(tin cuối, lúc tạo hồ sơ), giống tab Danh bạ.'
     : 'Thứ tự: hoạt động cũ nhất trước — cùng mốc thời gian như trên.';
 
-  console.log(`[Rescan] mode=${mode} limit=${limit} pool=${poolFetched} final=${contacts.length} overwrite=${overwrite} sort=${sort} delLead=${deleteLeadWhenNoPhone} page=${pageId || '*'}`);
+  console.log(`[Rescan] mode=${mode} limit=${limit} pool=${poolFetched} afterDate=${poolAfterDateFilter} final=${contacts.length} overwrite=${overwrite} sort=${sort} delLead=${deleteLeadWhenNoPhone} delCust=${deleteOrphanCustomerNoPhone} dateF=${dateFilterActive} page=${pageId || '*'}`);
 
   const totalToScan = contacts.length;
   const counters = {
-    scanned: 0, updated_set: 0, updated_replaced: 0, unchanged_same: 0, kept_existing: 0, no_phone_found: 0, errors: 0,
-    leads_deleted: 0, leads_delete_blocked: 0,
+    scanned: 0,
+    updated_set: 0,
+    updated_replaced: 0,
+    unchanged_same: 0,
+    kept_existing: 0,
+    no_phone_found: 0,
+    errors: 0,
+    leads_deleted: 0,
+    leads_delete_blocked: 0,
+    customers_deleted: 0,
+    customers_delete_blocked: 0,
   };
   const results = [];
 
@@ -5863,11 +5983,23 @@ async function runRescanPhonesBatch(body, ioRef) {
       if (!newPhone) {
         counters.no_phone_found += 1;
         if (deleteLeadWhenNoPhone && c.lead_id) {
+          const custIdBefore = c.customer_id || null;
           const delRes = await deleteLeadIfAllowedForRescan(supabase, c.lead_id, c.id);
           if (delRes.ok) {
             item.action = 'lead_deleted';
             item.deleted_lead_id = c.lead_id;
             counters.leads_deleted += 1;
+            if (deleteOrphanCustomerNoPhone && custIdBefore) {
+              const oc = await deleteOrphanCustomerIfAllowed(supabase, custIdBefore, c.id);
+              if (oc.ok) {
+                item.customer_deleted = true;
+                item.deleted_customer_id = custIdBefore;
+                counters.customers_deleted += 1;
+              } else {
+                item.customer_delete_blocked = oc.reason;
+                counters.customers_delete_blocked += 1;
+              }
+            }
           } else {
             item.lead_delete_blocked = delRes.reason;
             counters.leads_delete_blocked += 1;
@@ -5935,9 +6067,20 @@ async function runRescanPhonesBatch(body, ioRef) {
 
   return {
     ok: true,
-    mode, overwrite, sort, limit, page_id: pageId || null,
+    mode,
+    overwrite,
+    sort,
+    limit,
+    page_id: pageId || null,
     delete_lead_when_no_phone: deleteLeadWhenNoPhone,
+    delete_orphan_customer_no_phone: deleteOrphanCustomerNoPhone,
+    lead_date_from: b.lead_date_from || null,
+    lead_date_to: b.lead_date_to || null,
+    include_contacts_without_lead_in_range: !!b.include_contacts_without_lead_in_range,
+    date_filter_active: dateFilterActive,
     pool_fetched: poolFetched,
+    pool_after_lead_date_filter: poolAfterDateFilter,
+    skipped_by_lead_date: skippedByLeadDate,
     total_to_scan: totalToScan,
     sort_note: sortNote,
     ...counters,
@@ -5945,6 +6088,224 @@ async function runRescanPhonesBatch(body, ioRef) {
     results: results.slice(0, 500),
   };
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Quét SĐT sai (không chuẩn VN / dài / nghi từ link) — danh sách + cập nhật / xóa
+// POST /facebook/phone-quality-scan
+// POST /facebook/phone-quality-apply  body: { update_contact_ids, delete_contact_ids, sync_customer, delete_customer }
+// ═══════════════════════════════════════════════════════════════
+
+async function patchLeadDescriptionPhone(leadId, phone) {
+  if (!leadId || !phone) return;
+  const { data: lead } = await supabase.from('crm_leads').select('id, description').eq('id', leadId).maybeSingle();
+  if (!lead) return;
+  let desc = lead.description || '';
+  if (/SĐT:/.test(desc)) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${phone}`);
+  else desc = `${desc.trimEnd()}\nSĐT: ${phone}`.trim();
+  await supabase
+    .from('crm_leads')
+    .update({ description: desc, updated_at: new Date().toISOString() })
+    .eq('id', leadId);
+}
+
+async function runPhoneQualityScan(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const limit = Math.min(500, Math.max(1, parseInt(b.limit, 10) || 150));
+  const pageId = b.page_id || null;
+  const dateFilterActive =
+    !!(b.lead_date_from && String(b.lead_date_from).trim()) ||
+    !!(b.lead_date_to && String(b.lead_date_to).trim());
+  const fetchPoolCap = dateFilterActive
+    ? Math.min(40_000, Math.max(limit * 100, 5000))
+    : Math.min(25_000, Math.max(limit * 50, 2000));
+
+  let q = supabase
+    .from('facebook_contacts')
+    .select('id, fb_name, phone, page_id, last_message_at, created_at, customer_id, lead_id')
+    .not('phone', 'is', null)
+    .neq('phone', '');
+  if (pageId) q = q.eq('page_id', pageId);
+  q = q
+    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .limit(fetchPoolCap);
+
+  const { data: contactsRaw, error } = await q;
+  if (error) throw new Error(error.message);
+
+  let pool = sortFacebookContactsNewestFirst(contactsRaw || []).filter((c) => analyzeStoredPhoneIssue(c.phone).is_bad);
+  const bad_stored_count = pool.length;
+
+  const dateFilterResult = await filterContactsByLeadDateRange(supabase, pool, b);
+  pool = dateFilterResult.filtered;
+  const skipped_by_lead_date = dateFilterResult.skippedByDate;
+  const pool_after_date_filter = pool.length;
+
+  pool = pool.slice(0, limit);
+
+  const rows = [];
+  for (const c of pool) {
+    const analysis = analyzeStoredPhoneIssue(c.phone);
+    const { data: msgs } = await supabase
+      .from('facebook_messages')
+      .select('content, direction, created_at')
+      .eq('contact_id', c.id)
+      .eq('direction', 'inbound')
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    const inbound = (msgs || []).filter((m) => m && m.content && m.direction === 'inbound');
+    const found = extractInboundContactInfo(inbound);
+    const scannedPhone = found?.phone || null;
+    const scannedOk = !!(scannedPhone && validateVnSubscriberPhoneStored(scannedPhone).valid);
+
+    rows.push({
+      contact_id: c.id,
+      fb_name: c.fb_name,
+      page_id: c.page_id,
+      stored_phone: c.phone,
+      stored_issue: analysis,
+      scanned_phone: scannedPhone,
+      scanned_ok: scannedOk,
+      messages_scanned: inbound.length,
+      lead_id: c.lead_id || null,
+      customer_id: c.customer_id || null,
+      suggested_action: scannedOk ? 'update' : 'delete',
+    });
+  }
+
+  return {
+    ok: true,
+    limit,
+    date_filter_active: dateFilterActive,
+    pool_fetched: (contactsRaw || []).length,
+    bad_stored_count,
+    pool_after_date_filter,
+    skipped_by_lead_date,
+    rows_returned: rows.length,
+    rows,
+  };
+}
+
+async function applyPhoneQualityActions(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const updateIds = [...new Set((b.update_contact_ids || []).map((x) => String(x)))];
+  const deleteIds = [...new Set((b.delete_contact_ids || []).map((x) => String(x)))];
+  const syncCustomer = b.sync_customer !== false;
+  const deleteCustomer = !!b.delete_customer;
+
+  const out = {
+    ok: true,
+    updated: [],
+    update_skipped: [],
+    deleted: [],
+    delete_blocked: [],
+    customers_deleted: [],
+  };
+
+  for (const id of updateIds) {
+    if (deleteIds.includes(id)) continue;
+    const { data: c } = await supabase
+      .from('facebook_contacts')
+      .select('id, customer_id, lead_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (!c) {
+      out.update_skipped.push({ contact_id: id, reason: 'contact_missing' });
+      continue;
+    }
+    const { data: msgs } = await supabase
+      .from('facebook_messages')
+      .select('content, direction, created_at')
+      .eq('contact_id', c.id)
+      .eq('direction', 'inbound')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    const inbound = (msgs || []).filter((m) => m && m.content && m.direction === 'inbound');
+    const found = extractInboundContactInfo(inbound);
+    const scanned = found?.phone || null;
+    if (!scanned || !validateVnSubscriberPhoneStored(scanned).valid) {
+      out.update_skipped.push({ contact_id: id, reason: 'no_valid_inbound_phone' });
+      continue;
+    }
+    const { error: uErr } = await supabase
+      .from('facebook_contacts')
+      .update({ phone: scanned, updated_at: new Date().toISOString() })
+      .eq('id', c.id);
+    if (uErr) {
+      out.update_skipped.push({ contact_id: id, reason: uErr.message });
+      continue;
+    }
+    if (syncCustomer && c.customer_id) {
+      await supabase
+        .from('customers')
+        .update({ phone: scanned, updated_at: new Date().toISOString() })
+        .eq('id', c.customer_id)
+        .then(() => {}, () => {});
+    }
+    if (c.lead_id) await patchLeadDescriptionPhone(c.lead_id, scanned);
+    out.updated.push({ contact_id: id, new_phone: scanned });
+  }
+
+  for (const id of deleteIds) {
+    const { data: c } = await supabase
+      .from('facebook_contacts')
+      .select('id, lead_id, customer_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (!c) {
+      out.delete_blocked.push({ contact_id: id, reason: 'contact_missing' });
+      continue;
+    }
+    const custId = c.customer_id || null;
+    if (c.lead_id) {
+      const delRes = await deleteLeadIfAllowedForRescan(supabase, c.lead_id, c.id);
+      if (!delRes.ok) {
+        out.delete_blocked.push({ contact_id: id, reason: delRes.reason });
+        continue;
+      }
+    } else {
+      await supabase
+        .from('facebook_contacts')
+        .update({ phone: null, updated_at: new Date().toISOString() })
+        .eq('id', c.id);
+      if (custId) {
+        await supabase
+          .from('customers')
+          .update({ phone: null, updated_at: new Date().toISOString() })
+          .eq('id', custId)
+          .then(() => {}, () => {});
+      }
+    }
+    if (deleteCustomer && custId) {
+      const oc = await deleteOrphanCustomerIfAllowed(supabase, custId, c.id);
+      if (oc.ok) out.customers_deleted.push(custId);
+    }
+    out.deleted.push({ contact_id: id });
+  }
+
+  return out;
+}
+
+r.post('/phone-quality-scan', authMiddleware, async (req, res) => {
+  try {
+    const out = await runPhoneQualityScan(req.body || {});
+    res.json(out);
+  } catch (e) {
+    console.error('[PhoneQuality] scan', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/phone-quality-apply', authMiddleware, async (req, res) => {
+  try {
+    const out = await applyPhoneQualityActions(req.body || {});
+    res.json(out);
+  } catch (e) {
+    console.error('[PhoneQuality] apply', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 r.get('/rescan-phones/schedule/config', authMiddleware, async (_req, res) => {
   await loadRescanPhonesScheduleConfig();
