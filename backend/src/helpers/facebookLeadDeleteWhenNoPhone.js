@@ -50,4 +50,43 @@ async function deleteLeadIfAllowedForRescan(supabase, leadId, contactId) {
   return { ok: true };
 }
 
-module.exports = { deleteLeadIfAllowedForRescan };
+/**
+ * Sau khi xóa lead: xóa luôn customer «mồ côi» không SĐT, không dự án/đơn/lead khác, chỉ gắn 1 contact FB này.
+ */
+async function deleteOrphanCustomerIfAllowed(supabase, customerId, contactId) {
+  if (!customerId) return { ok: false, reason: 'no_customer_id' };
+  const { data: cust } = await supabase.from('customers').select('id, phone').eq('id', customerId).maybeSingle();
+  if (!cust) return { ok: false, reason: 'customer_missing' };
+  if (String(cust.phone || '').trim()) return { ok: false, reason: 'customer_has_phone' };
+
+  const { count: lc } = await supabase.from('crm_leads').select('id', { count: 'exact', head: true }).eq('customer_id', customerId);
+  if ((lc || 0) > 0) return { ok: false, reason: 'customer_has_leads' };
+
+  const { count: pc } = await supabase.from('projects').select('id', { count: 'exact', head: true }).eq('customer_id', customerId);
+  if ((pc || 0) > 0) return { ok: false, reason: 'customer_has_projects' };
+
+  const { count: qc } = await supabase.from('quotations').select('id', { count: 'exact', head: true }).eq('customer_id', customerId);
+  if ((qc || 0) > 0) return { ok: false, reason: 'customer_has_quotations' };
+
+  const { count: oc } = await supabase.from('orders').select('id', { count: 'exact', head: true }).eq('customer_id', customerId);
+  if ((oc || 0) > 0) return { ok: false, reason: 'customer_has_orders' };
+
+  const { data: fbRows } = await supabase.from('facebook_contacts').select('id').eq('customer_id', customerId);
+  const rows = fbRows || [];
+  if (rows.length > 1) return { ok: false, reason: 'multiple_fb_contacts' };
+  if (rows.length === 0) return { ok: false, reason: 'no_fb_contact_for_customer' };
+  if (String(rows[0].id) !== String(contactId)) return { ok: false, reason: 'fb_contact_mismatch' };
+
+  try {
+    await supabase.from('customer_interactions').delete().eq('customer_id', customerId);
+  } catch (_) {}
+  await supabase
+    .from('facebook_contacts')
+    .update({ customer_id: null, updated_at: new Date().toISOString() })
+    .eq('id', contactId);
+  const { error } = await supabase.from('customers').delete().eq('id', customerId);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true };
+}
+
+module.exports = { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed };

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
+import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
   Calendar, List, Plus, Search, Filter, MapPin, Clock, Users, MessageSquare,
   Check, X, ChevronLeft, ChevronRight, Settings, Trash2, Edit3, Send, CheckCircle2,
@@ -1034,17 +1035,12 @@ function UserMultiSelect({ users, value = [], onChange, placeholder = '👥 Ch�
 // ═══════════════════════════════════════════════════════════════
 function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSaved }) {
   const isEdit = !!event;
-  const toLocalDateTimeInput = (value) => {
-    if (!value) return '';
-    const d = new Date(value);
-    const tzOffset = d.getTimezoneOffset() * 60000;
-    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
-  };
+  const toLocalDateTimeInput = (value) => isoToDatetimeLocalValue(value);
   const startFromPreset = () => {
     if (!presetDay || event) return '';
     const d = new Date(presetDay.year, presetDay.month - 1, presetDay.day, 9, 0, 0, 0);
-    const tzOffset = d.getTimezoneOffset() * 60000;
-    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
   const [form, setForm] = useState({
     title: event?.title || '',
@@ -1098,7 +1094,12 @@ function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSave
     }
     setSaving(true);
     try {
-      const payload = { ...form, participant_ids: participantIds };
+      const payload = {
+        ...form,
+        participant_ids: participantIds,
+        start_time: datetimeLocalValueToIso(form.start_time),
+        end_time: form.end_time ? datetimeLocalValueToIso(form.end_time) : null,
+      };
       if (isEdit) {
         await api.put(`/events/${event.id}`, payload);
       } else {

@@ -23,6 +23,7 @@ import {
   getCurrentUserKeyForLeadSeen,
 } from '../lib/crmPipelineStorage';
 import { userSeesAllCrmDeals } from '../lib/crmDealAccess';
+import DealStageEventModal from '../components/DealStageEventModal';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -173,6 +174,9 @@ export default function CRMDashboard() {
   const [manualMergeModalOpen, setManualMergeModalOpen] = useState(false);
   const [bulkAssignModalOpen, setBulkAssignModalOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  /** Deal pipeline: mở popup chọn giờ rồi POST /events sau PATCH stage (bật theo từng pipeline tại Cài đặt pipeline) */
+  const [dealKanbanEventCtx, setDealKanbanEventCtx] = useState(null);
+  const [dealKanbanEventBusy, setDealKanbanEventBusy] = useState(false);
   const loadRef = useRef(null);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
@@ -1004,60 +1008,77 @@ export default function CRMDashboard() {
     return () => clearTimeout(t);
   }, [loading, viewMode, pipelineType, currentPipeline]);
 
-  const handleMoveStage = useCallback(async (leadId, newStageId) => {
-    const prevLeads = allLeads;
-    const prevDeals = allDeals;
-    const stages = pipelineType === 'lead' ? stagesLead : stagesDeal;
-    const targetStage = stages.find(s => s.id === newStageId);
+  const applyKanbanStageChange = useCallback(
+    async (leadId, newStageId, extraData = {}, opts = {}) => {
+      const throwOnError = !!opts.throwOnError;
+      const prevLeads = allLeads;
+      const prevDeals = allDeals;
+      if (pipelineType === 'lead') {
+        setAllLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l)));
+      } else {
+        setAllDeals((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l)));
+      }
+      try {
+        const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId, ...extraData });
 
-    let extraData = {};
-    if (targetStage?.is_lost) {
-      const lostReason = window.prompt(`Nhập lý do thua cho ${pipelineType === 'lead' ? 'lead' : 'deal'}:`)?.trim();
-      if (!lostReason) return;
-      extraData.lost_reason = lostReason;
-    }
+        if (data.requires_conversion) {
+          if (pipelineType === 'lead') setAllLeads(prevLeads);
+          else setAllDeals(prevDeals);
+        }
 
-    // Kéo Lead sang cột Thắng → luôn hiển thị modal chọn người phụ trách
-    if (targetStage?.is_won && pipelineType === 'lead') {
-      const lead = allLeads.find(l => l.id === leadId);
-      setWonAssignLeadId(leadId);
-      setWonAssignUser(lead?.assigned_to || lead?.lead_owner_id || '');
-      setWonAssignModal(true);
-      return;
-    }
-
-    // Optimistic update
-    if (pipelineType === 'lead') {
-      setAllLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l));
-    } else {
-      setAllDeals(prev => prev.map(l => l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l));
-    }
-
-    try {
-      const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId, ...extraData });
-
-      if (data.requires_conversion) {
+        if (data.deal_won) {
+          autoCreateProject(leadId);
+        } else if (data.project_auto_created?.project_id) {
+          setAutoCreateResult({
+            project_id: data.project_auto_created.project_id,
+            project_code: data.project_auto_created.project_code,
+            tasks_created: data.project_auto_created.tasks_created,
+          });
+          setAutoCreateStatus('success');
+          load();
+        }
+      } catch (e) {
+        console.error(e);
         if (pipelineType === 'lead') setAllLeads(prevLeads);
         else setAllDeals(prevDeals);
+        if (throwOnError) throw e;
+      }
+    },
+    [pipelineType, allLeads, allDeals, load],
+  );
+
+  const handleMoveStage = useCallback(
+    async (leadId, newStageId) => {
+      const stages = pipelineType === 'lead' ? stagesLead : stagesDeal;
+      const targetStage = stages.find((s) => s.id === newStageId);
+
+      let extraData = {};
+      if (targetStage?.is_lost) {
+        const lostReason = window.prompt(`Nhập lý do thua cho ${pipelineType === 'lead' ? 'lead' : 'deal'}:`)?.trim();
+        if (!lostReason) return;
+        extraData.lost_reason = lostReason;
       }
 
-      if (data.deal_won) {
-        autoCreateProject(leadId);
-      } else if (data.project_auto_created?.project_id) {
-        setAutoCreateResult({
-          project_id: data.project_auto_created.project_id,
-          project_code: data.project_auto_created.project_code,
-          tasks_created: data.project_auto_created.tasks_created,
-        });
-        setAutoCreateStatus('success');
-        load();
+      if (targetStage?.is_won && pipelineType === 'lead') {
+        const lead = allLeads.find((l) => l.id === leadId);
+        setWonAssignLeadId(leadId);
+        setWonAssignUser(lead?.assigned_to || lead?.lead_owner_id || '');
+        setWonAssignModal(true);
+        return;
       }
-    } catch (e) {
-      console.error(e);
-      if (pipelineType === 'lead') setAllLeads(prevLeads);
-      else setAllDeals(prevDeals);
-    }
-  }, [pipelineType, allLeads, allDeals, stagesLead, stagesDeal]);
+
+      if (pipelineType === 'deal' && targetStage && !targetStage.is_lost && targetStage.create_event_on_enter) {
+        const deal = allDeals.find((d) => d.id === leadId);
+        if (deal) {
+          setDealKanbanEventCtx({ leadId, newStageId, extraData, targetStage, deal });
+          return;
+        }
+      }
+
+      await applyKanbanStageChange(leadId, newStageId, extraData);
+    },
+    [pipelineType, stagesLead, stagesDeal, allLeads, allDeals, applyKanbanStageChange],
+  );
 
   const handleWonAssignConvert = async () => {
     if (!wonAssignUser) { setWonAssignError('Vui lòng chọn nhân viên phụ trách'); return; }
@@ -1081,6 +1102,49 @@ export default function CRMDashboard() {
       setWonAssigning(false);
     }
   };
+
+  const confirmDealKanbanEvent = async ({ startIso, endIso, titlePreview, locPreview }) => {
+    const ctx = dealKanbanEventCtx;
+    if (!ctx) return;
+    setDealKanbanEventBusy(true);
+    try {
+      await applyKanbanStageChange(ctx.leadId, ctx.newStageId, ctx.extraData, { throwOnError: true });
+      await api.post('/events', {
+        title: titlePreview,
+        description: ctx.deal?.description || null,
+        location: locPreview && locPreview !== '—' ? locPreview : null,
+        start_time: startIso,
+        end_time: endIso,
+        lead_id: ctx.leadId,
+        customer_id: ctx.deal?.customer_id || null,
+        assignee_id: ctx.deal?.assigned_to || ctx.deal?.lead_owner_id || null,
+        event_type: 'site_visit',
+        status: 'planned',
+      });
+      setDealKanbanEventCtx(null);
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi cập nhật giai đoạn / tạo sự kiện');
+    } finally {
+      setDealKanbanEventBusy(false);
+    }
+  };
+
+  const skipDealKanbanEvent = async () => {
+    const ctx = dealKanbanEventCtx;
+    if (!ctx) return;
+    setDealKanbanEventBusy(true);
+    try {
+      await applyKanbanStageChange(ctx.leadId, ctx.newStageId, ctx.extraData, { throwOnError: true });
+      setDealKanbanEventCtx(null);
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi cập nhật giai đoạn');
+    } finally {
+      setDealKanbanEventBusy(false);
+    }
+  };
+
   loadRef.current = load;
 
   const calculateDays = (createdAt) => {
@@ -1863,6 +1927,18 @@ export default function CRMDashboard() {
           </div>
         );
       })()}
+
+      <DealStageEventModal
+        open={!!dealKanbanEventCtx}
+        onClose={() => {
+          if (!dealKanbanEventBusy) setDealKanbanEventCtx(null);
+        }}
+        deal={dealKanbanEventCtx?.deal}
+        targetStageName={dealKanbanEventCtx?.targetStage?.name}
+        onConfirm={confirmDealKanbanEvent}
+        onMoveWithoutEvent={skipDealKanbanEvent}
+        submitting={dealKanbanEventBusy}
+      />
 
       <BulkAssignLeadsModal
         open={bulkAssignModalOpen}

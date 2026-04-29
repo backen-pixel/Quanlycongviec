@@ -921,6 +921,7 @@ r.post('/pipelines/:id/copy', async (req, res) => {
         is_won: !!s.is_won,
         is_lost: !!s.is_lost,
         send_zalo_on_enter: !!s.send_zalo_on_enter,
+        create_event_on_enter: !!s.create_event_on_enter,
         sync_role: s.sync_role || null,
       }));
       await supabase.from('crm_pipeline_stages').insert(inserts);
@@ -1009,6 +1010,7 @@ r.post('/pipeline-stages', async (req, res) => {
       color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
       is_won: b.is_won || false, is_lost: b.is_lost || false, is_active: true,
       send_zalo_on_enter: !!b.send_zalo_on_enter,
+      create_event_on_enter: !!b.create_event_on_enter,
       sync_role: b.sync_role || null,
     }).select().single();
     if (error) throw error;
@@ -1027,8 +1029,8 @@ r.put('/pipeline-stages/:id', async (req, res) => {
       if (String(pl.company_id || '') !== String(cid)) return res.status(403).json({ error: 'Không có quyền sửa stage pipeline công ty khác' });
     }
     const update = {};
-    ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter', 'sync_role'].forEach(f => {
-      if (b[f] !== undefined) update[f] = f === 'send_zalo_on_enter' ? !!b[f] : b[f];
+    ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter', 'create_event_on_enter', 'sync_role'].forEach(f => {
+      if (b[f] !== undefined) update[f] = (f === 'send_zalo_on_enter' || f === 'create_event_on_enter') ? !!b[f] : b[f];
     });
     const { data, error } = await supabase.from('crm_pipeline_stages').update(update)
       .eq('id', req.params.id).select().single();

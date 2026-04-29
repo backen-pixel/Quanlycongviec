@@ -184,14 +184,14 @@ server.listen(config.port, () => {
 
       // Tasks due within 24 hours (not done)
       const { data: dueSoon } = await supabase.from('tasks')
-        .select('id,title,assignee_id,created_by_id,due_date')
+        .select('id,title,assignee_id,created_by_id,due_date,project_id')
         .neq('status', 'done')
         .gte('due_date', now.toISOString())
         .lte('due_date', in24h.toISOString());
 
       // Tasks already overdue
       const { data: overdue } = await supabase.from('tasks')
-        .select('id,title,assignee_id,created_by_id,due_date')
+        .select('id,title,assignee_id,created_by_id,due_date,project_id')
         .neq('status', 'done')
         .lt('due_date', now.toISOString())
         .limit(50);
@@ -305,12 +305,32 @@ server.listen(config.port, () => {
         .lt('due_date', todayStart)
         .limit(50);
 
+      // Không tạo thông báo Sắp hết hạn / Quá hạn cho nhiệm vụ dự án ở module Sản xuất & Vận chuyển
+      const taskDeadlineRows = [...(dueSoon || []), ...(overdue || [])];
+      const projectIdsForTaskDeadlines = [...new Set(taskDeadlineRows.map((t) => t.project_id).filter(Boolean))];
+      const projectStatusById = new Map();
+      if (projectIdsForTaskDeadlines.length) {
+        const { data: projForTasks } = await supabase
+          .from('projects')
+          .select('id, status')
+          .in('id', projectIdsForTaskDeadlines);
+        (projForTasks || []).forEach((p) => projectStatusById.set(p.id, p.status));
+      }
+      const skipTaskDeadlineNotifStatuses = new Set(['producing', 'shipping']);
+      const shouldSkipProjectTaskDeadlineNotif = (taskRow) => {
+        if (!taskRow.project_id) return false;
+        const st = projectStatusById.get(taskRow.project_id);
+        return !!(st && skipTaskDeadlineNotifStatuses.has(st));
+      };
+
       // Batch: collect all notifications to insert (tasks)
       for (const t of (dueSoon || [])) {
+        if (shouldSkipProjectTaskDeadlineNotif(t)) continue;
         const uid = t.assignee_id || t.created_by_id;
         if (uid) notifs.push({ user_id: uid, type: 'deadline_warning', title: '⏰ Sắp hết hạn', message: `"${t.title}" — hạn: ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
       }
       for (const t of (overdue || [])) {
+        if (shouldSkipProjectTaskDeadlineNotif(t)) continue;
         const uid = t.assignee_id || t.created_by_id;
         if (uid) notifs.push({ user_id: uid, type: 'deadline_overdue', title: '🚨 Quá hạn!', message: `"${t.title}" đã quá hạn từ ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
       }
