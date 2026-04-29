@@ -305,34 +305,38 @@ server.listen(config.port, () => {
         .lt('due_date', todayStart)
         .limit(50);
 
-      // Không tạo thông báo Sắp hết hạn / Quá hạn cho nhiệm vụ dự án ở module Sản xuất & Vận chuyển
-      const taskDeadlineRows = [...(dueSoon || []), ...(overdue || [])];
-      const projectIdsForTaskDeadlines = [...new Set(taskDeadlineRows.map((t) => t.project_id).filter(Boolean))];
-      const projectStatusById = new Map();
-      if (projectIdsForTaskDeadlines.length) {
-        const { data: projForTasks } = await supabase
-          .from('projects')
-          .select('id, status')
-          .in('id', projectIdsForTaskDeadlines);
-        (projForTasks || []).forEach((p) => projectStatusById.set(p.id, p.status));
-      }
-      const skipTaskDeadlineNotifStatuses = new Set(['producing', 'shipping']);
-      const shouldSkipProjectTaskDeadlineNotif = (taskRow) => {
-        if (!taskRow.project_id) return false;
-        const st = projectStatusById.get(taskRow.project_id);
-        return !!(st && skipTaskDeadlineNotifStatuses.has(st));
-      };
+      // Nhiệm vụ bảng `tasks` (dự án / xưởng): tắt hết thông báo ⏰ Sắp hết hạn / 🚨 Quá hạn từ cron.
+      // Trước đây chỉ bỏ qua khi project.status ∈ { producing, shipping } — nhiều dự án khác status vẫn bị spam.
+      // CRM (`crm_tasks`) và hóa đơn quá hạn vẫn gửi bên dưới.
+      const DISABLE_PROJECT_TASK_DEADLINE_NOTIFICATIONS = true;
+      if (!DISABLE_PROJECT_TASK_DEADLINE_NOTIFICATIONS) {
+        const taskDeadlineRows = [...(dueSoon || []), ...(overdue || [])];
+        const projectIdsForTaskDeadlines = [...new Set(taskDeadlineRows.map((t) => t.project_id).filter(Boolean))];
+        const projectStatusById = new Map();
+        if (projectIdsForTaskDeadlines.length) {
+          const { data: projForTasks } = await supabase
+            .from('projects')
+            .select('id, status')
+            .in('id', projectIdsForTaskDeadlines);
+          (projForTasks || []).forEach((p) => projectStatusById.set(p.id, p.status));
+        }
+        const skipTaskDeadlineNotifStatuses = new Set(['producing', 'shipping']);
+        const shouldSkipProjectTaskDeadlineNotif = (taskRow) => {
+          if (!taskRow.project_id) return false;
+          const st = projectStatusById.get(taskRow.project_id);
+          return !!(st && skipTaskDeadlineNotifStatuses.has(st));
+        };
 
-      // Batch: collect all notifications to insert (tasks)
-      for (const t of (dueSoon || [])) {
-        if (shouldSkipProjectTaskDeadlineNotif(t)) continue;
-        const uid = t.assignee_id || t.created_by_id;
-        if (uid) notifs.push({ user_id: uid, type: 'deadline_warning', title: '⏰ Sắp hết hạn', message: `"${t.title}" — hạn: ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
-      }
-      for (const t of (overdue || [])) {
-        if (shouldSkipProjectTaskDeadlineNotif(t)) continue;
-        const uid = t.assignee_id || t.created_by_id;
-        if (uid) notifs.push({ user_id: uid, type: 'deadline_overdue', title: '🚨 Quá hạn!', message: `"${t.title}" đã quá hạn từ ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
+        for (const t of (dueSoon || [])) {
+          if (shouldSkipProjectTaskDeadlineNotif(t)) continue;
+          const uid = t.assignee_id || t.created_by_id;
+          if (uid) notifs.push({ user_id: uid, type: 'deadline_warning', title: '⏰ Sắp hết hạn', message: `"${t.title}" — hạn: ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
+        }
+        for (const t of (overdue || [])) {
+          if (shouldSkipProjectTaskDeadlineNotif(t)) continue;
+          const uid = t.assignee_id || t.created_by_id;
+          if (uid) notifs.push({ user_id: uid, type: 'deadline_overdue', title: '🚨 Quá hạn!', message: `"${t.title}" đã quá hạn từ ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
+        }
       }
 
       // Invoice overdue notifications — notify accounting + sales
