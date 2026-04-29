@@ -22,6 +22,7 @@ const DEFAULT_PREFS = {
   deal_new: true,
   production_deadlines: true,
   crm_lead_deadlines: true,
+  logistics_deadlines: true,
 };
 
 function mergePrefs(row) {

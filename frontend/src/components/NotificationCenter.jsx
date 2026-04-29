@@ -24,6 +24,12 @@ const ICON_MAP = {
   deadline_reminder: Clock,
   deadline_warning: Clock,
   deadline_overdue: AlertTriangle,
+  production_task_deadline_warning: Clock,
+  production_task_deadline_overdue: AlertTriangle,
+  logistics_task_deadline_warning: Clock,
+  logistics_task_deadline_overdue: AlertTriangle,
+  project_pipeline_deadline_warning: Clock,
+  project_pipeline_deadline_overdue: AlertTriangle,
   checklist_completed: CheckSquare,
   lead_assigned: CheckSquare,
   lead_created: FolderKanban,
@@ -68,6 +74,12 @@ const COLOR_MAP = {
   deadline_reminder: 'bg-orange-100 text-orange-600',
   deadline_warning: 'bg-amber-100 text-amber-600',
   deadline_overdue: 'bg-red-100 text-red-600',
+  production_task_deadline_warning: 'bg-amber-100 text-amber-600',
+  production_task_deadline_overdue: 'bg-red-100 text-red-600',
+  logistics_task_deadline_warning: 'bg-amber-100 text-amber-600',
+  logistics_task_deadline_overdue: 'bg-red-100 text-red-600',
+  project_pipeline_deadline_warning: 'bg-amber-100 text-amber-600',
+  project_pipeline_deadline_overdue: 'bg-red-100 text-red-600',
   checklist_completed: 'bg-lime-100 text-lime-700',
   lead_assigned: 'bg-cyan-100 text-cyan-600',
   lead_member_added: 'bg-indigo-100 text-indigo-600',
@@ -142,6 +154,7 @@ export default function NotificationCenter({ socket }) {
             deal_new: true,
             production_deadlines: true,
             crm_lead_deadlines: true,
+            logistics_deadlines: true,
           });
         }
       }

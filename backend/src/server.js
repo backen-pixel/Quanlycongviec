@@ -242,34 +242,43 @@ server.listen(config.port, () => {
         (leads || []).forEach(l => { leadMap[l.id] = l; });
       }
 
-      // Dedup: check existing notifications in last 4 hours to avoid spam
+      const { pickCrmDeadlineRecipient, buildProjectTaskDeadlineNotif } = require('./helpers/deadlineModuleNotifications');
+
+      // Dedup: check existing notifications in last 4 hours (theo từng nhiệm vụ / task)
       const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
+      const DEADLINE_DEDUP_TYPES = [
+        'crm_deadline_1h', 'crm_deadline_warning', 'crm_deadline_overdue',
+        'production_task_deadline_warning', 'production_task_deadline_overdue',
+        'logistics_task_deadline_warning', 'logistics_task_deadline_overdue',
+        'project_pipeline_deadline_warning', 'project_pipeline_deadline_overdue',
+        'invoice_overdue',
+      ];
       const { data: recentNotifs } = await supabase.from('notifications')
         .select('entity_id, type')
-        .in('type', ['crm_deadline_1h', 'crm_deadline_warning', 'crm_deadline_overdue'])
+        .in('type', DEADLINE_DEDUP_TYPES)
         .gte('created_at', fourHoursAgo);
-      const notifSet = new Set((recentNotifs || []).map(n => `${n.type}:${n.entity_id}`));
-      const shouldNotify = (type, entityId) => !notifSet.has(`${type}:${entityId}`);
+      const notifSet = new Set((recentNotifs || []).map((n) => `${n.type}:${n.entity_id}`));
+      const shouldNotify = (type, entityId) => entityId && !notifSet.has(`${type}:${entityId}`);
 
       // Batch: collect all notifications to insert
       const notifs = [];
 
+      /** CRM: một người duy nhất (assignee nhiệm vụ → chủ lead → phụ trách lead). */
       const addCrmNotif = (taskList, type, titleText, msgFn) => {
         for (const t of (taskList || [])) {
-          if (!shouldNotify(type, t.lead_id || t.id)) continue;
+          if (!shouldNotify(type, t.id)) continue;
           const lead = leadMap[t.lead_id] || {};
-          const uids = [...new Set([t.assignee_id, lead.assigned_to, lead.lead_owner_id].filter(Boolean))];
+          const uid = pickCrmDeadlineRecipient(t);
+          if (!uid) continue;
           const deadlineStr = new Date(t.deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-          for (const uid of uids) {
-            notifs.push({
-              user_id: uid,
-              type,
-              title: titleText,
-              message: msgFn(t, lead, deadlineStr),
-              entity_type: 'crm_lead',
-              entity_id: t.lead_id || t.id,
-            });
-          }
+          notifs.push({
+            user_id: uid,
+            type,
+            title: titleText,
+            message: msgFn(t, lead, deadlineStr),
+            entity_type: 'crm_task',
+            entity_id: t.id,
+          });
         }
       };
 
@@ -281,22 +290,21 @@ server.listen(config.port, () => {
       addCrmNotif(crmDueSoon, 'crm_deadline_1h', '🔔 Nhắc: Còn 1 giờ nữa đến hạn!',
         (t, lead, dl) => `Nhiệm vụ "${t.title}" — ${lead.code || ''} ${lead.title || ''} — hạn: ${dl}. Hãy thực hiện ngay!`);
 
-      // 🚨 Quá hạn
+      // 🚨 Quá hạn (CRM)
       for (const t of (crmOverdue || [])) {
-        if (!shouldNotify('crm_deadline_overdue', t.lead_id || t.id)) continue;
+        if (!shouldNotify('crm_deadline_overdue', t.id)) continue;
         const lead = leadMap[t.lead_id] || {};
+        const uid = pickCrmDeadlineRecipient(t);
+        if (!uid) continue;
         const daysLate = Math.floor((now - new Date(t.deadline)) / (1000 * 60 * 60 * 24));
-        const uids = [...new Set([t.assignee_id, lead.assigned_to, lead.lead_owner_id].filter(Boolean))];
-        for (const uid of uids) {
-          notifs.push({
-            user_id: uid,
-            type: 'crm_deadline_overdue',
-            title: '🚨 Quá hạn nhiệm vụ!',
-            message: `"${t.title}" — ${lead.code || ''} ${lead.title || ''} — quá hạn ${daysLate} ngày`,
-            entity_type: 'crm_lead',
-            entity_id: t.lead_id || t.id,
-          });
-        }
+        notifs.push({
+          user_id: uid,
+          type: 'crm_deadline_overdue',
+          title: '🚨 Quá hạn nhiệm vụ!',
+          message: `"${t.title}" — ${lead.code || ''} ${lead.title || ''} — quá hạn ${daysLate} ngày`,
+          entity_type: 'crm_task',
+          entity_id: t.id,
+        });
       }
 
       // Invoices overdue (due_date < today, paid_amount < total)
@@ -305,66 +313,45 @@ server.listen(config.port, () => {
         .lt('due_date', todayStart)
         .limit(50);
 
-      // Nhiệm vụ bảng `tasks` (dự án / xưởng): tắt hết thông báo ⏰ Sắp hết hạn / 🚨 Quá hạn từ cron.
-      // Trước đây chỉ bỏ qua khi project.status ∈ { producing, shipping } — nhiều dự án khác status vẫn bị spam.
-      // CRM (`crm_tasks`) và hóa đơn quá hạn vẫn gửi bên dưới.
-      const DISABLE_PROJECT_TASK_DEADLINE_NOTIFICATIONS = true;
-      if (!DISABLE_PROJECT_TASK_DEADLINE_NOTIFICATIONS) {
-        const taskDeadlineRows = [...(dueSoon || []), ...(overdue || [])];
-        const projectIdsForTaskDeadlines = [...new Set(taskDeadlineRows.map((t) => t.project_id).filter(Boolean))];
-        const projectStatusById = new Map();
-        if (projectIdsForTaskDeadlines.length) {
-          const { data: projForTasks } = await supabase
-            .from('projects')
-            .select('id, status')
-            .in('id', projectIdsForTaskDeadlines);
-          (projForTasks || []).forEach((p) => projectStatusById.set(p.id, p.status));
-        }
-        const skipTaskDeadlineNotifStatuses = new Set(['producing', 'shipping']);
-        const shouldSkipProjectTaskDeadlineNotif = (taskRow) => {
-          if (!taskRow.project_id) return false;
-          const st = projectStatusById.get(taskRow.project_id);
-          return !!(st && skipTaskDeadlineNotifStatuses.has(st));
-        };
-
-        for (const t of (dueSoon || [])) {
-          if (shouldSkipProjectTaskDeadlineNotif(t)) continue;
-          const uid = t.assignee_id || t.created_by_id;
-          if (uid) notifs.push({ user_id: uid, type: 'deadline_warning', title: '⏰ Sắp hết hạn', message: `"${t.title}" — hạn: ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
-        }
-        for (const t of (overdue || [])) {
-          if (shouldSkipProjectTaskDeadlineNotif(t)) continue;
-          const uid = t.assignee_id || t.created_by_id;
-          if (uid) notifs.push({ user_id: uid, type: 'deadline_overdue', title: '🚨 Quá hạn!', message: `"${t.title}" đã quá hạn từ ${new Date(t.due_date).toLocaleDateString('vi-VN')}`, entity_type: 'task', entity_id: t.id });
-        }
+      // Nhiệm vụ bảng `tasks`: phân module theo projects.status (SX / VC / pipeline dự án), chỉ gửi assignee_id.
+      const taskDeadlineRows = [...(dueSoon || []), ...(overdue || [])];
+      const projectIdsForTaskDeadlines = [...new Set(taskDeadlineRows.map((t) => t.project_id).filter(Boolean))];
+      const projectById = new Map();
+      if (projectIdsForTaskDeadlines.length) {
+        const { data: projForTasks } = await supabase
+          .from('projects')
+          .select('id, status, code, name')
+          .in('id', projectIdsForTaskDeadlines);
+        (projForTasks || []).forEach((p) => projectById.set(p.id, p));
+      }
+      for (const t of (dueSoon || [])) {
+        const n = buildProjectTaskDeadlineNotif(t, projectById.get(t.project_id), false);
+        if (!n) continue;
+        if (String(n.user_id) !== String(t.assignee_id)) continue;
+        if (!shouldNotify(n.type, t.id)) continue;
+        notifs.push(n);
+      }
+      for (const t of (overdue || [])) {
+        const n = buildProjectTaskDeadlineNotif(t, projectById.get(t.project_id), true);
+        if (!n) continue;
+        if (String(n.user_id) !== String(t.assignee_id)) continue;
+        if (!shouldNotify(n.type, t.id)) continue;
+        notifs.push(n);
       }
 
-      // Invoice overdue notifications — notify accounting + sales
+      // Hóa đơn quá hạn — chỉ người tạo hóa đơn (chịu trách nhiệm theo luồng hiện tại)
       for (const inv of (overdueInvoices || [])) {
+        if (!shouldNotify('invoice_overdue', inv.id)) continue;
         const daysOverdue = Math.floor((now - new Date(inv.due_date)) / (1000 * 60 * 60 * 24));
-        if (inv.paid_amount < inv.total) {
-          // Get accounting & sales users
-          const { data: accountingUsers } = await supabase.from('users')
-            .select('id').eq('department_id', (await supabase.from('departments').select('id').eq('name', 'Kế toán').single()).data?.id);
-          const { data: salesUsers } = await supabase.from('users')
-            .select('id').eq('department_id', (await supabase.from('departments').select('id').eq('name', 'Bán hàng').single()).data?.id);
-          
-          const targetUserIds = [...new Set([
-            ...((accountingUsers || []).map(u => u.id) || []),
-            ...((salesUsers || []).map(u => u.id) || []),
-            inv.created_by
-          ].filter(Boolean))];
-
-          for (const uid of targetUserIds) {
-            notifs.push({
-              user_id: uid,
-              type: 'invoice_overdue',
-              title: '💰 Hóa đơn quá hạn thanh toán',
-              message: `Hóa đơn ${inv.code} quá hạn ${daysOverdue} ngày — Còn nợ: ${((inv.total - inv.paid_amount) || 0).toLocaleString('vi-VN')} VND`,
-              entity_type: 'invoice',
-              entity_id: inv.id
-            });
-          }
+        if (inv.paid_amount < inv.total && inv.created_by) {
+          notifs.push({
+            user_id: inv.created_by,
+            type: 'invoice_overdue',
+            title: '💰 Hóa đơn quá hạn thanh toán',
+            message: `Hóa đơn ${inv.code} quá hạn ${daysOverdue} ngày — Còn nợ: ${((inv.total - inv.paid_amount) || 0).toLocaleString('vi-VN')} VND`,
+            entity_type: 'invoice',
+            entity_id: inv.id,
+          });
         }
       }
 
@@ -514,9 +501,9 @@ server.listen(config.port, () => {
     }
   };
 
-  // Run deadline check 60s after start, then every 15 minutes
-  setTimeout(checkDeadlines, 60000);
-  setInterval(checkDeadlines, 15 * 60 * 1000);
+  // Cron kiểm tra hạn nhiệm vụ — đã tắt. Bật lại: mở comment 2 dòng dưới (60s sau start, rồi mỗi 15 phút).
+  // setTimeout(checkDeadlines, 60000);
+  // setInterval(checkDeadlines, 15 * 60 * 1000);
 
   // Tắt scanMissingLeads chạy nền ở server startup để giảm egress.
   // Lead scan tự động chỉ chạy qua công cụ /facebook/lead-scan/config với timer riêng.

@@ -33,6 +33,7 @@ const PREFS_FALLBACK = {
   deal_new: true,
   production_deadlines: true,
   crm_lead_deadlines: true,
+  logistics_deadlines: true,
 };
 
 const MODULE_SECTIONS = [
@@ -57,8 +58,9 @@ const MODULE_SECTIONS = [
     rows: [
       { key: 'task_assigned', label: 'Nhiệm vụ được giao' },
       { key: 'task_completed', label: 'Nhiệm vụ hoàn thành / cập nhật' },
-      { key: 'production_deadlines', label: 'Hạn nhiệm vụ dự án (SX)', sub: 'Nhắc / quá hạn task trên dự án' },
-      { key: 'deadline_warning', label: 'Hạn khác (không phải task dự án)', sub: 'Ít dùng' },
+      { key: 'production_deadlines', label: 'Hạn nhiệm vụ — module Xưởng (SX)', sub: 'Task dự án khi đang sản xuất — chỉ người được giao' },
+      { key: 'logistics_deadlines', label: 'Hạn nhiệm vụ — Vận chuyển / lắp đặt / BH', sub: 'Task khi dự án ở giai đoạn VC — chỉ người được giao' },
+      { key: 'deadline_warning', label: 'Hạn nhiệm vụ — pipeline dự án (trước SX)', sub: 'Tư vấn, thiết kế, báo giá… — chỉ người được giao' },
       { key: 'checklist_completed', label: 'Checklist hoàn thành' },
       { key: 'comment_added', label: 'Bình luận' },
     ],
