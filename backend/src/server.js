@@ -165,8 +165,10 @@ io.on('connection', (socket) => {
   });
 });
 
-// Helper: push notification to specific user via Socket.IO
+const { isExpiryDeadlineNotificationType: isExpiryNotifType } = require('./helpers/notificationOperationalFilter');
+// Helper: push notification to specific user via Socket.IO (+ không đẩy TB hết hạn)
 app.set('pushNotification', (userId, notification) => {
+  if (isExpiryNotifType(notification?.type)) return;
   io.to(`user:${userId}`).emit('notification', notification);
 });
 
@@ -178,6 +180,7 @@ server.listen(config.port, () => {
   const checkDeadlines = async () => {
     try {
       const { supabase } = require('./config/supabase');
+      const { isExpiryDeadlineNotificationType } = require('./helpers/notificationOperationalFilter');
       const now = new Date();
       const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -364,8 +367,9 @@ server.listen(config.port, () => {
         }
       }
 
-      if (filteredNotifs.length) {
-        const { data: inserted } = await supabase.from('notifications').insert(filteredNotifs).select('*');
+      const toInsert = filteredNotifs.filter((n) => !isExpiryDeadlineNotificationType(n.type));
+      if (toInsert.length) {
+        const { data: inserted } = await supabase.from('notifications').insert(toInsert).select('*');
         (inserted || []).forEach((n) => io.to(`user:${n.user_id}`).emit('notification', n));
       }
 

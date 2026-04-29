@@ -1,5 +1,6 @@
 const { supabase } = require('../config/supabase');
 const { isNotificationAllowedForUser } = require('./notificationPrefsUser');
+const { isExpiryDeadlineNotificationType } = require('./notificationOperationalFilter');
 
 /**
  * Create a single notification with Socket.IO push
@@ -15,6 +16,7 @@ const { isNotificationAllowedForUser } = require('./notificationPrefsUser');
  */
 async function createNotification(req, userId, type, title, message, entityType, entityId, metadata = null) {
   if (!userId) return null;
+  if (isExpiryDeadlineNotificationType(type)) return null;
 
   const allowed = await isNotificationAllowedForUser(userId, type, entityType);
   if (!allowed) return null;
