@@ -89,6 +89,16 @@ const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
 const LS_CRM_DASH_COMPANY = 'crm_dash_filter_company_id';
 const LS_CRM_DASH_LEAD_TYPE = 'crm_dash_filter_lead_type_id';
 
+/** Admin CRM: mặc định lọc Công ty Phúc Đạt (khớp tên / tên ngắn). NV không phải admin không dùng — họ xem theo company user. */
+function findDefaultAdminCrmCompanyPhucDat(companies) {
+  if (!companies?.length) return '';
+  const hit = companies.find((c) => {
+    const t = `${c.name || ''} ${c.short_name || ''}`.toLowerCase();
+    return t.includes('phúc đạt') || t.includes('phuc dat') || (t.includes('phúc') && t.includes('đạt'));
+  });
+  return hit?.id ? String(hit.id) : '';
+}
+
 /** Lead/Deal đang trên pipeline (chưa cột Thắng / Thua) — dùng stage từ API, không dùng is_won ở root. */
 function isActiveCrmPipelineItem(item) {
   const st = item?.stage;
@@ -324,6 +334,26 @@ export default function CRMDashboard() {
       // ignore
     }
   }, [isAdmin, user, P?.filterCompany]);
+
+  // Admin: chưa có lọc công ty đã lưu → mặc định Phúc Đạt (sau khi danh sách công ty đã tải)
+  useEffect(() => {
+    if (!isAdmin || !companies.length) return;
+    try {
+      if (localStorage.getItem(LS_CRM_DASH_COMPANY)) return;
+    } catch {
+      /* ignore */
+    }
+    if (P?.filterCompany) return;
+    if (filterCompany) return;
+    const cid = findDefaultAdminCrmCompanyPhucDat(companies);
+    if (!cid) return;
+    setFilterCompany(cid);
+    try {
+      localStorage.setItem(LS_CRM_DASH_COMPANY, cid);
+    } catch {
+      /* ignore */
+    }
+  }, [isAdmin, companies, filterCompany, P?.filterCompany]);
 
   useEffect(() => {
     if (user == null) return;
