@@ -113,6 +113,10 @@ export default function LeadDetailScreen() {
   const [lostReason, setLostReason] = useState('');
   const [pendingStageId, setPendingStageId] = useState<string | null>(null);
   const [stagePickerOpen, setStagePickerOpen] = useState(false);
+  const [productionCompanies, setProductionCompanies] = useState<Array<{ id: string; name?: string; short_name?: string }>>([]);
+  const [wonProdPickOpen, setWonProdPickOpen] = useState(false);
+  const [pendingWonStageId, setPendingWonStageId] = useState<string | null>(null);
+  const [wonProdCompanyId, setWonProdCompanyId] = useState('');
 
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
@@ -196,6 +200,20 @@ export default function LeadDetailScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { data } = await api.get<{ companies?: Array<{ id: string; name?: string; short_name?: string }> }>(
+          '/companies',
+          { params: { for_module: 'production' } },
+        );
+        setProductionCompanies(Array.isArray(data?.companies) ? data.companies : []);
+      } catch {
+        setProductionCompanies([]);
+      }
+    })();
+  }, []);
 
   const skipNextActivitiesRefreshRef = useRef(true);
   useFocusEffect(
@@ -328,15 +346,22 @@ export default function LeadDetailScreen() {
     if (previewExpanded) void loadLeadPreview();
   }, [previewExpanded, loadLeadPreview]);
 
-  const applyStage = async (stageId: string, lost?: string) => {
+  const applyStage = async (
+    stageId: string,
+    opts?: { lost?: string; production_company_id?: string },
+  ) => {
     setSavingStage(true);
     try {
       await api.patch(`/crm/leads/${id}/stage`, {
         stage_id: stageId,
-        ...(lost ? { lost_reason: lost } : {}),
+        ...(opts?.lost ? { lost_reason: opts.lost } : {}),
+        ...(opts?.production_company_id ? { production_company_id: opts.production_company_id } : {}),
       });
       await load();
       setStagePickerOpen(false);
+      setWonProdPickOpen(false);
+      setPendingWonStageId(null);
+      setWonProdCompanyId('');
     } catch (e: unknown) {
       const body = (e as { response?: { data?: { error?: string; requires_conversion?: boolean } } })?.response?.data;
       const msg = body?.error || 'Không cập nhật được giai đoạn.';
@@ -364,6 +389,13 @@ export default function LeadDetailScreen() {
       setLostOpen(true);
       return;
     }
+    if (lead.type === 'deal' && stage.is_won && !lead.project_id) {
+      setPendingWonStageId(stage.id);
+      setWonProdCompanyId(lead.company_id ? String(lead.company_id) : '');
+      setWonProdPickOpen(true);
+      setStagePickerOpen(false);
+      return;
+    }
     void applyStage(stage.id);
   };
 
@@ -372,7 +404,16 @@ export default function LeadDetailScreen() {
       Alert.alert('Thiếu thông tin', 'Vui lòng nhập lý do thua.');
       return;
     }
-    void applyStage(pendingStageId, lostReason.trim());
+    void applyStage(pendingStageId, { lost: lostReason.trim() });
+  };
+
+  const confirmWonProductionCompany = () => {
+    if (!pendingWonStageId) return;
+    if (!wonProdCompanyId.trim()) {
+      Alert.alert('Thiếu thông tin', 'Chọn công ty thuộc module Sản xuất.');
+      return;
+    }
+    void applyStage(pendingWonStageId, { production_company_id: wonProdCompanyId.trim() });
   };
 
   const saveTitle = async () => {
@@ -1350,6 +1391,40 @@ export default function LeadDetailScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      <Modal visible={wonProdPickOpen} transparent animationType="slide" onRequestClose={() => !savingStage && setWonProdPickOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => !savingStage && setWonProdPickOpen(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Chọn công ty Sản xuất</Text>
+            <Text style={styles.rowSub}>Bắt buộc để tạo dự án xưởng khi deal Thắng.</Text>
+            <FlatList
+              data={productionCompanies}
+              keyExtractor={(c) => c.id}
+              style={{ maxHeight: 320 }}
+              renderItem={({ item: c }) => {
+                const sel = wonProdCompanyId === c.id;
+                return (
+                  <TouchableOpacity
+                    style={[styles.sheetRow, sel && { backgroundColor: CrmColors.blue50 }]}
+                    onPress={() => setWonProdCompanyId(c.id)}
+                  >
+                    <Text style={styles.sheetName}>{c.short_name || c.name || c.id}</Text>
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={<Text style={styles.rowSub}>Không có công ty SX. Cấu hình trên web.</Text>}
+            />
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+              <TouchableOpacity style={styles.lostCancel} onPress={() => !savingStage && setWonProdPickOpen(false)}>
+                <Text style={styles.lostCancelTxt}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.lostOk} onPress={confirmWonProductionCompany} disabled={savingStage}>
+                <Text style={styles.lostOkTxt}>{savingStage ? '…' : 'Xác nhận'}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
       </Modal>
 
       <Modal visible={stagePickerOpen} animationType="slide" transparent>

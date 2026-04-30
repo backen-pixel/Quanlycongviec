@@ -17,6 +17,7 @@ const EMPTY_STATE = {
   totalContacts: 0,
   totalPool: 0,
   offset: 0,
+  batchesInCycle: 0,
   synced: 0,
   syncErrors: 0,
   phonesFound: 0,
@@ -26,7 +27,7 @@ const EMPTY_STATE = {
   startedAt: null,
   lastUpdatedAt: null,
   logs: [],
-  config: { limit: 100, graphPages: 10, pauseSec: 60, cyclePauseSec: 300, delayMs: 100 },
+  config: { limit: 100, graphPages: 10, batchesPerCycle: 1, pauseSec: 60, cyclePauseSec: 300, delayMs: 100 },
 };
 
 let _state = { ...EMPTY_STATE };
@@ -112,6 +113,7 @@ export default function AutoToolPanel({ onComplete = null }) {
   const [form, setForm] = useState({
     limit: 100,
     graphPages: 10,
+    batchesPerCycle: 1,
     pauseSec: 60,
     cyclePauseSec: 300,
     delayMs: 100,
@@ -149,6 +151,7 @@ export default function AutoToolPanel({ onComplete = null }) {
       await saveAutoToolConfig({
         limit: parseInt(form.limit, 10) || 100,
         graphPages: parseInt(form.graphPages, 10) || 10,
+        batchesPerCycle: parseInt(form.batchesPerCycle, 10) || 1,
         pauseSec: parseInt(form.pauseSec, 10) || 60,
         cyclePauseSec: parseInt(form.cyclePauseSec, 10) || 300,
         delayMs: parseInt(form.delayMs, 10) || 100,
@@ -159,9 +162,10 @@ export default function AutoToolPanel({ onComplete = null }) {
   };
 
   const running = auto.running;
-  // Progress: offset (đã xong) + processed trong batch hiện tại / tổng pool
-  const totalDone = (auto.offset || 0) - (auto.totalContacts || 0) + (auto.processed || 0);
   const pool = auto.totalPool || 0;
+  const lim = auto.config?.limit ?? form.limit ?? 100;
+  const bpc = auto.config?.batchesPerCycle ?? form.batchesPerCycle ?? 1;
+  const maxPerCycle = Math.min(500000, Math.max(1, lim * Math.max(1, bpc)));
   const progress = auto.totalContacts > 0
     ? Math.min(100, Math.round((auto.processed / auto.totalContacts) * 100))
     : 0;
@@ -178,11 +182,18 @@ export default function AutoToolPanel({ onComplete = null }) {
           <Zap className="h-4 w-4 text-amber-500" />
           <span className="text-sm font-semibold text-gray-800">⚡ Công cụ tự động</span>
           {running && (
-            <span className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full animate-pulse">
-              <Loader2 className="h-3 w-3 animate-spin" />
+            <span
+              className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full animate-pulse max-w-[min(100vw-8rem,520px)] truncate"
+              title={
+                pool > 0
+                  ? `Tổng contact trong DB: ${pool} (số liệu tham chiếu). Vòng này xử lý tối đa ${maxPerCycle} user (${bpc} batch × ${lim}). Không quét hết DB trong một vòng.`
+                  : undefined
+              }
+            >
+              <Loader2 className="h-3 w-3 animate-spin shrink-0" />
               Vòng {auto.cycleCount} • {auto.processed}/{auto.totalContacts}
-              {auto.totalPool > 0 && ` (pool ${auto.totalPool})`}
-              {auto.currentContact && ` • ${auto.currentContact}`}
+              {` · tối đa ${maxPerCycle} user/vòng`}
+              {auto.currentContact && ` · ${auto.currentContact}`}
             </span>
           )}
           {expanded ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
@@ -225,7 +236,9 @@ export default function AutoToolPanel({ onComplete = null }) {
           {/* Description */}
           <div className="pt-3 text-[11px] text-gray-700 space-y-2">
             <p className="font-semibold text-gray-800">Luồng: Kéo contacts → Sync tin nhắn Graph → Quét SĐT inbound → Tạo Lead</p>
-            <p className="text-gray-500">Chạy liên tục theo batch. User mới nhất trước. Khi hết pool sẽ tự lặp lại.</p>
+            <p className="text-gray-500">
+              Mỗi <strong>vòng</strong> chỉ chạy <strong>số batch</strong> bạn cấu hình (mặc định 1 batch = {auto.config?.limit || form.limit || 100} user), không quét offset tiếp đến hết pool. Sau đó nghỉ «cuối vòng» rồi lặp lại từ user mới nhất.
+            </p>
           </div>
 
           {/* KPI Cards — always show when has data */}
@@ -310,6 +323,16 @@ export default function AutoToolPanel({ onComplete = null }) {
                       className="border rounded-md px-2 py-1"
                       value={form.graphPages}
                       onChange={e => setForm(f => ({ ...f, graphPages: e.target.value }))}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5">
+                    <span className="text-gray-600">Batch / vòng (1–500)</span>
+                    <input
+                      type="number" min={1} max={500}
+                      className="border rounded-md px-2 py-1"
+                      title="1 = mỗi vòng chỉ 1 batch contacts/batch, không quét hết pool"
+                      value={form.batchesPerCycle}
+                      onChange={e => setForm(f => ({ ...f, batchesPerCycle: e.target.value }))}
                     />
                   </label>
                   <label className="flex flex-col gap-0.5">

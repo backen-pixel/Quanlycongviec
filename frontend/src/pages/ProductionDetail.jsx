@@ -11,8 +11,6 @@ import {
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
   AlertTriangle, CheckCircle2, Clock, Truck, Wrench,
 } from 'lucide-react';
-import CRMTasksTab from '../components/CRMTasksTab';
-import ProductionTasksTab from '../components/ProductionTasksTab';
 import ProjectOrdersTab from '../components/ProjectOrdersTab';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
@@ -20,11 +18,11 @@ import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import PipelineStepper from '../components/PipelineStepper';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
-const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
+const DEAL_TAB_KEYS = new Set(['orders', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
 const LEGACY_TAB_MAP = {
   timeline: 'activities',
   'crm-notes': 'notes',
-  'crm-tasks': 'tasks',
+  'crm-tasks': 'orders',
   'crm-chat': 'chat',
   'crm-activities': 'activities',
   'crm-deal-docs': 'documents',
@@ -332,7 +330,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     return t === 'orders';
   };
   const [activeTab, setActiveTab] = useState(
-    tabAllowed(normalizedUrlTab) ? normalizedUrlTab : 'tasks',
+    tabAllowed(normalizedUrlTab) ? normalizedUrlTab : 'orders',
   );
   const [crmUsers, setCrmUsers] = useState([]);
   const [crmActivities, setCrmActivities] = useState([]);
@@ -429,7 +427,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     setActiveTab(tab);
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev);
-      if (tab === 'tasks') p.delete('tab');
+      if (tab === 'orders') p.delete('tab');
       else p.set('tab', tab);
       return p;
     }, { replace: true });
@@ -439,7 +437,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     const t = searchParams.get('tab');
     const next = LEGACY_TAB_MAP[t] || t;
     if (tabAllowed(next)) setActiveTab(next);
-    else setActiveTab('tasks');
+    else setActiveTab('orders');
   }, [id, searchParams, moduleKey]);
 
   useEffect(() => {
@@ -1151,7 +1149,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           <div className="bg-white rounded-xl border">
             {/* Tab bar — giống LeadDetail, bỏ Facebook và Tổng đài */}
             <div className="flex border-b flex-wrap">
-              {tabBtn('tasks', '✅ Công việc')}
               {tabBtn('orders', `🛒 Đơn hàng${orderCount ? ` (${orderCount})` : ''}`)}
               {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + (project.sharedDocuments?.length || 0) + safeTaskFiles.length})`)}
               {tabBtn('activities', `💬 Hoạt động (${crmLeadId ? sharedActivities.length : projectActivities.length})`)}
@@ -1165,26 +1162,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             </div>
 
             <div className="p-5">
-              {/* Công việc — dùng CRMTasksTab giống hệt chi tiết deal */}
-              {activeTab === 'tasks' && (
-                crmLeadId ? (
-                  <CRMTasksTab leadId={crmLeadId} leadType="deal" users={taskUsers} />
-                ) : (
-                  <ProductionTasksTab
-                    projectId={project.id}
-                    stages={pipelineStages}
-                    users={taskUsers}
-                    onReload={refreshProjectSilently}
-                    shareModule={moduleKey === 'vc' ? 'logistics' : 'production'}
-                  />
-                )
-              )}
-
               {activeTab === 'orders' && (
                 <ProjectOrdersTab
                   projectId={project.id}
                   users={taskUsers}
                   logisticsView={moduleKey === 'vc'}
+                  taskScope="production"
                   onChanged={() => { refreshProjectSilently(); api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => {}); }}
                 />
               )}

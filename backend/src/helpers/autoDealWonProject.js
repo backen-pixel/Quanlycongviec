@@ -4,21 +4,27 @@ const { notifyMultiple } = require('./notifications');
 const { syncCrmLeadSxPipelineFromProject } = require('./workshopKanban');
 const { applyDefaultWorkshopTemplatesForNewProject } = require('./workshopApplyTemplates');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('./projectCode');
+const { validateProductionCompanyId } = require('./productionCompanyGate');
 
 /**
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
  * @returns {Promise<{ ok: true, project_id, project_code, project_name, tasks_created } | { ok: false, error: string, statusCode?: number, existing_project_id?: string }>}
  */
-async function autoCreateProjectFromWonDeal({ req, dealId, userId }) {
+async function autoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId }) {
   try {
-    return await runAutoCreateProjectFromWonDeal({ req, dealId, userId });
+    return await runAutoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId });
   } catch (e) {
     console.error('[auto-project] Error:', e.message);
     return { ok: false, error: e.message || 'Lỗi tạo dự án', statusCode: 500 };
   }
 }
 
-async function runAutoCreateProjectFromWonDeal({ req, dealId, userId }) {
+async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId }) {
+  const coCheck = await validateProductionCompanyId(productionCompanyId);
+  if (!coCheck.ok) {
+    return { ok: false, error: coCheck.error, statusCode: 400 };
+  }
+
   const { data: deal } = await supabase.from('crm_leads')
     .select('*, customer:customers(id, full_name, phone, email, address)')
     .eq('id', dealId).single();
@@ -57,7 +63,7 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId }) {
     name: deal.title || 'Dự án mới',
     description: deal.description || null,
     customer_id: deal.customer_id,
-    company_id: deal.company_id || null,
+    company_id: coCheck.company.id,
     flow_id: flowId,
     status: 'consulting',
     current_stage_id: firstStage?.id || null,
@@ -112,43 +118,60 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId }) {
     try {
       const { data: crmTasks } = await supabase.from('crm_tasks')
         .select('*').eq('lead_id', dealId).order('order_index');
-      for (let i = 0; i < (crmTasks || []).length; i++) {
-        const ct = crmTasks[i];
-        const { data: task } = await supabase.from('tasks').insert({
+      if (crmTasks?.length) {
+        const completedAt = new Date().toISOString();
+        const rows = crmTasks.map((ct, i) => ({
           project_id: projectId, stage_id: firstStage?.id || null,
           title: ct.title, description: ct.description || null,
           assignee_id: ct.assignee_id || null, priority: ct.priority || 'medium',
-          status: 'done', completed_at: new Date().toISOString(),
+          status: 'done', completed_at: completedAt,
           order_index: i, created_by_id: userId, task_type: 'project',
           metadata: { crm_task_id: ct.id, imported_from: 'crm_deal', deal_id: dealId },
-        }).select().single();
-        if (task) allCreatedTasks.push(task);
+        }));
+        const { data: inserted } = await supabase.from('tasks').insert(rows).select('*');
+        if (inserted?.length) allCreatedTasks.push(...inserted);
       }
     } catch (e) { console.error('[auto-project] Import CRM tasks:', e.message); }
   }
 
-  for (const step of (flowSteps || []).filter((s) => s.order_index > 0)) {
-    if (step.division_unit_id) {
-      await supabase.from('project_company_assignments').upsert({
-        project_id: projectId,
-        division_unit_id: step.division_unit_id,
-        company_unit_id: step.company_unit_id,
-        template_set_id: step.template_set_id,
-        order_index: step.order_index,
-        status: step.order_index === 1 ? 'in_progress' : 'pending',
-        started_at: step.order_index === 1 ? new Date().toISOString() : null,
-      }, { onConflict: 'project_id,division_unit_id' });
-    }
+  const generatedBySteps = await Promise.all(
+    (flowSteps || [])
+      .filter((s) => s.order_index > 0)
+      .map(async (step) => {
+        if (step.division_unit_id) {
+          await supabase.from('project_company_assignments').upsert({
+            project_id: projectId,
+            division_unit_id: step.division_unit_id,
+            company_unit_id: step.company_unit_id,
+            template_set_id: step.template_set_id,
+            order_index: step.order_index,
+            status: step.order_index === 1 ? 'in_progress' : 'pending',
+            started_at: step.order_index === 1 ? new Date().toISOString() : null,
+          }, { onConflict: 'project_id,division_unit_id' });
+        }
 
-    const stepTasks = await generateStepTasks({
-      projectId, flowStepId: step.id,
-      templateSetId: step.template_set_id || null,
-      userId,
-    });
-    allCreatedTasks.push(...stepTasks);
-  }
+        const stepTasks = await generateStepTasks({
+          projectId, flowStepId: step.id,
+          templateSetId: step.template_set_id || null,
+          userId,
+        });
+        return stepTasks || [];
+      }),
+  );
+  allCreatedTasks.push(...generatedBySteps.flat());
 
   await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', dealId);
+
+  try {
+    const { syncExistingCrmOrdersToProject } = require('./projectOrderFulfillment');
+    await syncExistingCrmOrdersToProject({
+      projectId,
+      userId,
+      parentLeadId: dealId,
+    });
+  } catch (e) {
+    console.warn('[auto-project] sync existing CRM orders:', e.message);
+  }
 
   // Giữ status/current_stage ở KD (consulting): Kanban xưởng gán deal thắng vào cột bucket won_pending
   // ("Chờ vào xưởng") thay vì nhảy thẳng cột Sản xuất.
@@ -206,9 +229,22 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId }) {
   } catch (_) {}
 
   try {
-    const { ensureDefaultOrderOneForProject } = require('./projectOrderFulfillment');
+    const {
+      ensureDefaultOrderOneForProject,
+      migrateDealInternalsToFulfillmentLead,
+    } = require('./projectOrderFulfillment');
     const r1 = await ensureDefaultOrderOneForProject({ projectId, userId, defaultLabel: 'Đơn 1' });
-    if (r1.created) console.log(`[auto-project] ${r1.order?.code} — Đơn 1 (nhiệm vụ từng lượt)`);
+    if (r1.created) {
+      console.log(`[auto-project] ${r1.order?.code} — Đơn 1 (nhiệm vụ từng lượt)`);
+      const fulfillmentLeadId = r1.order?.fulfillment_lead_id;
+      if (fulfillmentLeadId) {
+        await migrateDealInternalsToFulfillmentLead({
+          fromLeadId: dealId,
+          toLeadId: fulfillmentLeadId,
+          projectId,
+        });
+      }
+    }
   } catch (e) {
     console.warn('[auto-project] ensure Đơn 1:', e.message);
   }

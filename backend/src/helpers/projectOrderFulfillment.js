@@ -1,5 +1,6 @@
 const { supabase } = require('../config/supabase');
 const { getCrmVcDeliveryStageId } = require('./workshopKanban');
+const { validateProductionCompanyId } = require('./productionCompanyGate');
 
 const ORDER_PHASES = ['draft', 'confirmed', 'in_production', 'ready_logistics', 'in_logistics', 'completed'];
 
@@ -112,6 +113,176 @@ async function createFulfillmentChildDeal({
     .single();
   if (error) throw error;
   return data.id;
+}
+
+/**
+ * Tạo bộ nhiệm vụ CRM theo đơn từ bộ mẫu Sản xuất mặc định.
+ * - Nhiệm vụ lớn = title từ workshop_task_template_items
+ * - Nhiệm vụ nhỏ (checklist) được ghép vào description để người dùng thấy ngay trong task.
+ */
+async function applyProductionTemplateToFulfillmentLead({
+  leadId,
+  createdBy,
+  assigneeId = null,
+}) {
+  if (!leadId || !createdBy) return { created: 0, reason: 'missing_params' };
+
+  const { count: existingCount, error: exErr } = await supabase
+    .from('crm_tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('lead_id', leadId)
+    .like('stage_slug', 'sx_%');
+  if (exErr) throw exErr;
+  if ((existingCount || 0) > 0) return { created: 0, reason: 'already_has_sx_tasks' };
+
+  const { data: leadRow } = await supabase
+    .from('crm_leads')
+    .select('id, company_id, project_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  let targetCompanyId = leadRow?.company_id || null;
+  if (leadRow?.project_id) {
+    const { data: p } = await supabase
+      .from('projects')
+      .select('company_id')
+      .eq('id', leadRow.project_id)
+      .maybeSingle();
+    if (p?.company_id) targetCompanyId = p.company_id;
+  }
+  if (targetCompanyId) {
+    const co = await validateProductionCompanyId(targetCompanyId);
+    if (!co.ok) return { created: 0, reason: 'company_not_in_production_module', error: co.error };
+  }
+
+  const fetchTemplates = async (companyMode) => {
+    let q = supabase
+      .from('workshop_task_templates')
+      .select('id, name, is_default, order_index, company_id')
+      .eq('workshop_area', 'production')
+      .eq('is_active', true);
+    if (companyMode === 'scoped' && targetCompanyId) q = q.eq('company_id', targetCompanyId);
+    if (companyMode === 'global') q = q.is('company_id', null);
+    q = q.order('order_index', { ascending: true });
+    const r = await q;
+    if (r.error?.message?.includes('order_index')) {
+      let q2 = supabase
+        .from('workshop_task_templates')
+        .select('id, name, is_default, company_id')
+        .eq('workshop_area', 'production')
+        .eq('is_active', true);
+      if (companyMode === 'scoped' && targetCompanyId) q2 = q2.eq('company_id', targetCompanyId);
+      if (companyMode === 'global') q2 = q2.is('company_id', null);
+      return q2;
+    }
+    return r;
+  };
+
+  let { data: templates, error: tplErr } = await fetchTemplates('scoped');
+  if (tplErr) throw tplErr;
+  if (!templates?.length) {
+    const g = await fetchTemplates('global');
+    templates = g.data;
+    tplErr = g.error;
+  }
+  if (tplErr) throw tplErr;
+  if (!templates?.length) return { created: 0, reason: 'no_production_templates_for_company' };
+
+  const templateIds = templates.map((t) => t.id).filter(Boolean);
+  const { data: items, error: itemErr } = await supabase
+    .from('workshop_task_template_items')
+    .select('template_id, title, description, priority, order_index, checklist')
+    .in('template_id', templateIds)
+    .order('template_id')
+    .order('order_index');
+  if (itemErr) throw itemErr;
+  if (!items?.length) return { created: 0, reason: 'template_items_empty' };
+
+  const slugByTitle = (titleRaw) => {
+    const t = String(titleRaw || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+    if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
+    if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
+    if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
+    if (t.includes('vat tu')) return 'sx_vat_tu';
+    if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
+    if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
+    if (t.includes('hoan thien')) return 'sx_hoan_thien';
+    if (t.includes('dong goi')) return 'sx_dong_goi';
+    if (t.includes('giao hang')) return 'sx_giao_hang';
+    return 'sx_other';
+  };
+
+  const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
+  const sortedItems = [...items].sort((a, b) => {
+    const ta = templateOrder.get(String(a.template_id)) ?? 9999;
+    const tb = templateOrder.get(String(b.template_id)) ?? 9999;
+    if (ta !== tb) return ta - tb;
+    return (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
+  });
+
+  const inserts = sortedItems.map((it, idx) => {
+    const checklist = Array.isArray(it.checklist) ? it.checklist.filter(Boolean) : [];
+    const checklistText = checklist.length
+      ? `\n\nNhiệm vụ nhỏ:\n${checklist.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
+      : '';
+    return {
+      lead_id: leadId,
+      title: it.title,
+      description: `${it.description || ''}${checklistText}`.trim() || null,
+      status: 'pending',
+      priority: it.priority || 'medium',
+      stage_slug: slugByTitle(it.title),
+      order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
+      assignee_id: assigneeId || null,
+      supervisor_id: null,
+      deadline: null,
+      created_by: createdBy,
+    };
+  });
+
+  const { error: insErr } = await supabase.from('crm_tasks').insert(inserts);
+  if (insErr) throw insErr;
+  return {
+    created: inserts.length,
+    reason: 'ok',
+    template_count: templates.length,
+    template_names: templates.map((t) => t.name).filter(Boolean),
+    company_id: targetCompanyId || null,
+  };
+}
+
+/**
+ * Chuyển toàn bộ dữ liệu nghiệp vụ từ deal gốc sang deal fulfillment (deal sản xuất).
+ * Dùng khi tạo Đơn 1 từ deal CRM đã thắng/chuyển SX.
+ */
+async function migrateDealInternalsToFulfillmentLead({
+  fromLeadId,
+  toLeadId,
+  projectId = null,
+}) {
+  if (!fromLeadId || !toLeadId) return { moved: false, reason: 'missing_params' };
+  if (String(fromLeadId) === String(toLeadId)) return { moved: false, reason: 'same_lead' };
+
+  // 1) Tasks + attachments task
+  await supabase.from('crm_tasks').update({ lead_id: toLeadId }).eq('lead_id', fromLeadId);
+  await supabase.from('crm_task_attachments').update({ lead_id: toLeadId }).eq('lead_id', fromLeadId);
+
+  // 2) Tài liệu lead/deal
+  const docPatch = { lead_id: toLeadId };
+  if (projectId) docPatch.project_id = projectId;
+  await supabase.from('lead_documents').update(docPatch).eq('lead_id', fromLeadId);
+
+  // 3) Hoạt động CRM
+  await supabase.from('crm_activities').update({ lead_id: toLeadId }).eq('lead_id', fromLeadId);
+
+  // 4) Báo giá/hóa đơn gắn lead (nếu có)
+  await supabase.from('quotations').update({ lead_id: toLeadId }).eq('lead_id', fromLeadId);
+  await supabase.from('invoices').update({ lead_id: toLeadId }).eq('lead_id', fromLeadId);
+
+  return { moved: true, fromLeadId, toLeadId };
 }
 
 async function pushOrderToLogistics({ orderId, projectId, userId }) {
@@ -279,6 +450,13 @@ async function createChildOrderOnProject(p) {
     estimatedValue: total != null ? Number(total) : 0,
   });
 
+  // Tự động gắn bộ nhiệm vụ SX vào deal nhiệm vụ theo đơn (fulfillment lead)
+  await applyProductionTemplateToFulfillmentLead({
+    leadId: childLeadId,
+    createdBy: userId,
+    assigneeId: master.assigned_to || master.lead_owner_id || null,
+  });
+
   const { data: order, error: insErr } = await supabase
     .from('orders')
     .insert({
@@ -366,6 +544,73 @@ async function ensureDefaultOrderOneForProject({ projectId, userId, defaultLabel
   }
 }
 
+/**
+ * Đồng bộ các đơn CRM đã tạo ở deal gốc sang project SX:
+ * - Gán project_id để SX nhìn thấy đủ số đơn
+ * - Tạo fulfillment deal nếu thiếu
+ * - Gắn bộ nhiệm vụ SX cho fulfillment deal nếu thiếu
+ */
+async function syncExistingCrmOrdersToProject({
+  projectId,
+  userId,
+  parentLeadId = null,
+}) {
+  if (!projectId || !userId) return { synced: 0, touched: 0 };
+  const master = parentLeadId
+    ? await supabase
+      .from('crm_leads')
+      .select('id, type, code, title, customer_id, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, estimated_value')
+      .eq('id', parentLeadId)
+      .maybeSingle()
+      .then((r) => r.data || null)
+    : await findMasterDealForProject(projectId);
+  if (!master?.id) return { synced: 0, touched: 0, reason: 'no_master_deal' };
+
+  const { data: rows, error } = await supabase
+    .from('orders')
+    .select('id, code, title, display_label, total, lead_id, project_id, fulfillment_lead_id, sort_index, created_at')
+    .eq('lead_id', master.id)
+    .order('sort_index', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  if (!rows?.length) return { synced: 0, touched: 0 };
+
+  let synced = 0;
+  let touched = 0;
+  for (const row of rows) {
+    const patch = {};
+    if (!row.project_id || String(row.project_id) !== String(projectId)) {
+      patch.project_id = projectId;
+      touched += 1;
+    }
+    let fulfillmentLeadId = row.fulfillment_lead_id || null;
+    if (!fulfillmentLeadId) {
+      const label = (row.display_label || row.title || row.code || 'Đơn').trim();
+      fulfillmentLeadId = await createFulfillmentChildDeal({
+        parentDeal: master,
+        masterProjectId: projectId,
+        displayLabel: label,
+        userId,
+        estimatedValue: Number(row.total || 0),
+      });
+      patch.fulfillment_lead_id = fulfillmentLeadId;
+      touched += 1;
+    }
+    if (Object.keys(patch).length) {
+      await supabase.from('orders').update(patch).eq('id', row.id);
+    }
+    if (fulfillmentLeadId) {
+      await applyProductionTemplateToFulfillmentLead({
+        leadId: fulfillmentLeadId,
+        createdBy: userId,
+        assigneeId: master.assigned_to || master.lead_owner_id || null,
+      });
+      synced += 1;
+    }
+  }
+  return { synced, touched };
+}
+
 module.exports = {
   ORDER_PHASES,
   nextDhCode,
@@ -375,4 +620,7 @@ module.exports = {
   ensureDefaultOrderOneForProject,
   pushOrderToLogistics,
   resolveVcIntakeStageId,
+  applyProductionTemplateToFulfillmentLead,
+  migrateDealInternalsToFulfillmentLead,
+  syncExistingCrmOrdersToProject,
 };

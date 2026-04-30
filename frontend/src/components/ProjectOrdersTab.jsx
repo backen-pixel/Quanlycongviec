@@ -5,7 +5,7 @@ import { Plus, Truck, Loader2, ChevronDown, ChevronRight, Package, Factory } fro
 
 // Internal phase UI removed per request.
 
-export default function ProjectOrdersTab({ projectId, users = [], onChanged = null, logisticsView = false }) {
+export default function ProjectOrdersTab({ projectId, users = [], onChanged = null, logisticsView = false, taskScope = 'crm' }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
@@ -15,6 +15,7 @@ export default function ProjectOrdersTab({ projectId, users = [], onChanged = nu
   const [msg, setMsg] = useState('');
   const [selected, setSelected] = useState({});
   const [bulkPushing, setBulkPushing] = useState(false);
+  const [generatingForLead, setGeneratingForLead] = useState(null);
   const [sxModal, setSxModal] = useState({ open: false, mode: 'single', orderId: null });
   const [sxCompanies, setSxCompanies] = useState([]);
   const [sxCompanyId, setSxCompanyId] = useState('');
@@ -162,6 +163,22 @@ export default function ProjectOrdersTab({ projectId, users = [], onChanged = nu
       setMsg(e.response?.data?.error || e.message || 'Lỗi chuyển SX');
     }
     setBulkPushing(false);
+  };
+
+  const generateSxTasks = async (fulfillmentLeadId) => {
+    if (!fulfillmentLeadId) return;
+    setGeneratingForLead(fulfillmentLeadId);
+    setMsg('');
+    try {
+      const { data } = await api.post(`/crm/leads/${encodeURIComponent(fulfillmentLeadId)}/tasks/generate-production-template`);
+      if ((data?.created || 0) > 0) setMsg(`Đã gen ${data.created} nhiệm vụ SX cho đơn.`);
+      else setMsg('Đơn đã có nhiệm vụ SX trước đó.');
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setMsg(e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ SX');
+    }
+    setGeneratingForLead(null);
   };
 
   if (loading) {
@@ -382,13 +399,25 @@ export default function ProjectOrdersTab({ projectId, users = [], onChanged = nu
                       <Factory className="h-3.5 w-3.5" />
                       Chuyển SX
                     </button>
+                    {!!o.fulfillment_lead_id && (
+                      <button
+                        type="button"
+                        onClick={() => generateSxTasks(o.fulfillment_lead_id)}
+                        disabled={generatingForLead === o.fulfillment_lead_id}
+                        className="h-8 px-3 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+                        title="Gen bộ nhiệm vụ SX nếu chưa có"
+                      >
+                        {generatingForLead === o.fulfillment_lead_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                        Gen nhiệm vụ SX
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 {open && o.fulfillment_lead_id && (
                   <div className="p-4 border-t border-gray-100">
                     <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Nhiệm vụ (deal đơn)</p>
-                    <CRMTasksTab leadId={o.fulfillment_lead_id} leadType="deal" users={users} />
+                    <CRMTasksTab leadId={o.fulfillment_lead_id} leadType="deal" users={users} taskScope={taskScope} />
                   </div>
                 )}
                 {open && !o.fulfillment_lead_id && (

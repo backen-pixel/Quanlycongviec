@@ -12,8 +12,9 @@ const { syncCrmLeadSxPipelineFromProject, emitCrmBadgeUpdateForProject } = requi
 const { userSeesAllCrmDeals, userSeesAllCrmLeads, normalizeCrmUserRole } = require('../helpers/crmAccessRoles');
 const { applyDefaultWorkshopTemplatesForNewProject, applyWorkshopTemplateToProject } = require('../helpers/workshopApplyTemplates');
 const { autoGenCrmTasks, FALLBACK_LEAD_TASKS, FALLBACK_DEAL_TASKS } = require('../helpers/autoGenCrmTasks');
-const { createFulfillmentChildDeal } = require('../helpers/projectOrderFulfillment');
+const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
+const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
 let misaService = null;
@@ -3301,18 +3302,33 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.patch('/leads/:id/stage', async (req, res) => {
   try {
-    const { stage_id, lost_reason } = req.body;
+    const { stage_id, lost_reason, production_company_id } = req.body;
     const { data: lead } = await supabase.from('crm_leads').select('type, project_id').eq('id', req.params.id).single();
     
     const { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('is_won, is_lost, pipeline_type, send_zalo_on_enter')
+      .select('name, is_won, is_lost, pipeline_type, send_zalo_on_enter')
       .eq('id', stage_id)
       .single();
     
     // Validate: lead can only move to lead stages, deals to deal stages
     if (lead?.type !== stage?.pipeline_type) {
       return res.status(400).json({ error: `${lead?.type === 'lead' ? 'Lead' : 'Deal'} chỉ có thể di chuyển trong pipeline riêng của nó` });
+    }
+
+    const stageName = String(stage?.name || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    const isProductionStage = stageName.includes('san xuat');
+    const requiresProductionPick = lead?.type === 'deal' && !lead?.project_id && (stage?.is_won || isProductionStage);
+
+    // Deal → Thắng hoặc cột Sản xuất, chưa có dự án: bắt buộc chọn công ty thuộc module Sản xuất
+    if (requiresProductionPick) {
+      const v = await validateProductionCompanyId(production_company_id);
+      if (!v.ok) {
+        return res.status(400).json({ error: v.error, requires_production_company: true });
+      }
     }
 
     // For leads: if moving to "Chuyển Deal" stage, return error requesting convert-to-deal
@@ -3325,6 +3341,11 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     const updates = { stage_id, updated_at: new Date().toISOString() };
     if (stage?.is_won) updates.actual_close_date = new Date().toISOString().split('T')[0];
+    if (lead?.type === 'deal' && isProductionStage) {
+      // Chuyển thẳng vào cột Sản xuất cũng coi như đã bàn giao SX/đã chốt để Kanban SX nhận diện.
+      updates.actual_close_date = updates.actual_close_date || new Date().toISOString().split('T')[0];
+      updates.sx_handover_at = new Date().toISOString();
+    }
     if (stage?.is_lost) {
       updates.lost_reason = lost_reason || null;
       updates.actual_close_date = new Date().toISOString().split('T')[0];
@@ -3399,31 +3420,36 @@ r.patch('/leads/:id/stage', async (req, res) => {
     // Deal → Thắng: tự tạo dự án xưởng server-side; nếu lỗi / thiếu luồng → trả deal_won cho modal
     let dealWonData = null;
     let projectAutoCreated = null;
-    if (lead?.type === 'deal' && stage?.is_won && !lead?.project_id) {
+    if (lead?.type === 'deal' && !lead?.project_id && (stage?.is_won || isProductionStage)) {
       const { data: dealData } = await supabase.from('crm_leads')
         .select('*, customer:customers(id, full_name, phone, email, address)')
         .eq('id', req.params.id).single();
 
-      const { data: adminUsers } = await supabase.from('users').select('id').eq('role', 'admin');
-      const adminIds = (adminUsers || []).map(u => u.id);
-      if (adminIds.length > 0) {
-        await notifyMultiple(req, adminIds, 'deal_won',
-          '🏆 Deal Thắng',
-          `Deal "${dealData?.title}" - Giá trị: ${(dealData?.estimated_value || 0).toLocaleString('vi-VN')} VND`,
-          'crm_deal', req.params.id);
+      if (stage?.is_won) {
+        const { data: adminUsers } = await supabase.from('users').select('id').eq('role', 'admin');
+        const adminIds = (adminUsers || []).map(u => u.id);
+        if (adminIds.length > 0) {
+          await notifyMultiple(req, adminIds, 'deal_won',
+            '🏆 Deal Thắng',
+            `Deal "${dealData?.title}" - Giá trị: ${(dealData?.estimated_value || 0).toLocaleString('vi-VN')} VND`,
+            'crm_deal', req.params.id);
+        }
+
+        try {
+          await supabase.from('crm_activities').insert({
+            lead_id: req.params.id, type: 'note',
+            title: '🎉 Deal Thắng!',
+            description: `Deal "${dealData?.title}" đã chốt thành công.`,
+            created_by: req.user.userId,
+          });
+        } catch (_) {}
       }
 
-      try {
-        await supabase.from('crm_activities').insert({
-          lead_id: req.params.id, type: 'note',
-          title: '🎉 Deal Thắng!',
-          description: `Deal "${dealData?.title}" đã chốt thành công.`,
-          created_by: req.user.userId,
-        });
-      } catch (_) {}
-
       const auto = await autoCreateProjectFromWonDeal({
-        req, dealId: req.params.id, userId: req.user.userId,
+        req,
+        dealId: req.params.id,
+        userId: req.user.userId,
+        productionCompanyId: production_company_id,
       });
 
       if (auto.ok) {
@@ -6153,6 +6179,7 @@ r.get('/invoices/:id/pdf', async (req, res) => {
 // GET tasks for a lead/deal
 r.get('/leads/:id/tasks', async (req, res) => {
   try {
+    const taskScope = String(req.query?.task_scope || 'all').toLowerCase();
     let { data, error } = await supabase.from('crm_tasks')
       .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
       .eq('lead_id', req.params.id)
@@ -6202,6 +6229,15 @@ r.get('/leads/:id/tasks', async (req, res) => {
         note_count: countMap[t.id]?.notes || 0,
         attachment_count: (countMap[t.id]?.files || 0) + (countMap[t.id]?.notes || 0),
       }));
+    }
+
+    // Phân tách nhiệm vụ theo module:
+    // - production: chỉ task SX (stage_slug bắt đầu sx_)
+    // - crm: ẩn task SX
+    if (taskScope === 'production') {
+      data = (data || []).filter((t) => String(t.stage_slug || '').startsWith('sx_'));
+    } else if (taskScope === 'crm') {
+      data = (data || []).filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
 
     res.json(data || []);
@@ -6270,6 +6306,34 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
     if (error) throw error;
     res.status(201).json({ tasks: data, count: data.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// FORCE GENERATE production template tasks for a fulfillment deal
+r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('id, type, assigned_to, lead_owner_id')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (!lead?.id) return res.status(404).json({ error: 'Không tìm thấy deal' });
+    if (lead.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
+
+    const r0 = await applyProductionTemplateToFulfillmentLead({
+      leadId,
+      createdBy: req.user.userId,
+      assigneeId: lead.assigned_to || lead.lead_owner_id || null,
+    });
+    res.json({
+      ok: true,
+      created: r0.created || 0,
+      reason: r0.reason || 'ok',
+      template_name: r0.template_name || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi tạo nhiệm vụ SX' });
+  }
 });
 
 // UPDATE task
@@ -6782,7 +6846,10 @@ r.put('/auto-project-config', async (req, res) => {
 r.post('/deals/:id/auto-create-project', async (req, res) => {
   try {
     const result = await autoCreateProjectFromWonDeal({
-      req, dealId: req.params.id, userId: req.user.userId,
+      req,
+      dealId: req.params.id,
+      userId: req.user.userId,
+      productionCompanyId: req.body?.production_company_id,
     });
     if (!result.ok) {
       if (result.existing_project_id) {
@@ -6825,6 +6892,8 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
 
     const b = req.body || {};
     if (!b.sale_acknowledged) return res.status(400).json({ error: 'Cần tick xác nhận Sale' });
+    const pcv = await validateProductionCompanyId(b.production_company_id);
+    if (!pcv.ok) return res.status(400).json({ error: pcv.error, requires_production_company: true });
     const cStart = b.construction_start_date || null;
     const pStart = b.expected_production_start_date || null;
     const pEnd = b.expected_production_end_date || null;
@@ -6852,6 +6921,7 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       construction_start_date: cStart,
       expected_production_start_date: pStart,
       updated_at: now,
+      company_id: pcv.company.id,
     };
     if (pEnd) projPatch.production_deadline = pEnd;
     const { error: projErr } = await supabase.from('projects').update(projPatch).eq('id', lead.project_id);

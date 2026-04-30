@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { Mic, Upload, Trash2, RefreshCw, Square, Circle, UserRound, Link2, UserPlus, Inbox, ScanLine } from 'lucide-react';
 import { formatDateTime } from '../lib/utils';
+
+function isVoiceRecordingsAdmin(role) {
+  const x = String(role ?? '').toLowerCase().trim();
+  return ['admin', 'superadmin', 'super_admin', 'administrator'].includes(x);
+}
 
 function recordingAudioUrl(rec) {
   if (rec?.audio_url) return rec.audio_url;
@@ -28,6 +34,11 @@ function leadTypeLabel(type) {
 }
 
 export default function VoiceRecordingsPage() {
+  const { user } = useAuth();
+  const voiceAdmin = isVoiceRecordingsAdmin(user?.role);
+  const [filterUserId, setFilterUserId] = useState('');
+  const [staffUsers, setStaffUsers] = useState([]);
+
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -76,6 +87,7 @@ export default function VoiceRecordingsPage() {
       if (listPhoneFilter.trim()) params.phone = listPhoneFilter.trim();
       if (listTab === 'unassigned') params.unassigned = '1';
       if (listTab === 'linked') params.linked_only = '1';
+      if (voiceAdmin && filterUserId) params.user_id = filterUserId;
       const { data } = await api.get('/voice-recordings', { params });
       setList(data.recordings || []);
     } catch (e) {
@@ -85,8 +97,16 @@ export default function VoiceRecordingsPage() {
   };
 
   useEffect(() => {
+    if (!voiceAdmin) return;
+    void api
+      .get('/users')
+      .then(({ data }) => setStaffUsers(Array.isArray(data?.users) ? data.users : []))
+      .catch(() => setStaffUsers([]));
+  }, [voiceAdmin]);
+
+  useEffect(() => {
     void load();
-  }, [listTab]);
+  }, [listTab, filterUserId, voiceAdmin]);
 
   useEffect(() => {
     if (!attachRecording) return;
@@ -314,6 +334,11 @@ export default function VoiceRecordingsPage() {
         <p className="text-sm text-gray-600 mt-2">
           Ghi âm từ mobile hoặc upload web; có số thì tự ghép khách và Deal/Lead bạn phụ trách. Dùng tab và «Quét ghép CRM» khi cần.
         </p>
+        {voiceAdmin ? (
+          <p className="text-sm text-violet-800 mt-2 rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
+            Quản trị: xem ghi âm của mọi nhân viên. Chọn nhân viên trong «Lọc theo NV» để chỉ xem file do người đó đồng bộ/tải lên.
+          </p>
+        ) : null}
       </div>
 
       {scanMessage && (
@@ -508,6 +533,26 @@ export default function VoiceRecordingsPage() {
             ({list.length})
           </h2>
           <div className="flex flex-wrap items-center gap-2">
+            {voiceAdmin ? (
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label htmlFor="voice-filter-user" className="text-xs text-gray-500 shrink-0">
+                  Lọc theo NV
+                </label>
+                <select
+                  id="voice-filter-user"
+                  value={filterUserId}
+                  onChange={(e) => setFilterUserId(e.target.value)}
+                  className="h-9 px-3 border rounded-lg text-sm bg-white min-w-0 max-w-full sm:max-w-[220px] text-gray-800"
+                >
+                  <option value="">Tất cả nhân viên</option>
+                  {staffUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.full_name || u.email || u.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <input
               value={listPhoneFilter}
               onChange={(e) => setListPhoneFilter(e.target.value)}
@@ -555,6 +600,9 @@ export default function VoiceRecordingsPage() {
                   <p className="font-medium text-gray-900 break-all">{r.file_name}</p>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
                     <span>{formatDateTime(r.created_at)}</span>
+                    {voiceAdmin && r.uploader?.full_name ? (
+                      <span className="font-medium text-violet-800">NV: {r.uploader.full_name}</span>
+                    ) : null}
                     {r.phone_number ? (
                       <span className="font-medium text-gray-800">Số: {r.phone_number}</span>
                     ) : null}

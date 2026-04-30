@@ -11,7 +11,7 @@ import {
 import {
   Truck, CheckCircle2, AlertTriangle, Search, X, Calendar,
   Package, Users, LayoutGrid, List, Plus,
-  CheckSquare, Square, UserCheck, Loader2, Wrench, ShieldCheck,
+  CheckSquare, UserCheck, Loader2, Wrench, ShieldCheck,
   Filter, Clock, Building2, Layers,
 } from 'lucide-react';
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView } from '../components/LogisticsViews';
@@ -673,7 +673,7 @@ export default function LogisticsDashboard() {
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="sticky top-2 z-30 flex items-center gap-2 bg-orange-600 text-white px-4 py-2.5 rounded-xl shadow-lg flex-wrap">
-          <span className="text-sm font-semibold">✓ {selectedIds.size} dự án đã chọn</span>
+          <span className="text-sm font-semibold">✓ Đã chọn <strong>{selectedIds.size}</strong> dự án</span>
           <div className="flex items-center gap-2 ml-auto flex-wrap">
             <button onClick={selectAll} className="h-8 px-3 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-medium cursor-pointer flex items-center gap-1.5">
               <CheckSquare className="h-3.5 w-3.5" /> Chọn tất cả
@@ -834,7 +834,14 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 // Kanban Card
 function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) {
   const navigate = useNavigate();
-  const handleDragStart = (e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('projectId', item.id); };
+  const handleDragStart = (e) => {
+    if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('projectId', item.id);
+  };
   const stageColor = stage.color || '#f97316';
   const doneTasks = item.done_tasks ?? 0;
   const totalTasks = item.task_total ?? 0;
@@ -848,23 +855,34 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) 
       data-vc-kanban-card={item.id}
       draggable
       onDragStart={handleDragStart}
-      onClick={() => {
+      onClick={(e) => {
+        if (e.target.closest?.('[data-workshop-bulk-checkbox]')) return;
         markWorkshopPipelineCardFocus(item.id, 'vc');
         navigate(`/vc/projects/${item.id}`);
       }}
       className={`relative bg-white rounded-lg border p-3 pt-9 transition-all duration-200 cursor-pointer group hover:-translate-y-0.5 hover:shadow-lg ${
-        isSelected ? 'border-orange-400 ring-2 ring-orange-200 bg-orange-50/30' : 'border-gray-200'
+        isSelected ? 'ring-2 ring-orange-400 ring-offset-1 border-orange-200 bg-orange-50/30' : 'border-gray-200'
       }`}
       style={{ borderLeft: `3px solid ${stageColor}` }}
     >
-      <div
-        className={`absolute top-2.5 left-2.5 z-10 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-        onClick={e => onToggleSelect?.(item.id, e)}
-      >
-        {isSelected ? <CheckSquare className="h-4 w-4 text-orange-600 cursor-pointer" /> : <Square className="h-4 w-4 text-gray-400 cursor-pointer hover:text-orange-500" />}
-      </div>
+      {onToggleSelect && (
+        <label
+          data-workshop-bulk-checkbox
+          className="absolute z-20 top-2 right-2 flex items-center justify-center cursor-pointer rounded-md p-0.5 hover:bg-gray-100"
+          onClick={(ev) => ev.stopPropagation()}
+          onMouseDown={(ev) => ev.stopPropagation()}
+          title="Chọn nhiều dự án"
+        >
+          <input
+            type="checkbox"
+            checked={!!isSelected}
+            onChange={() => onToggleSelect(item.id)}
+            className="h-4 w-4 rounded border-gray-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+          />
+        </label>
+      )}
 
-      <div className="flex items-start justify-between pr-1 mb-2 absolute top-3 left-8 right-3">
+      <div className="flex items-start justify-between pr-7 mb-2">
         <p className="text-xs font-semibold text-orange-600">{item.code}</p>
         {item.estimated_value > 0 && (
           <p className="text-sm font-bold text-emerald-600 text-right leading-tight max-w-[55%]">{formatVND(item.estimated_value)}</p>
