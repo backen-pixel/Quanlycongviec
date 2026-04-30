@@ -10,7 +10,7 @@ import {
 import {
   Zap, CheckCircle2, AlertTriangle, Search, X, Calendar,
   Factory, Users, LayoutGrid, List, Plus,
-  CheckSquare, Square, UserCheck, Loader2, Truck, Filter, Clock, Building2, Layers,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Building2, Layers, Trash2,
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView } from '../components/ProductionViews';
 import NewProductionProjectModal from '../components/NewProductionProjectModal';
@@ -86,6 +86,11 @@ export default function ProductionDashboard() {
   const [bulkDeadlineVal, setBulkDeadlineVal] = useState('');
   const [bulkPersonId, setBulkPersonId] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [handoverModal, setHandoverModal] = useState(null); // { projectId, projectName }
+  const [handoverUserId, setHandoverUserId] = useState('');
+  const [handoverErr, setHandoverErr] = useState('');
+  const [handoverSaving, setHandoverSaving] = useState(false);
 
   const navigate = useNavigate();
 
@@ -235,6 +240,21 @@ export default function ProductionDashboard() {
     setBulkSaving(false);
   }, [bulkPersonId, selectedIds, load, clearSelection]);
 
+  const applyBulkDelete = useCallback(async () => {
+    if (!selectedIds.size || bulkDeleting) return;
+    const count = selectedIds.size;
+    if (!window.confirm(`Xóa ${count} dự án đã chọn khỏi Sản xuất? Hành động không thể hoàn tác.`)) return;
+    setBulkDeleting(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => api.delete(`/projects/${id}`)));
+      await load();
+      clearSelection();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi xóa dự án');
+    }
+    setBulkDeleting(false);
+  }, [selectedIds, bulkDeleting, load, clearSelection]);
+
   const kanbanPipeline = useMemo(() => {
     const baseStages = pipeline.length
       ? pipeline
@@ -244,9 +264,20 @@ export default function ProductionDashboard() {
           { id: 'cc', name: 'CSKH', slug: 'customer-care', icon: '🤝', color: '#5eead4', workflow_stage_id: null },
         ];
 
+    const sortSxItems = (a, b) => {
+      const aFromCrm = !!a?.sx_intake;
+      const bFromCrm = !!b?.sx_intake;
+      if (aFromCrm !== bFromCrm) return aFromCrm ? -1 : 1;
+      const ta = new Date(a?.created_at || 0).getTime();
+      const tb = new Date(b?.created_at || 0).getTime();
+      return tb - ta;
+    };
+
     return baseStages.map((stage) => ({
       ...stage,
-      items: scopeProjects.filter((project) => project.sx_kanban_column_id === stage.id),
+      items: scopeProjects
+        .filter((project) => project.sx_kanban_column_id === stage.id)
+        .sort(sortSxItems),
     }));
   }, [pipeline, scopeProjects]);
 
@@ -335,6 +366,13 @@ export default function ProductionDashboard() {
   }, [scopeProjects, kpis]);
 
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
+    const current = projects.find((p) => String(p.id) === String(projectId));
+    const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(current?.status || ''));
+    if (lockedInVc) {
+      alert('Deal đã bàn giao sang Vận chuyển nên không thể kéo về cột khác.');
+      return;
+    }
+
     const wid = targetCol?.workflow_stage_id;
     const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET
       || String(targetCol?.id || '').startsWith('__fb_');
@@ -357,11 +395,25 @@ export default function ProductionDashboard() {
     // Cột được đánh dấu "bàn giao VC" → gọi handover-vc, giữ card trong cột
     if (isHandover) {
       setProjects((prev) => prev.map((p) => (p.id === projectId
-        ? { ...p, status: 'shipping', sx_kanban_column_id: targetCol.id }
+        ? { ...p, status: 'shipping', sx_kanban_column_id: targetCol.id, current_stage: null }
         : p)));
       try {
-        await api.patch(`/production/projects/${projectId}/handover-vc`);
-        await load();
+        const { data } = await api.patch(`/production/projects/${projectId}/handover-vc`);
+        const updated = data?.project;
+        if (updated) {
+          setProjects((prev) => prev.map((p) => (p.id === projectId
+            ? {
+                ...p,
+                status: updated.status ?? p.status,
+                current_stage_id: updated.current_stage_id ?? null,
+                current_stage: updated.current_stage ?? null,
+                sx_kanban_column_id: targetCol.id,
+                vc_kanban_column_id: updated.vc_kanban_column_id ?? p.vc_kanban_column_id,
+                logistics_person_id: updated.logistics_person_id ?? p.logistics_person_id,
+              }
+            : p)));
+        }
+        scheduleCrmBadgeRefresh(projectId);
       } catch (e) {
         console.error(e);
         load();
@@ -390,22 +442,57 @@ export default function ProductionDashboard() {
       console.error(e);
       load();
     }
-  }, [load]);
+  }, [load, projects]);
 
-  const handleHandoverVC = useCallback(async (projectId, projectName) => {
-    if (!confirm(`Bàn giao dự án "${projectName}" sang module Vận chuyển & Lắp đặt?\n\nDự án sẽ giữ nguyên trong cột này và hiển thị trạng thái VC.`)) return;
+  const handleHandoverVC = useCallback(async (projectId, projectName, logisticsPersonId) => {
     try {
       // Cập nhật optimistic: đổi status thành shipping, GIỮ trong kanban
       setProjects((prev) => prev.map((p) => (p.id === projectId
-        ? { ...p, status: 'shipping' }
+        ? { ...p, status: 'shipping', current_stage: null }
         : p)));
-      await api.patch(`/production/projects/${projectId}/handover-vc`);
-      await load(); // Refresh để lấy vc_stage info
+      const { data } = await api.patch(`/production/projects/${projectId}/handover-vc`, {
+        logistics_person_id: logisticsPersonId || undefined,
+      });
+      const updated = data?.project;
+      if (updated) {
+        setProjects((prev) => prev.map((p) => (p.id === projectId
+          ? {
+              ...p,
+              status: updated.status ?? p.status,
+              current_stage_id: updated.current_stage_id ?? null,
+              current_stage: updated.current_stage ?? null,
+              vc_kanban_column_id: updated.vc_kanban_column_id ?? p.vc_kanban_column_id,
+              logistics_person_id: updated.logistics_person_id ?? p.logistics_person_id,
+            }
+          : p)));
+      }
+      scheduleCrmBadgeRefresh(projectId);
     } catch (e) {
       console.error(e);
+      alert(e.response?.data?.error || 'Lỗi bàn giao VC');
       load();
     }
   }, [load]);
+
+  const openHandoverModal = useCallback((projectId, projectName) => {
+    setHandoverModal({ projectId, projectName });
+    setHandoverErr('');
+    setHandoverUserId('');
+  }, []);
+
+  const confirmHandoverVC = useCallback(async () => {
+    if (!handoverModal) return;
+    if (!handoverUserId) {
+      setHandoverErr('Vui lòng chọn người nhận bàn giao VC.');
+      return;
+    }
+    setHandoverSaving(true);
+    await handleHandoverVC(handoverModal.projectId, handoverModal.projectName, handoverUserId);
+    setHandoverSaving(false);
+    setHandoverModal(null);
+    setHandoverUserId('');
+    setHandoverErr('');
+  }, [handoverModal, handoverUserId, handleHandoverVC]);
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
@@ -732,7 +819,7 @@ export default function ProductionDashboard() {
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="sticky top-2 z-30 flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-xl shadow-lg flex-wrap">
-          <span className="text-sm font-semibold">✓ {selectedIds.size} deal đã chọn</span>
+          <span className="text-sm font-semibold">✓ Đã chọn <strong>{selectedIds.size}</strong> dự án</span>
           <div className="flex items-center gap-2 ml-auto flex-wrap">
             <button onClick={selectAll} className="h-8 px-3 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-medium cursor-pointer flex items-center gap-1.5 transition-colors">
               <CheckSquare className="h-3.5 w-3.5" /> Chọn tất cả
@@ -745,6 +832,13 @@ export default function ProductionDashboard() {
               className="h-8 px-3 bg-white text-blue-700 hover:bg-blue-50 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-colors">
               <UserCheck className="h-3.5 w-3.5" /> Gắn người SX
             </button>
+            <button
+              onClick={applyBulkDelete}
+              disabled={bulkDeleting}
+              className="h-8 px-3 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> {bulkDeleting ? 'Đang xóa...' : `Xóa (${selectedIds.size})`}
+            </button>
             <button onClick={clearSelection} className="h-8 px-3 bg-white/20 hover:bg-white/30 rounded-lg text-xs cursor-pointer flex items-center gap-1 transition-colors">
               <X className="h-3.5 w-3.5" /> Bỏ chọn
             </button>
@@ -754,7 +848,7 @@ export default function ProductionDashboard() {
 
       {viewMode === 'kanban' && (
         <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
-          selectedIds={selectedIds} onToggleSelect={toggleSelect} onHandoverVC={handleHandoverVC} />
+          selectedIds={selectedIds} onToggleSelect={toggleSelect} onHandoverVC={openHandoverModal} />
       )}
 
       {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
@@ -779,7 +873,7 @@ export default function ProductionDashboard() {
               </h2>
               <button onClick={() => setShowBulkDeadline(false)} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
             </div>
-            <p className="text-sm text-gray-500 mb-4">Áp dụng cho <strong className="text-blue-700">{selectedIds.size}</strong> deal đã chọn</p>
+            <p className="text-sm text-gray-500 mb-4">Áp dụng cho <strong className="text-blue-700">{selectedIds.size}</strong> dự án đã chọn</p>
             <input
               type="date"
               value={bulkDeadlineVal}
@@ -810,7 +904,7 @@ export default function ProductionDashboard() {
               </h2>
               <button onClick={() => setShowBulkPerson(false)} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
             </div>
-            <p className="text-sm text-gray-500 mb-4">Áp dụng cho <strong className="text-blue-700">{selectedIds.size}</strong> deal đã chọn</p>
+            <p className="text-sm text-gray-500 mb-4">Áp dụng cho <strong className="text-blue-700">{selectedIds.size}</strong> dự án đã chọn</p>
             <select
               value={bulkPersonId}
               onChange={e => setBulkPersonId(e.target.value)}
@@ -829,6 +923,46 @@ export default function ProductionDashboard() {
                 className="flex-1 h-10 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2">
                 {bulkSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
                 {bulkSaving ? 'Đang lưu...' : 'Áp dụng'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Handover VC Modal */}
+      {handoverModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => { if (!handoverSaving) setHandoverModal(null); }}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <Truck className="h-5 w-5 text-orange-500" /> Bàn giao sang VC
+              </h2>
+              <button onClick={() => !handoverSaving && setHandoverModal(null)} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
+            </div>
+            <p className="text-sm text-gray-600 mb-3">
+              Chọn người nhận cho dự án <strong>{handoverModal.projectName}</strong>.
+            </p>
+            <select
+              value={handoverUserId}
+              onChange={(e) => { setHandoverUserId(e.target.value); setHandoverErr(''); }}
+              className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 mb-3 bg-white"
+              autoFocus
+            >
+              <option value="">— Chọn người nhận VC/LĐ —</option>
+              {allUsers
+                .filter((u) => ['logistics', 'installer', 'manager', 'admin'].includes(String(u.role || '')))
+                .map((u) => (
+                  <option key={u.id} value={u.id}>{u.full_name} {u.role ? `(${u.role})` : ''}</option>
+                ))}
+            </select>
+            {handoverErr && <p className="text-xs text-red-600 mb-3">{handoverErr}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => !handoverSaving && setHandoverModal(null)}
+                className="flex-1 h-10 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 cursor-pointer">Hủy</button>
+              <button onClick={confirmHandoverVC} disabled={!handoverUserId || handoverSaving}
+                className="flex-1 h-10 bg-orange-600 text-white rounded-lg text-sm font-semibold hover:bg-orange-700 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2">
+                {handoverSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+                {handoverSaving ? 'Đang bàn giao...' : 'Xác nhận bàn giao'}
               </button>
             </div>
           </div>
@@ -954,15 +1088,15 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
   const [handingOver, setHandingOver] = useState(false);
 
   const handleDragStart = (e) => {
+    if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('projectId', item.id);
   };
 
   const stageColor = stage.color || '#e5e7eb';
-  // % hoàn thành nhiệm vụ (không phải xác suất CRM)
-  const doneTasks = item.done_tasks ?? 0;
-  const totalTasks = item.task_total ?? 0;
-  const progressPercent = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : (item.progress || 0);
   const assignee = item.production_person || item.assignee;
 
   const getInitials = (name) => {
@@ -970,37 +1104,46 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
     return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
-  // Kiểm tra dự án mới (trong 24 giờ)
-  const isNew = item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000;
+  // Deal mới từ CRM (sx_intake) luôn ưu tiên badge "Mới"; fallback theo 24h như cũ
+  const isNew = !!item.sx_intake || (item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000);
+  const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(item.status || ''));
 
   return (
     <div
       data-sx-kanban-card={item.id}
-      draggable
+      draggable={!lockedInVc}
       onDragStart={handleDragStart}
-      onClick={() => {
+      onClick={(e) => {
+        if (e.target.closest?.('[data-workshop-bulk-checkbox]')) return;
         markWorkshopPipelineCardFocus(item.id, 'sx');
         navigate(`/sx/projects/${item.id}`);
       }}
-      className={`relative bg-white rounded-lg border p-3 pt-9 transition-all duration-200 cursor-pointer group hover:-translate-y-0.5 hover:shadow-lg ${
-        isSelected ? 'border-blue-400 ring-2 ring-blue-200 bg-blue-50/30' : 'border-gray-200'
+      className={`relative bg-white rounded-lg border p-3 pt-9 transition-all duration-200 group hover:-translate-y-0.5 hover:shadow-lg ${
+        lockedInVc ? 'cursor-default' : 'cursor-pointer'
+      } ${
+        isSelected ? 'ring-2 ring-blue-400 ring-offset-1 border-blue-200 bg-blue-50/30' : 'border-gray-200'
       }`}
       style={{ borderLeft: `3px solid ${stageColor}` }}
     >
-      {/* Checkbox overlay — top left, always visible when selected, on hover otherwise */}
-      <div
-        className={`absolute top-2.5 left-2.5 z-10 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-        onClick={e => onToggleSelect?.(item.id, e)}
-        title={isSelected ? 'Bỏ chọn' : 'Chọn'}
-      >
-        {isSelected
-          ? <CheckSquare className="h-4 w-4 text-blue-600 cursor-pointer" />
-          : <Square className="h-4 w-4 text-gray-400 cursor-pointer hover:text-blue-500" />
-        }
-      </div>
+      {onToggleSelect && (
+        <label
+          data-workshop-bulk-checkbox
+          className="absolute z-20 top-2 right-2 flex items-center justify-center cursor-pointer rounded-md p-0.5 hover:bg-gray-100"
+          onClick={(ev) => ev.stopPropagation()}
+          onMouseDown={(ev) => ev.stopPropagation()}
+          title="Chọn nhiều dự án"
+        >
+          <input
+            type="checkbox"
+            checked={!!isSelected}
+            onChange={() => onToggleSelect(item.id)}
+            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+          />
+        </label>
+      )}
 
-      {/* Header: Code + Value — giống CRM (normal flow, không absolute) */}
-      <div className="flex items-start justify-between pr-1 mb-2 absolute top-3 left-8 right-3">
+      {/* Header: Code + Value — chừa chỗ checkbox góc phải (giống CRM) */}
+      <div className="flex items-start justify-between pr-7 mb-2">
         <p className="text-xs font-semibold text-blue-600">{item.code}</p>
         {item.estimated_value > 0 && (
           <p className="text-sm font-bold text-emerald-600 text-right leading-tight max-w-[55%]">
@@ -1092,27 +1235,6 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
-      {/* % Hoàn thành nhiệm vụ — không phải xác suất CRM */}
-      {totalTasks > 0 && (
-        <div className="mt-2">
-          <div className="flex items-center justify-between mb-0.5">
-            <span className="text-[10px] text-gray-400">
-              ✅ Hoàn thành
-              <span className="ml-1 text-gray-500">{doneTasks}/{totalTasks} việc</span>
-            </span>
-            <span className={`text-[10px] font-bold ${progressPercent >= 100 ? 'text-green-600' : progressPercent >= 50 ? 'text-blue-600' : 'text-amber-600'}`}>
-              {progressPercent}%
-            </span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-300 ${progressPercent >= 100 ? 'bg-green-500' : progressPercent >= 50 ? 'bg-blue-500' : 'bg-amber-500'}`}
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-        </div>
-      )}
-
       {/* Badge trạng thái VC — hiển thị khi đã bàn giao (giống CRM) */}
       {(item.status === 'shipping' || item.status === 'installing' || item.status === 'warranty') && (
         <div className="mt-2 flex flex-col gap-1">
@@ -1139,15 +1261,15 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
-      {/* Nút Bàn giao VC — hiện khi hover, ẩn khi đã bàn giao */}
-      {onHandoverVC && item.status !== 'shipping' && item.status !== 'installing' && item.status !== 'warranty' && item.status !== 'completed' && (
+      {/* Nút Bàn giao VC: chỉ hiện ở cột được đánh dấu is_handover_to_logistics */}
+      {onHandoverVC && stage?.is_handover_to_logistics === true && item.status !== 'shipping' && item.status !== 'installing' && item.status !== 'warranty' && item.status !== 'completed' && (
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
             if (handingOver) return;
             setHandingOver(true);
-            onHandoverVC(item.id, item.name).finally(() => setHandingOver(false));
+            Promise.resolve(onHandoverVC(item.id, item.name)).finally(() => setHandingOver(false));
           }}
           className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-semibold
             bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 hover:border-orange-400

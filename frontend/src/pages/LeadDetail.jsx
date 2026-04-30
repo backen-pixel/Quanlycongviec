@@ -35,6 +35,15 @@ function isCrmDealStageHoanThanhName(name) {
   return ascii.includes('hoan thanh');
 }
 
+function findDefaultAdminCompanyPhucDat(companies) {
+  if (!companies?.length) return '';
+  const hit = companies.find((c) => {
+    const t = `${c.name || ''} ${c.short_name || ''}`.toLowerCase();
+    return t.includes('phúc đạt') || t.includes('phuc dat') || (t.includes('phúc') && t.includes('đạt'));
+  });
+  return hit?.id ? String(hit.id) : '';
+}
+
 const ACTIVITY_TYPES = [
   { value: 'call', label: 'Gọi điện', icon: '📞', color: 'bg-blue-100 text-blue-700' },
   { value: 'meeting', label: 'Gặp mặt', icon: '🤝', color: 'bg-purple-100 text-purple-700' },
@@ -89,6 +98,15 @@ export default function LeadDetail() {
   const [movingStage, setMovingStage] = useState(false);
   const [dealDetailEventCtx, setDealDetailEventCtx] = useState(null);
   const [dealDetailEventBusy, setDealDetailEventBusy] = useState(false);
+  /** Kéo deal Thắng chưa có dự án: chọn công ty SX */
+  const [dealStageWonPick, setDealStageWonPick] = useState(null);
+  const [dealStageWonCompanyId, setDealStageWonCompanyId] = useState('');
+  const [dealStageWonErr, setDealStageWonErr] = useState('');
+  const [productionCompaniesSx, setProductionCompaniesSx] = useState([]);
+  const projectCompanyPickRef = useRef(false);
+  const [pickProjectCompanyOpen, setPickProjectCompanyOpen] = useState(false);
+  const [pickProjectCompanyId, setPickProjectCompanyId] = useState('');
+  const [pickProjectCompanyErr, setPickProjectCompanyErr] = useState('');
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -96,19 +114,27 @@ export default function LeadDetail() {
   const [autoCreateError, setAutoCreateError] = useState('');
   const autoCreateCalledRef = useRef(false);
 
-  const autoCreateProject = async (dealId) => {
+  const autoCreateProject = async (dealId, productionCompanyId) => {
+    if (!productionCompanyId) {
+      setPickProjectCompanyOpen(true);
+      setPickProjectCompanyErr('');
+      return;
+    }
     if (autoCreateCalledRef.current) return;
     autoCreateCalledRef.current = true;
     setAutoCreateStatus('loading');
+    setPickProjectCompanyOpen(false);
     try {
-      const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`);
+      const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`, {
+        production_company_id: productionCompanyId,
+      });
       setAutoCreateResult(data);
       setAutoCreateStatus('success');
-      load(); // Reload deal để cập nhật project_id
+      projectCompanyPickRef.current = false;
+      load();
     } catch (e) {
       const msg = e.response?.data?.error || 'Lỗi tạo dự án';
       if (e.response?.data?.project_id) {
-        // Deal đã có dự án
         setAutoCreateResult({ project_id: e.response.data.project_id });
         setAutoCreateStatus('success');
       } else {
@@ -118,6 +144,22 @@ export default function LeadDetail() {
       autoCreateCalledRef.current = false;
     }
   };
+
+  useEffect(() => {
+    api.get('/companies', { params: { for_module: 'production' } })
+      .then((r) => {
+        const list = r.data?.companies || [];
+        setProductionCompaniesSx(list);
+        if (isAdminUser) {
+          const pref = findDefaultAdminCompanyPhucDat(list);
+          if (pref) {
+            setDealStageWonCompanyId((prev) => prev || pref);
+            setPickProjectCompanyId((prev) => prev || pref);
+          }
+        }
+      })
+      .catch(() => setProductionCompaniesSx([]));
+  }, [isAdminUser]);
 
   useEffect(() => { load(); }, [id]);
 
@@ -225,12 +267,20 @@ export default function LeadDetail() {
 
       notifyCrmLeadSeenByCurrentUser(id, user?.id || user?.userId);
 
-      // Deal thắng + chưa có project → tự động tạo dự án ngầm
+      if (leadRes?.project_id) projectCompanyPickRef.current = false;
+      // Deal thắng + chưa có dự án → bắt buộc chọn công ty SX rồi mới tạo dự án
       if (leadRes?.type === 'deal' && !leadRes?.project_id) {
         const dealStages = stagesDealRes.data || [];
         const currentStage = dealStages.find(s => s.id === leadRes.stage_id);
-        if (currentStage?.is_won && !autoCreateCalledRef.current) {
-          autoCreateProject(id);
+        if (currentStage?.is_won && !projectCompanyPickRef.current) {
+          projectCompanyPickRef.current = true;
+          setPickProjectCompanyOpen(true);
+          setPickProjectCompanyId(
+            leadRes.company_id
+              ? String(leadRes.company_id)
+              : (isAdminUser ? findDefaultAdminCompanyPhucDat(productionCompaniesSx) : ''),
+          );
+          setPickProjectCompanyErr('');
         }
       }
     } catch (e) { console.error(e); }
@@ -247,7 +297,7 @@ export default function LeadDetail() {
       setOrders([]);
     }
     setOrdersLoading(false);
-  }, [id]);
+  }, [id, isAdminUser, productionCompaniesSx]);
 
   loadRef.current = load;
 
@@ -324,7 +374,7 @@ export default function LeadDetail() {
     try {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId, ...extraData });
       if (data?.requires_conversion) setShowConvertModal(true);
-      if (data?.deal_won && !lead?.project_id) autoCreateProject(id);
+      if (data?.deal_won) autoCreateProject(id, null);
       await loadRef.current?.();
       return data;
     } catch (e) {
@@ -343,6 +393,11 @@ export default function LeadDetail() {
   const moveStage = async (stageId, extraData = {}) => {
     const stages = lead?.type === 'deal' ? stagesDeal : stagesLead;
     const targetStage = stages.find(s => s.id === stageId);
+    const stageName = String(targetStage?.name || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    const isProductionStage = stageName.includes('san xuat');
 
     // Nếu stage là Thua/Mất → hiện modal nhập lý do
     if (targetStage?.is_lost && !extraData.lost_reason) {
@@ -382,6 +437,17 @@ export default function LeadDetail() {
       return;
     }
 
+    if (lead?.type === 'deal' && (targetStage?.is_won || isProductionStage) && !lead?.project_id) {
+      setDealStageWonErr('');
+      setDealStageWonCompanyId(
+        lead.company_id
+          ? String(lead.company_id)
+          : (isAdminUser ? findDefaultAdminCompanyPhucDat(productionCompaniesSx) : ''),
+      );
+      setDealStageWonPick({ stageId, extraData, targetStage });
+      return;
+    }
+
     if (
       lead?.type === 'deal' &&
       targetStage &&
@@ -394,6 +460,34 @@ export default function LeadDetail() {
 
     if (movingStage) return;
     await patchLeadStage(stageId, extraData);
+  };
+
+  const confirmDealStageWonProduction = async () => {
+    if (!dealStageWonCompanyId) {
+      setDealStageWonErr('Vui lòng chọn công ty thuộc module Sản xuất.');
+      return;
+    }
+    const ctx = dealStageWonPick;
+    if (!ctx) return;
+    setDealStageWonErr('');
+    const merged = { ...ctx.extraData, production_company_id: dealStageWonCompanyId };
+    setDealStageWonPick(null);
+    setDealStageWonCompanyId('');
+    if (ctx.targetStage.create_event_on_enter) {
+      setDealDetailEventCtx({ stageId: ctx.stageId, extraData: merged, targetStage: ctx.targetStage });
+    } else {
+      await patchLeadStage(ctx.stageId, merged);
+    }
+  };
+
+  const submitPickProjectCompany = async () => {
+    if (!pickProjectCompanyId) {
+      setPickProjectCompanyErr('Vui lòng chọn công ty Sản xuất.');
+      return;
+    }
+    setPickProjectCompanyErr('');
+    autoCreateCalledRef.current = false;
+    await autoCreateProject(id, pickProjectCompanyId);
   };
 
   const confirmDealDetailEvent = async ({ startIso, endIso, titlePreview, locPreview }) => {
@@ -627,8 +721,20 @@ export default function LeadDetail() {
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => { autoCreateCalledRef.current = false; autoCreateProject(id); }}
-              className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition">
+            <button
+              onClick={() => {
+                autoCreateCalledRef.current = false;
+                setAutoCreateStatus(null);
+                setPickProjectCompanyId(
+                  lead?.company_id
+                    ? String(lead.company_id)
+                    : (isAdminUser ? findDefaultAdminCompanyPhucDat(productionCompaniesSx) : ''),
+                );
+                setPickProjectCompanyErr('');
+                setPickProjectCompanyOpen(true);
+              }}
+              className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition"
+            >
               🔄 Thử lại
             </button>
             <button onClick={() => navigate(`/projects/create?deal_id=${id}`)}
@@ -876,7 +982,14 @@ export default function LeadDetail() {
           </div>
 
           {/* Lead Info — Editable inline */}
-          <LeadInfoPanel lead={lead} allUsers={allUsers} onUpdate={load} currentUser={user} canAssignOwner={isAdminUser} />
+          <LeadInfoPanel
+            lead={lead}
+            allUsers={allUsers}
+            onUpdate={load}
+            currentUser={user}
+            canAssignOwner={isAdminUser}
+            productionCompaniesSx={productionCompaniesSx}
+          />
 
           {/* Quick Stats Card */}
           <div className="grid grid-cols-3 gap-2">
@@ -907,10 +1020,10 @@ export default function LeadDetail() {
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
-                title={lead?.type === 'deal' ? 'Nhiệm vụ deal + đơn hàng từng lượt (gộp ở đây)' : 'Công việc theo nhiệm vụ'}
+                title={lead?.type === 'deal' ? 'Đơn hàng và nhiệm vụ theo từng đơn (Sản xuất)' : 'Công việc theo nhiệm vụ'}
               >
                 {lead?.type === 'deal'
-                  ? `✅ Công việc & đơn${orders.length ? ` (${orders.length})` : ''}`
+                  ? `📦 Đơn hàng${orders.length ? ` (${orders.length})` : ''}`
                   : '✅ Công việc'}
               </button>
               <button
@@ -1014,8 +1127,10 @@ export default function LeadDetail() {
                 lead?.type === 'deal' ? (
                   <LeadDealWorkTab
                     dealLeadId={id}
+                    dealCompanyId={lead?.company_id || null}
+                    isAdminUser={isAdminUser}
                     projectId={lead?.project_id || null}
-                    useOrderTasks={!!lead?.use_order_tasks}
+                    useOrderTasks
                     users={allUsers}
                     orders={orders}
                     ordersLoading={ordersLoading}
@@ -1363,6 +1478,94 @@ export default function LeadDetail() {
           }}
           onClose={() => setShowExcelImport(false)}
         />
+      )}
+
+      {dealStageWonPick && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+          onClick={() => { setDealStageWonPick(null); setDealStageWonErr(''); }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <Building2 className="h-6 w-6 text-teal-600" />
+              <h3 className="text-lg font-bold text-gray-900">Chọn công ty Sản xuất</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Chuyển deal sang <strong>Thắng</strong> cần gắn công ty thuộc <strong>module Sản xuất</strong> cho dự án xưởng.
+            </p>
+            <select
+              value={dealStageWonCompanyId}
+              onChange={(e) => { setDealStageWonCompanyId(e.target.value); setDealStageWonErr(''); }}
+              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white"
+            >
+              <option value="">— Chọn công ty —</option>
+              {productionCompaniesSx.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+            {dealStageWonErr && <p className="text-xs text-red-600 mt-2">{dealStageWonErr}</p>}
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
+                onClick={() => { setDealStageWonPick(null); setDealStageWonErr(''); }}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold"
+                onClick={() => confirmDealStageWonProduction()}
+              >
+                Tiếp tục
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pickProjectCompanyOpen && lead?.type === 'deal' && !lead?.project_id && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+          onClick={() => { setPickProjectCompanyOpen(false); projectCompanyPickRef.current = false; setPickProjectCompanyErr(''); }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <Building2 className="h-6 w-6 text-amber-600" />
+              <h3 className="text-lg font-bold text-gray-900">Tạo dự án xưởng</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Deal đã <strong>Thắng</strong> nhưng chưa có dự án. Chọn công ty <strong>module Sản xuất</strong> để hệ thống tạo dự án.
+            </p>
+            <select
+              value={pickProjectCompanyId}
+              onChange={(e) => { setPickProjectCompanyId(e.target.value); setPickProjectCompanyErr(''); }}
+              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white"
+            >
+              <option value="">— Chọn công ty —</option>
+              {productionCompaniesSx.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+            {pickProjectCompanyErr && <p className="text-xs text-red-600 mt-2">{pickProjectCompanyErr}</p>}
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
+                onClick={() => { setPickProjectCompanyOpen(false); projectCompanyPickRef.current = false; setPickProjectCompanyErr(''); }}
+              >
+                Để sau
+              </button>
+              <button
+                type="button"
+                className="flex-1 h-10 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold"
+                onClick={() => submitPickProjectCompany()}
+              >
+                Tạo dự án
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <DealStageEventModal
@@ -1836,7 +2039,7 @@ function AddDocumentModal({ onClose, onSave }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LeadInfoPanel — Inline editable fields (always visible)
 // ═══════════════════════════════════════════════════════════════════════════
-function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner = false }) {
+function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner = false, productionCompaniesSx = [] }) {
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -1848,6 +2051,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
     expected_production_start_date: '',
     expected_production_end_date: '',
     sale_acknowledged: false,
+    production_company_id: '',
   });
   const [sxHandoverSaving, setSxHandoverSaving] = useState(false);
   const [sxHandoverNotice, setSxHandoverNotice] = useState('');
@@ -1860,6 +2064,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
       expected_production_start_date: lead.expected_production_start_date || '',
       expected_production_end_date: lead.expected_production_end_date || '',
       sale_acknowledged: false,
+      production_company_id: lead.company_id ? String(lead.company_id) : '',
     });
     setSxHandoverNotice('');
     setSxHandoverExpanded(false);
@@ -2138,6 +2343,19 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
                   </p>
                 )}
               </div>
+              <label className="block text-[10px] font-semibold text-amber-900">
+                Công ty Sản xuất (module xưởng) <span className="text-red-600">*</span>
+                <select
+                  value={sxHandoverForm.production_company_id}
+                  onChange={(e) => { setSxHandoverForm((f) => ({ ...f, production_company_id: e.target.value })); setSxHandoverNotice(''); }}
+                  className="mt-0.5 w-full h-9 px-2 border border-amber-200 rounded-lg text-sm bg-white"
+                >
+                  <option value="">— Chọn công ty —</option>
+                  {productionCompaniesSx.map((c) => (
+                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                  ))}
+                </select>
+              </label>
               <div className="grid gap-2 sm:grid-cols-3">
                 <label className="text-[10px] font-semibold text-amber-900 block">
                   Ngày bắt đầu công trình
@@ -2191,6 +2409,10 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
                     setSxHandoverNotice('Vui lòng tick xác nhận Sale trước khi bàn giao sang Sản xuất.');
                     return;
                   }
+                  if (!sxHandoverForm.production_company_id) {
+                    setSxHandoverNotice('Vui lòng chọn công ty Sản xuất (module xưởng).');
+                    return;
+                  }
                   if (!sxHandoverForm.construction_start_date || !sxHandoverForm.expected_production_start_date) {
                     setSxHandoverNotice('Vui lòng nhập đủ: ngày dự kiến thi công và ngày dự kiến sản xuất.');
                     return;
@@ -2199,6 +2421,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
                   try {
                     await api.post(`/crm/leads/${lead.id}/sx-handover`, {
                       sale_acknowledged: true,
+                      production_company_id: sxHandoverForm.production_company_id,
                       construction_start_date: sxHandoverForm.construction_start_date,
                       expected_production_start_date: sxHandoverForm.expected_production_start_date,
                       expected_production_end_date: sxHandoverForm.expected_production_end_date || null,

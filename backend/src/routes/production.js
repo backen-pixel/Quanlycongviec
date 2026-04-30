@@ -1145,6 +1145,20 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
   try {
     const { id } = req.params;
     const userId = req.user.userId;
+    const logisticsPersonId = req.body?.logistics_person_id || null;
+
+    if (logisticsPersonId) {
+      const { data: u, error: uErr } = await supabase
+        .from('users')
+        .select('id, role, is_active')
+        .eq('id', logisticsPersonId)
+        .maybeSingle();
+      if (uErr || !u) return res.status(400).json({ error: 'Người nhận bàn giao không tồn tại.' });
+      if (u.is_active === false) return res.status(400).json({ error: 'Người nhận bàn giao đã ngưng hoạt động.' });
+      if (!['logistics', 'installer', 'manager', 'admin'].includes(String(u.role || ''))) {
+        return res.status(400).json({ error: 'Người nhận bàn giao phải thuộc nhóm Vận chuyển/Lắp đặt.' });
+      }
+    }
 
     const { data: project } = await supabase
       .from('projects')
@@ -1197,6 +1211,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
 
     // ── 2. Đổi status sang 'shipping', xoá current_stage_id, gán vc_kanban_column_id ──
     const projectUpdate = { status: 'shipping', current_stage_id: null };
+    if (logisticsPersonId) projectUpdate.logistics_person_id = logisticsPersonId;
     if (vcStageId) projectUpdate.vc_kanban_column_id = vcStageId;
 
     const { error: updateError } = await supabase
@@ -1296,9 +1311,13 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
 });
 
 // ═══ WORKSHOP TASK TEMPLATES (bộ mẫu SX / VC–LĐ) ═══
+const isWorkshopTplCompanyMissingError = (err) =>
+  String(err?.message || '').includes('workshop_task_templates.company_id')
+  || (String(err?.message || '').includes('column') && String(err?.message || '').includes('company_id'));
 
 r.get('/task-templates', requirePermission('projects', 'view'), async (req, res) => {
   try {
+    const company_id = effectiveWorkshopCompanyId(req, req.query.company_id);
     let q = supabase
       .from('workshop_task_templates')
       .select('*, items:workshop_task_template_items(*)')
@@ -1309,7 +1328,19 @@ r.get('/task-templates', requirePermission('projects', 'view'), async (req, res)
     if (req.query.active_only !== 'false') {
       q = q.eq('is_active', true);
     }
-    const { data, error } = await q;
+    if (company_id) {
+      q = q.eq('company_id', company_id);
+    }
+    let { data, error } = await q;
+    if (error && company_id && isWorkshopTplCompanyMissingError(error)) {
+      // Backward compatibility: DB chưa có cột company_id
+      const retry = await supabase
+        .from('workshop_task_templates')
+        .select('*, items:workshop_task_template_items(*)')
+        .order('order_index');
+      data = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
     const rows = (data || []).map((t) => ({
       ...t,
@@ -1325,13 +1356,14 @@ r.get('/task-templates', requirePermission('projects', 'view'), async (req, res)
 r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { name, workshop_area, description, order_index } = req.body;
+    const company_id = effectiveWorkshopCompanyId(req, req.body?.company_id);
     if (!name?.trim()) {
       return res.status(400).json({ error: 'Thiếu tên bộ mẫu' });
     }
     if (!['production', 'logistics'].includes(workshop_area)) {
       return res.status(400).json({ error: 'workshop_area phải là production hoặc logistics' });
     }
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('workshop_task_templates')
       .insert({
         name: name.trim(),
@@ -1339,9 +1371,25 @@ r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res
         description: description || null,
         order_index: order_index ?? 0,
         is_active: true,
+        company_id: company_id || null,
       })
       .select()
       .single();
+    if (error && isWorkshopTplCompanyMissingError(error)) {
+      const retry = await supabase
+        .from('workshop_task_templates')
+        .insert({
+          name: name.trim(),
+          workshop_area,
+          description: description || null,
+          order_index: order_index ?? 0,
+          is_active: true,
+        })
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
@@ -1352,33 +1400,69 @@ r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res
 
 r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
-    const { data: existingRow } = await supabase
+    let { data: existingRow, error: existingErr } = await supabase
       .from('workshop_task_templates')
-      .select('workshop_area')
+      .select('workshop_area, company_id')
       .eq('id', req.params.id)
       .single();
-
-    if (req.body.is_default === true && existingRow?.workshop_area) {
-      await supabase
+    if (existingErr && isWorkshopTplCompanyMissingError(existingErr)) {
+      const retryExisting = await supabase
         .from('workshop_task_templates')
-        .update({ is_default: false })
-        .eq('workshop_area', existingRow.workshop_area)
-        .neq('id', req.params.id);
+        .select('workshop_area')
+        .eq('id', req.params.id)
+        .single();
+      existingRow = retryExisting.data;
+      existingErr = retryExisting.error;
     }
+    if (existingErr) throw existingErr;
 
     const update = {};
     ['name', 'description', 'is_active', 'order_index', 'workshop_area', 'is_default'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    if (req.body.company_id !== undefined) {
+      update.company_id = effectiveWorkshopCompanyId(req, req.body.company_id) || null;
+    }
     if (update.workshop_area && !['production', 'logistics'].includes(update.workshop_area)) {
       return res.status(400).json({ error: 'workshop_area không hợp lệ' });
     }
-    const { data, error } = await supabase
+    if ((req.body.is_default === true || update.is_default === true) && existingRow?.workshop_area) {
+      const scopeCompanyId = update.company_id !== undefined ? update.company_id : (existingRow.company_id || null);
+      let clearQ = supabase
+        .from('workshop_task_templates')
+        .update({ is_default: false })
+        .eq('workshop_area', update.workshop_area || existingRow.workshop_area)
+        .neq('id', req.params.id);
+      if (scopeCompanyId) clearQ = clearQ.eq('company_id', scopeCompanyId);
+      else clearQ = clearQ.is('company_id', null);
+      const { error: clearErr } = await clearQ;
+      if (clearErr && isWorkshopTplCompanyMissingError(clearErr)) {
+        await supabase
+          .from('workshop_task_templates')
+          .update({ is_default: false })
+          .eq('workshop_area', update.workshop_area || existingRow.workshop_area)
+          .neq('id', req.params.id);
+      } else if (clearErr) {
+        throw clearErr;
+      }
+    }
+    let { data, error } = await supabase
       .from('workshop_task_templates')
       .update(update)
       .eq('id', req.params.id)
       .select()
       .single();
+    if (error && isWorkshopTplCompanyMissingError(error)) {
+      const { company_id: _ignoredCompanyId, ...updateNoCompany } = update;
+      const retry = await supabase
+        .from('workshop_task_templates')
+        .update(updateNoCompany)
+        .eq('id', req.params.id)
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) {

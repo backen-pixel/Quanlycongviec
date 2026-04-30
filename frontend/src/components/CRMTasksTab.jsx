@@ -21,14 +21,36 @@ const DEAL_STAGES = [
   { slug: 'deal_shipping', label: 'Đặt Vận chuyển', icon: '🚛', color: '#EF4444' },
   { slug: 'deal_notes', label: 'Ghi chú khác', icon: '📝', color: '#6B7280' },
 ];
+const SX_ORDER_STAGES = [
+  { slug: 'sx_tiep_nhan', label: 'Tiếp nhận', icon: '1️⃣', color: '#2563EB' },
+  { slug: 'sx_thiet_ke_ke_hoach', label: 'Thiết kế và lên kế hoạch', icon: '2️⃣', color: '#7C3AED' },
+  { slug: 'sx_kiem_tra_cheo', label: 'Kiểm tra chéo', icon: '3️⃣', color: '#0EA5E9' },
+  { slug: 'sx_vat_tu', label: 'Vật tư', icon: '4️⃣', color: '#D97706' },
+  { slug: 'sx_san_xuat_thung', label: 'Sản xuất thùng', icon: '5️⃣', color: '#059669' },
+  { slug: 'sx_san_xuat_alu', label: 'Sản xuất alu', icon: '6️⃣', color: '#0891B2' },
+  { slug: 'sx_hoan_thien', label: 'Hoàn thiện', icon: '7️⃣', color: '#16A34A' },
+  { slug: 'sx_dong_goi', label: 'Đóng gói', icon: '8️⃣', color: '#EA580C' },
+  { slug: 'sx_giao_hang', label: 'Giao hàng', icon: '9️⃣', color: '#DC2626' },
+];
 const ALL_STAGES = [...LEAD_STAGES, ...DEAL_STAGES];
 const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
-export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
-  const STAGES = leadType === 'deal' ? DEAL_STAGES : LEAD_STAGES;
+export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], taskScope = 'all' }) {
   const [tasks, setTasks] = useState([]);
+  const isSxOrderTaskFlow = useMemo(
+    () => leadType === 'deal' && tasks.some((t) => String(t.stage_slug || '').startsWith('sx_')),
+    [leadType, tasks],
+  );
+  const STAGES = useMemo(() => {
+    if (leadType !== 'deal') return LEAD_STAGES;
+    return isSxOrderTaskFlow ? SX_ORDER_STAGES : DEAL_STAGES;
+  }, [leadType, isSxOrderTaskFlow]);
+  const STAGE_OPTIONS = useMemo(
+    () => (leadType === 'deal' ? [...DEAL_STAGES, ...SX_ORDER_STAGES] : LEAD_STAGES),
+    [leadType],
+  );
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('list'); // list, deadline, planner, calendar
@@ -38,13 +60,14 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
   const [editingTask, setEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
+  const isProductionScope = taskScope === 'production';
 
   const loadTasks = async () => {
     setLoading(true);
     try {
       const [tasksRes, tplRes] = await Promise.all([
-        api.get(`/crm/leads/${leadId}/tasks`),
-        api.get('/crm/task-templates'),
+        api.get(`/crm/leads/${leadId}/tasks`, { params: { task_scope: taskScope } }),
+        isProductionScope ? Promise.resolve({ data: [] }) : api.get('/crm/task-templates'),
       ]);
       setTasks(tasksRes.data || []);
       setTemplates(tplRes.data || []);
@@ -55,7 +78,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
     } catch (e) { console.error(e); }
     setLoading(false);
   };
-  useEffect(() => { loadTasks(); }, [leadId]);
+  useEffect(() => { loadTasks(); }, [leadId, taskScope, isProductionScope]);
 
   const addTask = async (stageSlug) => {
     if (!newTask.title.trim()) return;
@@ -994,7 +1017,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [] }) {
                   <select value={editForm.stage_slug} onChange={e => setEditForm(f => ({ ...f, stage_slug: e.target.value }))}
                     className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
                     <option value="">— Chọn giai đoạn —</option>
-                    {ALL_STAGES.map(s => (<option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>))}
+                    {STAGE_OPTIONS.map(s => (<option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>))}
                   </select>
                 </div>
                 <div>

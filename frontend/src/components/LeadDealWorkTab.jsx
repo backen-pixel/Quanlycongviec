@@ -6,12 +6,23 @@ import api from '../lib/api';
 import CRMTasksTab from './CRMTasksTab';
 import ProjectOrdersTab from './ProjectOrdersTab';
 
+function findDefaultAdminCompanyPhucDat(companies) {
+  if (!companies?.length) return '';
+  const hit = companies.find((c) => {
+    const t = `${c.name || ''} ${c.short_name || ''}`.toLowerCase();
+    return t.includes('phúc đạt') || t.includes('phuc dat') || (t.includes('phúc') && t.includes('đạt'));
+  });
+  return hit?.id ? String(hit.id) : '';
+}
+
 /**
  * Tab Công việc gộp: nhiệm vụ deal tổng + đơn 1, 2… (ProjectOrdersTab).
  * Chưa có dự án: cùng UI với tab đơn trên dự án — "Thêm đơn" tạo dự án tự động nếu cần, rồi tạo bộ nhiệm vụ từng lượt (fulfillment).
  */
 export default function LeadDealWorkTab({
   dealLeadId,
+  dealCompanyId = null,
+  isAdminUser = false,
   projectId,
   useOrderTasks = false,
   users = [],
@@ -52,7 +63,7 @@ export default function LeadDealWorkTab({
             Pipeline tư vấn / báo giá / hợp đồng ở mức <strong>deal cơ sở</strong>. Từng lượt đặt hàng (Đơn 1, 2, …) mỗi bộ
             nhiệm vụ thực hiện ở khối bên dưới; lần đầu sẽ tạo dự án nếu deal chưa có.
           </p>
-          <CRMTasksTab leadId={dealLeadId} leadType="deal" users={users} />
+          <CRMTasksTab leadId={dealLeadId} leadType="deal" users={users} taskScope="crm" />
         </section>
       )}
 
@@ -78,6 +89,8 @@ export default function LeadDealWorkTab({
         ) : (
           <EnsureProjectAndOrders
             dealLeadId={dealLeadId}
+            dealCompanyId={dealCompanyId}
+            isAdminUser={isAdminUser}
             ordersCount={Array.isArray(orders) ? orders.length : 0}
             ordersLoading={ordersLoading}
             orders={orders}
@@ -93,16 +106,37 @@ export default function LeadDealWorkTab({
 /**
  * Cùng layout / hành vi "Thêm đơn" với {@link ProjectOrdersTab}; lần đầu: POST tạo dự án từ deal + POST tạo đơn con.
  */
-function EnsureProjectAndOrders({ dealLeadId, ordersCount, ordersLoading, orders, users, onProjectCreated }) {
+function EnsureProjectAndOrders({ dealLeadId, dealCompanyId, isAdminUser, ordersCount, ordersLoading, orders, users, onProjectCreated }) {
   const [newLabel, setNewLabel] = useState('');
   const [creating, setCreating] = useState(false);
   const [msg, setMsg] = useState('');
+  const [productionCompanies, setProductionCompanies] = useState([]);
+  const [sxCompanyId, setSxCompanyId] = useState(dealCompanyId ? String(dealCompanyId) : '');
+
+  useEffect(() => {
+    api.get('/companies', { params: { for_module: 'production' } })
+      .then((r) => setProductionCompanies(r.data?.companies || []))
+      .catch(() => setProductionCompanies([]));
+  }, []);
+
+  useEffect(() => {
+    if (dealCompanyId) setSxCompanyId(String(dealCompanyId));
+  }, [dealCompanyId]);
+
+  useEffect(() => {
+    if (dealCompanyId || !isAdminUser) return;
+    const pref = findDefaultAdminCompanyPhucDat(productionCompanies);
+    if (pref) setSxCompanyId((prev) => prev || pref);
+  }, [dealCompanyId, isAdminUser, productionCompanies]);
 
   const nextDefaultLabel = () => `Đơn ${ordersCount + 1}`;
 
   const ensureProjectId = async () => {
+    if (!sxCompanyId) throw new Error('Chọn công ty Sản xuất (module xưởng) trước khi tạo dự án');
     try {
-      const { data } = await api.post(`/crm/deals/${encodeURIComponent(dealLeadId)}/auto-create-project`);
+      const { data } = await api.post(`/crm/deals/${encodeURIComponent(dealLeadId)}/auto-create-project`, {
+        production_company_id: sxCompanyId,
+      });
       if (data?.project_id) return String(data.project_id);
     } catch (e) {
       const pid = e.response?.data?.project_id;
@@ -141,7 +175,21 @@ function EnsureProjectAndOrders({ dealLeadId, ordersCount, ordersLoading, orders
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-end gap-3 justify-between bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4">
-        <div className="min-w-0" />
+        <div className="min-w-0 flex-1 max-w-md">
+          <label className="block text-[10px] font-bold text-amber-900 uppercase tracking-wide mb-1">
+            Công ty Sản xuất <span className="text-red-600">*</span>
+          </label>
+          <select
+            value={sxCompanyId}
+            onChange={(e) => setSxCompanyId(e.target.value)}
+            className="w-full h-10 px-3 border border-amber-200 rounded-lg text-sm bg-white"
+          >
+            <option value="">— Chọn công ty (module SX) —</option>
+            {productionCompanies.map((c) => (
+              <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+            ))}
+          </select>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={newLabel}
@@ -243,6 +291,7 @@ function CrmOrphanOrderNotes({ orders, users }) {
                       leadId={o.fulfillment_lead_id}
                       leadType="deal"
                       users={users}
+                      taskScope="crm"
                     />
                   </>
                 ) : (

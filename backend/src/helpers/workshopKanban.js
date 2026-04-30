@@ -199,7 +199,11 @@ function kanbanColumnIdForProject(project, sortedStages, wonIdSet) {
     if (wid && cid && String(wid) === String(cid)) return col.id;
   }
   const intake = sortedStages.find((s) => s.bucket_slug === INTAKE_BUCKET);
-  if (intake && wonIdSet.has(project.id)) return intake.id;
+  if (wonIdSet.has(project.id)) {
+    // Nếu chưa cấu hình cột "Chờ vào xưởng" thì fallback cột đầu tiên để không bị mất card mới.
+    if (intake) return intake.id;
+    return sortedStages?.[0]?.id || null;
+  }
   return null;
 }
 

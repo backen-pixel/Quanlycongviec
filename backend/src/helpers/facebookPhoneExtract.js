@@ -153,6 +153,23 @@ function normalizePhoneForLeadCreation(rawVin) {
   return { ok: false, normalized: null };
 }
 
+/** Độ dài chạy dài nhất gồm cùng một chữ số (vd. 000000 trong id URL). */
+function longestSameDigitRun(digitsOnly) {
+  const d = String(digitsOnly || '').replace(/\D/g, '');
+  if (!d.length) return 0;
+  let maxRun = 1;
+  let cur = 1;
+  for (let i = 1; i < d.length; i++) {
+    if (d[i] === d[i - 1]) {
+      cur += 1;
+      if (cur > maxRun) maxRun = cur;
+    } else {
+      cur = 1;
+    }
+  }
+  return maxRun;
+}
+
 /**
  * SĐT đang lưu có vấn đề (không phải thuê bao VN chuẩn): dài bất thường, chuỗi số trong link, v.v.
  * Dùng cho quét «SĐT sai / nghi từ link» trước khi cập nhật hoặc xóa lead/KH.
@@ -164,21 +181,29 @@ function analyzeStoredPhoneIssue(raw) {
       is_bad: false,
       digit_count: 0,
       likely_from_link: false,
+      suspicious_repeat_run: 0,
       validate: { valid: false, normalized: null },
     };
   }
   const validate = validateVnSubscriberPhoneStored(trimmed);
   const digits = normalizeUnicodeDigitsToAscii(trimmed).replace(/\D/g, '');
+  const repeatRun = longestSameDigitRun(digits);
+  /** Chuỗi số liền kề giống nhau dài (hay gặp khi dính id/link, không phải SĐT thật). */
+  const suspiciousRepeat = repeatRun >= 5;
+  /** Quá dài so với thuê bao VN (10–11 số); hoặc user mô tả «hơn 10 số» trong một chuỗi rác. */
+  const tooManyDigits = digits.length > 11;
+  const is_bad = !validate.valid || tooManyDigits || suspiciousRepeat;
   const likelyFromLink =
     /https?:\/\//i.test(trimmed)
     || /(?:m\.me|fb\.me|zalo\.me|shopee\.|lazada\.|tiktok\.com)/i.test(trimmed)
-    || digits.length > 11
+    || tooManyDigits
+    || suspiciousRepeat
     || (digits.length >= 10 && !validate.valid);
-  const is_bad = !validate.valid;
   return {
     is_bad,
     digit_count: digits.length,
     likely_from_link: !!(is_bad && likelyFromLink),
+    suspicious_repeat_run: repeatRun,
     validate,
   };
 }
@@ -193,4 +218,5 @@ module.exports = {
   extractContactInfo,
   extractInboundContactInfo,
   analyzeStoredPhoneIssue,
+  longestSameDigitRun,
 };

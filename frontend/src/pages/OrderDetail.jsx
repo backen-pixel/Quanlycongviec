@@ -195,7 +195,7 @@ export default function OrderDetail() {
         <div className="bg-white rounded-xl border p-4">
           <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">✅ Nhiệm vụ đơn hàng</h3>
           {taskLeadId ? (
-            <CRMTasksTab leadId={taskLeadId} leadType="deal" users={[]} />
+            <CRMTasksTab leadId={taskLeadId} leadType="deal" users={[]} taskScope="crm" />
           ) : (
             <div className="text-sm text-gray-500">Đơn chưa có deal nhiệm vụ.</div>
           )}

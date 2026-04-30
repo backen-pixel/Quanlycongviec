@@ -93,6 +93,9 @@ export default function LeadVoiceRecordingsTab({ leadId }) {
               <p className="text-sm font-medium text-gray-900 break-all">{r.file_name}</p>
               <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs text-gray-600">
                 <span>{formatDateTime(r.created_at)}</span>
+                {r.uploader?.full_name ? (
+                  <span className="font-medium text-violet-800">NV: {r.uploader.full_name}</span>
+                ) : null}
                 {r.phone_number ? <span className="font-medium">Số: {r.phone_number}</span> : null}
                 {r.direction ? <span>{dirLabel(r.direction)}</span> : null}
                 {r.source ? <span>Nguồn: {r.source}</span> : null}

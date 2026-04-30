@@ -862,6 +862,8 @@ function ContactsTab() {
     lead_date_from: '',
     lead_date_to: '',
     include_contacts_without_lead_in_range: false,
+    /** Khi có khoảng ngày: gộp lead có SĐT KH (customer) xấu — kể cả contact chưa lưu số xấu */
+    include_lead_bad_customer_phone: true,
   });
   const [pqSelectedDel, setPqSelectedDel] = useState([]);
   const [pqApplyLoading, setPqApplyLoading] = useState(false);
@@ -1216,6 +1218,7 @@ function ContactsTab() {
         lead_date_from: pqForm.lead_date_from?.trim() || undefined,
         lead_date_to: pqForm.lead_date_to?.trim() || undefined,
         include_contacts_without_lead_in_range: pqForm.include_contacts_without_lead_in_range,
+        include_lead_bad_customer_phone: pqForm.include_lead_bad_customer_phone,
       };
       const res = await fetch(`${API}/api/facebook/phone-quality-scan`, {
         method: 'POST',
@@ -1584,8 +1587,8 @@ function ContactsTab() {
           <div className="min-w-[200px]">
             <div className="text-sm font-semibold text-violet-950">Quét SĐT sai / dài / nghi từ link</div>
             <p className="text-xs text-violet-900/85 mt-1 leading-relaxed">
-              Liệt kê contact có SĐT lưu <strong>không hợp lệ</strong> (quá dài, không phải 0xxxx… chuẩn, thường gặp khi dính số trong link). Hệ thống đọc lại tin <strong>inbound</strong> (đã loại URL).
-              Cột «SĐT quét được»: chuẩn VN → có thể <strong>cập nhật</strong> hàng loạt; không có → tick <strong>xóa lead</strong> (và tùy chọn xóa KH mồ côi).
+              Gồm SĐT trên contact <strong>hoặc</strong> trên khách hàng CRM khi có khoảng ngày: không chuẩn VN, <strong>&gt; 11 chữ số</strong>, hoặc <strong>≥ 5 số liền kề giống nhau</strong> (hay gặp khi dính id/link).
+              Hệ thống đọc lại tin <strong>inbound</strong> (đã loại URL). «SĐT quét được» chuẩn VN → <strong>cập nhật</strong>; không có → chọn <strong>xóa</strong> (và tùy chọn xóa KH mồ côi).
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1626,20 +1629,33 @@ function ContactsTab() {
             </button>
           </div>
         </div>
-        <label className="inline-flex items-center gap-2 text-[11px] text-violet-900 mb-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={pqForm.include_contacts_without_lead_in_range}
-            onChange={(e) => setPqForm((f) => ({ ...f, include_contacts_without_lead_in_range: e.target.checked }))}
-          />
-          Khi có khoảng ngày: gồm contact chưa lead (theo ngày tạo contact), giống «Quét lại SĐT»
-        </label>
+        <div className="flex flex-col gap-1.5 mb-2">
+          <label className="inline-flex items-center gap-2 text-[11px] text-violet-900 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={pqForm.include_contacts_without_lead_in_range}
+              onChange={(e) => setPqForm((f) => ({ ...f, include_contacts_without_lead_in_range: e.target.checked }))}
+            />
+            Khi có khoảng ngày: gồm contact chưa lead (theo ngày tạo contact), giống «Quét lại SĐT»
+          </label>
+          <label className="inline-flex items-center gap-2 text-[11px] text-violet-900 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={pqForm.include_lead_bad_customer_phone}
+              onChange={(e) => setPqForm((f) => ({ ...f, include_lead_bad_customer_phone: e.target.checked }))}
+            />
+            Khi có khoảng ngày: thêm lead có <strong>SĐT khách hàng</strong> xấu (dù contact chưa hiện số lỗi)
+          </label>
+        </div>
         {pqError && <div className="text-xs text-red-700 mb-2">❌ {pqError}</div>}
         {pqResult && (
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2 text-[11px] text-violet-950 bg-white/70 rounded-lg px-2 py-1.5 border border-violet-100">
               <span>Pool DB: <strong>{pqResult.pool_fetched}</strong></span>
-              <span>· SĐT xấu: <strong>{pqResult.bad_stored_count}</strong></span>
+              {(pqResult.merged_from_customer_phone ?? 0) > 0 && (
+                <span>· Thêm từ SĐT KH: <strong>{pqResult.merged_from_customer_phone}</strong></span>
+              )}
+              <span>· SĐT xấu (gộp): <strong>{pqResult.bad_stored_count}</strong></span>
               {pqResult.date_filter_active && (
                 <>
                   <span>· Sau lọc ngày: <strong>{pqResult.pool_after_date_filter}</strong></span>
@@ -1721,13 +1737,22 @@ function ContactsTab() {
                       <td className="p-1.5 font-medium text-gray-800 truncate max-w-[140px]" title={row.fb_name}>
                         {row.fb_name || '—'}
                       </td>
-                      <td className="p-1.5 font-mono text-red-800 break-all max-w-[160px]">{row.stored_phone}</td>
-                      <td className="p-1.5 text-gray-700">
-                        {row.stored_issue?.likely_from_link ? (
-                          <span className="text-orange-700">Nghi link / dài ({row.stored_issue?.digit_count} số)</span>
-                        ) : (
-                          <span>Không chuẩn VN</span>
+                      <td className="p-1.5 font-mono text-red-800 break-all max-w-[160px]">
+                        {row.stored_phone}
+                        {row.phone_issue_source === 'customer' && (
+                          <span className="block text-[9px] text-violet-700 font-sans mt-0.5">(theo KH CRM)</span>
                         )}
+                      </td>
+                      <td className="p-1.5 text-gray-700">
+                        {(() => {
+                          const si = row.stored_issue || {};
+                          const bits = [];
+                          if ((si.suspicious_repeat_run ?? 0) >= 5) bits.push(`Lặp ${si.suspicious_repeat_run} số liền nhau`);
+                          if ((si.digit_count ?? 0) > 11) bits.push(`Quá dài (${si.digit_count} số)`);
+                          if (si.likely_from_link && bits.length === 0) bits.push(`Nghi link / URL (${si.digit_count} số)`);
+                          if (!bits.length) bits.push('Không chuẩn VN');
+                          return bits.join(' · ');
+                        })()}
                       </td>
                       <td className="p-1.5 text-center text-gray-600">{row.messages_scanned}</td>
                       <td className="p-1.5 font-mono text-emerald-800">{row.scanned_phone || '—'}</td>

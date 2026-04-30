@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -36,6 +37,8 @@ function SortableItem({ id, children }) {
 }
 
 export default function WorkshopTaskTemplatesPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
@@ -49,6 +52,7 @@ export default function WorkshopTaskTemplatesPage() {
   const [editingVisibility, setEditingVisibility] = useState({}); // {itemId: true/false}
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
 
   const currentStages = activeTab === 'logistics' ? WORKSHOP_LOGISTICS_STAGES : WORKSHOP_PRODUCTION_STAGES;
 
@@ -61,8 +65,13 @@ export default function WorkshopTaskTemplatesPage() {
     setLoading(true);
     try {
       const [tplRes, compRes, deptRes] = await Promise.all([
-        api.get('/production/task-templates', { params: { active_only: 'false' } }),
-        api.get('/companies').catch(() => ({ data: [] })),
+        api.get('/production/task-templates', {
+          params: {
+            active_only: 'false',
+            ...(selectedCompanyId ? { company_id: selectedCompanyId } : {}),
+          },
+        }),
+        api.get('/companies', { params: { for_module: activeTab === 'logistics' ? 'logistics' : 'production' } }).catch(() => ({ data: [] })),
         api.get('/departments').catch(() => ({ data: [] })),
       ]);
       setTemplates(tplRes.data || []);
@@ -74,7 +83,7 @@ export default function WorkshopTaskTemplatesPage() {
     } catch {}
     setLoading(false);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [selectedCompanyId]);
 
   const filteredTemplates = templates.filter((t) => t.workshop_area === activeTab);
 
@@ -85,6 +94,7 @@ export default function WorkshopTaskTemplatesPage() {
       await api.post('/production/task-templates', {
         name: newTpl.name.trim(),
         workshop_area: newTpl.workshop_area,
+        company_id: selectedCompanyId || null,
         order_index: filteredTemplates.filter((x) => x.workshop_area === newTpl.workshop_area).length,
       });
       setNewTpl({ name: '', workshop_area: activeTab });
@@ -132,6 +142,7 @@ export default function WorkshopTaskTemplatesPage() {
       await api.put(`/production/task-templates/${editingTpl.id}`, {
         name: editingTpl.name.trim(),
         workshop_area: editingTpl.workshop_area,
+        company_id: selectedCompanyId || null,
       });
       setEditingTpl(null);
       load();
@@ -295,6 +306,21 @@ export default function WorkshopTaskTemplatesPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isAdmin && (
+            <select
+              value={selectedCompanyId}
+              onChange={(e) => setSelectedCompanyId(e.target.value)}
+              className="h-9 px-3 rounded-lg border text-sm bg-white"
+              title="Chọn công ty để quản lý bộ nhiệm vụ"
+            >
+              <option value="">— Chọn công ty —</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.short_name || c.name}
+                </option>
+              ))}
+            </select>
+          )}
           <Link to="/sx/dashboard" className="text-sm text-blue-600 hover:text-blue-800 font-medium">
             ← Dashboard xưởng
           </Link>

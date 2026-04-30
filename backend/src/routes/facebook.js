@@ -6369,6 +6369,49 @@ async function runLeadScanByDateBatch(body, ioRef) {
   };
 }
 
+/**
+ * Lead CRM trong khoảng ngày có SĐT khách hàng (customers.phone) xấu — lấy facebook_contacts tương ứng
+ * (kể cả contact.phone trống hoặc tạm đúng nhưng KH lưu số nghi từ link).
+ */
+async function fetchContactsForLeadsWithBadCustomerPhoneInDateRange(body) {
+  const fromS = body.lead_date_from && String(body.lead_date_from).trim();
+  const toS = body.lead_date_to && String(body.lead_date_to).trim();
+  if (!fromS && !toS) return [];
+  const { fromMs, toMs } = parseUtcDayBoundary(fromS, toS);
+  let lq = supabase.from('crm_leads').select('id, customer_id').eq('type', 'lead');
+  if (fromMs != null) lq = lq.gte('created_at', new Date(fromMs).toISOString());
+  if (toMs != null) lq = lq.lte('created_at', new Date(toMs).toISOString());
+  const { data: leads, error: lErr } = await lq.limit(8000);
+  if (lErr) throw new Error(lErr.message);
+  if (!leads?.length) return [];
+
+  const custIds = [...new Set(leads.map((L) => L.customer_id).filter(Boolean))];
+  const custMap = {};
+  for (let i = 0; i < custIds.length; i += 400) {
+    const chunk = custIds.slice(i, i + 400);
+    const { data: custs } = await supabase.from('customers').select('id, phone').in('id', chunk);
+    (custs || []).forEach((row) => {
+      custMap[row.id] = row.phone;
+    });
+  }
+
+  const badLeadIds = [];
+  for (const L of leads) {
+    const p = L.customer_id ? custMap[L.customer_id] : '';
+    if (p != null && String(p).trim() && analyzeStoredPhoneIssue(String(p).trim()).is_bad) {
+      badLeadIds.push(L.id);
+    }
+  }
+  if (!badLeadIds.length) return [];
+
+  const pick = 'id, fb_name, phone, page_id, last_message_at, created_at, customer_id, lead_id';
+  let cq = supabase.from('facebook_contacts').select(pick).in('lead_id', badLeadIds);
+  if (body.page_id) cq = cq.eq('page_id', body.page_id);
+  const { data: contacts, error: cErr } = await cq;
+  if (cErr) throw new Error(cErr.message);
+  return contacts || [];
+}
+
 async function runPhoneQualityScan(body) {
   const b = body && typeof body === 'object' ? body : {};
   const limit = Math.min(500, Math.max(1, parseInt(b.limit, 10) || 150));
@@ -6379,6 +6422,7 @@ async function runPhoneQualityScan(body) {
   const fetchPoolCap = dateFilterActive
     ? Math.min(40_000, Math.max(limit * 100, 5000))
     : Math.min(25_000, Math.max(limit * 50, 2000));
+  const includeLeadBadCustomer = b.include_lead_bad_customer_phone !== false;
 
   let q = supabase
     .from('facebook_contacts')
@@ -6394,8 +6438,25 @@ async function runPhoneQualityScan(body) {
   const { data: contactsRaw, error } = await q;
   if (error) throw new Error(error.message);
 
-  let pool = sortFacebookContactsNewestFirst(contactsRaw || []).filter((c) => analyzeStoredPhoneIssue(c.phone).is_bad);
+  let poolFromContact = sortFacebookContactsNewestFirst(contactsRaw || []).filter((c) => analyzeStoredPhoneIssue(c.phone).is_bad);
+
+  let extraFromCustomer = [];
+  if (dateFilterActive && includeLeadBadCustomer) {
+    try {
+      extraFromCustomer = await fetchContactsForLeadsWithBadCustomerPhoneInDateRange(b);
+    } catch (e) {
+      console.warn('[PhoneQuality] extra customer phone:', e.message);
+    }
+  }
+
+  const mergedMap = new Map();
+  poolFromContact.forEach((c) => mergedMap.set(c.id, c));
+  sortFacebookContactsNewestFirst(extraFromCustomer || []).forEach((c) => {
+    if (!mergedMap.has(c.id)) mergedMap.set(c.id, c);
+  });
+  let pool = sortFacebookContactsNewestFirst([...mergedMap.values()]);
   const bad_stored_count = pool.length;
+  const merged_from_customer_phone_row = extraFromCustomer.length;
 
   const dateFilterResult = await filterContactsByLeadDateRange(supabase, pool, b);
   pool = dateFilterResult.filtered;
@@ -6404,9 +6465,47 @@ async function runPhoneQualityScan(body) {
 
   pool = pool.slice(0, limit);
 
+  const leadIds = [...new Set(pool.map((c) => c.lead_id).filter(Boolean))];
+  const leadToCustomer = {};
+  if (leadIds.length) {
+    const { data: ldRows } = await supabase.from('crm_leads').select('id, customer_id').in('id', leadIds);
+    (ldRows || []).forEach((L) => {
+      leadToCustomer[L.id] = L.customer_id || null;
+    });
+  }
+  const custIdsForPool = [...new Set(Object.values(leadToCustomer).filter(Boolean))];
+  const custPhoneById = {};
+  for (let i = 0; i < custIdsForPool.length; i += 400) {
+    const chunk = custIdsForPool.slice(i, i + 400);
+    const { data: custs } = await supabase.from('customers').select('id, phone').in('id', chunk);
+    (custs || []).forEach((row) => {
+      custPhoneById[row.id] = row.phone;
+    });
+  }
+
   const rows = [];
   for (const c of pool) {
-    const analysis = analyzeStoredPhoneIssue(c.phone);
+    const contactStr = c.phone && String(c.phone).trim() ? String(c.phone).trim() : '';
+    let eff = contactStr;
+    let issueSource = 'contact';
+    let analysis = analyzeStoredPhoneIssue(eff);
+
+    if (!analysis.is_bad && c.lead_id) {
+      const custId = leadToCustomer[c.lead_id] || c.customer_id;
+      const cp = custId ? custPhoneById[custId] : '';
+      if (cp != null && String(cp).trim()) {
+        const cs = String(cp).trim();
+        const a2 = analyzeStoredPhoneIssue(cs);
+        if (a2.is_bad) {
+          eff = cs;
+          issueSource = 'customer';
+          analysis = a2;
+        }
+      }
+    } else if (analysis.is_bad && contactStr) {
+      issueSource = 'contact';
+    }
+
     const { data: msgs } = await supabase
       .from('facebook_messages')
       .select('content, direction, created_at')
@@ -6424,7 +6523,8 @@ async function runPhoneQualityScan(body) {
       contact_id: c.id,
       fb_name: c.fb_name,
       page_id: c.page_id,
-      stored_phone: c.phone,
+      stored_phone: eff,
+      phone_issue_source: issueSource,
       stored_issue: analysis,
       scanned_phone: scannedPhone,
       scanned_ok: scannedOk,
@@ -6440,6 +6540,7 @@ async function runPhoneQualityScan(body) {
     limit,
     date_filter_active: dateFilterActive,
     pool_fetched: (contactsRaw || []).length,
+    merged_from_customer_phone: merged_from_customer_phone_row,
     bad_stored_count,
     pool_after_date_filter,
     skipped_by_lead_date,

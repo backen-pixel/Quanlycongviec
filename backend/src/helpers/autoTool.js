@@ -7,8 +7,8 @@
  * 3. Quét SĐT từ tin inbound trong DB
  * 4. Có SĐT + chưa lead → tạo lead; đã có lead → cập nhật SĐT
  *
- * Chạy liên tục: mỗi vòng xử lý 1 batch (offset tăng dần),
- * khi hết contacts thì reset offset, nghỉ rồi lặp lại.
+ * Chạy liên tục: mỗi vòng xử lý tối đa `batchesPerCycle` batch (mặc định 1 = chỉ 100/batch rồi nghỉ),
+ * không quét offset tiếp đến hết pool. Khi hết contacts thì reset offset, nghỉ rồi lặp lại.
  */
 
 const { supabase } = require('../config/supabase');
@@ -26,6 +26,8 @@ const state = {
   totalContacts: 0,
   totalPool: 0,
   offset: 0,
+  /** Số batch đã chạy trong vòng hiện tại (reset khi offset về 0 sau cycle pause). */
+  batchesInCycle: 0,
   synced: 0,
   syncErrors: 0,
   phonesFound: 0,
@@ -38,8 +40,10 @@ const state = {
   config: {
     limit: 100,           // contacts mỗi batch
     graphPages: 10,       // trang Graph mỗi contact
-    pauseSec: 60,         // nghỉ giữa các batch (giây)
-    cyclePauseSec: 300,   // nghỉ khi hết pool, trước khi lặp lại từ đầu
+    /** Số batch tối đa mỗi vòng (offset chỉ tăng trong vòng này). 1 = chỉ chạy 1×limit contact rồi nghỉ vòng — không quét hết pool. */
+    batchesPerCycle: 1,
+    pauseSec: 60,         // nghỉ giữa các batch trong cùng một vòng (khi batchesPerCycle > 1)
+    cyclePauseSec: 300,   // nghỉ cuối vòng (sau đủ batch hoặc hết contact)
     delayMs: 100,         // delay giữa các contact (ms) — tránh rate limit
   },
 };
@@ -71,6 +75,7 @@ function getState() {
     totalContacts: state.totalContacts,
     totalPool: state.totalPool,
     offset: state.offset,
+    batchesInCycle: state.batchesInCycle,
     synced: state.synced,
     syncErrors: state.syncErrors,
     phonesFound: state.phonesFound,
@@ -90,6 +95,7 @@ function setConfig(partial) {
   if (!partial || typeof partial !== 'object') return;
   if (partial.limit != null) state.config.limit = Math.min(1000, Math.max(1, parseInt(partial.limit, 10) || 100));
   if (partial.graphPages != null) state.config.graphPages = Math.min(30, Math.max(1, parseInt(partial.graphPages, 10) || 10));
+  if (partial.batchesPerCycle != null) state.config.batchesPerCycle = Math.min(500, Math.max(1, parseInt(partial.batchesPerCycle, 10) || 1));
   if (partial.pauseSec != null) state.config.pauseSec = Math.min(3600, Math.max(0, parseInt(partial.pauseSec, 10) || 60));
   if (partial.cyclePauseSec != null) state.config.cyclePauseSec = Math.min(3600, Math.max(0, parseInt(partial.cyclePauseSec, 10) || 300));
   if (partial.delayMs != null) state.config.delayMs = Math.min(5000, Math.max(0, parseInt(partial.delayMs, 10) || 100));
@@ -109,6 +115,7 @@ async function loadConfigFromDb() {
       const v = data.value;
       if (v.limit != null) state.config.limit = Math.min(1000, Math.max(1, parseInt(v.limit, 10) || 100));
       if (v.graphPages != null) state.config.graphPages = Math.min(30, Math.max(1, parseInt(v.graphPages, 10) || 10));
+      if (v.batchesPerCycle != null) state.config.batchesPerCycle = Math.min(500, Math.max(1, parseInt(v.batchesPerCycle, 10) || 1));
       if (v.pauseSec != null) state.config.pauseSec = Math.min(3600, Math.max(0, parseInt(v.pauseSec, 10) || 60));
       if (v.cyclePauseSec != null) state.config.cyclePauseSec = Math.min(3600, Math.max(0, parseInt(v.cyclePauseSec, 10) || 300));
       if (v.delayMs != null) state.config.delayMs = Math.min(5000, Math.max(0, parseInt(v.delayMs, 10) || 100));
@@ -382,6 +389,7 @@ async function startLoop() {
   state.startedAt = new Date().toISOString();
   state.cycleCount = 0;
   state.offset = 0;
+  state.batchesInCycle = 0;
   state.processed = 0;
   state.processedTotal = 0;
   state.synced = 0;
@@ -407,10 +415,12 @@ async function startLoop() {
 
     try {
       const result = await runOneBatch();
+      const maxBatches = Math.max(1, parseInt(state.config.batchesPerCycle, 10) || 1);
 
       if (result.done) {
-        // Hết pool → reset offset, nghỉ dài rồi lặp lại
+        // Hết contact tại offset hiện tại → reset offset, nghỉ vòng
         state.offset = 0;
+        state.batchesInCycle = 0;
         state.currentContact = null;
         pushLog(
           `🏁 Vòng ${state.cycleCount} hoàn tất: ${state.processed} contacts, ${state.synced} tin, ${state.phonesFound} SĐT, ${state.leadsCreated} lead, ${state.leadsUpdated} cập nhật`,
@@ -428,15 +438,39 @@ async function startLoop() {
           if (!ok) break;
         }
       } else {
-        // Còn contacts → nghỉ ngắn rồi batch tiếp
-        if (state.stopRequested || !state.enabled) break;
+        state.batchesInCycle = (state.batchesInCycle || 0) + 1;
 
-        const batchPause = state.config.pauseSec;
-        if (batchPause > 0) {
-          pushLog(`⏸️ Nghỉ ${batchPause}s trước batch tiếp (offset ${state.offset})...`);
+        if (state.batchesInCycle >= maxBatches) {
+          // Đủ số batch trong vòng — không tăng offset tiếp (không quét hết pool)
+          state.offset = 0;
+          state.batchesInCycle = 0;
+          state.currentContact = null;
+          pushLog(
+            `🏁 Vòng ${state.cycleCount}: đã chạy ${maxBatches} batch (tối đa ${maxBatches * state.config.limit} contact) — không quét tiếp offset trong pool (~${state.totalPool} contact). Nghỉ trước vòng sau.`,
+            'ok',
+          );
           emit();
-          const ok = await interruptibleSleep(batchPause * 1000);
-          if (!ok) break;
+
+          if (state.stopRequested || !state.enabled) break;
+
+          const cyclePause = state.config.cyclePauseSec;
+          if (cyclePause > 0) {
+            pushLog(`⏸️ Nghỉ ${cyclePause}s trước vòng mới...`);
+            emit();
+            const ok = await interruptibleSleep(cyclePause * 1000);
+            if (!ok) break;
+          }
+        } else {
+          // Cùng vòng, còn batch → nghỉ ngắn rồi batch tiếp (offset đã tăng trong runOneBatch)
+          if (state.stopRequested || !state.enabled) break;
+
+          const batchPause = state.config.pauseSec;
+          if (batchPause > 0) {
+            pushLog(`⏸️ Nghỉ ${batchPause}s trước batch tiếp (offset ${state.offset})...`);
+            emit();
+            const ok = await interruptibleSleep(batchPause * 1000);
+            if (!ok) break;
+          }
         }
       }
     } catch (err) {

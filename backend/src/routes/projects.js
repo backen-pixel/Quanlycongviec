@@ -14,6 +14,7 @@ const {
   createChildOrderOnProject,
   ensureDefaultOrderOneForProject,
   pushOrderToLogistics,
+  applyProductionTemplateToFulfillmentLead,
 } = require('../helpers/projectOrderFulfillment');
 const {
   taskAttachmentVisibleForModuleAndUser,
@@ -370,6 +371,11 @@ r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
     if (!existing.fulfillment_lead_id) {
       return res.status(400).json({ error: 'Đơn chưa có deal nhiệm vụ (fulfillment)' });
     }
+    // Dữ liệu cũ có thể chưa có bộ nhiệm vụ SX ở deal fulfillment -> auto bù.
+    await applyProductionTemplateToFulfillmentLead({
+      leadId: existing.fulfillment_lead_id,
+      createdBy: req.user.userId,
+    });
     const { data, error } = await supabase.from('orders').update(updates).eq('id', oid).select('*').single();
     if (error) throw error;
     await logActivity(req.user.userId, 'updated', 'order', oid, `Chuyển SX: ${existing.code || ''} ${existing.display_label || ''}`);
@@ -391,6 +397,19 @@ r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
     const results = [];
     for (const oid of orderIds) {
       try {
+        const { data: existing } = await supabase
+          .from('orders')
+          .select('id, project_id, fulfillment_lead_id')
+          .eq('id', oid)
+          .eq('project_id', pid)
+          .maybeSingle();
+        if (!existing) throw new Error('Không tìm thấy/không cập nhật được');
+        if (existing.fulfillment_lead_id) {
+          await applyProductionTemplateToFulfillmentLead({
+            leadId: existing.fulfillment_lead_id,
+            createdBy: req.user.userId,
+          });
+        }
         const r0 = await supabase.from('orders')
           .update({
             updated_at: new Date().toISOString(),
