@@ -290,8 +290,8 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
 
-  // Cascade data
-  const [units, setUnits] = useState([]);
+  // Cascade data — Khối lấy level=1 (khớp bộ lọc trang); không phụ thuộc level.depth có trong payload hay không
+  const [divisions, setDivisions] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -302,62 +302,70 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
 
   useEffect(() => {
     if (!open) return;
-    // Load ecosystem units + companies
     Promise.all([
-      api.get('/ecosystem/units').catch(() => ({ data: { units: [] } })),
+      api.get('/ecosystem/units?level=1').catch(() => ({ data: { units: [] } })),
       api.get('/companies').catch(() => ({ data: { companies: [] } })),
-    ]).then(([uRes, cRes]) => {
-      setUnits(uRes.data.units || []);
+    ]).then(([divRes, cRes]) => {
+      setDivisions(divRes.data.units || []);
       setCompanies(cRes.data.companies || []);
     });
 
     if (editUser) {
-      setForm({ ...editUser, department_id: editUser.department_id || editUser.department?.id || '', team_id: editUser.team_id || editUser.team?.id || '', password: '' });
-      // Pre-populate cascade from existing data
+      setForm({
+        ...editUser,
+        department_id: editUser.department_id || editUser.department?.id || '',
+        team_id: editUser.team_id || editUser.team?.id || '',
+        password: '',
+      });
       if (editUser.department?.company_id) {
-        const comp = null; // will be set after companies load
         setSelCompany(editUser.department.company_id);
       }
     } else {
       setForm({ full_name: '', email: '', phone: '', role: 'staff', position: '', department_id: '', team_id: '', password: '', date_of_birth: '', hire_date: '', address: '', emergency_contact: '', notes: '' });
-      setSelDivision(''); setSelCompany('');
+      setSelDivision('');
+      setSelCompany('');
     }
   }, [open, editUser]);
 
-  // When companies load + editUser has department → find division
+  /** Sau khi có danh sách công ty — suy ra Khối từ company.division_unit_id (không cần chờ load PB) */
   useEffect(() => {
-    if (editUser && companies.length && units.length) {
-      const dept = departments.find(d => d.id === (editUser.department_id || editUser.department?.id));
-      if (dept?.company_id) {
-        setSelCompany(dept.company_id);
-        const comp = companies.find(c => c.id === dept.company_id);
-        if (comp?.division_unit_id) {
-          setSelDivision(comp.division_unit_id);
-        }
-      }
-    }
-  }, [editUser, companies, units, departments]);
+    if (!open || !editUser || !companies.length) return;
+    const companyId = editUser.department?.company_id;
+    if (!companyId) return;
+    setSelCompany(companyId);
+    const comp = companies.find((c) => c.id === companyId);
+    if (comp?.division_unit_id) setSelDivision(comp.division_unit_id);
+  }, [open, editUser, companies]);
 
   // Load departments when company changes
   useEffect(() => {
     if (selCompany) {
-      api.get('/departments').then(r => {
-        setDepartments((r.data.departments || []).filter(d => d.company_id === selCompany));
+      api.get('/departments').then((r) => {
+        setDepartments((r.data.departments || []).filter((d) => d.company_id === selCompany));
       });
-    } else { setDepartments([]); }
-    if (!editUser) { setForm(f => ({ ...f, department_id: '', team_id: '' })); setTeams([]); }
-  }, [selCompany]);
+    } else {
+      setDepartments([]);
+    }
+    if (!editUser) {
+      setForm((f) => ({ ...f, department_id: '', team_id: '' }));
+      setTeams([]);
+    }
+  }, [selCompany, editUser]);
 
   // Load teams when department changes
   useEffect(() => {
     if (form.department_id) {
-      api.get(`/teams?department_id=${form.department_id}`).then(r => setTeams(r.data.teams || [])).catch(() => setTeams([]));
-    } else { setTeams([]); }
-    if (!editUser) setForm(f => ({ ...f, team_id: '' }));
-  }, [form.department_id]);
+      api
+        .get(`/teams?department_id=${form.department_id}`)
+        .then((r) => setTeams(r.data.teams || []))
+        .catch(() => setTeams([]));
+    } else {
+      setTeams([]);
+    }
+    if (!editUser) setForm((f) => ({ ...f, team_id: '' }));
+  }, [form.department_id, editUser]);
 
-  const divisions = units.filter(u => u.level?.depth === 1);
-  const divCompanies = selDivision ? companies.filter(c => c.division_unit_id === selDivision) : companies;
+  const divCompanies = selDivision ? companies.filter((c) => c.division_unit_id === selDivision) : companies;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -376,7 +384,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editUser ? 'Sửa nhân viên' : 'Thêm nhân viên mới'} size="md">
+    <Modal open={open} onClose={onClose} title={editUser ? 'Sửa nhân viên' : 'Thêm nhân viên mới'} size="lg">
       <form onSubmit={submit} autoComplete="off" className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
         {/* Hidden fields to trick browser autofill */}
         <input type="text" name="prevent_autofill" id="prevent_autofill" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
@@ -400,17 +408,45 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
             {/* Khối */}
             <div>
               <label className="text-[11px] font-medium text-gray-600 block mb-1">Khối</label>
-              <select value={selDivision} onChange={e => { setSelDivision(e.target.value); setSelCompany(''); }} className="w-full h-9 px-3 border rounded-lg text-sm">
+              <select
+                value={selDivision}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSelDivision(v);
+                  setSelCompany('');
+                  setForm((f) => ({ ...f, department_id: '', team_id: '' }));
+                  setTeams([]);
+                }}
+                className="w-full h-9 px-3 border rounded-lg text-sm"
+              >
                 <option value="">— Tất cả Khối —</option>
-                {divisions.map(d => <option key={d.id} value={d.id}>{d.level?.icon} {d.name}</option>)}
+                {divisions.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.level?.icon} {d.name}
+                  </option>
+                ))}
               </select>
             </div>
             {/* Công ty */}
             <div>
               <label className="text-[11px] font-medium text-gray-600 block mb-1">Công ty</label>
-              <select value={selCompany} onChange={e => setSelCompany(e.target.value)} className="w-full h-9 px-3 border rounded-lg text-sm">
+              <select
+                value={selCompany}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSelCompany(v);
+                  setForm((f) => ({ ...f, department_id: '', team_id: '' }));
+                  setTeams([]);
+                }}
+                className="w-full h-9 px-3 border rounded-lg text-sm"
+              >
                 <option value="">— Chọn Cty —</option>
-                {divCompanies.map(c => <option key={c.id} value={c.id}>🏢 {c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>)}
+                {divCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    🏢 {c.name}
+                    {c.short_name ? ` (${c.short_name})` : ''}
+                  </option>
+                ))}
               </select>
             </div>
             {/* Phòng ban */}

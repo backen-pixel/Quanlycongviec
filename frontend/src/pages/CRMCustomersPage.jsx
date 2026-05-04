@@ -1,27 +1,77 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatVND, formatDate } from '../lib/utils';
 import {
-  Users, Search, Phone, Mail, MapPin, Building2, DollarSign, Target,
-  FileText, ShoppingCart, Receipt, TrendingUp, ChevronDown, ChevronUp,
-  Plus, ArrowLeft, Eye
+  Users, Search, Phone, Mail, Building2, Target,
+  ShoppingCart, Receipt, ChevronDown, ChevronUp, Plus,
 } from 'lucide-react';
 
+const LS_CRM_CUSTOMERS_COMPANY = 'crm_customers_filter_company_id';
+
 export default function CRMCustomersPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const userCompanyId = user?.company_id ? String(user.company_id) : '';
+
   const [customers, setCustomers] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [filterCompanyId, setFilterCompanyId] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return localStorage.getItem(LS_CRM_CUSTOMERS_COMPANY) || '';
+    } catch {
+      return '';
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const navigate = useNavigate();
 
-  useEffect(() => { load(); }, []);
-  const load = async () => { setLoading(true); const { data } = await api.get('/crm/customers-overview'); setCustomers(data || []); setLoading(false); };
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get('/companies', { params: { for_module: 'crm' } }).then((r) => {
+      const list = r.data?.companies || r.data || [];
+      setCompanies(Array.isArray(list) ? list : []);
+    }).catch(() => setCompanies([]));
+  }, [isAdmin]);
+
+  const listParams = isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {};
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {};
+      const { data } = await api.get('/crm/customers-overview', { params });
+      setCustomers(data || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [isAdmin, filterCompanyId]);
+
+  useEffect(() => {
+    void load();
+  }, [load, userCompanyId]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    try {
+      if (filterCompanyId) localStorage.setItem(LS_CRM_CUSTOMERS_COMPANY, filterCompanyId);
+      else localStorage.removeItem(LS_CRM_CUSTOMERS_COMPANY);
+    } catch {
+      /* ignore */
+    }
+  }, [isAdmin, filterCompanyId]);
 
   const loadDetail = async (id) => {
-    if (expandedId === id) { setExpandedId(null); return; }
-    const { data } = await api.get(`/crm/customers-overview/${id}`);
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+    const { data } = await api.get(`/crm/customers-overview/${id}`, { params: listParams });
     setDetail(data);
     setExpandedId(id);
   };
@@ -35,6 +85,29 @@ export default function CRMCustomersPage() {
   // Sort by total value desc
   const sorted = [...filtered].sort((a, b) => (b.stats.total_orders + b.stats.lead_value) - (a.stats.total_orders + a.stats.lead_value));
 
+  const leadDealCounts = useMemo(() => {
+    let leads = 0;
+    let deals = 0;
+    (customers || []).forEach((c) => {
+      (c.leads || []).forEach((l) => {
+        if (l.type === 'deal') deals += 1;
+        else leads += 1;
+      });
+    });
+    return { leads, deals };
+  }, [customers]);
+
+  const sourceBreakdown = useMemo(() => {
+    const map = new Map();
+    (customers || []).forEach((c) => {
+      (c.leads || []).forEach((l) => {
+        const name = (l.source?.name || 'Không nguồn').trim() || 'Không nguồn';
+        map.set(name, (map.get(name) || 0) + 1);
+      });
+    });
+    return [...map.entries()].sort((a, b) => b[1] - a[1]);
+  }, [customers]);
+
   // Summary
   const totalCustomers = customers.length;
   const activeCustomers = customers.filter(c => c.stats.lead_count > 0 || c.stats.order_count > 0).length;
@@ -45,9 +118,39 @@ export default function CRMCustomersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Users className="h-6 w-6 text-blue-600" /> Khách hàng CRM</h1><p className="text-sm text-gray-500 mt-1">{totalCustomers} khách hàng</p></div>
-        <button onClick={() => navigate('/crm/customers/new')} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Plus className="h-4 w-4" /> Thêm KH</button>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Users className="h-6 w-6 text-blue-600" /> Khách hàng CRM
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">{totalCustomers} khách hàng</p>
+          {!isAdmin && userCompanyId && (
+            <p className="text-xs text-blue-700 mt-1 flex items-center gap-1">
+              <Building2 className="h-3.5 w-3.5 shrink-0" />
+              Chỉ dữ liệu công ty của bạn
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
+              <select
+                value={filterCompanyId}
+                onChange={(e) => setFilterCompanyId(e.target.value)}
+                className="h-9 min-w-[200px] px-3 bg-white border border-gray-200 rounded-lg text-sm"
+              >
+                <option value="">Tất cả công ty</option>
+                {companies.map((co) => (
+                  <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button onClick={() => navigate('/crm/customers/new')} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
+            <Plus className="h-4 w-4" /> Thêm KH
+          </button>
+        </div>
       </div>
 
       {/* KPIs */}
@@ -55,8 +158,26 @@ export default function CRMCustomersPage() {
         <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase font-medium">Tổng KH</p><p className="text-2xl font-bold text-gray-900">{totalCustomers}</p><p className="text-xs text-blue-600">{activeCustomers} đang giao dịch</p></div>
         <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase font-medium">Doanh thu</p><p className="text-2xl font-bold text-emerald-600">{formatVND(totalRevenue)}</p><p className="text-xs text-gray-400">Đã thu</p></div>
         <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase font-medium">Công nợ</p><p className="text-2xl font-bold text-red-600">{formatVND(totalDebt)}</p><p className="text-xs text-gray-400">Còn nợ</p></div>
-        <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase font-medium">Leads</p><p className="text-2xl font-bold text-blue-600">{customers.reduce((s, c) => s + c.stats.lead_count, 0)}</p><p className="text-xs text-gray-400">{customers.reduce((s, c) => s + c.stats.won_count, 0)} đã chốt</p></div>
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-xs text-gray-500 uppercase font-medium">Lead / Deal</p>
+          <p className="text-2xl font-bold text-blue-600">{leadDealCounts.leads + leadDealCounts.deals}</p>
+          <p className="text-xs text-gray-400">{leadDealCounts.leads} lead · {leadDealCounts.deals} deal · {customers.reduce((s, c) => s + c.stats.won_count, 0)} đã chốt</p>
+        </div>
       </div>
+
+      {sourceBreakdown.length > 0 && (
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Lead & deal theo nguồn (theo phạm vi công ty đang xem)</p>
+          <div className="flex flex-wrap gap-2">
+            {sourceBreakdown.map(([name, n]) => (
+              <span key={name} className="inline-flex items-center gap-1 text-xs bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1 text-slate-700">
+                <span className="font-medium">{name}</span>
+                <span className="text-slate-500">{n}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative max-w-md">

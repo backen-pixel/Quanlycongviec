@@ -479,7 +479,7 @@ r.get('/:id', async (req, res) => {
       id,email,full_name,phone,avatar,role,position,department_id,team_id,
       date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,
       is_active,last_login_at,created_at,
-      department:departments!users_department_id_fkey(id,name,color),
+      department:departments!users_department_id_fkey(id,name,color,company_id),
       team:teams!users_team_id_fkey(id,name,color)
     `).eq('id', req.params.id).single();
     if (!e1) { user = u1; }

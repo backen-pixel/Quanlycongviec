@@ -233,13 +233,17 @@ export default function LeadListScreen({ navigation }: Props) {
 
   const loadMeta = useCallback(async () => {
     try {
-      const [co, sl, sd, src] = await Promise.all([
+      const filterCo =
+        (snapshotRef.current?.filterCompany && String(snapshotRef.current.filterCompany)) ||
+        (user?.company_id ? String(user.company_id) : '');
+      const srcParams = filterCo ? { company_id: filterCo } : {};
+      const [compRes, sl, sd, src] = await Promise.all([
         api.get('/companies').catch(() => ({ data: {} })),
         api.get('/crm/pipeline-stages', { params: { type: 'lead' } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
-        api.get('/crm/sources').catch(() => ({ data: {} })),
+        api.get('/crm/sources', { params: srcParams }).catch(() => ({ data: {} })),
       ]);
-      const companiesPayload = (co.data as { companies?: CompanyRow[] })?.companies;
+      const companiesPayload = (compRes.data as { companies?: CompanyRow[] })?.companies;
       setCompanies(Array.isArray(companiesPayload) ? companiesPayload : []);
       setStagesLead(Array.isArray(sl.data) ? sl.data : []);
       setStagesDeal(Array.isArray(sd.data) ? sd.data : []);
@@ -253,11 +257,11 @@ export default function LeadListScreen({ navigation }: Props) {
       setSources([]);
       setFbPages([]);
     }
-  }, []);
+  }, [user?.company_id]);
 
   useEffect(() => {
     void loadMeta();
-  }, [loadMeta]);
+  }, [loadMeta, snapshot?.filterCompany]);
 
   useEffect(() => {
     if (snapshot == null) return;
@@ -295,10 +299,14 @@ export default function LeadListScreen({ navigation }: Props) {
     }
     let cancelled = false;
     const pageId = src.replace(/^fbp:/, '');
+    const co =
+      (snapshotRef.current?.filterCompany && String(snapshotRef.current.filterCompany)) ||
+      (user?.company_id ? String(user.company_id) : '');
     (async () => {
+      const p = { page_id: pageId, ...(co ? { company_id: co } : {}) };
       const [rL, rD] = await Promise.all([
-        api.get('/crm/leads-by-fb-page', { params: { page_id: pageId, type: 'lead' } }).catch(() => ({ data: [] })),
-        api.get('/crm/leads-by-fb-page', { params: { page_id: pageId, type: 'deal' } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads-by-fb-page', { params: { ...p, type: 'lead' } }).catch(() => ({ data: [] })),
+        api.get('/crm/leads-by-fb-page', { params: { ...p, type: 'deal' } }).catch(() => ({ data: [] })),
       ]);
       if (cancelled) return;
       const lrows = (rL.data || []) as { id: string }[];
@@ -309,7 +317,7 @@ export default function LeadListScreen({ navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [fbKey]);
+  }, [fbKey, user?.company_id, snapshot?.filterCompany]);
 
   const clientBase: Omit<CrmPipelineClientFilters, 'filterStage'> | null = useMemo(() => {
     if (!snapshot) return null;

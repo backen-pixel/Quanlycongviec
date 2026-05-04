@@ -1,8 +1,42 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import api from '../lib/api';
-import { FolderTree, Plus, Edit3, Trash2, X, Save, ChevronRight, ChevronDown, GripVertical, Eye, EyeOff, ArrowUp, ArrowDown, Package } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { FolderTree, Plus, Edit3, Trash2, X, Save, ChevronRight, ChevronDown, GripVertical, Eye, EyeOff, ArrowUp, ArrowDown, Package, Building2 } from 'lucide-react';
+
+const LS_CATEGORIES_COMPANY = 'categories_page_filter_company_id';
 
 export default function CategoriesPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [companies, setCompanies] = useState([]);
+  const [filterCompanyId, setFilterCompanyId] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try { return localStorage.getItem(LS_CATEGORIES_COMPANY) || ''; } catch { return ''; }
+  });
+
+  const listParams = useMemo(
+    () => (isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
+    [isAdmin, filterCompanyId],
+  );
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get('/companies', { params: { for_module: 'crm' } })
+      .then((r) => {
+        const list = r.data?.companies || r.data || [];
+        setCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setCompanies([]));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    try {
+      if (filterCompanyId) localStorage.setItem(LS_CATEGORIES_COMPANY, filterCompanyId);
+      else localStorage.removeItem(LS_CATEGORIES_COMPANY);
+    } catch { /* ignore */ }
+  }, [isAdmin, filterCompanyId]);
+
   const [categories, setCategories] = useState([]);
   const [productCounts, setProductCounts] = useState({});
   const [loading, setLoading] = useState(true);
@@ -11,14 +45,14 @@ export default function CategoriesPage() {
   const [editingInline, setEditingInline] = useState(null);
   const [inlineValue, setInlineValue] = useState('');
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [listParams]);
 
   const load = async () => {
     setLoading(true);
     try {
       const [catRes, prodRes] = await Promise.allSettled([
-        api.get('/products/categories'),
-        api.get('/products', { params: { limit: 1000 } }),
+        api.get('/products/categories', { params: listParams }),
+        api.get('/products', { params: { ...listParams, limit: 1000 } }),
       ]);
       const cats = catRes.status === 'fulfilled' ? (catRes.value.data.categories || catRes.value.data || []) : [];
       setCategories(cats);
@@ -88,7 +122,7 @@ export default function CategoriesPage() {
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <FolderTree className="h-6 w-6 text-purple-600" /> Quản lý Nhóm ngành
@@ -97,9 +131,27 @@ export default function CategoriesPage() {
             {categories.length} nhóm ngành · {productCounts._total || 0} sản phẩm · {productCounts._none || 0} chưa phân loại
           </p>
         </div>
-        <button onClick={() => { setEditing(null); setShowForm(true); }} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
-          <Plus className="h-4 w-4" /> Thêm nhóm ngành
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
+              <select
+                value={filterCompanyId}
+                onChange={(e) => setFilterCompanyId(e.target.value)}
+                className="h-9 min-w-[180px] px-3 border rounded-lg text-sm bg-white"
+                title="Nhóm ngành thuộc công ty"
+              >
+                <option value="">Tất cả công ty</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button onClick={() => { setEditing(null); setShowForm(true); }} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
+            <Plus className="h-4 w-4" /> Thêm nhóm ngành
+          </button>
+        </div>
       </div>
 
       {/* Stats cards */}
@@ -169,6 +221,7 @@ export default function CategoriesPage() {
         <CategoryFormModal
           category={editing}
           categories={categories}
+          companyIdForAdmin={isAdmin && filterCompanyId ? filterCompanyId : null}
           onClose={() => { setShowForm(false); setEditing(null); }}
           onSave={() => { setShowForm(false); setEditing(null); load(); }}
         />
@@ -300,7 +353,7 @@ function CategoryRow({ cat, depth, index, productCounts, editingInline, inlineVa
   );
 }
 
-function CategoryFormModal({ category, categories, onClose, onSave }) {
+function CategoryFormModal({ category, categories, companyIdForAdmin, onClose, onSave }) {
   const [form, setForm] = useState({
     name: category?.name || '',
     description: category?.description || '',
@@ -314,6 +367,7 @@ function CategoryFormModal({ category, categories, onClose, onSave }) {
     setSaving(true);
     try {
       const payload = { ...form, parent_id: form.parent_id || null, order_index: parseInt(form.order_index) || 0 };
+      if (!category && companyIdForAdmin) payload.company_id = companyIdForAdmin;
       if (category) await api.put(`/products/categories/${category.id}`, payload);
       else await api.post('/products/categories', payload);
       onSave();

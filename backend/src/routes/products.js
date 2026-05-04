@@ -6,6 +6,94 @@ const { auth } = require('../middleware/auth');
 const r = Router();
 r.use(auth);
 
+function adminProducts(req) {
+  return req.user?.role === 'admin';
+}
+
+/** Admin: company_id query optional (null = all). Khác admin: bắt buộc company user. */
+function resolveProductsCompanyScope(req, res) {
+  if (adminProducts(req)) {
+    const q = req.query.company_id;
+    const id = q && String(q).trim() ? String(q).trim() : null;
+    return { ok: true, companyId: id };
+  }
+  const cid = req.user?.company_id;
+  if (!cid) {
+    res.status(400).json({ error: 'Thiếu company_id của user. Gán công ty cho tài khoản hoặc đăng nhập lại.' });
+    return { ok: false, companyId: null };
+  }
+  return { ok: true, companyId: cid };
+}
+
+async function resolveCompanyIdForNewCategory(req, body) {
+  if (adminProducts(req)) return body.company_id && String(body.company_id).trim() ? String(body.company_id).trim() : null;
+  return req.user?.company_id || null;
+}
+
+async function resolveCompanyIdForNewProduct(req, body) {
+  if (body.company_id != null && adminProducts(req)) {
+    const s = String(body.company_id).trim();
+    return s || null;
+  }
+  if (body.category_id) {
+    const { data: cat } = await supabase.from('product_categories').select('company_id').eq('id', body.category_id).maybeSingle();
+    if (cat?.company_id) return cat.company_id;
+  }
+  return req.user?.company_id || null;
+}
+
+/** Khi đổi category: đồng bộ company_id theo nhóm ngành; admin có thể set company_id trong body. undefined = giữ nguyên DB. */
+async function resolveCompanyIdOnProductUpdate(req, b, currentCategoryId) {
+  if (b.company_id !== undefined && adminProducts(req)) {
+    const s = String(b.company_id || '').trim();
+    return s || null;
+  }
+  const newCat = b.category_id !== undefined ? b.category_id : currentCategoryId;
+  if (newCat) {
+    const { data: cat } = await supabase.from('product_categories').select('company_id').eq('id', newCat).maybeSingle();
+    if (cat?.company_id) return cat.company_id;
+  }
+  return undefined;
+}
+
+async function assertProductInScope(req, res, productId) {
+  if (adminProducts(req)) return true;
+  const cid = req.user?.company_id;
+  if (!cid) {
+    res.status(400).json({ error: 'Thiếu company_id' });
+    return false;
+  }
+  const { data: row } = await supabase.from('products').select('company_id').eq('id', productId).maybeSingle();
+  if (!row) {
+    res.status(404).json({ error: 'Không tìm thấy sản phẩm' });
+    return false;
+  }
+  if (row.company_id && String(row.company_id) !== String(cid)) {
+    res.status(403).json({ error: 'Không có quyền thao tác sản phẩm này' });
+    return false;
+  }
+  return true;
+}
+
+async function assertCategoryInScope(req, res, categoryId) {
+  if (adminProducts(req)) return true;
+  const cid = req.user?.company_id;
+  if (!cid) {
+    res.status(400).json({ error: 'Thiếu company_id' });
+    return false;
+  }
+  const { data: row } = await supabase.from('product_categories').select('company_id').eq('id', categoryId).maybeSingle();
+  if (!row) {
+    res.status(404).json({ error: 'Không tìm thấy nhóm ngành' });
+    return false;
+  }
+  if (row.company_id && String(row.company_id) !== String(cid)) {
+    res.status(403).json({ error: 'Không có quyền thao tác nhóm ngành này' });
+    return false;
+  }
+  return true;
+}
+
 // ═══════════════════════════════════════════
 // PRODUCT CODE PARTS (Thành phần mã sản phẩm)
 // ═══════════════════════════════════════════
@@ -78,8 +166,11 @@ function buildProductCode(parts) {
 // Export products to Excel (returns JSON rows — frontend builds xlsx)
 r.get('/export', async (req, res) => {
   try {
+    const sc = resolveProductsCompanyScope(req, res);
+    if (!sc.ok) return;
     const { category_id, status } = req.query;
     let q = supabase.from('products').select('*, category:product_categories(name)').order('code');
+    if (sc.companyId) q = q.eq('company_id', sc.companyId);
     if (category_id) q = q.eq('category_id', category_id);
     if (status && status !== 'all') q = q.eq('status', status);
     const { data, error } = await q;
@@ -115,6 +206,12 @@ r.post('/import', async (req, res) => {
   try {
     const { rows, mode = 'upsert' } = req.body; // mode: 'insert' | 'upsert' | 'preview'
     if (!rows?.length) return res.status(400).json({ error: 'Không có dữ liệu' });
+    const sc = resolveProductsCompanyScope(req, res);
+    if (!sc.ok) return;
+    if (adminProducts(req) && !sc.companyId) {
+      return res.status(400).json({ error: 'Chọn công ty (company_id) trên URL hoặc gán company khi import' });
+    }
+    const importCompanyId = sc.companyId;
 
     const results = { created: 0, updated: 0, errors: [], preview: [] };
 
@@ -174,6 +271,7 @@ r.post('/import', async (req, res) => {
           code_category: codeCategory || null, code_style: codeStyle || null, code_glass: codeGlass || null,
           code_type_std: codeTypeStd || null, code_side: codeSide || null, code_size: codeSize || null,
           status: 'active', updated_at: new Date().toISOString(),
+          company_id: importCompanyId || null,
         };
 
         if (mode === 'preview') {
@@ -182,8 +280,9 @@ r.post('/import', async (req, res) => {
         }
 
         if (mode === 'upsert' && finalCode) {
-          // Check existing by code
-          const { data: existing } = await supabase.from('products').select('id').eq('code', finalCode).limit(1).single();
+          let exQ = supabase.from('products').select('id').eq('code', finalCode);
+          if (importCompanyId) exQ = exQ.eq('company_id', importCompanyId);
+          const { data: existing } = await exQ.limit(1).maybeSingle();
           if (existing) {
             await supabase.from('products').update(productData).eq('id', existing.id);
             results.updated++;
@@ -238,18 +337,27 @@ r.post('/import', async (req, res) => {
 
 r.get('/categories', async (req, res) => {
   try {
-    const { data } = await supabase.from('product_categories').select('*').order('order_index');
-    res.json({ categories: data });
+    const sc = resolveProductsCompanyScope(req, res);
+    if (!sc.ok) return;
+    let q = supabase.from('product_categories').select('*');
+    if (sc.companyId) q = q.eq('company_id', sc.companyId);
+    const { data, error } = await q.order('order_index');
+    if (error) throw error;
+    res.json({ categories: data || [] });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
 r.post('/categories', async (req, res) => {
   try {
     const b = req.body;
+    if (!b.name) return res.status(400).json({ error: 'Thiếu tên' });
+    const company_id = await resolveCompanyIdForNewCategory(req, b);
+    if (!adminProducts(req) && !company_id) return res.status(400).json({ error: 'Thiếu công ty để tạo nhóm ngành' });
     const slug = b.slug || b.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const { data, error } = await supabase.from('product_categories').insert({
       name: b.name, slug, description: b.description || null,
       parent_id: b.parent_id || null, image_url: b.image_url || null, order_index: b.order_index || 0,
+      company_id: company_id || null,
     }).select().single();
     if (error) throw error;
     res.status(201).json({ category: data });
@@ -258,12 +366,16 @@ r.post('/categories', async (req, res) => {
 
 r.put('/categories/:id', async (req, res) => {
   try {
+    const { id } = req.params;
+    const ok = await assertCategoryInScope(req, res, id);
+    if (!ok) return;
     const b = req.body;
     const update = {};
-    ['name', 'description', 'parent_id', 'image_url', 'order_index', 'is_active'].forEach(f => {
+    ['name', 'description', 'parent_id', 'image_url', 'order_index', 'is_active', 'slug'].forEach(f => {
       if (b[f] !== undefined) update[f] = b[f];
     });
-    const { data, error } = await supabase.from('product_categories').update(update).eq('id', req.params.id).select().single();
+    if (adminProducts(req) && b.company_id !== undefined) update.company_id = b.company_id || null;
+    const { data, error } = await supabase.from('product_categories').update(update).eq('id', id).select().single();
     if (error) throw error;
     res.json({ category: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
@@ -271,9 +383,12 @@ r.put('/categories/:id', async (req, res) => {
 
 r.delete('/categories/:id', async (req, res) => {
   try {
-    const { count } = await supabase.from('products').select('id', { count: 'exact', head: true }).eq('category_id', req.params.id);
+    const { id } = req.params;
+    const ok = await assertCategoryInScope(req, res, id);
+    if (!ok) return;
+    const { count } = await supabase.from('products').select('id', { count: 'exact', head: true }).eq('category_id', id);
     if (count > 0) return res.status(400).json({ error: `Không thể xóa — danh mục có ${count} sản phẩm` });
-    await supabase.from('product_categories').delete().eq('id', req.params.id);
+    await supabase.from('product_categories').delete().eq('id', id);
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -284,9 +399,12 @@ r.delete('/categories/:id', async (req, res) => {
 
 r.get('/', async (req, res) => {
   try {
+    const sc = resolveProductsCompanyScope(req, res);
+    if (!sc.ok) return;
     const { search, category_id, status, page = 1, limit = 50 } = req.query;
     let q = supabase.from('products').select('*, category:product_categories(id,name,slug)', { count: 'exact' });
-    
+    if (sc.companyId) q = q.eq('company_id', sc.companyId);
+
     // Multi-word search: "tủ trên" → match "tủ bếp trên" (mỗi từ phải xuất hiện trong name hoặc code)
     if (search) {
       const words = search.trim().split(/\s+/).filter(Boolean);
@@ -307,6 +425,8 @@ r.get('/', async (req, res) => {
 
 r.get('/:id', async (req, res) => {
   try {
+    const ok = await assertProductInScope(req, res, req.params.id);
+    if (!ok) return;
     const { data, error } = await supabase.from('products').select('*, category:product_categories(id,name,slug)')
       .eq('id', req.params.id).single();
     if (error) throw error;
@@ -329,6 +449,8 @@ r.get('/:id', async (req, res) => {
 r.post('/', async (req, res) => {
   try {
     const b = req.body;
+    const company_id = await resolveCompanyIdForNewProduct(req, b);
+    if (!adminProducts(req) && !company_id) return res.status(400).json({ error: 'Thiếu công ty — chọn nhóm ngành thuộc công ty hoặc gán company cho tài khoản' });
     // Auto-gen code from parts or sequential
     let code = b.code;
     if (!code && (b.code_group || b.code_spec)) {
@@ -352,6 +474,7 @@ r.post('/', async (req, res) => {
       material: b.material || null, color: b.color || null, finish: b.finish || null,
       specifications: b.specifications || null, status: 'active',
       stock_quantity: b.stock_quantity || 0, min_stock: b.min_stock || 0, tags: b.tags || [],
+      company_id: company_id || null,
       // Code parts
       code_group: b.code_group || null, code_spec: b.code_spec || null,
       code_standard: b.code_standard || null, code_category: b.code_category || null,
@@ -366,6 +489,10 @@ r.post('/', async (req, res) => {
 
 r.put('/:id', async (req, res) => {
   try {
+    const { id } = req.params;
+    const okScope = await assertProductInScope(req, res, id);
+    if (!okScope) return;
+    const { data: curRow } = await supabase.from('products').select('category_id').eq('id', id).maybeSingle();
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     const fields = ['name', 'description', 'category_id', 'sku', 'unit', 'base_price', 'cost_price',
@@ -375,6 +502,9 @@ r.put('/:id', async (req, res) => {
       'code_group', 'code_spec', 'code_standard', 'code_category', 'code_style',
       'code_glass', 'code_type_std', 'code_side', 'code_size'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+
+    const resolvedCid = await resolveCompanyIdOnProductUpdate(req, b, curRow?.category_id);
+    if (resolvedCid !== undefined) update.company_id = resolvedCid;
 
     // Auto-calc price if one provided
     if (b.selling_price && !b.base_price) update.base_price = Math.round(b.selling_price / 1.1);
@@ -386,7 +516,7 @@ r.put('/:id', async (req, res) => {
       update.code = buildProductCode(merged);
     }
 
-    const { data, error } = await supabase.from('products').update(update).eq('id', req.params.id)
+    const { data, error } = await supabase.from('products').update(update).eq('id', id)
       .select('*, category:product_categories(id,name)').single();
     if (error) throw error;
     res.json({ product: data });
@@ -395,6 +525,8 @@ r.put('/:id', async (req, res) => {
 
 r.delete('/:id', async (req, res) => {
   try {
+    const ok = await assertProductInScope(req, res, req.params.id);
+    if (!ok) return;
     await supabase.from('product_structures').delete().eq('product_id', req.params.id);
     await supabase.from('project_products').delete().eq('product_id', req.params.id);
     await supabase.from('products').delete().eq('id', req.params.id);
@@ -471,6 +603,8 @@ r.delete('/components/:id', async (req, res) => {
 
 r.post('/:id/structures', async (req, res) => {
   try {
+    const ok = await assertProductInScope(req, res, req.params.id);
+    if (!ok) return;
     const b = req.body;
     const { data, error } = await supabase.from('product_structures').insert({
       product_id: req.params.id, component_id: b.component_id,
@@ -483,6 +617,8 @@ r.post('/:id/structures', async (req, res) => {
 
 r.put('/:productId/structures/:structId', async (req, res) => {
   try {
+    const ok = await assertProductInScope(req, res, req.params.productId);
+    if (!ok) return;
     const b = req.body;
     const update = {};
     ['quantity', 'unit', 'notes', 'order_index'].forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
@@ -495,6 +631,8 @@ r.put('/:productId/structures/:structId', async (req, res) => {
 
 r.delete('/:productId/structures/:structId', async (req, res) => {
   try {
+    const ok = await assertProductInScope(req, res, req.params.productId);
+    if (!ok) return;
     await supabase.from('product_structures').delete().eq('id', req.params.structId);
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }

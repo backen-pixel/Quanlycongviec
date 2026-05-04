@@ -4,6 +4,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { syncCompanyToEcosystem } = require('../helpers/ecosystemSync');
 const { getRestrictedDivisionIdsForModule, KNOWN_MODULE_KEYS } = require('../helpers/ecosystemModuleScope');
+const { isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
 
 const r = Router();
 r.use(auth);
@@ -33,7 +34,13 @@ r.get('/', async (req, res) => {
 
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ companies: data || [] });
+    let list = data || [];
+    // Admin công ty: chỉ một công ty trong danh sách (khác admin hệ thống)
+    if (isCrmCompanyAdminUser(req.user)) {
+      const only = String(req.user.company_id).trim();
+      list = list.filter((c) => c && String(c.id) === only);
+    }
+    res.json({ companies: list });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 

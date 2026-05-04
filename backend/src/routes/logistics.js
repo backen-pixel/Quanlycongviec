@@ -720,14 +720,16 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     // (Tài liệu nội bộ VC nếu có sẽ nằm trong file_attachments / dự án đầy đủ.)
     const { data: sharedRaw, error: sharedErr } = await supabase
       .from('lead_documents')
-      .select('id, lead_id, project_id, name, doc_type, file_url, file_name, file_size, mime_type, notes, created_at, created_by, allowed_departments, allowed_companies, allowed_share_modules, shared_to_workshop')
+      .select('id, lead_id, project_id, name, doc_type, file_url, file_name, file_size, mime_type, notes, created_at, created_by, allowed_departments, allowed_companies, allowed_share_modules, shared_to_workshop, crm_stage_slug')
       .eq('project_id', rowId)
       .eq('shared_to_workshop', true)
       .order('created_at', { ascending: false });
     if (sharedErr) console.warn('[logistics/projects/:id] lead_documents shared:', sharedErr.message);
-    const sharedDocs = (Array.isArray(sharedRaw) ? sharedRaw : []).filter((d) =>
-      leadDocVisibleForModuleAndUser(d, 'logistics', req.user),
-    );
+    const sharedDocs = (Array.isArray(sharedRaw) ? sharedRaw : []).filter((d) => {
+      // Nhiệm vụ / tài liệu giai đoạn SX chỉ thuộc module Sản xuất — không hiển thị ở VC & Lắp đặt
+      if (String(d.crm_stage_slug || '').startsWith('sx_')) return false;
+      return leadDocVisibleForModuleAndUser(d, 'logistics', req.user);
+    });
     const docs = [];
 
     // CRM deals

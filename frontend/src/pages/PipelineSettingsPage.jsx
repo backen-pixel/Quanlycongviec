@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 
 /** Hai mẫu theo tài liệu Zalo / ví dụ template ngắn — ID chỉ để thử form; OA thật cần template_id của bạn */
 const ZALO_TEST_PRESETS = [
@@ -139,9 +140,8 @@ export default function PipelineSettingsPage() {
         api.get('/logistics/pipeline-stages', { params: wxParams }).catch(() => ({ data: [] })),
       ]);
       if (!lockedCompanyId && selectedCompanyId === '' && isAdmin && cos?.length) {
-        // Admin default: pick first company in list if none selected yet
-        const firstC = (Array.isArray(cos) ? cos : [])[0];
-        if (firstC?.id) setSelectedCompanyId(String(firstC.id));
+        const def = resolveDefaultCrmAdminCompanyId(Array.isArray(cos) ? cos : []);
+        if (def) setSelectedCompanyId(def);
       }
       if (lockedCompanyId) setSelectedCompanyId(lockedCompanyId);
 
@@ -666,7 +666,14 @@ export default function PipelineSettingsPage() {
             <select
               className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
               value={selectedCompanyId}
-              onChange={(e) => { setSelectedCompanyId(e.target.value); setSelectedPipelineId(''); setAdding(null); setEditId(null); }}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSelectedCompanyId(v);
+                if (v) setStoredCrmFilterCompanyId(v);
+                setSelectedPipelineId('');
+                setAdding(null);
+                setEditId(null);
+              }}
             >
               {companies.length === 0 && <option value="">— Chưa có công ty —</option>}
               {companies.map((c) => (

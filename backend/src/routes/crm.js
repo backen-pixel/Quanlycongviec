@@ -9,14 +9,19 @@ const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
 const { syncCrmLeadSxPipelineFromProject, emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
-const { userSeesAllCrmDeals, userSeesAllCrmLeads, normalizeCrmUserRole } = require('../helpers/crmAccessRoles');
+const {
+  userSeesAllCrmDeals,
+  userSeesAllCrmLeads,
+  normalizeCrmUserRole,
+  isCrmCompanyAdminUser,
+} = require('../helpers/crmAccessRoles');
 const { applyDefaultWorkshopTemplatesForNewProject, applyWorkshopTemplateToProject } = require('../helpers/workshopApplyTemplates');
 const { autoGenCrmTasks, FALLBACK_LEAD_TASKS, FALLBACK_DEAL_TASKS } = require('../helpers/autoGenCrmTasks');
 const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
-const { syncLeadDocumentsToProject } = require('../helpers/syncLeadDocumentsToProject');
-const { copyCrmTaskArtifactsToLeadDocuments } = require('../helpers/copyCrmTaskArtifactsToLeadDocuments');
+const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
+const { getLeadDocumentFieldsFromCrmTask } = require('../helpers/crmTaskLeadDocumentMeta');
 const { parseVietnameseMoney, parseVietnameseMeasure } = require('../helpers/excelVnNumbers');
 const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../helpers/orderFromQuotation');
 let autoFlowFns = {};
@@ -41,6 +46,12 @@ function userIsAdmin(role) {
   return normalizeCrmUserRole(role) === 'admin';
 }
 
+/** Admin công ty: `admin` + `company_id` trên JWT — khác admin hệ thống (`admin` không `company_id`). */
+function scopedAdminCompanyId(req) {
+  if (!isCrmCompanyAdminUser(req.user)) return null;
+  return String(req.user.company_id).trim();
+}
+
 function requireUserCompanyId(req, res) {
   const cid = req.user?.company_id;
   if (!cid) {
@@ -48,6 +59,22 @@ function requireUserCompanyId(req, res) {
     return null;
   }
   return cid;
+}
+
+/** Phân loại nguồn: global (company_id null) khớp mọi nguồn; phân loại theo cty chỉ khớp nguồn cùng công ty */
+async function assertCategoryFitsSource(sb, categoryId, sourceCompanyId) {
+  if (!categoryId) return { ok: true };
+  const { data: cat, error } = await sb.from('crm_source_categories').select('id, company_id').eq('id', categoryId).maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!cat) return { ok: false, error: 'Phân loại không tồn tại' };
+  if (!cat.company_id) return { ok: true };
+  if (!sourceCompanyId) {
+    return { ok: false, error: 'Phân loại này thuộc một công ty — nguồn chung (không công ty) không được gắn' };
+  }
+  if (String(cat.company_id) !== String(sourceCompanyId)) {
+    return { ok: false, error: 'Phân loại và nguồn phải cùng công ty' };
+  }
+  return { ok: true };
 }
 
 async function getZaloNotifySettings() {
@@ -534,6 +561,7 @@ async function bootstrapOrderOneFromGeneratedTasks(parentLeadId, userId, label =
       project_id: parent.project_id || null,
       lead_id: parentLeadId,
       fulfillment_lead_id: childLeadId,
+      company_id: parent.company_id || null,
       customer_id: parent.customer_id || null,
       customer_name: cust?.full_name || null,
       customer_phone: cust?.phone || null,
@@ -637,6 +665,16 @@ async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, d
 r.get('/dashboard', async (req, res) => {
   try {
     const { type = 'lead', company_id, date_from, date_to } = req.query; // 'lead' or 'deal'
+    const rawC = company_id && String(company_id).trim() ? String(company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sacDash = scopedAdminCompanyId(req);
+    if (sacDash) {
+      effectiveCompanyId = sacDash;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    }
 
     // Pipeline stages for the specified type
     const { data: stages } = await supabase
@@ -653,7 +691,12 @@ r.get('/dashboard', async (req, res) => {
     const assigneeOnly = dealAssigneeOnly || leadAssigneeOnly;
 
     // Leads/Deals theo filter (đủ trang) — tránh trần 1000 dòng của Supabase
-    const leads = await fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, date_to, assigned_to_only: assigneeOnly });
+    const leads = await fetchCrmLeadsForDashboardBatched(type, {
+      company_id: effectiveCompanyId || undefined,
+      date_from,
+      date_to,
+      assigned_to_only: assigneeOnly,
+    });
 
     const stageStats = (stages || []).map(s => {
       const stageLeads = (leads || []).filter(l => l.stage_id === s.id);
@@ -680,6 +723,10 @@ r.get('/dashboard', async (req, res) => {
       const uid = req.user?.userId;
       let allLeadsQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead');
       let dealsConvertedQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal');
+      if (effectiveCompanyId) {
+        allLeadsQ = allLeadsQ.eq('company_id', effectiveCompanyId);
+        dealsConvertedQ = dealsConvertedQ.eq('company_id', effectiveCompanyId);
+      }
       if (uid && !userSeesAllCrmLeads(req.user.role)) {
         allLeadsQ = allLeadsQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
       }
@@ -712,22 +759,26 @@ r.get('/dashboard', async (req, res) => {
     // Recent quotations (only for deal dashboard)
     let recentQuotes = [];
     if (type === 'deal') {
-      const { data } = await supabase
+      let qQ = supabase
         .from('quotations')
         .select('id, code, title, total, status, created_at, customer_name')
         .order('created_at', { ascending: false })
         .limit(5);
+      if (effectiveCompanyId) qQ = qQ.eq('company_id', effectiveCompanyId);
+      const { data } = await qQ;
       recentQuotes = data || [];
     }
 
     // Recent orders (only for deal dashboard)
     let recentOrders = [];
     if (type === 'deal') {
-      const { data } = await supabase
+      let qO = supabase
         .from('orders')
         .select('id, code, title, total, status, payment_status, created_at, customer_name')
         .order('created_at', { ascending: false })
         .limit(5);
+      if (effectiveCompanyId) qO = qO.eq('company_id', effectiveCompanyId);
+      const { data } = await qO;
       recentOrders = data || [];
     }
 
@@ -749,7 +800,10 @@ r.get('/pipelines', async (req, res) => {
   try {
     let q = supabase.from('crm_pipelines').select('*, company:companies(id, name)').order('is_default', { ascending: false }).order('name');
     if (req.query.active !== 'false') q = q.eq('is_active', true);
-    if (!userIsAdmin(req.user?.role)) {
+    const sacPl = scopedAdminCompanyId(req);
+    if (sacPl) {
+      q = q.eq('company_id', sacPl);
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       q = q.eq('company_id', cid);
@@ -768,7 +822,10 @@ r.get('/pipelines/:id', async (req, res) => {
     const { data, error } = await supabase.from('crm_pipelines')
       .select('*, company:companies(id, name), stages:crm_pipeline_stages(*)').eq('id', req.params.id).single();
     if (error) throw error;
-    if (!userIsAdmin(req.user?.role)) {
+    const sacPl1 = scopedAdminCompanyId(req);
+    if (sacPl1) {
+      if (String(data.company_id || '') !== String(sacPl1)) return res.status(403).json({ error: 'Không có quyền xem pipeline công ty khác' });
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (String(data.company_id || '') !== String(cid)) return res.status(403).json({ error: 'Không có quyền xem pipeline công ty khác' });
@@ -785,7 +842,13 @@ r.post('/pipelines', async (req, res) => {
   try {
     const b = req.body;
     if (!b.name) return res.status(400).json({ error: 'Thiếu tên pipeline' });
-    if (!userIsAdmin(req.user?.role)) {
+    const sacPNew = scopedAdminCompanyId(req);
+    if (sacPNew) {
+      if (b.company_id && String(b.company_id) !== String(sacPNew)) {
+        return res.status(403).json({ error: 'Không thể tạo pipeline cho công ty khác' });
+      }
+      b.company_id = sacPNew;
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (b.company_id && String(b.company_id) !== String(cid)) return res.status(403).json({ error: 'Không thể tạo pipeline cho công ty khác' });
@@ -829,7 +892,15 @@ r.post('/pipelines', async (req, res) => {
 
 r.put('/pipelines/:id', async (req, res) => {
   try {
-    if (!userIsAdmin(req.user?.role)) {
+    const sacPUp = scopedAdminCompanyId(req);
+    if (sacPUp) {
+      const { data: existing } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', req.params.id).single();
+      if (!existing) return res.status(404).json({ error: 'Không tìm thấy pipeline' });
+      if (String(existing.company_id || '') !== String(sacPUp)) return res.status(403).json({ error: 'Không có quyền sửa pipeline công ty khác' });
+      if (req.body.company_id !== undefined && String(req.body.company_id || '') !== String(sacPUp)) {
+        return res.status(403).json({ error: 'Không thể đổi pipeline sang công ty khác' });
+      }
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       const { data: existing } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', req.params.id).single();
@@ -866,7 +937,12 @@ r.put('/pipelines/:id', async (req, res) => {
 
 r.delete('/pipelines/:id', async (req, res) => {
   try {
-    if (!userIsAdmin(req.user?.role)) {
+    const sacPDel = scopedAdminCompanyId(req);
+    if (sacPDel) {
+      const { data: existing } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', req.params.id).single();
+      if (!existing) return res.status(404).json({ error: 'Không tìm thấy pipeline' });
+      if (String(existing.company_id || '') !== String(sacPDel)) return res.status(403).json({ error: 'Không có quyền xóa pipeline công ty khác' });
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       const { data: existing } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', req.params.id).single();
@@ -895,6 +971,16 @@ r.post('/pipelines/:id/copy', async (req, res) => {
     const b = req.body || {};
     const targetCompanyId = b.target_company_id || null;
     if (!targetCompanyId) return res.status(400).json({ error: 'Thiếu target_company_id' });
+    const sacCopy = scopedAdminCompanyId(req);
+    if (sacCopy) {
+      if (String(targetCompanyId) !== String(sacCopy)) {
+        return res.status(403).json({ error: 'Chỉ được copy pipeline trong công ty của bạn' });
+      }
+      const { data: srcRow } = await supabase.from('crm_pipelines').select('company_id').eq('id', sourceId).maybeSingle();
+      if (String(srcRow?.company_id || '') !== String(sacCopy)) {
+        return res.status(403).json({ error: 'Pipeline nguồn không thuộc công ty của bạn' });
+      }
+    }
 
     const { data: src, error: srcErr } = await supabase
       .from('crm_pipelines')
@@ -946,9 +1032,13 @@ r.get('/pipeline-stages', async (req, res) => {
   const { type, pipeline_id, company_id: companyIdQuery } = req.query;
   let q = supabase.from('crm_pipeline_stages').select('*').order('pipeline_type').order('order_index');
   if (type) q = q.eq('pipeline_type', type);
+  const sacSt = scopedAdminCompanyId(req);
   if (pipeline_id) {
-    // Validate pipeline ownership for non-admin
-    if (!userIsAdmin(req.user?.role)) {
+    if (sacSt) {
+      const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', pipeline_id).maybeSingle();
+      if (!pl) return res.json([]);
+      if (String(pl.company_id || '') !== String(sacSt)) return res.status(403).json({ error: 'Không có quyền xem stage của pipeline công ty khác' });
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', pipeline_id).maybeSingle();
@@ -960,7 +1050,9 @@ r.get('/pipeline-stages', async (req, res) => {
     // Explicit company pipeline (default) — used by LeadDetail to show correct company stages.
     const companyId = String(companyIdQuery || '').trim();
     if (!companyId) return res.json([]);
-    if (!userIsAdmin(req.user?.role)) {
+    if (sacSt) {
+      if (String(companyId) !== String(sacSt)) return res.status(403).json({ error: 'Không có quyền xem stage pipeline công ty khác' });
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (String(companyId) !== String(cid)) return res.status(403).json({ error: 'Không có quyền xem stage pipeline công ty khác' });
@@ -968,6 +1060,16 @@ r.get('/pipeline-stages', async (req, res) => {
     const { data: def } = await supabase.from('crm_pipelines')
       .select('id')
       .eq('company_id', companyId)
+      .eq('is_active', true)
+      .order('is_default', { ascending: false })
+      .order('created_at')
+      .limit(1)
+      .maybeSingle();
+    if (def?.id) q = q.eq('pipeline_id', def.id);
+  } else if (sacSt) {
+    const { data: def } = await supabase.from('crm_pipelines')
+      .select('id')
+      .eq('company_id', sacSt)
       .eq('is_active', true)
       .order('is_default', { ascending: false })
       .order('created_at')
@@ -997,7 +1099,12 @@ r.post('/pipeline-stages', async (req, res) => {
   try {
     const b = req.body;
     if (!b.name || !b.pipeline_type) return res.status(400).json({ error: 'Thiếu tên hoặc loại pipeline' });
-    if (!userIsAdmin(req.user?.role)) {
+    const sacPst = scopedAdminCompanyId(req);
+    if (sacPst) {
+      if (!b.pipeline_id) return res.status(400).json({ error: 'Thiếu pipeline_id' });
+      const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', b.pipeline_id).single();
+      if (String(pl.company_id || '') !== String(sacPst)) return res.status(403).json({ error: 'Không thể thêm stage vào pipeline công ty khác' });
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (!b.pipeline_id) return res.status(400).json({ error: 'Thiếu pipeline_id' });
@@ -1026,7 +1133,12 @@ r.post('/pipeline-stages', async (req, res) => {
 r.put('/pipeline-stages/:id', async (req, res) => {
   try {
     const b = req.body;
-    if (!userIsAdmin(req.user?.role)) {
+    const sacPsu = scopedAdminCompanyId(req);
+    if (sacPsu) {
+      const { data: st } = await supabase.from('crm_pipeline_stages').select('id, pipeline_id').eq('id', req.params.id).single();
+      const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', st.pipeline_id).single();
+      if (String(pl.company_id || '') !== String(sacPsu)) return res.status(403).json({ error: 'Không có quyền sửa stage pipeline công ty khác' });
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       const { data: st } = await supabase.from('crm_pipeline_stages').select('id, pipeline_id').eq('id', req.params.id).single();
@@ -1046,7 +1158,12 @@ r.put('/pipeline-stages/:id', async (req, res) => {
 
 r.delete('/pipeline-stages/:id', async (req, res) => {
   try {
-    if (!userIsAdmin(req.user?.role)) {
+    const sacPsd = scopedAdminCompanyId(req);
+    if (sacPsd) {
+      const { data: st } = await supabase.from('crm_pipeline_stages').select('id, pipeline_id').eq('id', req.params.id).single();
+      const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', st.pipeline_id).single();
+      if (String(pl.company_id || '') !== String(sacPsd)) return res.status(403).json({ error: 'Không có quyền xóa stage pipeline công ty khác' });
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       const { data: st } = await supabase.from('crm_pipeline_stages').select('id, pipeline_id').eq('id', req.params.id).single();
@@ -1068,7 +1185,12 @@ r.delete('/pipeline-stages/:id', async (req, res) => {
 r.get('/lead-types', async (req, res) => {
   try {
     const companyId = req.query.company_id || null;
-    if (!userIsAdmin(req.user?.role)) {
+    const sacLt = scopedAdminCompanyId(req);
+    if (sacLt) {
+      if (companyId && String(companyId) !== String(sacLt)) {
+        return res.status(403).json({ error: 'Không có quyền xem loại của công ty khác' });
+      }
+    } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (companyId && String(companyId) !== String(cid)) return res.status(403).json({ error: 'Không có quyền xem loại của công ty khác' });
@@ -1450,15 +1572,15 @@ r.get('/employees-by-company', async (req, res) => {
     const userId = req.user.userId;
     const { company_id: queryCompanyId } = req.query;
 
-    // Resolve company_id: ưu tiên query param, fallback sang user's company
-    let companyId = queryCompanyId;
+    const sacEmp = scopedAdminCompanyId(req);
+    // Resolve company_id: admin gắn công ty → chỉ công ty đó; khác → query / user / department
+    let companyId = sacEmp || queryCompanyId;
     if (!companyId) {
-      // Lấy company_id từ user → department → company
       const { data: userData } = await supabase.from('users')
-        .select('department_id')
+        .select('department_id, company_id')
         .eq('id', userId).single();
-      
-      if (userData?.department_id) {
+      companyId = userData?.company_id || null;
+      if (!companyId && userData?.department_id) {
         const { data: deptData } = await supabase.from('departments')
           .select('company_id')
           .eq('id', userData.department_id).single();
@@ -1515,23 +1637,248 @@ r.get('/employees-by-company', async (req, res) => {
 // SOURCES — bao gồm nguồn thông thường + FB pages gộp
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/sources', async (req, res) => {
-  const { data } = await supabase.from('crm_sources').select('*').eq('is_active', true).order('name');
-  const { data: rawPages } = await supabase.from('facebook_pages').select('id, page_id, page_name, is_active').eq('is_active', true);
+  try {
+    const qCo = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
+    let filterCo = qCo;
+    const sacSrc = scopedAdminCompanyId(req);
+    if (sacSrc) {
+      filterCo = sacSrc;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      filterCo = cid;
+    }
 
-  const pages = (rawPages || [])
-    .filter(p => p.page_id)
-    .sort((a, b) => (a.page_name || '').localeCompare(b.page_name || ''))
-    .map(p => ({
-      id: p.id,
-      page_id: p.page_id,
-      page_name: (p.page_name || '').trim(),
-      is_active: !!p.is_active,
-      source_key: p.page_id,
-      page_ids: [p.page_id],
-      page_count: 1,
-    }));
+    const includeInactive = userIsAdmin(req.user?.role) && String(req.query.include_inactive) === '1';
+    let srcQ = supabase
+      .from('crm_sources')
+      .select('*, category:crm_source_categories(id, name, icon, color, company_id)')
+      .order('name');
+    if (!includeInactive) srcQ = srcQ.eq('is_active', true);
+    if (filterCo) {
+      srcQ = srcQ.or(`company_id.is.null,company_id.eq.${filterCo}`);
+    }
+    const { data, error: srcErr } = await srcQ;
+    if (srcErr) throw srcErr;
 
-  res.json({ sources: data || [], fb_pages: pages });
+    let pagesQ = supabase
+      .from('facebook_pages')
+      .select('id, page_id, page_name, is_active, default_company_id')
+      .eq('is_active', true);
+    if (filterCo) {
+      pagesQ = pagesQ.or(`default_company_id.is.null,default_company_id.eq.${filterCo}`);
+    }
+    const { data: rawPages, error: pgErr } = await pagesQ;
+    if (pgErr) throw pgErr;
+
+    const pages = (rawPages || [])
+      .filter(p => p.page_id)
+      .sort((a, b) => (a.page_name || '').localeCompare(b.page_name || ''))
+      .map(p => ({
+        id: p.id,
+        page_id: p.page_id,
+        page_name: (p.page_name || '').trim(),
+        is_active: !!p.is_active,
+        default_company_id: p.default_company_id || null,
+        source_key: p.page_id,
+        page_ids: [p.page_id],
+        page_count: 1,
+      }));
+
+    res.json({ sources: data || [], fb_pages: pages });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOURCE CATEGORIES — Phân loại nguồn (chung / theo công ty)
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/source-categories', async (req, res) => {
+  try {
+    let filterCo = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
+    const sacCat = scopedAdminCompanyId(req);
+    if (sacCat) {
+      filterCo = sacCat;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      filterCo = cid;
+    }
+    const includeInactive = userIsAdmin(req.user?.role) && String(req.query.include_inactive) === '1';
+    let q = supabase.from('crm_source_categories').select('*').order('order_index', { ascending: true });
+    if (!includeInactive) q = q.eq('is_active', true);
+    if (filterCo) {
+      q = q.or(`company_id.is.null,company_id.eq.${filterCo}`);
+    }
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/source-categories', async (req, res) => {
+  try {
+    if (!userIsAdmin(req.user?.role)) return res.status(403).json({ error: 'Chỉ admin' });
+    const b = req.body || {};
+    if (!b.name?.trim()) return res.status(400).json({ error: 'Thiếu tên phân loại' });
+    let company_id = b.company_id === '' || b.company_id === undefined ? null : b.company_id;
+    if (company_id && typeof company_id !== 'string') company_id = String(company_id);
+
+    const { data: lastRow } = await supabase
+      .from('crm_source_categories')
+      .select('order_index')
+      .order('order_index', { ascending: false })
+      .limit(1);
+    const nextOrder = (lastRow?.[0]?.order_index ?? 0) + 1;
+
+    const { data, error } = await supabase
+      .from('crm_source_categories')
+      .insert({
+        name: b.name.trim(),
+        icon: b.icon?.trim() || null,
+        color: b.color?.trim() || null,
+        order_index: b.order_index ?? nextOrder,
+        company_id,
+        is_active: b.is_active !== false,
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/source-categories/:id', async (req, res) => {
+  try {
+    if (!userIsAdmin(req.user?.role)) return res.status(403).json({ error: 'Chỉ admin' });
+    const { data: existing, error: exErr } = await supabase
+      .from('crm_source_categories')
+      .select('id, company_id')
+      .eq('id', req.params.id)
+      .single();
+    if (exErr) throw exErr;
+    const b = req.body || {};
+    const update = {};
+    if (b.name !== undefined) update.name = String(b.name || '').trim();
+    if (b.icon !== undefined) update.icon = b.icon?.trim() || null;
+    if (b.color !== undefined) update.color = b.color?.trim() || null;
+    if (b.order_index !== undefined) update.order_index = b.order_index;
+    if (b.is_active !== undefined) update.is_active = !!b.is_active;
+    if (b.company_id !== undefined) {
+      update.company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
+    }
+    if (update.name === '') return res.status(400).json({ error: 'Tên không được trống' });
+
+    const { data, error } = await supabase
+      .from('crm_source_categories')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/source-categories/:id', async (req, res) => {
+  try {
+    if (!userIsAdmin(req.user?.role)) return res.status(403).json({ error: 'Chỉ admin' });
+    const { count } = await supabase
+      .from('crm_sources')
+      .select('id', { count: 'exact', head: true })
+      .eq('category_id', req.params.id);
+    if ((count || 0) > 0) {
+      return res.status(400).json({ error: `Không xóa được — ${count} nguồn đang dùng phân loại này` });
+    }
+    const { error } = await supabase.from('crm_source_categories').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOURCES — Tạo / sửa (admin)
+// ═══════════════════════════════════════════════════════════════════════════
+r.post('/sources', async (req, res) => {
+  try {
+    if (!userIsAdmin(req.user?.role)) return res.status(403).json({ error: 'Chỉ admin' });
+    const b = req.body || {};
+    if (!b.name?.trim()) return res.status(400).json({ error: 'Thiếu tên nguồn' });
+    let company_id = b.company_id === '' || b.company_id === undefined ? null : String(b.company_id);
+    const category_id = b.category_id === '' || b.category_id === undefined ? null : String(b.category_id);
+    const chk = await assertCategoryFitsSource(supabase, category_id, company_id);
+    if (!chk.ok) return res.status(400).json({ error: chk.error });
+
+    const { data, error } = await supabase
+      .from('crm_sources')
+      .insert({
+        name: b.name.trim(),
+        icon: b.icon?.trim() || '📎',
+        color: b.color?.trim() || null,
+        company_id,
+        category_id,
+        is_active: b.is_active !== false,
+      })
+      .select('*, category:crm_source_categories(id, name, icon, color, company_id)')
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/sources/:id', async (req, res) => {
+  try {
+    if (!userIsAdmin(req.user?.role)) return res.status(403).json({ error: 'Chỉ admin' });
+    const b = req.body || {};
+    const { data: existing, error: exErr } = await supabase
+      .from('crm_sources')
+      .select('id, company_id, category_id')
+      .eq('id', req.params.id)
+      .single();
+    if (exErr) throw exErr;
+
+    let company_id = existing.company_id;
+    if (b.company_id !== undefined) {
+      company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
+    }
+    let category_id = existing.category_id;
+    if (b.category_id !== undefined) {
+      category_id = b.category_id === '' || b.category_id === null ? null : String(b.category_id);
+    }
+    const chk = await assertCategoryFitsSource(supabase, category_id, company_id);
+    if (!chk.ok) return res.status(400).json({ error: chk.error });
+
+    const update = {};
+    if (b.name !== undefined) update.name = String(b.name || '').trim();
+    if (b.icon !== undefined) update.icon = b.icon?.trim() || null;
+    if (b.color !== undefined) update.color = b.color?.trim() || null;
+    if (b.is_active !== undefined) update.is_active = !!b.is_active;
+    if (b.company_id !== undefined) update.company_id = company_id;
+    if (b.category_id !== undefined) update.category_id = category_id;
+    if (update.name === '') return res.status(400).json({ error: 'Tên không được trống' });
+
+    const { data, error } = await supabase
+      .from('crm_sources')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*, category:crm_source_categories(id, name, icon, color, company_id)')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══ GỘP LEAD/DEAL — Dùng chung cho merge-duplicates (auto) và merge-selected (thủ công) ═══
@@ -1983,7 +2330,16 @@ r.post('/leads/cleanup-duplicates', async (req, res) => {
 
 r.get('/leads-by-fb-page', async (req, res) => {
   try {
-    const { page_id, source_key, type = 'lead' } = req.query;
+    const { page_id, source_key, type = 'lead', company_id: companyIdQ } = req.query;
+    let filterCompanyId = companyIdQ && String(companyIdQ).trim() ? String(companyIdQ).trim() : null;
+    const sacFb = scopedAdminCompanyId(req);
+    if (sacFb) {
+      filterCompanyId = sacFb;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      filterCompanyId = cid;
+    }
     let pageIds = [];
 
     if (source_key) {
@@ -2004,6 +2360,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
     let q = supabase.from('crm_leads')
       .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
       .in('id', leadIds).eq('type', type);
+    if (filterCompanyId) q = q.eq('company_id', filterCompanyId);
     if (type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role)) {
       q = q.eq('assigned_to', req.user.userId);
     }
@@ -2291,8 +2648,16 @@ r.get('/leads', async (req, res) => {
     const type = req.query.type || 'lead';
     const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role);
     const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeads(req.user.role);
-    const mergedQuery =
+    let mergedQuery =
       forcedDealSelf || forcedLeadSelf ? { ...req.query, assigned_to: req.user.userId } : { ...req.query };
+    const sacLeads = scopedAdminCompanyId(req);
+    if (sacLeads) {
+      mergedQuery = { ...mergedQuery, company_id: sacLeads };
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      mergedQuery = { ...mergedQuery, company_id: cid };
+    }
     const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, company_id, date_from, date_to, phone_filter, lead_type_id } = mergedQuery;
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
     const parsedOffset = Math.max(parseInt(offset) || 0, 0);
@@ -2370,8 +2735,18 @@ r.get('/leads', async (req, res) => {
 // ── CUSTOMERS CRUD ──
 r.get('/customers', async (req, res) => {
   try {
-    const { search } = req.query;
+    const { search, company_id: coQ } = req.query;
     let q = supabase.from('customers').select('*').order('created_at', { ascending: false }).limit(100);
+    const sacCu = scopedAdminCompanyId(req);
+    if (sacCu) {
+      q = q.eq('company_id', sacCu);
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      q = q.eq('company_id', cid);
+    } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
+      q = q.eq('company_id', coQ);
+    }
     if (search) q = q.or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%`);
     const { data } = await q;
     res.json(data || []);
@@ -2380,10 +2755,29 @@ r.get('/customers', async (req, res) => {
 
 r.post('/customers', async (req, res) => {
   try {
-    const { full_name, phone, email, address, company, tax_code, source, notes } = req.body;
+    const { full_name, phone, email, address, company, tax_code, source, notes, company_id: bodyCo } = req.body;
     if (!full_name?.trim()) return res.status(400).json({ error: 'Tên khách hàng là bắt buộc' });
+    let coId = bodyCo || null;
+    const sacCuPost = scopedAdminCompanyId(req);
+    if (sacCuPost) {
+      coId = sacCuPost;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const uc = requireUserCompanyId(req, res);
+      if (!uc) return;
+      coId = uc;
+    }
     const { data, error } = await supabase.from('customers')
-      .insert({ full_name, phone: phone || null, email: email || null, address: address || null, company: company || null, tax_code: tax_code || null, source: source || null, notes: notes || null })
+      .insert({
+        full_name,
+        phone: phone || null,
+        email: email || null,
+        address: address || null,
+        company: company || null,
+        tax_code: tax_code || null,
+        source: source || null,
+        notes: notes || null,
+        company_id: coId || null,
+      })
       .select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -2413,6 +2807,18 @@ r.post('/leads', async (req, res) => {
     if (!body.assigned_to) body.assigned_to = req.user.userId;
     if (!userSeesAllCrmLeads(req.user.role)) body.assigned_to = req.user.userId;
     body.lead_owner_id = body.assigned_to;
+
+    const sacLeadPost = scopedAdminCompanyId(req);
+    if (sacLeadPost) {
+      if (body.company_id && String(body.company_id) !== String(sacLeadPost)) {
+        return res.status(403).json({ error: 'Không tạo lead/deal cho công ty khác' });
+      }
+      body.company_id = sacLeadPost;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      body.company_id = cid;
+    }
 
     // Resolve pipeline_id + first stage by company (company-scoped pipelines)
     if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
@@ -2496,6 +2902,17 @@ r.post('/deals', async (req, res) => {
     });
 
     if (!body.title) return res.status(400).json({ error: 'Nhập tên Deal' });
+    const sacDealPost = scopedAdminCompanyId(req);
+    if (sacDealPost) {
+      if (body.company_id && String(body.company_id) !== String(sacDealPost)) {
+        return res.status(403).json({ error: 'Không tạo deal cho công ty khác' });
+      }
+      body.company_id = sacDealPost;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      body.company_id = cid;
+    }
     if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
     if (!body.assigned_to) body.assigned_to = req.user.userId;
     if (!userSeesAllCrmDeals(req.user.role)) body.assigned_to = req.user.userId;
@@ -2719,6 +3136,10 @@ r.get('/leads/:id/detail', async (req, res) => {
     if (error || !data) {
       throw new Error(error?.message || (typeof error === 'string' ? error : 'Không tải được chi tiết lead/deal'));
     }
+    const sacLd = scopedAdminCompanyId(req);
+    if (sacLd && String(data.company_id || '') !== String(sacLd)) {
+      return res.status(403).json({ error: 'Không có quyền xem lead/deal của công ty khác' });
+    }
     const uid = req.user?.userId;
     if (uid) {
       const key = String(uid).trim().toLowerCase();
@@ -2741,6 +3162,12 @@ r.put('/leads/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type, company_id').eq('id', id).single();
+    const sacPut = scopedAdminCompanyId(req);
+    if (sacPut) {
+      if (!oldLead || String(oldLead.company_id || '') !== String(sacPut)) {
+        return res.status(403).json({ error: 'Không có quyền sửa lead/deal của công ty khác' });
+      }
+    }
 
     const safeBody = { ...req.body };
     delete safeBody.sx_pipeline_stage_id;
@@ -2752,6 +3179,9 @@ r.put('/leads/:id', async (req, res) => {
     delete safeBody.expected_production_end_date;
     if (Object.prototype.hasOwnProperty.call(req.body, 'assigned_to') || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id')) {
       unifyCrmLeadResponsibleFields(safeBody);
+    }
+    if (sacPut && Object.prototype.hasOwnProperty.call(safeBody, 'company_id') && String(safeBody.company_id || '') !== String(sacPut)) {
+      return res.status(403).json({ error: 'Không thể chuyển lead/deal sang công ty khác' });
     }
 
     // Chỉ admin mới được đổi người phụ trách / gán nhân viên trên chi tiết Lead/Deal
@@ -2952,7 +3382,8 @@ r.get('/leads/:id/documents', async (req, res) => {
       ...doc,
       is_from_task: !!doc.source_attachment_id,
     }));
-    
+
+    res.set('Cache-Control', 'private, no-store');
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2999,7 +3430,8 @@ r.get('/leads/:id/task-documents', async (req, res) => {
       task_title: taskMap[a.task_id]?.title || 'Nhiệm vụ',
       stage_slug: taskMap[a.task_id]?.stage_slug || null,
     }));
-    
+
+    res.set('Cache-Control', 'private, no-store');
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3238,9 +3670,12 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     // Chỉ sync những attachment chưa có bản lead_document (dữ liệu cũ trước sync)
     try {
       const { data: taskAtts } = await supabase.from('crm_task_attachments')
-        .select('id, name, file_url, file_name, file_size, mime_type, notes, doc_type, created_by, task:crm_tasks(title)')
+        .select('id, name, file_url, file_name, file_size, mime_type, notes, doc_type, created_by, task:crm_tasks(id, title, stage_slug)')
         .eq('lead_id', req.params.id);
       if (taskAtts?.length) {
+        const { data: convLead } = await supabase.from('crm_leads')
+          .select('project_id').eq('id', req.params.id).maybeSingle();
+        const convDocOpts = { linkToProject: !!convLead?.project_id };
         // Tìm những attachment chưa có lead_document link
         const { data: existingLinks } = await supabase.from('lead_documents')
           .select('source_attachment_id')
@@ -3257,6 +3692,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
             file_size: att.file_size || null, mime_type: att.mime_type || null,
             notes: att.notes || null, created_by: att.created_by,
             source_attachment_id: att.id,
+            ...getLeadDocumentFieldsFromCrmTask(att.task, convDocOpts),
           })));
           console.log(`[convert] Synced ${unlinked.length} unlinked task attachments → lead_documents`);
         }
@@ -3646,15 +4082,9 @@ r.post('/leads/:id/create-project', async (req, res) => {
     await supabase.from('crm_leads').update({ project_id: project.id }).eq('id', dealId);
 
     try {
-      await copyCrmTaskArtifactsToLeadDocuments(dealId);
+      await ensureDealLeadDocumentsForModuleTransition({ leadId: dealId, projectId: project.id });
     } catch (e) {
-      console.warn('[CREATE PROJECT] copy CRM task docs:', e.message);
-    }
-
-    try {
-      await syncLeadDocumentsToProject({ leadId: dealId, projectId: project.id, shareToWorkshop: true });
-    } catch (e) {
-      console.warn('[CREATE PROJECT] sync lead_documents:', e.message);
+      console.warn('[CREATE PROJECT] ensure lead_documents:', e.message);
     }
 
     // Auto move into workshop module immediately after deal won.
@@ -3914,11 +4344,18 @@ async function applyLeadOrCustomerSalesFilter(queryBuilder, leadIdVal) {
 
 r.get('/quotations', async (req, res) => {
   try {
-    const { status, search, limit = 50, lead_id } = req.query;
+    const { status, search, limit = 50, lead_id, company_id: coQ } = req.query;
     let q = supabase.from('quotations')
       .select('*, customer:customers(id, full_name, phone), creator:users!quotations_created_by_fkey(id, full_name), approver:users!quotations_approved_by_fkey(id, full_name)')
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
+    if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      q = q.eq('company_id', cid);
+    } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
+      q = q.eq('company_id', coQ);
+    }
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
     if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
@@ -3976,7 +4413,7 @@ r.post('/quotations', async (req, res) => {
     const code = await nextCode('BG');
 
     // Sanitize: empty strings → null for UUID fields
-    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
+    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by', 'company_id'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     // Sanitize: empty strings → null for date fields
     const dateFields = ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'];
@@ -4000,6 +4437,21 @@ r.post('/quotations', async (req, res) => {
     }
     if (quoteData.deposit_label === '') quoteData.deposit_label = null;
     if (quoteData.remaining_note === '') quoteData.remaining_note = null;
+
+    let commercialCo = quoteData.company_id || null;
+    if (quoteData.lead_id) {
+      const { data: lrow } = await supabase.from('crm_leads').select('company_id').eq('id', quoteData.lead_id).maybeSingle();
+      if (lrow?.company_id) commercialCo = lrow.company_id;
+    }
+    if (!userIsAdmin(req.user?.role)) {
+      const uc = requireUserCompanyId(req, res);
+      if (!uc) return;
+      if (commercialCo && String(commercialCo) !== String(uc)) {
+        return res.status(403).json({ error: 'Báo giá phải cùng công ty với tài khoản' });
+      }
+      commercialCo = commercialCo || uc;
+    }
+    quoteData.company_id = commercialCo;
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     const processedItems = (items || []).map(item => {
@@ -4179,6 +4631,7 @@ r.post('/quotations', async (req, res) => {
               notes: att.notes,
               created_by: req.user.userId,
               source_attachment_id: att.id,
+              ...getLeadDocumentFieldsFromCrmTask(quotationTask, { linkToProject: !!lead?.project_id }),
             });
           }
 
@@ -4283,10 +4736,24 @@ r.put('/quotations/:id', async (req, res) => {
     }
 
     // Sanitize: empty strings → null for UUID fields
-    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
+    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by', 'company_id'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     // Sanitize: empty strings → null for date fields
     ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'].forEach(f => { if (quoteData[f] === '') quoteData[f] = null; });
+    let commercialCoPut = quoteData.company_id || null;
+    if (quoteData.lead_id) {
+      const { data: lrowPut } = await supabase.from('crm_leads').select('company_id').eq('id', quoteData.lead_id).maybeSingle();
+      if (lrowPut?.company_id) commercialCoPut = lrowPut.company_id;
+    }
+    if (!userIsAdmin(req.user?.role)) {
+      const uc = requireUserCompanyId(req, res);
+      if (!uc) return;
+      if (commercialCoPut && String(commercialCoPut) !== String(uc)) {
+        return res.status(403).json({ error: 'Báo giá phải cùng công ty với tài khoản' });
+      }
+      commercialCoPut = commercialCoPut || uc;
+    }
+    quoteData.company_id = commercialCoPut;
     const quoteMoneyOrNullPut = (v) => {
       if (v === '' || v === undefined || v === null) return null;
       if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -4478,10 +4945,17 @@ r.delete('/quotations/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/orders', async (req, res) => {
   try {
-    const { status, search, limit = 50, lead_id } = req.query;
+    const { status, search, limit = 50, lead_id, company_id: coQ } = req.query;
     let q = supabase.from('orders')
       .select('*, customer:customers(id, full_name, phone), creator:users!orders_created_by_fkey(id, full_name)')
       .order('created_at', { ascending: false }).limit(parseInt(limit));
+    if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      q = q.eq('company_id', cid);
+    } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
+      q = q.eq('company_id', coQ);
+    }
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
     if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
@@ -4566,9 +5040,31 @@ r.post('/orders', async (req, res) => {
     const code = await nextCode('DH');
 
     // Sanitize: empty strings → null for UUID fields
-    ['customer_id', 'lead_id', 'quotation_id', 'project_id'].forEach(f => {
+    ['customer_id', 'lead_id', 'quotation_id', 'project_id', 'company_id'].forEach(f => {
       if (orderData[f] === '' || orderData[f] === undefined) orderData[f] = null;
     });
+
+    let orderCo = orderData.company_id || null;
+    if (orderData.lead_id) {
+      const { data: lrow } = await supabase.from('crm_leads').select('company_id').eq('id', orderData.lead_id).maybeSingle();
+      if (lrow?.company_id) orderCo = lrow.company_id;
+    } else if (orderData.quotation_id) {
+      const { data: qrow } = await supabase.from('quotations').select('company_id, lead_id').eq('id', orderData.quotation_id).maybeSingle();
+      if (qrow?.company_id) orderCo = qrow.company_id;
+      else if (qrow?.lead_id) {
+        const { data: l2 } = await supabase.from('crm_leads').select('company_id').eq('id', qrow.lead_id).maybeSingle();
+        if (l2?.company_id) orderCo = l2.company_id;
+      }
+    }
+    if (!userIsAdmin(req.user?.role)) {
+      const uc = requireUserCompanyId(req, res);
+      if (!uc) return;
+      if (orderCo && String(orderCo) !== String(uc)) {
+        return res.status(403).json({ error: 'Đơn hàng phải cùng công ty với tài khoản' });
+      }
+      orderCo = orderCo || uc;
+    }
+    orderData.company_id = orderCo;
 
     const processedItems = (items || []).map(item => {
       const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
@@ -4644,7 +5140,9 @@ r.post('/orders/:id/create-invoice', async (req, res) => {
 
     const invCode = await nextCode('HD');
     const { data: invoice, error } = await supabase.from('invoices').insert({
-      code: invCode, customer_id: order.customer_id, customer_name: order.customer_name,
+      code: invCode,
+      company_id: order.company_id || null,
+      customer_id: order.customer_id, customer_name: order.customer_name,
       customer_phone: order.customer_phone, customer_address: order.customer_address,
       order_id: order.id, quotation_id: order.quotation_id, project_id: order.project_id,
       title: order.title, subtotal: order.subtotal, discount_type: order.discount_type,
@@ -4698,10 +5196,17 @@ r.delete('/orders/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/invoices', async (req, res) => {
   try {
-    const { status, search, limit = 50, lead_id } = req.query;
+    const { status, search, limit = 50, lead_id, company_id: coQ } = req.query;
     let q = supabase.from('invoices')
       .select('*, customer:customers(id, full_name, phone), creator:users!invoices_created_by_fkey(id, full_name)')
       .order('created_at', { ascending: false }).limit(parseInt(limit));
+    if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      q = q.eq('company_id', cid);
+    } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
+      q = q.eq('company_id', coQ);
+    }
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
     if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
@@ -4736,12 +5241,30 @@ r.post('/invoices', async (req, res) => {
     const code = await nextCode('HD');
 
     // Sanitize: empty strings → null for UUID fields
-    ['customer_id', 'order_id', 'quotation_id', 'project_id'].forEach(f => {
+    ['customer_id', 'order_id', 'quotation_id', 'project_id', 'company_id'].forEach(f => {
       if (invoiceData[f] === '' || invoiceData[f] === undefined) invoiceData[f] = null;
     });
+
+    let invCo = invoiceData.company_id || null;
+    if (invoiceData.order_id) {
+      const { data: orow } = await supabase.from('orders').select('company_id').eq('id', invoiceData.order_id).maybeSingle();
+      if (orow?.company_id) invCo = orow.company_id;
+    } else if (invoiceData.quotation_id) {
+      const { data: qr } = await supabase.from('quotations').select('company_id').eq('id', invoiceData.quotation_id).maybeSingle();
+      if (qr?.company_id) invCo = qr.company_id;
+    }
+    if (!userIsAdmin(req.user?.role)) {
+      const uc = requireUserCompanyId(req, res);
+      if (!uc) return;
+      if (invCo && String(invCo) !== String(uc)) {
+        return res.status(403).json({ error: 'Hóa đơn phải cùng công ty với tài khoản' });
+      }
+      invCo = invCo || uc;
+    }
     
     const { data: inv, error } = await supabase.from('invoices').insert({
       code,
+      company_id: invCo,
       customer_id: invoiceData.customer_id,
       customer_name: invoiceData.customer_name || null,
       customer_phone: invoiceData.customer_phone || null,
@@ -5033,9 +5556,9 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
     await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
 
     try {
-      await syncLeadDocumentsToProject({ leadId: req.params.id, projectId: project.id, shareToWorkshop: true });
+      await ensureDealLeadDocumentsForModuleTransition({ leadId: req.params.id, projectId: project.id });
     } catch (e) {
-      console.warn('[lead→project] sync lead_documents:', e.message);
+      console.warn('[lead→project] ensure lead_documents:', e.message);
     }
 
     // ── AUTO-GENERATE TASKS FOR ALL STAGES ──
@@ -5171,20 +5694,41 @@ function crmLeadRowVisibleToRequestUser(row, userId, role) {
 
 r.get('/customers-overview', async (req, res) => {
   try {
-    const { data: customers } = await supabase.from('customers').select('*').order('full_name');
-    const { data: leadsRaw } = await supabase
+    let effectiveCompanyId = null;
+    if (req.user?.role !== 'admin') {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    } else {
+      const q = req.query.company_id;
+      effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
+    }
+
+    let custQ = supabase.from('customers').select('*').order('full_name');
+    if (effectiveCompanyId) custQ = custQ.eq('company_id', effectiveCompanyId);
+    const { data: customers, error: custErr } = await custQ;
+    if (custErr) throw custErr;
+
+    let leadsQ = supabase
       .from('crm_leads')
       .select(
-        'id, customer_id, title, estimated_value, stage_id, code, created_at, type, assigned_to, lead_owner_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won)',
+        'id, customer_id, company_id, source_id, title, estimated_value, stage_id, code, created_at, type, assigned_to, lead_owner_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won), source:crm_sources(id, name, icon)',
       );
+    if (effectiveCompanyId) leadsQ = leadsQ.eq('company_id', effectiveCompanyId);
+    const { data: leadsRaw, error: leadsErr } = await leadsQ;
+    if (leadsErr) throw leadsErr;
     const uid = req.user?.userId;
     const role = req.user?.role;
     const leads = (leadsRaw || []).filter((l) => crmLeadRowVisibleToRequestUser(l, uid, role));
-    const { data: quotes } = await supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at');
-    const { data: orders } = await supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at');
-    const { data: invoices } = await supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at');
+    let quotesQ = supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at, company_id');
+    if (effectiveCompanyId) quotesQ = quotesQ.eq('company_id', effectiveCompanyId);
+    let ordersQ = supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at, company_id');
+    if (effectiveCompanyId) ordersQ = ordersQ.eq('company_id', effectiveCompanyId);
+    let invoicesQ = supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at, company_id');
+    if (effectiveCompanyId) invoicesQ = invoicesQ.eq('company_id', effectiveCompanyId);
+    const [{ data: quotes }, { data: orders }, { data: invoices }] = await Promise.all([quotesQ, ordersQ, invoicesQ]);
 
-    const result = customers.map(c => {
+    const result = (customers || []).map(c => {
       const cLeads = (leads || []).filter(l => l.customer_id === c.id);
       const cQuotes = (quotes || []).filter(q => q.customer_id === c.id);
       const cOrders = (orders || []).filter(o => o.customer_id === c.id);
@@ -5205,21 +5749,41 @@ r.get('/customers-overview', async (req, res) => {
 
 r.get('/customers-overview/:id', async (req, res) => {
   try {
+    let effectiveCompanyId = null;
+    if (req.user?.role !== 'admin') {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    } else {
+      const q = req.query.company_id;
+      effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
+    }
+
     const { data: customer } = await supabase.from('customers').select('*').eq('id', req.params.id).single();
     if (!customer) return res.status(404).json({ error: 'KH không tồn tại' });
-    const { data: leadsRaw } = await supabase
+    if (effectiveCompanyId && customer.company_id && String(customer.company_id) !== String(effectiveCompanyId)) {
+      return res.status(403).json({ error: 'Không có quyền xem khách hàng này' });
+    }
+
+    let leadsQ = supabase
       .from('crm_leads')
       .select(
-        'id, customer_id, title, code, estimated_value, stage_id, created_at, type, assigned_to, lead_owner_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, color, is_won)',
+        'id, customer_id, company_id, source_id, title, code, estimated_value, stage_id, created_at, type, assigned_to, lead_owner_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, color, is_won), source:crm_sources(id, name, icon)',
       )
       .eq('customer_id', req.params.id)
       .order('created_at', { ascending: false });
+    if (effectiveCompanyId) leadsQ = leadsQ.eq('company_id', effectiveCompanyId);
+    const { data: leadsRaw } = await leadsQ;
     const uid = req.user?.userId;
     const role = req.user?.role;
     const leads = (leadsRaw || []).filter((l) => crmLeadRowVisibleToRequestUser(l, uid, role));
-    const { data: quotes } = await supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
-    const { data: orders } = await supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
-    const { data: invoices } = await supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    let quotesQ = supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    if (effectiveCompanyId) quotesQ = quotesQ.eq('company_id', effectiveCompanyId);
+    let ordersQ = supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    if (effectiveCompanyId) ordersQ = ordersQ.eq('company_id', effectiveCompanyId);
+    let invoicesQ = supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
+    if (effectiveCompanyId) invoicesQ = invoicesQ.eq('company_id', effectiveCompanyId);
+    const [{ data: quotes }, { data: orders }, { data: invoices }] = await Promise.all([quotesQ, ordersQ, invoicesQ]);
     res.json({ ...customer, leads: leads || [], quotes: quotes || [], orders: orders || [], invoices: invoices || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5229,14 +5793,46 @@ r.get('/customers-overview/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/products-list', async (req, res) => {
   try {
-    const { data } = await supabase.from('products').select('*').order('name');
+    const rawQ = req.query.company_id && String(req.query.company_id).trim();
+    let effectiveCompanyId = rawQ || null;
+    if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    }
+    let q = supabase.from('products').select('*').order('name');
+    if (effectiveCompanyId) q = q.eq('company_id', effectiveCompanyId);
+    const { data, error } = await q;
+    if (error) throw error;
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 r.put('/products/:id', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('products').update({ ...req.body, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+    const { data: existing, error: exErr } = await supabase.from('products').select('company_id, category_id').eq('id', req.params.id).maybeSingle();
+    if (exErr) throw exErr;
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy sản phẩm' });
+    if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      if (existing.company_id && String(existing.company_id) !== String(cid)) {
+        return res.status(403).json({ error: 'Không có quyền sửa sản phẩm công ty khác' });
+      }
+    }
+    const b = { ...req.body };
+    if (!userIsAdmin(req.user?.role)) delete b.company_id;
+    if (userIsAdmin(req.user?.role) && Object.prototype.hasOwnProperty.call(b, 'company_id')) {
+      b.company_id = String(b.company_id || '').trim() || null;
+    } else {
+      const newCat = b.category_id !== undefined ? b.category_id : existing.category_id;
+      if (newCat) {
+        const { data: cat } = await supabase.from('product_categories').select('company_id').eq('id', newCat).maybeSingle();
+        if (cat?.company_id) b.company_id = cat.company_id;
+      }
+    }
+    b.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('products').update(b).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -5244,7 +5840,19 @@ r.put('/products/:id', async (req, res) => {
 
 r.post('/products', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('products').insert(req.body).select('*').single();
+    const row = { ...req.body };
+    if (userIsAdmin(req.user?.role)) {
+      if (row.company_id !== undefined) row.company_id = String(row.company_id || '').trim() || null;
+    } else {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      row.company_id = cid;
+    }
+    if (!row.company_id && row.category_id) {
+      const { data: cat } = await supabase.from('product_categories').select('company_id').eq('id', row.category_id).maybeSingle();
+      if (cat?.company_id) row.company_id = cat.company_id;
+    }
+    const { data, error } = await supabase.from('products').insert(row).select('*').single();
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6731,13 +7339,17 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
     const { data, error } = await supabase.from('crm_tasks')
       .update({ notes, updated_at: new Date().toISOString() })
       .eq('id', req.params.taskId)
-      .select('id, title, notes').single();
+      .select('id, title, notes, stage_slug').single();
     if (error) throw error;
 
     // Sync: upsert ghi chú vào lead_documents
     // Tìm attachment type "task_note" cho task này
     if (notes?.trim()) {
       try {
+        const { data: leadForSync } = await supabase.from('crm_leads')
+          .select('project_id').eq('id', req.params.leadId).single();
+        const taskDocOpts = { linkToProject: !!leadForSync?.project_id };
+
         const { data: existingAtt } = await supabase.from('crm_task_attachments')
           .select('id')
           .eq('task_id', req.params.taskId)
@@ -6749,9 +7361,14 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
           await supabase.from('crm_task_attachments')
             .update({ notes, name: `📝 ${data.title}` })
             .eq('id', existingAtt.id);
-          // Sync lead_document
+          // Sync lead_document (project_id + cờ xưởng khớp tab Tài liệu / SX)
           await supabase.from('lead_documents')
-            .update({ notes, name: `[${data.title}] 📝 Ghi chú` })
+            .update({
+              notes,
+              name: `[${data.title}] 📝 Ghi chú`,
+              project_id: leadForSync?.project_id ?? null,
+              ...getLeadDocumentFieldsFromCrmTask(data, taskDocOpts),
+            })
             .eq('source_attachment_id', existingAtt.id);
         } else {
           // Create new attachment + document
@@ -6761,12 +7378,11 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
             created_by: req.user.userId,
           }).select().single();
           if (att) {
-            const { data: lead } = await supabase.from('crm_leads')
-              .select('project_id').eq('id', req.params.leadId).single();
             await supabase.from('lead_documents').insert({
-              lead_id: req.params.leadId, project_id: lead?.project_id || null,
+              lead_id: req.params.leadId, project_id: leadForSync?.project_id || null,
               name: `[${data.title}] 📝 Ghi chú`, doc_type: 'task_inline_note',
               notes, created_by: req.user.userId, source_attachment_id: att.id,
+              ...getLeadDocumentFieldsFromCrmTask(data, taskDocOpts),
             });
           }
         }
@@ -6797,7 +7413,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
 
     // Query task visibility 1 lần duy nhất
     const { data: task } = await supabase.from('crm_tasks')
-      .select('title, default_allowed_companies, default_allowed_departments')
+      .select('id, title, stage_slug, default_allowed_companies, default_allowed_departments')
       .eq('id', req.params.taskId).single();
     const finalCompanies = task?.default_allowed_companies || null;
     const finalDepts = task?.default_allowed_departments || null;
@@ -6822,6 +7438,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     try {
       const { data: lead } = await supabase.from('crm_leads')
         .select('project_id').eq('id', req.params.leadId).single();
+      const bulkDocOpts = { linkToProject: !!lead?.project_id };
       const syncRows = (data || []).map(att => ({
         lead_id: req.params.leadId,
         project_id: lead?.project_id || null,
@@ -6830,6 +7447,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
         file_size: att.file_size, mime_type: att.mime_type,
         allowed_companies: finalCompanies, allowed_departments: finalDepts,
         created_by: req.user.userId, source_attachment_id: att.id,
+        ...getLeadDocumentFieldsFromCrmTask(task, bulkDocOpts),
       }));
       if (syncRows.length) await supabase.from('lead_documents').insert(syncRows);
     } catch (syncErr) { console.warn('Bulk sync error:', syncErr.message); }
@@ -6848,7 +7466,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     let finalDepts = allowed_departments || null;
     if (!finalCompanies && !finalDepts) {
       const { data: task } = await supabase.from('crm_tasks')
-        .select('default_allowed_companies, default_allowed_departments')
+        .select('id, stage_slug, default_allowed_companies, default_allowed_departments')
         .eq('id', req.params.taskId).single();
       if (task) {
         finalCompanies = task.default_allowed_companies || null;
@@ -6874,7 +7492,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     // ── SYNC → lead_documents ──
     try {
       const { data: task } = await supabase.from('crm_tasks')
-        .select('title').eq('id', req.params.taskId).single();
+        .select('id, title, stage_slug').eq('id', req.params.taskId).single();
       const { data: lead } = await supabase.from('crm_leads')
         .select('project_id').eq('id', req.params.leadId).single();
       await supabase.from('lead_documents').insert({
@@ -6885,6 +7503,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
         file_size: data.file_size, mime_type: data.mime_type, notes: data.notes,
         allowed_companies: finalCompanies, allowed_departments: finalDepts,
         created_by: req.user.userId, source_attachment_id: data.id,
+        ...getLeadDocumentFieldsFromCrmTask(task, { linkToProject: !!lead?.project_id }),
       });
     } catch (syncErr) { console.warn('Sync attachment→document:', syncErr.message); }
 
@@ -6921,27 +7540,66 @@ r.get('/leads/:id/task-attachments', async (req, res) => {
 // GET all CRM tasks (overview page) with filters
 r.get('/tasks/overview', async (req, res) => {
   try {
+    let effectiveCompanyId = null;
+    if (req.user?.role !== 'admin') {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    } else {
+      const q = req.query.company_id;
+      effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
+    }
+
+    let leadIds = null;
+    if (effectiveCompanyId) {
+      const { data: leads, error: leErr } = await supabase.from('crm_leads').select('id').eq('company_id', effectiveCompanyId);
+      if (leErr) throw leErr;
+      leadIds = (leads || []).map((x) => x.id);
+      if (!leadIds.length) return res.json([]);
+    }
+
     const { status, assignee_id, stage_slug, type } = req.query;
     let q = supabase.from('crm_tasks')
       .select('*, lead:crm_leads(id,title,code,type,customer:customers(id,full_name)), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
       .order('deadline', { ascending: true, nullsFirst: false });
+    if (leadIds?.length) q = q.in('lead_id', leadIds);
     if (status) q = q.eq('status', status);
     if (assignee_id) q = q.eq('assignee_id', assignee_id);
     if (stage_slug) q = q.eq('stage_slug', stage_slug);
-    if (type) q = q.eq('lead.type', type);
     const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+    let rows = data || [];
+    if (type) rows = rows.filter((t) => (t.lead?.type || '') === type);
+    res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET CRM tasks planner (grouped by assignee)
 r.get('/tasks/planner', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('crm_tasks')
+    let effectiveCompanyId = null;
+    if (req.user?.role !== 'admin') {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    } else {
+      const q = req.query.company_id;
+      effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
+    }
+    let leadIds = null;
+    if (effectiveCompanyId) {
+      const { data: leads, error: leErr } = await supabase.from('crm_leads').select('id').eq('company_id', effectiveCompanyId);
+      if (leErr) throw leErr;
+      leadIds = (leads || []).map((x) => x.id);
+      if (!leadIds.length) return res.json({ assignees: [], unassigned: [] });
+    }
+
+    let tq = supabase.from('crm_tasks')
       .select('*, lead:crm_leads(id,title,code,type), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar)')
       .in('status', ['pending', 'in_progress'])
       .order('deadline', { ascending: true, nullsFirst: false });
+    if (leadIds?.length) tq = tq.in('lead_id', leadIds);
+    const { data, error } = await tq;
     if (error) throw error;
 
     // Group by assignee
@@ -7172,6 +7830,12 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     if (pEnd) projPatch.production_deadline = pEnd;
     const { error: projErr } = await supabase.from('projects').update(projPatch).eq('id', lead.project_id);
     if (projErr) console.warn('[sx-handover] project dates:', projErr.message);
+
+    try {
+      await ensureDealLeadDocumentsForModuleTransition({ leadId, projectId: lead.project_id });
+    } catch (docEns) {
+      console.warn('[sx-handover] ensure lead_documents:', docEns.message);
+    }
 
     try {
       await syncCrmLeadSxPipelineFromProject(lead.project_id);

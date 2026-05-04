@@ -21,8 +21,7 @@ const {
   canViewerSeeByCompanyAndDept,
 } = require('../helpers/documentShareScope');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
-const { syncLeadDocumentsToProject } = require('../helpers/syncLeadDocumentsToProject');
-const { copyCrmTaskArtifactsToLeadDocuments } = require('../helpers/copyCrmTaskArtifactsToLeadDocuments');
+const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 
 const r = Router();
 r.use(auth);
@@ -378,6 +377,14 @@ r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
       leadId: existing.fulfillment_lead_id,
       createdBy: req.user.userId,
     });
+    try {
+      await ensureDealLeadDocumentsForModuleTransition({
+        leadId: existing.fulfillment_lead_id,
+        projectId: pid,
+      });
+    } catch (e) {
+      console.warn('[push-to-production] ensure lead_documents:', e.message);
+    }
     const { data, error } = await supabase.from('orders').update(updates).eq('id', oid).select('*').single();
     if (error) throw error;
     await logActivity(req.user.userId, 'updated', 'order', oid, `Chuyển SX: ${existing.code || ''} ${existing.display_label || ''}`);
@@ -411,6 +418,14 @@ r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
             leadId: existing.fulfillment_lead_id,
             createdBy: req.user.userId,
           });
+          try {
+            await ensureDealLeadDocumentsForModuleTransition({
+              leadId: existing.fulfillment_lead_id,
+              projectId: pid,
+            });
+          } catch (ee) {
+            console.warn('[push-to-production-bulk] ensure lead_documents:', ee.message);
+          }
         }
         const r0 = await supabase.from('orders')
           .update({
@@ -1572,11 +1587,11 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
         }).eq('id', projectId);
         console.log(`[deal] Project status → producing`);
 
-        // 4. Copy đính kèm + ghi chú nhiệm vụ CRM → lead_documents (dùng chung helper với auto-deal)
+        // 4. Bù tài liệu từ nhiệm vụ CRM + gán project_id (cùng helper chuyển module)
         try {
-          await copyCrmTaskArtifactsToLeadDocuments(b.deal_id);
-        } catch (copyErr) {
-          console.error('[deal→project] Copy task data error:', copyErr.message);
+          await ensureDealLeadDocumentsForModuleTransition({ leadId: b.deal_id, projectId });
+        } catch (e) {
+          console.warn('[deal→project] ensure lead_documents:', e.message);
         }
 
         // Copy all lead_documents → project quotation_files
@@ -1599,12 +1614,6 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
             await supabase.from('projects').update({ quotation_files: [...existing, ...allDocEntries] }).eq('id', projectId);
             console.log(`[deal] Copied ${allDocEntries.length} documents to project quotation_files`);
           }
-        }
-
-        try {
-          await syncLeadDocumentsToProject({ leadId: b.deal_id, projectId, shareToWorkshop: true });
-        } catch (e) {
-          console.warn('[deal→project] sync lead_documents:', e.message);
         }
 
         // 5. Log activity

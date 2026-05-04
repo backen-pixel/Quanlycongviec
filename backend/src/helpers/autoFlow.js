@@ -108,10 +108,10 @@ async function createProjectFromLead(lead, userId, overrideFlowId) {
   await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', lead.id);
 
   try {
-    const { syncLeadDocumentsToProject } = require('./syncLeadDocumentsToProject');
-    await syncLeadDocumentsToProject({ leadId: lead.id, projectId: project.id, shareToWorkshop: true });
+    const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
+    await ensureDealLeadDocumentsForModuleTransition({ leadId: lead.id, projectId: project.id });
   } catch (e) {
-    console.warn('[createProjectFromLead] sync lead_documents:', e.message);
+    console.warn('[createProjectFromLead] ensure lead_documents:', e.message);
   }
 
   // Auto create tasks for Tư vấn stage using stageFlow

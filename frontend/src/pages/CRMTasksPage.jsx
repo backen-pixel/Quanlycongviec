@@ -1,11 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
 import {
-  List, Calendar, Users, AlertTriangle, Search, Filter, CheckCircle2, Circle, Clock,
-  User, Eye, ChevronDown, ChevronRight, Target, X
+  List, Calendar, Users, AlertTriangle, Search, CheckCircle2, Circle, Clock,
+  User, Eye, Target, X, Building2,
 } from 'lucide-react';
+
+const LS_CRM_TASKS_COMPANY = 'crm_tasks_overview_company_id';
 
 const ALL_STAGES = [
   { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
@@ -18,8 +21,19 @@ const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'G�
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
 export default function CRMTasksPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   const [tasks, setTasks] = useState([]);
   const [users, setUsers] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [filterCompanyId, setFilterCompanyId] = useState(() => {
+    try {
+      return typeof window !== 'undefined' ? localStorage.getItem(LS_CRM_TASKS_COMPANY) || '' : '';
+    } catch {
+      return '';
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('list');
   const [search, setSearch] = useState('');
@@ -28,19 +42,54 @@ export default function CRMTasksPage() {
   const [filterStage, setFilterStage] = useState('');
   const [filterType, setFilterType] = useState('');
 
-  const load = async () => {
+  useEffect(() => {
+    if (!user?.id) return;
+    if (!isAdmin) setFilterAssignee((prev) => prev || String(user.id));
+  }, [user?.id, user?.role, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get('/companies', { params: { for_module: 'crm' } }).then((r) => {
+      const list = r.data?.companies || r.data || [];
+      setCompanies(Array.isArray(list) ? list : []);
+    }).catch(() => setCompanies([]));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    try {
+      if (filterCompanyId) localStorage.setItem(LS_CRM_TASKS_COMPANY, filterCompanyId);
+      else localStorage.removeItem(LS_CRM_TASKS_COMPANY);
+    } catch {
+      /* ignore */
+    }
+  }, [isAdmin, filterCompanyId]);
+
+  const load = useCallback(async () => {
     setLoading(true);
     try {
+      const params = {};
+      if (isAdmin && filterCompanyId) params.company_id = filterCompanyId;
+      if (filterStatus) params.status = filterStatus;
+      if (filterAssignee) params.assignee_id = filterAssignee;
+      if (filterStage) params.stage_slug = filterStage;
+      if (filterType) params.type = filterType;
+
       const [tasksRes, usersRes] = await Promise.all([
-        api.get('/crm/tasks/overview'),
-        api.get('/users').then(r => r.data?.users || []),
+        api.get('/crm/tasks/overview', { params }),
+        api.get('/users').then((r) => r.data?.users || []),
       ]);
       setTasks(tasksRes.data || []);
       setUsers(usersRes);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    }
     setLoading(false);
-  };
-  useEffect(() => { load(); }, []);
+  }, [isAdmin, filterCompanyId, filterStatus, filterAssignee, filterStage, filterType]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const toggleStatus = async (task) => {
     const next = task.status === 'completed' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'completed';
@@ -48,18 +97,18 @@ export default function CRMTasksPage() {
   };
 
   const filtered = useMemo(() => {
-    return tasks.filter(t => {
-      if (filterStatus && t.status !== filterStatus) return false;
-      if (filterAssignee && t.assignee_id !== filterAssignee) return false;
-      if (filterStage && t.stage_slug !== filterStage) return false;
-      if (filterType && t.lead?.type !== filterType) return false;
+    return tasks.filter((t) => {
       if (search) {
         const s = search.toLowerCase();
-        if (!(t.title || '').toLowerCase().includes(s) && !(t.lead?.title || '').toLowerCase().includes(s) && !(t.lead?.code || '').toLowerCase().includes(s)) return false;
+        if (
+          !(t.title || '').toLowerCase().includes(s)
+          && !(t.lead?.title || '').toLowerCase().includes(s)
+          && !(t.lead?.code || '').toLowerCase().includes(s)
+        ) return false;
       }
       return true;
     });
-  }, [tasks, filterStatus, filterAssignee, filterStage, filterType, search]);
+  }, [tasks, search]);
 
   const stats = useMemo(() => {
     const total = tasks.length;
@@ -97,8 +146,19 @@ export default function CRMTasksPage() {
     return groups;
   }, [filtered]);
 
-  const hasFilters = filterStatus || filterAssignee || filterStage || filterType || search;
-  const clearFilters = () => { setFilterStatus(''); setFilterAssignee(''); setFilterStage(''); setFilterType(''); setSearch(''); };
+  const hasFilters = filterStatus || filterAssignee || filterStage || filterType || search || (isAdmin && filterCompanyId);
+  const clearFilters = () => {
+    setFilterStatus('');
+    setFilterStage('');
+    setFilterType('');
+    setSearch('');
+    if (isAdmin) {
+      setFilterAssignee('');
+      setFilterCompanyId('');
+    } else {
+      setFilterAssignee(user?.id ? String(user.id) : '');
+    }
+  };
 
   const TaskCard = ({ task }) => {
     const StatusIcon = STATUS_ICONS[task.status] || Circle;
@@ -137,7 +197,29 @@ export default function CRMTasksPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">✅ Công việc CRM</h1>
           <p className="text-sm text-gray-500">{stats.total} công việc — {stats.completed} hoàn thành</p>
+          {!isAdmin && (
+            <p className="text-xs text-blue-700 mt-1 flex items-center gap-1">
+              <Building2 className="h-3.5 w-3.5 shrink-0" />
+              Chỉ lead/deal thuộc công ty của bạn; mặc định việc được giao cho bạn
+            </p>
+          )}
         </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin && (
+            <div className="flex items-center gap-1.5">
+              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
+              <select
+                value={filterCompanyId}
+                onChange={(e) => setFilterCompanyId(e.target.value)}
+                className="h-8 min-w-[180px] px-2 rounded-lg border text-xs bg-white"
+              >
+                <option value="">Tất cả công ty</option>
+                {companies.map((co) => (
+                  <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         <div className="flex items-center gap-1">
           {[{ id: 'list', icon: List, label: 'List' }, { id: 'deadline', icon: AlertTriangle, label: 'Deadline' }, { id: 'planner', icon: Users, label: 'Planner' }].map(v => (
             <button key={v.id} onClick={() => setViewMode(v.id)}
@@ -145,6 +227,7 @@ export default function CRMTasksPage() {
               <v.icon className="h-3.5 w-3.5" />{v.label}
             </button>
           ))}
+        </div>
         </div>
       </div>
 
@@ -179,7 +262,7 @@ export default function CRMTasksPage() {
           {ALL_STAGES.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
         </select>
         <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
-          <option value="">Người thực hiện</option>
+          <option value="">{isAdmin ? 'Người thực hiện (tất cả)' : 'Tất cả NV (trong công ty)'}</option>
           {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
         </select>
         <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatVND } from '../lib/utils';
 import { Search, Package, X, Plus, ChevronDown, ChevronRight, Boxes, Tag } from 'lucide-react';
 
@@ -12,8 +13,16 @@ import { Search, Package, X, Plus, ChevronDown, ChevronRight, Boxes, Tag } from 
  *  - onClose(): đóng picker
  *  - multiSelect?: cho phép chọn nhiều SP cùng lúc
  *  - onSelectMulti?(products[]): callback khi chọn nhiều
+ *  - companyId?: string — lọc SP/nhóm ngành theo công ty (admin); nhân viên luôn theo company user
  */
-export default function ProductSearchPicker({ onSelect, onClose, multiSelect = false, onSelectMulti }) {
+export default function ProductSearchPicker({ onSelect, onClose, multiSelect = false, onSelectMulti, companyId: companyIdProp }) {
+  const { user } = useAuth();
+  const companyParams = useMemo(() => {
+    if (companyIdProp) return { company_id: companyIdProp };
+    if (user?.role !== 'admin' && user?.company_id) return { company_id: user.company_id };
+    return {};
+  }, [companyIdProp, user?.role, user?.company_id]);
+
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -28,7 +37,7 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
     loadCategories();
     loadProducts('');
     setTimeout(() => searchRef.current?.focus(), 100);
-  }, []);
+  }, [companyParams]);
 
   // Debounce search → gọi API
   useEffect(() => {
@@ -36,11 +45,11 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
     const t = setTimeout(() => loadProducts(search), 300);
     setSearchTimer(t);
     return () => clearTimeout(t);
-  }, [search, categoryFilter]);
+  }, [search, categoryFilter, companyParams]);
 
   const loadCategories = async () => {
     try {
-      const { data } = await api.get('/products/categories');
+      const { data } = await api.get('/products/categories', { params: companyParams });
       setCategories(data.categories || data || []);
     } catch {}
   };
@@ -48,7 +57,7 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
   const loadProducts = async (q) => {
     setLoading(true);
     try {
-      const params = { limit: 5000 };
+      const params = { ...companyParams, limit: 5000 };
       if (q) params.search = q;
       if (categoryFilter) params.category_id = categoryFilter;
       const { data } = await api.get('/products', { params });
@@ -326,7 +335,14 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
  *  - onSelect(product): callback khi chọn
  *  - className?: CSS class cho container
  */
-export function ProductSearchInline({ onSelect, className = '' }) {
+export function ProductSearchInline({ onSelect, className = '', companyId: companyIdProp }) {
+  const { user } = useAuth();
+  const companyParams = useMemo(() => {
+    if (companyIdProp) return { company_id: companyIdProp };
+    if (user?.role !== 'admin' && user?.company_id) return { company_id: user.company_id };
+    return {};
+  }, [companyIdProp, user?.role, user?.company_id]);
+
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState('');
@@ -335,9 +351,9 @@ export function ProductSearchInline({ onSelect, className = '' }) {
   const wrapRef = useRef(null);
 
   useEffect(() => {
-    api.get('/products', { params: { limit: 5000 } }).then(r => setProducts(r.data.products || r.data || []));
-    api.get('/products/categories').then(r => setCategories(r.data.categories || r.data || [])).catch(() => {});
-  }, []);
+    api.get('/products', { params: { ...companyParams, limit: 5000 } }).then(r => setProducts(r.data.products || r.data || []));
+    api.get('/products/categories', { params: companyParams }).then(r => setCategories(r.data.categories || r.data || [])).catch(() => {});
+  }, [companyParams]);
 
   useEffect(() => {
     const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setShowDropdown(false); };

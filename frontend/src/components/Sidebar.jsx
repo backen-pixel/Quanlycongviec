@@ -4,13 +4,14 @@ import api from '../lib/api';
 import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor } from '../lib/utils';
 import {
-  LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
+  LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut, Lock,
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle,
+  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags,
 } from 'lucide-react';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -22,6 +23,7 @@ const MENU_GROUPS = [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
+      { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
       { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
       { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
@@ -90,11 +92,16 @@ const CRM_MENU_TOP_GROUP = {
   ],
 };
 
-/** CRM — phần còn lại ở cuối sidebar (cuộn riêng) */
+/** CRM — phần còn lại ở cuối sidebar (cuộn riêng)
+ *  Nhân viên: chỉ nhóm Bán hàng + 3 mục Khách hàng / Sản phẩm / Nhóm ngành (không có adminOnly).
+ *  Chỉ role `admin` thấy nhóm Phân tích, Facebook, báo cáo, cài đặt CRM… (adminOnly / staffHidden).
+ */
 const CRM_MENU_BOTTOM_GROUPS = [
   {
     id: 'crm-analytics',
     moduleKey: 'crm',
+    /** Ẩn toàn nhóm với nhân viên — chỉ admin */
+    staffHidden: true,
     title: 'Phân tích & hành trình',
     emoji: '📈',
     items: [
@@ -121,18 +128,20 @@ const CRM_MENU_BOTTOM_GROUPS = [
     title: 'Dữ liệu & cài đặt',
     emoji: '📋',
     items: [
+      { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
       { to: '/crm/customers', icon: UserCircle, label: 'Khách hàng' },
       { to: '/crm/products', icon: Package, label: 'Sản phẩm' },
       { to: '/crm/categories', icon: FolderTree, label: 'Nhóm ngành' },
-      { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo' },
-      { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook' },
-      { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline' },
-      { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM' },
-      { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án' },
-      { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice' },
-      { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp' },
-      { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
-      { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
+      { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo', adminOnly: true },
+      { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', adminOnly: true },
+      { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline', adminOnly: true },
+      { to: '/crm/sources-settings', icon: Tags, label: 'Nguồn & phân loại', adminOnly: true },
+      { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM', adminOnly: true },
+      { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án', adminOnly: true },
+      { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice', adminOnly: true },
+      { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
+      { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },
+      { to: '/updates', icon: Megaphone, label: 'Có gì mới?', adminOnly: true },
     ],
   },
 ];
@@ -273,6 +282,9 @@ export default function Sidebar() {
     return moduleAccess.modules?.[key] !== false;
   }, [moduleAccess]);
 
+  /** Nhân viên chỉ được ecosystem + CRM (khối KD): chỉ menu CRM, không Công việc / SX / VC */
+  const crmOnly = useMemo(() => isCrmOnlyModuleAccess(moduleAccess), [moduleAccess]);
+
   // Auto-collapse sidebar on quotation form pages (need more screen space)
   useEffect(() => {
     const isQuotationForm = /\/crm\/quotations\/(new|[0-9a-f-]{36})/.test(location.pathname);
@@ -280,10 +292,14 @@ export default function Sidebar() {
   }, [location.pathname]);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+  /** Sidebar CRM: role `admin` (cả admin hệ thống và admin công ty) thấy đủ mục cài đặt CRM; dữ liệu admin công ty vẫn khóa theo API */
+  const isCrmMenuAdmin = user?.role === 'admin';
   const isExecutive = ['admin', 'manager', 'director', 'supervisor'].includes(user?.role);
-  /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó */
+  /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó. crmOnly: luôn sidebar CRM (kể cả /settings/theme). */
   const isCRM =
-    location.pathname.startsWith('/crm') || location.pathname.startsWith('/tools/voice-recordings');
+    crmOnly ||
+    location.pathname.startsWith('/crm') ||
+    location.pathname.startsWith('/tools/voice-recordings');
   const isSX = location.pathname.startsWith('/sx');
   const isVC = location.pathname.startsWith('/vc');
   const activeMenuGroups = isVC ? VC_MENU_GROUPS : isSX ? SX_MENU_GROUPS : isCRM ? null : MENU_GROUPS;
@@ -320,7 +336,8 @@ export default function Sidebar() {
               </button>
             </div>
             <div className="flex-1 p-5 space-y-3">
-              {/* Công việc */}
+              {/* Công việc — ẩn với nhân viên chỉ CRM */}
+              {!crmOnly && (
               <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${!isCRM && !isSX && !isVC ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
                 <button onClick={() => { setShowAppSwitcher(false); navigate('/dashboard'); }}
                   className="flex items-center gap-4 flex-1 cursor-pointer">
@@ -341,6 +358,7 @@ export default function Sidebar() {
                   </button>
                 </div>
               </div>
+              )}
               {/* CRM */}
               {canAccessModule('crm') && (
               <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isCRM ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50'}`}>
@@ -427,18 +445,23 @@ export default function Sidebar() {
     >
       {/* App Switcher Button + Logo */}
       <div className="flex items-center gap-2 px-3 h-14 border-b border-white/10 shrink-0">
+        {!crmOnly && (
         <button onClick={() => setShowAppSwitcher(!showAppSwitcher)}
           className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors cursor-pointer ${showAppSwitcher ? 'bg-white/20 ring-1 ring-white/30' : 'hover:bg-white/10'}`} title="Chuyển ứng dụng">
           <Grid3X3 className="h-5 w-5 text-white" />
         </button>
-        {/* Active app indicator — click cycles through 4 modules */}
+        )}
+        {/* Active app indicator — click cycles through các module được phép (chỉ CRM nếu crmOnly) */}
         {(() => {
           const modList = [
             { key: 'work', mod: null, label: 'Công việc', emoji: '📋', path: '/dashboard', color: 'bg-blue-500/20 hover:bg-blue-500/30', dot: 'bg-blue-500/30' },
             { key: 'crm', mod: 'crm', label: 'CRM', emoji: '💼', path: '/crm', color: 'bg-emerald-500/20 hover:bg-emerald-500/30', dot: 'bg-emerald-500/40' },
             { key: 'sx', mod: 'production', label: 'Xưởng SX', emoji: '🏭', path: '/sx', color: 'bg-orange-500/20 hover:bg-orange-500/30', dot: 'bg-orange-500/40' },
             { key: 'vc', mod: 'logistics', label: 'Vận chuyển', emoji: '🚚', path: '/vc', color: 'bg-amber-500/20 hover:bg-amber-500/30', dot: 'bg-amber-500/40' },
-          ].filter((m) => !m.mod || canAccessModule(m.mod));
+          ].filter((m) => {
+            if (crmOnly) return m.key === 'crm';
+            return !m.mod || canAccessModule(m.mod);
+          });
           if (!modList.length) return null;
           const activeKey = isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
           let curIdx = modList.findIndex((m) => m.key === activeKey);
@@ -485,13 +508,14 @@ export default function Sidebar() {
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
               {CRM_MENU_BOTTOM_GROUPS.map((group) => {
+                if (group.staffHidden && !isCrmMenuAdmin) return null;
                 if (group.adminOnly && !isAdmin) return null;
                 return (
                   <MenuGroup
                     key={group.id}
                     group={group}
                     collapsed={collapsed}
-                    isAdmin={isAdmin}
+                    isAdmin={isCrmMenuAdmin}
                     isExecutive={isExecutive}
                     canAccessModule={canAccessModule}
                   />

@@ -32,6 +32,7 @@ const {
   stripHandoverFields,
 } = require('../helpers/productionPipelineSchema');
 const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
+const { ensureDealLeadDocumentsForProjectId } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 
 const r = Router();
 r.use(auth);
@@ -1068,6 +1069,12 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
             }
 
             try {
+              await ensureDealLeadDocumentsForProjectId(projectId);
+            } catch (ensErr) {
+              console.warn('[production/stage] ensure deal lead_documents:', ensErr.message);
+            }
+
+            try {
               const vcDeliveryStageId = await getCrmVcDeliveryStageId();
               if (vcDeliveryStageId) {
                 const { data: leads } = await supabase
@@ -1243,6 +1250,12 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       await ensureLeadDocumentsIncludeShareModules(id, ['logistics']);
     } catch (mdErr) {
       console.warn('[production/handover-vc] expand doc modules for VC:', mdErr.message);
+    }
+
+    try {
+      await ensureDealLeadDocumentsForProjectId(id);
+    } catch (ensErr) {
+      console.warn('[production/handover-vc] ensure deal lead_documents:', ensErr.message);
     }
 
     // Ghi stage_transition

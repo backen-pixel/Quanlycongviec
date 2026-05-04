@@ -9,7 +9,7 @@ import {
   Plus, Search, Filter, X, ChevronLeft, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
-  Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2
+  Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
 import EmployeePicker from '../components/EmployeePicker';
@@ -23,6 +23,14 @@ import {
   getCurrentUserKeyForLeadSeen,
 } from '../lib/crmPipelineStorage';
 import { userSeesAllCrmDeals } from '../lib/crmDealAccess';
+import {
+  findDefaultAdminCrmCompanyPhucDat,
+  getStoredCrmFilterCompanyId,
+  narrowPipelinesToDefaultForCompany,
+  resolveDefaultCrmAdminCompanyId,
+  setStoredCrmFilterCompanyId,
+} from '../lib/crmCompanyFilter';
+import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import DealStageEventModal from '../components/DealStageEventModal';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
@@ -86,19 +94,8 @@ const TIME_PRESETS = [
 
 const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
 
-/** Bộ lọc công ty + phân loại lead/deal: lưu lâu dài (vẫn dùng khi đi trang khác / tab mới; session vẫn lưu qua saveCrmPipelineSnapshot) */
-const LS_CRM_DASH_COMPANY = 'crm_dash_filter_company_id';
+/** Phân loại lead/deal trên dashboard (localStorage; khác key với công ty) */
 const LS_CRM_DASH_LEAD_TYPE = 'crm_dash_filter_lead_type_id';
-
-/** Admin CRM: mặc định lọc Công ty Phúc Đạt (khớp tên / tên ngắn). NV không phải admin không dùng — họ xem theo company user. */
-function findDefaultAdminCrmCompanyPhucDat(companies) {
-  if (!companies?.length) return '';
-  const hit = companies.find((c) => {
-    const t = `${c.name || ''} ${c.short_name || ''}`.toLowerCase();
-    return t.includes('phúc đạt') || t.includes('phuc dat') || (t.includes('phúc') && t.includes('đạt'));
-  });
-  return hit?.id ? String(hit.id) : '';
-}
 
 /** Lead/Deal đang trên pipeline (chưa cột Thắng / Thua) — dùng stage từ API, không dùng is_won ở root. */
 function isActiveCrmPipelineItem(item) {
@@ -110,6 +107,8 @@ export default function CRMDashboard() {
   const { user } = useAuth();
   const seesAllCrmDeals = userSeesAllCrmDeals(user?.role);
   const isAdmin = user?.role === 'admin';
+  /** Admin công ty (khác admin hệ thống): backend khóa API + GET /companies chỉ trả một công ty. */
+  const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
 
   const persistedUiRef = useRef(undefined);
   if (persistedUiRef.current === undefined) {
@@ -132,13 +131,8 @@ export default function CRMDashboard() {
   allDealsRef.current = allDeals;
   const [filterCompany, setFilterCompany] = useState(() => {
     if (P?.filterCompany) return P.filterCompany;
-    try {
-      const ls = typeof localStorage !== 'undefined' ? localStorage.getItem(LS_CRM_DASH_COMPANY) : null;
-      if (ls) return ls;
-    } catch {
-      /* ignore */
-    }
-    return '';
+    const ls = getStoredCrmFilterCompanyId();
+    return ls || '';
   });
   const [searchText, setSearchText] = useState(() => P?.searchText ?? '');
   const [searchFocused, setSearchFocused] = useState(false);
@@ -183,6 +177,8 @@ export default function CRMDashboard() {
   /** Chọn thẻ Kanban để gộp thủ công (không dùng quét trùng) */
   const [manualMergeIds, setManualMergeIds] = useState([]);
   const [manualMergeModalOpen, setManualMergeModalOpen] = useState(false);
+  const [bulkStageTarget, setBulkStageTarget] = useState('');
+  const [bulkMoving, setBulkMoving] = useState(false);
   const [bulkAssignModalOpen, setBulkAssignModalOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   /** Deal pipeline: mở popup chọn giờ rồi POST /events sau PATCH stage (bật theo từng pipeline tại Cài đặt pipeline) */
@@ -236,6 +232,21 @@ export default function CRMDashboard() {
     });
   }, []);
 
+  /** Gộp / bỏ toàn bộ id trong cột (chọn tất cả cột) */
+  const toggleSelectAllInColumn = useCallback((columnItemIds) => {
+    const ids = (columnItemIds || []).map(String);
+    if (!ids.length) return;
+    setManualMergeIds((prev) => {
+      const prevSet = new Set(prev.map(String));
+      const allSelected = ids.every((id) => prevSet.has(id));
+      if (allSelected) {
+        const drop = new Set(ids);
+        return prev.filter((id) => !drop.has(String(id)));
+      }
+      return [...new Set([...prev.map(String), ...ids])];
+    });
+  }, []);
+
   const bulkDeleteSelected = useCallback(async () => {
     const ids = [...new Set((manualMergeIds || []).map((x) => String(x)).filter(Boolean))];
     if (!ids.length) return;
@@ -258,6 +269,7 @@ export default function CRMDashboard() {
 
   useEffect(() => {
     setManualMergeIds([]);
+    setBulkStageTarget('');
   }, [pipelineType]);
 
   const itemsByIdForMerge = useMemo(() => {
@@ -363,38 +375,39 @@ export default function CRMDashboard() {
       companyFilterFromLsRef.current = true;
       return;
     }
-    if (!isAdmin) {
+    if (!isAdmin || isCompanyScopedAdmin) {
       companyFilterFromLsRef.current = true;
       return;
     }
     companyFilterFromLsRef.current = true;
     try {
-      const s = localStorage.getItem(LS_CRM_DASH_COMPANY);
+      const s = getStoredCrmFilterCompanyId();
       if (s) setFilterCompany(s);
     } catch {
       // ignore
     }
-  }, [isAdmin, user, P?.filterCompany]);
+  }, [isAdmin, isCompanyScopedAdmin, user, P?.filterCompany]);
 
-  // Admin: chưa có lọc công ty đã lưu → mặc định Phúc Đạt (sau khi danh sách công ty đã tải)
+  // Admin tổng: chưa có lọc công ty đã lưu → mặc định công ty đầu danh sách CRM
   useEffect(() => {
+    if (isCompanyScopedAdmin) return;
     if (!isAdmin || !companies.length) return;
     try {
-      if (localStorage.getItem(LS_CRM_DASH_COMPANY)) return;
+      if (getStoredCrmFilterCompanyId()) return;
     } catch {
       /* ignore */
     }
     if (P?.filterCompany) return;
     if (filterCompany) return;
-    const cid = findDefaultAdminCrmCompanyPhucDat(companies);
+    const cid = resolveDefaultCrmAdminCompanyId(companies);
     if (!cid) return;
     setFilterCompany(cid);
     try {
-      localStorage.setItem(LS_CRM_DASH_COMPANY, cid);
+      setStoredCrmFilterCompanyId(cid);
     } catch {
       /* ignore */
     }
-  }, [isAdmin, companies, filterCompany, P?.filterCompany]);
+  }, [isAdmin, isCompanyScopedAdmin, companies, filterCompany, P?.filterCompany]);
 
   useEffect(() => {
     if (user == null) return;
@@ -419,7 +432,7 @@ export default function CRMDashboard() {
     if (!isAdmin || !filterCompany || !companies?.length) return;
     if (!companies.some((c) => String(c.id) === String(filterCompany))) {
       setFilterCompany('');
-      try { localStorage.removeItem(LS_CRM_DASH_COMPANY); } catch { /* ignore */ }
+      setStoredCrmFilterCompanyId('');
     }
   }, [isAdmin, filterCompany, companies]);
 
@@ -432,7 +445,7 @@ export default function CRMDashboard() {
         const { data: pls } = await api.get('/crm/pipelines').catch(() => ({ data: [] }));
         if (cancel) return;
         const list = Array.isArray(pls) ? pls : [];
-        setPipelines(list);
+        setPipelines(narrowPipelinesToDefaultForCompany(list, filterCompany || null));
 
         if (!filterCompany) {
           const [leadRes, dealRes] = await Promise.all([
@@ -602,12 +615,17 @@ export default function CRMDashboard() {
 
   useEffect(() => {
     if (!user?.company_id) return;
-    setUserCompanyId(String(user.company_id));
-    // Non-admin: khóa theo công ty của user
-    if (!isAdmin) {
-      setFilterCompany(String(user.company_id));
+    const cid = String(user.company_id);
+    setUserCompanyId(cid);
+    if (!isAdmin || isCompanyScopedAdmin) {
+      setFilterCompany(cid);
+      try {
+        setStoredCrmFilterCompanyId(cid);
+      } catch {
+        /* ignore */
+      }
     }
-  }, [user?.company_id, isAdmin]);
+  }, [user?.company_id, isAdmin, isCompanyScopedAdmin]);
 
   const resolvePipelineIdForCompany = useCallback((companyId) => {
     if (!companyId) return null;
@@ -616,6 +634,33 @@ export default function CRMDashboard() {
     const def = byCompany.find((p) => p.is_default);
     return (def || byCompany[0] || null)?.id || null;
   }, [pipelines]);
+
+  /** Công ty đang áp dụng cho dashboard (admin: theo bộ lọc; user: theo company_id). */
+  const dashboardScopeCompanyId = useMemo(() => {
+    if (isCompanyScopedAdmin && user?.company_id) return String(user.company_id);
+    if (!isAdmin && user?.company_id) return String(user.company_id);
+    if (isAdmin && filterCompany) return String(filterCompany);
+    return '';
+  }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompany]);
+
+  const scopedCompanyName = useMemo(() => {
+    if (!dashboardScopeCompanyId || !companies?.length) return '';
+    const c = companies.find((x) => String(x.id) === String(dashboardScopeCompanyId));
+    return c?.name || '';
+  }, [dashboardScopeCompanyId, companies]);
+
+  const companyHasNoPipeline = useMemo(() => {
+    if (!dashboardScopeCompanyId) return false;
+    const list = pipelines || [];
+    return !list.some((p) => String(p.company_id || '') === String(dashboardScopeCompanyId));
+  }, [dashboardScopeCompanyId, pipelines]);
+
+  const showNoPipelineMainViews = useMemo(
+    () =>
+      companyHasNoPipeline &&
+      (viewMode === 'kanban' || viewMode === 'list' || viewMode === 'planner'),
+    [companyHasNoPipeline, viewMode],
+  );
 
   const buildStagesParams = useCallback((type) => {
     // Admin: khi đã chọn company filter → nạp stages đúng pipeline của công ty đó
@@ -643,33 +688,38 @@ export default function CRMDashboard() {
     setLoading(true);
     try {
       let resolvedCompanyId = filterCompany;
-      if (isAdmin && !resolvedCompanyId && !adminCompanyDefaultResolvedRef.current) {
+      if (isCompanyScopedAdmin && user?.company_id) {
+        resolvedCompanyId = String(user.company_id);
+      } else if (!isAdmin && user?.company_id) {
+        resolvedCompanyId = resolvedCompanyId || String(user.company_id);
+      }
+      if (isAdmin && !isCompanyScopedAdmin && !resolvedCompanyId && !adminCompanyDefaultResolvedRef.current) {
         const { data: crd } = await api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: {} }));
         const list = crd?.companies || [];
         const arr = Array.isArray(list) ? list : [];
         let fromLs = '';
         try {
-          fromLs = localStorage.getItem(LS_CRM_DASH_COMPANY) || '';
+          fromLs = getStoredCrmFilterCompanyId();
         } catch {
           /* ignore */
         }
-        resolvedCompanyId = fromLs || findDefaultAdminCrmCompanyPhucDat(arr);
+        resolvedCompanyId = fromLs || resolveDefaultCrmAdminCompanyId(arr);
         adminCompanyDefaultResolvedRef.current = true;
         if (resolvedCompanyId && String(resolvedCompanyId) !== String(filterCompany)) {
           setFilterCompany(resolvedCompanyId);
           try {
-            localStorage.setItem(LS_CRM_DASH_COMPANY, resolvedCompanyId);
+            setStoredCrmFilterCompanyId(resolvedCompanyId);
           } catch {
             /* ignore */
           }
         } else if (resolvedCompanyId) {
           try {
-            localStorage.setItem(LS_CRM_DASH_COMPANY, resolvedCompanyId);
+            setStoredCrmFilterCompanyId(resolvedCompanyId);
           } catch {
             /* ignore */
           }
         }
-      } else if (isAdmin && resolvedCompanyId) {
+      } else if (isAdmin && !isCompanyScopedAdmin && resolvedCompanyId) {
         adminCompanyDefaultResolvedRef.current = true;
       }
 
@@ -758,7 +808,7 @@ export default function CRMDashboard() {
         api.get('/crm/pipelines').catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: stagesLeadParams }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: stagesDealParams }).catch(() => ({ data: [] })),
-        api.get('/crm/sources').catch(() => ({ data: [] })),
+        api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
         api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
         api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
         api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
@@ -784,7 +834,12 @@ export default function CRMDashboard() {
       });
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
-      setPipelines(Array.isArray(pipelinesRes.data) ? pipelinesRes.data : []);
+      setPipelines(
+        narrowPipelinesToDefaultForCompany(
+          Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
+          resolvedCompanyId || null,
+        ),
+      );
       const userKey = getCurrentUserKeyForLeadSeen(user);
       const viewedLocal = getLocallyViewedLeadIdSet(userKey);
       const mergeLeadSeenLocal = (rows) =>
@@ -902,15 +957,19 @@ export default function CRMDashboard() {
       return;
     }
     const pageId = filterSource.replace('fbp:', '');
-    if (lastFbFilter.current === pageId) return;
-    lastFbFilter.current = pageId;
+    const co = filterCompany || (user?.company_id ? String(user.company_id) : '');
+    const key = `${pageId}|${co}`;
+    if (lastFbFilter.current === key) return;
+    lastFbFilter.current = key;
     (async () => {
       try {
-        const { data } = await api.get('/crm/leads-by-fb-page', { params: { page_id: pageId, type: pipelineType } });
+        const { data } = await api.get('/crm/leads-by-fb-page', {
+          params: { page_id: pageId, type: pipelineType, ...(co ? { company_id: co } : {}) },
+        });
         setFbPageLeadIds(new Set((data || []).map(l => l.id)));
       } catch { setFbPageLeadIds(new Set()); }
     })();
-  }, [filterSource, pipelineType]);
+  }, [filterSource, pipelineType, filterCompany, user?.company_id]);
 
   // ── Client-side search + filter (instant, no API) ──
   const hasPhoneNumber = useCallback((item) => {
@@ -1048,8 +1107,7 @@ export default function CRMDashboard() {
     });
     try {
       if (isAdmin) {
-        if (filterCompany) localStorage.setItem(LS_CRM_DASH_COMPANY, String(filterCompany));
-        else localStorage.removeItem(LS_CRM_DASH_COMPANY);
+        setStoredCrmFilterCompanyId(filterCompany ? String(filterCompany) : '');
       }
       if (filterLeadType) localStorage.setItem(LS_CRM_DASH_LEAD_TYPE, String(filterLeadType));
       else localStorage.removeItem(LS_CRM_DASH_LEAD_TYPE);
@@ -1121,6 +1179,10 @@ export default function CRMDashboard() {
         if (data.requires_conversion) {
           if (pipelineType === 'lead') setAllLeads(prevLeads);
           else setAllDeals(prevDeals);
+          if (throwOnError) {
+            throw new Error('Thao tác này cần bước chuyển đổi riêng — không áp dụng khi chuyển hàng loạt.');
+          }
+          return;
         }
 
         if (data.deal_won) {
@@ -1191,6 +1253,73 @@ export default function CRMDashboard() {
       await applyKanbanStageChange(leadId, newStageId, extraData);
     },
     [pipelineType, stagesLead, stagesDeal, allLeads, allDeals, applyKanbanStageChange, isAdmin, filterCompany, productionCompaniesForSx],
+  );
+
+  /** Chuyển hàng loạt sang giai đoạn (Kanban) — không áp dụng Thắng / deal đặc biệt */
+  const bulkMoveSelectedToStage = useCallback(
+    async (targetStageId) => {
+      const stages = pipelineType === 'lead' ? stagesLead : stagesDeal;
+      const targetStage = stages.find((s) => String(s.id) === String(targetStageId));
+      if (!targetStage) return;
+      const ids = [...new Set((manualMergeIds || []).map((x) => String(x)).filter(Boolean))];
+      if (!ids.length) return;
+
+      const stageName = String(targetStage?.name || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+      const isProductionStage = stageName.includes('san xuat');
+
+      if (pipelineType === 'lead' && targetStage.is_won) {
+        window.alert('Chuyển sang cột Thắng cần chọn người phụ trách cho từng lead. Vui lòng kéo thẻ hoặc xử lý từng lead.');
+        return;
+      }
+
+      if (pipelineType === 'deal') {
+        if (targetStage.is_won || isProductionStage) {
+          window.alert('Không hỗ trợ chuyển hàng loạt sang giai đoạn Thắng / Sản xuất — vui lòng kéo từng deal.');
+          return;
+        }
+        if (targetStage.create_event_on_enter) {
+          window.alert('Giai đoạn này yêu cầu đặt lịch khi vào — vui lòng kéo từng deal.');
+          return;
+        }
+      }
+
+      if (targetStage.is_lost) {
+        const lostReason = window.prompt(`Nhập lý do thua (áp dụng cho ${ids.length} ${pipelineType === 'deal' ? 'deal' : 'lead'}):`)?.trim();
+        if (!lostReason) return;
+        setBulkMoving(true);
+        try {
+          for (const id of ids) {
+            await applyKanbanStageChange(id, targetStageId, { lost_reason: lostReason }, { throwOnError: true });
+          }
+          setManualMergeIds([]);
+          setBulkStageTarget('');
+          await loadRef.current?.();
+        } catch (e) {
+          window.alert(e.response?.data?.error || e.message || 'Lỗi chuyển giai đoạn');
+        } finally {
+          setBulkMoving(false);
+        }
+        return;
+      }
+
+      setBulkMoving(true);
+      try {
+        for (const id of ids) {
+          await applyKanbanStageChange(id, targetStageId, {}, { throwOnError: true });
+        }
+        setManualMergeIds([]);
+        setBulkStageTarget('');
+        await loadRef.current?.();
+      } catch (e) {
+        window.alert(e.response?.data?.error || e.message || 'Lỗi chuyển giai đoạn');
+      } finally {
+        setBulkMoving(false);
+      }
+    },
+    [pipelineType, stagesLead, stagesDeal, manualMergeIds, applyKanbanStageChange],
   );
 
   const confirmDealWonProduction = async () => {
@@ -1558,7 +1687,7 @@ export default function CRMDashboard() {
               setFilterPhone('has_phone');
               handleTimePresetChange('');
               try {
-                localStorage.removeItem(LS_CRM_DASH_COMPANY);
+                setStoredCrmFilterCompanyId('');
                 localStorage.removeItem(LS_CRM_DASH_LEAD_TYPE);
               } catch {
                 // ignore
@@ -1691,7 +1820,7 @@ export default function CRMDashboard() {
             </div>
 
             {/* Company */}
-            {isAdmin && companies.length > 0 && (
+            {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
               <select
                 value={filterCompany}
                 onChange={e => setFilterCompany(e.target.value)}
@@ -1704,6 +1833,13 @@ export default function CRMDashboard() {
             {!isAdmin && userCompanyId && (
               <span className="h-9 inline-flex items-center px-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
                 🏢 Công ty của bạn
+              </span>
+            )}
+            {isCompanyScopedAdmin && userCompanyId && (
+              <span className="h-9 inline-flex items-center px-3 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-800" title="Tài khoản admin phạm vi một công ty">
+                🏢 {companies.find((c) => String(c.id) === String(userCompanyId))?.short_name
+                  || companies.find((c) => String(c.id) === String(userCompanyId))?.name
+                  || 'Công ty của bạn'}
               </span>
             )}
 
@@ -1867,114 +2003,172 @@ export default function CRMDashboard() {
         ))}
       </div>
 
-      {viewMode === 'kanban' && manualMergeIds.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 mb-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm">
-          <GitMerge className="h-4 w-4 text-amber-700 shrink-0" />
-          <span className="text-amber-900">
-            Đã chọn <strong>{manualMergeIds.length}</strong> {pipelineType === 'deal' ? 'deal' : 'lead'}
-            {manualMergeIds.length < 2 && <span className="text-amber-700/80"> — chọn ít nhất 2 để gộp</span>}
-          </span>
-          {manualMergeIds.length >= 2 && (
-            <button
-              type="button"
-              onClick={() => setManualMergeModalOpen(true)}
-              className="h-9 px-4 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 cursor-pointer shadow-sm"
-            >
-              Gộp đã chọn
-            </button>
+      {showNoPipelineMainViews ? (
+        <div
+          data-tour="crm-no-pipeline"
+          className="rounded-xl border border-amber-200 bg-amber-50/90 px-6 py-10 sm:px-10 sm:py-12 text-center shadow-sm"
+        >
+          <Building2 className="h-12 w-12 mx-auto text-amber-600 mb-4 opacity-90" />
+          <h2 className="text-lg sm:text-xl font-bold text-amber-950 mb-2">Chưa có pipeline CRM cho công ty này</h2>
+          {scopedCompanyName && (
+            <p className="text-sm font-medium text-amber-900/85 mb-3">{scopedCompanyName}</p>
           )}
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => setBulkAssignModalOpen(true)}
-              className="h-9 px-4 rounded-lg bg-white border border-amber-400 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer shadow-sm flex items-center gap-1.5"
+          <p className="text-sm text-amber-900/90 max-w-lg mx-auto mb-6 leading-relaxed">
+            Khi chưa tạo pipeline (và các giai đoạn Lead/Deal), Kanban không có cột nên nhìn như trống. Hãy cấu hình pipeline trước, sau đó tải lại trang.
+          </p>
+          {isAdmin ? (
+            <Link
+              to="/crm/pipeline-settings"
+              className="inline-flex items-center gap-2 h-10 px-5 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 shadow-sm transition-colors"
             >
-              <UserCheck className="h-3.5 w-3.5 shrink-0" />
-              Gán phụ trách
-            </button>
+              Mở cài đặt pipeline
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          ) : (
+            <p className="text-sm text-amber-900/85 max-w-md mx-auto">
+              Vui lòng liên hệ quản trị viên để tạo pipeline và các giai đoạn cho công ty bạn.
+            </p>
           )}
-          <button
-            type="button"
-            onClick={bulkDeleteSelected}
-            disabled={bulkDeleting}
-            className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
-          >
-            <Trash2 className="h-3.5 w-3.5 shrink-0" />
-            {bulkDeleting ? 'Đang xóa…' : `Xóa (${manualMergeIds.length})`}
-          </button>
-          <button
-            type="button"
-            onClick={() => setManualMergeIds([])}
-            className="h-9 px-3 rounded-lg border border-amber-300 text-amber-800 text-xs font-medium hover:bg-amber-100 cursor-pointer"
-          >
-            Bỏ chọn
-          </button>
         </div>
-      )}
-
-      {/* Kanban View */}
-      {viewMode === 'kanban' && (
-      <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
-        <KanbanView
-          pipeline={currentPipeline}
-          onMoveStage={handleMoveStage}
-          pipelineType={pipelineType}
-          calculateDays={calculateDays}
-          mergeSelectedIds={manualMergeIds}
-          onToggleMergeSelect={toggleManualMergeSelect}
-          compact={pipelineType === 'lead'}
-        />
-        {/* Nút Tải thêm 1000 */}
-        {kanbanLoadLimit !== 'all' && (() => {
-          const offset = pipelineType === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
-          const total = pipelineType === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
-          const loaded = pipelineType === 'lead' ? allLeads.length : allDeals.length;
-          const hasMore = total === null || offset < total;
-          if (!hasMore) return null;
-          return (
-            <div className="flex items-center justify-center gap-3 py-3 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
-              <span className="text-xs text-gray-500">
-                Đã tải <span className="font-semibold text-gray-700">{loaded.toLocaleString()}</span>
-                {total !== null && <> / <span className="font-semibold text-indigo-600">{total.toLocaleString()}</span> lead</>}
-              </span>
-              <button
-                onClick={handleLoadMore}
-                disabled={loadMoreState.loading}
-                className="flex items-center gap-1.5 h-8 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:opacity-60 transition-colors"
-              >
-                {loadMoreState.loading
-                  ? <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Đang tải...</>
-                  : <>📥 Tải thêm 1.000 {pipelineType === 'lead' ? 'lead' : 'deal'}</>
-                }
-              </button>
-              <button
-                onClick={() => { setKanbanLoadLimit('all'); localStorage.setItem('crm_kanban_load_limit', 'all'); }}
-                className="h-8 px-3 border border-gray-200 bg-white text-xs text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Tải tất cả
-              </button>
+      ) : (
+        <>
+          {viewMode === 'kanban' && manualMergeIds.length > 0 && (
+            <div className="flex flex-col gap-3 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+              <div className="flex flex-wrap items-center gap-3">
+                <GitMerge className="h-4 w-4 text-amber-700 shrink-0" />
+                <span className="text-amber-900">
+                  Đã chọn <strong>{manualMergeIds.length}</strong> {pipelineType === 'deal' ? 'deal' : 'lead'}
+                  {manualMergeIds.length < 2 && <span className="text-amber-700/80"> — chọn ít nhất 2 để gộp</span>}
+                </span>
+                {manualMergeIds.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setManualMergeModalOpen(true)}
+                    className="h-9 px-4 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 cursor-pointer shadow-sm"
+                  >
+                    Gộp đã chọn
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setBulkAssignModalOpen(true)}
+                    className="h-9 px-4 rounded-lg bg-white border border-amber-400 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer shadow-sm flex items-center gap-1.5"
+                  >
+                    <UserCheck className="h-3.5 w-3.5 shrink-0" />
+                    Gán phụ trách
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={bulkDeleteSelected}
+                  disabled={bulkDeleting}
+                  className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                  {bulkDeleting ? 'Đang xóa…' : `Xóa (${manualMergeIds.length})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setManualMergeIds([])}
+                  className="h-9 px-3 rounded-lg border border-amber-300 text-amber-800 text-xs font-medium hover:bg-amber-100 cursor-pointer"
+                >
+                  Bỏ chọn
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-amber-200/80">
+                <span className="text-xs font-semibold text-amber-900 shrink-0">Chuyển sang giai đoạn:</span>
+                <select
+                  value={bulkStageTarget}
+                  onChange={(e) => setBulkStageTarget(e.target.value)}
+                  disabled={bulkMoving}
+                  className="h-9 min-w-[200px] max-w-full px-3 rounded-lg border border-amber-300 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-60"
+                >
+                  <option value="">— Chọn cột đích —</option>
+                  {(pipelineType === 'lead' ? stagesLead : stagesDeal).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {(s.icon ? `${s.icon} ` : '')}{s.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!bulkStageTarget || bulkMoving}
+                  onClick={() => bulkMoveSelectedToStage(bulkStageTarget)}
+                  className="h-9 px-4 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm"
+                >
+                  {bulkMoving ? 'Đang chuyển…' : 'Chuyển'}
+                </button>
+              </div>
             </div>
-          );
-        })()}
-      </div>
-      )}
+          )}
 
-      {/* List View */}
-      {viewMode === 'list' && (
-        <ListView
-          pipeline={currentPipeline}
-          pipelineType={pipelineType}
-          calculateDays={calculateDays}
-        />
-      )}
+          {/* Kanban View */}
+          {viewMode === 'kanban' && (
+          <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
+            <KanbanView
+              pipeline={currentPipeline}
+              onMoveStage={handleMoveStage}
+              pipelineType={pipelineType}
+              calculateDays={calculateDays}
+              mergeSelectedIds={manualMergeIds}
+              onToggleMergeSelect={toggleManualMergeSelect}
+              onToggleSelectAllInColumn={toggleSelectAllInColumn}
+              compact={pipelineType === 'lead'}
+            />
+            {/* Nút Tải thêm 1000 */}
+            {kanbanLoadLimit !== 'all' && (() => {
+              const offset = pipelineType === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
+              const total = pipelineType === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
+              const loaded = pipelineType === 'lead' ? allLeads.length : allDeals.length;
+              const hasMore = total === null || offset < total;
+              if (!hasMore) return null;
+              return (
+                <div className="flex items-center justify-center gap-3 py-3 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
+                  <span className="text-xs text-gray-500">
+                    Đã tải <span className="font-semibold text-gray-700">{loaded.toLocaleString()}</span>
+                    {total !== null && <> / <span className="font-semibold text-indigo-600">{total.toLocaleString()}</span> lead</>}
+                  </span>
+                  <button
+                    onClick={handleLoadMore}
+                    disabled={loadMoreState.loading}
+                    className="flex items-center gap-1.5 h-8 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:opacity-60 transition-colors"
+                  >
+                    {loadMoreState.loading
+                      ? <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Đang tải...</>
+                      : <>📥 Tải thêm 1.000 {pipelineType === 'lead' ? 'lead' : 'deal'}</>
+                    }
+                  </button>
+                  <button
+                    onClick={() => { setKanbanLoadLimit('all'); localStorage.setItem('crm_kanban_load_limit', 'all'); }}
+                    className="h-8 px-3 border border-gray-200 bg-white text-xs text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Tải tất cả
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+          )}
 
-      {/* Planner View */}
-      {viewMode === 'planner' && (
-        <PlannerView
-          pipeline={currentPipeline}
-          pipelineType={pipelineType}
-          users={users}
-        />
+          {/* List View */}
+          {viewMode === 'list' && (
+            <ListView
+              pipeline={currentPipeline}
+              pipelineType={pipelineType}
+              calculateDays={calculateDays}
+            />
+          )}
+
+          {/* Planner View */}
+          {viewMode === 'planner' && (
+            <PlannerView
+              pipeline={currentPipeline}
+              pipelineType={pipelineType}
+              users={users}
+            />
+          )}
+        </>
       )}
       {viewMode === 'calendar' && (
         <div className="bg-white rounded-xl border p-12 text-center text-gray-500">
@@ -1986,21 +2180,19 @@ export default function CRMDashboard() {
       {showNewLead && (
         <NewLeadModal
           onClose={() => { setShowNewLead(false); load(); }}
-          sources={sources}
           leadTypes={leadTypes}
           companies={companies}
           type={pipelineType}
-          defaultCompanyId={filterCompany || user?.company_id}
+          defaultCompanyId={isAdmin ? (filterCompany || user?.company_id || '') : (user?.company_id ? String(user.company_id) : '')}
           currentUser={user}
         />
       )}
       {showNewDeal && (
         <NewDealModal
           onClose={() => { setShowNewDeal(false); load(); }}
-          sources={sources}
           leadTypes={leadTypes}
           companies={companies}
-          defaultCompanyId={filterCompany || user?.company_id}
+          defaultCompanyId={isAdmin ? (filterCompany || user?.company_id || '') : (user?.company_id ? String(user.company_id) : '')}
           currentUser={user}
         />
       )}
@@ -2690,7 +2882,17 @@ function ManualMergeLeadsModal({ open, onClose, ids, itemsById, pipelineType, on
 
 // Kanban Stage Card - MISA Style (responsive scroll)
 
-function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect, compact }) {
+function KanbanStageCard({
+  stage,
+  items,
+  onMoveStage,
+  pipelineType,
+  calculateDays,
+  mergeSelectedIds,
+  onToggleMergeSelect,
+  onToggleSelectAllInColumn,
+  compact,
+}) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
@@ -2711,6 +2913,10 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
   }, []);
 
   const stageColor = stage.color || '#e5e7eb';
+  const columnItemIds = (items || []).map((i) => i.id);
+  const allInColumnSelected =
+    columnItemIds.length > 0 &&
+    columnItemIds.every((id) => (mergeSelectedIds || []).some((x) => String(x) === String(id)));
 
   const handleColumnDragOver = (e) => {
     e.preventDefault();
@@ -2752,12 +2958,24 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
       <div className={`bg-white border border-gray-200 border-t-0 transition-all ${
         compact ? 'p-2.5' : 'p-4'
       } ${isOverColumn ? 'bg-blue-50' : ''}`}>
-        <div className={`flex items-center justify-between ${compact ? 'mb-1' : 'mb-2'}`}>
+        <div className={`flex items-center justify-between gap-2 ${compact ? 'mb-1' : 'mb-2'}`}>
           <div className="flex items-center gap-1.5 min-w-0">
             <span className={compact ? 'text-base shrink-0' : 'text-lg shrink-0'}>{stage.icon || '📌'}</span>
             <h3 className={`font-semibold text-gray-900 truncate ${compact ? 'text-sm' : ''}`}>{stage.name}</h3>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
+            {columnItemIds.length > 0 && onToggleSelectAllInColumn && (
+              <button
+                type="button"
+                onClick={() => onToggleSelectAllInColumn(columnItemIds)}
+                className={`px-2 py-1 rounded-lg border border-gray-200 bg-white font-semibold text-gray-700 hover:bg-amber-50 hover:border-amber-300 transition-colors ${
+                  compact ? 'text-[10px]' : 'text-xs'
+                }`}
+                title={allInColumnSelected ? 'Bỏ chọn mọi lead/deal trong cột này' : 'Chọn tất cả trong cột'}
+              >
+                {allInColumnSelected ? 'Bỏ chọn cột' : 'Chọn tất cả'}
+              </button>
+            )}
             <span className={`px-2 py-1 bg-gray-100 text-gray-700 font-bold rounded ${compact ? 'text-[10px]' : 'text-xs'}`}>
               {items.length}
             </span>
@@ -2805,8 +3023,14 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineType, calculateDay
 // Kanban Item Card - MISA Style
 function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect, compact }) {
   const navigate = useNavigate();
+  const openLeadDetail = () => {
+    localStorage.setItem('crm_pinned_tab', pipelineType);
+    markCrmPipelineCardFocus(item.id);
+    navigate(`/crm/leads/${item.id}`);
+  };
+
   const handleDragStart = (e) => {
-    if (e.target.closest?.('[data-merge-checkbox]')) {
+    if (e.target.closest?.('[data-kanban-select-zone]')) {
       e.preventDefault();
       return;
     }
@@ -2823,42 +3047,79 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
 
   const selectedForMerge = mergeSelectedIds && mergeSelectedIds.some((x) => String(x) === String(item.id));
 
+  const splitPickZones = !!onToggleMergeSelect;
+
   return (
     <div
       data-crm-pipeline-card={item.id}
       draggable
       onDragStart={handleDragStart}
-      onClick={(e) => {
-        if (e.target.closest?.('[data-merge-checkbox]')) return;
-        localStorage.setItem('crm_pinned_tab', pipelineType);
-        markCrmPipelineCardFocus(item.id);
-        navigate(`/crm/leads/${item.id}`);
-      }}
-      className={`relative bg-white rounded-lg border border-gray-200 transition-all duration-200 cursor-move group hover:-translate-y-0.5 hover:shadow-lg ${
-        compact ? 'p-2 pt-7' : 'p-3 pt-9'
+      onClick={
+        splitPickZones
+          ? undefined
+          : () => {
+              openLeadDetail();
+            }
+      }
+      className={`relative min-h-[7rem] overflow-hidden rounded-lg border border-gray-200 bg-white transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-lg ${
+        splitPickZones ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
       } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{
         borderLeft: `3px solid ${stageColor}`,
       }}
     >
-      {onToggleMergeSelect && (
-        <label
-          data-merge-checkbox
-          className={`absolute z-20 flex items-center justify-center cursor-pointer rounded-md p-0.5 hover:bg-gray-100 ${compact ? 'top-1.5 right-1.5' : 'top-2 right-2'}`}
-          onClick={(ev) => ev.stopPropagation()}
-          onMouseDown={(ev) => ev.stopPropagation()}
-          title="Chọn để gộp thủ công"
-        >
-          <input
-            type="checkbox"
-            checked={!!selectedForMerge}
-            onChange={() => onToggleMergeSelect(item.id)}
-            className={`rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer ${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'}`}
-          />
-        </label>
+      {splitPickZones && (
+        <>
+          {/* Hai vùng màu — chỉ hiện khi hover thẻ */}
+          <div
+            className="pointer-events-none absolute inset-0 z-[5] flex flex-col rounded-lg opacity-0 transition-opacity duration-150 group-hover/card:opacity-100"
+            aria-hidden
+          >
+            <div className="h-[30%] min-h-[2.25rem] shrink-0 border-b border-amber-200/60 bg-amber-100/65" />
+            <div className="min-h-0 flex-1 bg-sky-100/50" />
+          </div>
+
+          <button
+            type="button"
+            data-kanban-select-zone
+            title="30% trên: chọn để gộp / xóa / chuyển hàng loạt"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onToggleMergeSelect(item.id);
+            }}
+            className={`absolute left-0 right-0 top-0 z-20 flex h-[30%] min-h-[2.25rem] cursor-pointer items-center justify-center border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 ${
+              selectedForMerge ? 'ring-1 ring-inset ring-amber-400/70' : ''
+            }`}
+          >
+            <span className="pointer-events-none flex flex-col items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100">
+              <CheckSquare className={`${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-amber-900 drop-shadow-sm`} />
+              <span className={`font-bold text-amber-950 drop-shadow-sm ${compact ? 'text-[9px]' : 'text-[10px]'}`}>Chọn</span>
+            </span>
+          </button>
+
+          <button
+            type="button"
+            data-kanban-detail-zone
+            title="70% dưới: mở chi tiết lead/deal"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              openLeadDetail();
+            }}
+            className="absolute bottom-0 left-0 right-0 top-[30%] z-[15] cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500"
+          >
+            <span className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100">
+              <Eye className={`${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-sky-900 drop-shadow-sm`} />
+              <span className={`font-bold text-sky-950 drop-shadow-sm ${compact ? 'text-[9px]' : 'text-[10px]'}`}>Chi tiết</span>
+            </span>
+          </button>
+        </>
       )}
+
+      <div
+        className={`relative z-0 ${splitPickZones ? 'pointer-events-none' : ''} ${compact ? 'p-2' : 'p-3'}`}
+      >
       {/* Header: Code + Value */}
-      <div className={`flex items-start justify-between pr-7 ${compact ? 'mb-1' : 'mb-2'}`}>
+      <div className={`flex items-start justify-between ${compact ? 'mb-1' : 'mb-2'}`}>
         <p className={`font-semibold text-blue-600 ${compact ? 'text-[10px]' : 'text-xs'}`}>{item.code}</p>
         {item.estimated_value > 0 && (
           <p className={`font-bold text-emerald-600 ${compact ? 'text-[10px] leading-tight text-right max-w-[52%]' : 'text-sm'}`}>{formatVND(item.estimated_value)}</p>
@@ -2989,12 +3250,22 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
           <p className="text-xs text-red-600 line-clamp-2">{item.lost_reason}</p>
         </div>
       )}
+      </div>
     </div>
   );
 }
 
 // Kanban View Container - MISA Style
-function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect, compact }) {
+function KanbanView({
+  pipeline,
+  onMoveStage,
+  pipelineType,
+  calculateDays,
+  mergeSelectedIds,
+  onToggleMergeSelect,
+  onToggleSelectAllInColumn,
+  compact,
+}) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
   const pipelineDraggingRef = useRef(false);
@@ -3133,6 +3404,7 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeS
               calculateDays={calculateDays}
               mergeSelectedIds={mergeSelectedIds}
               onToggleMergeSelect={onToggleMergeSelect}
+              onToggleSelectAllInColumn={onToggleSelectAllInColumn}
               compact={compact}
             />
           ))}
@@ -3143,7 +3415,7 @@ function KanbanView({ pipeline, onMoveStage, pipelineType, calculateDays, mergeS
 }
 
 // ── NEW DEAL MODAL ─────────────────────────────────────────────────────────
-function NewDealModal({ onClose, sources, leadTypes, companies, defaultCompanyId, currentUser }) {
+function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, currentUser }) {
   const isAdmin = currentUser?.role === 'admin';
   const [formData, setFormData] = useState({
     title: '',
@@ -3159,6 +3431,7 @@ function NewDealModal({ onClose, sources, leadTypes, companies, defaultCompanyId
     description: '',
   });
   const [saving, setSaving] = useState(false);
+  const [modalSources, setModalSources] = useState([]);
 
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
@@ -3167,10 +3440,27 @@ function NewDealModal({ onClose, sources, leadTypes, companies, defaultCompanyId
       .filter((t) => t.applies_to === 'both' || t.applies_to === 'deal');
   }, [leadTypes, formData.company_id]);
 
-  // Lock company for non-admin
+  useEffect(() => {
+    const cid = String(formData.company_id || '').trim();
+    if (!cid) {
+      setModalSources([]);
+      return;
+    }
+    let cancelled = false;
+    api.get('/crm/sources', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.data?.sources || (Array.isArray(r.data) ? r.data : []);
+        setModalSources(Array.isArray(list) ? list : []);
+      })
+      .catch(() => { if (!cancelled) setModalSources([]); });
+    return () => { cancelled = true; };
+  }, [formData.company_id]);
+
+  // Lock company for non-admin — ưu tiên company trên user, không lấy filter Kanban (có thể là admin/LS khác)
   useEffect(() => {
     if (isAdmin) return;
-    const cid = defaultCompanyId || currentUser?.company_id || '';
+    const cid = (currentUser?.company_id ? String(currentUser.company_id) : '') || (defaultCompanyId ? String(defaultCompanyId) : '');
     if (cid && String(formData.company_id || '') !== String(cid)) {
       setFormData((prev) => ({ ...prev, company_id: cid }));
     }
@@ -3182,6 +3472,12 @@ function NewDealModal({ onClose, sources, leadTypes, companies, defaultCompanyId
     const ok = visibleLeadTypes.some((t) => String(t.id) === String(formData.lead_type_id));
     if (!ok) setFormData((prev) => ({ ...prev, lead_type_id: '' }));
   }, [formData.company_id, visibleLeadTypes, formData.lead_type_id]);
+
+  useEffect(() => {
+    if (!formData.source_id) return;
+    const ok = modalSources.some((s) => String(s.id) === String(formData.source_id));
+    if (!ok) setFormData((prev) => ({ ...prev, source_id: '' }));
+  }, [modalSources, formData.source_id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -3198,6 +3494,7 @@ function NewDealModal({ onClose, sources, leadTypes, companies, defaultCompanyId
         phone: formData.customer_phone,
         email: formData.customer_email || null,
         address: formData.install_address || null,
+        ...(formData.company_id ? { company_id: formData.company_id } : {}),
       });
       const customerId = customer?.id || customer?.customer?.id;
 
@@ -3299,7 +3596,7 @@ function NewDealModal({ onClose, sources, leadTypes, companies, defaultCompanyId
             <select value={formData.source_id} onChange={e => set('source_id', e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
               <option value="">-- Chọn nguồn --</option>
-              {(sources || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {modalSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
 
@@ -3371,7 +3668,7 @@ function NewDealModal({ onClose, sources, leadTypes, companies, defaultCompanyId
 }
 
 // New Lead Modal - Auto create customer
-function NewLeadModal({ onClose, sources, leadTypes, companies, type, defaultCompanyId, currentUser }) {
+function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, currentUser }) {
   const isAdmin = currentUser?.role === 'admin';
   const [formData, setFormData] = useState({
     title: '',
@@ -3385,6 +3682,7 @@ function NewLeadModal({ onClose, sources, leadTypes, companies, type, defaultCom
     assigned_to: currentUser?.id || '',
   });
   const [saving, setSaving] = useState(false);
+  const [modalSources, setModalSources] = useState([]);
 
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
@@ -3393,10 +3691,27 @@ function NewLeadModal({ onClose, sources, leadTypes, companies, type, defaultCom
       .filter((t) => t.applies_to === 'both' || t.applies_to === 'lead');
   }, [leadTypes, formData.company_id]);
 
-  // Lock company for non-admin
+  useEffect(() => {
+    const cid = String(formData.company_id || '').trim();
+    if (!cid) {
+      setModalSources([]);
+      return;
+    }
+    let cancelled = false;
+    api.get('/crm/sources', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.data?.sources || (Array.isArray(r.data) ? r.data : []);
+        setModalSources(Array.isArray(list) ? list : []);
+      })
+      .catch(() => { if (!cancelled) setModalSources([]); });
+    return () => { cancelled = true; };
+  }, [formData.company_id]);
+
+  // Lock company for non-admin — ưu tiên công ty nhân viên, tránh mặc định Phúc Đạt từ bộ lọc admin/LS
   useEffect(() => {
     if (isAdmin) return;
-    const cid = defaultCompanyId || currentUser?.company_id || '';
+    const cid = (currentUser?.company_id ? String(currentUser.company_id) : '') || (defaultCompanyId ? String(defaultCompanyId) : '');
     if (cid && String(formData.company_id || '') !== String(cid)) {
       setFormData((prev) => ({ ...prev, company_id: cid }));
     }
@@ -3408,6 +3723,12 @@ function NewLeadModal({ onClose, sources, leadTypes, companies, type, defaultCom
     const ok = visibleLeadTypes.some((t) => String(t.id) === String(formData.lead_type_id));
     if (!ok) setFormData((prev) => ({ ...prev, lead_type_id: '' }));
   }, [formData.company_id, visibleLeadTypes, formData.lead_type_id]);
+
+  useEffect(() => {
+    if (!formData.source_id) return;
+    const ok = modalSources.some((s) => String(s.id) === String(formData.source_id));
+    if (!ok) setFormData((prev) => ({ ...prev, source_id: '' }));
+  }, [modalSources, formData.source_id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -3425,11 +3746,14 @@ function NewLeadModal({ onClose, sources, leadTypes, companies, type, defaultCom
       const { data: customer } = await api.post('/customers', {
         full_name: formData.customer_name,
         phone: formData.customer_phone || null,
+        ...(formData.company_id ? { company_id: formData.company_id } : {}),
       });
       const customerId = customer?.id || customer?.customer?.id;
 
-      // 2. Get first lead stage
-      const { data: stages } = await api.get('/crm/pipeline-stages', { params: { type: 'lead' } });
+      // 2. Giai đoạn đầu pipeline đúng công ty
+      const { data: stages } = await api.get('/crm/pipeline-stages', {
+        params: { type: 'lead', ...(formData.company_id ? { company_id: formData.company_id } : {}) },
+      });
       const firstStage = stages?.[0];
 
       // 3. Create lead with customer_id
@@ -3531,7 +3855,7 @@ function NewLeadModal({ onClose, sources, leadTypes, companies, type, defaultCom
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
             >
               <option value="">-- Chọn nguồn --</option>
-              {sources.map(s => (
+              {modalSources.map(s => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
             </select>
