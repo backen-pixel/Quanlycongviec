@@ -270,12 +270,13 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     } catch (e) { console.error(e); }
   };
 
-  const toggleExpand = (taskId, taskNotes) => {
+  const toggleExpand = (task) => {
+    const taskId = task.id;
     if (expandedTask === taskId) {
       setExpandedTask(null);
     } else {
       setExpandedTask(taskId);
-      setTaskNoteText(p => ({ ...p, [taskId]: taskNotes || '' }));
+      setTaskNoteText((p) => ({ ...p, [taskId]: task.notes || '' }));
       loadAttachments(taskId);
     }
   };
@@ -435,7 +436,9 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
     const isExpanded = expandedTask === task.id;
     const atts = taskAttachments[task.id] || [];
-    const hasContent = task.notes || atts.length > 0;
+    const descText = (task.description || '').trim();
+    const hasDesc = !!descText;
+    const hasContent = task.notes || descText || atts.length > 0;
     const fileCount = task.file_count || 0;
     const noteCount = task.note_count || 0;
     const hasNotes = !!task.notes;
@@ -448,7 +451,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           </button>
           <div
             className="flex-1 min-w-0 cursor-pointer"
-            onClick={() => toggleExpand(task.id, task.notes)}
+            onClick={() => toggleExpand(task)}
             title="Click: ghi chú & đính kèm · Double-click: chỉnh sửa nhiệm vụ"
           >
             <p
@@ -460,9 +463,14 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
             >
               {task.title}
             </p>
-            {hasNotes && !isExpanded && (
+            {!isExpanded && hasNotes && (
               <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1 italic" title={task.notes}>
                 💬 {task.notes.slice(0, 80)}{task.notes.length > 80 ? '...' : ''}
+              </p>
+            )}
+            {!isExpanded && !hasNotes && hasDesc && (
+              <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2" title={descText}>
+                📋 {descText.slice(0, 120)}{descText.length > 120 ? '…' : ''}
               </p>
             )}
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
@@ -517,6 +525,11 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
                   <FileText className="h-2.5 w-2.5" />Có ghi chú
                 </span>
               )}
+              {hasDesc && !hasNotes && !isExpanded && (
+                <span className="text-[10px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium">
+                  <FileText className="h-2.5 w-2.5" />Mô tả mẫu
+                </span>
+              )}
               {task.shared_to_project && (
                 <span className="text-[10px] text-green-600 flex items-center gap-0.5">
                   <Share2 className="h-2.5 w-2.5" />Đang chia sẻ
@@ -541,7 +554,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
               title={task.shared_to_project ? 'Đang hiển thị trên Dự án / Khối khác — click để tắt' : 'Bật hiển thị ghi chú & file trên Dự án / Khối khác (team CRM vẫn xem đủ tại đây)'}>
               {task.shared_to_project ? <Share2 className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
             </button>
-            <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(task.id, task.notes); }} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Ghi chú & file">
+            <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(task); }} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Ghi chú & file">
               <Paperclip className="h-3.5 w-3.5" />
             </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); openEditModal(task); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Chỉnh sửa nhiệm vụ">
@@ -554,6 +567,12 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
         {/* Expanded: Notes + Attachments (gộp 1 khu vực) */}
         {isExpanded && (
           <div className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-3 pt-3">
+            {hasDesc && (
+              <div className="rounded-lg bg-slate-50 border border-slate-100 p-2.5">
+                <p className="text-[10px] font-semibold text-slate-500 uppercase mb-1">Mô tả / hướng dẫn (từ mẫu CRM)</p>
+                <p className="text-xs text-slate-700 whitespace-pre-wrap">{descText}</p>
+              </div>
+            )}
             {/* Ghi chú + Upload gộp chung */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -973,12 +992,19 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           onImportDone={(data) => {
             setExcelImportTaskId(null);
             loadTasks();
+            if (data?.draft_only) {
+              setImportToast({
+                message: 'Đã mở trang tạo báo giá với dữ liệu Excel — chỉnh sửa và bấm Lưu để tạo báo giá & hoàn thành nhiệm vụ.',
+                type: 'success',
+              });
+              setTimeout(() => setImportToast(null), 8000);
+              return;
+            }
             let msg = `✅ Đã tạo báo giá ${data.code || ''} — ${formatVND(data.total || 0)}. Task đã hoàn thành!`;
             if (data.synced_products?.length) {
               const linked = data.synced_products?.length || 0;
-              
+
               if (linked > 0) msg += ` 📦 ${linked} sản phẩm đã liên kết với danh mục web.`;
-              
             }
             setImportToast({ message: msg, type: 'success' });
             setTimeout(() => setImportToast(null), 7000);

@@ -76,25 +76,36 @@ const MENU_GROUPS = [
   }
 ];
 
-// CRM menu structure
-const CRM_MENU_GROUPS = [
+/** CRM — chỉ Dashboard, Sự kiện, Ghi âm, Nhóm chat (đầu sidebar) */
+const CRM_MENU_TOP_GROUP = {
+  id: 'crm-overview',
+  moduleKey: 'crm',
+  title: 'Tổng quan',
+  emoji: '📊',
+  items: [
+    { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM' },
+    { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
+    { to: '/tools/voice-recordings', icon: Mic, label: 'Ghi âm' },
+    { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
+  ],
+};
+
+/** CRM — phần còn lại ở cuối sidebar (cuộn riêng) */
+const CRM_MENU_BOTTOM_GROUPS = [
   {
-    id: 'crm-overview',
+    id: 'crm-analytics',
     moduleKey: 'crm',
-    title: '1. Tổng quan',
-    emoji: '📊',
+    title: 'Phân tích & hành trình',
+    emoji: '📈',
     items: [
-      { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM' },
+      { to: '/crm/executive-kpi', icon: BarChart3, label: 'KPI Giám đốc', executiveOnly: true },
       { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
-      { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
-      { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
-      { to: '/tools/voice-recordings', icon: Mic, label: 'Ghi âm' },
-    ]
+    ],
   },
   {
     id: 'crm-sales',
     moduleKey: 'crm',
-    title: '2. Bán hàng',
+    title: 'Bán hàng',
     emoji: '💰',
     items: [
       { to: '/crm/pipeline', icon: Target, label: 'Pipeline & Leads', end: true },
@@ -102,12 +113,12 @@ const CRM_MENU_GROUPS = [
       { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
       { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
       { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },
-    ]
+    ],
   },
   {
     id: 'crm-data',
     moduleKey: 'crm',
-    title: '3. Dữ liệu',
+    title: 'Dữ liệu & cài đặt',
     emoji: '📋',
     items: [
       { to: '/crm/customers', icon: UserCircle, label: 'Khách hàng' },
@@ -122,7 +133,7 @@ const CRM_MENU_GROUPS = [
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
       { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
-    ]
+    ],
   },
 ];
 
@@ -194,7 +205,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end }) {
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, canAccessModule }) {
+function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule }) {
   const [open, setOpen] = useState(true);
 
   if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return null;
@@ -202,6 +213,7 @@ function MenuGroup({ group, collapsed, isAdmin, canAccessModule }) {
   // Filter items based on role + ecosystem module scope
   const items = group.items.filter((item) => {
     if (item.adminOnly && !isAdmin) return false;
+    if (item.executiveOnly && !isExecutive) return false;
     if (item.moduleKey && canAccessModule && !canAccessModule(item.moduleKey)) return false;
     return true;
   });
@@ -268,12 +280,13 @@ export default function Sidebar() {
   }, [location.pathname]);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+  const isExecutive = ['admin', 'manager', 'director', 'supervisor'].includes(user?.role);
   /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó */
   const isCRM =
     location.pathname.startsWith('/crm') || location.pathname.startsWith('/tools/voice-recordings');
   const isSX = location.pathname.startsWith('/sx');
   const isVC = location.pathname.startsWith('/vc');
-  const activeMenuGroups = isVC ? VC_MENU_GROUPS : isSX ? SX_MENU_GROUPS : isCRM ? CRM_MENU_GROUPS : MENU_GROUPS;
+  const activeMenuGroups = isVC ? VC_MENU_GROUPS : isSX ? SX_MENU_GROUPS : isCRM ? null : MENU_GROUPS;
 
   const pinModule = (path) => {
     localStorage.setItem('pinned_module', path);
@@ -457,13 +470,50 @@ export default function Sidebar() {
         <NotificationCenter socket={socket} />
       </div>
 
-      {/* Menu Groups */}
-      <div className="flex-1 overflow-y-auto py-2">
-        {activeMenuGroups.map(group => {
-          // Hide admin-only groups for non-admin
-          if (group.adminOnly && !isAdmin) return null;
-          return <MenuGroup key={group.id} group={group} collapsed={collapsed} isAdmin={isAdmin} canAccessModule={canAccessModule} />;
-        })}
+      {/* Menu Groups — CRM: tổng quan gọn trên, còn lại cuối sidebar */}
+      <div className={`flex-1 flex flex-col min-h-0 ${isCRM ? '' : 'overflow-y-auto'} py-2`}>
+        {isCRM ? (
+          <>
+            <div className="shrink-0">
+              <MenuGroup
+                group={CRM_MENU_TOP_GROUP}
+                collapsed={collapsed}
+                isAdmin={isAdmin}
+                isExecutive={isExecutive}
+                canAccessModule={canAccessModule}
+              />
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
+              {CRM_MENU_BOTTOM_GROUPS.map((group) => {
+                if (group.adminOnly && !isAdmin) return null;
+                return (
+                  <MenuGroup
+                    key={group.id}
+                    group={group}
+                    collapsed={collapsed}
+                    isAdmin={isAdmin}
+                    isExecutive={isExecutive}
+                    canAccessModule={canAccessModule}
+                  />
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          activeMenuGroups.map((group) => {
+            if (group.adminOnly && !isAdmin) return null;
+            return (
+              <MenuGroup
+                key={group.id}
+                group={group}
+                collapsed={collapsed}
+                isAdmin={isAdmin}
+                isExecutive={isExecutive}
+                canAccessModule={canAccessModule}
+              />
+            );
+          })
+        )}
       </div>
 
       {/* User section */}

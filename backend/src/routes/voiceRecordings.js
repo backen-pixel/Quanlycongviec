@@ -181,8 +181,9 @@ r.get('/', async (req, res) => {
     } else {
       q = q.eq('user_id', req.user.userId).limit(200);
     }
+    /** Chưa gắn Lead/Deal: có SĐT hoặc đã có KH nhưng lead_id trống (nhiều cơ hội → chỉ gắn KH). */
     if (unassigned) {
-      q = q.not('phone_number', 'is', null).neq('phone_number', '').is('customer_id', null);
+      q = q.is('lead_id', null);
     }
     if (linkedOnly) {
       q = q.not('lead_id', 'is', null);
@@ -191,7 +192,14 @@ r.get('/', async (req, res) => {
 
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ recordings: (data || []).map(attachPlayableUrl) });
+    let rows = data || [];
+    if (unassigned) {
+      rows = rows.filter((r) => {
+        const hasPhone = r.phone_number && String(r.phone_number).trim() !== '';
+        return hasPhone || r.customer_id;
+      });
+    }
+    res.json({ recordings: rows.map(attachPlayableUrl) });
   } catch (e) {
     console.error('voice-recordings list:', e.message);
     res.status(500).json({ error: e.message || 'Không tải được danh sách' });

@@ -132,7 +132,7 @@ export default function QuotationsPage() {
           onImportDone={(data) => {
             setShowExcelImport(false);
             load();
-            navigate(`/crm/quotations/${data.id}`);
+            if (data?.id) navigate(`/crm/quotations/${data.id}`);
           }}
           onClose={() => setShowExcelImport(false)}
         />

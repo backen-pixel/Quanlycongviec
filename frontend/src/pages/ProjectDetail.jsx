@@ -10,6 +10,7 @@ import {
   ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
   Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign, Pin, ShoppingCart,
+  Wallet,
 } from 'lucide-react';
 import ProjectOrdersTab from '../components/ProjectOrdersTab';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
@@ -18,6 +19,7 @@ import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
 import ProjectFlowTab from '../components/ProjectFlowTab';
 import ProjectCRMTab from '../components/ProjectCRMTab';
+import ProjectCashflowTab from '../components/ProjectCashflowTab';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
@@ -542,6 +544,7 @@ export default function ProjectDetail() {
         {[
           { id: 'tasks', label: 'Công việc', icon: CheckSquare, count: totalTasks },
           { id: 'orders', label: 'Đơn hàng', icon: ShoppingCart, count: orderCount || undefined },
+          { id: 'finance', label: 'Thu chi', icon: Wallet },
           { id: 'flow', label: 'Luồng', icon: ArrowRight },
           { id: 'documents', label: 'Tài liệu', icon: FileText },
           { id: 'approvals', label: 'Duyệt', icon: Shield, count: pendingApprovalCount || undefined },
@@ -749,6 +752,10 @@ export default function ProjectDetail() {
 
       {activeTab === 'orders' && (
         <ProjectOrdersTab projectId={id} users={allUsers} onChanged={load} />
+      )}
+
+      {activeTab === 'finance' && (
+        <ProjectCashflowTab projectId={id} />
       )}
 
       {/* ─── Approvals (Duyệt) Tab ─── */}

@@ -95,6 +95,7 @@ import ReleaseNotesPage from './pages/ReleaseNotesPage';
 import FacebookPage from './pages/FacebookPage';
 import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
+import ExecutiveKpiPage from './pages/ExecutiveKpiPage';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
 import CRMTasksPage from './pages/CRMTasksPage';
@@ -245,6 +246,7 @@ export default function App() {
             <Route path="/crm/events" element={<EventsFeedPage />} />
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
+            <Route path="/crm/executive-kpi" element={<ExecutiveKpiPage />} />
             <Route path="/crm/pipeline" element={<CRMDashboard />} />
             <Route path="/crm/leads/:id" element={<LeadDetail />} />
             <Route path="/crm/quotations" element={<QuotationsPage />} />

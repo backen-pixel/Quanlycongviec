@@ -159,23 +159,85 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
   return { ok: true, count: createdIds.length, task_ids: createdIds };
 }
 
+function isWorkshopCompanyColumnError(err) {
+  const m = String(err?.message || '');
+  return m.includes('workshop_task_templates.company_id') || (m.includes('column') && m.includes('company_id'));
+}
+
+/**
+ * Chọn bộ mẫu mặc định: ưu tiên theo company_id dự án, sau đó bộ toàn cục (company_id NULL), cuối cùng bất kỳ default còn lại.
+ */
+async function resolveDefaultWorkshopTemplateId(workshopArea, companyId) {
+  if (companyId) {
+    const { data, error } = await supabase
+      .from('workshop_task_templates')
+      .select('id')
+      .eq('workshop_area', workshopArea)
+      .eq('is_default', true)
+      .eq('is_active', true)
+      .eq('company_id', companyId)
+      .limit(1)
+      .maybeSingle();
+    if (!error && data?.id) return data.id;
+    if (error && !isWorkshopCompanyColumnError(error)) {
+      console.warn('[workshop-default-template] company template:', error.message);
+    }
+  }
+
+  const { data: globalDef, error: e2 } = await supabase
+    .from('workshop_task_templates')
+    .select('id')
+    .eq('workshop_area', workshopArea)
+    .eq('is_default', true)
+    .eq('is_active', true)
+    .is('company_id', null)
+    .limit(1)
+    .maybeSingle();
+
+  if (!e2 && globalDef?.id) return globalDef.id;
+  if (e2 && !isWorkshopCompanyColumnError(e2)) {
+    console.warn('[workshop-default-template] global template:', e2.message);
+  }
+  if (e2 && isWorkshopCompanyColumnError(e2)) {
+    const { data: legacy } = await supabase
+      .from('workshop_task_templates')
+      .select('id')
+      .eq('workshop_area', workshopArea)
+      .eq('is_default', true)
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+    if (legacy?.id) return legacy.id;
+  }
+
+  const { data: anyDef } = await supabase
+    .from('workshop_task_templates')
+    .select('id')
+    .eq('workshop_area', workshopArea)
+    .eq('is_default', true)
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle();
+  return anyDef?.id || null;
+}
+
 /**
  * Sau khi tạo dự án từ deal thắng: áp bộ mẫu xưởng được đánh dấu «mặc định» (mỗi khu SX / VC-LĐ tối đa 1 bộ).
  */
 async function applyDefaultWorkshopTemplatesForNewProject(projectId, userId) {
+  const { data: proj } = await supabase
+    .from('projects')
+    .select('company_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  const companyId = proj?.company_id || null;
+
   let total = 0;
   for (const area of ['production', 'logistics']) {
     try {
-      const { data: def } = await supabase
-        .from('workshop_task_templates')
-        .select('id')
-        .eq('workshop_area', area)
-        .eq('is_default', true)
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
-      if (!def?.id) continue;
-      const r = await applyWorkshopTemplateToProject(projectId, def.id, userId);
+      const defId = await resolveDefaultWorkshopTemplateId(area, companyId);
+      if (!defId) continue;
+      const r = await applyWorkshopTemplateToProject(projectId, defId, userId);
       if (r.ok) total += r.count;
       else console.warn(`[workshop-default-template] ${area}:`, r.error);
     } catch (e) {
@@ -188,6 +250,7 @@ async function applyDefaultWorkshopTemplatesForNewProject(projectId, userId) {
 module.exports = {
   applyWorkshopTemplateToProject,
   applyDefaultWorkshopTemplatesForNewProject,
+  resolveDefaultWorkshopTemplateId,
   normalizeChecklistForTaskInsert,
   resolveStageIdForWorkshopArea,
 };

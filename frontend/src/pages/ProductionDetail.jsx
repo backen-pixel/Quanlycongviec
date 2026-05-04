@@ -3,6 +3,7 @@ import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
+import { isLeadDocVisibleInModule, parseShareModules } from '../lib/documentShareScope';
 import { useAuth } from '../lib/auth';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
@@ -249,9 +250,20 @@ function getFileIcon(name) {
   return map[ext] || '📄';
 }
 
-/** Row tài liệu — rich preview như CRM DocumentRow */
-function DocRow({ doc, onDelete }) {
+const SHARE_MODULE_OPTIONS = [
+  { id: 'production', label: 'Sản xuất' },
+  { id: 'logistics', label: 'Vận chuyển & LĐ' },
+  { id: 'workshop', label: 'Công việc dự án' },
+];
+
+/** Row tài liệu — rich preview như CRM DocumentRow; crmVisibility = chia sẻ từ lead_documents */
+function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
   const [expanded, setExpanded] = useState(false);
+  const [showVis, setShowVis] = useState(false);
+  const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
+  const [allowedMods, setAllowedMods] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
+  const [savingVis, setSavingVis] = useState(false);
+
   const name = doc.file_name || doc.name || doc.file_path?.split('/').pop() || 'Tài liệu';
   const fileHref = doc.file_url ? pubUrl(doc.file_url) : '';
   const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: name }) : null;
@@ -260,6 +272,38 @@ function DocRow({ doc, onDelete }) {
   const isImage = isFile && (mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name));
   const isVideo = isFile && (mime.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(name));
   const hasExtra = doc.notes || isImage || isVideo;
+  const crmShareUi = typeof doc.shared_to_workshop === 'boolean' && doc.id && onVisibilitySaved;
+  const visibleHere =
+    !workshopModule || isLeadDocVisibleInModule(doc, workshopModule);
+
+  const openVis = () => {
+    setSharedToWorkshop(!!doc.shared_to_workshop);
+    setAllowedMods(parseShareModules(doc.allowed_share_modules) || []);
+    setShowVis(true);
+  };
+
+  const toggleMod = (id) => {
+    setAllowedMods((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const saveVis = async () => {
+    setSavingVis(true);
+    try {
+      await api.put(`/crm/documents/${doc.id}/visibility`, {
+        allowed_companies: doc.allowed_companies ?? null,
+        allowed_departments: doc.allowed_departments ?? null,
+        shared_to_workshop: !!sharedToWorkshop,
+        allowed_share_modules:
+          sharedToWorkshop && allowedMods.length ? allowedMods : null,
+      });
+      setShowVis(false);
+      onVisibilitySaved?.();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu');
+    }
+    setSavingVis(false);
+  };
+
   return (
     <div className="bg-gray-50 rounded-lg border overflow-hidden">
       <div className="flex items-center justify-between p-3">
@@ -267,11 +311,17 @@ function DocRow({ doc, onDelete }) {
           <span className="text-lg shrink-0">{isVideo ? '🎬' : getFileIcon(name)}</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-gray-900 truncate">{name}</p>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs text-gray-500">{isImage ? '🖼️ Ảnh' : isVideo ? '🎬 Video' : '📄 File'}</span>
               {doc.file_size > 0 && <span className="text-[10px] text-gray-400">{doc.file_size > 1048576 ? `${(doc.file_size/1048576).toFixed(1)} MB` : `${(doc.file_size/1024).toFixed(1)} KB`}</span>}
               {doc.created_at && <span className="text-[10px] text-gray-400">{new Date(doc.created_at).toLocaleDateString('vi-VN')}</span>}
               {(doc.uploader?.full_name || doc.creator?.full_name) && <span className="text-[10px] text-gray-400">· {doc.uploader?.full_name || doc.creator?.full_name}</span>}
+              {crmShareUi && doc.shared_to_workshop && Array.isArray(doc.allowed_share_modules) && doc.allowed_share_modules.length > 0 && (
+                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium">🧩 {doc.allowed_share_modules.join(', ')}</span>
+              )}
+              {crmShareUi && workshopModule && !visibleHere && (
+                <span className="text-[9px] bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded-full font-medium">Ẩn ở module này</span>
+              )}
             </div>
           </div>
           {isFile && !isImage && !isVideo && fileOpenProps && (
@@ -279,9 +329,21 @@ function DocRow({ doc, onDelete }) {
           )}
           {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`} />}
         </div>
-        {onDelete && (
-          <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
-        )}
+        <div className="flex items-center shrink-0">
+          {crmShareUi && (
+            <button
+              type="button"
+              title="Chia sẻ module SX / VC / CV — ai được xem"
+              onClick={(e) => { e.stopPropagation(); openVis(); }}
+              className="p-1 hover:bg-slate-200 text-slate-600 rounded cursor-pointer"
+            >
+              ⚙️
+            </button>
+          )}
+          {onDelete && (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+          )}
+        </div>
       </div>
       {isVideo && (
         <div className={`px-3 ${expanded ? 'pb-3' : 'pb-2'}`}>
@@ -299,6 +361,38 @@ function DocRow({ doc, onDelete }) {
             <a {...fileOpenProps} className="block"><img src={fileHref} alt={name} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90" /></a>
           )}
           {doc.notes && <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>}
+        </div>
+      )}
+
+      {showVis && crmShareUi && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={() => !savingVis && setShowVis(false)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-semibold text-gray-900">Ai được xem tài liệu này?</p>
+            <p className="text-xs text-gray-500">Bật chia sẻ xưởng, rồi chọn module (để trống = mọi module SX / VC / CV đều xem).</p>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={sharedToWorkshop} onChange={(e) => setSharedToWorkshop(e.target.checked)} />
+              Chia sẻ sang xưởng (SX / VC)
+            </label>
+            {sharedToWorkshop && (
+              <div className="space-y-1 pl-1">
+                <p className="text-[10px] font-medium text-gray-500 uppercase">Giới hạn module (tùy chọn)</p>
+                {SHARE_MODULE_OPTIONS.map((o) => (
+                  <label key={o.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allowedMods.includes(o.id)}
+                      onChange={() => toggleMod(o.id)}
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => setShowVis(false)} disabled={savingVis}>Hủy</button>
+              <button type="button" className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60" onClick={saveVis} disabled={savingVis}>{savingVis ? '…' : 'Lưu'}</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1248,7 +1342,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     <div className="mb-4">
                       <p className="text-xs font-bold text-gray-500 uppercase mb-2">🔗 Từ CRM — đã chia sẻ xưởng ({project.sharedDocuments.length})</p>
                       <div className="space-y-2">
-                        {project.sharedDocuments.map(doc => <DocRow key={doc.id} doc={doc} />)}
+                        {project.sharedDocuments.map((doc) => (
+                          <DocRow
+                            key={doc.id}
+                            doc={doc}
+                            workshopModule={moduleKey === 'vc' ? 'logistics' : 'production'}
+                            onVisibilitySaved={refreshProjectSilently}
+                          />
+                        ))}
                       </div>
                     </div>
                   )}

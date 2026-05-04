@@ -16,6 +16,7 @@ import CallLogsTab from '../components/CallLogsTab';
 import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
+import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
 import DealStageEventModal from '../components/DealStageEventModal';
@@ -301,11 +302,18 @@ export default function LeadDetail() {
 
   loadRef.current = load;
 
+  /** Cột pipeline có tên chứa «Hoàn thành» — dùng cho Zalo OA và tab Điểm chéo & KH */
   const isDealHoanThanhForZalo = useMemo(() => {
     if (!lead || lead.type !== 'deal') return false;
     const st = stagesDeal.find((s) => s.id === lead.stage_id);
     return !!(st && isCrmDealStageHoanThanhName(st.name));
   }, [lead, stagesDeal]);
+
+  useEffect(() => {
+    if (lead?.type === 'deal' && activeTab === 'deal_scores' && !isDealHoanThanhForZalo) {
+      setActiveTab('tasks');
+    }
+  }, [lead?.type, activeTab, isDealHoanThanhForZalo]);
 
   const noteActivities = useMemo(
     () => (activities || []).filter((a) => a.type === 'note'),
@@ -1119,6 +1127,19 @@ export default function LeadDetail() {
                   ✅ Gửi duyệt deal
                 </button>
               )}
+              {lead?.type === 'deal' && isDealHoanThanhForZalo && (
+                <button
+                  onClick={() => setActiveTab('deal_scores')}
+                  className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                    activeTab === 'deal_scores'
+                      ? 'text-blue-600 border-b-2 border-blue-600'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  title="Chỉ hiện sau khi deal ở cột Hoàn thành"
+                >
+                  ⭐ Điểm chéo & KH
+                </button>
+              )}
             </div>
 
             {/* Tab Content */}
@@ -1367,6 +1388,8 @@ export default function LeadDetail() {
                     )}
                   </div>
                 )
+              ) : activeTab === 'deal_scores' ? (
+                <DealCrossScoresPanel dealLeadId={id} user={user} />
               ) : null}
             </div>
           </div>
@@ -1474,7 +1497,7 @@ export default function LeadDetail() {
           onImportDone={(data) => {
             setShowExcelImport(false);
             load();
-            navigate(`/crm/quotations/${data.id}`);
+            if (data?.id) navigate(`/crm/quotations/${data.id}`);
           }}
           onClose={() => setShowExcelImport(false)}
         />

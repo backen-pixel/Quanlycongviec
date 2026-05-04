@@ -1,10 +1,133 @@
 import { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
 import { useAuth } from '../lib/auth';
-import { Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, Eye, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload, FileSpreadsheet, X, AlertTriangle, Loader2, Eye, ChevronDown, ChevronUp, FileEdit } from 'lucide-react';
+
+/** Dùng chung với QuotationForm (đọc draft khi from_excel=1) */
+export const QUOTATION_EXCEL_DRAFT_KEY = 'quotation_excel_draft_v1';
+
+/**
+ * Từ kết quả parse-excel → payload nội bộ (form + dòng hàng) để đổ vào trang sửa báo giá.
+ * (Logic giữ đồng bộ với tính spec_factor / CK / freebie như bản tạo trực tiếp cũ.)
+ */
+export function buildQuotationDraftFromPreview(preview, file, user, leadId) {
+  const itemsPayload = preview.items
+    .filter((i) => !i.is_group)
+    .map((i) => {
+      let specFactor = 0;
+      let itemDiscount = 0;
+      const qty = i.quantity || 1;
+      let price = i.unit_price || 0;
+      const excelAmount = i.amount || 0;
+      const headerCK = i.group_discount_percent || 0;
+
+      if (i.is_freebie) {
+        itemDiscount = 0;
+        specFactor = 0;
+        price = 0;
+      } else if (price > 0 && qty > 0 && excelAmount > 0) {
+        const rawRatio = excelAmount / (qty * price);
+        if (rawRatio > 1.005) {
+          specFactor = Math.round(rawRatio * 1000) / 1000;
+        } else if (rawRatio >= 0.995) {
+          specFactor = 0;
+        } else {
+          const impliedCK = Math.round((1 - rawRatio) * 10000) / 100;
+          if (headerCK > 0 && Math.abs(impliedCK - headerCK) < 1) {
+            itemDiscount = headerCK;
+          } else {
+            itemDiscount = impliedCK;
+          }
+          specFactor = 0;
+        }
+      }
+
+      return {
+        name: i.name,
+        description: i.description || '',
+        unit: i.unit || 'bộ',
+        quantity: qty,
+        unit_price: price,
+        spec_factor: specFactor,
+        discount_percent: itemDiscount,
+        vat_rate: i.vat_rate || 0,
+        height: i.height || '',
+        width: i.width || '',
+        length: i.length || '',
+        dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '',
+        group_name: i.group_name || '',
+        notes: i.is_freebie ? 'HỖ TRỢ' : (i.notes || ''),
+        is_freebie: !!i.is_freebie,
+      };
+    });
+
+  const itemsGrossTotal = itemsPayload.reduce((s, i) => {
+    const f = parseFloat(i.spec_factor) || 0;
+    const gross =
+      f > 0 ? f * (i.quantity || 1) * (i.unit_price || 0) : (i.quantity || 1) * (i.unit_price || 0);
+    const ck = gross * (i.discount_percent || 0) / 100;
+    return s + (gross - ck);
+  }, 0);
+  const excelGrandTotal = preview.summary?.total || 0;
+  const computedDiscount =
+    excelGrandTotal > 0 && itemsGrossTotal > excelGrandTotal
+      ? Math.round(itemsGrossTotal - excelGrandTotal)
+      : preview.summary?.discount_amount || 0;
+
+  const notesParts = [];
+  if (preview.kts_info) notesParts.push(`KT Phụ trách: ${preview.kts_info}`);
+  if (preview.notes) notesParts.push(preview.notes);
+  const sum = preview.summary;
+  if (sum?.deposit_amount > 0) {
+    const rs =
+      sum.deposit_received === true ? 'Đã nhận' :
+      sum.deposit_received === false ? 'Chưa nhận' : '';
+    notesParts.push(
+      `Cọc: ${formatVND(sum.deposit_amount)}${rs ? ` — ${rs}` : ''}${sum.deposit_label ? `\n${sum.deposit_label}` : ''}`,
+    );
+  }
+  if (sum?.remaining_note || (sum?.remaining_amount != null && sum.remaining_amount > 0)) {
+    notesParts.push(
+      `Còn lại: ${sum.remaining_note || '—'}${sum.remaining_amount > 0 ? ` (${formatVND(sum.remaining_amount)})` : ''}`,
+    );
+  }
+
+  const fileTitle = file?.name?.replace(/\.[^.]+$/, '').trim() || '';
+
+  const todayISO = new Date().toISOString().slice(0, 10);
+
+  return {
+    form: {
+      title: preview.title || fileTitle || `Báo giá ${preview.customer_name || ''}`.trim(),
+      customer_name: preview.customer_name || '',
+      customer_phone: preview.customer_phone || '',
+      customer_address: preview.customer_address || '',
+      lead_id: leadId || '',
+      valid_until: todayISO,
+      discount_type: 'amount',
+      discount_value: computedDiscount,
+      notes: notesParts.join('\n\n'),
+      payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
+      approved_by: user?.id || '',
+      deposit_amount: sum?.deposit_amount > 0 ? sum.deposit_amount : null,
+      deposit_received: sum?.deposit_received === true || sum?.deposit_received === false ? sum.deposit_received : null,
+      deposit_label: sum?.deposit_label || '',
+      remaining_amount: sum?.remaining_amount > 0 ? sum.remaining_amount : null,
+      remaining_note: sum?.remaining_note || '',
+    },
+    items: itemsPayload,
+    meta: {
+      fileName: file?.name || '',
+      importedAt: new Date().toISOString(),
+      requireReviewConfirm: true,
+    },
+  };
+}
 
 export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportDone, onClose }) {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [file, setFile] = useState(null);
   const [parsing, setParsing] = useState(false);
@@ -13,7 +136,6 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
   const [saving, setSaving] = useState(false);
   const [expandGroups, setExpandGroups] = useState({});
   const [descPopup, setDescPopup] = useState(null); // { name, description }
-  const [confirmed, setConfirmed] = useState(false);
   const fileRef = useRef(null);
 
   const handleFileSelect = async (e) => {
@@ -27,7 +149,6 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     setError('');
     setParsing(true);
     setPreview(null);
-    setConfirmed(false);
 
     try {
       const formData = new FormData();
@@ -42,123 +163,29 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     setParsing(false);
   };
 
-  const handleConfirm = async () => {
+  /** Đưa dữ liệu sang trang «Tạo báo giá» để chỉnh sửa; chỉ khi bấm Lưu ở đó mới tạo báo giá & liên kết deal/task. */
+  const handleApplyToQuotationForm = () => {
     if (!preview) return;
     setSaving(true);
     try {
-      // Build quotation payload
-      const itemsPayload = preview.items
-        .filter(i => !i.is_group)
-        .map((i, idx) => {
-          // Tính hệ số quy cách + chiết khấu thực tế per-item từ Excel
-          let specFactor = 0;
-          let itemDiscount = 0;
-          const qty = i.quantity || 1;
-          let price = i.unit_price || 0;
-          const excelAmount = i.amount || 0;
-          // group_discount_percent = CK từ header nhóm (đã tính vào Thành tiền per-item)
-          // group_summary_discount_percent = CK từ summary rows (chưa tính vào Thành tiền, áp tổng nhóm)
-          const headerCK = i.group_discount_percent || 0;
-          const summaryCK = i.group_summary_discount_percent || 0;
-
-          // Freebie: item có text "HỖ TRỢ"/"MIỄN PHÍ"/"TẶNG" → giá = 0, KHÔNG tính CK
-          if (i.is_freebie) {
-            itemDiscount = 0;
-            specFactor = 0;
-            price = 0; // Hỗ trợ = miễn phí, không phải chiết khấu
-          } else if (price > 0 && qty > 0 && excelAmount > 0) {
-            const rawRatio = excelAmount / (qty * price);
-
-            if (rawRatio > 1.005) {
-              // ratio > 1 → có hệ số quy cách (VD: mét dài tủ)
-              specFactor = Math.round(rawRatio * 1000) / 1000;
-              // CK nhóm tủ sẽ nằm ở chiết khấu tổng báo giá, KHÔNG áp per-item
-            } else if (rawRatio >= 0.995) {
-              // ratio ≈ 1 → SL×ĐG = Thành tiền, không CK per-item
-              specFactor = 0;
-            } else {
-              // ratio < 1 → có chiết khấu per-item (Thành tiền đã trừ CK)
-              const impliedCK = Math.round((1 - rawRatio) * 10000) / 100;
-              if (headerCK > 0 && Math.abs(impliedCK - headerCK) < 1) {
-                itemDiscount = headerCK;
-              } else {
-                itemDiscount = impliedCK;
-              }
-              specFactor = 0;
-            }
-          }
-
-          return {
-            name: i.name,
-            description: i.description || '',
-            unit: i.unit || 'bộ',
-            quantity: qty,
-            unit_price: price,
-            spec_factor: specFactor,
-            discount_percent: itemDiscount,
-            vat_rate: i.vat_rate || 0,
-            height: i.height || '',
-            width: i.width || '',
-            length: i.length || '',
-            dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '',
-            group_name: i.group_name || '',
-            notes: i.is_freebie ? 'HỖ TRỢ' : (i.notes || ''),
-            is_freebie: !!i.is_freebie,
-          };
-        });
-
-      // Tính discount_value: ưu tiên grandTotal từ Excel, tính ngược CK
-      const itemsGrossTotal = itemsPayload.reduce((s, i) => {
-        const f = parseFloat(i.spec_factor) || 0;
-        const gross = f > 0 ? f * (i.quantity || 1) * (i.unit_price || 0) : (i.quantity || 1) * (i.unit_price || 0);
-        const ck = gross * (i.discount_percent || 0) / 100;
-        return s + (gross - ck);
-      }, 0);
-      const excelGrandTotal = preview.summary?.total || 0;
-      // Nếu Excel có tổng cộng và nhỏ hơn tổng items → CK = chênh lệch
-      const computedDiscount = (excelGrandTotal > 0 && itemsGrossTotal > excelGrandTotal)
-        ? Math.round(itemsGrossTotal - excelGrandTotal)
-        : (preview.summary?.discount_amount || 0);
-
-        // Build notes: KT phụ trách + notes từ Excel
-        const notesParts = [];
-        if (preview.kts_info) notesParts.push(`KT Phụ trách: ${preview.kts_info}`);
-        if (preview.notes) notesParts.push(preview.notes);
-
-        // Tên file (không extension) làm tên báo giá mặc định
-        const fileTitle = file?.name?.replace(/\.[^.]+$/, '').trim() || '';
-        const payload = {
-          title: preview.title || fileTitle || `Báo giá ${preview.customer_name || ''}`.trim(),
-          customer_name: preview.customer_name || '',
-          customer_phone: preview.customer_phone || '',
-          customer_address: preview.customer_address || '',
-          lead_id: dealId || leadId || '',
-          items: itemsPayload,
-          discount_type: 'amount',
-          discount_value: computedDiscount,
-          notes: notesParts.join('\n\n'),
-          payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
-          // Lưu nhân viên xác nhận (đã tick checkbox "đã kiểm tra")
-          approved_by: user?.id || '',
-        };
-
-      const { data } = await api.post('/crm/quotations', payload);
-      // Hiển thị thông báo auto-link + auto-complete
-      let msg = '';
-      if (data.auto_task) {
-        msg += `🚀 Tự động:\n• Liên kết báo giá ${data.code} với Deal\n• Hoàn thành nhiệm vụ "${data.auto_task.taskTitle}"\n• File báo giá đã ghi vào ghi chú nhiệm vụ\n`;
-      } else if (data.lead_id && !(dealId || leadId)) {
-        msg += `🔗 Tự động liên kết báo giá ${data.code} với Deal qua khách hàng\n`;
+      const resolvedLead = dealId || leadId || '';
+      const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead);
+      sessionStorage.setItem(
+        QUOTATION_EXCEL_DRAFT_KEY,
+        JSON.stringify({ version: 1, ...draft }),
+      );
+      const q = new URLSearchParams();
+      q.set('from_excel', '1');
+      if (resolvedLead) q.set('lead_id', resolvedLead);
+      navigate(`/crm/quotations/new?${q.toString()}`);
+      onClose?.();
+      if (onImportDone) {
+        try {
+          onImportDone({ draft_only: true });
+        } catch (_) {}
       }
-      if (data.synced_products?.length) {
-        const linked = data.synced_products?.length || 0;
-        
-        msg += linked > 0 ? `📦 ${linked} sản phẩm đã liên kết với danh mục web.\n` : '';
-      }
-      if (msg) alert(msg);
-      if (onImportDone) onImportDone(data);
     } catch (e) {
-      setError(e.response?.data?.error || 'Lỗi tạo báo giá');
+      setError(e?.message || 'Không đưa được dữ liệu sang form');
     }
     setSaving(false);
   };
@@ -181,7 +208,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
             </div>
             <div>
               <h2 className="text-lg font-bold text-gray-900">Import báo giá từ Excel</h2>
-              <p className="text-xs text-gray-500">Upload file .xlsx → Xem trước → Tạo báo giá</p>
+              <p className="text-xs text-gray-500">Upload .xlsx → Xem trước → Áp dụng vào form báo giá → Chỉnh sửa → Lưu</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer">
@@ -338,10 +365,23 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
               </div>
 
               {/* Stats */}
-              <div className="flex items-center gap-4 text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="bg-gray-100 px-3 py-1.5 rounded-full font-medium">📋 {itemCount} sản phẩm</span>
                 {groupCount > 0 && <span className="bg-purple-100 text-purple-700 px-3 py-1.5 rounded-full font-medium">📂 {groupCount} nhóm</span>}
                 <span className="bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-full font-medium">💰 {formatVND(preview.summary?.total || preview.summary?.subtotal || 0)}</span>
+                {preview.summary?.deposit_amount > 0 && (
+                  <span className="bg-rose-100 text-rose-800 px-3 py-1.5 rounded-full font-medium border border-rose-200" title={preview.summary?.deposit_label || ''}>
+                    💵 Cọc {formatVND(preview.summary.deposit_amount)}
+                    {preview.summary?.deposit_received === true ? ' · Đã nhận' : ''}
+                    {preview.summary?.deposit_received === false ? ' · Chưa nhận' : ''}
+                  </span>
+                )}
+                {(preview.summary?.remaining_note || preview.summary?.remaining_amount > 0) && (
+                  <span className="bg-slate-100 text-slate-800 px-3 py-1.5 rounded-full font-medium max-w-[min(100%,280px)] truncate" title={preview.summary?.remaining_note || ''}>
+                    📌 Còn lại
+                    {preview.summary?.remaining_amount > 0 ? `: ${formatVND(preview.summary.remaining_amount)}` : ''}
+                  </span>
+                )}
               </div>
 
               {/* Items table - grouped */}
@@ -505,31 +545,15 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
 
         {/* Footer */}
         <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl space-y-3">
-          {preview && (
-            <label className="flex items-center gap-3 cursor-pointer select-none group">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={e => setConfirmed(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-emerald-600 cursor-pointer"
-              />
-              <span className={`text-sm font-medium transition-colors ${confirmed ? 'text-emerald-700' : 'text-gray-600'}`}>
-                {user?.full_name ? (
-                  <><span className="font-bold text-blue-700">{user.full_name}</span> đã kiểm tra lại báo giá và xác nhận số liệu chính xác</>
-                ) : (
-                  'Tôi đã kiểm tra lại báo giá và xác nhận số liệu chính xác'
-                )}
-              </span>
-              {confirmed && <Check className="h-4 w-4 text-emerald-600 flex-shrink-0" />}
-            </label>
-          )}
           <div className="flex items-center justify-between">
             <div className="text-xs text-gray-500">
-              {preview ? (confirmed ? '✅ Sẵn sàng tạo báo giá' : '⚠️ Vui lòng kiểm tra và xác nhận trước khi tạo') : 'Chọn file Excel để bắt đầu'}
+              {!preview
+                ? 'Chọn file Excel để bắt đầu'
+                : '✅ Sau khi áp dụng, tick xác nhận đã kiểm tra số liệu trên trang chỉnh sửa báo giá rồi mới Lưu'}
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap justify-end">
               {preview && (
-                <button onClick={() => { setPreview(null); setFile(null); setConfirmed(false); fileRef.current && (fileRef.current.value = ''); }}
+                <button onClick={() => { setPreview(null); setFile(null); fileRef.current && (fileRef.current.value = ''); }}
                   className="h-9 px-4 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition">
                   🔄 Chọn file khác
                 </button>
@@ -539,10 +563,14 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
                 Hủy
               </button>
               {preview && (
-                <button onClick={handleConfirm} disabled={saving || !confirmed}
-                  className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition">
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  {saving ? 'Đang tạo...' : `✅ Tạo báo giá (${itemCount} SP)`}
+                <button
+                  type="button"
+                  onClick={() => void handleApplyToQuotationForm()}
+                  disabled={saving}
+                  className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileEdit className="h-4 w-4" />}
+                  {saving ? 'Đang mở…' : `Áp dụng vào báo giá (${itemCount} dòng)`}
                 </button>
               )}
             </div>
