@@ -30,6 +30,8 @@ export default function LeadDealWorkTab({
   ordersLoading = false,
   onOrdersRefresh = null,
   onProjectRefresh = null,
+  /** Gọi sau khi thêm/sửa ghi chú hoặc file trên nhiệm vụ CRM — để tab Tài liệu refetch */
+  onArtifactsSynced = null,
 }) {
   const [bootstrapProjectId, setBootstrapProjectId] = useState(null);
   const effectiveProjectId = projectId || bootstrapProjectId;
@@ -63,7 +65,13 @@ export default function LeadDealWorkTab({
             Pipeline tư vấn / báo giá / hợp đồng ở mức <strong>deal cơ sở</strong>. Từng lượt đặt hàng (Đơn 1, 2, …) mỗi bộ
             nhiệm vụ thực hiện ở khối bên dưới; lần đầu sẽ tạo dự án nếu deal chưa có.
           </p>
-          <CRMTasksTab leadId={dealLeadId} leadType="deal" users={users} taskScope="crm" />
+          <CRMTasksTab
+            leadId={dealLeadId}
+            leadType="deal"
+            users={users}
+            taskScope="crm"
+            onArtifactsSynced={onArtifactsSynced}
+          />
         </section>
       )}
 
@@ -96,6 +104,7 @@ export default function LeadDealWorkTab({
             orders={orders}
             users={users}
             onProjectCreated={onProjectCreated}
+            onArtifactsSynced={onArtifactsSynced}
           />
         )}
       </section>
@@ -106,7 +115,17 @@ export default function LeadDealWorkTab({
 /**
  * Cùng layout / hành vi "Thêm đơn" với {@link ProjectOrdersTab}; lần đầu: POST tạo dự án từ deal + POST tạo đơn con.
  */
-function EnsureProjectAndOrders({ dealLeadId, dealCompanyId, isAdminUser, ordersCount, ordersLoading, orders, users, onProjectCreated }) {
+function EnsureProjectAndOrders({
+  dealLeadId,
+  dealCompanyId,
+  isAdminUser,
+  ordersCount,
+  ordersLoading,
+  orders,
+  users,
+  onProjectCreated,
+  onArtifactsSynced = null,
+}) {
   const [newLabel, setNewLabel] = useState('');
   const [creating, setCreating] = useState(false);
   const [msg, setMsg] = useState('');
@@ -213,14 +232,14 @@ function EnsureProjectAndOrders({ dealLeadId, dealCompanyId, isAdminUser, orders
       {msg && <div className="text-sm text-red-800 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{msg}</div>}
 
       {Array.isArray(orders) && orders.some((o) => !o.project_id) && (
-        <CrmOrphanOrderNotes orders={orders} users={users} />
+        <CrmOrphanOrderNotes orders={orders} users={users} onArtifactsSynced={onArtifactsSynced} />
       )}
     </div>
   );
 }
 
 /** Bản ghi từ màn ĐH CRM (chưa gắn dự án) — mở nhiệm vụ / link chi tiết. */
-function CrmOrphanOrderNotes({ orders, users }) {
+function CrmOrphanOrderNotes({ orders, users, onArtifactsSynced = null }) {
   const list = (orders || []).filter((o) => !o.project_id);
   const [openId, setOpenId] = useState(() => (list[0]?.id ? list[0].id : null));
   if (!list.length) return null;
@@ -292,6 +311,7 @@ function CrmOrphanOrderNotes({ orders, users }) {
                       leadType="deal"
                       users={users}
                       taskScope="crm"
+                      onArtifactsSynced={onArtifactsSynced}
                     />
                   </>
                 ) : (

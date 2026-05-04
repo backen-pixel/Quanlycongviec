@@ -6,6 +6,54 @@ const r = Router();
 
 r.use(auth);
 
+function userIsAdmin(role) {
+  return role === 'admin';
+}
+
+/** Admin: query company_id optional (null = tất cả). Không phải admin: luôn company của user. */
+function resolveEventsCompanyScope(req, res) {
+  if (userIsAdmin(req.user?.role)) {
+    const q = req.query.company_id;
+    const id = q && String(q).trim() ? String(q).trim() : null;
+    return { ok: true, companyId: id };
+  }
+  const cid = req.user?.company_id;
+  if (!cid) {
+    res.status(400).json({ error: 'Thiếu company_id của user. Gán công ty cho tài khoản hoặc đăng nhập lại.' });
+    return { ok: false, companyId: null };
+  }
+  return { ok: true, companyId: cid };
+}
+
+async function assertEventCompanyAccess(req, res, eventId) {
+  const sc = resolveEventsCompanyScope(req, res);
+  if (!sc.ok) return false;
+  if (!sc.companyId) return true;
+  const { data: row, error } = await supabase.from('crm_events').select('id, company_id, lead_id').eq('id', eventId).maybeSingle();
+  if (error) throw error;
+  if (!row) {
+    res.status(404).json({ error: 'Không tìm thấy sự kiện' });
+    return false;
+  }
+  if (row.company_id) {
+    if (String(row.company_id) !== String(sc.companyId)) {
+      res.status(403).json({ error: 'Không có quyền truy cập sự kiện này' });
+      return false;
+    }
+    return true;
+  }
+  if (row.lead_id) {
+    const { data: lead } = await supabase.from('crm_leads').select('company_id').eq('id', row.lead_id).maybeSingle();
+    if (lead?.company_id && String(lead.company_id) !== String(sc.companyId)) {
+      res.status(403).json({ error: 'Không có quyền truy cập sự kiện này' });
+      return false;
+    }
+    return true;
+  }
+  res.status(403).json({ error: 'Không có quyền truy cập sự kiện này' });
+  return false;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // EVENT TYPES — Quản lý loại sự kiện
 // ═══════════════════════════════════════════════════════════════
@@ -80,8 +128,11 @@ const EVENT_SELECT = `*,
 // GET /events — Feed (mới nhất trước) with filters
 r.get('/', async (req, res) => {
   try {
+    const sc = resolveEventsCompanyScope(req, res);
+    if (!sc.ok) return;
     const { type, status, user_id, lead_id, customer_id, date_from, date_to, search, limit, offset } = req.query;
     let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
+    if (sc.companyId) q = q.eq('company_id', sc.companyId);
 
     if (type) q = q.eq('event_type', type);
     if (status) q = q.eq('status', status);
@@ -104,17 +155,21 @@ r.get('/', async (req, res) => {
 // GET /events/calendar — Calendar view (events in date range)
 r.get('/calendar', async (req, res) => {
   try {
+    const sc = resolveEventsCompanyScope(req, res);
+    if (!sc.ok) return;
     const { month, year } = req.query; // month: 1-12, year: 2026
     const m = parseInt(month) || new Date().getMonth() + 1;
     const y = parseInt(year) || new Date().getFullYear();
     const startDate = `${y}-${String(m).padStart(2, '0')}-01T00:00:00`;
     const endDate = new Date(y, m, 0, 23, 59, 59).toISOString(); // last day of month
 
-    const { data, error } = await supabase.from('crm_events')
+    let cq = supabase.from('crm_events')
       .select(EVENT_SELECT)
       .gte('start_time', startDate)
       .lte('start_time', endDate)
       .order('start_time');
+    if (sc.companyId) cq = cq.eq('company_id', sc.companyId);
+    const { data, error } = await cq;
     if (error) throw error;
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -123,6 +178,8 @@ r.get('/calendar', async (req, res) => {
 // GET /events/:id
 r.get('/:id', async (req, res) => {
   try {
+    const ok = await assertEventCompanyAccess(req, res, req.params.id);
+    if (!ok) return;
     const { data, error } = await supabase.from('crm_events')
       .select(EVENT_SELECT)
       .eq('id', req.params.id).single();
@@ -176,6 +233,18 @@ r.post('/', async (req, res) => {
         .select('customer_id').eq('id', insert.lead_id).single();
       if (lead?.customer_id) insert.customer_id = lead.customer_id;
     }
+
+    let evCompanyId = null;
+    if (userIsAdmin(req.user?.role) && b.company_id !== undefined && b.company_id !== '') {
+      evCompanyId = String(b.company_id).trim() || null;
+    } else if (!userIsAdmin(req.user?.role)) {
+      evCompanyId = req.user?.company_id ? String(req.user.company_id) : null;
+    }
+    if (!evCompanyId && insert.lead_id) {
+      const { data: lr } = await supabase.from('crm_leads').select('company_id').eq('id', insert.lead_id).maybeSingle();
+      if (lr?.company_id) evCompanyId = String(lr.company_id);
+    }
+    insert.company_id = evCompanyId;
 
     const { data, error } = await supabase.from('crm_events')
       .insert(insert).select(EVENT_SELECT).single();
@@ -234,12 +303,17 @@ r.post('/', async (req, res) => {
 // PUT /events/:id — Sửa sự kiện
 r.put('/:id', async (req, res) => {
   try {
+    const ok = await assertEventCompanyAccess(req, res, req.params.id);
+    if (!ok) return;
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     const fields = ['title', 'description', 'location', 'start_time', 'end_time',
       'all_day', 'status', 'result', 'event_type', 'event_type_id',
       'lead_id', 'customer_id', 'project_id', 'assignee_id'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f] === '' ? null : b[f]; });
+    if (userIsAdmin(req.user?.role) && b.company_id !== undefined) {
+      update.company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
+    }
 
     // If completed, set result
     if (b.status === 'completed' && b.result) update.result = b.result;
@@ -321,6 +395,8 @@ r.put('/:id/respond', async (req, res) => {
 // DELETE /events/:id
 r.delete('/:id', async (req, res) => {
   try {
+    const ok = await assertEventCompanyAccess(req, res, req.params.id);
+    if (!ok) return;
     const { error } = await supabase.from('crm_events').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ success: true });

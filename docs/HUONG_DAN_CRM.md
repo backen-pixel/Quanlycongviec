@@ -1,6 +1,7 @@
 # 📖 HƯỚNG DẪN SỬ DỤNG CRM — TuBep Pro
 
 ## Mục lục
+0. [Admin hệ thống và Admin công ty](#0-admin-hệ-thống-và-admin-công-ty)
 1. [Tổng quan luồng CRM](#1-tổng-quan-luồng-crm)
 2. [Tạo Lead mới](#2-tạo-lead-mới)
 3. [Quản lý Lead — Pipeline Kanban](#3-quản-lý-lead--pipeline-kanban)
@@ -11,6 +12,19 @@
 8. [Tạo Dự án từ Deal](#8-tạo-dự-án-từ-deal)
 9. [Đơn hàng → Hóa đơn → Thu tiền](#9-đơn-hàng--hóa-đơn--thu-tiền)
 10. [Auto-Flow Engine (tự động hóa)](#10-auto-flow-engine)
+
+---
+
+## 0. Admin hệ thống và Admin công ty
+
+Trong hệ thống dùng **cùng role `admin`** trong bảng nhân sự; phân biệt bằng trường **công ty** trên tài khoản (`users.company_id`):
+
+| Loại | Điều kiện | Quyền gần đúng |
+|------|-----------|----------------|
+| **Admin hệ thống (tổng)** | `role = admin` và **không** gán `company_id` | Xem và lọc **mọi công ty** trên CRM (dropdown công ty, pipeline, lead/deal toàn hệ thống). |
+| **Admin công ty** | `role = admin` và **có** `company_id` | Quản trị CRM **chỉ trong công ty đó**: API và danh sách công ty chỉ trả một công ty; không mở được dữ liệu lead/deal công ty khác. Vẫn là admin trong phạm vi công ty (gán NV, sửa pipeline công ty mình, v.v.). |
+
+Nhân viên không phải admin vẫn chỉ thấy lead/deal theo quy tắc phụ trách như trước.
 
 ---
 

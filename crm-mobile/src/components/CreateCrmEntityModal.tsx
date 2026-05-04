@@ -55,7 +55,9 @@ export default function CreateCrmEntityModal({ visible, mode, onClose, onCreated
       try {
         const [co, so] = await Promise.all([
           api.get<{ companies: CrmCompany[] }>('/companies').catch(() => ({ data: { companies: [] } })),
-          api.get<{ sources: CrmSource[] }>('/crm/sources').catch(() => ({ data: { sources: [] } })),
+          api.get<{ sources: CrmSource[] }>('/crm/sources', {
+            params: defaultCompany ? { company_id: defaultCompany } : {},
+          }).catch(() => ({ data: { sources: [] } })),
         ]);
         setCompanies(co.data?.companies || []);
         setSources(so.data?.sources || []);

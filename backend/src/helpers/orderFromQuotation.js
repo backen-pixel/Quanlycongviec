@@ -3,6 +3,7 @@
  */
 function snapshotOrderRowFromQuotation(quote) {
   return {
+    company_id: quote.company_id ?? null,
     customer_id: quote.customer_id,
     customer_name: quote.customer_name,
     customer_phone: quote.customer_phone,

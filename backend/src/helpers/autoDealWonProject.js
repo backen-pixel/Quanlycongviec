@@ -5,8 +5,7 @@ const { syncCrmLeadSxPipelineFromProject } = require('./workshopKanban');
 const { applyDefaultWorkshopTemplatesForNewProject } = require('./workshopApplyTemplates');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('./projectCode');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
-const { syncLeadDocumentsToProject } = require('./syncLeadDocumentsToProject');
-const { copyCrmTaskArtifactsToLeadDocuments } = require('./copyCrmTaskArtifactsToLeadDocuments');
+const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
 
 /**
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
@@ -167,15 +166,9 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
   await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', dealId);
 
   try {
-    await copyCrmTaskArtifactsToLeadDocuments(dealId);
+    await ensureDealLeadDocumentsForModuleTransition({ leadId: dealId, projectId });
   } catch (e) {
-    console.warn('[auto-project] copy CRM task docs → lead_documents:', e.message);
-  }
-
-  try {
-    await syncLeadDocumentsToProject({ leadId: dealId, projectId, shareToWorkshop: true });
-  } catch (e) {
-    console.warn('[auto-project] sync lead_documents → project:', e.message);
+    console.warn('[auto-project] ensure lead_documents:', e.message);
   }
 
   try {

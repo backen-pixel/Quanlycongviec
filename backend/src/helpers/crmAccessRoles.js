@@ -15,6 +15,22 @@ function normalizeCrmUserRole(role) {
   return String(role ?? '').trim().toLowerCase();
 }
 
+/**
+ * Admin hệ thống (tổng): role `admin` và không gắn `company_id` — xem/lọc mọi công ty khi gọi API.
+ * @param {{ role?: string, company_id?: string | null }} user — JWT / req.user
+ */
+function isCrmSystemAdminUser(user) {
+  return normalizeCrmUserRole(user?.role) === 'admin' && !(user?.company_id != null && String(user.company_id).trim() !== '');
+}
+
+/**
+ * Admin theo công ty: role `admin` và có `company_id` — phạm vi dữ liệu chỉ công ty đó (backend ép filter).
+ * @param {{ role?: string, company_id?: string | null }} user
+ */
+function isCrmCompanyAdminUser(user) {
+  return normalizeCrmUserRole(user?.role) === 'admin' && user?.company_id != null && String(user.company_id).trim() !== '';
+}
+
 function userSeesAllCrmDeals(role) {
   return CRM_DEAL_VIEW_ALL_ROLES.has(normalizeCrmUserRole(role));
 }
@@ -95,4 +111,6 @@ module.exports = {
   userSeesAllCrmLeads,
   normalizeCrmUserRole,
   fetchCrmLeadsForCustomerScoped,
+  isCrmSystemAdminUser,
+  isCrmCompanyAdminUser,
 };

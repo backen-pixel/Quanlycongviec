@@ -1261,8 +1261,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   projectId={project.id}
                   users={taskUsers}
                   logisticsView={moduleKey === 'vc'}
-                  taskScope="production"
+                  taskScope={moduleKey === 'vc' ? 'crm' : 'production'}
                   onChanged={() => { refreshProjectSilently(); api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => {}); }}
+                  onTaskArtifactsSynced={refreshProjectSilently}
                 />
               )}
 

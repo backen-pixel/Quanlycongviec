@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
-import { lazy, Suspense, Component } from 'react';
+import { lazy, Suspense, Component, useMemo, useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 
 // Khởi tạo global batch auto-run timer (chạy ngay khi app load)
@@ -97,6 +97,7 @@ import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
 import ExecutiveKpiPage from './pages/ExecutiveKpiPage';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
+import CRMSourcesSettingsPage from './pages/CRMSourcesSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
 import CRMTasksPage from './pages/CRMTasksPage';
 const CRMTemplatesPage = lazy(() => import('./pages/CRMTemplatesPage'));
@@ -130,15 +131,40 @@ import { Settings } from 'lucide-react';
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
 import { ThemeProvider } from './components/ThemeProvider';
 import ThemeSettingsPage from './pages/ThemeSettingsPage';
+import PasswordSettingsPage from './pages/PasswordSettingsPage';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
 import MessengerDock from './components/MessengerDock';
+import { RequireCrmElevated, RequireExecutive } from './components/RequireRole';
+import api from './lib/api';
+import { isCrmOnlyModuleAccess } from './lib/moduleAccess';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const [moduleAccess, setModuleAccess] = useState(null);
 
-  if (loading) {
+  useEffect(() => {
+    if (!user) {
+      setModuleAccess(null);
+      return;
+    }
+    api.get('/ecosystem/my-module-access')
+      .then((r) => setModuleAccess(r.data))
+      .catch(() => setModuleAccess({ allowAll: true }));
+  }, [user]);
+
+  const crmOnly = useMemo(() => isCrmOnlyModuleAccess(moduleAccess), [moduleAccess]);
+
+  useEffect(() => {
+    if (crmOnly) {
+      try {
+        localStorage.setItem('pinned_module', '/crm');
+      } catch { /* ignore */ }
+    }
+  }, [crmOnly]);
+
+  if (loading || (user && moduleAccess === null)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--color-page-bg)]">
         <div className="flex flex-col items-center gap-3">
@@ -153,6 +179,18 @@ function ProtectedLayout() {
   }
 
   if (!user) return <Navigate to="/login" state={{ from: location }} />;
+
+  if (crmOnly) {
+    const path = location.pathname;
+    const allowed =
+      /^\/crm(\/|$)/.test(path) ||
+      path.startsWith('/tools/voice-recordings') ||
+      path.startsWith('/settings/theme') ||
+      path.startsWith('/settings/password');
+    if (!allowed) {
+      return <Navigate to="/crm/dashboard" replace />;
+    }
+  }
 
   // Pages with full-screen layouts (no padding wrapper; main becomes flex column fill)
   const fullscreenPages = ['/projects/create', '/crm/messenger'];
@@ -182,7 +220,7 @@ function ProtectedLayout() {
               )}
             </main>
           </div>
-          <PinnedProjectsWidget />
+          {!crmOnly && <PinnedProjectsWidget />}
         </div>
     </CrmNotesFabProvider>
   );
@@ -246,7 +284,7 @@ export default function App() {
             <Route path="/crm/events" element={<EventsFeedPage />} />
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
-            <Route path="/crm/executive-kpi" element={<ExecutiveKpiPage />} />
+            <Route path="/crm/executive-kpi" element={<RequireExecutive><ExecutiveKpiPage /></RequireExecutive>} />
             <Route path="/crm/pipeline" element={<CRMDashboard />} />
             <Route path="/crm/leads/:id" element={<LeadDetail />} />
             <Route path="/crm/quotations" element={<QuotationsPage />} />
@@ -260,19 +298,21 @@ export default function App() {
             <Route path="/crm/invoices/new" element={<InvoiceForm />} />
             <Route path="/crm/invoices/:id/edit" element={<InvoiceForm />} />
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
-            <Route path="/crm/reports" element={<CRMReports />} />
-            <Route path="/crm/facebook" element={<FacebookPage />} />
-            <Route path="/crm/pipeline-settings" element={<PipelineSettingsPage />} />
+            <Route path="/crm/reports" element={<RequireCrmElevated><CRMReports /></RequireCrmElevated>} />
+            <Route path="/crm/facebook" element={<RequireCrmElevated><FacebookPage /></RequireCrmElevated>} />
+            <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />
+            <Route path="/crm/sources-settings" element={<RequireCrmElevated><CRMSourcesSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
+            <Route path="/settings/password" element={<PasswordSettingsPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
-            <Route path="/settings/misa" element={<MisaSettingsPage />} />
-            <Route path="/settings/api-keys" element={<ApiKeysSettingsPage />} />
+            <Route path="/settings/misa" element={<RequireCrmElevated><MisaSettingsPage /></RequireCrmElevated>} />
+            <Route path="/settings/api-keys" element={<RequireCrmElevated><ApiKeysSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/request-monitor" element={<RequestMonitorPage />} />
-            <Route path="/crm/customers" element={<CustomersPage />} />
+            <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
-            <Route path="/crm/task-templates" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><CRMTemplatesPage /></Suspense>} />
-            <Route path="/crm/auto-project-config" element={<AutoProjectConfigPage />} />
+            <Route path="/crm/task-templates" element={<RequireCrmElevated><Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><CRMTemplatesPage /></Suspense></RequireCrmElevated>} />
+            <Route path="/crm/auto-project-config" element={<RequireCrmElevated><AutoProjectConfigPage /></RequireCrmElevated>} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/sx" element={<ProductionLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />

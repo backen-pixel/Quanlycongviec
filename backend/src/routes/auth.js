@@ -10,10 +10,11 @@ const r = Router();
 // Đăng nhập
 r.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Thiếu email/mật khẩu' });
+    const emailTrim = String(req.body.email || '').trim();
+    const { password } = req.body;
+    if (!emailTrim || !password) return res.status(400).json({ error: 'Thiếu email/mật khẩu' });
 
-    const { data } = await supabase.from('users').select('*').eq('email', email).neq('is_active', false).limit(1);
+    const { data } = await supabase.from('users').select('*').eq('email', emailTrim).neq('is_active', false).limit(1);
     if (!data?.length) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
 
     const user = data[0];
@@ -67,6 +68,43 @@ r.post('/reset-seed-passwords', async (req, res) => {
     if (error) throw error;
     res.json({ ok: true, message: 'Đã reset password cho tất cả seed users thành admin123' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
+});
+
+// Đổi mật khẩu (đã đăng nhập — nhập mật khẩu cũ)
+r.post('/change-password', auth, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body || {};
+    if (current_password == null || new_password == null) {
+      return res.status(400).json({ error: 'Nhập mật khẩu hiện tại và mật khẩu mới' });
+    }
+    const cur = String(current_password);
+    const next = String(new_password);
+    if (next.length < 8) {
+      return res.status(400).json({ error: 'Mật khẩu mới cần ít nhất 8 ký tự' });
+    }
+    if (cur === next) {
+      return res.status(400).json({ error: 'Mật khẩu mới phải khác mật khẩu hiện tại' });
+    }
+    const { data: u, error: fErr } = await supabase
+      .from('users')
+      .select('id, password')
+      .eq('id', req.user.userId)
+      .single();
+    if (fErr || !u) return res.status(404).json({ error: 'Không tìm thấy tài khoản' });
+    if (!(await bcrypt.compare(cur, u.password))) {
+      return res.status(400).json({ error: 'Mật khẩu hiện tại không đúng' });
+    }
+    const hash = await bcrypt.hash(next, 12);
+    const { error: uErr } = await supabase
+      .from('users')
+      .update({ password: hash, updated_at: new Date().toISOString() })
+      .eq('id', req.user.userId);
+    if (uErr) throw uErr;
+    res.json({ ok: true, message: 'Đã đổi mật khẩu' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
 });
 
 // Thông tin user hiện tại

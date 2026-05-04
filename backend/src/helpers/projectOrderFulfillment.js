@@ -393,6 +393,16 @@ async function pushOrderToLogistics({ orderId, projectId, userId }) {
     });
   } catch (_) { /* optional */ }
 
+  try {
+    const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
+    await ensureDealLeadDocumentsForModuleTransition({
+      leadId: order.fulfillment_lead_id,
+      projectId: childProject.id,
+    });
+  } catch (e) {
+    console.warn('[pushOrderToLogistics] ensure lead_documents:', e.message);
+  }
+
   return {
     already: false,
     logistics_project_id: childProject.id,

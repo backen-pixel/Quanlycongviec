@@ -300,6 +300,43 @@ export default function LeadDetail() {
     setOrdersLoading(false);
   }, [id, isAdminUser, productionCompaniesSx]);
 
+  /** Sau khi ghi chú/đính kèm trên nhiệm vụ CRM — đồng bộ ngay tab Tài liệu (gộp deal gốc + deal đơn fulfillment nếu khác). */
+  const refreshTaskSyncedDocuments = useCallback(async (payload) => {
+    if (!id) return;
+    const alt = payload?.artifactLeadId && String(payload.artifactLeadId) !== String(id) ? String(payload.artifactLeadId) : null;
+    const leadIds = alt ? [id, alt] : [id];
+    try {
+      const docLists = await Promise.all(
+        leadIds.map((lid) => api.get(`/crm/leads/${lid}/documents`).catch(() => ({ data: [] }))),
+      );
+      const taskLists = await Promise.all(
+        leadIds.map((lid) => api.get(`/crm/leads/${lid}/task-documents`).catch(() => ({ data: [] }))),
+      );
+      const seenDoc = new Set();
+      const mergedDocs = [];
+      for (const dr of docLists) {
+        for (const d of dr.data || []) {
+          if (!d?.id || seenDoc.has(d.id)) continue;
+          seenDoc.add(d.id);
+          mergedDocs.push(d);
+        }
+      }
+      const seenAtt = new Set();
+      const mergedTask = [];
+      for (const tr of taskLists) {
+        const rows = tr.data || tr || [];
+        for (const a of Array.isArray(rows) ? rows : []) {
+          const k = a?.id || `${a?.task_id}|${a?.file_url}|${a?.name}`;
+          if (seenAtt.has(k)) continue;
+          seenAtt.add(k);
+          mergedTask.push(a);
+        }
+      }
+      setDocuments(mergedDocs);
+      setTaskDocuments(mergedTask);
+    } catch (_) {}
+  }, [id]);
+
   loadRef.current = load;
 
   /** Cột pipeline có tên chứa «Hoàn thành» — dùng cho Zalo OA và tab Điểm chéo & KH */
@@ -319,6 +356,23 @@ export default function LeadDetail() {
     () => (activities || []).filter((a) => a.type === 'note'),
     [activities],
   );
+
+  /** Tài liệu lead: thủ công vs đồng bộ từ NV; tránh lặp với «File nhiệm vụ» khi cùng source_attachment_id. */
+  const { manualLeadDocs, orphanSyncedLeadDocs, documentsTabTotal } = useMemo(() => {
+    const fromTask = (d) =>
+      !!(d?.source_attachment_id || d?.source_crm_task_id || d?.is_from_task);
+    const manual = (documents || []).filter((d) => !fromTask(d));
+    const shownAttIds = new Set(
+      (taskDocuments || []).map((t) => (t?.id != null ? String(t.id) : null)).filter(Boolean),
+    );
+    const orphan = (documents || []).filter((d) => {
+      if (!fromTask(d)) return false;
+      if (d.source_attachment_id != null && shownAttIds.has(String(d.source_attachment_id))) return false;
+      return true;
+    });
+    const total = manual.length + (taskDocuments || []).length + orphan.length;
+    return { manualLeadDocs: manual, orphanSyncedLeadDocs: orphan, documentsTabTotal: total };
+  }, [documents, taskDocuments]);
 
   useEffect(() => {
     if (loading || !lead || !id || String(lead.id) !== String(id)) return;
@@ -1007,7 +1061,7 @@ export default function LeadDetail() {
             </div>
             <div className="bg-amber-50 rounded-lg border border-amber-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">Tài liệu</p>
-              <p className="text-xl font-bold text-amber-600">{documents.filter(d => !d.is_from_task && !d.source_attachment_id).length + taskDocuments.length}</p>
+              <p className="text-xl font-bold text-amber-600">{documentsTabTotal}</p>
             </div>
             <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">File NV</p>
@@ -1042,7 +1096,7 @@ export default function LeadDetail() {
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                📋 Tài liệu ({documents.filter(d => !d.is_from_task && !d.source_attachment_id).length + taskDocuments.length})
+                📋 Tài liệu ({documentsTabTotal})
               </button>
               <button
                 onClick={() => setActiveTab('activities')}
@@ -1157,9 +1211,15 @@ export default function LeadDetail() {
                     ordersLoading={ordersLoading}
                     onOrdersRefresh={reloadOrders}
                     onProjectRefresh={load}
+                    onArtifactsSynced={refreshTaskSyncedDocuments}
                   />
                 ) : (
-                  <CRMTasksTab leadId={id} leadType={lead?.type || 'lead'} users={allUsers} />
+                  <CRMTasksTab
+                    leadId={id}
+                    leadType={lead?.type || 'lead'}
+                    users={allUsers}
+                    onArtifactsSynced={refreshTaskSyncedDocuments}
+                  />
                 )
               ) : activeTab === 'documents' ? (
                 <>
@@ -1279,28 +1339,40 @@ export default function LeadDetail() {
                     </div>
                   )}
 
-                  {/* Lead Documents — chỉ hiện file KHÔNG phải sync từ nhiệm vụ */}
-                  {(() => {
-                    const ownDocs = documents.filter(d => !d.is_from_task && !d.source_attachment_id);
-                    return (
-                      <>
-                        <p className="text-xs font-bold text-gray-500 uppercase mb-2">📄 Tài liệu Lead ({ownDocs.length})</p>
-                        {ownDocs.length === 0 ? (
-                          <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
-                            <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-                            <p className="text-sm text-gray-500">Chưa có tài liệu</p>
-                            <p className="text-xs text-gray-400 mt-1">Upload file hoặc nhập văn bản để thêm tài liệu</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-2 max-h-96 overflow-y-auto">
-                            {ownDocs.map(doc => (
-                              <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
+                  {orphanSyncedLeadDocs.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">
+                        📌 Tài liệu đồng bộ từ nhiệm vụ ({orphanSyncedLeadDocs.length})
+                      </p>
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {orphanSyncedLeadDocs.map((doc) => (
+                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Lead Documents — chỉ file thêm trực tiếp trên deal (không phải bản đồng bộ từ NV) */}
+                  <>
+                    <p className="text-xs font-bold text-gray-500 uppercase mb-2">📄 Tài liệu Lead ({manualLeadDocs.length})</p>
+                    {manualLeadDocs.length === 0 ? (
+                      taskDocuments.length > 0 || orphanSyncedLeadDocs.length > 0 ? (
+                        <p className="text-xs text-gray-500 mb-2 py-2">Chưa có file hay văn bản thêm trực tiếp trên deal (không tính file từ nhiệm vụ).</p>
+                      ) : (
+                        <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
+                          <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                          <p className="text-sm text-gray-500">Chưa có tài liệu</p>
+                          <p className="text-xs text-gray-400 mt-1">Upload file hoặc nhập văn bản để thêm tài liệu</p>
+                        </div>
+                      )
+                    ) : (
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {manualLeadDocs.map((doc) => (
+                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 </>
               ) : activeTab === 'activities' ? (
                 <>
@@ -2093,11 +2165,22 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
     setSxHandoverExpanded(false);
   }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_handover_at, lead?.construction_start_date, lead?.expected_production_start_date, lead?.expected_production_end_date]);
 
-  // Load sources + companies
   useEffect(() => {
-    api.get('/crm/sources').then(r => setSources(r.data?.sources || (Array.isArray(r.data) ? r.data : []))).catch(() => {});
     api.get('/companies', { params: { for_module: 'crm' } }).then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const cid = lead?.company_id || currentUser?.company_id;
+    const params = cid ? { company_id: String(cid) } : {};
+    let cancelled = false;
+    api.get('/crm/sources', { params })
+      .then((r) => {
+        if (cancelled) return;
+        setSources(r.data?.sources || (Array.isArray(r.data) ? r.data : []));
+      })
+      .catch(() => { if (!cancelled) setSources([]); });
+    return () => { cancelled = true; };
+  }, [lead?.company_id, currentUser?.company_id]);
 
   useEffect(() => {
     // Fallback: nhiều lead cũ chưa set company_id → vẫn load theo company của user để hiện danh mục phân loại

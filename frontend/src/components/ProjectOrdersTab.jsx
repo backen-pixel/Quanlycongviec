@@ -5,7 +5,14 @@ import { Plus, Truck, Loader2, ChevronDown, ChevronRight, Package, Factory } fro
 
 // Internal phase UI removed per request.
 
-export default function ProjectOrdersTab({ projectId, users = [], onChanged = null, logisticsView = false, taskScope = 'crm' }) {
+export default function ProjectOrdersTab({
+  projectId,
+  users = [],
+  onChanged = null,
+  logisticsView = false,
+  taskScope = 'crm',
+  onTaskArtifactsSynced = null,
+}) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
@@ -417,7 +424,13 @@ export default function ProjectOrdersTab({ projectId, users = [], onChanged = nu
                 {open && o.fulfillment_lead_id && (
                   <div className="p-4 border-t border-gray-100">
                     <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Nhiệm vụ (deal đơn)</p>
-                    <CRMTasksTab leadId={o.fulfillment_lead_id} leadType="deal" users={users} taskScope={taskScope} />
+                    <CRMTasksTab
+                      leadId={o.fulfillment_lead_id}
+                      leadType="deal"
+                      users={users}
+                      taskScope={taskScope}
+                      onArtifactsSynced={onTaskArtifactsSynced}
+                    />
                   </div>
                 )}
                 {open && !o.fulfillment_lead_id && (

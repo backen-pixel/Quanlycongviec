@@ -1,12 +1,46 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatVND } from '../lib/utils';
-import { Package, Search, Plus, Edit3, X, Save, Boxes, Tag, FolderTree } from 'lucide-react';
+import { Package, Search, Plus, Edit3, X, Save, Boxes, Tag, FolderTree, Building2 } from 'lucide-react';
 
 const UNITS = ['bộ', 'cái', 'mét', 'm²', 'tấm', 'kg', 'chiếc', 'hộp', 'thanh', 'm dài'];
 
+const LS_CRM_PRODUCTS_COMPANY = 'crm_products_filter_company_id';
+
 export default function CRMProductsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [companies, setCompanies] = useState([]);
+  const [filterCompanyId, setFilterCompanyId] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try { return localStorage.getItem(LS_CRM_PRODUCTS_COMPANY) || ''; } catch { return ''; }
+  });
+
+  const listParams = useMemo(
+    () => (isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
+    [isAdmin, filterCompanyId],
+  );
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get('/companies', { params: { for_module: 'crm' } })
+      .then((r) => {
+        const list = r.data?.companies || r.data || [];
+        setCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setCompanies([]));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    try {
+      if (filterCompanyId) localStorage.setItem(LS_CRM_PRODUCTS_COMPANY, filterCompanyId);
+      else localStorage.removeItem(LS_CRM_PRODUCTS_COMPANY);
+    } catch { /* ignore */ }
+  }, [isAdmin, filterCompanyId]);
+
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -17,20 +51,20 @@ export default function CRMProductsPage() {
   const [editing, setEditing] = useState(null);
   const [showCategoryMgr, setShowCategoryMgr] = useState(false);
 
-  useEffect(() => { load(); }, []);
-
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [prodRes, catRes] = await Promise.allSettled([
-        api.get('/crm/products-list'),
-        api.get('/products/categories'),
+        api.get('/crm/products-list', { params: listParams }),
+        api.get('/products/categories', { params: listParams }),
       ]);
       if (prodRes.status === 'fulfilled') setProducts(prodRes.value.data || []);
       if (catRes.status === 'fulfilled') setCategories(catRes.value.data.categories || catRes.value.data || []);
     } catch {}
     setLoading(false);
-  };
+  }, [listParams]);
+
+  useEffect(() => { load(); }, [load]);
 
   const filtered = products.filter(p => {
     if (categoryFilter && p.category_id !== categoryFilter) return false;
@@ -60,7 +94,23 @@ export default function CRMProductsPage() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Package className="h-6 w-6 text-blue-600" /> Sản phẩm CRM</h1>
           <p className="text-sm text-gray-500 mt-1">{products.length} sản phẩm · {categories.length} nhóm ngành</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
+              <select
+                value={filterCompanyId}
+                onChange={(e) => setFilterCompanyId(e.target.value)}
+                className="h-9 min-w-[160px] px-3 border rounded-lg text-sm bg-white"
+                title="Sản phẩm & nhóm ngành theo công ty"
+              >
+                <option value="">Tất cả công ty</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <button onClick={() => setShowCategoryMgr(!showCategoryMgr)} className="h-9 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
             <FolderTree className="h-4 w-4" /> Nhóm ngành
           </button>
@@ -71,7 +121,13 @@ export default function CRMProductsPage() {
       </div>
 
       {/* Category Manager (toggle) */}
-      {showCategoryMgr && <CategoryManager categories={categories} onReload={load} />}
+      {showCategoryMgr && (
+        <CategoryManager
+          categories={categories}
+          companyIdForAdmin={isAdmin && filterCompanyId ? filterCompanyId : null}
+          onReload={load}
+        />
+      )}
 
       {/* Search */}
       <div className="flex items-center gap-3">
@@ -185,12 +241,20 @@ export default function CRMProductsPage() {
         </table>
       </div>
 
-      {showForm && <ProductForm product={editing} categories={categories} onClose={() => setShowForm(false)} onSave={() => { setShowForm(false); load(); }} />}
+      {showForm && (
+        <ProductForm
+          product={editing}
+          categories={categories}
+          companyIdForAdmin={isAdmin && filterCompanyId ? filterCompanyId : null}
+          onClose={() => setShowForm(false)}
+          onSave={() => { setShowForm(false); load(); }}
+        />
+      )}
     </div>
   );
 }
 
-function ProductForm({ product, categories, onClose, onSave }) {
+function ProductForm({ product, categories, companyIdForAdmin, onClose, onSave }) {
   const [form, setForm] = useState({
     name: product?.name || '', code: product?.code || product?.sku || '',
     group: product?.group || product?.code_group || '', 
@@ -212,6 +276,7 @@ function ProductForm({ product, categories, onClose, onSave }) {
         cost_price: parseFloat(form.cost_price) || 0,
         category_id: form.category_id || null,
       };
+      if (!product && companyIdForAdmin) payload.company_id = companyIdForAdmin;
       if (product) await api.put(`/crm/products/${product.id}`, payload);
       else await api.post('/crm/products', payload);
       onSave();
@@ -260,7 +325,7 @@ function ProductForm({ product, categories, onClose, onSave }) {
   );
 }
 
-function CategoryManager({ categories, onReload }) {
+function CategoryManager({ categories, companyIdForAdmin, onReload }) {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -268,7 +333,10 @@ function CategoryManager({ categories, onReload }) {
     if (!name.trim()) return;
     setSaving(true);
     try {
-      await api.post('/products/categories', { name: name.trim() });
+      await api.post('/products/categories', {
+        name: name.trim(),
+        ...(companyIdForAdmin ? { company_id: companyIdForAdmin } : {}),
+      });
       setName('');
       onReload();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }

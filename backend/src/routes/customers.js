@@ -66,11 +66,21 @@ r.get('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
+function customerAdmin(role) {
+  return role === 'admin';
+}
+
 // ─── CREATE CUSTOMER ──
 r.post('/', async (req, res) => {
   try {
     const b = req.body;
     if (!b.full_name) return res.status(400).json({ error: 'Thiếu tên khách hàng' });
+    let commercialCompanyId = null;
+    if (customerAdmin(req.user?.role)) {
+      commercialCompanyId = b.company_id && String(b.company_id).trim() ? String(b.company_id).trim() : null;
+    } else {
+      commercialCompanyId = req.user?.company_id ? String(req.user.company_id) : null;
+    }
     const { data, error } = await supabase.from('customers').insert({
       full_name: b.full_name, phone: b.phone, email: b.email || null,
       address: b.address || null, district: b.district || null, city: b.city || null,
@@ -80,6 +90,7 @@ r.post('/', async (req, res) => {
       assigned_to: b.assigned_to || null, status: b.status || 'new',
       status_id: b.status_id || null,
       tags: b.tags || [],
+      company_id: commercialCompanyId,
     }).select().single();
     if (error) throw error;
     res.status(201).json({ customer: data });

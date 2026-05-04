@@ -2,13 +2,16 @@ import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
   Calendar, List, Plus, Search, Filter, MapPin, Clock, Users, MessageSquare,
   Check, X, ChevronLeft, ChevronRight, Settings, Trash2, Edit3, Send, CheckCircle2,
-  XCircle, AlertCircle, Loader2,
+  XCircle, AlertCircle, Loader2, Building2,
 } from 'lucide-react';
+
+const LS_EVENTS_COMPANY = 'crm_events_filter_company_id';
 
 const STATUS_MAP = {
   planned: { label: 'Đã lên kế hoạch', color: 'bg-blue-100 text-blue-700', icon: Clock },
@@ -46,6 +49,36 @@ function isToday(isoStr) { return isSameDay(isoStr, new Date()); }
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════
 export default function EventsFeedPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [companies, setCompanies] = useState([]);
+  const [filterCompanyId, setFilterCompanyId] = useState(() => {
+    try { return localStorage.getItem(LS_EVENTS_COMPANY) || ''; } catch { return ''; }
+  });
+
+  const listParams = useMemo(
+    () => (isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
+    [isAdmin, filterCompanyId],
+  );
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get('/companies', { params: { for_module: 'crm' } })
+      .then((r) => {
+        const list = r.data?.companies || r.data || [];
+        setCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setCompanies([]));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    try {
+      if (filterCompanyId) localStorage.setItem(LS_EVENTS_COMPANY, filterCompanyId);
+      else localStorage.removeItem(LS_EVENTS_COMPANY);
+    } catch { /* ignore */ }
+  }, [isAdmin, filterCompanyId]);
+
   const [view, setView] = useState('feed'); // feed | calendar | types
   const [events, setEvents] = useState([]);
   const [eventTypes, setEventTypes] = useState([]);
@@ -62,7 +95,7 @@ export default function EventsFeedPage() {
   const [calEvents, setCalEvents] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
   const [createPresetDay, setCreatePresetDay] = useState(null);
-  const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+  const currentUser = user || {};
 
   useEffect(() => {
     loadEventTypes();
@@ -72,14 +105,14 @@ export default function EventsFeedPage() {
   useEffect(() => {
     if (view === 'feed') loadFeed();
     if (view === 'calendar') loadCalendar();
-  }, [view, filterType, filterStatus, filterUser, calMonth, calYear]);
+  }, [view, filterType, filterStatus, filterUser, calMonth, calYear, listParams]);
 
   const loadEventTypes = () => api.get('/events/event-types').then(r => setEventTypes(r.data || [])).catch(() => {});
 
   const loadFeed = async () => {
     setLoading(true);
     try {
-      const params = { limit: 100 };
+      const params = { limit: 100, ...listParams };
       if (filterType) params.type = filterType;
       if (filterStatus) params.status = filterStatus;
       if (filterUser) params.user_id = filterUser;
@@ -93,7 +126,7 @@ export default function EventsFeedPage() {
   const loadCalendar = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/events/calendar', { params: { month: calMonth, year: calYear } });
+      const { data } = await api.get('/events/calendar', { params: { month: calMonth, year: calYear, ...listParams } });
       setCalEvents(data || []);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -131,7 +164,23 @@ export default function EventsFeedPage() {
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">{events.length} sự kiện</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin && (
+            <div className="flex items-center gap-2 mr-1">
+              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
+              <select
+                value={filterCompanyId}
+                onChange={(e) => setFilterCompanyId(e.target.value)}
+                className="h-9 min-w-[160px] px-3 border rounded-lg text-sm bg-white"
+                title="Lọc sự kiện theo công ty"
+              >
+                <option value="">Tất cả công ty</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           {/* View toggle */}
           <div className="flex bg-gray-100 rounded-lg p-0.5">
             <button onClick={() => setView('feed')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'feed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>

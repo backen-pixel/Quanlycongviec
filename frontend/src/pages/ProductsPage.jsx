@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import Modal from '../components/Modal';
-import { Plus, Search, Package, Upload, Download, Trash2, Edit3, Save, X, Settings, ChevronDown, ChevronRight, Eye, FileSpreadsheet } from 'lucide-react';
+import { Plus, Search, Package, Upload, Download, Trash2, Edit3, Save, X, Settings, ChevronDown, ChevronRight, Eye, FileSpreadsheet, Building2 } from 'lucide-react';
 import { formatVND } from '../lib/utils';
 import * as XLSX from 'xlsx';
 
@@ -11,7 +12,40 @@ const CODE_PART_VN = {
   style:'Hình thức', glass:'Kính', type_standard:'Chuẩn loại', side:'Hông', size:'Kích thước',
 };
 
+const LS_PRODUCTS_COMPANY = 'products_page_filter_company_id';
+
 export default function ProductsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [companies, setCompanies] = useState([]);
+  const [filterCompanyId, setFilterCompanyId] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try { return localStorage.getItem(LS_PRODUCTS_COMPANY) || ''; } catch { return ''; }
+  });
+
+  const listParams = useMemo(
+    () => (isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
+    [isAdmin, filterCompanyId],
+  );
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get('/companies', { params: { for_module: 'crm' } })
+      .then((r) => {
+        const list = r.data?.companies || r.data || [];
+        setCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setCompanies([]));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    try {
+      if (filterCompanyId) localStorage.setItem(LS_PRODUCTS_COMPANY, filterCompanyId);
+      else localStorage.removeItem(LS_PRODUCTS_COMPANY);
+    } catch { /* ignore */ }
+  }, [isAdmin, filterCompanyId]);
+
   const [products, setProducts] = useState([]);
   const [codeParts, setCodeParts] = useState({});
   const [total, setTotal] = useState(0);
@@ -29,9 +63,9 @@ export default function ProductsPage() {
     setLoading(true);
     try {
       const [prodRes, codeRes, catRes] = await Promise.allSettled([
-        api.get('/products', { params: { search, category_id: categoryFilter || undefined, limit: 200 } }),
+        api.get('/products', { params: { ...listParams, search, category_id: categoryFilter || undefined, limit: 200 } }),
         api.get('/products/code-parts'),
-        api.get('/products/categories'),
+        api.get('/products/categories', { params: listParams }),
       ]);
       if (prodRes.status === 'fulfilled') {
         setProducts(prodRes.value.data.products || []);
@@ -45,14 +79,14 @@ export default function ProductsPage() {
       }
     } catch {}
     setLoading(false);
-  }, [search, categoryFilter]);
+  }, [search, categoryFilter, listParams]);
 
   useEffect(() => { load(); }, [load]);
 
   // ── Export Excel ──
   const exportExcel = async () => {
     try {
-      const { data } = await api.get('/products/export');
+      const { data } = await api.get('/products/export', { params: listParams });
       if (!data.rows?.length) return alert('Không có sản phẩm để xuất');
       const ws = XLSX.utils.json_to_sheet(data.rows);
       // Set column widths
@@ -242,8 +276,12 @@ export default function ProductsPage() {
 
   const doImport = async (mode) => {
     if (!importData?.rows?.length) return;
+    if (isAdmin && !filterCompanyId && mode !== 'preview') {
+      alert('Vui lòng chọn công ty ở trên (bộ lọc) trước khi import — mỗi công ty có bộ sản phẩm riêng.');
+      return;
+    }
     try {
-      const { data } = await api.post('/products/import', { rows: importData.rows, mode });
+      const { data } = await api.post('/products/import', { rows: importData.rows, mode }, { params: listParams });
       alert(data.message);
       if (mode !== 'preview') { setShowImport(false); setImportData(null); load(); }
       else { setImportData(prev => ({ ...prev, preview: data.preview, errors: data.errors })); }
@@ -278,6 +316,22 @@ export default function ProductsPage() {
           <p className="text-sm text-gray-500 mt-0.5">{total} sản phẩm</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <div className="flex items-center gap-2 mr-1">
+              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
+              <select
+                value={filterCompanyId}
+                onChange={(e) => setFilterCompanyId(e.target.value)}
+                className="h-9 min-w-[180px] px-3 border rounded-lg text-sm bg-white"
+                title="Lọc sản phẩm & nhóm ngành theo công ty"
+              >
+                <option value="">Tất cả công ty</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <button onClick={() => setShowCodeParts(!showCodeParts)} className="h-9 px-3 bg-gray-100 text-gray-700 rounded-lg text-xs hover:bg-gray-200 flex items-center gap-1.5 cursor-pointer">
             <Settings className="h-3.5 w-3.5" /> Cấu trúc mã
           </button>
@@ -381,7 +435,16 @@ export default function ProductsPage() {
       </div>
 
       {/* Add/Edit Modal */}
-      {showAdd && <ProductFormModal codeParts={codeParts} categories={categories} editId={editId} onClose={() => { setShowAdd(false); setEditId(null); }} onSaved={load} />}
+      {showAdd && (
+        <ProductFormModal
+          codeParts={codeParts}
+          categories={categories}
+          editId={editId}
+          companyIdForAdmin={isAdmin && filterCompanyId ? filterCompanyId : null}
+          onClose={() => { setShowAdd(false); setEditId(null); }}
+          onSaved={load}
+        />
+      )}
 
       {/* Import Preview Modal — full table immediately */}
       {showImport && importData && (
@@ -484,7 +547,7 @@ export default function ProductsPage() {
 }
 
 // ═══ Product Form Modal ═══
-function ProductFormModal({ codeParts, categories, editId, onClose, onSaved }) {
+function ProductFormModal({ codeParts, categories, editId, companyIdForAdmin, onClose, onSaved }) {
   const [form, setForm] = useState({
     name: '', unit: 'bộ', selling_price: '', base_price: '', description: '', category_id: '',
     code_group: '', code_spec: '', code_standard: '', code_category: '',
@@ -525,6 +588,7 @@ function ProductFormModal({ codeParts, categories, editId, onClose, onSaved }) {
     setLoading(true);
     try {
       const payload = { ...form, selling_price: +form.selling_price || 0, base_price: +form.base_price || 0, category_id: form.category_id || null };
+      if (companyIdForAdmin) payload.company_id = companyIdForAdmin;
       if (editId) await api.put(`/products/${editId}`, payload);
       else await api.post('/products', payload);
       onSaved(); onClose();

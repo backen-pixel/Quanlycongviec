@@ -1,4 +1,5 @@
 const { supabase } = require('../config/supabase');
+const { getLeadDocumentFieldsFromCrmTask } = require('./crmTaskLeadDocumentMeta');
 
 /**
  * Đưa đính kèm nhiệm vụ CRM và ghi chú task vào lead_documents (cùng lead_id deal).
@@ -12,10 +13,14 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
   let notesCopied = 0;
   if (!leadId) return { attachmentsCopied, notesCopied };
 
+  const { data: leadRow } = await supabase.from('crm_leads')
+    .select('project_id').eq('id', leadId).maybeSingle();
+  const linkOpts = { linkToProject: !!leadRow?.project_id };
+
   try {
     const { data: dealTaskAtts } = await supabase
       .from('crm_task_attachments')
-      .select('*, task:crm_tasks(title, stage_slug)')
+      .select('*, task:crm_tasks(id, title, stage_slug)')
       .eq('lead_id', leadId);
 
     if (dealTaskAtts?.length) {
@@ -39,6 +44,7 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
           mime_type: att.mime_type || null,
           notes: att.notes || null,
           created_by: att.created_by,
+          ...getLeadDocumentFieldsFromCrmTask(att.task, linkOpts),
         }));
       if (newDocInserts.length) {
         const { error } = await supabase.from('lead_documents').insert(newDocInserts);
@@ -73,6 +79,7 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
           doc_type: 'requirement',
           notes: t.notes,
           created_by: t.created_by,
+          ...getLeadDocumentFieldsFromCrmTask(t, linkOpts),
         }));
       if (noteInserts.length) {
         const { error } = await supabase.from('lead_documents').insert(noteInserts);

@@ -50,18 +50,47 @@ function fbActivitySourceLabel(c) {
 // FACEBOOK INTEGRATION PAGE
 // ═══════════════════════════════════════════════════════════════
 
+const LS_FB_COMPANY = 'facebook_filter_company_id';
+
 export default function FacebookPage() {
-  const { socket } = useAuth();
+  const { socket, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [companies, setCompanies] = useState([]);
+  const [filterFbCompany, setFilterFbCompany] = useState(() => {
+    try { return localStorage.getItem(LS_FB_COMPANY) || ''; } catch { return ''; }
+  });
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get('tab') || 'inbox');
   const [stats, setStats] = useState(null);
 
-  const loadStats = useCallback(() => {
-    fetch(`${API}/api/facebook/stats`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : {}).then(setStats).catch(() => {});
-  }, []);
+  const fbCompanyQs = useMemo(() => (isAdmin && filterFbCompany ? `company_id=${encodeURIComponent(filterFbCompany)}` : ''), [isAdmin, filterFbCompany]);
 
-  useEffect(() => { loadStats(); }, [tab, loadStats]);
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch(`${API}/api/companies?for_module=crm`, { headers: hdr() })
+      .then((r) => r.ok ? r.json() : {})
+      .then((d) => {
+        const list = d?.companies || d || [];
+        setCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setCompanies([]));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    try {
+      if (filterFbCompany) localStorage.setItem(LS_FB_COMPANY, filterFbCompany);
+      else localStorage.removeItem(LS_FB_COMPANY);
+    } catch { /* ignore */ }
+  }, [isAdmin, filterFbCompany]);
+
+  const loadStats = useCallback(() => {
+    const q = fbCompanyQs ? `?${fbCompanyQs}` : '';
+    fetch(`${API}/api/facebook/stats${q}`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : {}).then(setStats).catch(() => {});
+  }, [fbCompanyQs]);
+
+  useEffect(() => { loadStats(); }, [tab, loadStats, fbCompanyQs]);
 
   useEffect(() => {
     const nextTab = searchParams.get('tab');
@@ -88,7 +117,7 @@ export default function FacebookPage() {
   return (
     <div className="h-[calc(100vh-64px)] flex flex-col bg-gray-100">
       <div className="border-b bg-white px-6 py-3 flex items-center justify-between shrink-0 shadow-sm">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl flex items-center justify-center shadow-sm">
             <span className="text-white font-bold text-sm">f</span>
           </div>
@@ -96,6 +125,19 @@ export default function FacebookPage() {
             <h1 className="text-base font-bold text-gray-800">Facebook Messenger</h1>
             <p className="text-[11px] text-gray-400">Quản lý tin nhắn & khách hàng</p>
           </div>
+          {isAdmin && (
+            <select
+              value={filterFbCompany}
+              onChange={(e) => setFilterFbCompany(e.target.value)}
+              className="h-9 min-w-[170px] px-3 border rounded-lg text-sm bg-white"
+              title="Lọc Page/chỉ số theo công ty (default_company_id trên Page)"
+            >
+              <option value="">Tất cả công ty</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+          )}
         </div>
         {stats && (
           <div className="flex gap-4 text-xs text-gray-500">
@@ -121,8 +163,8 @@ export default function FacebookPage() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} />}
-        {tab === 'contacts' && <ContactsTab />}
+        {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} fbCompanyQs={fbCompanyQs} />}
+        {tab === 'contacts' && <ContactsTab fbCompanyQs={fbCompanyQs} />}
         {tab === 'analytics' && <AnalyticsTab />}
         {tab === 'lead-ads' && <LeadAdsTab />}
         {tab === 'comments' && <CommentsTab />}
@@ -173,7 +215,7 @@ function PageSelector({ value, onChange, pages, pageStats }) {
   );
 }
 
-function InboxTab({ pageStats }) {
+function InboxTab({ pageStats, fbCompanyQs = '' }) {
   const { socket } = useAuth();
   const [searchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
@@ -199,9 +241,10 @@ function InboxTab({ pageStats }) {
 
   // Load pages
   useEffect(() => {
-    fetch(`${API}/api/facebook/pages`, { headers: hdr() })
+    const q = fbCompanyQs ? `?${fbCompanyQs}` : '';
+    fetch(`${API}/api/facebook/pages${q}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : []).then(setPages).catch(() => {});
-  }, []);
+  }, [fbCompanyQs]);
 
   const loadContacts = useCallback((append = false) => {
     const params = new URLSearchParams();
@@ -209,6 +252,9 @@ function InboxTab({ pageStats }) {
     if (pageFilter) params.set('page_id', pageFilter);
     params.set('limit', String(contactLimit));
     params.set('offset', append ? String(contactMeta.nextOffset || 0) : '0');
+    if (fbCompanyQs) {
+      new URLSearchParams(fbCompanyQs).forEach((v, k) => params.set(k, v));
+    }
     const qs = params.toString() ? `?${params}` : '';
     fetch(`${API}/api/facebook/contacts${qs}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
@@ -229,7 +275,7 @@ function InboxTab({ pageStats }) {
         setContacts(sorted);
         setContactMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       }).catch(() => {});
-  }, [search, pageFilter, contactLimit, contactMeta.nextOffset, contacts]);
+  }, [search, pageFilter, contactLimit, contactMeta.nextOffset, contacts, fbCompanyQs]);
 
   useEffect(() => { loadContacts(false); }, [loadContacts]);
 
@@ -830,7 +876,7 @@ function CreateLeadButton({ contactId, onCreated }) {
 // CONTACTS TAB — Danh bạ Facebook (CRUD)
 // ═══════════════════════════════════════════════════════════════
 
-function ContactsTab() {
+function ContactsTab({ fbCompanyQs = '' }) {
   const navigate = useNavigate();
   const { socket } = useAuth();
   const [contacts, setContacts] = useState([]);
@@ -983,6 +1029,9 @@ function ContactsTab() {
     if (filter === 'no_lead') p.set('has_lead', 'false');
     p.set('limit', '200');
     p.set('offset', append ? String(meta.nextOffset || 0) : '0');
+    if (fbCompanyQs) {
+      new URLSearchParams(fbCompanyQs).forEach((v, k) => p.set(k, v));
+    }
     fetch(`${API}/api/facebook/contacts?${p}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
       .then(payload => {
@@ -1003,7 +1052,7 @@ function ContactsTab() {
         setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       })
       .catch(() => {});
-  }, [search, filter, meta.nextOffset, sortContacts]);
+  }, [search, filter, meta.nextOffset, sortContacts, fbCompanyQs]);
 
   useEffect(() => { load(false); }, [load]);
 

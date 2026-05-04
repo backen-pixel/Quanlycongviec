@@ -37,7 +37,7 @@ const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
-export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], taskScope = 'all' }) {
+export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], taskScope = 'all', onArtifactsSynced = null }) {
   const [tasks, setTasks] = useState([]);
   const isSxOrderTaskFlow = useMemo(
     () => leadType === 'deal' && tasks.some((t) => String(t.stage_slug || '').startsWith('sx_')),
@@ -61,6 +61,12 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   const [editForm, setEditForm] = useState({});
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   const isProductionScope = taskScope === 'production';
+
+  const notifyArtifactsSynced = () => {
+    try {
+      onArtifactsSynced?.({ artifactLeadId: leadId });
+    } catch (_) { /* ignore */ }
+  };
 
   const loadTasks = async () => {
     setLoading(true);
@@ -287,6 +293,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       await api.put(`/crm/leads/${leadId}/tasks/${taskId}/notes`, { notes: taskNoteText[taskId] || '' });
       // Update local tasks state
       setTasks(prev => prev.map(t => t.id === taskId ? { ...t, notes: taskNoteText[taskId] } : t));
+      notifyArtifactsSynced();
       setSavingNote('saved-' + taskId);
       setTimeout(() => setSavingNote(null), 1500);
     } catch (e) {
@@ -386,6 +393,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
         await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments/bulk`, { items });
         loadAttachments(taskId);
         loadTasks(); // Refresh counts
+        notifyArtifactsSynced();
       } catch (err) {
         setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
         alert(err.response?.data?.error || err.message || 'Upload lỗi');
@@ -407,6 +415,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       setAttNoteText('');
       setAttNoteName('');
       loadAttachments(taskId);
+      notifyArtifactsSynced();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi thêm ghi chú'); }
   };
 
@@ -415,6 +424,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     try {
       await api.delete(`/crm/leads/${leadId}/tasks/${taskId}/attachments/${attId}`);
       loadAttachments(taskId);
+      notifyArtifactsSynced();
     } catch (e) { alert('Lỗi'); }
   };
 
@@ -425,6 +435,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
         ...p,
         [taskId]: (p[taskId] || []).map(a => a.id === attId ? { ...a, shared_to_project: data.shared_to_project } : a)
       }));
+      notifyArtifactsSynced();
     } catch (e) { alert('Lỗi chia sẻ'); }
   };
 
@@ -992,6 +1003,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           onImportDone={(data) => {
             setExcelImportTaskId(null);
             loadTasks();
+            notifyArtifactsSynced();
             if (data?.draft_only) {
               setImportToast({
                 message: 'Đã mở trang tạo báo giá với dữ liệu Excel — chỉnh sửa và bấm Lưu để tạo báo giá & hoàn thành nhiệm vụ.',

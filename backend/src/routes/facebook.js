@@ -18,6 +18,11 @@ const {
 } = require('../helpers/facebookPhoneExtract');
 const { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed } = require('../helpers/facebookLeadDeleteWhenNoPhone');
 const { reconcileInboundPhoneAfterScan, phonesEqualDigits } = require('../helpers/facebookInboundPhoneReconcile');
+const {
+  loadConfig: loadAutoLeadConfig,
+  saveConfig: saveAutoLeadConfig,
+  DEFAULT_CONFIG: AUTO_LEAD_DEFAULTS,
+} = require('../config/autoLeadConfig');
 
 // Disable DB logging to facebook_webhook_logs to reduce Supabase egress.
 // Set FB_DISABLE_WEBHOOK_LOGS=1 (or true/yes/on) in env to enable.
@@ -563,8 +568,7 @@ async function runPipelineV2OnePass({
   cleanupContactsWithLead = false,
   cleanupLimit = 0,
 } = {}) {
-  const { getConfig: getAutoLeadConfig } = require('../config/autoLeadConfig');
-  const autoLeadCfg = getAutoLeadConfig();
+  const autoLeadCfg = await loadAutoLeadConfig();
   const triggerMode = String(autoLeadCfg?.trigger || 'first_message');
   /** manual = vẫn đồng bộ tin + quét SĐT; không tự tạo lead hàng loạt */
   const skipAutoLeadCreation = triggerMode === 'manual';
@@ -1390,7 +1394,29 @@ async function persistPageDefaultSourceId(page, sourceId) {
  */
 async function resolveFacebookSourceId(page) {
   if (!page?.page_id) return null;
-  if (page.default_source_id) return page.default_source_id;
+
+  /** Ưu page → công ty mặc định trong tab Facebook (auto_lead_config / app_settings) */
+  let fallbackCompanyId = page.default_company_id || null;
+  if (!fallbackCompanyId) {
+    try {
+      const cfg = await loadAutoLeadConfig();
+      if (cfg?.default_company_id) fallbackCompanyId = cfg.default_company_id;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const fbSourcePatch = (extra = {}) => ({
+    ...extra,
+    ...(fallbackCompanyId ? { company_id: fallbackCompanyId } : {}),
+  });
+
+  if (page.default_source_id) {
+    if (fallbackCompanyId) {
+      await supabase.from('crm_sources').update({ company_id: fallbackCompanyId }).eq('id', page.default_source_id);
+    }
+    return page.default_source_id;
+  }
 
   const pid = String(page.page_id).trim();
   const pnm = (page.page_name || pid).trim();
@@ -1402,6 +1428,9 @@ async function resolveFacebookSourceId(page) {
     .eq('name', canonicalName)
     .limit(1);
   if (exactRows?.[0]?.id) {
+    if (fallbackCompanyId) {
+      await supabase.from('crm_sources').update({ company_id: fallbackCompanyId }).eq('id', exactRows[0].id);
+    }
     await persistPageDefaultSourceId(page, exactRows[0].id);
     return exactRows[0].id;
   }
@@ -1414,7 +1443,7 @@ async function resolveFacebookSourceId(page) {
     .limit(1);
   const byPage = byPageIdRows?.[0];
   if (byPage?.id) {
-    await supabase.from('crm_sources').update({ name: canonicalName, is_active: true }).eq('id', byPage.id);
+    await supabase.from('crm_sources').update(fbSourcePatch({ name: canonicalName, is_active: true })).eq('id', byPage.id);
     await persistPageDefaultSourceId(page, byPage.id);
     return byPage.id;
   }
@@ -1429,15 +1458,16 @@ async function resolveFacebookSourceId(page) {
       .limit(1);
     const legacy = legacyRows?.[0];
     if (legacy?.id) {
-      await supabase.from('crm_sources').update({ name: canonicalName, is_active: true }).eq('id', legacy.id);
+      await supabase.from('crm_sources').update(fbSourcePatch({ name: canonicalName, is_active: true })).eq('id', legacy.id);
       await persistPageDefaultSourceId(page, legacy.id);
       return legacy.id;
     }
   }
 
+  const insertRow = fbSourcePatch({ name: canonicalName, is_active: true });
   const { data: created } = await supabase
     .from('crm_sources')
-    .insert({ name: canonicalName, is_active: true })
+    .insert(insertRow)
     .select('id')
     .single();
   if (created?.id) await persistPageDefaultSourceId(page, created.id);
@@ -1450,8 +1480,7 @@ const _createLeadLocks = new Map();
 async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   const page = await getPageConfig(pageId);
   if (!page) return null;
-  const { getConfig: getAutoLeadConfig } = require('../config/autoLeadConfig');
-  const autoLeadCfg = getAutoLeadConfig();
+  const autoLeadCfg = await loadAutoLeadConfig();
 
   // ── LOCK theo contact.id: chỉ 1 request được tạo lead cho 1 contact ──
   const lockKey = contact.id;
@@ -2064,8 +2093,8 @@ async function handleMessaging(pageId, event, io) {
         }
       }
 
-      // Auto-create lead nếu chưa có — theo cấu hình auto-lead-config
-      const autoLeadCfg = getAutoLeadConfig();
+      // Auto-create lead nếu chưa có — theo cấu hình auto-lead-config (gồm công ty mặc định trong tab Setup)
+      const autoLeadCfg = await loadAutoLeadConfig();
       let isFirstMessage = false;
       if (!contact.lead_id) {
         // Check: có lead cũ đã bị xóa không?
@@ -2424,6 +2453,26 @@ async function handleComment(pageId, value) {
 
 const { auth: authMiddleware } = require('../middleware/auth');
 
+/** Phạm vi Page FB theo default_company_id: admin ?company_id=; NV chỉ Page gán đúng công ty. */
+async function resolveFacebookPageScope(req, res) {
+  const { data: pages, error } = await supabase.from('facebook_pages').select('page_id, default_company_id');
+  if (error) { res.status(500).json({ error: error.message }); return null; }
+  const rows = pages || [];
+  if (req.user?.role === 'admin') {
+    const co = req.query.company_id && String(req.query.company_id).trim();
+    if (co) {
+      return { mode: 'filter', pageIds: rows.filter((p) => String(p.default_company_id || '') === co).map((p) => p.page_id) };
+    }
+    return { mode: 'all', pageIds: null };
+  }
+  const cid = req.user?.company_id;
+  if (!cid) { res.status(400).json({ error: 'Thiếu company_id trên tài khoản — gán công ty cho nhân viên.' }); return null; }
+  return {
+    mode: 'filter',
+    pageIds: rows.filter((p) => p.default_company_id && String(p.default_company_id) === String(cid)).map((p) => p.page_id),
+  };
+}
+
 // ── Pages config CRUD ────────────────────────────────────────
 
 r.get('/pages', authMiddleware, async (req, res) => {
@@ -2450,7 +2499,14 @@ r.get('/pages', authMiddleware, async (req, res) => {
         .order('created_at', { ascending: false }));
     }
     if (error) throw error;
-    res.json(data || []);
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    let rows = data || [];
+    if (scope.mode === 'filter') {
+      const set = new Set(scope.pageIds);
+      rows = rows.filter((p) => set.has(p.page_id));
+    }
+    res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2514,13 +2570,25 @@ r.delete('/pages/:id', authMiddleware, async (req, res) => {
 
 r.get('/contacts', authMiddleware, async (req, res) => {
   try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    if (scope.mode === 'filter' && !scope.pageIds.length) {
+      return res.json({
+        data: [], total: 0, offset: 0, limit: Math.min(parseInt(req.query.limit, 10) || 200, 200),
+        hasMore: false, nextOffset: 0,
+      });
+    }
     const { page_id, has_lead, search, limit: rawLimit, offset: rawOffset } = req.query;
+    if (page_id && scope.mode === 'filter' && !scope.pageIds.includes(String(page_id))) {
+      return res.status(403).json({ error: 'Không có quyền xem Page này' });
+    }
     const maxLimit = Math.min(parseInt(rawLimit, 10) || 200, 200);
     const offset = Math.max(parseInt(rawOffset) || 0, 0);
     const base = () => {
       let q = supabase
         .from('facebook_contacts')
         .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)');
+      if (scope.mode === 'filter') q = q.in('page_id', scope.pageIds);
       if (page_id) q = q.eq('page_id', page_id);
       if (has_lead === 'true') q = q.not('lead_id', 'is', null);
       if (has_lead === 'false') q = q.is('lead_id', null);
@@ -2601,10 +2669,15 @@ r.get('/contacts', authMiddleware, async (req, res) => {
 // Get single contact (check lead still exists)
 r.get('/contacts/:id', authMiddleware, async (req, res) => {
   try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
     const { data: contact } = await supabase.from('facebook_contacts')
       .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)')
       .eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    if (scope.mode === 'filter' && (!scope.pageIds.length || !scope.pageIds.includes(String(contact.page_id)))) {
+      return res.status(403).json({ error: 'Không có quyền xem liên hệ này' });
+    }
     
     // Nếu lead_id có nhưng lead không tồn tại → clear
     if (contact.lead_id && !contact.lead) {
@@ -2679,10 +2752,9 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     const { data: page } = await supabase.from('facebook_pages')
       .select('*').eq('page_id', contact.page_id).single();
 
-    const { getConfig: getAutoLeadConfig } = require('../config/autoLeadConfig');
-    const autoLeadCfg = getAutoLeadConfig();
+    const autoLeadCfg = await loadAutoLeadConfig();
 
-    // Company: body override → page default → auto-lead-config default
+    // Company: body override → page default → auto-lead-config default (công ty mặc định trong Setup FB)
     let companyId = req.body.company_id || null;
     if (!companyId && page?.default_company_id) companyId = page.default_company_id;
     if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
@@ -3133,17 +3205,55 @@ r.post('/comments/:id/reply', authMiddleware, async (req, res) => {
 
 r.get('/stats', authMiddleware, async (req, res) => {
   try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    if (scope.mode === 'filter' && !scope.pageIds.length) {
+      return res.json({
+        total_contacts: 0,
+        messages_today: 0,
+        lead_ads_today: 0,
+        comments_today: 0,
+        total_unread: 0,
+        page_stats: [],
+      });
+    }
+
     const today = new Date().toISOString().split('T')[0];
     const week = new Date(Date.now() - 7 * 86400000).toISOString();
 
+    const inPages = (col) => {
+      if (scope.mode !== 'filter') return col;
+      return col.in('page_id', scope.pageIds);
+    };
+
     const [contacts, messages, leadAds, comments, unread, allContacts, pages] = await Promise.all([
-      supabase.from('facebook_contacts').select('id', { count: 'exact', head: true }),
-      supabase.from('facebook_messages').select('id', { count: 'exact', head: true }).eq('direction', 'inbound').gte('created_at', today),
+      inPages(supabase.from('facebook_contacts').select('id', { count: 'exact', head: true })),
+      (async () => {
+        const { data: cids } = await inPages(supabase.from('facebook_contacts').select('id'));
+        const ids = (cids || []).map((c) => c.id);
+        if (!ids.length) return { count: 0 };
+        let total = 0;
+        const CH = 500;
+        for (let i = 0; i < ids.length; i += CH) {
+          const slice = ids.slice(i, i + CH);
+          const { count } = await supabase.from('facebook_messages')
+            .select('id', { count: 'exact', head: true })
+            .eq('direction', 'inbound')
+            .gte('created_at', today)
+            .in('contact_id', slice);
+          total += count || 0;
+        }
+        return { count: total };
+      })(),
       supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true }).gte('created_at', today),
       supabase.from('facebook_comments').select('id', { count: 'exact', head: true }).gte('created_at', today),
-      supabase.from('facebook_contacts').select('unread_count, page_id').gt('unread_count', 0),
-      supabase.from('facebook_contacts').select('id, page_id, created_at'),
-      supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true),
+      inPages(supabase.from('facebook_contacts').select('unread_count, page_id').gt('unread_count', 0)),
+      inPages(supabase.from('facebook_contacts').select('id, page_id, created_at')),
+      (async () => {
+        let q = supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true);
+        if (scope.mode === 'filter') q = q.in('page_id', scope.pageIds);
+        return await q;
+      })(),
     ]);
 
     // Tính số user mới theo page (7 ngày gần nhất)
@@ -3631,8 +3741,7 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     const BATCH_CAP = Math.min(5000, Math.max(50, parseInt(process.env.FB_BATCH_LEADS_CAP || '500', 10) || 500));
 
     // ── Tôn trọng auto-lead-config (giống webhook) để tránh tạo lead "rác" ──
-    const { getConfig: getAutoLeadConfig } = require('../config/autoLeadConfig');
-    const autoLeadCfg = getAutoLeadConfig();
+    const autoLeadCfg = await loadAutoLeadConfig();
     const triggerMode = String(autoLeadCfg?.trigger || 'first_message');
     if (triggerMode === 'manual') {
       return res.json({
@@ -5190,8 +5299,6 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
 // AUTO-LEAD CONFIG — Điều kiện tự động tạo Lead
 // ═══════════════════════════════════════════════════════════════
 
-const { getConfig: getAutoLeadConfig, loadConfig: loadAutoLeadConfig, saveConfig: saveAutoLeadConfig, DEFAULT_CONFIG: AUTO_LEAD_DEFAULTS } = require('../config/autoLeadConfig');
-
 // Preload config vào cache khi khởi động
 loadAutoLeadConfig().then(() => console.log('[AutoLead] ✅ Config loaded from DB'));
 
@@ -5278,7 +5385,7 @@ async function scanAndCreateLeads() {
   const results = { scanned: 0, created: 0, skipped: 0, errors: [], leads: [] };
 
   try {
-    const autoLeadCfg = getAutoLeadConfig();
+    const autoLeadCfg = await loadAutoLeadConfig();
 
     // Lấy tất cả contacts có phone, chưa có lead
     await ensureSyncPausedColumnDetected();
