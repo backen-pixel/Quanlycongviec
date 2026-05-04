@@ -2033,73 +2033,70 @@ export default function CRMDashboard() {
       ) : (
         <>
           {viewMode === 'kanban' && manualMergeIds.length > 0 && (
-            <div className="flex flex-col gap-3 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
-              <div className="flex flex-wrap items-center gap-3">
-                <GitMerge className="h-4 w-4 text-amber-700 shrink-0" />
-                <span className="text-amber-900">
-                  Đã chọn <strong>{manualMergeIds.length}</strong> {pipelineType === 'deal' ? 'deal' : 'lead'}
-                  {manualMergeIds.length < 2 && <span className="text-amber-700/80"> — chọn ít nhất 2 để gộp</span>}
-                </span>
-                {manualMergeIds.length >= 2 && (
-                  <button
-                    type="button"
-                    onClick={() => setManualMergeModalOpen(true)}
-                    className="h-9 px-4 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 cursor-pointer shadow-sm"
-                  >
-                    Gộp đã chọn
-                  </button>
-                )}
-                {isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => setBulkAssignModalOpen(true)}
-                    className="h-9 px-4 rounded-lg bg-white border border-amber-400 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer shadow-sm flex items-center gap-1.5"
-                  >
-                    <UserCheck className="h-3.5 w-3.5 shrink-0" />
-                    Gán phụ trách
-                  </button>
-                )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+              <GitMerge className="h-4 w-4 text-amber-700 shrink-0" />
+              <span className="text-amber-900">
+                Đã chọn <strong>{manualMergeIds.length}</strong> {pipelineType === 'deal' ? 'deal' : 'lead'}
+                {manualMergeIds.length < 2 && <span className="text-amber-700/80"> — chọn ít nhất 2 để gộp</span>}
+              </span>
+              {manualMergeIds.length >= 2 && (
                 <button
                   type="button"
-                  onClick={bulkDeleteSelected}
-                  disabled={bulkDeleting}
-                  className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
+                  onClick={() => setManualMergeModalOpen(true)}
+                  className="h-9 px-4 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 cursor-pointer shadow-sm"
                 >
-                  <Trash2 className="h-3.5 w-3.5 shrink-0" />
-                  {bulkDeleting ? 'Đang xóa…' : `Xóa (${manualMergeIds.length})`}
+                  Gộp đã chọn
                 </button>
+              )}
+              {isAdmin && (
                 <button
                   type="button"
-                  onClick={() => setManualMergeIds([])}
-                  className="h-9 px-3 rounded-lg border border-amber-300 text-amber-800 text-xs font-medium hover:bg-amber-100 cursor-pointer"
+                  onClick={() => setBulkAssignModalOpen(true)}
+                  className="h-9 px-4 rounded-lg bg-white border border-amber-400 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer shadow-sm flex items-center gap-1.5"
                 >
-                  Bỏ chọn
+                  <UserCheck className="h-3.5 w-3.5 shrink-0" />
+                  Gán phụ trách
                 </button>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-amber-200/80">
-                <span className="text-xs font-semibold text-amber-900 shrink-0">Chuyển sang giai đoạn:</span>
-                <select
-                  value={bulkStageTarget}
-                  onChange={(e) => setBulkStageTarget(e.target.value)}
-                  disabled={bulkMoving}
-                  className="h-9 min-w-[200px] max-w-full px-3 rounded-lg border border-amber-300 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-60"
-                >
-                  <option value="">— Chọn cột đích —</option>
-                  {(pipelineType === 'lead' ? stagesLead : stagesDeal).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {(s.icon ? `${s.icon} ` : '')}{s.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  disabled={!bulkStageTarget || bulkMoving}
-                  onClick={() => bulkMoveSelectedToStage(bulkStageTarget)}
-                  className="h-9 px-4 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm"
-                >
-                  {bulkMoving ? 'Đang chuyển…' : 'Chuyển'}
-                </button>
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={bulkDeleteSelected}
+                disabled={bulkDeleting}
+                className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                {bulkDeleting ? 'Đang xóa…' : `Xóa (${manualMergeIds.length})`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setManualMergeIds([])}
+                className="h-9 px-3 rounded-lg border border-amber-300 text-amber-800 text-xs font-medium hover:bg-amber-100 cursor-pointer"
+              >
+                Bỏ chọn
+              </button>
+              <span className="hidden sm:block w-px h-6 shrink-0 bg-amber-300/70 self-center" aria-hidden />
+              <span className="text-xs font-semibold text-amber-900 shrink-0 whitespace-nowrap">Chuyển sang giai đoạn:</span>
+              <select
+                value={bulkStageTarget}
+                onChange={(e) => setBulkStageTarget(e.target.value)}
+                disabled={bulkMoving}
+                className="h-9 min-w-[min(100%,12rem)] sm:min-w-[200px] max-w-full px-3 rounded-lg border border-amber-300 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-60"
+              >
+                <option value="">— Chọn cột đích —</option>
+                {(pipelineType === 'lead' ? stagesLead : stagesDeal).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {(s.icon ? `${s.icon} ` : '')}{s.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!bulkStageTarget || bulkMoving}
+                onClick={() => bulkMoveSelectedToStage(bulkStageTarget)}
+                className="h-9 px-4 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm"
+              >
+                {bulkMoving ? 'Đang chuyển…' : 'Chuyển'}
+              </button>
             </div>
           )}
 
