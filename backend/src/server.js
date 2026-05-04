@@ -100,6 +100,8 @@ app.use('/api/company-templates', require('./routes/companyTemplates'));
 app.use('/api/flows', require('./routes/flows'));
 app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
+app.use('/api/crm/executive', require('./routes/executiveKpi'));
+app.use('/api/crm/deal-performance', require('./routes/dealScores'));
 app.use('/api/crm', require('./routes/crm'));
 app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));

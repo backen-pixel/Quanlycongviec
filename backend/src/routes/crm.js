@@ -15,6 +15,10 @@ const { autoGenCrmTasks, FALLBACK_LEAD_TASKS, FALLBACK_DEAL_TASKS } = require('.
 const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
+const { syncLeadDocumentsToProject } = require('../helpers/syncLeadDocumentsToProject');
+const { copyCrmTaskArtifactsToLeadDocuments } = require('../helpers/copyCrmTaskArtifactsToLeadDocuments');
+const { parseVietnameseMoney, parseVietnameseMeasure } = require('../helpers/excelVnNumbers');
+const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../helpers/orderFromQuotation');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
 let misaService = null;
@@ -433,12 +437,12 @@ async function createNotification(req, userId, type, title, message, entityType,
 // ─── autoGenCrmTasks + FALLBACK_*_TASKS: imported from helpers/autoGenCrmTasks.js ──
 
 /**
- * Sau khi Lead/Deal được auto-gen tasks, gom toàn bộ tasks đó thành "Đơn 1":
+ * Sau khi Deal được auto-gen tasks, gom toàn bộ tasks đó thành "Đơn 1":
  * - Tạo deal con (fulfillment) = nơi chứa bộ nhiệm vụ theo đơn
- * - Tạo 1 bản ghi orders (CRM) gắn lead_id = lead/deal gốc, fulfillment_lead_id = deal con
- * - Chuyển toàn bộ crm_tasks + crm_task_attachments từ lead/deal gốc sang deal con
+ * - Tạo 1 bản ghi orders (CRM) gắn lead_id = deal gốc, fulfillment_lead_id = deal con
+ * - Chuyển toàn bộ crm_tasks + crm_task_attachments từ deal gốc sang deal con
  *
- * Mục tiêu: tab Công việc của Deal hiển thị đúng "Đơn 1" thay vì dàn task ở deal gốc.
+ * Chỉ gọi cho Deal mới / Lead vừa chuyển Deal — không dùng cho Lead pipeline (task ở lại trên lead).
  */
 async function bootstrapOrderOneFromGeneratedTasks(parentLeadId, userId, label = 'Đơn 1') {
   if (!parentLeadId || !userId) return { ok: false, reason: 'missing_params' };
@@ -2475,9 +2479,8 @@ r.post('/leads', async (req, res) => {
       }
     } catch (autoErr) { console.error('Auto-create tasks error:', autoErr.message); }
 
-    try {
-      await bootstrapOrderOneFromGeneratedTasks(data.id, req.user.userId, 'Đơn 1');
-    } catch (e) { console.warn('[lead_created] bootstrap Đơn 1:', e.message); }
+    // Lead: giữ toàn bộ nhiệm vụ trên chính lead (mẫu crm_task_templates + fallback) — không tạo Đơn 1 / deal con.
+    // Gom «Đơn 1» chỉ áp dụng khi tạo Deal (POST /deals) hoặc chuyển Lead → Deal.
 
     res.status(201).json(data);
   } catch (e) {
@@ -3642,6 +3645,18 @@ r.post('/leads/:id/create-project', async (req, res) => {
     // Link deal → project
     await supabase.from('crm_leads').update({ project_id: project.id }).eq('id', dealId);
 
+    try {
+      await copyCrmTaskArtifactsToLeadDocuments(dealId);
+    } catch (e) {
+      console.warn('[CREATE PROJECT] copy CRM task docs:', e.message);
+    }
+
+    try {
+      await syncLeadDocumentsToProject({ leadId: dealId, projectId: project.id, shareToWorkshop: true });
+    } catch (e) {
+      console.warn('[CREATE PROJECT] sync lead_documents:', e.message);
+    }
+
     // Auto move into workshop module immediately after deal won.
     const CRM_SLUGS = ['consulting', 'design', 'quotation', 'contract'];
     const WORKSHOP_SLUGS = ['production', 'delivery', 'customer-care'];
@@ -3929,9 +3944,35 @@ r.get('/quotations/:id', async (req, res) => {
   }
 });
 
+r.get('/quotations/:id/history', async (req, res) => {
+  try {
+    const { data: rows, error } = await supabase
+      .from('quotation_edit_history')
+      .select('id, action, summary, detail, created_at, created_by')
+      .eq('quotation_id', req.params.id)
+      .order('created_at', { ascending: false })
+      .limit(80);
+    if (error) throw error;
+    const userIds = [...new Set((rows || []).map((r) => r.created_by).filter(Boolean))];
+    let userMap = {};
+    if (userIds.length) {
+      const { data: users } = await supabase.from('users').select('id, full_name').in('id', userIds);
+      (users || []).forEach((u) => { userMap[u.id] = u.full_name; });
+    }
+    const history = (rows || []).map((r) => ({ ...r, editor_name: userMap[r.created_by] || null }));
+    res.json({ history });
+  } catch (e) {
+    if (String(e.message || '').includes('does not exist') || e.code === '42P01'
+      || (String(e.message || '').includes('relation') && String(e.message || '').includes('quotation_edit_history'))) {
+      return res.json({ history: [] });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/quotations', async (req, res) => {
   try {
-    const { items, ...quoteData } = req.body;
+    const { items, quotation_source, ...quoteData } = req.body;
     const code = await nextCode('BG');
 
     // Sanitize: empty strings → null for UUID fields
@@ -3940,6 +3981,25 @@ r.post('/quotations', async (req, res) => {
     // Sanitize: empty strings → null for date fields
     const dateFields = ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'];
     dateFields.forEach(f => { if (quoteData[f] === '') quoteData[f] = null; });
+    const quoteMoneyOrNull = (v) => {
+      if (v === '' || v === undefined || v === null) return null;
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+      const onlyDigits = String(v).replace(/\s/g, '').replace(/đ/gi, '').replace(/[^\d]/g, '');
+      if (!onlyDigits) return null;
+      const n = parseInt(onlyDigits, 10);
+      return Number.isFinite(n) ? n : null;
+    };
+    if ('deposit_amount' in quoteData) quoteData.deposit_amount = quoteMoneyOrNull(quoteData.deposit_amount);
+    if ('remaining_amount' in quoteData) quoteData.remaining_amount = quoteMoneyOrNull(quoteData.remaining_amount);
+    if ('deposit_received' in quoteData) {
+      const dr = quoteData.deposit_received;
+      if (dr === '' || dr === undefined || dr === null) quoteData.deposit_received = null;
+      else if (dr === true || dr === 'true') quoteData.deposit_received = true;
+      else if (dr === false || dr === 'false') quoteData.deposit_received = false;
+      else quoteData.deposit_received = null;
+    }
+    if (quoteData.deposit_label === '') quoteData.deposit_label = null;
+    if (quoteData.remaining_note === '') quoteData.remaining_note = null;
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     const processedItems = (items || []).map(item => {
@@ -3987,6 +4047,28 @@ r.post('/quotations', async (req, res) => {
         ...item, quotation_id: quote.id, item_order: i,
       }));
       await supabase.from('quotation_items').insert(itemRows);
+    }
+
+    try {
+      let summary = 'Tạo báo giá';
+      const qs = quotation_source || {};
+      if (qs.from_excel) {
+        summary = qs.excel_file_name ? `Tạo báo giá từ Excel (${qs.excel_file_name})` : 'Tạo báo giá từ Excel';
+        if (qs.excel_review_confirmed) summary += ' — đã xác nhận đã kiểm tra số liệu';
+      }
+      await supabase.from('quotation_edit_history').insert({
+        quotation_id: quote.id,
+        action: 'created',
+        summary,
+        detail: {
+          total: quote.total,
+          item_count: processedItems.length,
+          source: qs.from_excel ? 'excel' : 'manual',
+        },
+        created_by: req.user.userId,
+      });
+    } catch (he) {
+      if (!String(he.message || '').includes('does not exist')) console.warn('[quotation_edit_history]', he.message);
     }
 
     // ═══ ĐỒNG BỘ SẢN PHẨM: chỉ liên kết product_id theo tên, KHÔNG cập nhật giá / không tạo mới ═══
@@ -4182,16 +4264,57 @@ async function getNotifyTargets(leadId) {
 
 r.put('/quotations/:id', async (req, res) => {
   try {
-    const { items, ...quoteData } = req.body;
+    const { items: itemsBody, quotation_source: _qs, ...quoteDataFromBody } = req.body;
+
+    const { data: prevQuote } = await supabase.from('quotations')
+      .select('title, total, status, customer_name, discount_value, discount_type, code')
+      .eq('id', req.params.id).single();
+
+    let quoteData = quoteDataFromBody;
+    if (itemsBody === undefined) {
+      const { data: fullQ } = await supabase.from('quotations').select('*').eq('id', req.params.id).single();
+      if (fullQ) {
+        quoteData = { ...fullQ, ...quoteDataFromBody };
+        delete quoteData.id;
+        delete quoteData.code;
+        delete quoteData.created_at;
+        delete quoteData.created_by;
+      }
+    }
 
     // Sanitize: empty strings → null for UUID fields
     const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     // Sanitize: empty strings → null for date fields
     ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'].forEach(f => { if (quoteData[f] === '') quoteData[f] = null; });
+    const quoteMoneyOrNullPut = (v) => {
+      if (v === '' || v === undefined || v === null) return null;
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+      const onlyDigits = String(v).replace(/\s/g, '').replace(/đ/gi, '').replace(/[^\d]/g, '');
+      if (!onlyDigits) return null;
+      const n = parseInt(onlyDigits, 10);
+      return Number.isFinite(n) ? n : null;
+    };
+    if ('deposit_amount' in quoteData) quoteData.deposit_amount = quoteMoneyOrNullPut(quoteData.deposit_amount);
+    if ('remaining_amount' in quoteData) quoteData.remaining_amount = quoteMoneyOrNullPut(quoteData.remaining_amount);
+    if ('deposit_received' in quoteData) {
+      const dr = quoteData.deposit_received;
+      if (dr === '' || dr === undefined || dr === null) quoteData.deposit_received = null;
+      else if (dr === true || dr === 'true') quoteData.deposit_received = true;
+      else if (dr === false || dr === 'false') quoteData.deposit_received = false;
+      else quoteData.deposit_received = null;
+    }
+    if (quoteData.deposit_label === '') quoteData.deposit_label = null;
+    if (quoteData.remaining_note === '') quoteData.remaining_note = null;
+
+    let rawItems = itemsBody;
+    if (rawItems === undefined) {
+      const { data: existingItems } = await supabase.from('quotation_items').select('*').eq('quotation_id', req.params.id).order('item_order');
+      rawItems = existingItems || [];
+    }
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
-    const processedItems = (items || []).map(item => {
+    const processedItems = (rawItems || []).map(item => {
       const specFactor = parseFloat(item.spec_factor) || 0;
       const grossAmount = specFactor > 0
         ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
@@ -4239,6 +4362,33 @@ r.put('/quotations/:id', async (req, res) => {
       await supabase.from('quotation_items').insert(itemRows);
     }
 
+    try {
+      const parts = [];
+      const pt = prevQuote?.total != null ? Number(prevQuote.total) : null;
+      const nt = data?.total != null ? Number(data.total) : null;
+      if (prevQuote && pt !== nt && pt != null && nt != null) {
+        parts.push(`Tổng ${formatMoney(prevQuote.total)} → ${formatMoney(data.total)}`);
+      }
+      if (prevQuote && prevQuote.title !== data.title) parts.push('Đổi tiêu đề');
+      if (prevQuote && prevQuote.status !== data.status) {
+        parts.push(`Trạng thái ${prevQuote.status || '—'} → ${data.status || '—'}`);
+      }
+      const summary = parts.length ? `Cập nhật: ${parts.join('; ')}` : 'Cập nhật báo giá';
+      await supabase.from('quotation_edit_history').insert({
+        quotation_id: req.params.id,
+        action: 'updated',
+        summary,
+        detail: {
+          before: prevQuote ? { title: prevQuote.title, total: prevQuote.total, status: prevQuote.status } : null,
+          after: { title: data.title, total: data.total, status: data.status },
+          item_count: processedItems.length,
+        },
+        created_by: req.user.userId,
+      });
+    } catch (he) {
+      if (!String(he.message || '').includes('does not exist')) console.warn('[quotation_edit_history]', he.message);
+    }
+
     // AUTO-FLOW: BG chấp nhận → auto tạo ĐH + Project
     let autoResult = null;
     if (quoteData.status === 'accepted') {
@@ -4268,30 +4418,14 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
 
     const orderCode = await nextCode('DH');
     const { data: order, error } = await supabase.from('orders').insert({
-      code: orderCode, customer_id: quote.customer_id, customer_name: quote.customer_name,
-      customer_phone: quote.customer_phone, customer_address: quote.customer_address,
-      quotation_id: quote.id, lead_id: quote.lead_id, project_id: quote.project_id,
-      title: quote.title, description: quote.description, payment_terms: quote.payment_terms,
-      subtotal: quote.subtotal, discount_type: quote.discount_type, discount_value: quote.discount_value,
-      discount_amount: quote.discount_amount, tax_rate: quote.tax_rate, tax_amount: quote.tax_amount,
-      total: quote.total, created_by: req.user.userId,
+      code: orderCode,
+      ...snapshotOrderRowFromQuotation(quote),
+      created_by: req.user.userId,
     }).select('*').single();
     if (error) throw error;
 
-    // Copy items (carry all fields)
     if (qItems?.length) {
-      const oItems = qItems.map(qi => ({
-        order_id: order.id, product_id: qi.product_id, product_code: qi.product_code,
-        quotation_item_id: qi.id,
-        item_order: qi.item_order, name: qi.name, description: qi.description,
-        unit: qi.unit, quantity: qi.quantity, unit_price: qi.unit_price,
-        height: qi.height, width: qi.width, length: qi.length, weight: qi.weight,
-        discount_percent: qi.discount_percent, discount_amount: qi.discount_amount, amount: qi.amount,
-        vat_rate: qi.vat_rate || 0, vat_amount: qi.vat_amount || 0, tax_amount: qi.tax_amount || 0, total: qi.total || 0,
-        dimensions: qi.dimensions, material: qi.material, color: qi.color, notes: qi.notes,
-        promo_code: qi.promo_code, is_promo: qi.is_promo || false,
-      }));
-      await supabase.from('order_items').insert(oItems);
+      await supabase.from('order_items').insert(mapQuotationItemsToOrderRows(qItems, order.id));
     }
 
     // Update quotation status
@@ -4364,10 +4498,25 @@ r.get('/orders/:id', async (req, res) => {
     const { data: order } = await supabase.from('orders')
       .select('*, fulfillment_lead_id, lead_id, customer:customers(id, full_name, phone, email, address, company, tax_code)')
       .eq('id', req.params.id).single();
-    const { data: items } = await supabase.from('order_items')
+    let { data: items } = await supabase.from('order_items')
       .select('*, product:products(id, name, code)')
       .eq('order_id', req.params.id).order('item_order');
-    res.json({ ...order, items: items || [] });
+    items = items || [];
+    let source_quotation = null;
+    if (order?.quotation_id) {
+      const { data: q } = await supabase.from('quotations')
+        .select('id, code, notes, valid_until, delivery_terms, payment_terms, deposit_amount, deposit_received, deposit_label, remaining_amount, remaining_note, description')
+        .eq('id', order.quotation_id).maybeSingle();
+      source_quotation = q || null;
+      // Đơn hàng không có dòng (lỗi copy trước đây / DB trống) — hiển thị dòng từ báo giá gốc
+      if (!items.length) {
+        const { data: qItems } = await supabase.from('quotation_items')
+          .select('*, product:products(id, name, code)')
+          .eq('quotation_id', order.quotation_id).order('item_order');
+        if (qItems?.length) items = qItems;
+      }
+    }
+    res.json({ ...order, items, source_quotation });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -4882,6 +5031,12 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
 
     // Link lead to project
     await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+
+    try {
+      await syncLeadDocumentsToProject({ leadId: req.params.id, projectId: project.id, shareToWorkshop: true });
+    } catch (e) {
+      console.warn('[lead→project] sync lead_documents:', e.message);
+    }
 
     // ── AUTO-GENERATE TASKS FOR ALL STAGES ──
     const allStageSlugs = ['consulting', 'design', 'quotation', 'contract', 'production', 'delivery', 'customer-care'];
@@ -5535,6 +5690,24 @@ function generateDocPdf(res, doc, items, docType) {
 // ═══════════════════════════════════════════════════════════════════════════
 // IMPORT EXCEL → PARSE (chỉ parse, trả về data preview — KHÔNG lưu DB)
 // ═══════════════════════════════════════════════════════════════════════════
+
+/** Quét ô «ĐÃ NHẬN» / «CHƯA NHẬN» trên dòng Cọc (mẫu báo giá Phúc Đạt). */
+function parseExcelDepositReceivedFromRow(row) {
+  const blob = (row || []).map((c) => String(c ?? '').trim()).filter(Boolean).join(' ');
+  if (/\bĐÃ\s*(NHẬN|THU|ĐÓNG)\b/i.test(blob)) return true;
+  if (/\bCHƯA\s*(NHẬN|THU|ĐÓNG)\b/i.test(blob)) return false;
+  return null;
+}
+
+/** Dòng tiền Cọc / Còn lại — không có chữ TỔNG/CỘNG (tránh trùng với dòng tổng hạng mục). */
+function isExcelDepositOrRemainSummaryRow(name, stt, fullRowText) {
+  const bundle = `${name || ''} ${stt || ''} ${fullRowText || ''}`.trim();
+  if (!bundle) return false;
+  const u = bundle.toUpperCase();
+  if (/\bTỔNG\b/.test(u) || /\bCỘNG\b/.test(u)) return false;
+  return /\bCỌC\b/.test(u) || /\bCÒN\s*LẠI\b/.test(u);
+}
+
 const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) => {
@@ -5726,7 +5899,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       const workingNameEarly = name || (!sttIsNumber && stt ? stt : '') || '';
       const isRomanGroupEarly = /^[IVX]+[\.\)\s]/.test(workingNameEarly) || /^[IVX]+[\.\)\s]/.test(fullRowText.trim());
       const hasUnitEarly = colMap.unit !== undefined && String(row[colMap.unit] || '').trim();
-      const hasPriceEarly = colMap.unit_price !== undefined && parseFloat(row[colMap.unit_price]) > 0;
+      const hasPriceEarly = colMap.unit_price !== undefined && parseVietnameseMoney(row[colMap.unit_price]) > 0;
 
       if (isRomanGroupEarly && !hasPriceEarly) {
         const groupName = workingNameEarly || fullRowText.trim();
@@ -5752,17 +5925,45 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       const sttIsSummary = sttUpper.includes('TỔNG') || sttUpper.includes('CHIẾT KHẤU') || sttUpper.includes('PHẦN TỦ') || sttUpper.includes('PHẦN TỪ');
       if (isSummary && (!stt || sttIsSummary || !sttIsNumber)) {
         // Find amount: try amount column, then scan row for largest number
-        let amt = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
+        let amt = colMap.amount !== undefined ? parseVietnameseMoney(row[colMap.amount]) : 0;
         if (amt === 0) {
           // Scan all cells for a number (summary amount might be in unexpected column)
           for (let ci = 0; ci < row.length; ci++) {
-            const cellVal = parseFloat(row[ci]);
+            const cellVal = parseVietnameseMoney(row[ci]);
             if (cellVal > 1000 && cellVal > amt) amt = cellVal;
           }
         }
         const summaryLabel = name || stt || fullRowText;
         summaryRows.push({ label: summaryLabel, amount: amt });
         console.log('[parse-excel] summary row:', { label: summaryLabel.slice(0,40), amt, stt, rawAmtCell: row[colMap.amount] });
+        continue;
+      }
+
+      // ── Dòng Cọc / Còn lại (khối tiền cuối báo giá — có thể có «ĐÃ NHẬN» ở cột phụ) ──
+      if (isExcelDepositOrRemainSummaryRow(name, stt, fullRowText)) {
+        let amt = colMap.amount !== undefined ? parseVietnameseMoney(row[colMap.amount]) : 0;
+        if (amt === 0) {
+          for (let ci = 0; ci < row.length; ci++) {
+            const cellVal = parseVietnameseMoney(row[ci]);
+            if (cellVal >= 1000 && cellVal > amt) amt = cellVal;
+          }
+        }
+        const summaryLabel = name || stt || fullRowText;
+        const labelU = summaryLabel.toUpperCase();
+        const rowKind = labelU.includes('CÒN LẠI') ? 'remaining' : 'deposit';
+        const deposit_received = rowKind === 'deposit' ? parseExcelDepositReceivedFromRow(row) : null;
+        summaryRows.push({
+          label: summaryLabel,
+          amount: amt,
+          row_kind: rowKind,
+          deposit_received,
+        });
+        console.log('[parse-excel] deposit/remain row:', {
+          label: summaryLabel.slice(0, 48),
+          amt,
+          rowKind,
+          deposit_received,
+        });
         continue;
       }
 
@@ -5774,7 +5975,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       // Detect group title: has name but no STT number AND no unit_price
       const sttNum = parseInt(stt);
       const hasUnit = colMap.unit !== undefined && String(row[colMap.unit] || '').trim();
-      const hasPrice = colMap.unit_price !== undefined && parseFloat(row[colMap.unit_price]) > 0;
+      const hasPrice = colMap.unit_price !== undefined && parseVietnameseMoney(row[colMap.unit_price]) > 0;
       const workingName = effectiveName || name;
       const isGroupRow = (isNaN(sttNum) || !stt || sttIsSummary) && !hasPrice && workingName.length > 5;
 
@@ -5796,29 +5997,33 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       }
 
       // Normal item row — must have unit_price or amount
-      if (!hasPrice && !(colMap.amount !== undefined && parseFloat(row[colMap.amount]) > 0)) continue;
+      if (!hasPrice && !(colMap.amount !== undefined && parseVietnameseMoney(row[colMap.amount]) > 0)) continue;
 
       // Detect "HỖ TRỢ" / "MIỄN PHÍ" / "TẶNG" in amount column → freebie item (CK 100%)
       const rawAmountCell = colMap.amount !== undefined ? String(row[colMap.amount] || '').trim() : '';
-      const parsedAmount = colMap.amount !== undefined ? parseFloat(row[colMap.amount]) || 0 : 0;
+      const parsedAmount = colMap.amount !== undefined ? parseVietnameseMoney(row[colMap.amount]) : 0;
       const isFreebieText = /HỖ\s*TRỢ|MIỄN\s*PHÍ|TẶNG|FREE|KM|KHUYẾN/i.test(rawAmountCell);
       const isFreebie = isFreebieText && parsedAmount === 0;
+
+      const descCell = colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '';
+      const notesCell = colMap.notes !== undefined ? String(row[colMap.notes] || '').trim() : '';
+      const mergedDescription = [descCell, notesCell].filter(Boolean).join('\n\n');
 
       items.push({
         is_group: false,
         group_name: currentGroup,
         group_discount_percent: currentGroupDiscount,
         name,
-        description: colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '',
+        description: mergedDescription,
         unit: colMap.unit !== undefined ? String(row[colMap.unit] || '').trim() : 'bộ',
-        length: colMap.length !== undefined ? parseFloat(row[colMap.length]) || null : null,
-        width: colMap.width !== undefined ? parseFloat(row[colMap.width]) || null : null,
-        height: colMap.height !== undefined ? parseFloat(row[colMap.height]) || null : null,
-        quantity: colMap.quantity !== undefined ? parseFloat(row[colMap.quantity]) || 1 : 1,
-        unit_price: colMap.unit_price !== undefined ? parseFloat(row[colMap.unit_price]) || 0 : 0,
+        length: colMap.length !== undefined ? (parseVietnameseMeasure(row[colMap.length]) ?? null) : null,
+        width: colMap.width !== undefined ? (parseVietnameseMeasure(row[colMap.width]) ?? null) : null,
+        height: colMap.height !== undefined ? (parseVietnameseMeasure(row[colMap.height]) ?? null) : null,
+        quantity: colMap.quantity !== undefined ? (parseVietnameseMeasure(row[colMap.quantity]) ?? 1) : 1,
+        unit_price: colMap.unit_price !== undefined ? parseVietnameseMoney(row[colMap.unit_price]) : 0,
         amount: parsedAmount,
         vat_rate: colMap.vat_rate !== undefined ? parseFloat(row[colMap.vat_rate]) || 0 : 0,
-        notes: colMap.notes !== undefined ? String(row[colMap.notes] || '').trim() : '',
+        notes: notesCell,
         is_freebie: isFreebie,
       });
     }
@@ -5892,6 +6097,23 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
     if (!grandTotal) grandTotal = itemsTotal - discountAmount;
     if (!subtotalBeforeDiscount) subtotalBeforeDiscount = itemsTotal;
 
+    let deposit_amount = null;
+    let deposit_received = null;
+    let deposit_label = '';
+    let remaining_amount = null;
+    let remaining_note = '';
+    for (const sr of summaryRows) {
+      if (sr.row_kind === 'deposit') {
+        if (sr.amount > 0) deposit_amount = sr.amount;
+        deposit_label = sr.label || deposit_label;
+        if (sr.deposit_received === true || sr.deposit_received === false) deposit_received = sr.deposit_received;
+      }
+      if (sr.row_kind === 'remaining') {
+        remaining_amount = sr.amount > 0 ? sr.amount : remaining_amount;
+        remaining_note = sr.label || remaining_note;
+      }
+    }
+
     res.json({
       customer_name,
       customer_phone,
@@ -5905,6 +6127,11 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
         discount_amount: discountAmount,
         total: grandTotal,
         summary_rows: summaryRows,
+        deposit_amount,
+        deposit_received,
+        deposit_label,
+        remaining_amount,
+        remaining_note,
       },
       columns_detected: colMap,
       header_row: headerIdx,
@@ -6039,6 +6266,19 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
     const notesParts = [];
     if (parseRes.kts_info) notesParts.push(`KT Phụ trách: ${parseRes.kts_info}`);
     if (parseRes.notes) notesParts.push(parseRes.notes);
+    const sumImp = parseRes.summary;
+    if (sumImp?.deposit_amount > 0) {
+      const rsDep = sumImp.deposit_received === true ? 'Đã nhận'
+        : sumImp.deposit_received === false ? 'Chưa nhận' : '';
+      notesParts.push(
+        `Cọc: ${formatMoney(sumImp.deposit_amount)}${rsDep ? ` — ${rsDep}` : ''}${sumImp.deposit_label ? `\n${sumImp.deposit_label}` : ''}`,
+      );
+    }
+    if (sumImp?.remaining_note || (sumImp?.remaining_amount != null && sumImp.remaining_amount > 0)) {
+      notesParts.push(
+        `Còn lại: ${sumImp.remaining_note || '—'}${sumImp.remaining_amount > 0 ? ` (${formatMoney(sumImp.remaining_amount)})` : ''}`,
+      );
+    }
     notesParts.push(`📋 Import từ task: ${task.title}`);
     if (fulfillmentLabel) notesParts.push(`🧾 Thuộc: ${fulfillmentLabel} (Deal/Lead: ${lead.code || lead.id})`);
     if (lead.parent_lead_id) notesParts.push(`🎯 Deal/Lead gốc: ${masterLeadId}`);
@@ -6065,6 +6305,7 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
     // 5. Create quotation via internal POST /crm/quotations
     const axios = require('axios');
     const port = process.env.PORT || 3000;
+    const sumPost = parseRes.summary || {};
     const { data: quote } = await axios.post(`http://localhost:${port}/api/crm/quotations`, {
       title: parseRes.title || req.file.originalname.replace(/\.(xlsx?|xls)$/i, '') || `Báo giá ${customerName}`.trim(),
       customer_name: customerName,
@@ -6080,6 +6321,11 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
       discount_value: computedDiscount,
       notes: notesParts.join('\n\n'),
       payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
+      deposit_amount: sumPost.deposit_amount > 0 ? sumPost.deposit_amount : null,
+      deposit_received: sumPost.deposit_received === true || sumPost.deposit_received === false ? sumPost.deposit_received : null,
+      deposit_label: sumPost.deposit_label || null,
+      remaining_amount: sumPost.remaining_amount > 0 ? sumPost.remaining_amount : null,
+      remaining_note: sumPost.remaining_note || null,
     }, { headers: { authorization: req.headers.authorization } });
 
     // 6. Force-complete this specific task (in case auto-complete didn't match)

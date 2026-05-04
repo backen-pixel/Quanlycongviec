@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
-import { formatVND as _formatVND } from '../lib/utils';
-import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search, X, AlignLeft, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search, X, AlignLeft, Loader2, Check, History } from 'lucide-react';
 import SaveToast from '../components/SaveToast';
 import CustomerSearchPicker from '../components/CustomerSearchPicker';
+import { QUOTATION_EXCEL_DRAFT_KEY } from '../components/ExcelQuotationImport';
+import { useAuth } from '../lib/auth';
+import { formatDateTime } from '../lib/utils';
+import { getDepositRemainingDisplay } from '../lib/quotationTermsDisplay';
+import ProductSearchPicker from '../components/ProductSearchPicker';
+import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
 
 // Override formatVND: 0 → "0đ" thay vì "—"
 const formatVND = (n) => {
@@ -12,8 +17,6 @@ const formatVND = (n) => {
   if (n === 0) return '0đ';
   return new Intl.NumberFormat('vi-VN').format(n) + 'đ';
 };
-import ProductSearchPicker from '../components/ProductSearchPicker';
-import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
 
 // Helper: cho phép nhập dấu "," thay "." cho số thập phân
 const parseNumber = (val) => {
@@ -91,6 +94,7 @@ export default function QuotationForm() {
   const isEdit = !!id;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { user } = useAuth();
   const [descPopup, setDescPopup] = useState(null); // { idx, name, description }
 
   const todayISO = new Date().toISOString().slice(0, 10);
@@ -100,6 +104,12 @@ export default function QuotationForm() {
     valid_until: todayISO, payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
     delivery_terms: '', notes: '', lead_id: '',
     discount_type: 'percent', discount_value: 0,
+    approved_by: '',
+    deposit_amount: null,
+    deposit_received: null,
+    deposit_label: '',
+    remaining_amount: null,
+    remaining_note: '',
   });
   const [customPaymentTerms, setCustomPaymentTerms] = useState('');
   const [isCustomPayment, setIsCustomPayment] = useState(false);
@@ -116,6 +126,14 @@ export default function QuotationForm() {
   const [saveMsg, setSaveMsg] = useState('');
   const [statusLoading, setStatusLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [excelDraftHint, setExcelDraftHint] = useState('');
+  /** Xác nhận đã kiểm tra số liệu — chuyển từ modal Excel sang đây */
+  const [excelReviewConfirmed, setExcelReviewConfirmed] = useState(false);
+  const [excelImportMeta, setExcelImportMeta] = useState(null);
+  const [quotationHistory, setQuotationHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  /** Sau khi đổ dữ liệu từ Excel, không ghi đè bằng GET lead/detail (cùng effect chạy lại khi bỏ from_excel). */
+  const skipLeadDetailPrefillRef = useRef(false);
 
   useEffect(() => {
     api.get('/customers', { params: { limit: 5000 } }).then(r => setCustomers(r.data.customers || r.data || []));
@@ -130,7 +148,12 @@ export default function QuotationForm() {
           customer_phone: d.customer_phone || '', customer_address: d.customer_address || '',
           valid_until: d.valid_until || '', payment_terms: isPreset ? pt : 'Khác', delivery_terms: d.delivery_terms || '',
           notes: d.notes || '', discount_type: d.discount_type || 'percent', discount_value: d.discount_value || 0,
-          lead_id: d.lead_id, project_id: d.project_id,
+          lead_id: d.lead_id, project_id: d.project_id, approved_by: d.approved_by || '',
+          deposit_amount: d.deposit_amount != null && d.deposit_amount !== '' ? Number(d.deposit_amount) : null,
+          deposit_received: d.deposit_received === true || d.deposit_received === false ? d.deposit_received : null,
+          deposit_label: d.deposit_label || '',
+          remaining_amount: d.remaining_amount != null && d.remaining_amount !== '' ? Number(d.remaining_amount) : null,
+          remaining_note: d.remaining_note || '',
         });
         if (!isPreset && pt) { setIsCustomPayment(true); setCustomPaymentTerms(pt); }
         if (d.items?.length) setItems(d.items.map(i => {
@@ -149,9 +172,82 @@ export default function QuotationForm() {
         }));
       });
     } else {
-      // Auto-fill from lead/deal if lead_id in URL
+      const fromExcel = searchParams.get('from_excel') === '1';
+      if (fromExcel) {
+        try {
+          const raw = sessionStorage.getItem(QUOTATION_EXCEL_DRAFT_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            sessionStorage.removeItem(QUOTATION_EXCEL_DRAFT_KEY);
+            const dform = parsed.form || {};
+            const urlLead = searchParams.get('lead_id') || '';
+            const pt = dform.payment_terms || '';
+            const presetPt = pt && PAYMENT_OPTIONS.includes(pt);
+            if (presetPt) {
+              setIsCustomPayment(false);
+              setCustomPaymentTerms('');
+            } else if (pt) {
+              setIsCustomPayment(true);
+              setCustomPaymentTerms(pt);
+            }
+            setForm((f) => ({
+              ...f,
+              ...dform,
+              lead_id: dform.lead_id || urlLead || '',
+              discount_type: dform.discount_type || 'amount',
+              discount_value: dform.discount_value ?? 0,
+              payment_terms: presetPt ? pt : (pt ? 'Khác' : f.payment_terms),
+              approved_by: dform.approved_by || f.approved_by || '',
+            }));
+            if (parsed.items?.length) {
+              setItems(
+                parsed.items.map((i) => ({
+                  name: i.name || '',
+                  description: i.description || '',
+                  product_code: '',
+                  unit: i.unit || 'bộ',
+                  quantity: i.quantity ?? 1,
+                  unit_price: i.unit_price ?? 0,
+                  discount_percent: i.discount_percent ?? 0,
+                  vat_rate: i.vat_rate ?? 0,
+                  height: i.height ?? '',
+                  width: i.width ?? '',
+                  length: i.length ?? '',
+                  dimensions: i.dimensions || '',
+                  material: '',
+                  color: '',
+                  promo_code: '',
+                  is_promo: false,
+                  spec_factor: i.spec_factor ?? 0,
+                  group_name: i.group_name || '',
+                  standard_area: 0,
+                  notes: i.notes || '',
+                  is_freebie: !!i.is_freebie,
+                })),
+              );
+            }
+            setExcelDraftHint(parsed.meta?.fileName ? `Đã nhập từ Excel: ${parsed.meta.fileName}` : 'Đã nhập từ Excel');
+            if (parsed.meta?.requireReviewConfirm) {
+              setExcelImportMeta({ fileName: parsed.meta?.fileName || '', requireReviewConfirm: true });
+              setExcelReviewConfirmed(false);
+            } else {
+              setExcelImportMeta(null);
+              setExcelReviewConfirmed(true);
+            }
+            skipLeadDetailPrefillRef.current = true;
+            const cleanLead = dform.lead_id || urlLead || '';
+            navigate(`/crm/quotations/new${cleanLead ? `?lead_id=${encodeURIComponent(cleanLead)}` : ''}`, { replace: true });
+            return;
+          }
+        } catch (e) {
+          console.warn('[quotation] excel draft:', e);
+        }
+        navigate('/crm/quotations/new', { replace: true });
+        return;
+      }
+
       const leadId = searchParams.get('lead_id');
-      if (leadId) {
+      if (leadId && !skipLeadDetailPrefillRef.current) {
         api.get(`/crm/leads/${leadId}/detail`).then(r => {
           const lead = r.data;
           setForm(f => ({
@@ -166,7 +262,16 @@ export default function QuotationForm() {
         }).catch(() => { /* lead not found, ignore */ });
       }
     }
-  }, [id]);
+  }, [id, isEdit, navigate, searchParams]);
+
+  useEffect(() => {
+    if (!isEdit || !id) return;
+    setHistoryLoading(true);
+    api.get(`/crm/quotations/${id}/history`)
+      .then((r) => setQuotationHistory(r.data.history || []))
+      .catch(() => setQuotationHistory([]))
+      .finally(() => setHistoryLoading(false));
+  }, [isEdit, id]);
 
   // Auto-fill customer info
   const selectCustomer = (c) => {
@@ -286,23 +391,46 @@ export default function QuotationForm() {
     return { rows, subtotal, discountAmt, afterDiscount, totalVat, total: afterDiscount + totalVat, groupSubtotals, groupDetails, groupOrder };
   }, [items, form.discount_type, form.discount_value]);
 
+  const { depositShow, remainingShow } = useMemo(() => getDepositRemainingDisplay(form), [
+    form.deposit_amount, form.deposit_received, form.deposit_label,
+    form.remaining_amount, form.remaining_note, form.notes,
+  ]);
+
   const _isSaving = useRef(false);
+  const excelSaveBlocked = !isEdit && excelImportMeta?.requireReviewConfirm && !excelReviewConfirmed;
+
   const save = async () => {
     if (_isSaving.current) return;
     if (!form.title && !form.customer_name) return alert('Nhập tiêu đề hoặc khách hàng');
+    if (excelSaveBlocked) {
+      alert('Vui lòng tick xác nhận đã kiểm tra lại số liệu báo giá trước khi lưu.');
+      return;
+    }
     _isSaving.current = true;
     setSaveStatus('loading');
     setSaveMsg(isEdit ? 'Đang cập nhật báo giá...' : 'Đang tạo báo giá...');
     try {
       const effectivePayment = isCustomPayment ? customPaymentTerms : form.payment_terms;
       const payload = { ...form, payment_terms: effectivePayment, items: calcs.rows };
+      if (!isEdit && excelImportMeta) {
+        payload.quotation_source = {
+          from_excel: true,
+          excel_file_name: excelImportMeta.fileName || null,
+          excel_review_confirmed: !!excelReviewConfirmed,
+        };
+      }
       if (isEdit) {
         await api.put(`/crm/quotations/${id}`, payload);
         setSaveMsg('Cập nhật báo giá thành công!');
         setSaveStatus('success');
+        try {
+          const r = await api.get(`/crm/quotations/${id}/history`);
+          setQuotationHistory(r.data.history || []);
+        } catch (_) {}
         setTimeout(() => navigate('/crm/quotations'), 1200);
       } else {
         const { data } = await api.post('/crm/quotations', payload);
+        setExcelImportMeta(null);
         setSaveMsg('Tạo báo giá thành công!');
         setSaveStatus('success');
         setTimeout(() => navigate(`/crm/quotations/${data.id}`, { replace: true }), 1200);
@@ -320,6 +448,10 @@ export default function QuotationForm() {
     try {
       const { data } = await api.put(`/crm/quotations/${id}`, { status: newStatus });
       setForm(f => ({ ...f, status: newStatus }));
+      try {
+        const r = await api.get(`/crm/quotations/${id}/history`);
+        setQuotationHistory(r.data.history || []);
+      } catch (_) {}
       // Auto-flow: BG chấp nhận → tự tạo ĐH + Project
       if (data.auto?.order) {
         const msg = data.auto.autoProject
@@ -361,6 +493,11 @@ export default function QuotationForm() {
           <div>
             <h1 className="text-xl font-bold text-gray-900">{isEdit ? 'Sửa báo giá' : 'Tạo báo giá mới'}</h1>
             {isEdit && form.code && <p className="text-xs text-blue-600 font-bold">{form.code}</p>}
+            {excelDraftHint && (
+              <p className="text-xs text-emerald-700 font-medium mt-1 rounded-lg bg-emerald-50 border border-emerald-100 px-2 py-1 inline-block">
+                {excelDraftHint} — chỉnh sửa bên dưới rồi bấm <strong>Lưu</strong> để tạo báo giá chính thức.
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2" data-print-hide>
@@ -387,13 +524,39 @@ export default function QuotationForm() {
               {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
             </button>
           )}
-          <button onClick={save} disabled={saveStatus === 'loading'} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
+          <button onClick={save} disabled={saveStatus === 'loading' || excelSaveBlocked} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
             {saveStatus === 'loading'
               ? <><Loader2 className="h-4 w-4 animate-spin" /> Đang lưu...</>
               : <><Save className="h-4 w-4" /> Lưu</>}
           </button>
         </div>
       </div>
+
+      {!isEdit && excelImportMeta?.requireReviewConfirm && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 space-y-2">
+          <label className="flex items-start gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={excelReviewConfirmed}
+              onChange={(e) => setExcelReviewConfirmed(e.target.checked)}
+              className="w-4 h-4 mt-0.5 rounded border-gray-300 text-emerald-600 cursor-pointer flex-shrink-0"
+            />
+            <span className={`text-sm font-medium leading-snug ${excelReviewConfirmed ? 'text-emerald-800' : 'text-gray-700'}`}>
+              {user?.full_name ? (
+                <>
+                  <span className="font-bold text-blue-800">{user.full_name}</span> đã kiểm tra lại báo giá (từ Excel) và xác nhận số liệu chính xác trước khi lưu
+                </>
+              ) : (
+                'Tôi đã kiểm tra lại báo giá từ Excel và xác nhận số liệu chính xác trước khi lưu'
+              )}
+            </span>
+            {excelReviewConfirmed && <Check className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />}
+          </label>
+          <p className="text-xs text-emerald-900/80 pl-7">
+            Bắt buộc tick mới bấm được <strong>Lưu</strong> — xác nhận được ghi trong lịch sử báo giá.
+          </p>
+        </div>
+      )}
 
       {/* Customer Info - MISA style */}
       <div className="bg-white rounded-xl border p-4">
@@ -653,6 +816,53 @@ export default function QuotationForm() {
               <span>TỔNG CỘNG:</span>
               <span className="text-blue-600">{formatVND(calcs.total)}</span>
             </div>
+            {(depositShow || remainingShow) && (
+              <div className="mt-3 pt-3 border-t border-rose-200/80 space-y-2 text-xs rounded-lg bg-rose-50/80 px-3 py-2 -mx-1">
+                <div className="font-semibold text-rose-900 text-[11px] uppercase tracking-wide">Tiền cọc & khoản còn lại</div>
+                {depositShow && (
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-rose-900">Tiền cọc (theo báo giá)</span>
+                      <span className="font-bold text-rose-950 tabular-nums">
+                        {depositShow.amount > 0 ? formatVND(depositShow.amount) : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2 text-rose-800">
+                      <span>Trạng thái nhận cọc</span>
+                      <span className="font-medium">
+                        {depositShow.received === true ? 'Đã nhận' : depositShow.received === false ? 'Chưa nhận' : '—'}
+                      </span>
+                    </div>
+                    {depositShow.label && (
+                      <p className="text-[11px] text-rose-800/90 whitespace-pre-wrap leading-snug border-t border-rose-100 pt-1 mt-1">{depositShow.label}</p>
+                    )}
+                    {depositShow.fromNotesOnly && (
+                      <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5">
+                        Đang hiển thị từ ghi chú. Điền ô bên dưới phần Điều khoản và <strong>Lưu</strong> để lưu vào hệ thống.
+                      </p>
+                    )}
+                  </div>
+                )}
+                {remainingShow && (remainingShow.amount > 0 || remainingShow.note) && (
+                  <div className={`space-y-0.5 ${depositShow ? 'border-t border-rose-100 pt-2' : ''}`}>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-slate-700">Còn lại (khi bàn giao / nghiệm thu)</span>
+                      <span className="font-bold text-slate-900 tabular-nums">
+                        {remainingShow.amount > 0 ? formatVND(remainingShow.amount) : '—'}
+                      </span>
+                    </div>
+                    {remainingShow.note && (
+                      <p className="text-[11px] text-slate-600 whitespace-pre-wrap leading-snug">{remainingShow.note}</p>
+                    )}
+                    {remainingShow.fromNotesOnly && (
+                      <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5">
+                        Đang hiển thị từ ghi chú — nhập trường tương ứng và Lưu để cố định.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -708,12 +918,108 @@ export default function QuotationForm() {
               <input value={customPaymentTerms} onChange={e => setCustomPaymentTerms(e.target.value)} placeholder="Nhập điều khoản thanh toán..." className="w-full h-10 px-3 border rounded-lg text-sm mt-2" />
             )}
           </div>
+          <div className="md:col-span-2 rounded-lg border border-rose-100 bg-rose-50/50 p-3 space-y-3">
+            <h3 className="text-xs font-bold text-rose-950">Cọc & thanh toán còn lại</h3>
+            <p className="text-[11px] text-rose-900/80">Số liệu khớp block cuối file Excel (hoặc nhập tay). Hiển thị tóm tắt cạnh <strong>TỔNG CỘNG</strong>.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">Tiền cọc (VNĐ)</label>
+                <NumericInput
+                  value={form.deposit_amount === null || form.deposit_amount === undefined ? '' : form.deposit_amount}
+                  onChange={(v) => setForm((f) => ({ ...f, deposit_amount: v === '' ? null : v }))}
+                  allowEmpty
+                  className="w-full h-10 px-3 border rounded-lg text-sm mt-1 text-right"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Đã nhận cọc?</label>
+                <select
+                  value={form.deposit_received === true ? 'yes' : form.deposit_received === false ? 'no' : ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setForm((f) => ({
+                      ...f,
+                      deposit_received: v === 'yes' ? true : v === 'no' ? false : null,
+                    }));
+                  }}
+                  className="w-full h-10 px-3 border rounded-lg text-sm mt-1"
+                >
+                  <option value="">Chưa xác định</option>
+                  <option value="yes">Đã nhận</option>
+                  <option value="no">Chưa nhận</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs font-medium text-gray-600">Mô tả dòng cọc (VD: ký HĐ, lệnh SX)</label>
+                <input
+                  value={form.deposit_label}
+                  onChange={(e) => setForm((f) => ({ ...f, deposit_label: e.target.value }))}
+                  className="w-full h-10 px-3 border rounded-lg text-sm mt-1"
+                  placeholder="Tùy chọn"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Số tiền còn lại (VNĐ)</label>
+                <NumericInput
+                  value={form.remaining_amount === null || form.remaining_amount === undefined ? '' : form.remaining_amount}
+                  onChange={(v) => setForm((f) => ({ ...f, remaining_amount: v === '' ? null : v }))}
+                  allowEmpty
+                  className="w-full h-10 px-3 border rounded-lg text-sm mt-1 text-right"
+                  placeholder="0"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs font-medium text-gray-600">Diễn giải khoản còn lại</label>
+                <input
+                  value={form.remaining_note}
+                  onChange={(e) => setForm((f) => ({ ...f, remaining_note: e.target.value }))}
+                  className="w-full h-10 px-3 border rounded-lg text-sm mt-1"
+                  placeholder="VD: khi bàn giao và nghiệm thu công trình"
+                />
+              </div>
+            </div>
+          </div>
           <div className="md:col-span-2">
             <label className="text-xs font-medium text-gray-600">Ghi chú / Điều khoản</label>
             <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={5} className="w-full px-3 py-2 border rounded-lg text-sm mt-1 whitespace-pre-wrap" placeholder="Ghi chú, điều khoản thanh toán, bảo hành..." />
           </div>
         </div>
       </div>
+
+      {isEdit && (
+        <div className="bg-white rounded-xl border p-4">
+          <h2 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+            <History className="h-4 w-4 text-slate-600" /> Lịch sử chỉnh sửa báo giá
+          </h2>
+          {historyLoading ? (
+            <p className="text-sm text-gray-500 flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Đang tải…
+            </p>
+          ) : quotationHistory.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              Chưa có bản ghi. Sau khi chạy migration hệ thống và lưu báo giá, các lần tạo/cập nhật sẽ hiển thị tại đây.
+            </p>
+          ) : (
+            <ul className="space-y-2 max-h-72 overflow-y-auto">
+              {quotationHistory.map((h) => (
+                <li key={h.id} className="text-sm border border-gray-100 rounded-lg px-3 py-2 bg-gray-50/90">
+                  <div className="flex justify-between gap-2 flex-wrap items-start">
+                    <span className={`font-semibold ${h.action === 'created' ? 'text-emerald-700' : 'text-blue-700'}`}>
+                      {h.action === 'created' ? 'Tạo mới' : 'Cập nhật'}
+                    </span>
+                    <span className="text-xs text-gray-500 whitespace-nowrap">{formatDateTime(h.created_at)}</span>
+                  </div>
+                  <p className="text-gray-800 mt-1 leading-snug">{h.summary}</p>
+                  {h.editor_name ? (
+                    <p className="text-xs text-gray-500 mt-1">Người thực hiện: {h.editor_name}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Description Detail Popup */}
       {descPopup && (

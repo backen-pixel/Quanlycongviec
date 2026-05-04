@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { ArrowLeft, Receipt, User, Phone, MapPin, DollarSign, Plus, X, Building2, Download, Printer, Send, FileCheck, AlertCircle, Mail, Loader2, Pencil } from 'lucide-react';
+import { ArrowLeft, User, Phone, MapPin, DollarSign, X, Building2, Download, Printer, Send, FileCheck, AlertCircle, Mail, Loader2, Pencil, Link2, Calendar, FileText } from 'lucide-react';
+import CrmLineItemsReadonly from '../components/CrmLineItemsReadonly';
 
 export default function InvoiceDetail() {
   const { id } = useParams();
@@ -87,7 +88,6 @@ export default function InvoiceDetail() {
 
   const remaining = (invoice.total || 0) - (invoice.paid_amount || 0);
   const paidPct = invoice.total > 0 ? Math.min(((invoice.paid_amount || 0) / invoice.total) * 100, 100) : 0;
-  const totalVat = (invoice.items || []).reduce((s, i) => s + (i.vat_amount || (i.amount || 0) * (i.vat_rate || 0) / 100), 0);
 
   return (
     <div className="space-y-4 w-full">
@@ -147,90 +147,98 @@ export default function InvoiceDetail() {
       <MisaStatusPanel invoice={invoice} onPublish={publishToMisa} onSendEmail={() => setShowMisaEmail(true)} loading={misaLoading} />
 
       <div className="grid grid-cols-1 gap-4">
-        {/* Customer + Payment History - horizontal */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white rounded-xl border p-4 space-y-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Khách hàng</h3>
-            {invoice.customer_name && <p className="text-sm font-medium text-gray-900 flex items-center gap-2"><User className="h-4 w-4 text-gray-400" />{invoice.customer_name}</p>}
-            {invoice.customer_phone && <p className="text-xs text-gray-500 flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-gray-400" />{invoice.customer_phone}</p>}
-            {invoice.customer_address && <p className="text-xs text-gray-500 flex items-center gap-2"><MapPin className="h-3.5 w-3.5 text-gray-400" />{invoice.customer_address}</p>}
-            {invoice.customer_tax_code && <p className="text-xs text-gray-500 flex items-center gap-2"><Building2 className="h-3.5 w-3.5 text-gray-400" />MST: {invoice.customer_tax_code}</p>}
-          </div>
-
-          {/* Payment History */}
-          <div className="bg-white rounded-xl border p-4">
-            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Lịch sử thanh toán</h3>
-            {(invoice.payments || []).length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-4">Chưa có thanh toán</p>
-            ) : (
-              <div className="space-y-2">
-                {invoice.payments.map(p => (
-                  <div key={p.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="text-sm font-bold text-emerald-600">{formatVND(p.amount)}</p>
-                      <p className="text-[10px] text-gray-400">{p.payment_method === 'cash' ? '💵 Tiền mặt' : '🏦 Chuyển khoản'} {p.reference_number ? `· ${p.reference_number}` : ''}</p>
-                    </div>
-                    <span className="text-xs text-gray-500">{formatDate(p.payment_date)}</span>
-                  </div>
-                ))}
-              </div>
+            {invoice.customer_name && <p className="text-sm font-medium text-gray-900 flex items-center gap-2"><User className="h-4 w-4 text-gray-400 shrink-0" />{invoice.customer_name}</p>}
+            {invoice.customer_phone && <p className="text-xs text-gray-600 flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-gray-400 shrink-0" />{invoice.customer_phone}</p>}
+            {(invoice.customer?.email || invoice.customer_email) && (
+              <p className="text-xs text-gray-600 flex items-center gap-2"><Mail className="h-3.5 w-3.5 text-gray-400 shrink-0" />{invoice.customer?.email || invoice.customer_email}</p>
+            )}
+            {invoice.customer_address && <p className="text-xs text-gray-600 flex items-start gap-2"><MapPin className="h-3.5 w-3.5 text-gray-400 shrink-0 mt-0.5" /><span>{invoice.customer_address}</span></p>}
+            {(invoice.customer_tax_code || invoice.customer?.tax_code) && (
+              <p className="text-xs text-gray-600 flex items-center gap-2"><Building2 className="h-3.5 w-3.5 text-gray-400 shrink-0" />MST: {invoice.customer_tax_code || invoice.customer?.tax_code}</p>
             )}
           </div>
-        </div>
 
-        {/* Right: Items with VAT */}
-        <div className="bg-white rounded-xl border p-3">
-          <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-4">Chi tiết hàng hóa</h3>
-          <div className="overflow-x-auto border rounded-lg">
-          <table className="min-w-[1200px] w-full text-xs">
-            <thead><tr className="border-b text-[9px] text-gray-500 uppercase tracking-wider">
-              <th className="py-1.5 px-1 text-left">STT</th><th className="py-1.5 px-1 text-left">Mã HH</th><th className="py-1.5 px-1 text-left min-w-[160px]">Tên</th><th className="py-1.5 px-1 text-left min-w-[120px]">Diễn giải</th><th className="py-1.5 px-1 text-center">ĐVT</th>
-              <th className="py-1.5 px-1 text-right">Cao</th><th className="py-1.5 px-1 text-right">Rộng</th><th className="py-1.5 px-1 text-right">Dài</th>
-              <th className="py-1.5 px-1 text-right">SL</th><th className="py-1.5 px-1 text-right">Đơn giá</th><th className="py-1.5 px-1 text-right">Thành tiền</th>
-              <th className="py-1.5 px-1 text-right">CK%</th><th className="py-1.5 px-1 text-right">Tiền CK</th>
-              <th className="py-1.5 px-1 text-right">%VAT</th><th className="py-1.5 px-1 text-right">Tiền thuế</th>
-              <th className="py-1.5 px-1 text-right">Tổng</th><th className="py-1.5 px-1 text-left">CTKM</th><th className="py-1.5 px-1 text-center">KM</th>
-            </tr></thead>
-            <tbody>
-              {(invoice.items || []).map((item, i) => {
-                const vatAmount = item.vat_amount || (item.amount || 0) * (item.vat_rate || 0) / 100;
-                const discAmt = item.discount_amount || (item.quantity || 0) * (item.unit_price || 0) * (item.discount_percent || 0) / 100;
-                const total = item.total || ((item.amount || 0) + vatAmount);
-                return (
-                  <tr key={item.id} className="border-b text-xs">
-                    <td className="py-1 px-1 text-gray-400">{i + 1}</td>
-                    <td className="py-1 px-1 text-gray-500">{item.product_code || '-'}</td>
-                    <td className="py-1 px-1 font-medium text-gray-900">{item.name}</td>
-                    <td className="py-1 px-1 text-gray-500">{item.description || ''}</td>
-                    <td className="py-1 px-1 text-center text-gray-500">{item.unit}</td>
-                    <td className="py-1 px-1 text-right text-gray-400">{item.height || '-'}</td>
-                    <td className="py-1 px-1 text-right text-gray-400">{item.width || '-'}</td>
-                    <td className="py-1 px-1 text-right text-gray-400">{item.length || '-'}</td>
-                    <td className="py-1 px-1 text-right">{item.quantity}</td>
-                    <td className="py-1 px-1 text-right">{formatVND(item.unit_price)}</td>
-                    <td className="py-1 px-1 text-right font-medium">{formatVND(item.amount)}</td>
-                    <td className="py-1 px-1 text-right text-gray-500">{item.discount_percent || 0}%</td>
-                    <td className="py-1 px-1 text-right text-orange-600">{formatVND(discAmt)}</td>
-                    <td className="py-1 px-1 text-right text-gray-500">{item.vat_rate || 0}%</td>
-                    <td className="py-1 px-1 text-right text-gray-600">{formatVND(vatAmount)}</td>
-                    <td className="py-1 px-1 text-right font-bold text-blue-700">{formatVND(total)}</td>
-                    <td className="py-1 px-1 text-gray-500">{item.promo_code || ''}</td>
-                    <td className="py-1 px-1 text-center">{item.is_promo ? '🎁' : ''}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          </div>
-          <div className="flex justify-end mt-4">
-            <div className="w-72 space-y-1.5 text-sm">
-              <div className="flex justify-between"><span className="text-gray-500">Tổng tiền hàng</span><span>{formatVND(invoice.subtotal)}</span></div>
-              {invoice.discount_amount > 0 && <div className="flex justify-between"><span className="text-gray-500">Chiết khấu</span><span className="text-red-600">-{formatVND(invoice.discount_amount)}</span></div>}
-              {totalVat > 0 && <div className="flex justify-between"><span className="text-gray-500">Thuế GTGT</span><span>{formatVND(totalVat)}</span></div>}
-              <div className="flex justify-between border-t pt-2 text-base font-bold"><span>TỔNG CỘNG</span><span className="text-purple-600">{formatVND(invoice.total)}</span></div>
+          <div className="bg-white rounded-xl border p-4 space-y-3">
+            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide flex items-center gap-2">
+              <FileText className="h-4 w-4 text-purple-600" /> Chứng từ & điều khoản
+            </h3>
+            {invoice.invoice_date && (
+              <p className="text-sm text-gray-800 flex items-center gap-2"><Calendar className="h-4 w-4 text-gray-400" /> Ngày HĐ: <span className="font-medium">{formatDate(invoice.invoice_date)}</span></p>
+            )}
+            {invoice.due_date && (
+              <p className="text-sm text-gray-800 flex items-center gap-2"><Calendar className="h-4 w-4 text-amber-500" /> Hạn TT: <span className="font-medium">{formatDate(invoice.due_date)}</span></p>
+            )}
+            {invoice.payment_terms && (
+              <div>
+                <span className="text-xs font-semibold text-gray-500 uppercase">Điều khoản thanh toán</span>
+                <p className="text-gray-800 mt-1 whitespace-pre-wrap text-sm">{invoice.payment_terms}</p>
+              </div>
+            )}
+            {invoice.payment_method && (
+              <p className="text-xs text-gray-600">Hình thức (ghi trên HĐ): <span className="font-medium">{invoice.payment_method}</span></p>
+            )}
+            {invoice.bank_account && (
+              <p className="text-xs text-gray-600 whitespace-pre-wrap">TK NH: {invoice.bank_account}</p>
+            )}
+            {invoice.description && (
+              <div>
+                <span className="text-xs font-semibold text-gray-500 uppercase">Mô tả</span>
+                <p className="text-gray-800 mt-1 whitespace-pre-wrap text-sm">{invoice.description}</p>
+              </div>
+            )}
+            {invoice.notes && (
+              <div>
+                <span className="text-xs font-semibold text-gray-500 uppercase">Ghi chú</span>
+                <pre className="text-gray-800 mt-1 whitespace-pre-wrap text-sm font-sans">{invoice.notes}</pre>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2 pt-1">
+              {invoice.order_id && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/crm/orders/${invoice.order_id}`)}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                >
+                  <Link2 className="h-3.5 w-3.5" /> Đơn hàng liên quan
+                </button>
+              )}
+              {invoice.quotation_id && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/crm/quotations/${invoice.quotation_id}`)}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 cursor-pointer"
+                >
+                  <Link2 className="h-3.5 w-3.5" /> Báo giá gốc
+                </button>
+              )}
             </div>
           </div>
         </div>
+
+        <div className="bg-white rounded-xl border p-4">
+          <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Lịch sử thanh toán</h3>
+          {(invoice.payments || []).length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-4">Chưa có thanh toán</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {invoice.payments.map((p) => (
+                <div key={p.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <div>
+                    <p className="text-sm font-bold text-emerald-600">{formatVND(p.amount)}</p>
+                    <p className="text-[10px] text-gray-500">{p.payment_method === 'cash' ? 'Tiền mặt' : 'Chuyển khoản'} {p.reference_number ? `· ${p.reference_number}` : ''}</p>
+                    {p.notes && <p className="text-[10px] text-gray-400 mt-1">{p.notes}</p>}
+                  </div>
+                  <span className="text-xs text-gray-500 whitespace-nowrap">{formatDate(p.payment_date)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <CrmLineItemsReadonly items={invoice.items || []} document={invoice} accent="purple" />
       </div>
 
       {showPay && <PayModal remaining={remaining} code={invoice.code} onPay={recordPayment} onClose={() => setShowPay(false)} loading={payLoading} />}

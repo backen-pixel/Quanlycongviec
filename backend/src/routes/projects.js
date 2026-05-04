@@ -21,6 +21,8 @@ const {
   canViewerSeeByCompanyAndDept,
 } = require('../helpers/documentShareScope');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
+const { syncLeadDocumentsToProject } = require('../helpers/syncLeadDocumentsToProject');
+const { copyCrmTaskArtifactsToLeadDocuments } = require('../helpers/copyCrmTaskArtifactsToLeadDocuments');
 
 const r = Router();
 r.use(auth);
@@ -434,6 +436,297 @@ r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(400).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+function uniqById(rows) {
+  const m = new Map();
+  (rows || []).forEach((r) => {
+    if (r && r.id && !m.has(r.id)) m.set(r.id, r);
+  });
+  return [...m.values()];
+}
+
+function num(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// ─── THU CHI DỰ ÁN: báo giá, đơn, HĐ, lịch sử thanh toán, chi phí ghi nhận ──
+r.get('/:id/cashflow', async (req, res) => {
+  try {
+    const pid = String(req.params.id || '').replace(/"/g, '');
+
+    const { data: leads } = await supabase.from('crm_leads').select('id').eq('project_id', pid);
+    const leadIds = (leads || []).map((l) => l.id);
+
+    const qSelectFull =
+      'id, code, title, total, status, deposit_amount, deposit_received, deposit_label, created_at, project_id, lead_id';
+    const qSelectMin = 'id, code, title, total, status, created_at, project_id, lead_id';
+
+    let qByProject;
+    let qByLead;
+    {
+      const a = await supabase.from('quotations').select(qSelectFull).eq('project_id', pid);
+      if (a.error && (a.error.code === '42703' || String(a.error.message || '').toLowerCase().includes('column'))) {
+        const b = await supabase.from('quotations').select(qSelectMin).eq('project_id', pid);
+        qByProject = b;
+      } else qByProject = a;
+    }
+    if (leadIds.length) {
+      const a = await supabase.from('quotations').select(qSelectFull).in('lead_id', leadIds);
+      if (a.error && (a.error.code === '42703' || String(a.error.message || '').toLowerCase().includes('column'))) {
+        const b = await supabase.from('quotations').select(qSelectMin).in('lead_id', leadIds);
+        qByLead = b;
+      } else qByLead = a;
+    } else {
+      qByLead = { data: [] };
+    }
+    const quotations = uniqById([...(qByProject?.data || []), ...(qByLead?.data || [])]);
+
+    const oSelect =
+      'id, code, title, total, paid_amount, payment_status, status, created_at, order_date, project_id, lead_id, logistics_project_id, display_label';
+    const [{ data: oByProj }, { data: oByLead }] = await Promise.all([
+      supabase
+        .from('orders')
+        .select(oSelect)
+        .or(`project_id.eq."${pid}",logistics_project_id.eq."${pid}"`),
+      leadIds.length ? supabase.from('orders').select(oSelect).in('lead_id', leadIds) : Promise.resolve({ data: [] }),
+    ]);
+    let orders = uniqById([...(oByProj || []), ...(oByLead || [])]);
+
+    const iSelect =
+      'id, code, title, total, paid_amount, payment_status, status, invoice_date, created_at, project_id, lead_id, order_id';
+    const [{ data: iByProject }, { data: iByLead }] = await Promise.all([
+      supabase.from('invoices').select(iSelect).eq('project_id', pid),
+      leadIds.length ? supabase.from('invoices').select(iSelect).in('lead_id', leadIds) : Promise.resolve({ data: [] }),
+    ]);
+    let invoices = uniqById([...(iByProject || []), ...(iByLead || [])]);
+
+    const orderIds = orders.map((o) => o.id);
+    if (orderIds.length) {
+      const { data: iByOrder } = await supabase.from('invoices').select(iSelect).in('order_id', orderIds);
+      invoices = uniqById([...invoices, ...(iByOrder || [])]);
+    }
+
+    const invoiceIds = invoices.map((i) => i.id);
+    let payments = [];
+    if (invoiceIds.length) {
+      const { data: pr, error: prErr } = await supabase
+        .from('payment_records')
+        .select('id, invoice_id, order_id, amount, payment_date, payment_method, reference_number, notes, created_at')
+        .in('invoice_id', invoiceIds)
+        .order('payment_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (prErr) throw prErr;
+      payments = pr || [];
+    }
+
+    const invById = new Map((invoices || []).map((i) => [i.id, i]));
+
+    let expenses = [];
+    try {
+      const { data: ex } = await supabase
+        .from('project_expenses')
+        .select('id, amount, expense_date, category, description, created_at, created_by')
+        .eq('project_id', pid)
+        .order('expense_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      expenses = ex || [];
+    } catch (_) {
+      expenses = [];
+    }
+
+    const ts = (d) => {
+      if (!d) return 0;
+      const t = new Date(d).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+
+    const timeline = [];
+
+    for (const q of quotations) {
+      timeline.push({
+        kind: 'quotation',
+        sort_at: ts(q.created_at),
+        title: `Báo giá ${q.code || ''}`,
+        subtitle: q.title || '',
+        amount: num(q.total),
+        flow: 'reference',
+        id: q.id,
+        href: `/crm/quotations/${q.id}`,
+        meta: { status: q.status },
+      });
+      if (num(q.deposit_amount) > 0) {
+        timeline.push({
+          kind: 'quotation_deposit',
+          sort_at: ts(q.created_at) + 0.5,
+          title: `Tiền cọc (theo báo giá ${q.code || ''})`,
+          subtitle: [q.deposit_received === true ? 'Đã nhận' : q.deposit_received === false ? 'Chưa nhận' : null, q.deposit_label]
+            .filter(Boolean)
+            .join(' — ') || undefined,
+          amount: num(q.deposit_amount),
+          flow: 'reference',
+          id: `${q.id}-dep`,
+          href: `/crm/quotations/${q.id}`,
+          meta: { deposit_received: q.deposit_received },
+        });
+      }
+    }
+
+    for (const o of orders) {
+      timeline.push({
+        kind: 'order',
+        sort_at: ts(o.order_date || o.created_at),
+        title: `Đơn hàng ${o.code || ''}${o.display_label ? ` — ${o.display_label}` : ''}`,
+        subtitle: o.title || '',
+        amount: num(o.total),
+        flow: 'reference',
+        paid_snapshot: num(o.paid_amount),
+        id: o.id,
+        href: `/crm/orders/${o.id}`,
+        meta: { payment_status: o.payment_status, status: o.status },
+      });
+    }
+
+    for (const inv of invoices) {
+      timeline.push({
+        kind: 'invoice',
+        sort_at: ts(inv.invoice_date || inv.created_at),
+        title: `Hóa đơn ${inv.code || ''}`,
+        subtitle: inv.title || '',
+        amount: num(inv.total),
+        flow: 'payable',
+        paid_snapshot: num(inv.paid_amount),
+        id: inv.id,
+        href: `/crm/invoices/${inv.id}`,
+        meta: { payment_status: inv.payment_status, status: inv.status },
+      });
+    }
+
+    for (const p of payments) {
+      const inv = invById.get(p.invoice_id);
+      timeline.push({
+        kind: 'payment_in',
+        sort_at: ts(p.payment_date || p.created_at),
+        title: `Thu tiền (${inv?.code || 'HĐ'})`,
+        subtitle: [p.payment_method, p.reference_number, p.notes].filter(Boolean).join(' · ') || undefined,
+        amount: num(p.amount),
+        flow: 'in',
+        id: p.id,
+        href: `/crm/invoices/${p.invoice_id}`,
+        meta: { invoice_id: p.invoice_id },
+      });
+    }
+
+    for (const ex of expenses) {
+      timeline.push({
+        kind: 'expense_out',
+        sort_at: ts(ex.expense_date || ex.created_at),
+        title: ex.category?.trim() || 'Chi phí dự án',
+        subtitle: ex.description || undefined,
+        amount: num(ex.amount),
+        flow: 'out',
+        id: ex.id,
+        meta: {},
+      });
+    }
+
+    timeline.sort((a, b) => b.sort_at - a.sort_at);
+
+    const quotations_total = quotations.reduce((s, q) => s + num(q.total), 0);
+    const deposits_sum = quotations.reduce((s, q) => s + (num(q.deposit_amount) > 0 ? num(q.deposit_amount) : 0), 0);
+    const orders_total = orders.reduce((s, o) => s + num(o.total), 0);
+    const orders_paid = orders.reduce((s, o) => s + num(o.paid_amount), 0);
+    const orders_outstanding = orders.reduce((s, o) => s + Math.max(0, num(o.total) - num(o.paid_amount)), 0);
+
+    const invoices_total = invoices.reduce((s, i) => s + num(i.total), 0);
+    const invoices_paid = invoices.reduce((s, i) => s + num(i.paid_amount), 0);
+    const invoices_outstanding = invoices.reduce((s, i) => s + Math.max(0, num(i.total) - num(i.paid_amount)), 0);
+
+    const payments_total = payments.reduce((s, p) => s + num(p.amount), 0);
+    const expenses_total = expenses.reduce((s, e) => s + num(e.amount), 0);
+
+    let remaining_to_collect = 0;
+    let remaining_basis = 'none';
+    if (invoices.length > 0) {
+      remaining_to_collect = invoices_outstanding;
+      remaining_basis = 'invoice';
+    } else if (orders.length > 0) {
+      remaining_to_collect = orders_outstanding;
+      remaining_basis = 'order';
+    } else {
+      remaining_to_collect = Math.max(0, quotations_total - deposits_sum);
+      remaining_basis = 'quotation';
+    }
+
+    res.json({
+      quotations,
+      orders,
+      invoices,
+      payments,
+      expenses,
+      timeline,
+      summary: {
+        quotations: {
+          count: quotations.length,
+          total_sum: quotations_total,
+          deposits_sum,
+        },
+        orders: {
+          count: orders.length,
+          total_sum: orders_total,
+          paid_sum: orders_paid,
+          outstanding_sum: orders_outstanding,
+        },
+        invoices: {
+          count: invoices.length,
+          total_sum: invoices_total,
+          paid_sum: invoices_paid,
+          outstanding_sum: invoices_outstanding,
+        },
+        payments_recorded_sum: payments_total,
+        expenses_sum: expenses_total,
+        remaining_to_collect,
+        remaining_basis,
+        net_cash_vs_expenses: payments_total - expenses_total,
+      },
+    });
+  } catch (e) {
+    console.error('[projects/:id/cashflow]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải thu chi' });
+  }
+});
+
+/** Ghi nhận chi phí trên dự án (vật tư phát sinh, v.v.) */
+r.post('/:id/expenses', async (req, res) => {
+  try {
+    const pid = req.params.id;
+    const b = req.body || {};
+    const amount = num(b.amount);
+    if (!(amount > 0)) return res.status(400).json({ error: 'Nhập số tiền chi > 0' });
+
+    const row = {
+      project_id: pid,
+      amount,
+      expense_date: b.expense_date || null,
+      category: b.category?.trim() || null,
+      description: b.description?.trim() || null,
+      created_by: req.user.userId,
+    };
+
+    const { data, error } = await supabase.from('project_expenses').insert(row).select('*').single();
+    if (error) {
+      if (error.message?.includes('does not exist') || error.code === '42P01') {
+        return res.status(503).json({ error: 'Chưa chạy migration project_expenses (114_project_expenses.sql)' });
+      }
+      throw error;
+    }
+    await logActivity(req.user.userId, 'created', 'project_expense', data.id, `Chi phí dự án ${pid}: ${amount}`);
+    res.status(201).json(data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || 'Lỗi ghi chi phí' });
   }
 });
 
@@ -1279,51 +1572,12 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
         }).eq('id', projectId);
         console.log(`[deal] Project status → producing`);
 
-        // 4. Copy documents from deal/lead to project
+        // 4. Copy đính kèm + ghi chú nhiệm vụ CRM → lead_documents (dùng chung helper với auto-deal)
         try {
-          // Copy task attachments → lead_documents  
-          const { data: dealTaskAtts } = await supabase.from('crm_task_attachments')
-            .select('*, task:crm_tasks(title, stage_slug)')
-            .eq('lead_id', b.deal_id);
-          if (dealTaskAtts?.length) {
-            const { data: existingDocs } = await supabase.from('lead_documents')
-              .select('name, file_url').eq('lead_id', b.deal_id);
-            const existingSet = new Set((existingDocs || []).map(d => `${d.name}|${d.file_url || ''}`));
-            const newDocInserts = dealTaskAtts
-              .filter(att => !existingSet.has(`[${att.task?.title || 'Task'}] ${att.name}|${att.file_url || ''}`))
-              .map(att => ({
-                lead_id: b.deal_id,
-                name: `[${att.task?.title || 'Task'}] ${att.name}`,
-                doc_type: att.file_url ? (att.doc_type || 'other') : 'requirement',
-                file_url: att.file_url || null, file_name: att.file_name || null,
-                file_size: att.file_size || null, mime_type: att.mime_type || null,
-                notes: att.notes || null, created_by: att.created_by,
-              }));
-            if (newDocInserts.length) {
-              await supabase.from('lead_documents').insert(newDocInserts);
-              console.log(`[deal→project] Copied ${newDocInserts.length} task attachments → lead_documents`);
-            }
-          }
-
-          // Copy task notes → lead_documents
-          const { data: dealTasksWithNotes } = await supabase.from('crm_tasks')
-            .select('id, title, stage_slug, notes, created_by')
-            .eq('lead_id', b.deal_id).not('notes', 'is', null);
-          if (dealTasksWithNotes?.length) {
-            const existingDocs2 = (await supabase.from('lead_documents').select('name').eq('lead_id', b.deal_id)).data || [];
-            const existingNames = new Set(existingDocs2.map(d => d.name));
-            const noteInserts = dealTasksWithNotes
-              .filter(t => t.notes?.trim() && !existingNames.has(`📝 Ghi chú: ${t.title}`))
-              .map(t => ({
-                lead_id: b.deal_id, name: `📝 Ghi chú: ${t.title}`,
-                doc_type: 'requirement', notes: t.notes, created_by: t.created_by,
-              }));
-            if (noteInserts.length) {
-              await supabase.from('lead_documents').insert(noteInserts);
-              console.log(`[deal→project] Copied ${noteInserts.length} task notes → lead_documents`);
-            }
-          }
-        } catch (copyErr) { console.error('[deal→project] Copy task data error:', copyErr.message); }
+          await copyCrmTaskArtifactsToLeadDocuments(b.deal_id);
+        } catch (copyErr) {
+          console.error('[deal→project] Copy task data error:', copyErr.message);
+        }
 
         // Copy all lead_documents → project quotation_files
         const { data: dealDocs } = await supabase.from('lead_documents')
@@ -1345,6 +1599,12 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
             await supabase.from('projects').update({ quotation_files: [...existing, ...allDocEntries] }).eq('id', projectId);
             console.log(`[deal] Copied ${allDocEntries.length} documents to project quotation_files`);
           }
+        }
+
+        try {
+          await syncLeadDocumentsToProject({ leadId: b.deal_id, projectId, shareToWorkshop: true });
+        } catch (e) {
+          console.warn('[deal→project] sync lead_documents:', e.message);
         }
 
         // 5. Log activity

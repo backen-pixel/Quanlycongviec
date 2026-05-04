@@ -15,6 +15,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const { supabase } = require('../config/supabase');
+const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('./orderFromQuotation');
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────
 
@@ -106,6 +107,13 @@ async function createProjectFromLead(lead, userId, overrideFlowId) {
   // Link lead to project
   await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', lead.id);
 
+  try {
+    const { syncLeadDocumentsToProject } = require('./syncLeadDocumentsToProject');
+    await syncLeadDocumentsToProject({ leadId: lead.id, projectId: project.id, shareToWorkshop: true });
+  } catch (e) {
+    console.warn('[createProjectFromLead] sync lead_documents:', e.message);
+  }
+
   // Auto create tasks for Tư vấn stage using stageFlow
   let stageFlow = null;
   try { stageFlow = require('./stageFlow'); } catch {}
@@ -139,26 +147,16 @@ async function onQuotationAccepted(quotationId, userId) {
 
   const orderCode = await nextCode('DH');
   const { data: order, error } = await supabase.from('orders').insert({
-    code: orderCode, customer_id: quote.customer_id, customer_name: quote.customer_name,
-    customer_phone: quote.customer_phone, customer_address: quote.customer_address,
-    quotation_id: quote.id, lead_id: quote.lead_id, project_id: quote.project_id,
-    title: quote.title, description: quote.description, payment_terms: quote.payment_terms,
-    subtotal: quote.subtotal, discount_type: quote.discount_type, discount_value: quote.discount_value,
-    discount_amount: quote.discount_amount, tax_rate: quote.tax_rate, tax_amount: quote.tax_amount,
-    total: quote.total, status: 'confirmed', confirmed_at: new Date().toISOString(),
+    code: orderCode,
+    ...snapshotOrderRowFromQuotation(quote),
+    status: 'confirmed',
+    confirmed_at: new Date().toISOString(),
     created_by: userId,
   }).select('*').single();
   if (error) throw error;
 
   if (qItems?.length) {
-    const oItems = qItems.map(qi => ({
-      order_id: order.id, product_id: qi.product_id, quotation_item_id: qi.id,
-      item_order: qi.item_order, name: qi.name, description: qi.description,
-      unit: qi.unit, quantity: qi.quantity, unit_price: qi.unit_price,
-      discount_percent: qi.discount_percent, amount: qi.amount,
-      dimensions: qi.dimensions, material: qi.material, color: qi.color, notes: qi.notes,
-    }));
-    await supabase.from('order_items').insert(oItems);
+    await supabase.from('order_items').insert(mapQuotationItemsToOrderRows(qItems, order.id));
   }
 
   // Update quotation → converted

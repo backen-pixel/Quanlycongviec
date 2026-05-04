@@ -1,7 +1,8 @@
 /**
  * Chuẩn hoá SĐT (chỉ số) và ghép với customers + cơ hội CRM (lead/deal).
- * Nếu khách có đúng 1 lead/deal trong phạm vi quyền → tự gắn lead_id.
- * Từ 2 trở lên → chỉ gắn customer_id; lead_id để NV chọn thủ công trên web.
+ * Tự gắn lead_id khi: đúng một dòng CRM trong phạm vi; hoặc (nhiều dòng nhưng) đúng một lead
+ * và không có lead thứ hai — kèm deal vẫn gắn lead đó; hoặc không có lead và đúng một deal.
+ * Nhiều lead hoặc nhiều deal song song (không rõ ràng) → chỉ gắn customer_id; NV chọn tay trên web.
  */
 
 const { fetchCrmLeadsForCustomerScoped } = require('./crmAccessRoles');
@@ -106,25 +107,37 @@ async function resolveCustomerLeadByPhone(supabase, phoneRaw, staffUserId, role)
     };
   }
 
-  if (leads.length >= 2) {
+  const leadRows = leads.filter((x) => x.type === 'lead');
+  const dealRows = leads.filter((x) => x.type === 'deal');
+
+  let chosen = null;
+  if (leads.length === 1) {
+    chosen = leads[0];
+  } else if (leads.length > 1 && leadRows.length === 1) {
+    /* Ví dụ 1 lead + n deal: chỉ một lead → gắn lead; nhiều lead → không tự chọn */
+    chosen = leadRows[0];
+  } else if (leadRows.length === 0 && dealRows.length === 1) {
+    chosen = dealRows[0];
+  }
+
+  if (!chosen) {
     return {
       customer_id: customer.id,
       lead_id: null,
       customer,
       lead: null,
-      multiple_leads: true,
+      multiple_leads: leads.length >= 2,
       visible_lead_count: leads.length,
     };
   }
 
-  const lead = leads[0] || null;
   return {
     customer_id: customer.id,
-    lead_id: lead?.id || null,
+    lead_id: chosen.id,
     customer,
-    lead,
+    lead: chosen,
     multiple_leads: false,
-    visible_lead_count: 1,
+    visible_lead_count: leads.length,
   };
 }
 

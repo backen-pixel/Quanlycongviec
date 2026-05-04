@@ -64,6 +64,9 @@ export default function VoiceRecordingsPage() {
   const [leadRows, setLeadRows] = useState([]);
   const [pickLeadId, setPickLeadId] = useState('');
   const [savingLink, setSavingLink] = useState(false);
+  const [leadRowsLoading, setLeadRowsLoading] = useState(false);
+  const [attachPreviewLoading, setAttachPreviewLoading] = useState(false);
+  const attachSeqRef = useRef(0);
 
   /** all | unassigned | linked — linked = đã gắn lead/deal */
   const [listTab, setListTab] = useState('all');
@@ -106,7 +109,7 @@ export default function VoiceRecordingsPage() {
 
   useEffect(() => {
     void load();
-  }, [listTab, filterUserId, voiceAdmin]);
+  }, [listTab, filterUserId, voiceAdmin, listPhoneFilter]);
 
   useEffect(() => {
     if (!attachRecording) return;
@@ -127,15 +130,57 @@ export default function VoiceRecordingsPage() {
   useEffect(() => {
     if (!attachRecording || !pickCustomerId) {
       setLeadRows([]);
+      setLeadRowsLoading(false);
       return;
     }
+    setLeadRowsLoading(true);
     void api
       .get('/voice-recordings/crm-lead-options', { params: { customer_id: pickCustomerId } })
       .then(({ data }) => setLeadRows(data.leads || []))
-      .catch(() => setLeadRows([]));
+      .catch(() => setLeadRows([]))
+      .finally(() => setLeadRowsLoading(false));
   }, [pickCustomerId, attachRecording]);
 
+  /** Khi mở modal: nếu chưa có KH join sẵn nhưng có SĐT → tra CRM và điền KH + lead nếu hệ thống tự ghép được */
+  useEffect(() => {
+    if (!attachRecording) {
+      setAttachPreviewLoading(false);
+      return;
+    }
+    if (attachRecording.customer?.id) {
+      setAttachPreviewLoading(false);
+      return;
+    }
+    const phone = String(attachRecording.phone_number || '').replace(/\s/g, '').trim();
+    if (phone.length < 9) {
+      setAttachPreviewLoading(false);
+      return;
+    }
+    const seq = attachSeqRef.current;
+    let cancelled = false;
+    setAttachPreviewLoading(true);
+    void api
+      .get('/voice-recordings/phone-preview', { params: { phone } })
+      .then(({ data }) => {
+        if (cancelled || seq !== attachSeqRef.current) return;
+        const m = data?.match;
+        if (m?.customer_id) {
+          setPickCustomerId(m.customer_id);
+          setPickLeadId(m.lead_id || '');
+          setCustQuery(m.customer?.full_name || phone);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled && seq === attachSeqRef.current) setAttachPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachRecording?.id]);
+
   const openAttach = (row) => {
+    attachSeqRef.current += 1;
     setAttachRecording(row);
     setCustQuery('');
     setCustRows([]);
@@ -167,11 +212,20 @@ export default function VoiceRecordingsPage() {
     setSavingLink(false);
   };
 
-  const relinkFromPhone = async (id) => {
+  const relinkFromPhone = async (id, opts = {}) => {
+    const { updateAttachModal } = opts;
     setErr('');
     setRelinkingRowId(id);
     try {
-      await api.patch(`/voice-recordings/${id}`, { action: 'relink_from_phone' });
+      const { data } = await api.patch(`/voice-recordings/${id}`, { action: 'relink_from_phone' });
+      if (updateAttachModal && data?.recording) {
+        setAttachRecording(data.recording);
+        setPickCustomerId(data.recording.customer?.id || '');
+        setPickLeadId(data.recording.lead?.id || '');
+        if (data.recording.customer?.full_name) {
+          setCustQuery(data.recording.customer.full_name);
+        }
+      }
       await load();
     } catch (e) {
       setErr(e.response?.data?.error || e.message || 'Quét thủ công thất bại');
@@ -426,8 +480,9 @@ export default function VoiceRecordingsPage() {
               />
               <p className="mt-1 text-xs text-gray-500">
                 Nếu không nhập ở đây, khi tải lên hệ thống sẽ quét số di động Việt Nam trong ghi chú, tên file và nhãn
-                thiết bị để gắn khách hàng; nếu khách có đúng một cơ hội (lead/deal) trong phạm vi của bạn thì gắn luôn,
-                còn từ hai trở lên thì chỉ gắn khách — bạn chọn cơ hội trong «Gắn KH / Lead».
+                thiết bị để gắn khách hàng. Sau đó nếu trong phạm vi của bạn chỉ có một cơ hội CRM, hoặc chỉ có một
+                Lead (kèm Deal hay không), hoặc không có Lead nào và chỉ một Deal — hệ thống gắn luôn; nhiều Lead hoặc
+                nhiều Deal song song thì chỉ gắn khách — chọn Deal/Lead trong «Gắn KH / Lead» hoặc «Quét gắn Lead».
               </p>
             </div>
             <div>
@@ -511,7 +566,7 @@ export default function VoiceRecordingsPage() {
             }`}
           >
             <Inbox className="h-4 w-4" />
-            Chưa có KH / lead
+            Chưa gắn Lead/Deal
           </button>
           <button
             type="button"
@@ -526,7 +581,7 @@ export default function VoiceRecordingsPage() {
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-3">
           <h2 className="font-semibold text-gray-900">
             {listTab === 'unassigned'
-              ? 'Ghi âm chưa gắn khách'
+              ? 'Chưa gắn Lead/Deal (có SĐT hoặc đã có KH)'
               : listTab === 'linked'
                 ? 'Đã gắn Deal / Lead'
                 : 'Đã đồng bộ'}{' '}
@@ -572,7 +627,7 @@ export default function VoiceRecordingsPage() {
               onClick={() => void runAutoRelinkScan()}
               disabled={loading || relinking || relinkingRowId != null}
               className="h-9 px-3 rounded-lg border border-violet-300 text-violet-800 text-sm hover:bg-violet-50 inline-flex items-center gap-1.5"
-              title="Quét tất cả bản có SĐT nhưng chưa ghép khách (theo danh sách hiện tại)"
+              title="Quét & ghép KH/Lead theo SĐT cho các bản chưa gắn đủ (theo quyền của bạn)"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${relinking ? 'animate-spin' : ''}`} />
               {relinking ? 'Đang quét…' : 'Quét ghép CRM (hàng loạt)'}
@@ -584,7 +639,7 @@ export default function VoiceRecordingsPage() {
         ) : list.length === 0 ? (
           <p className="text-sm text-gray-500">
             {listTab === 'unassigned'
-              ? 'Không có ghi âm nào đang “mồ côi”. Các bản có số điện thoại nhưng hệ thống chưa tìm được khách (hoặc chưa tạo KH) sẽ nằm ở đây — bạn có thể tạo Lead/Deal và liên kết.'
+              ? 'Không có bản nào cần gắn Lead/Deal. Tab này gồm bản đã có SĐT hoặc đã có khách nhưng chưa chọn cơ hội — dùng «Quét gắn» hoặc «Gắn KH / Lead».'
               : listTab === 'linked'
                 ? 'Chưa có bản ghi nào đã ghép lead/deal. Dùng «Quét ghép CRM» sau khi có SĐT trùng khách & cơ hội do bạn phụ trách.'
                 : 'Chưa có bản ghi. App mobile sau khi đăng nhập sẽ hiện ở đây.'}
@@ -667,11 +722,11 @@ export default function VoiceRecordingsPage() {
                     type="button"
                     onClick={() => void relinkFromPhone(r.id)}
                     disabled={relinkingRowId != null}
-                    title="Quét SĐT từ ô số, ghi chú, tên file, nhãn thiết bị rồi ghép khách / lead (nếu đủ điều kiện)"
+                    title="Quét SĐT (ô số, ghi chú, tên file…) → ghép khách; nếu khách có đúng một lead hoặc một deal (hoặc một lead kèm deal) thì gắn theo quy tắc hệ thống"
                     className="h-9 px-3 rounded-lg border border-emerald-200 bg-emerald-50/80 text-emerald-900 text-sm hover:bg-emerald-100 cursor-pointer disabled:opacity-50 disabled:pointer-events-none inline-flex items-center gap-1.5"
                   >
                     <ScanLine className={`h-3.5 w-3.5 shrink-0 ${relinkingRowId === r.id ? 'animate-pulse' : ''}`} />
-                    {relinkingRowId === r.id ? 'Đang quét…' : 'Quét thủ công'}
+                    {relinkingRowId === r.id ? 'Đang quét…' : 'Quét gắn Lead'}
                   </button>
                   {!r.customer_id && r.phone_number ? (
                     <button
@@ -777,6 +832,28 @@ export default function VoiceRecordingsPage() {
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 space-y-4">
             <h3 className="font-semibold text-gray-900">Gắn ghi âm với CRM</h3>
             <p className="text-xs text-gray-600">File: {attachRecording.file_name}</p>
+            {attachRecording.phone_number ? (
+              <p className="text-xs text-gray-700">
+                SĐT trên ghi âm: <span className="font-mono font-medium">{attachRecording.phone_number}</span>
+              </p>
+            ) : null}
+            {attachPreviewLoading ? (
+              <p className="text-xs text-violet-700 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+                Đang tra số với danh sách khách hàng…
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={savingLink || relinkingRowId != null}
+                onClick={() => void relinkFromPhone(attachRecording.id, { updateAttachModal: true })}
+                className="h-9 px-3 rounded-lg border border-emerald-200 bg-emerald-50/80 text-emerald-900 text-sm hover:bg-emerald-100 inline-flex items-center gap-1.5 disabled:opacity-50"
+                title="Quét SĐT từ file/ghi chú rồi tự ghép KH; nếu đủ điều kiện sẽ gắn luôn Lead/Deal"
+              >
+                <ScanLine className="h-3.5 w-3.5 shrink-0" />
+                {relinkingRowId === attachRecording.id ? 'Đang quét…' : 'Quét gắn từ SĐT'}
+              </button>
+            </div>
             <div>
               <label className="text-xs font-medium text-gray-500 uppercase">Tìm khách hàng (gõ tên hoặc SĐT)</label>
               <input
@@ -805,14 +882,28 @@ export default function VoiceRecordingsPage() {
               )}
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-500 uppercase">Lead / Deal (tuỳ chọn)</label>
+              <label className="text-xs font-medium text-gray-500 uppercase">
+                Lead / Deal của khách hàng
+                {pickCustomerId && leadRows.length > 0 ? (
+                  <span className="text-gray-400 font-normal normal-case"> ({leadRows.length} cơ hội)</span>
+                ) : null}
+              </label>
+              {leadRowsLoading ? (
+                <p className="mt-1 text-xs text-gray-500">Đang tải danh sách Lead/Deal…</p>
+              ) : null}
               <select
                 value={pickLeadId}
                 onChange={(e) => setPickLeadId(e.target.value)}
-                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
-                disabled={!pickCustomerId}
+                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white disabled:bg-gray-50"
+                disabled={!pickCustomerId || leadRowsLoading}
               >
-                <option value="">— Không chọn —</option>
+                <option value="">
+                  {!pickCustomerId
+                    ? '— Chọn khách hàng trước —'
+                    : leadRows.length === 0
+                      ? '— Khách chưa có Lead/Deal trong phạm vi của bạn —'
+                      : '— Không chọn (chỉ gắn khách) —'}
+                </option>
                 {leadRows.map((l) => (
                   <option key={l.id} value={l.id}>
                     {leadTypeLabel(l.type)} {l.code ? `${l.code} · ` : ''}
@@ -820,6 +911,11 @@ export default function VoiceRecordingsPage() {
                   </option>
                 ))}
               </select>
+              {pickCustomerId && !leadRowsLoading && leadRows.length === 0 ? (
+                <p className="mt-1 text-xs text-amber-800">
+                  Không có Lead/Deal nào bạn được xem cho khách này — tạo thêm trên CRM hoặc nhờ quản trị phân quyền.
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2 justify-end pt-2">
               <button type="button" onClick={closeAttach} className="h-9 px-4 rounded-lg border text-gray-700 text-sm">

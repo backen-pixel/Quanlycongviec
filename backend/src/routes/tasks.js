@@ -265,6 +265,15 @@ r.put('/:id', async (req, res) => {
     const { data, error } = await supabase.from('tasks').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
 
+    if (data?.project_id && (b.description !== undefined || b.notes !== undefined)) {
+      try {
+        const { upsertLeadDocumentFromProjectTask } = require('../helpers/syncProjectTaskToLeadDocument');
+        await upsertLeadDocumentFromProjectTask(data, { userId: req.user.userId });
+      } catch (syncErr) {
+        console.warn('[tasks] sync task → lead_document:', syncErr.message);
+      }
+    }
+
     // Notifications on status change
     if (old && update.status && update.status !== old.status) {
       // Nếu chuyển sang review → thông báo cho người tạo

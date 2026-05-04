@@ -1061,6 +1061,13 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
             }
 
             try {
+              const { ensureLeadDocumentsIncludeShareModules } = require('../helpers/moduleLeadDocuments');
+              await ensureLeadDocumentsIncludeShareModules(projectId, ['logistics']);
+            } catch (mdErr) {
+              console.warn('[production/stage] expand doc modules for VC:', mdErr.message);
+            }
+
+            try {
               const vcDeliveryStageId = await getCrmVcDeliveryStageId();
               if (vcDeliveryStageId) {
                 const { data: leads } = await supabase
@@ -1229,6 +1236,13 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       } else {
         throw updateError;
       }
+    }
+
+    try {
+      const { ensureLeadDocumentsIncludeShareModules } = require('../helpers/moduleLeadDocuments');
+      await ensureLeadDocumentsIncludeShareModules(id, ['logistics']);
+    } catch (mdErr) {
+      console.warn('[production/handover-vc] expand doc modules for VC:', mdErr.message);
     }
 
     // Ghi stage_transition

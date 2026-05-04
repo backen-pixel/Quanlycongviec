@@ -130,7 +130,16 @@ export default function CRMDashboard() {
   const [allDeals, setAllDeals] = useState([]);
   const allDealsRef = useRef(allDeals);
   allDealsRef.current = allDeals;
-  const [filterCompany, setFilterCompany] = useState(() => P?.filterCompany ?? '');
+  const [filterCompany, setFilterCompany] = useState(() => {
+    if (P?.filterCompany) return P.filterCompany;
+    try {
+      const ls = typeof localStorage !== 'undefined' ? localStorage.getItem(LS_CRM_DASH_COMPANY) : null;
+      if (ls) return ls;
+    } catch {
+      /* ignore */
+    }
+    return '';
+  });
   const [searchText, setSearchText] = useState(() => P?.searchText ?? '');
   const [searchFocused, setSearchFocused] = useState(false);
   const [filterAssignee, setFilterAssignee] = useState(() => P?.filterAssignee ?? '');
@@ -142,6 +151,8 @@ export default function CRMDashboard() {
   const [filterStage, setFilterStage] = useState(() => P?.filterStage ?? '');
   const [filterLeadType, setFilterLeadType] = useState(() => P?.filterLeadType ?? '');
   const companyFilterFromLsRef = useRef(false);
+  /** Admin + filter rỗng: chỉ tự gán Phúc Đạt một lần; sau đó NV chọn «Tất cả» (= '') vẫn load đúng */
+  const adminCompanyDefaultResolvedRef = useRef(false);
   const leadTypeFilterFromLsRef = useRef(false);
   // Mặc định luôn chỉ hiện lead đã có SĐT; không phục hồi giá trị '' (tất cả)
   const [filterPhone, setFilterPhone] = useState(() => {
@@ -192,7 +203,7 @@ export default function CRMDashboard() {
     const fromP = P?.kanbanLoadLimit != null ? String(P.kanbanLoadLimit) : null;
     if (fromP && KANBAN_LOAD_OPTIONS.includes(fromP)) return fromP;
     const s = localStorage.getItem('crm_kanban_load_limit');
-    return KANBAN_LOAD_OPTIONS.includes(s) ? s : '1000';
+    return KANBAN_LOAD_OPTIONS.includes(s) ? s : 'all';
   });
 
   /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
@@ -543,8 +554,13 @@ export default function CRMDashboard() {
     if (total !== null && offset >= total) return; // hết rồi
     setLoadMoreState((s) => ({ ...s, loading: true }));
     try {
-      const common = { type, phone_filter: filterPhone || undefined, limit: 1000, offset };
+      const dateParams = {};
+      if (customDateFrom) dateParams.date_from = customDateFrom;
+      if (customDateTo) dateParams.date_to = customDateTo;
+      const common = { type, phone_filter: filterPhone || undefined, ...dateParams, limit: 1000, offset };
       if (filterAssignee) common.assigned_to = filterAssignee;
+      if (filterCompany) common.company_id = filterCompany;
+      if (filterLeadType) common.lead_type_id = filterLeadType;
       const res = await api.get('/crm/leads', { params: common });
       const d = res.data;
       const rows = Array.isArray(d) ? d : (d?.data || []);
@@ -572,7 +588,17 @@ export default function CRMDashboard() {
       console.error('[loadMore]', e);
       setLoadMoreState((s) => ({ ...s, loading: false }));
     }
-  }, [loadMoreState, pipelineType, filterPhone, filterAssignee, user]);
+  }, [
+    loadMoreState,
+    pipelineType,
+    filterPhone,
+    filterAssignee,
+    filterCompany,
+    filterLeadType,
+    customDateFrom,
+    customDateTo,
+    user,
+  ]);
 
   useEffect(() => {
     if (!user?.company_id) return;
@@ -616,6 +642,51 @@ export default function CRMDashboard() {
   const load = async () => {
     setLoading(true);
     try {
+      let resolvedCompanyId = filterCompany;
+      if (isAdmin && !resolvedCompanyId && !adminCompanyDefaultResolvedRef.current) {
+        const { data: crd } = await api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: {} }));
+        const list = crd?.companies || [];
+        const arr = Array.isArray(list) ? list : [];
+        let fromLs = '';
+        try {
+          fromLs = localStorage.getItem(LS_CRM_DASH_COMPANY) || '';
+        } catch {
+          /* ignore */
+        }
+        resolvedCompanyId = fromLs || findDefaultAdminCrmCompanyPhucDat(arr);
+        adminCompanyDefaultResolvedRef.current = true;
+        if (resolvedCompanyId && String(resolvedCompanyId) !== String(filterCompany)) {
+          setFilterCompany(resolvedCompanyId);
+          try {
+            localStorage.setItem(LS_CRM_DASH_COMPANY, resolvedCompanyId);
+          } catch {
+            /* ignore */
+          }
+        } else if (resolvedCompanyId) {
+          try {
+            localStorage.setItem(LS_CRM_DASH_COMPANY, resolvedCompanyId);
+          } catch {
+            /* ignore */
+          }
+        }
+      } else if (isAdmin && resolvedCompanyId) {
+        adminCompanyDefaultResolvedRef.current = true;
+      }
+
+      let stagesLeadParams = buildStagesParams('lead');
+      let stagesDealParams = buildStagesParams('deal');
+      if (isAdmin && resolvedCompanyId) {
+        const { data: plsPre } = await api.get('/crm/pipelines').catch(() => ({ data: [] }));
+        const plist = Array.isArray(plsPre) ? plsPre : [];
+        const byCo = plist.filter((p) => String(p.company_id || '') === String(resolvedCompanyId));
+        const def = byCo.find((p) => p.is_default) || byCo[0];
+        const pid = def?.id;
+        if (pid) {
+          stagesLeadParams = { type: 'lead', pipeline_id: pid };
+          stagesDealParams = { type: 'deal', pipeline_id: pid };
+        }
+      }
+
       // Build date params for API
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
@@ -629,7 +700,7 @@ export default function CRMDashboard() {
       const buildCountParams = (type, phone_filter) => {
         const p = { type, ...dateParams, limit: 1, offset: 0 };
         if (filterAssignee) p.assigned_to = filterAssignee;
-        if (filterCompany) p.company_id = filterCompany;
+        if (resolvedCompanyId) p.company_id = resolvedCompanyId;
         if (filterLeadType) p.lead_type_id = filterLeadType;
         if (phone_filter) p.phone_filter = phone_filter;
         return p;
@@ -638,7 +709,7 @@ export default function CRMDashboard() {
       const fetchKanbanRows = async (type) => {
         const common = { type, phone_filter: filterPhone || undefined, ...dateParams };
         if (filterAssignee) common.assigned_to = filterAssignee;
-        if (filterCompany) common.company_id = filterCompany;
+        if (resolvedCompanyId) common.company_id = resolvedCompanyId;
         if (filterLeadType) common.lead_type_id = filterLeadType;
         const loadAll =
           String(kanbanLoadLimit ?? '')
@@ -680,15 +751,15 @@ export default function CRMDashboard() {
       };
 
       const [dashLeadRes, dashDealRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, alertsRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams, ...(filterCompany ? { company_id: filterCompany } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams, ...(filterCompany ? { company_id: filterCompany } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams, ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams, ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         fetchKanbanRows('lead'),
         fetchKanbanRows('deal'),
         api.get('/crm/pipelines').catch(() => ({ data: [] })),
-        api.get('/crm/pipeline-stages', { params: buildStagesParams('lead') }).catch(() => ({ data: [] })),
-        api.get('/crm/pipeline-stages', { params: buildStagesParams('deal') }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: stagesLeadParams }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: stagesDealParams }).catch(() => ({ data: [] })),
         api.get('/crm/sources').catch(() => ({ data: [] })),
-        api.get('/crm/lead-types', { params: { ...(filterCompany ? { company_id: filterCompany } : {}) } }).catch(() => ({ data: [] })),
+        api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
         api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
         api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
         api.get('/users').catch(() => ({ data: [] })),

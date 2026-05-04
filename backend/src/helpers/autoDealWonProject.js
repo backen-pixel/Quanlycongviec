@@ -5,6 +5,8 @@ const { syncCrmLeadSxPipelineFromProject } = require('./workshopKanban');
 const { applyDefaultWorkshopTemplatesForNewProject } = require('./workshopApplyTemplates');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('./projectCode');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
+const { syncLeadDocumentsToProject } = require('./syncLeadDocumentsToProject');
+const { copyCrmTaskArtifactsToLeadDocuments } = require('./copyCrmTaskArtifactsToLeadDocuments');
 
 /**
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
@@ -122,7 +124,9 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
         const completedAt = new Date().toISOString();
         const rows = crmTasks.map((ct, i) => ({
           project_id: projectId, stage_id: firstStage?.id || null,
-          title: ct.title, description: ct.description || null,
+          title: ct.title,
+          description:
+            [ct.description, ct.notes].filter((x) => x && String(x).trim()).join('\n\n') || null,
           assignee_id: ct.assignee_id || null, priority: ct.priority || 'medium',
           status: 'done', completed_at: completedAt,
           order_index: i, created_by_id: userId, task_type: 'project',
@@ -161,6 +165,18 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
   allCreatedTasks.push(...generatedBySteps.flat());
 
   await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', dealId);
+
+  try {
+    await copyCrmTaskArtifactsToLeadDocuments(dealId);
+  } catch (e) {
+    console.warn('[auto-project] copy CRM task docs → lead_documents:', e.message);
+  }
+
+  try {
+    await syncLeadDocumentsToProject({ leadId: dealId, projectId, shareToWorkshop: true });
+  } catch (e) {
+    console.warn('[auto-project] sync lead_documents → project:', e.message);
+  }
 
   try {
     const { syncExistingCrmOrdersToProject } = require('./projectOrderFulfillment');
