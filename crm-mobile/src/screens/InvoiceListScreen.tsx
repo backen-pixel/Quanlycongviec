@@ -15,12 +15,21 @@ import type { MoreStackParamList } from '../navigation/types';
 import type { InvoiceRow } from '../types/salesDocs';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatVnd } from '../lib/formatVnd';
+import { useCrmCompanyFilter } from '../context/CrmCompanyFilterContext';
+import CrmCompanyPickerBar from '../components/CrmCompanyPickerBar';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'InvoiceList'>;
 
 type Props = { navigation: Nav };
 
 export default function InvoiceListScreen({ navigation }: Props) {
+  const {
+    showCompanyPicker,
+    companies,
+    selectedCompanyId,
+    setSelectedCompanyId,
+    companyQueryParams,
+  } = useCrmCompanyFilter();
   const [rows, setRows] = useState<InvoiceRow[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
@@ -29,26 +38,30 @@ export default function InvoiceListScreen({ navigation }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get<InvoiceRow[]>('/crm/invoices', { params: { limit: 100, search: q.trim() || undefined } });
+      const { data } = await api.get<InvoiceRow[]>('/crm/invoices', {
+        params: { limit: 100, search: q.trim() || undefined, ...companyQueryParams },
+      });
       setRows(Array.isArray(data) ? data : []);
     } catch {
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, [q, companyQueryParams]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const { data } = await api.get<InvoiceRow[]>('/crm/invoices', { params: { limit: 100, search: q.trim() || undefined } });
+      const { data } = await api.get<InvoiceRow[]>('/crm/invoices', {
+        params: { limit: 100, search: q.trim() || undefined, ...companyQueryParams },
+      });
       setRows(Array.isArray(data) ? data : []);
     } catch {
       setRows([]);
     } finally {
       setRefreshing(false);
     }
-  }, [q]);
+  }, [q, companyQueryParams]);
 
   useEffect(() => {
     void load();
@@ -64,6 +77,12 @@ export default function InvoiceListScreen({ navigation }: Props) {
 
   return (
     <View style={styles.screen}>
+      <CrmCompanyPickerBar
+        visible={showCompanyPicker}
+        companies={companies}
+        value={selectedCompanyId}
+        onChange={setSelectedCompanyId}
+      />
       <View style={styles.toolbar}>
         <TextInput
           style={styles.search}

@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { api } from '../api/client';
+import { useCrmCompanyFilter } from '../context/CrmCompanyFilterContext';
+import CrmCompanyPickerBar from '../components/CrmCompanyPickerBar';
 import type { MoreStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatVnd } from '../lib/formatVnd';
@@ -37,7 +39,7 @@ type DashboardPayload = {
 
 const KPI_LABELS: Record<string, string> = {
   total_leads: 'Lead trong kỳ',
-  converted_to_deals: 'Deal (toàn hệ thống)',
+  converted_to_deals: 'Chuyển thành deal',
   conversion_rate: 'Tỷ lệ chuyển đổi (%)',
   total_value: 'Giá trị pipeline',
   conversion_value: 'Giá trị thắng / chuyển',
@@ -54,29 +56,41 @@ export default function CrmDashboardScreen({ route }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const {
+    showCompanyPicker,
+    companies,
+    selectedCompanyId,
+    setSelectedCompanyId,
+    companyQueryParams,
+  } = useCrmCompanyFilter();
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: d } = await api.get<DashboardPayload>('/crm/dashboard', { params: { type: dashType } });
+      const { data: d } = await api.get<DashboardPayload>('/crm/dashboard', {
+        params: { type: dashType, ...companyQueryParams },
+      });
       setData(d);
     } catch {
       setData(null);
     } finally {
       setLoading(false);
     }
-  }, [dashType]);
+  }, [dashType, companyQueryParams]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const { data: d } = await api.get<DashboardPayload>('/crm/dashboard', { params: { type: dashType } });
+      const { data: d } = await api.get<DashboardPayload>('/crm/dashboard', {
+        params: { type: dashType, ...companyQueryParams },
+      });
       setData(d);
     } catch {
       setData(null);
     } finally {
       setRefreshing(false);
     }
-  }, [dashType]);
+  }, [dashType, companyQueryParams]);
 
   React.useEffect(() => {
     void load();
@@ -96,6 +110,12 @@ export default function CrmDashboardScreen({ route }: Props) {
       contentContainerStyle={styles.pad}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
+      <CrmCompanyPickerBar
+        visible={showCompanyPicker}
+        companies={companies}
+        value={selectedCompanyId}
+        onChange={setSelectedCompanyId}
+      />
       <View style={styles.toggleRow}>
         <TouchableOpacity
           style={[styles.toggle, dashType === 'lead' && styles.toggleOn]}

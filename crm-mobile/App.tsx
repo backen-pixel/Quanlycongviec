@@ -3,6 +3,7 @@ import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import { AuthProvider } from './src/context/AuthContext';
+import { CrmCompanyFilterProvider } from './src/context/CrmCompanyFilterContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
 import RootNavigator from './src/navigation/RootNavigator';
@@ -36,6 +37,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
+        <CrmCompanyFilterProvider>
         <PermissionBootstrap />
         <NotificationProvider>
           <NavigationContainer ref={navigationRef} theme={NavTheme}>
@@ -63,6 +65,7 @@ export default function App() {
             <StatusBar style="dark" />
           </NavigationContainer>
         </NotificationProvider>
+        </CrmCompanyFilterProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

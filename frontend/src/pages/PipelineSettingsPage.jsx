@@ -79,6 +79,7 @@ export default function PipelineSettingsPage() {
     send_zalo_on_enter: false,
     create_event_on_enter: false,
     sync_role: '',
+    default_probability: '',
   });
   const isAdmin = user?.role === 'admin';
   const [companies, setCompanies] = useState([]);
@@ -427,6 +428,7 @@ export default function PipelineSettingsPage() {
       send_zalo_on_enter: false,
       create_event_on_enter: false,
       sync_role: '',
+      default_probability: '',
     });
   };
 
@@ -442,6 +444,7 @@ export default function PipelineSettingsPage() {
       send_zalo_on_enter: !!stage.send_zalo_on_enter,
       create_event_on_enter: !!stage.create_event_on_enter,
       sync_role: stage.sync_role || '',
+      default_probability: stage.default_probability != null && stage.default_probability !== '' ? String(stage.default_probability) : '',
     });
   };
 
@@ -449,7 +452,9 @@ export default function PipelineSettingsPage() {
     if (!form.name.trim()) return alert('Nhập tên giai đoạn');
     try {
       if (!selectedPipelineId) return alert('Chọn pipeline trước');
-      await api.post('/crm/pipeline-stages', { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId });
+      const payload = { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId };
+      if (payload.default_probability === '') delete payload.default_probability;
+      await api.post('/crm/pipeline-stages', payload);
       setAdding(null);
       load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
@@ -458,7 +463,9 @@ export default function PipelineSettingsPage() {
   const saveEdit = async () => {
     if (!form.name.trim()) return alert('Nhập tên giai đoạn');
     try {
-      await api.put(`/crm/pipeline-stages/${editId}`, form);
+      const payload = { ...form };
+      if (payload.default_probability === '') payload.default_probability = null;
+      await api.put(`/crm/pipeline-stages/${editId}`, payload);
       setEditId(null);
       load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
@@ -574,6 +581,9 @@ export default function PipelineSettingsPage() {
                 {s.is_won && <span className="text-emerald-600 font-bold">✅ Thắng</span>}
                 {s.is_lost && <span className="text-red-500 font-bold">❌ Thua</span>}
                 {!s.is_active && <span className="text-orange-500">Ẩn</span>}
+                {s.default_probability != null && s.default_probability !== '' && (
+                  <span className="text-violet-600 font-medium">◎ {s.default_probability}% mặc định</span>
+                )}
                 {s.sync_role && (
                   <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-medium">
                     {syncRoleLabels[s.sync_role] || s.sync_role}
@@ -1252,6 +1262,24 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
               style={{ backgroundColor: c }} />
           ))}
         </div>
+      </div>
+
+      <div>
+        <label className="text-[10px] font-medium text-gray-500 block mb-1">
+          Xác suất mặc định theo cột (%)
+        </label>
+        <input
+          type="number"
+          min={0}
+          max={100}
+          value={form.default_probability ?? ''}
+          onChange={(e) => setForm((f) => ({ ...f, default_probability: e.target.value }))}
+          className="w-full max-w-[140px] h-8 px-3 border rounded-lg text-sm"
+          placeholder="Để trống = không fallback"
+        />
+        <p className="text-[10px] text-gray-400 mt-1 leading-snug">
+          Khi lead/deal chưa có % riêng (trống), KPI và giá trị có trọng số dùng % này. Để trống nếu không muốn áp dụng.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-4">

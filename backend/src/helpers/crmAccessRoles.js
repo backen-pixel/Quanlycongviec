@@ -1,8 +1,7 @@
-/** Deal: admin / lãnh đạo xem toàn bộ; NV chỉ deal assigned_to. */
+/** Deal: admin hệ thống / superadmin xem toàn (theo phạm vi API); NV chỉ deal assigned_to.
+ *  Không gồm manager/director — KPI pipeline chỉ theo deal được giao, tránh nhầm với tổng công ty. */
 const CRM_DEAL_VIEW_ALL_ROLES = new Set([
   'admin',
-  'manager',
-  'director',
   'superadmin',
   'super_admin',
   'administrator',

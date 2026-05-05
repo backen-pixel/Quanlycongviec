@@ -1,29 +1,53 @@
-import { Alert, Linking, NativeModules, Platform } from 'react-native';
+import { Alert, Linking, NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import { Audio } from 'expo-av';
 import * as Notifications from 'expo-notifications';
 import * as ImagePicker from 'expo-image-picker';
 
-/** ID 2 kênh thông báo Android */
+/** ID kênh Android — đổi hậu tố khi cần ép tạo lại kênh (Android không cho sửa importance sau khi tạo). */
 export const NOTIF_CHANNEL_CHAT = 'crm_chat';
-export const NOTIF_CHANNEL_SYSTEM = 'crm_system';
+/** Kênh CRM (không chat) — đổi id khi đổi âm/rung mặc định (Android cache kênh cũ). */
+export const NOTIF_CHANNEL_SYSTEM = 'crm_system_tray_v3';
+
+/**
+ * Android 13+ (API 33): quyền POST_NOTIFICATIONS — bắt buộc để hiện thông báo trên thanh / khay.
+ * Expo `requestPermissionsAsync` đôi khi chưa đủ; gọi thêm API hệ thống để chắc chắn.
+ */
+export async function ensureAndroidPostNotificationsPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  if (Platform.Version < 33) return true;
+  try {
+    const granted = await PermissionsAndroid.check(
+      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+    );
+    if (granted) return true;
+    const r = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+    );
+    return r === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Tạo notification channels Android + cài handler.
  * Gọi một lần khi app khởi động (appPermissions đã import ở App.tsx qua PermissionBootstrap).
  *
- * crm_chat   → IMPORTANCE_HIGH → Heads-up (nổi trên màn hình) + âm thanh + rung
- * crm_system → IMPORTANCE_DEFAULT → không Heads-up, chỉ icon thanh trạng thái
+ * crm_chat → IMPORTANCE_HIGH — tin nhắn (âm + rung)
+ * crm_system_tray_v3 → HIGH + âm mặc định + rung — CRM (khay / khóa / nền)
  */
 export async function setupNotificationChannels(): Promise<void> {
-  // Notification handler: chat có âm thanh, hệ thống không
+  // Foreground: chat có âm; kênh hệ thống hầu như không play sound (tùy OEM)
   try {
     Notifications.setNotificationHandler({
       handleNotification: async (notification) => {
         const channelId = notification.request.content.data?.channelId as string | undefined;
-        const isChat = channelId === NOTIF_CHANNEL_CHAT;
+        const isOurChannel =
+          channelId === NOTIF_CHANNEL_CHAT || channelId === NOTIF_CHANNEL_SYSTEM;
         return {
           shouldShowAlert: true,
-          shouldPlaySound: isChat,
+          // Cả chat + CRM hệ thống: có âm/rung khi TB tới (app foreground — Expo điều khiển hiển thị)
+          shouldPlaySound: isOurChannel,
           shouldSetBadge: true,
           shouldShowBanner: true,
           shouldShowList: true,
@@ -51,14 +75,18 @@ export async function setupNotificationChannels(): Promise<void> {
       bypassDnd: false,
     });
 
-    // Kênh thông báo hệ thống — IMPORTANCE_DEFAULT → không Heads-up
+    // Kênh CRM không phải chat — HIGH + PUBLIC để hiện trên khay kéo và màn hình khóa (Settings user vẫn có thể ẩn)
     await Notifications.setNotificationChannelAsync(NOTIF_CHANNEL_SYSTEM, {
-      name: 'Thông báo hệ thống',
-      importance: Notifications.AndroidImportance.DEFAULT,
-      sound: undefined,
-      enableVibrate: false,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+      name: 'Thông báo CRM',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+      enableVibrate: true,
+      vibrationPattern: [0, 120, 80, 120],
+      enableLights: true,
+      lightColor: '#0068FF',
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       showBadge: true,
+      bypassDnd: false,
     });
   } catch {
     /* ignore on older / web */
@@ -80,7 +108,18 @@ export async function getAppPermissionGaps(): Promise<AppPermissionGap[]> {
   const mic = await Audio.getPermissionsAsync();
   if (mic.status !== 'granted') gaps.push('microphone');
   const n = await Notifications.getPermissionsAsync();
-  if (n.status !== 'granted') gaps.push('notifications');
+  let needNotifications = n.status !== 'granted';
+  if (Platform.OS === 'android' && Platform.Version >= 33) {
+    try {
+      const postOk = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+      );
+      if (!postOk) needNotifications = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (needNotifications) gaps.push('notifications');
 
   try {
     const lib = await ImagePicker.getMediaLibraryPermissionsAsync();
@@ -124,7 +163,10 @@ function gapLabels(gaps: AppPermissionGap[]): string {
 
 export async function requestAppPermissionsForGaps(gaps: AppPermissionGap[]): Promise<void> {
   if (gaps.includes('microphone')) await Audio.requestPermissionsAsync();
-  if (gaps.includes('notifications')) await Notifications.requestPermissionsAsync();
+  if (gaps.includes('notifications')) {
+    await Notifications.requestPermissionsAsync();
+    if (Platform.OS === 'android') await ensureAndroidPostNotificationsPermission();
+  }
   if (gaps.includes('photos')) {
     try {
       await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -157,6 +199,7 @@ export async function grantAllPermissionsQuick(): Promise<void> {
     ImagePicker.requestMediaLibraryPermissionsAsync().catch(() => {}),
     ImagePicker.requestCameraPermissionsAsync().catch(() => {}),
   ]);
+  if (Platform.OS === 'android') await ensureAndroidPostNotificationsPermission();
 
   // Overlay: không thể grant in-app, mở Settings luôn nếu chưa có
   if (Platform.OS === 'android') {

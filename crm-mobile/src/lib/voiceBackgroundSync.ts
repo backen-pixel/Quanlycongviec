@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { PermissionsAndroid, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { getStoredToken } from '../api/client';
 import { API_ORIGIN } from '../config';
+import { ensureAndroidPostNotificationsPermission } from './appPermissions';
 import {
   isVoiceDataSyncAvailable,
   voiceDataSyncGetDebugState,
@@ -18,16 +19,6 @@ async function getLastSyncMs(): Promise<number> {
   const raw = await AsyncStorage.getItem(KEY_LAST_SYNC_MS);
   const n = raw ? Number(raw) : 0;
   return Number.isFinite(n) ? n : 0;
-}
-
-async function requestPostNotificationsIfNeeded(): Promise<boolean> {
-  if (Platform.OS !== 'android' || Platform.Version < 33) return true;
-  try {
-    const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
-    return r === PermissionsAndroid.RESULTS.GRANTED;
-  } catch {
-    return false;
-  }
 }
 
 export async function ensureVoiceBackgroundSyncPermissions(): Promise<{ mediaGranted: boolean }> {
@@ -92,7 +83,7 @@ export async function syncVoiceBackgroundTaskWithPrefs(): Promise<void> {
     return;
   }
 
-  await requestPostNotificationsIfNeeded();
+  await ensureAndroidPostNotificationsPermission();
   const lastSync = await getLastSyncMs();
   await voiceDataSyncStart(`${API_ORIGIN}/api`, token, lastSync);
 }

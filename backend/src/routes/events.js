@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { notifyMultiple } = require('../helpers/notifications');
+const { isCrmSystemAdminUser, isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
 const r = Router();
 
 r.use(auth);
@@ -33,13 +34,35 @@ function normalizeEventTimestamp(value) {
   return Number.isNaN(d.getTime()) ? value : d.toISOString();
 }
 
-function userIsAdmin(role) {
-  return role === 'admin';
+/** Lead IDs của một công ty (đủ trang) — dùng lọc sự kiện legacy thiếu company_id. */
+async function fetchAllLeadIdsForCompany(companyId) {
+  const rows = [];
+  const pageSize = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .eq('company_id', companyId)
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk.map((r) => r.id));
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+  return rows;
 }
 
-/** Admin: query company_id optional (null = tất cả). Không phải admin: luôn company của user. */
+/**
+ * Chỉ admin hệ thống được company_id null (= xem mọi công ty qua query).
+ * Admin theo công ty / nhân viên: luôn giới hạn company_id JWT — không đọc company_id query để tránh lộ dữ liệu công ty khác.
+ */
 function resolveEventsCompanyScope(req, res) {
-  if (userIsAdmin(req.user?.role)) {
+  if (isCrmCompanyAdminUser(req.user)) {
+    return { ok: true, companyId: String(req.user.company_id).trim() };
+  }
+  if (isCrmSystemAdminUser(req.user)) {
     const q = req.query.company_id;
     const id = q && String(q).trim() ? String(q).trim() : null;
     return { ok: true, companyId: id };
@@ -49,36 +72,45 @@ function resolveEventsCompanyScope(req, res) {
     res.status(400).json({ error: 'Thiếu company_id của user. Gán công ty cho tài khoản hoặc đăng nhập lại.' });
     return { ok: false, companyId: null };
   }
-  return { ok: true, companyId: cid };
+  return { ok: true, companyId: String(cid).trim() };
+}
+
+/** Lọc sự kiện thuộc công ty: company_id khớp HOẶC (legacy) lead/deal thuộc công ty đó. */
+async function applyEventsCompanyFilter(queryBuilder, companyId) {
+  if (!companyId) return queryBuilder;
+  const lids = await fetchAllLeadIdsForCompany(companyId);
+  const MAX_OR_IN = 320;
+  const slice = lids.slice(0, MAX_OR_IN);
+  if (slice.length === 0) {
+    return queryBuilder.eq('company_id', companyId);
+  }
+  return queryBuilder.or(`company_id.eq.${companyId},lead_id.in.(${slice.join(',')})`);
 }
 
 async function assertEventCompanyAccess(req, res, eventId) {
   const sc = resolveEventsCompanyScope(req, res);
   if (!sc.ok) return false;
-  if (!sc.companyId) return true;
+  if (!sc.companyId && isCrmSystemAdminUser(req.user)) return true;
   const { data: row, error } = await supabase.from('crm_events').select('id, company_id, lead_id').eq('id', eventId).maybeSingle();
   if (error) throw error;
   if (!row) {
     res.status(404).json({ error: 'Không tìm thấy sự kiện' });
     return false;
   }
-  if (row.company_id) {
-    if (String(row.company_id) !== String(sc.companyId)) {
-      res.status(403).json({ error: 'Không có quyền truy cập sự kiện này' });
-      return false;
-    }
-    return true;
-  }
+  if (!sc.companyId) return true;
+  if (row.company_id && String(row.company_id) === String(sc.companyId)) return true;
   if (row.lead_id) {
     const { data: lead } = await supabase.from('crm_leads').select('company_id').eq('id', row.lead_id).maybeSingle();
-    if (lead?.company_id && String(lead.company_id) !== String(sc.companyId)) {
-      res.status(403).json({ error: 'Không có quyền truy cập sự kiện này' });
-      return false;
-    }
-    return true;
+    if (lead?.company_id && String(lead.company_id) === String(sc.companyId)) return true;
   }
   res.status(403).json({ error: 'Không có quyền truy cập sự kiện này' });
   return false;
+}
+
+async function resolveLeadCompanyId(leadId) {
+  if (!leadId) return null;
+  const { data: lr } = await supabase.from('crm_leads').select('company_id').eq('id', leadId).maybeSingle();
+  return lr?.company_id ? String(lr.company_id) : null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -159,7 +191,7 @@ r.get('/', async (req, res) => {
     if (!sc.ok) return;
     const { type, status, user_id, lead_id, customer_id, date_from, date_to, search, limit, offset } = req.query;
     let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
-    if (sc.companyId) q = q.eq('company_id', sc.companyId);
+    q = await applyEventsCompanyFilter(q, sc.companyId);
 
     if (type) q = q.eq('event_type', type);
     if (status) q = q.eq('status', status);
@@ -197,7 +229,7 @@ r.get('/calendar', async (req, res) => {
       .gte('start_time', startDate)
       .lte('start_time', endDate)
       .order('start_time');
-    if (sc.companyId) cq = cq.eq('company_id', sc.companyId);
+    cq = await applyEventsCompanyFilter(cq, sc.companyId);
     const { data, error } = await cq;
     if (error) throw error;
     res.json(data || []);
@@ -264,14 +296,24 @@ r.post('/', async (req, res) => {
     }
 
     let evCompanyId = null;
-    if (userIsAdmin(req.user?.role) && b.company_id !== undefined && b.company_id !== '') {
+    if (isCrmSystemAdminUser(req.user) && b.company_id !== undefined && b.company_id !== null && b.company_id !== '') {
       evCompanyId = String(b.company_id).trim() || null;
-    } else if (!userIsAdmin(req.user?.role)) {
-      evCompanyId = req.user?.company_id ? String(req.user.company_id) : null;
+    } else if (!isCrmSystemAdminUser(req.user)) {
+      evCompanyId = req.user?.company_id ? String(req.user.company_id).trim() : null;
     }
     if (!evCompanyId && insert.lead_id) {
-      const { data: lr } = await supabase.from('crm_leads').select('company_id').eq('id', insert.lead_id).maybeSingle();
-      if (lr?.company_id) evCompanyId = String(lr.company_id);
+      evCompanyId = await resolveLeadCompanyId(insert.lead_id);
+    }
+    if (insert.lead_id) {
+      const leadCid = await resolveLeadCompanyId(insert.lead_id);
+      if (!leadCid) return res.status(400).json({ error: 'Lead/deal không gắn công ty — không thể tạo sự kiện' });
+      if (evCompanyId && String(leadCid) !== String(evCompanyId)) {
+        return res.status(403).json({ error: 'Lead/deal không thuộc công ty của sự kiện' });
+      }
+      if (!evCompanyId) evCompanyId = leadCid;
+    }
+    if (!isCrmSystemAdminUser(req.user) && !evCompanyId) {
+      return res.status(400).json({ error: 'Thiếu công ty — gắn lead/deal hoặc gán công ty cho tài khoản' });
     }
     insert.company_id = evCompanyId;
 
@@ -351,8 +393,27 @@ r.put('/:id', async (req, res) => {
       }
       update[f] = b[f];
     });
-    if (userIsAdmin(req.user?.role) && b.company_id !== undefined) {
+    if (isCrmSystemAdminUser(req.user) && b.company_id !== undefined) {
       update.company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
+    }
+
+    if (b.lead_id !== undefined) {
+      const newLead = b.lead_id === '' ? null : b.lead_id;
+      if (newLead) {
+        const leadCid = await resolveLeadCompanyId(newLead);
+        if (!leadCid) return res.status(400).json({ error: 'Lead/deal không gắn công ty' });
+        if (!isCrmSystemAdminUser(req.user)) {
+          update.company_id = leadCid;
+        } else {
+          const co = update.company_id;
+          if (co != null && String(co) !== String(leadCid)) {
+            return res.status(403).json({ error: 'Lead/deal không thuộc công ty của sự kiện' });
+          }
+          if (co == null && b.company_id === undefined) {
+            update.company_id = leadCid;
+          }
+        }
+      }
     }
 
     // If completed, set result
@@ -395,20 +456,29 @@ r.put('/:id', async (req, res) => {
       } catch (taskErr) { console.warn('[EVENT] Auto-complete task:', taskErr.message); }
     }
 
-    // Notification khi hoàn thành sự kiện
+    // Notification khi hoàn thành — chỉ user thuộc cùng công ty (theo sự kiện / lead)
     if (b.status === 'completed') {
       try {
         const { data: creator } = await supabase.from('users')
           .select('full_name').eq('id', req.user.userId).single();
-        const { data: allUsers } = await supabase.from('users')
-          .select('id').eq('is_active', true);
-        await notifyMultiple(
-          req, (allUsers || []).map(u => u.id),
-          'event_completed',
-          `✅ Sự kiện hoàn thành: ${data.title}`,
-          `${creator?.full_name || 'Ai đó'} đã hoàn thành sự kiện "${data.title}"${data.result ? `: ${data.result}` : ''}`,
-          'event', data.id
-        );
+        let notifyCompanyId = data.company_id || null;
+        if (!notifyCompanyId && data.lead_id) {
+          notifyCompanyId = await resolveLeadCompanyId(data.lead_id);
+        }
+        let uq = supabase.from('users').select('id').eq('is_active', true);
+        if (notifyCompanyId) uq = uq.eq('company_id', notifyCompanyId);
+        const { data: companyUsers } = await uq;
+        const ids = (companyUsers || []).map((u) => u.id);
+        if (ids.length) {
+          await notifyMultiple(
+            req,
+            ids,
+            'event_completed',
+            `✅ Sự kiện hoàn thành: ${data.title}`,
+            `${creator?.full_name || 'Ai đó'} đã hoàn thành sự kiện "${data.title}"${data.result ? `: ${data.result}` : ''}`,
+            'event', data.id
+          );
+        }
       } catch (ne) { console.warn('[EVENT] Complete notification error:', ne.message); }
     }
 
@@ -419,6 +489,8 @@ r.put('/:id', async (req, res) => {
 // PUT /events/:id/respond — Xác nhận/Từ chối tham gia
 r.put('/:id/respond', async (req, res) => {
   try {
+    const ok = await assertEventCompanyAccess(req, res, req.params.id);
+    if (!ok) return;
     const { status } = req.body; // confirmed | declined
     if (!['confirmed', 'declined'].includes(status)) {
       return res.status(400).json({ error: 'Status phải là confirmed hoặc declined' });
@@ -449,6 +521,8 @@ r.delete('/:id', async (req, res) => {
 
 r.get('/:id/comments', async (req, res) => {
   try {
+    const ok = await assertEventCompanyAccess(req, res, req.params.id);
+    if (!ok) return;
     const { data, error } = await supabase.from('crm_event_comments')
       .select('*, user:users(id, full_name, avatar)')
       .eq('event_id', req.params.id).order('created_at');
@@ -459,6 +533,8 @@ r.get('/:id/comments', async (req, res) => {
 
 r.post('/:id/comments', async (req, res) => {
   try {
+    const ok = await assertEventCompanyAccess(req, res, req.params.id);
+    if (!ok) return;
     const { content } = req.body;
     if (!content?.trim()) return res.status(400).json({ error: 'Nội dung bình luận trống' });
     const { data, error } = await supabase.from('crm_event_comments')
@@ -471,6 +547,8 @@ r.post('/:id/comments', async (req, res) => {
 
 r.delete('/:eventId/comments/:commentId', async (req, res) => {
   try {
+    const ok = await assertEventCompanyAccess(req, res, req.params.eventId);
+    if (!ok) return;
     const { error } = await supabase.from('crm_event_comments')
       .delete().eq('id', req.params.commentId);
     if (error) throw error;
