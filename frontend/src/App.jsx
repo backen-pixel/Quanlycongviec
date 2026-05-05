@@ -93,6 +93,7 @@ import InvoiceForm from './pages/InvoiceForm';
 import EventsFeedPage from './pages/EventsFeedPage';
 import ReleaseNotesPage from './pages/ReleaseNotesPage';
 import FacebookPage from './pages/FacebookPage';
+import FacebookLinkPhoneCleanupPage from './pages/FacebookLinkPhoneCleanupPage';
 import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
 import ExecutiveKpiPage from './pages/ExecutiveKpiPage';
@@ -300,6 +301,7 @@ export default function App() {
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<RequireCrmElevated><CRMReports /></RequireCrmElevated>} />
             <Route path="/crm/facebook" element={<RequireCrmElevated><FacebookPage /></RequireCrmElevated>} />
+            <Route path="/crm/facebook/link-phone-cleanup" element={<RequireCrmElevated><FacebookLinkPhoneCleanupPage /></RequireCrmElevated>} />
             <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/sources-settings" element={<RequireCrmElevated><CRMSourcesSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/categories" element={<CategoriesPage />} />

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../lib/auth';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../lib/api';
 import {
   MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink,
@@ -15,7 +15,7 @@ import AutoToolPanelInline from '../components/AutoToolPanel';
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
 
-/** Tin nhắn soạn sẵn (Hộp thư FB) — lưu localStorage, chèn vào ô nhập trước khi gửi */
+/** Tin soạn sẵn cũ trên trình duyệt (chỉ dùng để nhập một lần lên server) */
 const LS_FB_CANNED_REPLIES = 'fb_inbox_canned_replies_v1';
 
 function loadCannedRepliesFromStorage() {
@@ -71,6 +71,8 @@ function fbActivitySourceLabel(c) {
 // ═══════════════════════════════════════════════════════════════
 
 const LS_FB_COMPANY = 'facebook_filter_company_id';
+/** Lần đầu vào Facebook (admin): mặc định lọc đúng công ty của user, không ép lại sau khi user chọn «Tất cả». */
+const LS_FB_COMPANY_INIT = 'facebook_filter_company_initialized';
 
 export default function FacebookPage() {
   const { socket, user } = useAuth();
@@ -95,6 +97,19 @@ export default function FacebookPage() {
       })
       .catch(() => setCompanies([]));
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || !user) return;
+    try {
+      if (localStorage.getItem(LS_FB_COMPANY_INIT)) return;
+      const cid = user.company_id || user.companyId;
+      if (cid) {
+        setFilterFbCompany(String(cid));
+        localStorage.setItem(LS_FB_COMPANY, String(cid));
+      }
+      localStorage.setItem(LS_FB_COMPANY_INIT, '1');
+    } catch { /* ignore */ }
+  }, [isAdmin, user]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -259,20 +274,41 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
   const imageInputRef = useRef(null);
   const cannedToggleRef = useRef(null);
   const cannedSidebarRef = useRef(null);
-  const [cannedReplies, setCannedReplies] = useState(() => loadCannedRepliesFromStorage());
+  const [cannedReplies, setCannedReplies] = useState([]);
+  const [cannedListLoading, setCannedListLoading] = useState(true);
+  const [cannedSaving, setCannedSaving] = useState(false);
+  const [cannedImporting, setCannedImporting] = useState(false);
   const [cannedOpen, setCannedOpen] = useState(false);
   const [cannedDraftTitle, setCannedDraftTitle] = useState('');
   const [cannedDraftBody, setCannedDraftBody] = useState('');
   const [cannedEditingId, setCannedEditingId] = useState(null);
   selectedRef.current = selected;
 
-  const persistCannedReplies = useCallback((next) => {
+  const loadCannedFromServer = useCallback(async () => {
+    setCannedListLoading(true);
     try {
-      localStorage.setItem(LS_FB_CANNED_REPLIES, JSON.stringify(next));
+      const res = await fetch(`${API}/api/facebook/canned-replies`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (!res.ok) throw new Error('api');
+      const d = await res.json();
+      const items = (d.items || []).map((x) => ({ id: x.id, title: x.title, text: x.body }));
+      setCannedReplies(items);
     } catch {
-      /* ignore quota */
+      setCannedReplies(loadCannedRepliesFromStorage());
+    } finally {
+      setCannedListLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    loadCannedFromServer();
+  }, [loadCannedFromServer]);
+
+  const legacyLocalCanned = useMemo(
+    () => (cannedOpen ? loadCannedRepliesFromStorage() : []),
+    [cannedOpen, cannedListLoading, cannedReplies.length, cannedImporting],
+  );
 
   useEffect(() => {
     if (!cannedOpen) return;
@@ -301,31 +337,53 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
     });
   }, [reply]);
 
-  const submitCannedDraft = useCallback(() => {
-    const title = cannedDraftTitle.trim();
-    const text = cannedDraftBody.trim();
-    if (!title || !text) {
+  const submitCannedDraft = useCallback(async () => {
+    const tTitle = cannedDraftTitle.trim();
+    const tText = cannedDraftBody.trim();
+    if (!tTitle || !tText) {
       alert('Nhập đủ tiêu đề và nội dung.');
       return;
     }
-    if (cannedEditingId) {
-      setCannedReplies((prev) => {
-        const next = prev.map((x) => (x.id === cannedEditingId ? { ...x, title, text } : x));
-        persistCannedReplies(next);
-        return next;
-      });
-      setCannedEditingId(null);
-    } else {
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      setCannedReplies((prev) => {
-        const next = [{ id, title, text }, ...prev].slice(0, 80);
-        persistCannedReplies(next);
-        return next;
-      });
+    setCannedSaving(true);
+    try {
+      if (cannedEditingId) {
+        const res = await fetch(`${API}/api/facebook/canned-replies/${encodeURIComponent(cannedEditingId)}`, {
+          method: 'PUT',
+          headers: hdr(),
+          body: JSON.stringify({ title: tTitle, body: tText }),
+        });
+        const row = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(row.error || 'Lỗi cập nhật');
+          return;
+        }
+        setCannedReplies((prev) =>
+          prev.map((x) => (x.id === cannedEditingId ? { id: row.id, title: row.title, text: row.body } : x)),
+        );
+        setCannedEditingId(null);
+      } else {
+        if (cannedReplies.length >= 80) {
+          alert('Tối đa 80 mẫu');
+          return;
+        }
+        const res = await fetch(`${API}/api/facebook/canned-replies`, {
+          method: 'POST',
+          headers: hdr(),
+          body: JSON.stringify({ title: tTitle, body: tText }),
+        });
+        const row = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(row.error || 'Lỗi thêm mẫu');
+          return;
+        }
+        setCannedReplies((prev) => [{ id: row.id, title: row.title, text: row.body }, ...prev].slice(0, 80));
+      }
+      setCannedDraftTitle('');
+      setCannedDraftBody('');
+    } finally {
+      setCannedSaving(false);
     }
-    setCannedDraftTitle('');
-    setCannedDraftBody('');
-  }, [cannedDraftTitle, cannedDraftBody, cannedEditingId, persistCannedReplies]);
+  }, [cannedDraftTitle, cannedDraftBody, cannedEditingId, cannedReplies.length]);
 
   const cancelCannedDraft = useCallback(() => {
     setCannedEditingId(null);
@@ -339,13 +397,47 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
     setCannedDraftBody(c.text);
   }, []);
 
-  const removeCannedReply = useCallback((id) => {
-    setCannedReplies((prev) => {
-      const next = prev.filter((x) => x.id !== id);
-      persistCannedReplies(next);
-      return next;
+  const removeCannedReply = useCallback(async (id) => {
+    if (!window.confirm('Xóa mẫu này?')) return;
+    const res = await fetch(`${API}/api/facebook/canned-replies/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: hdr(),
     });
-  }, [persistCannedReplies]);
+    const err = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(err.error || 'Xóa thất bại');
+      return;
+    }
+    setCannedReplies((prev) => prev.filter((x) => x.id !== id));
+  }, []);
+
+  const importLocalCannedToServer = useCallback(async () => {
+    const local = loadCannedRepliesFromStorage();
+    if (!local.length) return;
+    setCannedImporting(true);
+    try {
+      const res = await fetch(`${API}/api/facebook/canned-replies/import`, {
+        method: 'POST',
+        headers: hdr(),
+        body: JSON.stringify({ items: local.map((x) => ({ title: x.title, text: x.text })) }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(d.error || 'Nhập thất bại');
+        return;
+      }
+      await loadCannedFromServer();
+      try {
+        localStorage.removeItem(LS_FB_CANNED_REPLIES);
+      } catch {
+        /* ignore */
+      }
+      if (d.imported) alert(`Đã nhập ${d.imported} mẫu lên server.`);
+      else alert(d.message || 'Không nhập thêm được mẫu nào (có thể đã đủ 80 mẫu).');
+    } finally {
+      setCannedImporting(false);
+    }
+  }, [loadCannedFromServer]);
 
   useEffect(() => {
     if (!cannedEditingId) return;
@@ -894,11 +986,28 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                     </button>
                   </div>
                   <p className="px-3 py-1.5 text-[10px] text-gray-500 border-b border-gray-100 shrink-0 leading-snug">
-                    «Chèn»: chỉ đưa <strong>nội dung</strong> vào ô nhập. CRUD mẫu (tiêu đề + nội dung) lưu trên máy bạn.
+                    «Chèn»: đưa <strong>nội dung</strong> vào ô nhập. Mẫu lưu trên <strong>server</strong> (theo tài khoản),
+                    tối đa 80 mẫu.
                   </p>
                   <div className="flex-1 overflow-y-auto px-2 py-2 space-y-2 min-h-0">
-                    {cannedReplies.length === 0 ? (
-                      <p className="text-[11px] text-gray-400 text-center py-6 px-2">Chưa có mẫu. Thêm ở form dưới hoặc «Nạp từ ô nhập».</p>
+                    {cannedListLoading ? (
+                      <p className="text-[11px] text-gray-400 text-center py-6 px-2">Đang tải mẫu…</p>
+                    ) : cannedReplies.length === 0 ? (
+                      <div className="text-[11px] text-gray-500 text-center py-4 px-2 space-y-3">
+                        <p>Chưa có mẫu trên server. Thêm ở form dưới hoặc «Nạp từ ô nhập».</p>
+                        {legacyLocalCanned.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={importLocalCannedToServer}
+                            disabled={cannedImporting}
+                            className="w-full text-[11px] font-medium px-3 py-2 rounded-lg bg-amber-100 text-amber-900 border border-amber-200 hover:bg-amber-200 disabled:opacity-50"
+                          >
+                            {cannedImporting
+                              ? 'Đang nhập…'
+                              : `Nhập ${legacyLocalCanned.length} mẫu từ trình duyệt (cũ) lên server`}
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       cannedReplies.map((c) => (
                         <div key={c.id} className="flex justify-start">
@@ -913,21 +1022,24 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                               <button
                                 type="button"
                                 onClick={() => applyCannedReply(c.text)}
-                                className="text-[10px] font-medium px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                                disabled={cannedSaving}
+                                className="text-[10px] font-medium px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                               >
                                 Chèn vào ô nhập
                               </button>
                               <button
                                 type="button"
                                 onClick={() => startEditCanned(c)}
-                                className="text-[10px] font-medium px-2 py-1 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1"
+                                disabled={cannedSaving}
+                                className="text-[10px] font-medium px-2 py-1 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1 disabled:opacity-50"
                               >
                                 <Edit3 size={11} /> Sửa
                               </button>
                               <button
                                 type="button"
                                 onClick={() => removeCannedReply(c.id)}
-                                className="text-[10px] font-medium px-2 py-1 rounded-lg border border-red-100 text-red-600 hover:bg-red-50 inline-flex items-center gap-1"
+                                disabled={cannedSaving}
+                                className="text-[10px] font-medium px-2 py-1 rounded-lg border border-red-100 text-red-600 hover:bg-red-50 inline-flex items-center gap-1 disabled:opacity-50"
                               >
                                 <Trash2 size={11} /> Xóa
                               </button>
@@ -935,6 +1047,18 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                           </div>
                         </div>
                       ))
+                    )}
+                    {!cannedListLoading && cannedReplies.length > 0 && legacyLocalCanned.length > 0 && (
+                      <div className="pt-1 border-t border-dashed border-gray-200">
+                        <button
+                          type="button"
+                          onClick={importLocalCannedToServer}
+                          disabled={cannedImporting || cannedSaving}
+                          className="w-full text-[10px] font-medium px-2 py-1.5 rounded-lg text-gray-600 bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
+                        >
+                          {cannedImporting ? 'Đang nhập…' : `Gộp thêm từ trình duyệt (${legacyLocalCanned.length})`}
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div className="border-t border-amber-100 bg-white p-2 shrink-0 space-y-2 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
@@ -955,15 +1079,17 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                       <button
                         type="button"
                         onClick={submitCannedDraft}
-                        className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 inline-flex items-center gap-1"
+                        disabled={cannedSaving || cannedListLoading}
+                        className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 inline-flex items-center gap-1 disabled:opacity-50"
                       >
-                        <Save size={12} /> {cannedEditingId ? 'Cập nhật' : 'Thêm mẫu'}
+                        <Save size={12} /> {cannedSaving ? '…' : cannedEditingId ? 'Cập nhật' : 'Thêm mẫu'}
                       </button>
                       {(cannedEditingId || cannedDraftTitle.trim() || cannedDraftBody.trim()) && (
                         <button
                           type="button"
                           onClick={cancelCannedDraft}
-                          className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                          disabled={cannedSaving}
+                          className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                         >
                           Hủy form
                         </button>
@@ -971,7 +1097,8 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                       <button
                         type="button"
                         onClick={loadReplyIntoCannedForm}
-                        className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50"
+                        disabled={cannedListLoading}
+                        className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
                       >
                         Nạp từ ô nhập
                       </button>
@@ -1026,7 +1153,7 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                     className={`p-2.5 rounded-xl cursor-pointer transition disabled:opacity-40 ${
                       cannedOpen ? 'text-amber-700 bg-amber-100 ring-2 ring-amber-300/60' : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50'
                     }`}
-                    title="Tin soạn sẵn — CRUD mẫu, chèn nội dung vào ô nhập"
+                    title="Tin soạn sẵn — lưu server, chèn vào ô nhập"
                   >
                     <StickyNote size={20} />
                   </button>
@@ -3963,6 +4090,20 @@ function SettingsTab() {
   return (
     <div className="p-6 overflow-y-auto h-full max-w-4xl">
       <h2 className="text-lg font-bold mb-4">⚙ Cài đặt Facebook</h2>
+      <div className="bg-white border border-amber-200 rounded-xl p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-semibold text-amber-900 text-sm">Dọn SĐT nghi từ link</p>
+          <p className="text-xs text-amber-800 mt-0.5 max-w-xl">
+            Quét theo khoảng ngày, xem lại danh sách, rồi xóa SĐT + chặn tái tạo lead (số không xuất hiện trong tin inbound sau khi loại URL).
+          </p>
+        </div>
+        <Link
+          to="/crm/facebook/link-phone-cleanup"
+          className="shrink-0 text-sm font-medium px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-700"
+        >
+          Mở tool
+        </Link>
+      </div>
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
         <h3 className="font-bold text-blue-800 mb-2">📋 Hướng dẫn</h3>
         <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">

@@ -43,7 +43,26 @@ async function reconcileInboundPhoneAfterScan(supabase, contactId, opts = {}) {
     .maybeSingle();
   if (cErr || !contact) return { ok: false, action: 'no_contact' };
 
-  const oldPhone = contact.phone && String(contact.phone).trim() ? String(contact.phone).trim() : null;
+  let lead = null;
+  let cust = null;
+  if (contact.lead_id) {
+    const { data: ld } = await supabase
+      .from('crm_leads')
+      .select('id, customer_id, description')
+      .eq('id', contact.lead_id)
+      .maybeSingle();
+    lead = ld;
+    if (lead?.customer_id) {
+      const { data: c } = await supabase.from('customers').select('id, phone').eq('id', lead.customer_id).maybeSingle();
+      cust = c;
+    }
+  }
+  if (!cust && contact.customer_id) {
+    const { data: c2 } = await supabase.from('customers').select('id, phone').eq('id', contact.customer_id).maybeSingle();
+    cust = c2;
+  }
+
+  const oldPhone = cust?.phone && String(cust.phone).trim() ? String(cust.phone).trim() : null;
 
   const { data: messages } = await supabase
     .from('facebook_messages')
@@ -71,27 +90,8 @@ async function reconcileInboundPhoneAfterScan(supabase, contactId, opts = {}) {
     .update({ phone: null, updated_at: new Date().toISOString() })
     .eq('id', contactId);
 
-  let lead = null;
-  let cust = null;
-  if (contact.lead_id) {
-    const { data: ld } = await supabase
-      .from('crm_leads')
-      .select('id, customer_id, description')
-      .eq('id', contact.lead_id)
-      .maybeSingle();
-    lead = ld;
-    if (lead?.customer_id) {
-      const { data: c } = await supabase.from('customers').select('id, phone').eq('id', lead.customer_id).maybeSingle();
-      cust = c;
-    }
-  }
-  if (!cust && contact.customer_id) {
-    const { data: c2 } = await supabase.from('customers').select('id, phone').eq('id', contact.customer_id).maybeSingle();
-    cust = c2;
-  }
-
   const leadCustId = lead?.customer_id || contact.customer_id;
-  if (leadCustId && cust?.phone != null && String(cust.phone).trim() === oldPhone) {
+  if (leadCustId) {
     await supabase.from('customers').update({ phone: '', updated_at: new Date().toISOString() }).eq('id', leadCustId);
   }
 
@@ -106,10 +106,15 @@ async function reconcileInboundPhoneAfterScan(supabase, contactId, opts = {}) {
   if (deleteLeadIfNoPhone && contact.lead_id) {
     const { data: freshC } = await supabase
       .from('facebook_contacts')
-      .select('phone, lead_id')
+      .select('lead_id, customer_id')
       .eq('id', contactId)
       .maybeSingle();
-    const noPhone = !freshC?.phone || !String(freshC.phone).trim();
+    let noPhone = true;
+    const cid = freshC?.customer_id || null;
+    if (cid) {
+      const { data: fc } = await supabase.from('customers').select('phone').eq('id', cid).maybeSingle();
+      noPhone = !fc?.phone || !String(fc.phone).trim();
+    }
     if (noPhone && freshC?.lead_id) {
       lead_delete = await deleteLeadIfAllowedForRescan(supabase, freshC.lead_id, contactId);
     }

@@ -16,6 +16,7 @@ import CallLogsTab from '../components/CallLogsTab';
 import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
+import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
@@ -108,6 +109,9 @@ export default function LeadDetail() {
   const [pickProjectCompanyOpen, setPickProjectCompanyOpen] = useState(false);
   const [pickProjectCompanyId, setPickProjectCompanyId] = useState('');
   const [pickProjectCompanyErr, setPickProjectCompanyErr] = useState('');
+  const [showDeleteLeadModal, setShowDeleteLeadModal] = useState(false);
+  const [blockPhoneOnDeleteLead, setBlockPhoneOnDeleteLead] = useState(true);
+  const [deletingLead, setDeletingLead] = useState(false);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -628,18 +632,25 @@ export default function LeadDetail() {
     setApprovalForm({ type: 'drawing', title: '', note: '' });
   };
 
-  const deleteLead = async () => {
-    const type = lead?.type === 'deal' ? 'Deal' : 'Lead';
-    const hasProject = lead?.project_id;
-    const msg = hasProject
-      ? `⚠️ Xóa ${type} "${lead.title}"?\n\nSẽ xóa luôn:\n• Dự án liên kết và tất cả nhiệm vụ\n• Tài liệu, báo giá, đơn hàng, hóa đơn\n\nHành động này KHÔNG THỂ hoàn tác!`
-      : `Xóa ${type} "${lead.title}"?\n\nSẽ xóa luôn tài liệu, hoạt động liên quan.\nHành động này không thể hoàn tác.`;
-    if (!confirm(msg)) return;
+  const deleteLead = () => {
+    setBlockPhoneOnDeleteLead(!!(customer?.phone && String(customer.phone).trim()));
+    setShowDeleteLeadModal(true);
+  };
+
+  const confirmDeleteLeadWithBlock = async () => {
+    setDeletingLead(true);
     try {
-      await api.delete(`/crm/leads/${id}`);
+      const q =
+        blockPhoneOnDeleteLead && customer?.phone && String(customer.phone).trim()
+          ? '?block_auto_recreate_phone=true'
+          : '';
+      await api.delete(`/crm/leads/${id}${q}`);
+      setShowDeleteLeadModal(false);
       navigate('/crm');
     } catch (e) {
       alert('Lỗi xóa: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setDeletingLead(false);
     }
   };
 
@@ -1431,7 +1442,7 @@ export default function LeadDetail() {
                   contextBadge={lead?.code || ''}
                 />
               ) : activeTab === 'facebook' ? (
-                <FacebookChatTab leadId={id} />
+                <FacebookChatTab leadId={id} companyId={lead?.company_id} />
               ) : activeTab === 'team' ? (
                 <LeadMembersTab leadId={id} />
               ) : activeTab === 'chat' ? (
@@ -1490,6 +1501,59 @@ export default function LeadDetail() {
           onSuccess={(dealId) => { setShowConvertModal(false); navigateToCrmDealFocused(dealId || id); }}
         />
       )}
+
+      <Modal
+        open={showDeleteLeadModal}
+        onClose={() => !deletingLead && setShowDeleteLeadModal(false)}
+        title={lead?.type === 'deal' ? 'Xóa Deal' : 'Xóa Lead'}
+        size="md"
+      >
+        {lead && (
+          <div className="space-y-4">
+            {lead.project_id ? (
+              <p className="text-sm text-red-800 bg-red-50 border border-red-100 rounded-lg p-3">
+                Sẽ xóa luôn dự án liên kết, nhiệm vụ, tài liệu, báo giá, đơn hàng, hóa đơn liên quan. Không hoàn tác.
+              </p>
+            ) : (
+              <p className="text-sm text-gray-700">
+                Xóa <strong>{lead.title}</strong> và tài liệu, hoạt động liên quan. Không hoàn tác.
+              </p>
+            )}
+            {customer?.phone && String(customer.phone).trim() && (
+              <label className="flex items-start gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={blockPhoneOnDeleteLead}
+                  onChange={(e) => setBlockPhoneOnDeleteLead(e.target.checked)}
+                  className="mt-0.5 rounded border-gray-300"
+                />
+                <span>
+                  <strong>Chặn tự tạo lead Facebook</strong> từ SĐT{' '}
+                  <span className="font-mono">{customer.phone}</span> (Messenger, quét SĐT, lịch quét lead…).
+                </span>
+              </label>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={deletingLead}
+                onClick={() => setShowDeleteLeadModal(false)}
+                className="h-9 px-4 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={deletingLead}
+                onClick={confirmDeleteLeadWithBlock}
+                className="h-9 px-4 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 cursor-pointer disabled:opacity-50"
+              >
+                {deletingLead ? 'Đang xóa…' : 'Xóa'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Modal chọn người phụ trách trước khi chuyển sang Deal (won stage) */}
       {showAssignBeforeWonModal && isAdminUser && (

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Image, Paperclip, Send, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Image, Paperclip, Send, RefreshCw, ExternalLink } from 'lucide-react';
+import { useAuth } from '../lib/auth';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({
@@ -8,32 +10,92 @@ const hdr = () => ({
 });
 
 /**
- * Messenger thread for a CRM lead/deal (same UI as Lead detail).
+ * Messenger thread for a CRM lead/deal — cùng hành vi gần Hộp thư FB: sync khi ít tin, realtime fb_message.
  */
-export default function FacebookChatTab({ leadId }) {
+export default function FacebookChatTab({ leadId, companyId }) {
+  const { socket } = useAuth();
   const [messages, setMessages] = useState([]);
   const [reply, setReply] = useState('');
   const [contact, setContact] = useState(null);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
+  const contactRef = useRef(null);
+  contactRef.current = contact;
+
+  const companyQs = useMemo(
+    () => (companyId ? `?company_id=${encodeURIComponent(companyId)}` : ''),
+    [companyId],
+  );
+
+  const tryAutoSync = useCallback(
+    (c, count) => {
+      if (!c?.id || count >= 5) return;
+      fetch(`${API}/api/facebook/contacts/${c.id}/sync-history${companyQs}`, {
+        method: 'POST',
+        headers: hdr(),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((result) => {
+          if (result?.synced > 0) {
+            return fetch(`${API}/api/facebook/contacts/${c.id}/messages${companyQs}`, {
+              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+            }).then((r2) => (r2.ok ? r2.json() : []));
+          }
+          return null;
+        })
+        .then((fresh) => {
+          if (Array.isArray(fresh) && fresh.length) {
+            setMessages(fresh.map((m) => ({ ...m, contact: c })));
+            setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+          }
+        })
+        .catch(() => {});
+    },
+    [companyQs],
+  );
 
   const loadMessages = useCallback(() => {
     if (!leadId) return;
+    setLoading(true);
+    setLoadError(null);
     fetch(`${API}/api/facebook/leads/${leadId}/messages`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d) => {
-        setMessages(d);
-        if (d.length > 0 && d[0].contact) setContact(d[0].contact);
+      .then(async (r) => {
+        if (r.status === 403) {
+          setLoadError('forbidden');
+          setMessages([]);
+          setContact(null);
+          return;
+        }
+        if (!r.ok) {
+          setLoadError('error');
+          setMessages([]);
+          setContact(null);
+          return;
+        }
+        const d = await r.json();
+        const list = Array.isArray(d) ? d : [];
+        setMessages(list);
+        const c0 = list.find((m) => m.contact)?.contact;
+        if (c0) setContact(c0);
+        else setContact(null);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        if (c0 && list.length < 5) tryAutoSync(c0, list.length);
       })
-      .catch(() => {});
-  }, [leadId]);
+      .catch(() => {
+        setLoadError('error');
+        setMessages([]);
+        setContact(null);
+      })
+      .finally(() => setLoading(false));
+  }, [leadId, tryAutoSync]);
 
   const uniqueMessages = useMemo(() => {
     const seen = new Set();
@@ -51,17 +113,38 @@ export default function FacebookChatTab({ leadId }) {
 
   useEffect(() => {
     const INTERVAL = 30_000;
-    const tick = () => { if (!document.hidden) loadMessages(); };
+    const tick = () => {
+      if (!document.hidden) loadMessages();
+    };
     const timer = setInterval(tick, INTERVAL);
     document.addEventListener('visibilitychange', tick);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [loadMessages]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const h = (data) => {
+      const cid = contactRef.current?.id;
+      if (!cid || String(data.contact_id) !== String(cid) || !data.message) return;
+      setMessages((prev) =>
+        prev.some((m) => m.id === data.message.id) ? prev : [...prev, { ...data.message, contact: contactRef.current }],
+      );
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    };
+    socket.on('fb_message', h);
+    return () => {
+      socket.off('fb_message', h);
+    };
+  }, [socket]);
 
   const sendReply = async () => {
     if (!reply.trim() || !contact || sending) return;
     setSending(true);
     try {
-      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/reply`, {
+      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/reply${companyQs}`, {
         method: 'POST',
         headers: hdr(),
         body: JSON.stringify({ message: reply }),
@@ -98,7 +181,7 @@ export default function FacebookChatTab({ leadId }) {
       else if (file.type.startsWith('video/')) attType = 'video';
       else if (file.type.startsWith('audio/')) attType = 'audio';
 
-      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/reply`, {
+      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/reply${companyQs}`, {
         method: 'POST',
         headers: hdr(),
         body: JSON.stringify({
@@ -123,7 +206,7 @@ export default function FacebookChatTab({ leadId }) {
     if (!contact) return;
     setSyncing(true);
     try {
-      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/sync-history`, {
+      const res = await fetch(`${API}/api/facebook/contacts/${contact.id}/sync-history${companyQs}`, {
         method: 'POST',
         headers: hdr(),
       });
@@ -138,15 +221,32 @@ export default function FacebookChatTab({ leadId }) {
   const formatTime = (d) =>
     new Date(d).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
 
+  if (loading) {
+    return (
+      <div className="text-center text-gray-400 py-12 text-sm">Đang tải hội thoại Facebook…</div>
+    );
+  }
+
+  if (loadError === 'forbidden') {
+    return (
+      <div className="text-center text-amber-700 py-8 px-4 text-sm">
+        Bạn không có quyền xem hội thoại Facebook của deal này (không thuộc Page / công ty được phép).
+      </div>
+    );
+  }
+
   if (!messages.length && !contact) {
     return (
       <div className="text-center text-gray-400 py-8">
         <p className="text-3xl mb-2">📘</p>
-        <p className="text-sm">Chưa có tin nhắn Facebook nào liên kết với {leadId ? 'lead' : 'deal'} này.</p>
-        <p className="text-xs mt-1">Khi KH nhắn tin qua Messenger, tin nhắn sẽ hiện ở đây.</p>
+        <p className="text-sm">Chưa có tin nhắn Facebook nào liên kết với {leadId ? 'lead/deal' : 'bản ghi'} này.</p>
+        <p className="text-xs mt-1">Khi khách nhắn qua Messenger (đúng Page công ty), tin sẽ hiện ở đây — hoặc mở Hộp thư để gán liên hệ.</p>
+        {loadError === 'error' && <p className="text-xs text-red-500 mt-2">Không tải được dữ liệu. Thử làm mới trang.</p>}
       </div>
     );
   }
+
+  const inboxHref = contact?.id ? `/facebook?tab=inbox&contact=${encodeURIComponent(contact.id)}` : '/facebook?tab=inbox';
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 420px)', minHeight: '400px' }}>
@@ -169,6 +269,12 @@ export default function FacebookChatTab({ leadId }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Link
+              to={inboxHref}
+              className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1.5 rounded-lg hover:bg-gray-100 flex items-center gap-1"
+            >
+              <ExternalLink size={12} /> Hộp thư
+            </Link>
             <button
               type="button"
               onClick={syncHistory}

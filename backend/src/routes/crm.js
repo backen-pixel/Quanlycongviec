@@ -39,6 +39,7 @@ const {
   normalizeVnPhoneTo84,
   formatVnPhoneLocal0From84,
 } = require('../helpers/zaloOa');
+const { addPhoneToAutoLeadBlocklist } = require('../helpers/crmAutoLeadPhoneBlocklist');
 
 const ZALO_APP_SETTING_KEY = 'zalo_oa_notify';
 
@@ -3296,9 +3297,23 @@ r.put('/leads/:id', async (req, res) => {
 r.delete('/leads/:id', async (req, res) => {
   try {
     const { data: lead } = await supabase.from('crm_leads')
-      .select('id, title, project_id')
+      .select('id, title, project_id, customer_id')
       .eq('id', req.params.id).single();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
+
+    const blockAuto = req.query.block_auto_recreate_phone === 'true';
+    if (blockAuto && lead.customer_id) {
+      const { data: cust } = await supabase.from('customers').select('phone').eq('id', lead.customer_id).maybeSingle();
+      const ph = cust?.phone && String(cust.phone).trim() ? String(cust.phone).trim() : null;
+      if (ph) {
+        const addRes = await addPhoneToAutoLeadBlocklist(supabase, ph, {
+          note: `Xóa lead ${lead.title || lead.id}`,
+          userId: req.user?.userId,
+          display: ph,
+        });
+        if (!addRes.ok) console.warn('[CRM] Chặn SĐT sau xóa lead:', addRes.error);
+      }
+    }
 
     // Nếu là lead/deal gốc: xóa luôn deal/lead con theo đơn + các orders liên quan
     try {
@@ -3367,6 +3382,31 @@ r.delete('/leads/:id', async (req, res) => {
     res.json({ success: true, message: `Đã xóa lead "${lead.title}"${lead.project_id ? ' và dự án liên kết' : ''}` });
   } catch (e) {
     console.error('Delete lead error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** SĐT đã chặn — không tự tạo lead Facebook / quét SĐT (createLeadFromFacebook, lead scan). */
+r.get('/auto-lead-blocked-phones', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('crm_auto_lead_blocked_phones')
+      .select('id, phone_last9, phone_display, note, created_at, created_by')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+    res.json({ items: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/auto-lead-blocked-phones/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('crm_auto_lead_blocked_phones').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
