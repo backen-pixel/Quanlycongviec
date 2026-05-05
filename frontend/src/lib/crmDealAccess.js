@@ -1,11 +1,9 @@
 /**
- * CRM Deal: admin / lãnh đạo xem mọi deal; nhân viên (staff, sale, …) chỉ deal mình phụ trách.
- * Phải khớp logic backend `userSeesAllCrmDeals` (crm.js).
+ * CRM Deal: admin / superadmin xem mọi deal (theo phạm vi API); nhân viên & quản lý (manager/director) chỉ deal được giao.
+ * Phải khớp logic backend `userSeesAllCrmDeals` (crmAccessRoles.js).
  */
 const CRM_DEAL_VIEW_ALL_ROLES = new Set([
   'admin',
-  'manager',
-  'director',
   'superadmin',
   'super_admin',
   'administrator',

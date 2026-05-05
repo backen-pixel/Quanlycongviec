@@ -676,13 +676,26 @@ r.get('/dashboard', async (req, res) => {
       effectiveCompanyId = cid;
     }
 
-    // Pipeline stages for the specified type
-    const { data: stages } = await supabase
+    // Pipeline stages for the specified type — chỉ pipeline mặc định của công ty (tránh trộn cột nhiều pipeline)
+    let stagesQuery = supabase
       .from('crm_pipeline_stages')
-      .select('id, name, color, icon, order_index, is_won, is_lost, pipeline_type')
+      .select('id, name, color, icon, order_index, is_won, is_lost, pipeline_type, default_probability')
       .eq('is_active', true)
       .eq('pipeline_type', type)
       .order('order_index');
+    if (effectiveCompanyId) {
+      const { data: defPl } = await supabase
+        .from('crm_pipelines')
+        .select('id')
+        .eq('company_id', effectiveCompanyId)
+        .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at')
+        .limit(1)
+        .maybeSingle();
+      if (defPl?.id) stagesQuery = stagesQuery.eq('pipeline_id', defPl.id);
+    }
+    const { data: stages } = await stagesQuery;
 
     const dealAssigneeOnly =
       type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role) ? req.user.userId : null;
@@ -700,11 +713,17 @@ r.get('/dashboard', async (req, res) => {
 
     const stageStats = (stages || []).map(s => {
       const stageLeads = (leads || []).filter(l => l.stage_id === s.id);
+      const probPct = (l) => {
+        const raw = l.probability;
+        const fallback = s.default_probability;
+        const p = raw != null && raw !== '' ? Number(raw) : (fallback != null && fallback !== '' ? Number(fallback) : 0);
+        return Number.isFinite(p) ? Math.max(0, Math.min(100, p)) : 0;
+      };
       return {
         ...s,
         count: stageLeads.length,
         value: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0), 0),
-        weighted: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0) * (l.probability || 0) / 100, 0),
+        weighted: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0) * probPct(l) / 100, 0),
       };
     });
 
@@ -1014,6 +1033,7 @@ r.post('/pipelines/:id/copy', async (req, res) => {
         send_zalo_on_enter: !!s.send_zalo_on_enter,
         create_event_on_enter: !!s.create_event_on_enter,
         sync_role: s.sync_role || null,
+        default_probability: s.default_probability != null && s.default_probability !== '' ? s.default_probability : null,
       }));
       await supabase.from('crm_pipeline_stages').insert(inserts);
     }
@@ -1117,6 +1137,11 @@ r.post('/pipeline-stages', async (req, res) => {
     if (b.pipeline_id) orderQ = orderQ.eq('pipeline_id', b.pipeline_id);
     const { data: existing } = await orderQ;
     const nextOrder = (existing?.[0]?.order_index || 0) + 1;
+    let defaultProbability = null;
+    if (b.default_probability !== undefined && b.default_probability !== null && b.default_probability !== '') {
+      const n = Number(b.default_probability);
+      if (Number.isFinite(n)) defaultProbability = Math.max(0, Math.min(100, Math.round(n)));
+    }
     const { data, error } = await supabase.from('crm_pipeline_stages').insert({
       name: b.name, pipeline_type: b.pipeline_type, pipeline_id: b.pipeline_id || null,
       color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
@@ -1124,6 +1149,7 @@ r.post('/pipeline-stages', async (req, res) => {
       send_zalo_on_enter: !!b.send_zalo_on_enter,
       create_event_on_enter: !!b.create_event_on_enter,
       sync_role: b.sync_role || null,
+      default_probability: defaultProbability,
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -1149,6 +1175,14 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter', 'create_event_on_enter', 'sync_role'].forEach(f => {
       if (b[f] !== undefined) update[f] = (f === 'send_zalo_on_enter' || f === 'create_event_on_enter') ? !!b[f] : b[f];
     });
+    if (b.default_probability !== undefined) {
+      if (b.default_probability === null || b.default_probability === '') {
+        update.default_probability = null;
+      } else {
+        const n = Number(b.default_probability);
+        update.default_probability = Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
+      }
+    }
     const { data, error } = await supabase.from('crm_pipeline_stages').update(update)
       .eq('id', req.params.id).select().single();
     if (error) throw error;

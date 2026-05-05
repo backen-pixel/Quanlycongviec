@@ -18,22 +18,37 @@ import { isExpiryDeadlineNotificationType } from '../lib/operationalNotification
 import { CRM_MOBILE_PREFS_CHANGED, loadCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
 import { rememberMessengerTargetFromNotification } from '../lib/messengerBubbleTarget';
 import { navigateFromAppNotification } from '../lib/navigateFromAppNotification';
-import { NOTIF_CHANNEL_CHAT, NOTIF_CHANNEL_SYSTEM } from '../lib/appPermissions';
+import {
+  NOTIF_CHANNEL_CHAT,
+  NOTIF_CHANNEL_SYSTEM,
+  ensureAndroidPostNotificationsPermission,
+} from '../lib/appPermissions';
 import type { AppNotification, NotificationPrefs } from '../types/notifications';
 
+/** Khi vừa bấm Home / tắt màn, AppState đôi khi còn "active" 1–2 frame — trì hoãn rồi mới quyết định toast trong app hay đẩy ra khay thông báo. */
+const APP_VS_TRAY_DELAY_MS = Platform.OS === 'ios' ? 72 : 48;
+
 /**
- * Post Android Heads-up notification khi socket nhận tin nhắn mà app đang ở background.
- * - messenger_chat / lead_chat → kênh crm_chat (IMPORTANCE_HIGH → Heads-up + âm thanh + rung)
- * - khác → kênh crm_system (IMPORTANCE_DEFAULT → chỉ status bar icon)
+ * Đẩy thông báo local ra khay hệ thống / thanh trạng thái (app không ở foreground).
+ * Android 13+: cần quyền POST_NOTIFICATIONS (Expo gộp trong requestPermissionsAsync).
  */
 async function postLocalNotification(n: AppNotification): Promise<void> {
   try {
+    if (Platform.OS === 'android') {
+      const postOk = await ensureAndroidPostNotificationsPermission();
+      if (!postOk) return;
+    }
+    const { status: perm } = await Notifications.getPermissionsAsync();
+    if (perm !== 'granted') {
+      const { status: req } = await Notifications.requestPermissionsAsync();
+      if (req !== 'granted') return;
+    }
+
     const isChat = n.type === 'messenger_chat' || n.type === 'lead_chat';
     const meta = n.metadata && typeof n.metadata === 'object'
       ? (n.metadata as Record<string, unknown>)
       : {};
 
-    // Tạo title / body thân thiện
     let title = n.title || 'CRM';
     let body = n.message || '';
 
@@ -50,31 +65,45 @@ async function postLocalNotification(n: AppNotification): Promise<void> {
 
     const channelId = isChat ? NOTIF_CHANNEL_CHAT : NOTIF_CHANNEL_SYSTEM;
 
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title,
-        body,
-        sound: isChat ? 'default' : undefined,
-        badge: 1,
-        // channelId — Android only, expo-notifications tự bỏ qua trên iOS
-        channelId,
-        // color + priority + vibrate — Android specific fields trong NotificationContentInput
-        color: '#0068FF',
-        priority: isChat
-          ? Notifications.AndroidNotificationPriority.HIGH
-          : Notifications.AndroidNotificationPriority.DEFAULT,
-        vibrate: isChat ? [0, 200, 100, 200] : undefined,
-        data: {
-          notifId: n.id,
-          type: n.type,
-          entity_type: n.entity_type,
-          entity_id: n.entity_id,
-          metadata: n.metadata,
-          channelId,
+    const dataPayload = {
+      notifId: n.id,
+      type: n.type,
+      entity_type: n.entity_type,
+      entity_id: n.entity_id,
+      metadata: n.metadata,
+      channelId,
+    };
+
+    if (Platform.OS === 'android') {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          subtitle: 'TuBep CRM',
+          data: dataPayload,
+          android: {
+            channelId,
+            color: '#0068FF',
+            // Luôn bật âm mặc định — kênh cũng có sound: default (user có thể tắt trong Cài đặt TB)
+            sound: true,
+            // HIGH + kênh IMPORTANCE_HIGH → heads-up trên khay / khóa (tùy OEM & cài đặt user)
+            priority: Notifications.AndroidNotificationPriority.HIGH,
+            vibrate: isChat ? [0, 200, 100, 200] : [0, 120, 80, 120],
+          },
         },
-      },
-      trigger: null, // Hiển thị ngay lập tức
-    });
+        trigger: null,
+      });
+    } else {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: isChat ? 'default' : undefined,
+          data: dataPayload,
+        },
+        trigger: null,
+      });
+    }
   } catch {
     /* ignore — không block socket handler */
   }
@@ -229,6 +258,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     socketRef.current = s;
 
+    const trayDelayTimers: ReturnType<typeof setTimeout>[] = [];
+
     const onNotif = (raw: unknown) => {
       const n = raw as AppNotification;
       if (isExpiryDeadlineNotificationType(n?.type)) return;
@@ -237,18 +268,23 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       if (isChatNotification(n)) setChatUnreadCount((c) => c + 1);
       if (n?.type === 'messenger_chat') rememberMessengerTargetFromNotification(n);
 
-      const appState = AppState.currentState;
-      if (appState === 'active') {
-        // App đang mở → chỉ hiện in-app toast, KHÔNG post system notification
-        // (tránh Heads-up notification làm "bị out khỏi app" khi vô tình tap)
-        setToast(n);
-      } else {
-        // App background / inactive → post local notification (Heads-up / Lock Screen)
-        // API 30+: ChatBubbleOverlayService cũng post bubble notification từ background
-        // nhưng bubble notification là dạng bubble (khác), còn local notification hiển thị
-        // trong notification tray — hai loại này bổ sung cho nhau, không xung đột.
-        void postLocalNotification(n);
-      }
+      const decideToastOrTray = () => {
+        const state = AppState.currentState;
+        // Android: luôn đăng TB hệ thống (âm + rung + khay). Trước đây chỉ toast khi app mở → không có âm/khay.
+        if (Platform.OS === 'android') {
+          void postLocalNotification(n);
+          if (state === 'active') setToast(n);
+          return;
+        }
+        if (state === 'active') {
+          setToast(n);
+        } else {
+          void postLocalNotification(n);
+        }
+      };
+
+      const tid = setTimeout(decideToastOrTray, APP_VS_TRAY_DELAY_MS);
+      trayDelayTimers.push(tid);
 
       listenersRef.current.forEach((fn) => {
         try {
@@ -301,6 +337,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     const appSub = AppState.addEventListener('change', onAppState);
 
     return () => {
+      trayDelayTimers.forEach((id) => clearTimeout(id));
       appSub.remove();
       tapSub.remove();
       s.off('notification', onNotif);

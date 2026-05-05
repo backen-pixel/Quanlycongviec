@@ -2910,6 +2910,14 @@ function KanbanStageCard({
   }, []);
 
   const stageColor = stage.color || '#e5e7eb';
+  const columnWeighted = (items || []).reduce((sum, item) => {
+    const ev = item.estimated_value || 0;
+    let p = item.probability;
+    if (p == null || p === '') p = stage.default_probability;
+    const n = Number(p);
+    const pct = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+    return sum + ev * (pct / 100);
+  }, 0);
   const columnItemIds = (items || []).map((i) => i.id);
   const allInColumnSelected =
     columnItemIds.length > 0 &&
@@ -2980,6 +2988,8 @@ function KanbanStageCard({
         </div>
         <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
           Giá trị: {formatVND(items.reduce((sum, item) => sum + (item.estimated_value || 0), 0))}
+          {' · '}
+          Trọng số: {formatVND(columnWeighted)}
         </p>
       </div>
 

@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { api } from '../api/client';
+import { useCrmCompanyFilter } from '../context/CrmCompanyFilterContext';
+import CrmCompanyPickerBar from '../components/CrmCompanyPickerBar';
 import type { MoreStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 
@@ -21,12 +23,20 @@ type PipelineRow = {
   description?: string | null;
   is_default?: boolean;
   is_active?: boolean;
+  company_id?: string | null;
   company?: { name?: string } | null;
 };
 
 type Props = { navigation: Nav };
 
 export default function CrmPipelineListScreen({ navigation }: Props) {
+  const {
+    showCompanyPicker,
+    companies,
+    selectedCompanyId,
+    setSelectedCompanyId,
+    companyQueryParams,
+  } = useCrmCompanyFilter();
   const [rows, setRows] = useState<PipelineRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,25 +45,35 @@ export default function CrmPipelineListScreen({ navigation }: Props) {
     setLoading(true);
     try {
       const { data } = await api.get<PipelineRow[]>('/crm/pipelines');
-      setRows(Array.isArray(data) ? data : []);
+      let list = Array.isArray(data) ? data : [];
+      const cid = companyQueryParams.company_id;
+      if (cid) {
+        list = list.filter((r) => String(r.company_id || '') === String(cid));
+      }
+      setRows(list);
     } catch {
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [companyQueryParams]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       const { data } = await api.get<PipelineRow[]>('/crm/pipelines');
-      setRows(Array.isArray(data) ? data : []);
+      let list = Array.isArray(data) ? data : [];
+      const cid = companyQueryParams.company_id;
+      if (cid) {
+        list = list.filter((r) => String(r.company_id || '') === String(cid));
+      }
+      setRows(list);
     } catch {
       setRows([]);
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [companyQueryParams]);
 
   React.useEffect(() => {
     void load();
@@ -70,6 +90,14 @@ export default function CrmPipelineListScreen({ navigation }: Props) {
   return (
     <FlatList
       style={styles.screen}
+      ListHeaderComponent={
+        <CrmCompanyPickerBar
+          visible={showCompanyPicker}
+          companies={companies}
+          value={selectedCompanyId}
+          onChange={setSelectedCompanyId}
+        />
+      }
       data={rows}
       keyExtractor={(it) => it.id}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}

@@ -6,7 +6,7 @@ import {
   MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink,
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
-  Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3
+  Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote,
 } from 'lucide-react';
 import AutoToolPanel from '../components/AutoToolPanel';
 import CrmAppChannelPrefsBanner from '../components/CrmAppChannelPrefsBanner';
@@ -14,6 +14,26 @@ import AutoToolPanelInline from '../components/AutoToolPanel';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
+
+/** Tin nhắn soạn sẵn (Hộp thư FB) — lưu localStorage, chèn vào ô nhập trước khi gửi */
+const LS_FB_CANNED_REPLIES = 'fb_inbox_canned_replies_v1';
+
+function loadCannedRepliesFromStorage() {
+  try {
+    const raw = localStorage.getItem(LS_FB_CANNED_REPLIES);
+    const a = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(a)) return [];
+    return a
+      .filter((x) => x && typeof x.text === 'string' && String(x.text).trim())
+      .map((x, i) => ({
+        id: String(x.id || `legacy-${i}`),
+        title: String(x.title || x.text.slice(0, 48)).trim() || 'Mẫu',
+        text: String(x.text).trim(),
+      }));
+  } catch {
+    return [];
+  }
+}
 
 /** Mới nhất = max(tin cuối, lúc tạo contact) — khớp backend facebookContactActivity */
 function fbActivityTs(c) {
@@ -237,7 +257,110 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
   const selectedRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
+  const cannedToggleRef = useRef(null);
+  const cannedSidebarRef = useRef(null);
+  const [cannedReplies, setCannedReplies] = useState(() => loadCannedRepliesFromStorage());
+  const [cannedOpen, setCannedOpen] = useState(false);
+  const [cannedDraftTitle, setCannedDraftTitle] = useState('');
+  const [cannedDraftBody, setCannedDraftBody] = useState('');
+  const [cannedEditingId, setCannedEditingId] = useState(null);
   selectedRef.current = selected;
+
+  const persistCannedReplies = useCallback((next) => {
+    try {
+      localStorage.setItem(LS_FB_CANNED_REPLIES, JSON.stringify(next));
+    } catch {
+      /* ignore quota */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!cannedOpen) return;
+    const onDoc = (e) => {
+      const t = e.target;
+      if (cannedToggleRef.current?.contains(t)) return;
+      if (cannedSidebarRef.current?.contains(t)) return;
+      setCannedOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [cannedOpen]);
+
+  const loadReplyIntoCannedForm = useCallback(() => {
+    const t = reply.trim();
+    if (!t) {
+      alert('Soạn tin trong ô nhập trước, rồi bấm «Nạp vào form».');
+      return;
+    }
+    setCannedDraftBody(t);
+    setCannedEditingId(null);
+    setCannedDraftTitle((prev) => {
+      if (prev.trim()) return prev;
+      const line = t.split('\n')[0]?.trim() || t;
+      return line.slice(0, 56) + (line.length > 56 ? '…' : '');
+    });
+  }, [reply]);
+
+  const submitCannedDraft = useCallback(() => {
+    const title = cannedDraftTitle.trim();
+    const text = cannedDraftBody.trim();
+    if (!title || !text) {
+      alert('Nhập đủ tiêu đề và nội dung.');
+      return;
+    }
+    if (cannedEditingId) {
+      setCannedReplies((prev) => {
+        const next = prev.map((x) => (x.id === cannedEditingId ? { ...x, title, text } : x));
+        persistCannedReplies(next);
+        return next;
+      });
+      setCannedEditingId(null);
+    } else {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      setCannedReplies((prev) => {
+        const next = [{ id, title, text }, ...prev].slice(0, 80);
+        persistCannedReplies(next);
+        return next;
+      });
+    }
+    setCannedDraftTitle('');
+    setCannedDraftBody('');
+  }, [cannedDraftTitle, cannedDraftBody, cannedEditingId, persistCannedReplies]);
+
+  const cancelCannedDraft = useCallback(() => {
+    setCannedEditingId(null);
+    setCannedDraftTitle('');
+    setCannedDraftBody('');
+  }, []);
+
+  const startEditCanned = useCallback((c) => {
+    setCannedEditingId(c.id);
+    setCannedDraftTitle(c.title);
+    setCannedDraftBody(c.text);
+  }, []);
+
+  const removeCannedReply = useCallback((id) => {
+    setCannedReplies((prev) => {
+      const next = prev.filter((x) => x.id !== id);
+      persistCannedReplies(next);
+      return next;
+    });
+  }, [persistCannedReplies]);
+
+  useEffect(() => {
+    if (!cannedEditingId) return;
+    const exists = cannedReplies.some((c) => c.id === cannedEditingId);
+    if (!exists) {
+      setCannedEditingId(null);
+      setCannedDraftTitle('');
+      setCannedDraftBody('');
+    }
+  }, [cannedReplies, cannedEditingId]);
+
+  const applyCannedReply = useCallback((text) => {
+    setReply(text);
+    /* Giữ panel mở để chọn thêm mẫu nếu cần */
+  }, []);
 
   // Load pages
   useEffect(() => {
@@ -510,7 +633,7 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
   }, [messages]);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0">
       {/* ── LEFT: Contact list ── */}
       <div className={`w-80 border-r bg-white flex flex-col shrink-0 ${selected ? 'hidden md:flex' : 'flex'}`}>
         <div className="p-3 border-b bg-gray-50 space-y-2">
@@ -617,7 +740,7 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
       </div>
 
       {/* ── RIGHT: Chat area ── */}
-      <div className={`flex-1 flex flex-col bg-gray-50 ${!selected ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`flex-1 flex flex-col bg-gray-50 min-h-0 ${!selected ? 'hidden md:flex' : 'flex'}`}>
         {selected ? (
           <>
             {/* Chat header */}
@@ -684,75 +807,178 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
               </div>
             </div>
 
-              {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-              {uniqueMessages.map((m, i) => {
-                const isOut = m.direction === 'outbound';
-                const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(uniqueMessages[i-1]?.created_at).toDateString();
-                return (
-                  <div key={m.id}>
-                    {showDate && (
-                      <div className="flex justify-center my-3">
-                        <span className="text-[10px] text-gray-400 bg-white px-3 py-1 rounded-full shadow-sm border">
-                          {new Date(m.created_at).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}
-                        </span>
-                      </div>
-                    )}
-                    <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
-                        isOut ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
-                      }`}>
-                        {/* Image */}
-                        {m.attachment_url && (m.message_type === 'image' || m.attachment_type === 'image') && (
-                          <div className="mb-2">
-                            <img 
-                              src={m.attachment_url} 
-                              className="max-w-[280px] rounded-xl cursor-pointer hover:opacity-90 transition" 
-                              alt="Hình ảnh"
-                              onClick={() => window.open(m.attachment_url, '_blank')}
-                            />
-                          </div>
-                        )}
-                        {/* Audio */}
-                        {m.attachment_url && (m.message_type === 'audio' || m.attachment_type === 'audio') && (
-                          <div className="mb-1">
-                            <audio 
-                              src={m.attachment_url} 
-                              controls 
-                              className="max-w-[280px] h-10"
-                              style={{ filter: isOut ? 'invert(1) hue-rotate(180deg)' : 'none' }}
-                            />
-                          </div>
-                        )}
-                        {/* Video */}
-                        {m.attachment_url && (m.message_type === 'video' || m.attachment_type === 'video') && (
-                          <div className="mb-2">
-                            <video 
-                              src={m.attachment_url} 
-                              controls 
-                              className="max-w-[280px] rounded-xl"
-                              preload="metadata"
-                            />
-                          </div>
-                        )}
-                        {/* File */}
-                        {m.attachment_url && (m.message_type === 'file' || m.attachment_type === 'file') && (
-                          <a href={m.attachment_url} target="_blank" rel="noreferrer"
-                            className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-1 transition ${isOut ? 'bg-blue-400/30 hover:bg-blue-400/50' : 'bg-gray-50 hover:bg-gray-100'}`}>
-                            <File size={16} /> Tệp đính kèm
-                          </a>
-                        )}
-                        {/* Text */}
-                        {m.content && m.content !== '[image]' && m.content !== '[audio]' && m.content !== '[video]' && m.content !== '[file]' && (
-                          <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
-                        )}
-                        <p className={`text-[10px] mt-1 ${isOut ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+            {/* Messages + khung tin soạn sẵn (chat-style) */}
+            <div className="flex flex-1 min-h-0 overflow-hidden flex-row">
+              <div className="flex-1 min-w-0 overflow-y-auto px-4 py-3 space-y-2">
+                {uniqueMessages.map((m, i) => {
+                  const isOut = m.direction === 'outbound';
+                  const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(uniqueMessages[i - 1]?.created_at).toDateString();
+                  return (
+                    <div key={m.id}>
+                      {showDate && (
+                        <div className="flex justify-center my-3">
+                          <span className="text-[10px] text-gray-400 bg-white px-3 py-1 rounded-full shadow-sm border">
+                            {new Date(m.created_at).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                          </span>
+                        </div>
+                      )}
+                      <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
+                          isOut ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
+                        }`}>
+                          {m.attachment_url && (m.message_type === 'image' || m.attachment_type === 'image') && (
+                            <div className="mb-2">
+                              <img
+                                src={m.attachment_url}
+                                className="max-w-[280px] rounded-xl cursor-pointer hover:opacity-90 transition"
+                                alt="Hình ảnh"
+                                onClick={() => window.open(m.attachment_url, '_blank')}
+                              />
+                            </div>
+                          )}
+                          {m.attachment_url && (m.message_type === 'audio' || m.attachment_type === 'audio') && (
+                            <div className="mb-1">
+                              <audio
+                                src={m.attachment_url}
+                                controls
+                                className="max-w-[280px] h-10"
+                                style={{ filter: isOut ? 'invert(1) hue-rotate(180deg)' : 'none' }}
+                              />
+                            </div>
+                          )}
+                          {m.attachment_url && (m.message_type === 'video' || m.attachment_type === 'video') && (
+                            <div className="mb-2">
+                              <video src={m.attachment_url} controls className="max-w-[280px] rounded-xl" preload="metadata" />
+                            </div>
+                          )}
+                          {m.attachment_url && (m.message_type === 'file' || m.attachment_type === 'file') && (
+                            <a
+                              href={m.attachment_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-1 transition ${isOut ? 'bg-blue-400/30 hover:bg-blue-400/50' : 'bg-gray-50 hover:bg-gray-100'}`}
+                            >
+                              <File size={16} /> Tệp đính kèm
+                            </a>
+                          )}
+                          {m.content && m.content !== '[image]' && m.content !== '[audio]' && m.content !== '[video]' && m.content !== '[file]' && (
+                            <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
+                          )}
+                          <p className={`text-[10px] mt-1 ${isOut ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+                        </div>
                       </div>
                     </div>
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {cannedOpen && (
+                <aside
+                  ref={cannedSidebarRef}
+                  className="w-[min(100%,320px)] sm:w-[300px] shrink-0 border-l border-amber-100 bg-gradient-to-b from-amber-50/95 via-white to-gray-50 flex flex-col shadow-inner min-h-0"
+                  aria-label="Tin soạn sẵn"
+                >
+                  <div className="px-3 py-2 border-b border-amber-100/80 bg-white/90 flex items-center justify-between gap-2 shrink-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <StickyNote className="h-4 w-4 text-amber-600 shrink-0" />
+                      <span className="text-xs font-semibold text-gray-900 truncate">Tin soạn sẵn</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCannedOpen(false)}
+                      className="p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 shrink-0"
+                      title="Đóng"
+                    >
+                      <X size={16} />
+                    </button>
                   </div>
-                );
-              })}
-              <div ref={messagesEndRef} />
+                  <p className="px-3 py-1.5 text-[10px] text-gray-500 border-b border-gray-100 shrink-0 leading-snug">
+                    «Chèn»: chỉ đưa <strong>nội dung</strong> vào ô nhập. CRUD mẫu (tiêu đề + nội dung) lưu trên máy bạn.
+                  </p>
+                  <div className="flex-1 overflow-y-auto px-2 py-2 space-y-2 min-h-0">
+                    {cannedReplies.length === 0 ? (
+                      <p className="text-[11px] text-gray-400 text-center py-6 px-2">Chưa có mẫu. Thêm ở form dưới hoặc «Nạp từ ô nhập».</p>
+                    ) : (
+                      cannedReplies.map((c) => (
+                        <div key={c.id} className="flex justify-start">
+                          <div
+                            className={`max-w-[95%] rounded-2xl rounded-bl-md px-3 py-2 shadow-sm border ${
+                              cannedEditingId === c.id ? 'border-amber-400 bg-amber-50' : 'border-gray-100 bg-white'
+                            }`}
+                          >
+                            <p className="text-[11px] font-semibold text-gray-900">{c.title}</p>
+                            <p className="text-[13px] text-gray-700 whitespace-pre-wrap break-words mt-1 leading-relaxed">{c.text}</p>
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              <button
+                                type="button"
+                                onClick={() => applyCannedReply(c.text)}
+                                className="text-[10px] font-medium px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                              >
+                                Chèn vào ô nhập
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => startEditCanned(c)}
+                                className="text-[10px] font-medium px-2 py-1 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1"
+                              >
+                                <Edit3 size={11} /> Sửa
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeCannedReply(c.id)}
+                                className="text-[10px] font-medium px-2 py-1 rounded-lg border border-red-100 text-red-600 hover:bg-red-50 inline-flex items-center gap-1"
+                              >
+                                <Trash2 size={11} /> Xóa
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="border-t border-amber-100 bg-white p-2 shrink-0 space-y-2 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
+                    <input
+                      value={cannedDraftTitle}
+                      onChange={(e) => setCannedDraftTitle(e.target.value)}
+                      placeholder="Tiêu đề mẫu"
+                      className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 focus:ring-2 focus:ring-amber-400 focus:border-transparent"
+                    />
+                    <textarea
+                      value={cannedDraftBody}
+                      onChange={(e) => setCannedDraftBody(e.target.value)}
+                      placeholder="Nội dung (chèn vào ô nhập khi chọn «Chèn»)"
+                      rows={4}
+                      className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 resize-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
+                    />
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={submitCannedDraft}
+                        className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 inline-flex items-center gap-1"
+                      >
+                        <Save size={12} /> {cannedEditingId ? 'Cập nhật' : 'Thêm mẫu'}
+                      </button>
+                      {(cannedEditingId || cannedDraftTitle.trim() || cannedDraftBody.trim()) && (
+                        <button
+                          type="button"
+                          onClick={cancelCannedDraft}
+                          className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        >
+                          Hủy form
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={loadReplyIntoCannedForm}
+                        className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50"
+                      >
+                        Nạp từ ô nhập
+                      </button>
+                    </div>
+                  </div>
+                </aside>
+              )}
             </div>
 
             {/* ── Input bar ── */}
@@ -790,6 +1016,21 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                     <MicOff size={20} />
                   </button>
                 )}
+
+                {/* Tin soạn sẵn — mở khung chat CRUD bên phải */}
+                <div className="relative shrink-0" ref={cannedToggleRef}>
+                  <button
+                    type="button"
+                    onClick={() => setCannedOpen((o) => !o)}
+                    disabled={recording}
+                    className={`p-2.5 rounded-xl cursor-pointer transition disabled:opacity-40 ${
+                      cannedOpen ? 'text-amber-700 bg-amber-100 ring-2 ring-amber-300/60' : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50'
+                    }`}
+                    title="Tin soạn sẵn — CRUD mẫu, chèn nội dung vào ô nhập"
+                  >
+                    <StickyNote size={20} />
+                  </button>
+                </div>
 
                 {/* Text input */}
                 <input value={reply} onChange={e => setReply(e.target.value)}

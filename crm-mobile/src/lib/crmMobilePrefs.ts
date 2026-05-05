@@ -110,7 +110,7 @@ export function canAssigneeFilterLeads(role?: string | null): boolean {
 
 export function canAssigneeFilterDeals(role?: string | null): boolean {
   const r = String(role ?? '').toLowerCase().trim();
-  return ['admin', 'manager', 'director', 'superadmin', 'super_admin', 'administrator'].includes(r);
+  return ['admin', 'superadmin', 'super_admin', 'administrator'].includes(r);
 }
 
 /** Admin xem toàn bộ ghi âm + quét ghép đa nhân viên (API voice-recordings). */

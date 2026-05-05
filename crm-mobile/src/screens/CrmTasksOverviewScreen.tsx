@@ -14,6 +14,8 @@ import { api } from '../api/client';
 import { navigationRef } from '../navigation/navigationRef';
 import type { MoreStackParamList } from '../navigation/types';
 import { useAuth } from '../context/AuthContext';
+import { useCrmCompanyFilter } from '../context/CrmCompanyFilterContext';
+import CrmCompanyPickerBar from '../components/CrmCompanyPickerBar';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'CrmTasksOverview'>;
@@ -60,6 +62,13 @@ function goLead(navigation: Nav, leadId: string) {
 export default function CrmTasksOverviewScreen({ navigation }: Props) {
   const { user } = useAuth();
   const uid = user?.id || user?.userId || '';
+  const {
+    showCompanyPicker,
+    companies,
+    selectedCompanyId,
+    setSelectedCompanyId,
+    companyQueryParams,
+  } = useCrmCompanyFilter();
   const [rows, setRows] = useState<CrmOverviewTask[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [mineOnly, setMineOnly] = useState(true);
@@ -67,11 +76,11 @@ export default function CrmTasksOverviewScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
 
   const params = useMemo(() => {
-    const p: Record<string, string> = {};
+    const p: Record<string, string> = { ...companyQueryParams };
     if (status) p.status = status;
     if (mineOnly && uid) p.assignee_id = uid;
     return p;
-  }, [status, mineOnly, uid]);
+  }, [status, mineOnly, uid, companyQueryParams]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,6 +138,12 @@ export default function CrmTasksOverviewScreen({ navigation }: Props) {
 
   return (
     <View style={styles.screen}>
+      <CrmCompanyPickerBar
+        visible={showCompanyPicker}
+        companies={companies}
+        value={selectedCompanyId}
+        onChange={setSelectedCompanyId}
+      />
       <View style={styles.chips}>
         {STATUS_CHIPS.map((c) => (
           <TouchableOpacity

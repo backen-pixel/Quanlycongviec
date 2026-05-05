@@ -11,11 +11,14 @@ import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
+  Alert,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useCrmCompanyFilter } from '../context/CrmCompanyFilterContext';
+import CrmCompanyPickerBar from '../components/CrmCompanyPickerBar';
 import type { MoreStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 
@@ -68,6 +71,14 @@ function dayKeyFromStart(iso?: string | null): string {
 
 export default function CrmEventsScreen({ route }: Props) {
   const { user } = useAuth();
+  const {
+    showCompanyPicker,
+    companies,
+    selectedCompanyId,
+    setSelectedCompanyId,
+    companyQueryParams,
+    needsCompanySelection,
+  } = useCrmCompanyFilter();
   const now = new Date();
   const [tab, setTab] = useState<'list' | 'cal'>('list');
   const [events, setEvents] = useState<CrmEventRow[]>([]);
@@ -86,21 +97,25 @@ export default function CrmEventsScreen({ route }: Props) {
 
   const loadList = useCallback(async () => {
     try {
-      const { data } = await api.get<{ events?: CrmEventRow[] }>('/events', { params: { limit: 80, offset: 0 } });
+      const { data } = await api.get<{ events?: CrmEventRow[] }>('/events', {
+        params: { limit: 80, offset: 0, ...companyQueryParams },
+      });
       setEvents(Array.isArray(data?.events) ? data.events : []);
     } catch {
       setEvents([]);
     }
-  }, []);
+  }, [companyQueryParams]);
 
   const loadCalendar = useCallback(async () => {
     try {
-      const { data } = await api.get<CrmEventRow[]>('/events/calendar', { params: { month, year } });
+      const { data } = await api.get<CrmEventRow[]>('/events/calendar', {
+        params: { month, year, ...companyQueryParams },
+      });
       setCalEvents(Array.isArray(data) ? data : []);
     } catch {
       setCalEvents([]);
     }
-  }, [month, year]);
+  }, [month, year, companyQueryParams]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -172,11 +187,16 @@ export default function CrmEventsScreen({ route }: Props) {
     ).toISOString();
     setSaving(true);
     try {
+      if (needsCompanySelection) {
+        Alert.alert('Chọn công ty', 'Vui lòng chọn công ty CRM trước khi tạo sự kiện.');
+        return;
+      }
       await api.post('/events', {
         title,
         start_time,
         event_type: 'other',
         assignee_id: user?.id || user?.userId,
+        ...(companyQueryParams.company_id ? { company_id: companyQueryParams.company_id } : {}),
       });
       setCreateOpen(false);
       await loadAll();
@@ -192,6 +212,13 @@ export default function CrmEventsScreen({ route }: Props) {
 
   return (
     <View style={styles.screen}>
+      <CrmCompanyPickerBar
+        visible={showCompanyPicker}
+        companies={companies}
+        value={selectedCompanyId}
+        onChange={setSelectedCompanyId}
+        warn={needsCompanySelection}
+      />
       <View style={styles.tabs}>
         <TouchableOpacity style={[styles.tab, tab === 'list' && styles.tabOn]} onPress={() => setTab('list')}>
           <Text style={[styles.tabTxt, tab === 'list' && styles.tabTxtOn]}>Danh sách</Text>

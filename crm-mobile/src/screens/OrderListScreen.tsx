@@ -15,6 +15,8 @@ import type { MoreStackParamList } from '../navigation/types';
 import type { OrderRow } from '../types/salesDocs';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatVnd } from '../lib/formatVnd';
+import { useCrmCompanyFilter } from '../context/CrmCompanyFilterContext';
+import CrmCompanyPickerBar from '../components/CrmCompanyPickerBar';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'OrderList'>;
 
@@ -30,6 +32,13 @@ const ST: Record<string, string> = {
 };
 
 export default function OrderListScreen({ navigation }: Props) {
+  const {
+    showCompanyPicker,
+    companies,
+    selectedCompanyId,
+    setSelectedCompanyId,
+    companyQueryParams,
+  } = useCrmCompanyFilter();
   const [rows, setRows] = useState<OrderRow[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
@@ -38,26 +47,30 @@ export default function OrderListScreen({ navigation }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get<OrderRow[]>('/crm/orders', { params: { limit: 100, search: q.trim() || undefined } });
+      const { data } = await api.get<OrderRow[]>('/crm/orders', {
+        params: { limit: 100, search: q.trim() || undefined, ...companyQueryParams },
+      });
       setRows(Array.isArray(data) ? data : []);
     } catch {
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, [q, companyQueryParams]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const { data } = await api.get<OrderRow[]>('/crm/orders', { params: { limit: 100, search: q.trim() || undefined } });
+      const { data } = await api.get<OrderRow[]>('/crm/orders', {
+        params: { limit: 100, search: q.trim() || undefined, ...companyQueryParams },
+      });
       setRows(Array.isArray(data) ? data : []);
     } catch {
       setRows([]);
     } finally {
       setRefreshing(false);
     }
-  }, [q]);
+  }, [q, companyQueryParams]);
 
   useEffect(() => {
     void load();
@@ -73,6 +86,12 @@ export default function OrderListScreen({ navigation }: Props) {
 
   return (
     <View style={styles.screen}>
+      <CrmCompanyPickerBar
+        visible={showCompanyPicker}
+        companies={companies}
+        value={selectedCompanyId}
+        onChange={setSelectedCompanyId}
+      />
       <View style={styles.toolbar}>
         <TextInput
           style={styles.search}

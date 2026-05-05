@@ -51,33 +51,35 @@ function isToday(isoStr) { return isSameDay(isoStr, new Date()); }
 export default function EventsFeedPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  /** Admin hệ thống (không gắn company) — mới được lọc «tất cả công ty» / chọn công ty khác */
+  const isSystemAdmin = isAdmin && !(user?.company_id != null && String(user.company_id).trim() !== '');
   const [companies, setCompanies] = useState([]);
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     try { return localStorage.getItem(LS_EVENTS_COMPANY) || ''; } catch { return ''; }
   });
 
   const listParams = useMemo(
-    () => (isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
-    [isAdmin, filterCompanyId],
+    () => (isSystemAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
+    [isSystemAdmin, filterCompanyId],
   );
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isSystemAdmin) return;
     api.get('/companies', { params: { for_module: 'crm' } })
       .then((r) => {
         const list = r.data?.companies || r.data || [];
         setCompanies(Array.isArray(list) ? list : []);
       })
       .catch(() => setCompanies([]));
-  }, [isAdmin]);
+  }, [isSystemAdmin]);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isSystemAdmin) return;
     try {
       if (filterCompanyId) localStorage.setItem(LS_EVENTS_COMPANY, filterCompanyId);
       else localStorage.removeItem(LS_EVENTS_COMPANY);
     } catch { /* ignore */ }
-  }, [isAdmin, filterCompanyId]);
+  }, [isSystemAdmin, filterCompanyId]);
 
   const [view, setView] = useState('feed'); // feed | calendar | types
   const [events, setEvents] = useState([]);
@@ -165,7 +167,7 @@ export default function EventsFeedPage() {
           <p className="text-sm text-gray-500 mt-0.5">{events.length} sự kiện</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {isAdmin && (
+          {isSystemAdmin && (
             <div className="flex items-center gap-2 mr-1">
               <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
               <select
