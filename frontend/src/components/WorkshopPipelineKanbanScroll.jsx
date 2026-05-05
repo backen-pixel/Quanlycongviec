@@ -38,6 +38,10 @@ export default function WorkshopPipelineKanbanScroll({ cardSelector, children })
       }
     };
 
+    const EDGE_ZONE_PX = 56;
+    const MIN_STEP = 5;
+    const MAX_STEP = 34;
+
     const runScroll = () => {
       scrollRafRef.current = 0;
       if (!pipelineDraggingRef.current) return;
@@ -46,13 +50,27 @@ export default function WorkshopPipelineKanbanScroll({ cardSelector, children })
       if (!sc || !wrap) return;
       const { x } = lastPointerRef.current;
       const r = wrap.getBoundingClientRect();
-      const margin = 56;
-      if (x < r.left + margin) {
-        sc.scrollLeft = Math.max(0, sc.scrollLeft - 14);
-        scrollRafRef.current = requestAnimationFrame(runScroll);
-      } else if (x > r.right - margin) {
-        sc.scrollLeft = Math.min(sc.scrollWidth - sc.clientWidth, sc.scrollLeft + 14);
-        scrollRafRef.current = requestAnimationFrame(runScroll);
+      const innerLeft = r.left + EDGE_ZONE_PX;
+      const innerRight = r.right - EDGE_ZONE_PX;
+      let delta = 0;
+      if (x < innerLeft) {
+        const t = Math.min(1, (innerLeft - x) / EDGE_ZONE_PX);
+        const step = MIN_STEP + t * t * (MAX_STEP - MIN_STEP);
+        delta = -step;
+      } else if (x > innerRight) {
+        const t = Math.min(1, (x - innerRight) / EDGE_ZONE_PX);
+        const step = MIN_STEP + t * t * (MAX_STEP - MIN_STEP);
+        delta = step;
+      }
+      if (delta !== 0) {
+        const maxLeft = Math.max(0, sc.scrollWidth - sc.clientWidth);
+        const before = sc.scrollLeft;
+        sc.scrollLeft = Math.max(0, Math.min(maxLeft, before + delta));
+        const moved = sc.scrollLeft !== before;
+        const inZone = x < innerLeft || x > innerRight;
+        if (inZone && moved) {
+          scrollRafRef.current = requestAnimationFrame(runScroll);
+        }
       }
     };
 
@@ -60,13 +78,15 @@ export default function WorkshopPipelineKanbanScroll({ cardSelector, children })
       lastPointerRef.current = { x: e.clientX, y: e.clientY };
       if (!pipelineDraggingRef.current) return;
       e.preventDefault();
-      if (scrollRafRef.current) return;
       const wrap = kanbanWrapRef.current;
       if (!wrap) return;
       const r = wrap.getBoundingClientRect();
-      const margin = 56;
-      if (e.clientX < r.left + margin || e.clientX > r.right - margin) {
-        scrollRafRef.current = requestAnimationFrame(runScroll);
+      const innerLeft = r.left + EDGE_ZONE_PX;
+      const innerRight = r.right - EDGE_ZONE_PX;
+      if (e.clientX < innerLeft || e.clientX > innerRight) {
+        if (!scrollRafRef.current) {
+          scrollRafRef.current = requestAnimationFrame(runScroll);
+        }
       }
     };
 

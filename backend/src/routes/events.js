@@ -6,6 +6,33 @@ const r = Router();
 
 r.use(auth);
 
+const RE_TZ = /[zZ]$|[+-]\d{2}:\d{2}$|[+-]\d{4}$/;
+
+/**
+ * Naive datetime (không có Z / ±offset) từ client thường bị Postgres/PostgREST hiểu theo UTC
+ * → ở VN hiển thị như bị cộng thêm ~7h. Chuỗi đã có Z/offset giữ nguyên (web dùng datetime-local → toISOString).
+ * Naive: coi là giờ bức tường Asia/Ho_Chi_Minh rồi lưu UTC.
+ */
+function normalizeEventTimestamp(value) {
+  if (value == null || value === '') return value;
+  const s = String(value).trim();
+  if (!s) return value;
+  if (RE_TZ.test(s)) {
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? value : d.toISOString();
+  }
+  const m = s.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,3}))?/,
+  );
+  if (!m) return value;
+  const sec = m[6] != null ? Number(m[6]) : 0;
+  const ms = m[7] != null ? String(m[7]).padEnd(3, '0').slice(0, 3) : '';
+  const base = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${String(sec).padStart(2, '0')}`;
+  const withZone = ms ? `${base}.${ms}+07:00` : `${base}+07:00`;
+  const d = new Date(withZone);
+  return Number.isNaN(d.getTime()) ? value : d.toISOString();
+}
+
 function userIsAdmin(role) {
   return role === 'admin';
 }
@@ -158,10 +185,12 @@ r.get('/calendar', async (req, res) => {
     const sc = resolveEventsCompanyScope(req, res);
     if (!sc.ok) return;
     const { month, year } = req.query; // month: 1-12, year: 2026
-    const m = parseInt(month) || new Date().getMonth() + 1;
-    const y = parseInt(year) || new Date().getFullYear();
-    const startDate = `${y}-${String(m).padStart(2, '0')}-01T00:00:00`;
-    const endDate = new Date(y, m, 0, 23, 59, 59).toISOString(); // last day of month
+    const m = parseInt(month, 10) || new Date().getMonth() + 1;
+    const y = parseInt(year, 10) || new Date().getFullYear();
+    const pad = (n) => String(n).padStart(2, '0');
+    const lastDay = new Date(y, m, 0).getDate();
+    const startDate = new Date(`${y}-${pad(m)}-01T00:00:00+07:00`).toISOString();
+    const endDate = new Date(`${y}-${pad(m)}-${pad(lastDay)}T23:59:59.999+07:00`).toISOString();
 
     let cq = supabase.from('crm_events')
       .select(EVENT_SELECT)
@@ -215,8 +244,8 @@ r.post('/', async (req, res) => {
       title: b.title,
       description: b.description || null,
       location: b.location || null,
-      start_time: b.start_time,
-      end_time: b.end_time || null,
+      start_time: normalizeEventTimestamp(b.start_time),
+      end_time: b.end_time != null && b.end_time !== '' ? normalizeEventTimestamp(b.end_time) : null,
       all_day: b.all_day || false,
       status: b.status || 'planned',
       lead_id: b.lead_id || null,
@@ -310,7 +339,18 @@ r.put('/:id', async (req, res) => {
     const fields = ['title', 'description', 'location', 'start_time', 'end_time',
       'all_day', 'status', 'result', 'event_type', 'event_type_id',
       'lead_id', 'customer_id', 'project_id', 'assignee_id'];
-    fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f] === '' ? null : b[f]; });
+    fields.forEach((f) => {
+      if (b[f] === undefined) return;
+      if (b[f] === '') {
+        update[f] = null;
+        return;
+      }
+      if (f === 'start_time' || f === 'end_time') {
+        update[f] = normalizeEventTimestamp(b[f]);
+        return;
+      }
+      update[f] = b[f];
+    });
     if (userIsAdmin(req.user?.role) && b.company_id !== undefined) {
       update.company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
     }

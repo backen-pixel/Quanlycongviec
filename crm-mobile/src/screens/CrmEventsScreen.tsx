@@ -158,7 +158,18 @@ export default function CrmEventsScreen({ route }: Props) {
   const saveEvent = async () => {
     const title = createTitle.trim();
     if (!title || !createDay || saving) return;
-    const start_time = `${createDay}T${pad2(Number(createHour) || 9)}:${pad2(Number(createMin) || 0)}:00`;
+    // Giống web datetimeLocal → ISO UTC: dùng giờ thiết bị (VN). Không gửi chuỗi naive không offset —
+    // backend/Postgres có thể hiểu là UTC và hiển thị sai ~7h.
+    const [yy, mo, dd] = createDay.split('-').map((x) => Number(x));
+    const start_time = new Date(
+      yy,
+      mo - 1,
+      dd,
+      Number(createHour) || 9,
+      Number(createMin) || 0,
+      0,
+      0,
+    ).toISOString();
     setSaving(true);
     try {
       await api.post('/events', {
