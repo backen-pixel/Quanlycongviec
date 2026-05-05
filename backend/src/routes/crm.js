@@ -3624,18 +3624,50 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       return res.status(400).json({ error: 'Lead chưa được liên kết khách hàng. Vào chi tiết Lead → chọn Khách hàng trước khi chuyển Deal.' });
     }
 
-    // Get first deal stage
-    const { data: firstDealStage } = await supabase
+    const companyId = req.body.company_id || lead.company_id || null;
+
+    // Pipeline dùng cho cột Deal đầu tiên phải trùng pipeline Kanban của công ty (trước đây lấy 1 cột deal trên toàn DB → stage_id lạ, không nằm cột nào trên board).
+    let pipelineForDeal = null;
+    if (req.body.pipeline_id) {
+      const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', req.body.pipeline_id).maybeSingle();
+      if (!pl) return res.status(400).json({ error: 'Pipeline không tồn tại' });
+      if (companyId && String(pl.company_id || '') !== String(companyId)) {
+        return res.status(400).json({ error: 'Pipeline không thuộc công ty của lead' });
+      }
+      pipelineForDeal = pl.id;
+    }
+    if (!pipelineForDeal && lead.pipeline_id && companyId) {
+      const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', lead.pipeline_id).maybeSingle();
+      if (pl && String(pl.company_id || '') === String(companyId)) pipelineForDeal = pl.id;
+    }
+    if (!pipelineForDeal && companyId) {
+      const { data: pls } = await supabase.from('crm_pipelines')
+        .select('id, is_default')
+        .eq('company_id', companyId)
+        .eq('is_active', true);
+      const list = pls || [];
+      const def = list.find((p) => p.is_default) || list[0];
+      pipelineForDeal = def?.id || null;
+    }
+
+    let stageQ = supabase
       .from('crm_pipeline_stages')
       .select('id')
       .eq('pipeline_type', 'deal')
       .eq('is_active', true)
       .order('order_index')
-      .limit(1)
-      .single();
-
+      .limit(1);
+    if (pipelineForDeal) {
+      stageQ = stageQ.eq('pipeline_id', pipelineForDeal);
+    }
+    const { data: firstDealStage, error: stagePickErr } = await stageQ.maybeSingle();
+    if (stagePickErr) throw stagePickErr;
     if (!firstDealStage) {
-      return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên' });
+      return res.status(500).json({
+        error: pipelineForDeal
+          ? 'Không tìm thấy cột Deal đầu tiên trong pipeline của công ty. Kiểm tra pipeline CRM / migration.'
+          : 'Không tìm thấy giai đoạn Deal đầu tiên trên hệ thống.',
+      });
     }
 
     // Update lead → deal (một người phụ trách)
@@ -3645,9 +3677,10 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       .update({
         type: 'deal',
         stage_id: firstDealStage.id,
+        pipeline_id: pipelineForDeal || lead.pipeline_id || null,
         assigned_to: ownerId,
         lead_owner_id: ownerId,
-        company_id: req.body.company_id || lead.company_id || null,
+        company_id: companyId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', req.params.id)

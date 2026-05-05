@@ -1,6 +1,9 @@
 /**
  * Chuỗi datetime-local (YYYY-MM-DDTHH:mm, không timezone) ↔ ISO UTC để gửi API.
  * Tránh lỗi cộng trừ getTimezoneOffset + toISOString().slice(0,16) làm sai giờ hiển thị.
+ *
+ * Backend POST/PUT /events: chuỗi **không** có Z/±offset được coi là giờ VN (+07) — client nên luôn gửi
+ * ISO có Z (như hàm datetimeLocalValueToIso) để tránh nhầm với giờ máy không phải VN.
  */
 
 function pad2(n) {
