@@ -134,6 +134,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/categories', icon: FolderTree, label: 'Nhóm ngành' },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo', adminOnly: true },
       { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', adminOnly: true },
+      { to: '/crm/facebook/link-phone-cleanup', icon: Phone, label: 'Dọn SĐT từ link', adminOnly: true },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline', adminOnly: true },
       { to: '/crm/sources-settings', icon: Tags, label: 'Nguồn & phân loại', adminOnly: true },
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM', adminOnly: true },
