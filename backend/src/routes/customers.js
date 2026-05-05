@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { addPhoneToAutoLeadBlocklist } = require('../helpers/crmAutoLeadPhoneBlocklist');
 
 const r = Router();
 r.use(auth);
@@ -115,7 +116,14 @@ r.put('/:id', async (req, res) => {
 r.delete('/:id', async (req, res) => {
   try {
     const force = req.query.force === 'true';
+    const blockAuto = req.query.block_auto_recreate_phone === 'true';
     const custId = req.params.id;
+
+    let phoneToBlock = null;
+    if (blockAuto) {
+      const { data: crow } = await supabase.from('customers').select('phone').eq('id', custId).maybeSingle();
+      phoneToBlock = crow?.phone && String(crow.phone).trim() ? String(crow.phone).trim() : null;
+    }
 
     // Check linked data
     const { count: projectCount } = await supabase.from('projects').select('id', { count: 'exact', head: true }).eq('customer_id', custId);
@@ -178,6 +186,16 @@ r.delete('/:id', async (req, res) => {
     try { await supabase.from('customer_interactions').delete().eq('customer_id', custId); } catch (_) {}
     const { error } = await supabase.from('customers').delete().eq('id', custId);
     if (error) throw error;
+
+    if (blockAuto && phoneToBlock) {
+      const addRes = await addPhoneToAutoLeadBlocklist(supabase, phoneToBlock, {
+        note: `Xóa KH ${custId}`,
+        userId: req.user?.userId,
+        display: phoneToBlock,
+      });
+      if (!addRes.ok) console.warn('[Customers] Chặn SĐT sau xóa KH:', addRes.error);
+    }
+
     res.json({ message: 'Đã xóa khách hàng và dữ liệu liên quan' });
   } catch (e) { console.error('Delete customer:', e); res.status(500).json({ error: e.message || 'Lỗi' }); }
 });

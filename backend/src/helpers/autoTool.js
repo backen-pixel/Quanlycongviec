@@ -56,6 +56,23 @@ function emit() {
   if (_io) _io.emit('auto_tool_state', getState());
 }
 
+function phoneDigitsLen(s) {
+  if (s == null || s === '') return 0;
+  return String(s).replace(/\D/g, '').length;
+}
+
+/** KH đã có SĐT chuẩn (≥9 số) → không dùng SĐT trích từ chat cho luồng tự động. */
+async function customerHasCanonicalPhone(contact) {
+  let cid = contact.customer_id || null;
+  if (!cid && contact.lead_id) {
+    const { data: ld } = await supabase.from('crm_leads').select('customer_id').eq('id', contact.lead_id).maybeSingle();
+    cid = ld?.customer_id || null;
+  }
+  if (!cid) return false;
+  const { data: cust } = await supabase.from('customers').select('phone').eq('id', cid).maybeSingle();
+  return phoneDigitsLen(cust?.phone) >= 9;
+}
+
 function pushLog(text, level = 'info') {
   state.logs.push({ ts: new Date().toISOString(), text, level });
   if (state.logs.length > 300) state.logs = state.logs.slice(-200);
@@ -255,19 +272,15 @@ async function runOneBatch() {
         .limit(500);
 
       const inboundInfo = extractInboundContactInfo(messages || []);
-      const phone = inboundInfo.phone || null;
+      const phoneRaw = inboundInfo.phone || null;
+      const custPhoneOk = await customerHasCanonicalPhone(contact);
+      const phone = phoneRaw && !custPhoneOk ? phoneRaw : null;
 
       if (phone) {
         batchPhones++;
         state.phonesFound++;
 
-        // Cập nhật SĐT vào contact
-        const currentPhone = contact.phone ? String(contact.phone).trim() : '';
-        if (!currentPhone || currentPhone !== phone) {
-          await supabase.from('facebook_contacts')
-            .update({ phone, updated_at: new Date().toISOString() })
-            .eq('id', contact.id);
-        }
+        // Không ghi SĐT vào facebook_contacts — nguồn chuẩn là customers.phone
 
         // ── Bước 4: Tạo lead hoặc cập nhật ──
         if (!contact.lead_id) {

@@ -22,11 +22,52 @@ function isLikelyVnSubscriberNumber(digitsOnly) {
 function stripUrlLikeSegments(text) {
   if (!text) return '';
   return String(text)
+    // URL trong ngoặc: View comment.(https://...)
+    .replace(/\([^)]*https?:\/\/[^)]*\)/gi, ' ')
     .replace(/\bhttps?:\/\/\S+/gi, ' ')
     .replace(/\bwww\.\S+/gi, ' ')
-    .replace(/\b(?:m\.me|fb\.me|zalo\.me|facebook\.com|messenger\.com|bit\.ly|tinyurl\.com|t\.co)\/\S*/gi, ' ')
+    .replace(/\b(?:l\.)?facebook\.com\/\S*/gi, ' ')
+    .replace(/\b(?:m\.me|fb\.me|zalo\.me|fb\.watch|messenger\.com|bit\.ly|tinyurl\.com|t\.co)\/\S*/gi, ' ')
     // Domain + path không có scheme (vd: shopee.vn/.../0909…) — hay chứa dãy số giống SĐT trong URL
-    .replace(/\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.(?:com|vn|net|org|io|info|co|me|shop|store|app)(?:\/[^\s]*)?/gi, ' ');
+    .replace(/\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.(?:com|vn|net|org|io|info|co|me|shop|store|app)(?:\/[^\s]*)?/gi, ' ')
+    // Tham số hay path chứa snowflake ID — tránh sót khi domain đã bị cắt
+    .replace(/\bcomment_id=\d+/gi, ' ')
+    .replace(/\breply_comment_id=\d+/gi, ' ')
+    .replace(/\bvideos\/\d+/gi, ' ');
+}
+
+/** Chuỗi có link/meta Facebook (comment, video) — cần lọc SĐT trùng ID dài. */
+function messageLooksFacebookMetaUrl(raw) {
+  return /facebook\.com|fb\.com|fb\.watch|messenger\.com|comment_id=|\/videos\/\d/i.test(String(raw || ''));
+}
+
+/** Các dãy ≥minLen chữ số liên tiếp (snowflake / media id trong URL). */
+function extractLongNumericRuns(raw, minLen = 14) {
+  const normalized = normalizeUnicodeDigitsToAscii(String(raw || ''));
+  const runs = [];
+  const re = new RegExp(`\\d{${minLen},}`, 'g');
+  let m;
+  while ((m = re.exec(normalized)) !== null) {
+    runs.push(m[0]);
+  }
+  return runs;
+}
+
+/**
+ * SĐT trích được trùng (chuỗi con) với ID Facebook dài trong cùng tin — bỏ qua (vd comment_id chứa 4237451415 → 04237451415).
+ */
+function isPhoneDigitsSubstringOfFbLongId(phoneDigits, longRuns) {
+  const p = String(phoneDigits || '').replace(/\D/g, '');
+  if (!p || p.length < 10 || !longRuns?.length) return false;
+  const variants = new Set([p]);
+  if (p.startsWith('0') && p.length > 1) variants.add(p.slice(1));
+  for (const v of variants) {
+    if (v.length < 10) continue;
+    for (const run of longRuns) {
+      if (run.includes(v)) return true;
+    }
+  }
+  return false;
 }
 
 function normalizeVietnamPhoneCandidate(rawCandidate) {
@@ -76,14 +117,18 @@ function extractContactInfo(text) {
   ];
 
   let phone = null;
+  const longRuns = messageLooksFacebookMetaUrl(raw) ? extractLongNumericRuns(raw) : [];
+
   for (const pattern of phonePatterns) {
     const matches = sanitized.match(pattern) || [];
     for (const matched of matches) {
       const normalized = normalizeVietnamPhoneCandidate(matched);
-      if (normalized) {
-        phone = normalized;
-        break;
+      if (!normalized) continue;
+      if (longRuns.length && isPhoneDigitsSubstringOfFbLongId(normalized, longRuns)) {
+        continue;
       }
+      phone = normalized;
+      break;
     }
     if (phone) break;
   }
@@ -219,4 +264,7 @@ module.exports = {
   extractInboundContactInfo,
   analyzeStoredPhoneIssue,
   longestSameDigitRun,
+  messageLooksFacebookMetaUrl,
+  extractLongNumericRuns,
+  isPhoneDigitsSubstringOfFbLongId,
 };

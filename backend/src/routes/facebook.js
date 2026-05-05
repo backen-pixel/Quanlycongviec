@@ -16,6 +16,7 @@ const {
   validateVnSubscriberPhoneStored,
   analyzeStoredPhoneIssue,
 } = require('../helpers/facebookPhoneExtract');
+const { isPhoneBlockedForFacebookAutoLead } = require('../helpers/crmAutoLeadPhoneBlocklist');
 const { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed } = require('../helpers/facebookLeadDeleteWhenNoPhone');
 const { reconcileInboundPhoneAfterScan, phonesEqualDigits } = require('../helpers/facebookInboundPhoneReconcile');
 const {
@@ -23,6 +24,18 @@ const {
   saveConfig: saveAutoLeadConfig,
   DEFAULT_CONFIG: AUTO_LEAD_DEFAULTS,
 } = require('../config/autoLeadConfig');
+const {
+  previewLinkOnlyPhones,
+  executeLinkOnlyPhoneCleanup,
+  DEFAULT_MAX_CONTACTS_LINK_CLEANUP,
+  MAX_CONTACTS_LINK_CLEANUP_CAP,
+} = require('../helpers/facebookLinkOnlyPhoneTool');
+
+function parseMaxContactsLinkCleanup(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_MAX_CONTACTS_LINK_CLEANUP;
+  return Math.min(MAX_CONTACTS_LINK_CLEANUP_CAP, n);
+}
 
 // Disable DB logging to facebook_webhook_logs to reduce Supabase egress.
 // Set FB_DISABLE_WEBHOOK_LOGS=1 (or true/yes/on) in env to enable.
@@ -627,7 +640,16 @@ async function runPipelineV2OnePass({
       .eq('id', contact.id)
       .single();
 
-    const phone = fresh?.phone && String(fresh.phone).trim() ? String(fresh.phone).trim() : null;
+    let phoneAfterCustId = fresh?.customer_id || null;
+    if (!phoneAfterCustId && fresh?.lead_id) {
+      const { data: ldp } = await supabase.from('crm_leads').select('customer_id').eq('id', fresh.lead_id).maybeSingle();
+      phoneAfterCustId = ldp?.customer_id || null;
+    }
+    let phone = null;
+    if (phoneAfterCustId) {
+      const { data: cp } = await supabase.from('customers').select('phone').eq('id', phoneAfterCustId).maybeSingle();
+      phone = cp?.phone && String(cp.phone).trim() ? String(cp.phone).trim() : null;
+    }
     row.phone_after = phone;
 
     if (!fresh?.lead_id) {
@@ -1365,15 +1387,10 @@ function _phoneDigitsLen(s) {
   return String(s).replace(/\D/g, '').length;
 }
 
-/** Lead đã gắn contact và đã có SĐT lưu (KH / contact FB / dòng SĐT trong mô tả) → không quét lại tin nhắn. */
+/** Lead đã gắn KH và KH đã có SĐT → không quét lại tin nhắn (chỉ coi SĐT khách hàng, không dùng SĐT cột contact FB / mô tả). */
 function leadLinkedPhoneAlreadyStored(contact, lead, cust) {
   if (!contact?.lead_id || !lead) return false;
-  if (_phoneDigitsLen(cust?.phone) >= 9) return true;
-  if (_phoneDigitsLen(contact.phone) >= 9) return true;
-  const desc = lead.description || '';
-  const m = desc.match(/SĐT:\s*(\S+)/i);
-  if (m?.[1] && _phoneDigitsLen(m[1]) >= 9) return true;
-  return false;
+  return _phoneDigitsLen(cust?.phone) >= 9;
 }
 
 /** Ghi default_source_id lên facebook_pages để lần sau không tra lại crm_sources */
@@ -1555,7 +1572,14 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
 
   // 4. Check trùng theo SĐT (nếu có phone → tìm lead/customer trùng SĐT)
   const phone = extraData.phone || freshContact?.phone || contact.phone;
-  if (phone && phone.trim()) {
+  if (phone && String(phone).trim()) {
+    const blocked = await isPhoneBlockedForFacebookAutoLead(supabase, phone);
+    if (blocked) {
+      console.log(`[FB] ⛔ Không tạo lead — SĐT đã chặn tự động tạo lại (${source})`);
+      return null;
+    }
+  }
+  if (phone && String(phone).trim()) {
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     if (cleanPhone.length >= 9) {
       // Tìm customer trùng SĐT
@@ -2134,10 +2158,10 @@ async function handleMessaging(pageId, event, io) {
             }
 
             case 'has_phone':
-              // Chỉ tạo khi có SĐT
-              if (extractedPhone || contact.phone) {
+              // Chỉ tạo khi có SĐT trong tin nhắn (không dùng cột facebook_contacts.phone)
+              if (extractedPhone) {
                 shouldCreate = true;
-                reason.push(`has_phone: ${extractedPhone || contact.phone}`);
+                reason.push(`has_phone: ${extractedPhone}`);
               } else {
                 console.log(`[FB] ⏳ Contact ${contact.id}: no phone yet, waiting...`);
               }
@@ -2156,18 +2180,11 @@ async function handleMessaging(pageId, event, io) {
           if (shouldCreate) {
             const contactName = contact.fb_name || autoLeadCfg.default_customer_name || 'User';
 
-            if (extractedPhone && !contact.phone) {
-              const _phoneUpd = { phone: extractedPhone, updated_at: new Date().toISOString() };
-              if (hasSyncPausedColumnSync()) _phoneUpd.phone_resolved_at = new Date().toISOString();
-              await supabase.from('facebook_contacts').update(_phoneUpd).eq('id', contact.id);
-              contact.phone = extractedPhone;
-            }
-
             console.log(`[FB] 🆕 Creating lead: "${contactName}" (${reason.join(', ')})`);
             isFirstMessage = true;
             const lead = await createLeadFromFacebook(pageId, contact, 'Messenger', {
               full_name: contactName,
-              phone: extractedPhone || contact.phone,
+              phone: extractedPhone || undefined,
               address: extractedAddress,
               description: `Tin nhắn đầu tiên: ${content}`,
             });
@@ -2218,15 +2235,23 @@ async function handleMessaging(pageId, event, io) {
       // Refresh contact.lead_id vì có thể vừa được tạo trong createLeadFromFacebook ở trên
       if (!contact.lead_id) {
         const { data: refreshed } = await supabase.from('facebook_contacts')
-          .select('lead_id, phone').eq('id', contact.id).single();
+          .select('lead_id').eq('id', contact.id).single();
         if (refreshed) {
           contact.lead_id = refreshed.lead_id;
-          if (refreshed.phone && !contact.phone) contact.phone = refreshed.phone;
         }
       }
 
-      // Nếu không tìm thấy SĐT trong tin nhắn hiện tại, quét tin nhắn cũ nếu lead chưa có phone
-      if (!extractedPhone && contact.lead_id && !contact.phone) {
+      let linkedCustPhoneDigits = 0;
+      if (contact.lead_id) {
+        const { data: leadRow } = await supabase.from('crm_leads').select('customer_id').eq('id', contact.lead_id).maybeSingle();
+        if (leadRow?.customer_id) {
+          const { data: custRow } = await supabase.from('customers').select('phone').eq('id', leadRow.customer_id).maybeSingle();
+          linkedCustPhoneDigits = _phoneDigitsLen(custRow?.phone);
+        }
+      }
+
+      // Nếu không tìm thấy SĐT trong tin nhắn hiện tại, quét tin nhắn cũ nếu lead/KH chưa có SĐT chuẩn
+      if (!extractedPhone && contact.lead_id && linkedCustPhoneDigits < 9) {
         const { data: oldMsgs } = await supabase.from('facebook_messages')
           .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
           .order('created_at', { ascending: false }).limit(500);
@@ -2241,14 +2266,8 @@ async function handleMessaging(pageId, event, io) {
       }
 
       if ((extractedPhone && autoLeadCfg.auto_update_phone) || (extractedAddress && autoLeadCfg.auto_update_address)) {
-        // Update contact — luôn cập nhật phone mới
-        const contactUpd = { updated_at: new Date().toISOString() };
-        if (extractedPhone && extractedPhone !== contact.phone) {
-          contactUpd.phone = extractedPhone;
-          console.log(`[FB] 📞 Contact phone: ${contact.phone || 'N/A'} → ${extractedPhone}`);
-        }
-        if (Object.keys(contactUpd).length > 1) {
-          await supabase.from('facebook_contacts').update(contactUpd).eq('id', contact.id);
+        if (extractedPhone && autoLeadCfg.auto_update_phone) {
+          console.log(`[FB] 📞 Phone from message: ${extractedPhone} (lưu KH, không ghi facebook_contacts.phone)`);
         }
 
         if (contact.lead_id) {
@@ -2382,8 +2401,10 @@ async function handleLeadGen(pageId, value) {
   // Create contact + lead
   const contact = await getOrCreateContact(pageId, `leadad_${leadgenId}`, fullName);
   if (contact) {
-    if (phone) await supabase.from('facebook_contacts').update({ phone, email }).eq('id', contact.id);
-    
+    if (email) {
+      await supabase.from('facebook_contacts').update({ email, updated_at: new Date().toISOString() }).eq('id', contact.id);
+    }
+
     const lead = await createLeadFromFacebook(pageId, contact, 'Lead Ads', {
       full_name: fullName,
       phone,
@@ -2454,11 +2475,21 @@ async function handleComment(pageId, value) {
 const { auth: authMiddleware } = require('../middleware/auth');
 
 /** Phạm vi Page FB theo default_company_id: admin ?company_id=; NV chỉ Page gán đúng công ty. */
-async function resolveFacebookPageScope(req, res) {
+async function resolveFacebookPageScope(req, res, opts = {}) {
+  const forcedLeadCompanyId =
+    opts.leadCompanyId != null && String(opts.leadCompanyId).trim() !== ''
+      ? String(opts.leadCompanyId).trim()
+      : null;
   const { data: pages, error } = await supabase.from('facebook_pages').select('page_id, default_company_id');
   if (error) { res.status(500).json({ error: error.message }); return null; }
   const rows = pages || [];
   if (req.user?.role === 'admin') {
+    if (forcedLeadCompanyId) {
+      return {
+        mode: 'filter',
+        pageIds: rows.filter((p) => String(p.default_company_id || '') === forcedLeadCompanyId).map((p) => p.page_id),
+      };
+    }
     const co = req.query.company_id && String(req.query.company_id).trim();
     if (co) {
       return { mode: 'filter', pageIds: rows.filter((p) => String(p.default_company_id || '') === co).map((p) => p.page_id) };
@@ -2467,10 +2498,22 @@ async function resolveFacebookPageScope(req, res) {
   }
   const cid = req.user?.company_id;
   if (!cid) { res.status(400).json({ error: 'Thiếu company_id trên tài khoản — gán công ty cho nhân viên.' }); return null; }
+  if (forcedLeadCompanyId && String(forcedLeadCompanyId) !== String(cid)) {
+    res.status(403).json({ error: 'Không có quyền xem dữ liệu Facebook của deal công ty khác.' });
+    return null;
+  }
   return {
     mode: 'filter',
     pageIds: rows.filter((p) => p.default_company_id && String(p.default_company_id) === String(cid)).map((p) => p.page_id),
   };
+}
+
+function contactAllowedByFacebookScope(scope, contact) {
+  if (!scope || !contact?.page_id) return false;
+  if (scope.mode === 'all') return true;
+  if (!Array.isArray(scope.pageIds)) return false;
+  const pid = String(contact.page_id);
+  return scope.pageIds.some((p) => String(p) === pid);
 }
 
 // ── Pages config CRUD ────────────────────────────────────────
@@ -2624,8 +2667,9 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       seen.add(id);
       result.push(row);
     }
-    result.forEach(c => {
-      c.display_phone = c.phone || c.customer?.phone || null;
+    result.forEach((c) => {
+      const p = c.customer?.phone && String(c.customer.phone).trim() !== '' ? String(c.customer.phone).trim() : null;
+      c.display_phone = p;
     });
     // Ưu tiên contact hoạt động mới nhất lên đầu.
     result.sort((a, b) => {
@@ -2648,9 +2692,10 @@ r.get('/contacts', authMiddleware, async (req, res) => {
         .eq('direction', 'inbound');
       const countMap = {};
       (counts || []).forEach(m => { countMap[m.contact_id] = (countMap[m.contact_id] || 0) + 1; });
-      page.forEach(c => {
+      page.forEach((c) => {
         c.message_count = countMap[c.id] || 0;
-        c.display_phone = c.phone || c.customer?.phone || null;
+        const p = c.customer?.phone && String(c.customer.phone).trim() !== '' ? String(c.customer.phone).trim() : null;
+        c.display_phone = p;
         Object.assign(c, enrichContactActivityFields(c));
       });
     }
@@ -2685,7 +2730,10 @@ r.get('/contacts/:id', authMiddleware, async (req, res) => {
       contact.lead_id = null;
       contact.lead = null;
     }
-    contact.display_phone = contact.phone || contact.customer?.phone || null;
+    {
+      const p = contact.customer?.phone && String(contact.customer.phone).trim() !== '' ? String(contact.customer.phone).trim() : null;
+      contact.display_phone = p;
+    }
     Object.assign(contact, enrichContactActivityFields(contact));
 
     res.json(contact);
@@ -2925,9 +2973,14 @@ r.post('/contacts/:id/reconcile-inbound-phone', authMiddleware, async (req, res)
 // Sync lịch sử hội thoại cũ từ Facebook cho 1 contact
 r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
   try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
     const { data: contact } = await supabase.from('facebook_contacts')
       .select('*').eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    if (!contactAllowedByFacebookScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền đồng bộ hội thoại Facebook của Page này' });
+    }
 
     const page = await getPageConfig(contact.page_id);
     if (!page?.access_token) return res.status(400).json({ error: 'No page token' });
@@ -2986,8 +3039,8 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
     // ── Auto tạo lead nếu contact chưa có ──
     let leadCreated = null;
     if (!contact.lead_id && synced > 0) {
-      // Extract phone/address từ messages vừa sync
-      let extractedPhone = contact.phone || null;
+      // Extract phone/address từ messages vừa sync (không lấy từ cột facebook_contacts.phone)
+      let extractedPhone = null;
       let extractedAddress = null;
       const { data: allMsgs } = await supabase.from('facebook_messages')
         .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
@@ -3000,11 +3053,6 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
           if (address && !extractedAddress) extractedAddress = address;
           if (extractedPhone && extractedAddress) break;
         }
-      }
-
-      // Update contact phone
-      if (extractedPhone && !contact.phone) {
-        await supabase.from('facebook_contacts').update({ phone: extractedPhone }).eq('id', contact.id);
       }
 
       // Tạo lead
@@ -3033,47 +3081,87 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
 
 r.get('/contacts/:contactId/messages', authMiddleware, async (req, res) => {
   try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    const { data: contact, error: cErr } = await supabase.from('facebook_contacts')
+      .select('id, page_id').eq('id', req.params.contactId).maybeSingle();
+    if (cErr) throw cErr;
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    if (!contactAllowedByFacebookScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền xem hội thoại Facebook của Page này' });
+    }
+
     const { data } = await supabase.from('facebook_messages')
       .select('*')
       .eq('contact_id', req.params.contactId)
       .order('created_at', { ascending: true })
-      .limit(200);
-    
+      .limit(500);
+
     // Mark as read
     await supabase.from('facebook_contacts').update({ unread_count: 0 }).eq('id', req.params.contactId);
-    
+
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Get messages by lead_id
+// Get messages by lead_id (deal/lead CRM): scope theo company của deal; tìm contact theo lead_id hoặc customer_id
 r.get('/leads/:leadId/messages', authMiddleware, async (req, res) => {
   try {
-    // Tìm contact linked to lead
-    const { data: contact } = await supabase.from('facebook_contacts')
-      .select('id, fb_name, fb_profile_pic, phone, psid, page_id')
-      .eq('lead_id', req.params.leadId).limit(1).single();
-    
-    if (!contact) {
-      // Fallback: tìm messages trực tiếp theo lead_id
-      const { data } = await supabase.from('facebook_messages')
-        .select('*, contact:facebook_contacts(id, fb_name, fb_profile_pic, phone, psid, page_id)')
-        .eq('lead_id', req.params.leadId)
-        .order('created_at', { ascending: true })
-        .limit(200);
-      return res.json(data || []);
+    const { data: lead, error: leadErr } = await supabase.from('crm_leads')
+      .select('id, customer_id, company_id, type')
+      .eq('id', req.params.leadId)
+      .maybeSingle();
+    if (leadErr) throw leadErr;
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+
+    const scopeOpts = lead.company_id ? { leadCompanyId: lead.company_id } : {};
+    const scope = await resolveFacebookPageScope(req, res, scopeOpts);
+    if (!scope) return;
+
+    const contactSelect = 'id, fb_name, fb_profile_pic, phone, psid, page_id, lead_id, customer_id';
+    let contact = null;
+
+    const { data: byLead } = await supabase.from('facebook_contacts')
+      .select(contactSelect)
+      .eq('lead_id', req.params.leadId)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    contact = byLead || null;
+
+    if (!contact && lead.customer_id) {
+      const { data: byCust } = await supabase.from('facebook_contacts')
+        .select(contactSelect)
+        .eq('customer_id', lead.customer_id)
+        .order('last_message_at', { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      contact = byCust || null;
     }
 
-    // Lấy TẤT CẢ messages của contact (không chỉ theo lead_id)
-    const { data } = await supabase.from('facebook_messages')
-      .select('*')
-      .eq('contact_id', contact.id)
+    if (contact) {
+      if (!contactAllowedByFacebookScope(scope, contact)) {
+        return res.status(403).json({ error: 'Không có quyền xem hội thoại Facebook của Page này' });
+      }
+      const { data } = await supabase.from('facebook_messages')
+        .select('*')
+        .eq('contact_id', contact.id)
+        .order('created_at', { ascending: true })
+        .limit(500);
+      const messages = (data || []).map((m) => ({ ...m, contact }));
+      return res.json(messages);
+    }
+
+    const { data: fallback } = await supabase.from('facebook_messages')
+      .select('*, contact:facebook_contacts(id, fb_name, fb_profile_pic, phone, psid, page_id)')
+      .eq('lead_id', req.params.leadId)
       .order('created_at', { ascending: true })
-      .limit(500);
-    
-    // Gắn contact info vào mỗi message
-    const messages = (data || []).map(m => ({ ...m, contact }));
-    res.json(messages);
+      .limit(200);
+    const rows = fallback || [];
+    if (rows.length && rows[0]?.contact && !contactAllowedByFacebookScope(scope, rows[0].contact)) {
+      return res.status(403).json({ error: 'Không có quyền xem hội thoại Facebook của Page này' });
+    }
+    return res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3083,9 +3171,14 @@ r.post('/contacts/:contactId/reply', authMiddleware, async (req, res) => {
     const { message, attachment_url, attachment_type } = req.body;
     if (!message && !attachment_url) return res.status(400).json({ error: 'Message or attachment required' });
 
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
     const { data: contact } = await supabase.from('facebook_contacts')
       .select('*').eq('id', req.params.contactId).single();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    if (!contactAllowedByFacebookScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền gửi tin nhắn Facebook từ Page này' });
+    }
 
     let result;
     let msgType = 'text';
@@ -4117,19 +4210,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       return res.json({ total: 0, updated: 0, message: 'Không có contact nào để quét' });
     }
 
-    // Chạy tay + auto pipeline: cùng thứ tự mới→cũ (kể cả batch pipeline_aligned).
-    contacts.sort((a, b) => {
-      const act = activityTimestampMs(b) - activityTimestampMs(a);
-      if (act !== 0) return act;
-      const score = (c) => {
-        let s = 0;
-        if (!c.phone) s += 2;
-        if (!c.lead_id) s += 0.5;
-        return s;
-      };
-      return score(b) - score(a);
-    });
-
     let updated = 0;
     let foundPhones = 0;
     let foundAddresses = 0;
@@ -4161,6 +4241,23 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       (custs || []).forEach(c => { custMap[c.id] = c; });
     }
     console.log(`[ExtractPhones] Loaded ${Object.keys(leadMap).length} leads, ${Object.keys(custMap).length} customers`);
+
+    // Thứ tự mới→cũ; ưu tiên contact chưa có SĐT trên KH (không dùng cột facebook_contacts.phone).
+    contacts.sort((a, b) => {
+      const act = activityTimestampMs(b) - activityTimestampMs(a);
+      if (act !== 0) return act;
+      const score = (c) => {
+        let s = 0;
+        const ld = leadMap[c.lead_id];
+        const custFromLead = ld?.customer_id ? custMap[ld.customer_id] : null;
+        const custFromContact = c.customer_id ? custMap[c.customer_id] : null;
+        const cust = custFromLead || custFromContact;
+        if (_phoneDigitsLen(cust?.phone) < 9) s += 2;
+        if (!c.lead_id) s += 0.5;
+        return s;
+      };
+      return score(b) - score(a);
+    });
 
     const forceRescanPhones = !!req.body?.force_rescan_phones;
     let skippedHasPhone = 0;
@@ -4240,34 +4337,19 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         if (sourceMsg) console.log(`[ExtractPhones] inbound phone ${extractedPhone} from msg ${sourceMsg.id} contact=${contact.id}`);
       }
 
-      // ── Fix #1 & #4: Fallback sang contact.phone nếu tin nhắn không tìm được số mới ──
-      const effectivePhone = extractedPhone || (contact.phone && String(contact.phone).trim() ? contact.phone : null);
+      // SĐT đồng bộ vào KH / mô tả: chỉ từ tin nhắn (extracted), không fallback cột facebook_contacts.phone
+      const effectivePhone = extractedPhone || null;
+      const custPhoneOk = _phoneDigitsLen(cust?.phone) >= 9;
 
-      if (!effectivePhone && !extractedAddress && extraPhones.length === 0) {
+      if (!effectivePhone && !extractedAddress && extraPhones.length === 0 && !custPhoneOk) {
         noInfo++;
         results.push({ contact_id: contact.id, contact: contact.fb_name, phone: null, address: null, status: 'no_info_found' });
         if (io) io.emit('batch_progress', { type: 'extract_phones', current: i + 1, total, name: contact.fb_name, status: 'no_info' });
         continue;
       }
 
-      const contactUpd = { updated_at: new Date().toISOString() };
-      if (extractedPhone) {
-        const had = contact.phone && String(contact.phone).trim();
-        const same = had && String(contact.phone).trim() === String(extractedPhone).trim();
-        if (!had) {
-          contactUpd.phone = extractedPhone;
-          foundPhones++;
-        } else if (forceRescanPhones && !same) {
-          contactUpd.phone = extractedPhone;
-          foundPhones++;
-        }
-      }
-      if (Object.keys(contactUpd).length > 1) {
-        await supabase.from('facebook_contacts').update(contactUpd).eq('id', contact.id);
-        if (contactUpd.phone) updatedContactPhone++;
-      }
+      // Không ghi SĐT vào facebook_contacts — nguồn hiển thị chỉ customers.phone
 
-      // ── Fix #1: Dùng effectivePhone (bao gồm contact.phone sẵn có) để sync sang customer ──
       const leadCustId = lead?.customer_id || contact.customer_id;
       // Nếu custMap thiếu (do không được load ban đầu) → fetch trực tiếp
       if (!cust && leadCustId) {
@@ -4281,8 +4363,6 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
           else if (forceRescanPhones && String(cust.phone).trim() !== String(extractedPhone).trim()) {
             custUpd.phone = extractedPhone;
           }
-        } else if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) {
-          custUpd.phone = effectivePhone;
         }
         if (extractedAddress && extractedAddress !== cust?.address) {
           custUpd.address = extractedAddress;
@@ -4292,6 +4372,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
           await supabase.from('customers').update(custUpd).eq('id', leadCustId);
           if (custUpd.phone) {
             updatedCustomerPhone++;
+            if (extractedPhone) foundPhones++;
             const newPh = custUpd.phone;
             if (custMap[leadCustId]) custMap[leadCustId].phone = newPh;
             else custMap[leadCustId] = { id: leadCustId, phone: newPh };
@@ -4313,15 +4394,15 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         }
 
         let desc = lead.description || '';
-        if (effectivePhone) {
+        const phoneForDesc = (_phoneDigitsLen(cust?.phone) >= 9 && String(cust.phone).trim()) ? String(cust.phone).trim() : effectivePhone;
+        if (phoneForDesc) {
           if (/SĐT:/.test(desc)) {
             const oldMatch = desc.match(/SĐT:\s*(\S*)/);
-            // Chỉ update nếu SĐT trống hoặc khác
-            if (!oldMatch?.[1] || oldMatch[1] !== effectivePhone) {
-              desc = desc.replace(/SĐT:.*$/m, `SĐT: ${effectivePhone}`);
+            if (!oldMatch?.[1] || oldMatch[1] !== phoneForDesc) {
+              desc = desc.replace(/SĐT:.*$/m, `SĐT: ${phoneForDesc}`);
             }
           } else {
-            desc = `${desc.trimEnd()}\nSĐT: ${effectivePhone}`.trim();
+            desc = `${desc.trimEnd()}\nSĐT: ${phoneForDesc}`.trim();
           }
         }
         if (extractedAddress) {
@@ -4345,10 +4426,10 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
       results.push({
         contact_id: contact.id,
         contact: contact.fb_name,
-        phone: effectivePhone || cust?.phone || null,
+        phone: cust?.phone && String(cust.phone).trim() ? String(cust.phone).trim() : effectivePhone || null,
         address: extractedAddress || cust?.address || lead?.install_address || null,
         extraPhones: extraPhones.length ? extraPhones : undefined,
-        status: extractedPhone ? 'updated_phone' : (effectivePhone && !extractedPhone) ? 'synced_existing' : extractedAddress ? 'updated_address' : 'refreshed',
+        status: extractedPhone ? 'updated_phone' : extractedAddress ? 'updated_address' : custPhoneOk ? 'refreshed' : 'refreshed',
       });
       if (io) io.emit('batch_progress', {
         type: 'extract_phones',
@@ -4356,7 +4437,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
         total,
         name: contact.fb_name,
         status: 'found',
-        phone: extractedPhone || contact.phone || cust?.phone || null,
+        phone: cust?.phone && String(cust.phone).trim() ? String(cust.phone).trim() : extractedPhone || null,
         address: extractedAddress || cust?.address || lead?.install_address || null,
       });
     }
@@ -4577,16 +4658,10 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
   let extractedPhone = inboundInfo.phone;
   let extractedAddress = inboundInfo.address;
   const extraPhones = inboundInfo.extraPhones;
-  const effectivePhone = extractedPhone || (fresh.phone && String(fresh.phone).trim() ? fresh.phone : null);
+  const effectivePhone = extractedPhone || null;
 
   if (!effectivePhone && !extractedAddress && extraPhones.length === 0) {
     return { outcome: 'no_info' };
-  }
-
-  const contactUpd = { updated_at: new Date().toISOString() };
-  if (extractedPhone && !fresh.phone) contactUpd.phone = extractedPhone;
-  if (Object.keys(contactUpd).length > 1) {
-    await supabase.from('facebook_contacts').update(contactUpd).eq('id', fresh.id);
   }
 
   const leadCustId = lead?.customer_id || fresh.customer_id;
@@ -4596,10 +4671,16 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
       if (freshCust) cust = freshCust;
     }
     const custUpd = {};
-    if (effectivePhone && (!cust?.phone || !String(cust.phone).trim())) custUpd.phone = effectivePhone;
+    if (extractedPhone) {
+      if (!cust?.phone || !String(cust.phone).trim()) custUpd.phone = extractedPhone;
+      else if (forceRescanPhones && String(cust.phone).trim() !== String(extractedPhone).trim()) {
+        custUpd.phone = extractedPhone;
+      }
+    }
     if (extractedAddress && extractedAddress !== cust?.address) custUpd.address = extractedAddress;
     if (Object.keys(custUpd).length) {
       await supabase.from('customers').update(custUpd).eq('id', leadCustId);
+      cust = { id: leadCustId, ...(cust || {}), ...custUpd };
     }
   }
 
@@ -4613,12 +4694,15 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
       if (newTitle !== lead.title) leadUpd.title = newTitle;
     }
     let desc = lead.description || '';
-    if (effectivePhone) {
+    const phoneForDesc = (_phoneDigitsLen(cust?.phone) >= 9 && String(cust.phone).trim())
+      ? String(cust.phone).trim()
+      : effectivePhone;
+    if (phoneForDesc) {
       if (/SĐT:/.test(desc)) {
         const oldMatch = desc.match(/SĐT:\s*(\S*)/);
-        if (!oldMatch?.[1] || oldMatch[1] !== effectivePhone) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${effectivePhone}`);
+        if (!oldMatch?.[1] || oldMatch[1] !== phoneForDesc) desc = desc.replace(/SĐT:.*$/m, `SĐT: ${phoneForDesc}`);
       } else {
-        desc = `${desc.trimEnd()}\nSĐT: ${effectivePhone}`.trim();
+        desc = `${desc.trimEnd()}\nSĐT: ${phoneForDesc}`.trim();
       }
     }
     if (extractedAddress) {
@@ -4635,9 +4719,10 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
     }
   }
 
+  const outPhone = cust?.phone && String(cust.phone).trim() ? String(cust.phone).trim() : effectivePhone || null;
   return {
     outcome: 'updated',
-    phone: effectivePhone || cust?.phone || null,
+    phone: outPhone,
     address: extractedAddress || cust?.address || lead?.install_address || null,
     extractedPhone: !!extractedPhone,
   };
@@ -5405,6 +5490,10 @@ async function scanAndCreateLeads() {
 
     for (const contact of (contacts || [])) {
       try {
+        if (contact.phone && await isPhoneBlockedForFacebookAutoLead(supabase, contact.phone)) {
+          results.skipped++;
+          continue;
+        }
         // Kiểm tra lead cũ bị xóa — chỉ check khi contact đã gắn customer (tránh lỗi với null)
         if (!autoLeadCfg.recreate_deleted_leads && contact.customer_id) {
           const { data: oldLead } = await supabase.from('crm_leads')
@@ -6012,8 +6101,6 @@ async function runRescanPhonesBatch(body, ioRef) {
   let q = supabase.from('facebook_contacts')
     .select('id, fb_name, phone, page_id, last_message_at, created_at, customer_id, lead_id');
   if (pageId) q = q.eq('page_id', pageId);
-  if (mode === 'with_phone') q = q.not('phone', 'is', null).neq('phone', '');
-  if (mode === 'without_phone') q = q.or('phone.is.null,phone.eq.');
   if (sort === 'newest_first') {
     q = q.order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
@@ -6034,10 +6121,44 @@ async function runRescanPhonesBatch(body, ioRef) {
   const skippedByLeadDate = dateFilterResult.skippedByDate;
   const poolAfterDateFilter = contacts.length;
 
+  let poolSorted = sortFacebookContactsNewestFirst(contacts);
+  const leadIdsRescan = [...new Set(poolSorted.map((c) => c.lead_id).filter(Boolean))];
+  const leadMapRescan = {};
+  for (let bi = 0; bi < leadIdsRescan.length; bi += 500) {
+    const batch = leadIdsRescan.slice(bi, bi + 500);
+    const { data: leads } = await supabase.from('crm_leads').select('id, customer_id').in('id', batch);
+    (leads || []).forEach((l) => { leadMapRescan[l.id] = l; });
+  }
+  const custIdSetRescan = new Set();
+  for (const c of poolSorted) {
+    const cid = c.customer_id || (c.lead_id && leadMapRescan[c.lead_id]?.customer_id);
+    if (cid) custIdSetRescan.add(cid);
+  }
+  const custMapRescan = {};
+  const custIdArrRescan = [...custIdSetRescan];
+  for (let bi = 0; bi < custIdArrRescan.length; bi += 500) {
+    const batch = custIdArrRescan.slice(bi, bi + 500);
+    const { data: custs } = await supabase.from('customers').select('id, phone').in('id', batch);
+    (custs || []).forEach((cu) => { custMapRescan[cu.id] = cu; });
+  }
+  function rescanCustId(row) {
+    return row.customer_id || (row.lead_id && leadMapRescan[row.lead_id]?.customer_id) || null;
+  }
+  function rescanCustPhoneDigitsLen(row) {
+    const id = rescanCustId(row);
+    if (!id) return 0;
+    return _phoneDigitsLen(custMapRescan[id]?.phone);
+  }
+  if (mode === 'with_phone') {
+    poolSorted = poolSorted.filter((c) => rescanCustPhoneDigitsLen(c) >= 9);
+  } else if (mode === 'without_phone') {
+    poolSorted = poolSorted.filter((c) => rescanCustPhoneDigitsLen(c) < 9);
+  }
+
   if (sort === 'newest_first') {
-    contacts = sortFacebookContactsNewestFirst(contacts).slice(0, limit);
+    contacts = poolSorted.slice(0, limit);
   } else {
-    contacts = [...sortFacebookContactsNewestFirst(contacts)].reverse().slice(0, limit);
+    contacts = [...poolSorted].reverse().slice(0, limit);
   }
 
   const sortNote = sort === 'newest_first'
@@ -6075,12 +6196,15 @@ async function runRescanPhonesBatch(body, ioRef) {
       const inbound = (msgs || []).filter(m => m && m.content && m.direction === 'inbound');
       const found = extractInboundContactInfo(inbound);
       const newPhone = found?.phone || null;
+      const custId = rescanCustId(c);
+      const custRow = custId ? custMapRescan[custId] : null;
+      const oldPhone = custRow?.phone && String(custRow.phone).trim() ? String(custRow.phone).trim() : null;
 
       const item = {
         contact_id: c.id,
         fb_name: c.fb_name,
         page_id: c.page_id,
-        old_phone: c.phone || null,
+        old_phone: oldPhone,
         new_phone: newPhone,
         messages_scanned: inbound.length,
         extra_phones: found?.extraPhones || [],
@@ -6090,7 +6214,7 @@ async function runRescanPhonesBatch(body, ioRef) {
       if (!newPhone) {
         counters.no_phone_found += 1;
         if (deleteLeadWhenNoPhone && c.lead_id) {
-          const custIdBefore = c.customer_id || null;
+          const custIdBefore = rescanCustId(c) || c.customer_id || null;
           const delRes = await deleteLeadIfAllowedForRescan(supabase, c.lead_id, c.id);
           if (delRes.ok) {
             item.action = 'lead_deleted';
@@ -6112,10 +6236,13 @@ async function runRescanPhonesBatch(body, ioRef) {
             counters.leads_delete_blocked += 1;
           }
         }
-      } else if (!c.phone) {
-        const { error: updErr } = await supabase.from('facebook_contacts')
+      } else if (!custId || !syncCustomer) {
+        item.action = custId ? 'skipped_no_sync' : 'no_customer_linked';
+        counters.kept_existing += 1;
+      } else if (!oldPhone) {
+        const { error: updErr } = await supabase.from('customers')
           .update({ phone: newPhone, updated_at: new Date().toISOString() })
-          .eq('id', c.id);
+          .eq('id', custId);
         if (updErr) {
           item.action = 'error';
           item.error = updErr.message;
@@ -6123,20 +6250,15 @@ async function runRescanPhonesBatch(body, ioRef) {
         } else {
           item.action = 'set_new';
           counters.updated_set += 1;
-          if (syncCustomer && c.customer_id) {
-            await supabase.from('customers')
-              .update({ phone: newPhone, updated_at: new Date().toISOString() })
-              .eq('id', c.customer_id)
-              .then(() => {}, () => {});
-          }
+          custMapRescan[custId] = { ...(custMapRescan[custId] || { id: custId }), phone: newPhone };
         }
-      } else if (String(c.phone).trim() === String(newPhone).trim()) {
+      } else if (phonesEqualDigits(oldPhone, newPhone)) {
         item.action = 'unchanged_same';
         counters.unchanged_same += 1;
       } else if (overwrite) {
-        const { error: updErr } = await supabase.from('facebook_contacts')
+        const { error: updErr } = await supabase.from('customers')
           .update({ phone: newPhone, updated_at: new Date().toISOString() })
-          .eq('id', c.id);
+          .eq('id', custId);
         if (updErr) {
           item.action = 'error';
           item.error = updErr.message;
@@ -6144,12 +6266,7 @@ async function runRescanPhonesBatch(body, ioRef) {
         } else {
           item.action = 'replaced';
           counters.updated_replaced += 1;
-          if (syncCustomer && c.customer_id) {
-            await supabase.from('customers')
-              .update({ phone: newPhone, updated_at: new Date().toISOString() })
-              .eq('id', c.customer_id)
-              .then(() => {}, () => {});
-          }
+          custMapRescan[custId] = { ...(custMapRescan[custId] || { id: custId }), phone: newPhone };
         }
       } else {
         item.action = 'kept_existing';
@@ -6311,22 +6428,40 @@ async function runLeadScanByDateBatch(body, ioRef) {
       const found = extractInboundContactInfo(inbound);
       const newPhone = found?.phone || null;
 
-      const oldPhone =
-        fresh.phone && String(fresh.phone).trim() ? String(fresh.phone).trim() : null;
+      let scanCustId = fresh.customer_id || null;
+      if (!scanCustId && fresh.lead_id) {
+        const { data: ldScan } = await supabase.from('crm_leads').select('customer_id').eq('id', fresh.lead_id).maybeSingle();
+        scanCustId = ldScan?.customer_id || null;
+      }
+      let oldPhone = null;
+      if (scanCustId) {
+        const { data: custScan } = await supabase.from('customers').select('phone').eq('id', scanCustId).maybeSingle();
+        oldPhone = custScan?.phone && String(custScan.phone).trim() ? String(custScan.phone).trim() : null;
+      }
 
       if (newPhone) {
+        if (!scanCustId || !syncCustomer) {
+          item.action = !scanCustId ? 'no_customer_linked' : 'skipped_no_sync';
+          item.new_phone = newPhone;
+          results.push(item);
+          try {
+            if (io) {
+              io.emit('rescan_phones_progress', {
+                current: counters.scanned,
+                total: totalToScan,
+                name: fresh.fb_name,
+                action: item.action,
+              });
+            }
+          } catch (_) {}
+          continue;
+        }
         if (!oldPhone) {
           const { error: updErr } = await supabase
-            .from('facebook_contacts')
+            .from('customers')
             .update({ phone: newPhone, updated_at: new Date().toISOString() })
-            .eq('id', fresh.id);
+            .eq('id', scanCustId);
           if (updErr) throw new Error(updErr.message);
-          if (syncCustomer && fresh.customer_id) {
-            await supabase
-              .from('customers')
-              .update({ phone: newPhone, updated_at: new Date().toISOString() })
-              .eq('id', fresh.customer_id);
-          }
           if (fresh.lead_id) await patchLeadDescriptionPhone(fresh.lead_id, newPhone);
           counters.updated_set += 1;
           item.action = 'set_new';
@@ -6337,16 +6472,10 @@ async function runLeadScanByDateBatch(body, ioRef) {
           item.phone = oldPhone;
         } else {
           const { error: updErr } = await supabase
-            .from('facebook_contacts')
+            .from('customers')
             .update({ phone: newPhone, updated_at: new Date().toISOString() })
-            .eq('id', fresh.id);
+            .eq('id', scanCustId);
           if (updErr) throw new Error(updErr.message);
-          if (syncCustomer && fresh.customer_id) {
-            await supabase
-              .from('customers')
-              .update({ phone: newPhone, updated_at: new Date().toISOString() })
-              .eq('id', fresh.customer_id);
-          }
           if (fresh.lead_id) await patchLeadDescriptionPhone(fresh.lead_id, newPhone);
           counters.updated_replaced += 1;
           item.action = 'replaced';
@@ -6869,6 +6998,211 @@ r.post('/auto-tool/start', authMiddleware, async (_req, res) => {
 r.post('/auto-tool/stop', authMiddleware, async (_req, res) => {
   autoTool.stop();
   res.json({ ok: true, state: autoTool.getState() });
+});
+
+const FB_INBOX_CANNED_MAX = 80;
+
+/** Tin soạn sẵn Hộp thư — lưu DB theo user */
+r.get('/canned-replies', authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    const { data, error } = await supabase
+      .from('facebook_inbox_canned_replies')
+      .select('id, title, body, sort_index, created_at, updated_at')
+      .eq('user_id', uid)
+      .order('sort_index', { ascending: true })
+      .order('created_at', { ascending: false })
+      .limit(FB_INBOX_CANNED_MAX);
+    if (error) throw error;
+    res.json({ items: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/canned-replies', authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    const title = String(req.body?.title || '').trim();
+    const body = String(req.body?.body || req.body?.text || '').trim();
+    if (!title || !body) return res.status(400).json({ error: 'Cần tiêu đề và nội dung' });
+    const { count, error: cErr } = await supabase
+      .from('facebook_inbox_canned_replies')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', uid);
+    if (cErr) throw cErr;
+    if ((count || 0) >= FB_INBOX_CANNED_MAX) {
+      return res.status(400).json({ error: `Tối đa ${FB_INBOX_CANNED_MAX} mẫu` });
+    }
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('facebook_inbox_canned_replies')
+      .insert({
+        user_id: uid,
+        title,
+        body,
+        sort_index: 0,
+        updated_at: now,
+      })
+      .select('id, title, body, sort_index, created_at, updated_at')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/canned-replies/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    const title = String(req.body?.title || '').trim();
+    const body = String(req.body?.body || req.body?.text || '').trim();
+    if (!title || !body) return res.status(400).json({ error: 'Cần tiêu đề và nội dung' });
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('facebook_inbox_canned_replies')
+      .update({ title, body, updated_at: now })
+      .eq('id', req.params.id)
+      .eq('user_id', uid)
+      .select('id, title, body, sort_index, created_at, updated_at')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Không tìm thấy mẫu' });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/canned-replies/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    const { data, error } = await supabase
+      .from('facebook_inbox_canned_replies')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('user_id', uid)
+      .select('id');
+    if (error) throw error;
+    if (!data?.length) return res.status(404).json({ error: 'Không tìm thấy mẫu' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Nhập hàng loạt từ localStorage (tối đa còn slot) */
+r.post('/canned-replies/import', authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    const items = req.body?.items;
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ error: 'Cần mảng items { title, text hoặc body }' });
+    }
+    const { count: existing, error: cErr } = await supabase
+      .from('facebook_inbox_canned_replies')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', uid);
+    if (cErr) throw cErr;
+    let room = FB_INBOX_CANNED_MAX - (existing || 0);
+    if (room <= 0) return res.json({ imported: 0, message: 'Đã đủ mẫu' });
+
+    const now = new Date().toISOString();
+    const rows = [];
+    for (let i = 0; i < items.length && room > 0; i += 1) {
+      const it = items[i];
+      const title = String(it?.title || '').trim();
+      const body = String(it?.body || it?.text || '').trim();
+      if (!title || !body) continue;
+      rows.push({
+        user_id: uid,
+        title,
+        body,
+        sort_index: -i,
+        updated_at: now,
+      });
+      room -= 1;
+    }
+    if (!rows.length) return res.json({ imported: 0 });
+    const { data, error } = await supabase.from('facebook_inbox_canned_replies').insert(rows).select('id');
+    if (error) throw error;
+    res.json({ imported: (data || []).length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Admin: quét SĐT không khớp tin inbound (sau strip URL) trong khoảng có hoạt động tin nhắn — preview / xóa + chặn */
+r.post('/tools/link-only-phones/preview', authMiddleware, async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Chỉ admin dùng tool này' });
+    }
+    const { date_from, date_to, company_id = null, stream: streamBody, max_contacts } = req.body || {};
+    if (!date_from || !date_to) {
+      return res.status(400).json({ error: 'Cần date_from và date_to (ISO 8601)' });
+    }
+    const maxContactsToScan = parseMaxContactsLinkCleanup(max_contacts);
+    const useStream = streamBody === true;
+
+    if (useStream) {
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Accel-Buffering', 'no');
+      const send = (obj) => {
+        res.write(`${JSON.stringify(obj)}\n`);
+      };
+      try {
+        const out = await previewLinkOnlyPhones(supabase, {
+          dateFrom: date_from,
+          dateTo: date_to,
+          companyId: company_id || null,
+          maxContactsToScan,
+          onProgress: (p) => send({ type: 'progress', ...p }),
+        });
+        send({ type: 'done', rows: out.rows, meta: out.meta, percent: 100 });
+      } catch (e) {
+        send({ type: 'error', message: e.message, code: e.code || null });
+      }
+      res.end();
+      return;
+    }
+
+    const out = await previewLinkOnlyPhones(supabase, {
+      dateFrom: date_from,
+      dateTo: date_to,
+      companyId: company_id || null,
+      maxContactsToScan,
+    });
+    res.json(out);
+  } catch (e) {
+    if (e.code === 'validation') return res.status(400).json({ error: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/tools/link-only-phones/execute', authMiddleware, async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Chỉ admin dùng tool này' });
+    }
+    const { items, date_from, date_to } = req.body || {};
+    if (!date_from || !date_to) {
+      return res.status(400).json({ error: 'Cần date_from và date_to giống lúc quét' });
+    }
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ error: 'Cần mảng items (contact_id, phone)' });
+    }
+    const out = await executeLinkOnlyPhoneCleanup(supabase, items, {
+      userId: req.user.userId || req.user.id,
+      dateFrom: date_from,
+      dateTo: date_to,
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = r;

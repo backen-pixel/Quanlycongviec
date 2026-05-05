@@ -18,6 +18,11 @@ export default function CustomersPage() {
   const [editId, setEditId] = useState(null);
   const [custStatuses, setCustStatuses] = useState([]);
   const [showDupScanner, setShowDupScanner] = useState(false);
+  const [custDeleteModal, setCustDeleteModal] = useState(null); // { id, name, phone }
+  const [custDeleteForce, setCustDeleteForce] = useState(false);
+  const [custDeleteBlockPhone, setCustDeleteBlockPhone] = useState(true);
+  const [custDeleteErr, setCustDeleteErr] = useState('');
+  const [custDeleteBusy, setCustDeleteBusy] = useState(false);
 
   // Load customer statuses from API
   useEffect(() => {
@@ -36,30 +41,37 @@ export default function CustomersPage() {
   };
   useEffect(load, [filterStatusId]);
 
-  const deleteCustomer = async (e, id, name) => {
+  const openDeleteCustomer = (e, c) => {
     e.stopPropagation();
     e.preventDefault();
-    if (!confirm(`Xóa khách hàng "${name}"?`)) return;
+    setCustDeleteForce(false);
+    setCustDeleteBlockPhone(!!(c.phone && String(c.phone).trim()));
+    setCustDeleteErr('');
+    setCustDeleteModal({ id: c.id, name: c.full_name, phone: c.phone });
+  };
+
+  const runDeleteCustomer = async () => {
+    if (!custDeleteModal) return;
+    setCustDeleteBusy(true);
+    setCustDeleteErr('');
     try {
-      await api.delete(`/customers/${id}`);
+      const params = new URLSearchParams();
+      if (custDeleteForce) params.set('force', 'true');
+      if (custDeleteBlockPhone && custDeleteModal.phone) params.set('block_auto_recreate_phone', 'true');
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      await api.delete(`/customers/${custDeleteModal.id}${qs}`);
+      setCustDeleteModal(null);
       load();
     } catch (err) {
       const data = err.response?.data;
-      // Backend returns linked counts → ask to force delete
-      if (data?.linked) {
+      if (data?.linked && !custDeleteForce) {
         const { projects, leads, quotations } = data.linked;
-        const msg = `⚠️ Khách hàng "${name}" có:\n• ${projects} dự án\n• ${leads} lead/deal\n• ${quotations} báo giá\n\nXóa TẤT CẢ dữ liệu liên quan?\nHành động này KHÔNG THỂ hoàn tác!`;
-        if (confirm(msg)) {
-          try {
-            await api.delete(`/customers/${id}?force=true`);
-            load();
-          } catch (e2) {
-            alert('Lỗi xóa: ' + (e2.response?.data?.error || e2.message));
-          }
-        }
+        setCustDeleteErr(`Khách có ${projects} dự án, ${leads} lead/deal, ${quotations} báo giá. Tick «Xóa toàn bộ dữ liệu liên quan» bên dưới rồi thử lại.`);
       } else {
-        alert('Lỗi: ' + (data?.error || err.message));
+        alert('Lỗi xóa: ' + (data?.error || err.message));
       }
+    } finally {
+      setCustDeleteBusy(false);
     }
   };
 
@@ -165,7 +177,7 @@ export default function CustomersPage() {
                   <div className="text-right shrink-0 flex items-center gap-2">
                     {c.total_revenue > 0 && <span className="text-sm font-bold text-emerald-600 hidden sm:inline">{formatVND(c.total_revenue)}</span>}
                     <span className="text-[10px] text-gray-400 hidden sm:inline">{formatDate(c.created_at)}</span>
-                    <button onClick={(e) => deleteCustomer(e, c.id, c.full_name)}
+                    <button type="button" onClick={(e) => openDeleteCustomer(e, c)}
                       className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -185,6 +197,70 @@ export default function CustomersPage() {
           onMerged={() => load()}
         />
       )}
+
+      <Modal
+        open={!!custDeleteModal}
+        onClose={() => !custDeleteBusy && setCustDeleteModal(null)}
+        title="Xóa khách hàng"
+        size="md"
+      >
+        {custDeleteModal && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              Xóa <strong>{custDeleteModal.name}</strong>
+              {custDeleteModal.phone && (
+                <span className="block text-xs text-gray-500 mt-1">SĐT: {custDeleteModal.phone}</span>
+              )}
+              ? Hành động không hoàn tác.
+            </p>
+            {custDeleteModal.phone && (
+              <label className="flex items-start gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={custDeleteBlockPhone}
+                  onChange={(e) => setCustDeleteBlockPhone(e.target.checked)}
+                  className="mt-0.5 rounded border-gray-300"
+                />
+                <span>
+                  <strong>Chặn tự tạo lead Facebook</strong> từ SĐT này (quét tin / Auto tool / tạo từ Messenger sẽ bỏ qua).
+                </span>
+              </label>
+            )}
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={custDeleteForce}
+                onChange={(e) => { setCustDeleteForce(e.target.checked); setCustDeleteErr(''); }}
+                className="mt-0.5 rounded border-gray-300"
+              />
+              <span>
+                <strong>Xóa toàn bộ</strong> dự án, lead/deal, báo giá liên quan (khi hệ thống báo còn dữ liệu gắn KH).
+              </span>
+            </label>
+            {custDeleteErr && (
+              <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">{custDeleteErr}</div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={custDeleteBusy}
+                onClick={() => setCustDeleteModal(null)}
+                className="h-9 px-4 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={custDeleteBusy}
+                onClick={runDeleteCustomer}
+                className="h-9 px-4 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 cursor-pointer disabled:opacity-50"
+              >
+                {custDeleteBusy ? 'Đang xóa…' : 'Xóa'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
