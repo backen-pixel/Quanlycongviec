@@ -118,7 +118,12 @@ export default function PipelineSettingsPage() {
   // Lead/Deal types (company-scoped)
   const [leadTypes, setLeadTypes] = useState([]);
   const [leadTypesLoading, setLeadTypesLoading] = useState(false);
-  const [leadTypeNew, setLeadTypeNew] = useState({ name: '', applies_to: 'both', is_active: true });
+  const [leadTypeNew, setLeadTypeNew] = useState({
+    name: '',
+    applies_to: 'both',
+    is_active: true,
+    workshop_production_templates: false,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -745,6 +750,7 @@ export default function PipelineSettingsPage() {
 
         <p className="text-[11px] text-gray-600">
           Mỗi công ty có danh mục riêng. Khi tạo Lead/Deal, hệ thống sẽ chỉ cho chọn loại thuộc đúng công ty đó.
+          Với Deal: có thể bật «SX mẫu» để khi tạo deal loại đó, hệ thống tự sinh nhiệm vụ pipeline SX (sx_*) theo bộ mẫu xưởng của công ty (công ty phải thuộc module Sản xuất).
         </p>
 
         {/* Add new type */}
@@ -780,9 +786,15 @@ export default function PipelineSettingsPage() {
                   name: leadTypeNew.name.trim(),
                   applies_to: leadTypeNew.applies_to,
                   is_active: leadTypeNew.is_active !== false,
+                  workshop_production_templates: !!leadTypeNew.workshop_production_templates,
                 });
                 setLeadTypes((prev) => [data, ...(prev || [])]);
-                setLeadTypeNew({ name: '', applies_to: 'both', is_active: true });
+                setLeadTypeNew({
+                  name: '',
+                  applies_to: 'both',
+                  is_active: true,
+                  workshop_production_templates: false,
+                });
               } catch (e) {
                 alert(e.response?.data?.error || 'Lỗi tạo loại');
               }
@@ -793,6 +805,17 @@ export default function PipelineSettingsPage() {
             + Thêm loại
           </button>
         </div>
+        <label className="flex items-start gap-2 text-[11px] text-teal-900 bg-teal-50/80 border border-teal-100 rounded-lg px-3 py-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            className="mt-0.5 rounded border-teal-400 text-teal-700"
+            checked={!!leadTypeNew.workshop_production_templates}
+            onChange={(e) => setLeadTypeNew((v) => ({ ...v, workshop_production_templates: e.target.checked }))}
+          />
+          <span>
+            <strong>Deal Sản xuất:</strong> khi tạo Deal chọn loại này, tự tạo nhiệm vụ SX theo bộ mẫu đã cấu hình cho công ty (workshop — khu vực Sản xuất).
+          </span>
+        </label>
 
         {/* List */}
         {leadTypes.length === 0 ? (
@@ -836,11 +859,29 @@ export default function PipelineSettingsPage() {
                     />
                     Hiện
                   </label>
+                  <label
+                    className="flex items-center gap-1.5 text-[10px] text-teal-800 cursor-pointer select-none shrink-0"
+                    title="Tạo nhiệm vụ sx_* từ bộ mẫu xưởng khi tạo Deal loại này"
+                  >
+                    <input
+                      type="checkbox"
+                      className="rounded border-teal-400"
+                      checked={!!t.workshop_production_templates}
+                      onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, workshop_production_templates: e.target.checked } : x))}
+                    />
+                    SX mẫu
+                  </label>
                   <button
                     type="button"
                     onClick={async () => {
                       try {
-                        const payload = { name: (t.name || '').trim(), applies_to: t.applies_to, order_index: t.order_index ?? 0, is_active: t.is_active !== false };
+                        const payload = {
+                          name: (t.name || '').trim(),
+                          applies_to: t.applies_to,
+                          order_index: t.order_index ?? 0,
+                          is_active: t.is_active !== false,
+                          workshop_production_templates: !!t.workshop_production_templates,
+                        };
                         const { data } = await api.put(`/crm/lead-types/${t.id}`, payload);
                         setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? data : x));
                       } catch (e) {

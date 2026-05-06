@@ -102,6 +102,7 @@ import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMSourcesSettingsPage from './pages/CRMSourcesSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
 import CRMTasksPage from './pages/CRMTasksPage';
+import CrmFollowUpCarePage from './pages/CrmFollowUpCarePage';
 const CRMTemplatesPage = lazy(() => import('./pages/CRMTemplatesPage'));
 import AutoProjectConfigPage from './pages/AutoProjectConfigPage';
 // CRMProductsPage removed — merged into ProductsPage
@@ -315,6 +316,7 @@ export default function App() {
             <Route path="/settings/request-monitor" element={<RequestMonitorPage />} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
+            <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
             <Route path="/crm/task-templates" element={<RequireCrmElevated><Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><CRMTemplatesPage /></Suspense></RequireCrmElevated>} />
             <Route path="/crm/auto-project-config" element={<RequireCrmElevated><AutoProjectConfigPage /></RequireCrmElevated>} />
             <Route path="/crm/products" element={<ProductsPage />} />

@@ -3792,6 +3792,11 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
                 <option value="">-- Chọn loại (không bắt buộc) --</option>
                 {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
+              {formData.lead_type_id && visibleLeadTypes.find((x) => String(x.id) === String(formData.lead_type_id))?.workshop_production_templates && (
+                <p className="mt-2 text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-3 py-2 leading-relaxed">
+                  Loại này được cấu hình để khi tạo Deal sẽ tự sinh nhiệm vụ pipeline Sản xuất (sx_*) theo bộ mẫu xưởng của công ty (áp dụng khi công ty thuộc module SX).
+                </p>
+              )}
             </div>
           )}
 

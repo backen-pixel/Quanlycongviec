@@ -19,7 +19,10 @@ const {
   getCrmVcDeliveryStageId,
   emitCrmBadgeUpdateForProject,
 } = require('../helpers/workshopKanban');
-const { applyWorkshopTemplateToProject } = require('../helpers/workshopApplyTemplates');
+const {
+  applyWorkshopTemplateToProject,
+  applyAllActiveWorkshopTemplatesForArea,
+} = require('../helpers/workshopApplyTemplates');
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
 const {
   buildPipelineStageSelect,
@@ -120,6 +123,87 @@ async function findSxPipelineStageRowForWorkflow(workflowStageId, projectCompany
 function calcTaskProgress(tasks) {
   if (!tasks?.length) return 0;
   return Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100);
+}
+
+const CRM_DEALS_FOR_PROJECT_EMBED = `
+  id, code, title, type, estimated_value, status, lost_reason, created_at,
+  assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
+  lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
+  sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)
+`;
+
+const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, estimated_value, status, lost_reason, created_at';
+
+/**
+ * Deals CRM cho chi tiết dự án SX: mặc định crm_leads.project_id.
+ * Fallback: đơn CRM (orders) gắng project_id nhưng deal chưa được set project_id — lấy lead_id / fulfillment_lead_id.
+ */
+async function loadCrmDealsSummaryForProductionProject(projectId) {
+  let rows = [];
+  try {
+    const { data, error } = await supabase
+      .from('crm_leads')
+      .select(CRM_DEALS_FOR_PROJECT_EMBED)
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    rows = data || [];
+  } catch (e) {
+    console.warn('[production] crmDeals embed:', e.message);
+    const { data } = await supabase
+      .from('crm_leads')
+      .select(CRM_DEALS_FOR_PROJECT_MIN)
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    rows = data || [];
+  }
+  if (rows.length) return rows;
+
+  let orderRows = [];
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('lead_id, fulfillment_lead_id')
+      .eq('project_id', projectId);
+    if (error) throw error;
+    orderRows = data || [];
+  } catch (e) {
+    console.warn('[production] crmDeals orders lookup:', e.message);
+    return [];
+  }
+
+  const idOrder = [];
+  const seen = new Set();
+  for (const o of orderRows) {
+    if (o.lead_id && !seen.has(String(o.lead_id))) {
+      seen.add(String(o.lead_id));
+      idOrder.push(o.lead_id);
+    }
+    if (o.fulfillment_lead_id && !seen.has(String(o.fulfillment_lead_id))) {
+      seen.add(String(o.fulfillment_lead_id));
+      idOrder.push(o.fulfillment_lead_id);
+    }
+  }
+  if (!idOrder.length) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('crm_leads')
+      .select(CRM_DEALS_FOR_PROJECT_EMBED)
+      .in('id', idOrder);
+    if (error) throw error;
+    rows = data || [];
+  } catch (e) {
+    console.warn('[production] crmDeals orders fallback embed:', e.message);
+    const { data } = await supabase
+      .from('crm_leads')
+      .select(CRM_DEALS_FOR_PROJECT_MIN)
+      .in('id', idOrder);
+    rows = data || [];
+  }
+  const rank = new Map(idOrder.map((id, i) => [String(id), i]));
+  rows.sort((a, b) => (rank.get(String(a.id)) ?? 999) - (rank.get(String(b.id)) ?? 999));
+  return rows;
 }
 
 /** Chỉ hiện tài liệu ở module Xưởng khi bật cờ chia sẻ rõ ràng (hoặc từ khóa đồng bộ cũ). Không dùng allowed_departments/companies — đó là phân quyền nội bộ CRM, không phải chia sẻ xưởng. */
@@ -844,29 +928,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     );
     const hiddenDocuments = documents.filter((doc) => !isDocSharedToWorkshop(doc));
 
-    let crmSummary = [];
-    try {
-      const { data: crmRows, error: crmErr } = await supabase
-        .from('crm_leads')
-        .select(`
-          id, code, title, type, estimated_value, status, lost_reason, created_at,
-          assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
-          lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
-          sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)
-        `)
-        .eq('project_id', project.id)
-        .order('created_at', { ascending: false });
-      if (crmErr) throw crmErr;
-      crmSummary = crmRows || [];
-    } catch (e) {
-      console.warn('[production] crmDeals embed fallback:', e.message);
-      const { data: crmRows } = await supabase
-        .from('crm_leads')
-        .select('id, code, title, type, estimated_value, status, lost_reason, created_at')
-        .eq('project_id', project.id)
-        .order('created_at', { ascending: false });
-      crmSummary = crmRows || [];
-    }
+    const crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
 
     const leadIds = (crmSummary || []).map((d) => d.id).filter(Boolean);
     let crmSharedNotes = [];
@@ -1661,65 +1723,24 @@ r.post('/projects/:id/tasks/from-template', requirePermission('projects', 'edit'
 });
 
 /**
- * Gen hàng loạt nhiệm vụ từ bộ mẫu xưởng (workshop_task_templates) theo khu vực.
- * - Ưu tiên template theo company_id của dự án (nếu có), fallback template global (company_id NULL).
- * - Idempotent: nếu đã có tasks chứa metadata.workshop_template_id = template.id thì bỏ qua template đó.
+ * Gen hàng loạt nhiệm vụ từ bộ mẫu xưởng — logic trong helpers/workshopApplyTemplates.js (applyAllActiveWorkshopTemplatesForArea).
  */
 r.post('/projects/:id/tasks/generate-from-templates', requirePermission('projects', 'edit'), async (req, res) => {
   try {
-    const projectId = req.params.id;
-    const userId = req.user.userId;
     const workshop_area = String(req.body?.workshop_area || 'production');
     if (!['production', 'logistics'].includes(workshop_area)) {
       return res.status(400).json({ error: 'workshop_area phải là production hoặc logistics' });
     }
 
-    const { data: proj, error: pErr } = await supabase
-      .from('projects')
-      .select('id, company_id')
-      .eq('id', projectId)
-      .maybeSingle();
-    if (pErr) throw pErr;
-    if (!proj?.id) return res.status(404).json({ error: 'Không tìm thấy dự án' });
-
-    const companyId = proj.company_id || null;
-
-    const baseQuery = (scope) => {
-      let q = supabase
-        .from('workshop_task_templates')
-        .select('id, name, order_index, company_id')
-        .eq('workshop_area', workshop_area)
-        .eq('is_active', true)
-        .order('order_index');
-      if (scope === 'company' && companyId) q = q.eq('company_id', companyId);
-      if (scope === 'global') q = q.is('company_id', null);
-      return q;
-    };
-
-    let templates = [];
-    if (companyId) {
-      const { data: scoped, error } = await baseQuery('company');
-      if (error && !isWorkshopTemplateCompanyIdMissingError(error)) throw error;
-      if (scoped?.length) templates = scoped;
+    const out = await applyAllActiveWorkshopTemplatesForArea(req.params.id, req.user.userId, {
+      workshopArea: workshop_area,
+      companyId: req.body?.company_id ?? undefined,
+    });
+    if (!out.ok) {
+      const msg = String(out.error || '');
+      const st = msg.includes('Không tìm thấy dự án') ? 404 : 400;
+      return res.status(st).json({ error: out.error });
     }
-    if (!templates.length) {
-      const { data: globalRows, error } = await baseQuery('global');
-      if (error && !isWorkshopTemplateCompanyIdMissingError(error)) throw error;
-      templates = globalRows || [];
-    }
-    if (!templates.length) {
-      return res.status(400).json({ error: 'Chưa có bộ mẫu xưởng cho khu vực này' });
-    }
-
-    let created = 0;
-    let skipped = 0;
-    const applied = [];
-    const skipped_templates = [];
-
-    // Use shared helper (also used by sx-handover)
-    const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
-    const out = await applyAllActiveWorkshopTemplatesForArea(projectId, userId, { workshopArea: workshop_area, companyId });
-    if (!out.ok) return res.status(400).json({ error: out.error });
     res.json(out);
   } catch (e) {
     console.error(e);

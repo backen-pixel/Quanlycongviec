@@ -8,7 +8,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
@@ -117,6 +117,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
     emoji: '💰',
     items: [
       { to: '/crm/pipeline', icon: Target, label: 'Pipeline & Leads', end: true },
+      { to: '/crm/follow-up-care', icon: CalendarClock, label: 'CSKH theo hạn' },
       { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM' },
       { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
       { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },

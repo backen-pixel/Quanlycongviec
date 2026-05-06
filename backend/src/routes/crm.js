@@ -1171,6 +1171,7 @@ r.post('/lead-types', async (req, res) => {
       applies_to,
       order_index: b.order_index ?? nextOrder,
       is_active: b.is_active !== false,
+      workshop_production_templates: !!b.workshop_production_templates,
       updated_at: new Date().toISOString(),
     }).select('*').single();
     if (error) throw error;
@@ -1193,6 +1194,7 @@ r.put('/lead-types/:id', async (req, res) => {
 
     const update = {};
     ['name', 'order_index', 'is_active'].forEach((f) => { if (b[f] !== undefined) update[f] = b[f]; });
+    if (b.workshop_production_templates !== undefined) update.workshop_production_templates = !!b.workshop_production_templates;
     if (b.applies_to !== undefined) {
       const at = String(b.applies_to || 'both');
       update.applies_to = ['lead','deal','both'].includes(at) ? at : 'both';
@@ -1943,9 +1945,19 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
     if (String(delId) === String(keepId)) continue;
 
     if (includeSecondaryData) {
-      const { data: tasks } = await supabase.from('crm_tasks').select('id').eq('lead_id', delId);
+      // Chỉ chuyển nhiệm vụ CRM thường; KHÔNG chuyển nhiệm vụ SX (sx_*) khi gộp deal.
+      // Vì sx_* thuộc pipeline xưởng/đơn, không nên "dính" sang deal khác sau khi merge.
+      const { data: tasks } = await supabase
+        .from('crm_tasks')
+        .select('id')
+        .eq('lead_id', delId)
+        .not('stage_slug', 'like', 'sx_%');
       if (tasks?.length) {
-        await supabase.from('crm_tasks').update({ lead_id: keepId }).eq('lead_id', delId);
+        await supabase
+          .from('crm_tasks')
+          .update({ lead_id: keepId })
+          .eq('lead_id', delId)
+          .not('stage_slug', 'like', 'sx_%');
         movedTasks += tasks.length;
       }
 
@@ -2489,18 +2501,53 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
 /** Fallback: dùng .range() — giới hạn parsedLimit dòng để tránh egress lớn. */
 async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const { assigneeStrict = false, viewerUserId = null, req: scopeReq = null } = opts;
-  const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, type = 'lead', company_id, date_from, date_to, phone_filter, lead_type_id } = reqQuery;
+  const {
+    stage_id,
+    assigned_to,
+    source_id,
+    search,
+    limit = 100,
+    offset = 0,
+    type = 'lead',
+    company_id,
+    date_from,
+    date_to,
+    phone_filter,
+    lead_type_id,
+    pipeline_id,
+    next_follow_up_from,
+    next_follow_up_to,
+    next_follow_up_empty,
+  } = reqQuery;
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
 
+  const nfFrom = sanitizeIsoDateQueryParam(next_follow_up_from);
+  const nfTo = sanitizeIsoDateQueryParam(next_follow_up_to);
+  const nfEmpty =
+    next_follow_up_empty === 'true' || next_follow_up_empty === '1' || next_follow_up_empty === true;
+  const pipeId = uuidQueryOrNull(pipeline_id);
+  const orderByFollowUp = !!(nfFrom || nfTo || nfEmpty);
+
   const selectStr = await getCrmLeadListSelect();
+  const applyPipelineFollowUpFilters = (q) => {
+    let x = q;
+    if (pipeId) x = x.eq('pipeline_id', pipeId);
+    if (nfEmpty) x = x.is('next_follow_up', null);
+    else {
+      if (nfFrom) x = x.gte('next_follow_up', nfFrom);
+      if (nfTo) x = x.lte('next_follow_up', nfTo);
+    }
+    return x;
+  };
+
   const buildBaseQuery = () => {
     let q = supabase
       .from('crm_leads')
       .select(selectStr)
       .eq('type', type)
       .is('parent_lead_id', null)
-      .order('created_at', { ascending: false });
+      .order(orderByFollowUp ? 'next_follow_up' : 'created_at', { ascending: orderByFollowUp });
     if (stage_id) q = q.eq('stage_id', stage_id);
     if (assigned_to) {
       if (assigneeStrict) q = q.eq('assigned_to', assigned_to);
@@ -2509,6 +2556,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (source_id) q = q.eq('source_id', source_id);
     if (company_id) q = q.eq('company_id', company_id);
     if (lead_type_id) q = q.eq('lead_type_id', lead_type_id);
+    q = applyPipelineFollowUpFilters(q);
     const df = sanitizeIsoDateQueryParam(date_from);
     const dt = sanitizeIsoDateQueryParam(date_to);
     if (df) q = q.gte('created_at', df);
@@ -2530,7 +2578,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
       .select(currentSelectStr)
       .eq('type', type)
       .is('parent_lead_id', null)
-      .order('created_at', { ascending: false });
+      .order(orderByFollowUp ? 'next_follow_up' : 'created_at', { ascending: orderByFollowUp });
     if (stage_id) q = q.eq('stage_id', stage_id);
     if (assigned_to) {
       if (assigneeStrict) q = q.eq('assigned_to', assigned_to);
@@ -2539,6 +2587,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (source_id) q = q.eq('source_id', source_id);
     if (company_id) q = q.eq('company_id', company_id);
     if (lead_type_id) q = q.eq('lead_type_id', lead_type_id);
+    q = applyPipelineFollowUpFilters(q);
     const df = sanitizeIsoDateQueryParam(date_from);
     const dt = sanitizeIsoDateQueryParam(date_to);
     if (df) q = q.gte('created_at', df);
@@ -2572,14 +2621,28 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   } else if (phone_filter === 'no_phone') {
     result = result.filter((l) => !l.display_phone);
   }
-  result.sort((a, b) => {
-    const ap = a.display_phone ? 1 : 0;
-    const bp = b.display_phone ? 1 : 0;
-    if (bp !== ap) return bp - ap;
-    const da = a.created_at ? new Date(a.created_at).getTime() : 0;
-    const db = b.created_at ? new Date(b.created_at).getTime() : 0;
-    return db - da;
-  });
+  if (orderByFollowUp) {
+    result.sort((a, b) => {
+      const na = a.next_follow_up ? new Date(a.next_follow_up).getTime() : Infinity;
+      const nb = b.next_follow_up ? new Date(b.next_follow_up).getTime() : Infinity;
+      if (na !== nb) return na - nb;
+      const ap = a.display_phone ? 1 : 0;
+      const bp = b.display_phone ? 1 : 0;
+      if (bp !== ap) return bp - ap;
+      const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return db - da;
+    });
+  } else {
+    result.sort((a, b) => {
+      const ap = a.display_phone ? 1 : 0;
+      const bp = b.display_phone ? 1 : 0;
+      if (bp !== ap) return bp - ap;
+      const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return db - da;
+    });
+  }
 
   const total = result.length;
   const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
@@ -2619,6 +2682,26 @@ r.get('/leads', async (req, res) => {
     // RPC `crm_leads_page_ids` (database/58_...) không có tham số p_lead_type_id — gửi thêm sẽ khiến PostgREST
     // không resolve được function → 500. Lọc theo lead_type_id chỉ dùng legacy.
     if (uuidQueryOrNull(lead_type_id)) {
+      const legacy = await getCrmLeadsListLegacy(mergedQuery, {
+        assigneeStrict: rpcAssigneeStrict,
+        viewerUserId: req.user?.userId,
+        req,
+      });
+      return res.json(legacy);
+    }
+
+    const legacyFollowUpFrom = sanitizeIsoDateQueryParam(mergedQuery.next_follow_up_from);
+    const legacyFollowUpTo = sanitizeIsoDateQueryParam(mergedQuery.next_follow_up_to);
+    const legacyFollowUpEmpty =
+      mergedQuery.next_follow_up_empty === 'true' || mergedQuery.next_follow_up_empty === '1';
+    const legacyPipelineId = uuidQueryOrNull(mergedQuery.pipeline_id);
+    const forceLegacyExtended = !!(
+      legacyFollowUpFrom ||
+      legacyFollowUpTo ||
+      legacyFollowUpEmpty ||
+      legacyPipelineId
+    );
+    if (forceLegacyExtended) {
       const legacy = await getCrmLeadsListLegacy(mergedQuery, {
         assigneeStrict: rpcAssigneeStrict,
         viewerUserId: req.user?.userId,
@@ -2955,6 +3038,10 @@ r.post('/leads', async (req, res) => {
 r.post('/deals', async (req, res) => {
   try {
     const body = { ...req.body };
+    const applyWorkshopSxFromBody =
+      body.apply_workshop_production_tasks === true || body.apply_workshop_production_tasks === 'true';
+    delete body.apply_workshop_production_tasks;
+
     ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id', 'pipeline_id', 'lead_type_id', 'region_id'].forEach(f => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
@@ -3025,12 +3112,18 @@ r.post('/deals', async (req, res) => {
       .maybeSingle();
     if (!firstStage) return res.status(500).json({ error: 'Không tìm thấy giai đoạn Deal đầu tiên trong pipeline này' });
 
+    let leadTypeTriggersWorkshopSx = false;
     if (body.lead_type_id) {
-      const { data: lt } = await supabase.from('crm_lead_types').select('id, company_id, applies_to, is_active').eq('id', body.lead_type_id).maybeSingle();
+      const { data: lt } = await supabase
+        .from('crm_lead_types')
+        .select('id, company_id, applies_to, is_active, workshop_production_templates')
+        .eq('id', body.lead_type_id)
+        .maybeSingle();
       if (!lt) return res.status(400).json({ error: 'Loại Lead/Deal không tồn tại' });
       if (String(lt.company_id || '') !== String(body.company_id || '')) return res.status(400).json({ error: 'Loại không thuộc công ty đã chọn' });
       if (lt.is_active === false) return res.status(400).json({ error: 'Loại đang bị ẩn' });
       if (lt.applies_to && !['deal','both'].includes(String(lt.applies_to))) return res.status(400).json({ error: 'Loại này không áp dụng cho Deal' });
+      leadTypeTriggersWorkshopSx = !!lt.workshop_production_templates;
     }
 
     const code = await nextCode('DEAL');
@@ -3061,6 +3154,24 @@ r.post('/deals', async (req, res) => {
     try {
       await autoGenCrmTasks(data.id, 'deal', req.user.userId);
     } catch (autoErr) { console.error('Auto-create tasks on deal create error:', autoErr.message); }
+
+    // Nhiệm vụ SX (sx_*) từ workshop_task_templates — khi loại Deal bật cờ hoặc client gửi apply_workshop_production_tasks.
+    if (applyWorkshopSxFromBody || leadTypeTriggersWorkshopSx) {
+      try {
+        const gate = await validateProductionCompanyId(data.company_id);
+        if (gate.ok) {
+          const targetLeadId = await resolveCrmTaskWriteLeadId(data.id);
+          await applyProductionTemplateToFulfillmentLead({
+            leadId: targetLeadId,
+            createdBy: req.user.userId,
+            assigneeId: data.assigned_to || data.lead_owner_id || null,
+            force: false,
+          });
+        }
+      } catch (sxErr) {
+        console.warn('[POST /deals] workshop production templates:', sxErr.message);
+      }
+    }
 
     // Một deal duy nhất; task CRM trên deal đó — không tự tạo đơn «Đơn 1» hay deal con.
 
@@ -7380,31 +7491,42 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// FORCE GENERATE production template tasks for a fulfillment deal
+// Gen nhiệm vụ pipeline SX (sx_*) từ workshop_task_templates — ghi đúng lead (deal con khi use_order_tasks).
 r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
   try {
-    const leadId = req.params.id;
     const force = !!req.body?.force;
+    const targetLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
     const { data: lead } = await supabase
       .from('crm_leads')
-      .select('id, type, assigned_to, lead_owner_id')
-      .eq('id', leadId)
+      .select('id, type, company_id, assigned_to, lead_owner_id')
+      .eq('id', targetLeadId)
       .maybeSingle();
     if (!lead?.id) return res.status(404).json({ error: 'Không tìm thấy deal' });
     if (lead.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
 
     const r0 = await applyProductionTemplateToFulfillmentLead({
-      leadId,
+      leadId: targetLeadId,
       createdBy: req.user.userId,
       assigneeId: lead.assigned_to || lead.lead_owner_id || null,
       force,
+      requireTemplateCompanyMatch: true,
+      dealCompanyId: lead.company_id || null,
     });
+    if (r0?.reason === 'missing_deal_company') {
+      return res.status(400).json({ error: 'Deal chưa có công ty — không thể gen nhiệm vụ SX theo công ty.' });
+    }
+    if (r0?.reason === 'no_production_templates_for_deal_company') {
+      return res.status(400).json({ error: 'Không có bộ nhiệm vụ Sản xuất thuộc công ty của deal. Vui lòng tạo/bật bộ mẫu đúng công ty rồi thử lại.' });
+    }
     res.json({
       ok: true,
       created: r0.created || 0,
       reason: r0.reason || 'ok',
-      template_name: r0.template_name || null,
+      template_count: r0.template_count ?? null,
+      template_names: r0.template_names || [],
+      target_lead_id: targetLeadId,
       forced: force,
+      company_id: r0.company_id || lead.company_id || null,
     });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Lỗi tạo nhiệm vụ SX' });

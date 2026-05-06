@@ -45,7 +45,44 @@ function guessStageSlugForTemplateItemTitle(workshopArea, title) {
 }
 
 /**
- * Áp một bộ mẫu xưởng → tạo tasks dự án (dùng cho API và auto-gen deal thắng).
+ * Danh sách bộ mẫu đang bật cho khu SX / VC–LĐ (ưu tiên theo company, không có thì global).
+ */
+async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId) {
+  const area = String(workshopArea || 'production');
+  const cid = companyId || null;
+
+  const baseQuery = (scope) => {
+    let q = supabase
+      .from('workshop_task_templates')
+      .select('id, name, order_index, company_id')
+      .eq('workshop_area', area)
+      .eq('is_active', true)
+      .order('order_index');
+    if (scope === 'company' && cid) q = q.eq('company_id', cid);
+    if (scope === 'global') q = q.is('company_id', null);
+    return q;
+  };
+
+  let templates = [];
+  if (cid) {
+    const { data: scoped, error } = await baseQuery('company');
+    if (error && !isWorkshopCompanyColumnError(error)) {
+      console.warn('[workshop-templates] company list:', error.message);
+    }
+    if (scoped?.length) templates = scoped;
+  }
+  if (!templates.length) {
+    const { data: globalRows, error } = await baseQuery('global');
+    if (error && !isWorkshopCompanyColumnError(error)) {
+      console.warn('[workshop-templates] global list:', error.message);
+    }
+    templates = globalRows || [];
+  }
+  return templates;
+}
+
+/**
+ * Áp một bộ mẫu xưởng → tạo tasks dự án (batch insert; checklist sau khi có id).
  * @returns {{ ok: true, count: number, task_ids: string[] } | { ok: false, error: string, statusCode?: number }}
  */
 async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
@@ -76,13 +113,9 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
     return { ok: false, error: 'Bộ mẫu trống', statusCode: 400 };
   }
 
-  // Resolve stage ids that Production UI uses (tasks.stage_id is workflow_stages.id)
   const { bySlug } = await getWorkshopStageMap();
   const fallbackStageId = await resolveStageIdForWorkshopArea(tpl.workshop_area);
-  const resolveStageIdBySlug = (slug) => {
-    const s = bySlug?.[slug];
-    return s?.id ?? null;
-  };
+  const resolveStageIdBySlug = (slug) => bySlug?.[slug]?.id ?? null;
 
   if (!fallbackStageId) {
     return {
@@ -92,66 +125,84 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
     };
   }
 
-  // Track per-stage order_index, because template items may be distributed across multiple stages.
-  const orderBaseByStage = {};
-  async function nextOrder(stageId) {
-    if (!stageId) stageId = fallbackStageId;
-    if (orderBaseByStage[stageId] == null) {
-      const { data: lastTask } = await supabase
-        .from('tasks')
-        .select('order_index')
-        .eq('project_id', projectId)
-        .eq('stage_id', stageId)
-        .order('order_index', { ascending: false })
-        .limit(1);
-      orderBaseByStage[stageId] = lastTask?.[0]?.order_index ?? 0;
-    }
-    orderBaseByStage[stageId] += 1;
-    return orderBaseByStage[stageId];
-  }
-
   const now = Date.now();
-  const createdIds = [];
-
-  for (const item of items) {
+  const staged = items.map((item) => {
     const guessedSlug = guessStageSlugForTemplateItemTitle(tpl.workshop_area, item.title);
     const stageId = resolveStageIdBySlug(guessedSlug) || fallbackStageId;
-    const orderIndex = await nextOrder(stageId);
     const dueDate = item.deadline_days
       ? new Date(now + item.deadline_days * 86400000).toISOString()
       : null;
+    return { item, guessedSlug, stageId, dueDate };
+  });
 
-    const { data: taskRow, error: insErr } = await supabase
+  const distinctStageIds = [...new Set(staged.map((s) => s.stageId).filter(Boolean))];
+  const maxOrderByStage = {};
+  for (const sid of distinctStageIds) maxOrderByStage[sid] = 0;
+
+  if (distinctStageIds.length) {
+    const { data: existing } = await supabase
       .from('tasks')
-      .insert({
-        project_id: projectId,
-        stage_id: stageId,
-        title: item.title,
-        description: item.description || null,
-        priority: item.priority || 'medium',
-        status: 'todo',
-        task_type: 'project',
-        created_by_id: userId,
-        due_date: dueDate,
-        order_index: orderIndex,
-        metadata: { workshop_template_id: templateId, workshop_template_item_id: item.id, guessed_stage_slug: guessedSlug },
-      })
-      .select('id')
-      .single();
-    if (insErr) return { ok: false, error: insErr.message, statusCode: 500 };
-    createdIds.push(taskRow.id);
+      .select('stage_id, order_index')
+      .eq('project_id', projectId)
+      .in('stage_id', distinctStageIds);
+    for (const t of existing || []) {
+      const sid = t.stage_id;
+      const o = Number(t.order_index) || 0;
+      if (sid && o > (maxOrderByStage[sid] ?? 0)) maxOrderByStage[sid] = o;
+    }
+  }
 
+  const taskRows = [];
+  for (const s of staged) {
+    maxOrderByStage[s.stageId] = (maxOrderByStage[s.stageId] ?? 0) + 1;
+    taskRows.push({
+      project_id: projectId,
+      stage_id: s.stageId,
+      title: s.item.title,
+      description: s.item.description || null,
+      priority: s.item.priority || 'medium',
+      status: 'todo',
+      task_type: 'project',
+      created_by_id: userId,
+      due_date: s.dueDate,
+      order_index: maxOrderByStage[s.stageId],
+      metadata: {
+        workshop_template_id: templateId,
+        workshop_template_item_id: s.item.id,
+        guessed_stage_slug: s.guessedSlug,
+      },
+    });
+  }
+
+  const { data: insertedTasks, error: insErr } = await supabase.from('tasks').insert(taskRows).select('id');
+  if (insErr) return { ok: false, error: insErr.message, statusCode: 500 };
+  const createdIds = (insertedTasks || []).map((r) => r.id).filter(Boolean);
+
+  const checklistBatch = [];
+  (insertedTasks || []).forEach((taskRow, idx) => {
+    const item = staged[idx]?.item;
+    if (!item || !taskRow?.id) return;
     const checklistRows = normalizeChecklistForTaskInsert(item.checklist);
-    for (let ci = 0; ci < checklistRows.length; ci++) {
-      const row = checklistRows[ci];
-      try {
-        await supabase.from('task_checklists').insert({
-          task_id: taskRow.id,
-          title: row.title,
-          order_index: row.order_index ?? ci,
-        });
-      } catch (clErr) {
-        console.warn('[workshop-template] checklist insert:', clErr.message);
+    checklistRows.forEach((row, ci) => {
+      checklistBatch.push({
+        task_id: taskRow.id,
+        title: row.title,
+        order_index: row.order_index ?? ci,
+      });
+    });
+  });
+
+  if (checklistBatch.length) {
+    const { error: clBatchErr } = await supabase.from('task_checklists').insert(checklistBatch);
+    if (clBatchErr) {
+      console.warn('[workshop-template] checklist batch:', clBatchErr.message);
+      for (let i = 0; i < checklistBatch.length; i += 1) {
+        const row = checklistBatch[i];
+        try {
+          await supabase.from('task_checklists').insert(row);
+        } catch (clErr) {
+          console.warn('[workshop-template] checklist row:', clErr.message);
+        }
       }
     }
   }
@@ -265,43 +316,20 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, { works
     return { ok: false, error: 'workshop_area phải là production hoặc logistics' };
   }
 
-  let cid = companyId || null;
-  if (!cid) {
-    const { data: proj } = await supabase
-      .from('projects')
-      .select('company_id')
-      .eq('id', projectId)
-      .maybeSingle();
-    cid = proj?.company_id || null;
-  }
+  const { data: proj, error: pe } = await supabase
+    .from('projects')
+    .select('id, company_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (pe) return { ok: false, error: pe.message };
+  if (!proj?.id) return { ok: false, error: 'Không tìm thấy dự án' };
 
-  const baseQuery = (scope) => {
-    let q = supabase
-      .from('workshop_task_templates')
-      .select('id, name, order_index, company_id')
-      .eq('workshop_area', area)
-      .eq('is_active', true)
-      .order('order_index');
-    if (scope === 'company' && cid) q = q.eq('company_id', cid);
-    if (scope === 'global') q = q.is('company_id', null);
-    return q;
-  };
+  const cid =
+    companyId !== undefined && companyId !== null && companyId !== ''
+      ? companyId
+      : (proj.company_id || null);
 
-  let templates = [];
-  if (cid) {
-    const { data: scoped, error } = await baseQuery('company');
-    if (!error && scoped?.length) templates = scoped;
-    if (error && !isWorkshopCompanyColumnError(error)) {
-      console.warn('[workshop-all-templates] company list:', error.message);
-    }
-  }
-  if (!templates.length) {
-    const { data: globalRows, error } = await baseQuery('global');
-    if (error && !isWorkshopCompanyColumnError(error)) {
-      console.warn('[workshop-all-templates] global list:', error.message);
-    }
-    templates = globalRows || [];
-  }
+  const templates = await fetchActiveWorkshopTemplatesForArea(area, cid);
   if (!templates.length) {
     return { ok: false, error: 'Chưa có bộ mẫu xưởng cho khu vực này' };
   }
@@ -344,6 +372,7 @@ module.exports = {
   applyWorkshopTemplateToProject,
   applyDefaultWorkshopTemplatesForNewProject,
   applyAllActiveWorkshopTemplatesForArea,
+  fetchActiveWorkshopTemplatesForArea,
   resolveDefaultWorkshopTemplateId,
   normalizeChecklistForTaskInsert,
   resolveStageIdForWorkshopArea,
