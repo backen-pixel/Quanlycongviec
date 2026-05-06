@@ -10,20 +10,22 @@ import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFi
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
-  AlertTriangle, CheckCircle2, Clock, Truck, Wrench,
+  AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench,
 } from 'lucide-react';
-import ProjectOrdersTab from '../components/ProjectOrdersTab';
+import CRMTasksTab from '../components/CRMTasksTab';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import PipelineStepper from '../components/PipelineStepper';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
-const DEAL_TAB_KEYS = new Set(['orders', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
 const LEGACY_TAB_MAP = {
   timeline: 'activities',
   'crm-notes': 'notes',
-  'crm-tasks': 'orders',
+  /** Tab cũ «Đơn hàng» / crm-tasks → nhiệm vụ trên deal */
+  orders: 'tasks',
+  'crm-tasks': 'tasks',
   'crm-chat': 'chat',
   'crm-activities': 'activities',
   'crm-deal-docs': 'documents',
@@ -399,6 +401,68 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
   );
 }
 
+/** Tab Công việc khi chưa có deal CRM gắn `project_id`: hiển thị nhiệm vụ bảng `tasks` (pipeline workflow dự án). */
+function WorkshopTasksFallbackPanel({ tasks, moduleLabel, onToggleDone }) {
+  const grouped = useMemo(() => {
+    const m = new Map();
+    for (const t of tasks) {
+      const label = t.stage?.name || t.stage?.slug || 'Khác';
+      if (!m.has(label)) m.set(label, []);
+      m.get(label).push(t);
+    }
+    return Array.from(m.entries());
+  }, [tasks]);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
+        <p className="font-semibold text-amber-900">Đang xem nhiệm vụ xưởng (bảng dự án)</p>
+        <p className="text-xs text-amber-800/95 mt-1 leading-relaxed">
+          Dự án này chưa có deal CRM nào được gắn <span className="font-mono bg-amber-100/90 px-1 rounded">project_id</span> — không tải được
+          pipeline CRM (nhiệm vụ <span className="font-mono">sx_*</span> trên deal). Các dòng dưới là nhiệm vụ trên dự án (quy trình {moduleLabel}).
+        </p>
+      </div>
+
+      <div className="space-y-6">
+        {grouped.map(([stageLabel, rows]) => (
+          <div key={stageLabel}>
+            <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-2">{stageLabel}</p>
+            <ul className="space-y-2">
+              {rows.map((task) => {
+                const done = task.status === 'done';
+                const Icon = done ? CheckCircle2 : Circle;
+                return (
+                  <li
+                    key={task.id}
+                    className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-2.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onToggleDone?.(task)}
+                      className="mt-0.5 shrink-0 text-gray-400 hover:text-teal-600 cursor-pointer"
+                      title={done ? 'Đánh dấu chưa xong' : 'Hoàn thành'}
+                    >
+                      <Icon className={`h-4 w-4 ${done ? 'text-teal-600' : ''}`} />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-sm font-medium ${done ? 'text-gray-500 line-through' : 'text-gray-900'}`}>
+                        {task.title || '—'}
+                      </p>
+                      {task.assignee?.full_name && (
+                        <p className="text-[11px] text-gray-500 mt-0.5">👤 {task.assignee.full_name}</p>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ProductionDetail({ moduleKey = 'sx' }) {
   // moduleKey = 'sx' (sản xuất) | 'vc' (vận chuyển)
   const MOD = moduleKey === 'vc'
@@ -432,20 +496,18 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [orderCount, setOrderCount] = useState(0);
   const tabFromUrl = searchParams.get('tab');
   const normalizedUrlTab = LEGACY_TAB_MAP[tabFromUrl] || tabFromUrl;
-  const tabAllowed = (t) => {
-    if (DEAL_TAB_KEYS.has(t)) return true;
-    return t === 'orders';
-  };
+  const tabAllowed = (t) => DEAL_TAB_KEYS.has(t);
   const [activeTab, setActiveTab] = useState(
-    tabAllowed(normalizedUrlTab) ? normalizedUrlTab : 'orders',
+    tabAllowed(normalizedUrlTab) ? normalizedUrlTab : 'tasks',
   );
   const [crmUsers, setCrmUsers] = useState([]);
   const [crmActivities, setCrmActivities] = useState([]);
   const [crmDealDocs, setCrmDealDocs] = useState([]);
   const [productionTaskSummary, setProductionTaskSummary] = useState({ total: 0, completed: 0, percent: 0 });
+  /** Danh sách thô từ GET /tasks?project_id= — dùng khi không có deal CRM để vẫn hiển thị nhiệm vụ xưởng */
+  const [workshopTasksForProject, setWorkshopTasksForProject] = useState([]);
   const [savingProductionOwner, setSavingProductionOwner] = useState(false);
   const [vcTeams, setVcTeams] = useState([]);
   const [savingTeamAssign, setSavingTeamAssign] = useState(false);
@@ -481,7 +543,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [showIncidentForm, setShowIncidentForm] = useState(false);
   const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'medium' });
   const [savingIncident, setSavingIncident] = useState(false);
-  const [bulkGenTplLoading, setBulkGenTplLoading] = useState(false);
 
   const noteActivities = useMemo(
     () => (crmActivities || []).filter((a) => a.type === 'note'),
@@ -538,7 +599,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     setActiveTab(tab);
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev);
-      if (tab === 'orders') p.delete('tab');
+      if (tab === 'tasks') p.delete('tab');
       else p.set('tab', tab);
       return p;
     }, { replace: true });
@@ -548,7 +609,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     const t = searchParams.get('tab');
     const next = LEGACY_TAB_MAP[t] || t;
     if (tabAllowed(next)) setActiveTab(next);
-    else setActiveTab('orders');
+    else setActiveTab('tasks');
   }, [id, searchParams, moduleKey]);
 
   useEffect(() => {
@@ -652,6 +713,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         return;
       }
       const list = tasksRes.data?.tasks || tasksRes.data || [];
+      setWorkshopTasksForProject(Array.isArray(list) ? list : []);
       const scopedTasks = pickWorkshopTasksForSummary(list);
       const total = scopedTasks.length;
       const completed = scopedTasks.filter((t) => t.status === 'done').length;
@@ -662,7 +724,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       loadProjectDocs(id);
       loadTaskFiles(id);
       loadProjectActivities(id);
-      api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => setOrderCount(0));
     } catch (e) {
       console.error(e);
       const st = e.response?.status;
@@ -726,17 +787,34 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       ]);
       const proj = projRes.data?.project;
       const list = tasksRes.data?.tasks || tasksRes.data || [];
+      setWorkshopTasksForProject(Array.isArray(list) ? list : []);
       const scopedTasks = pickWorkshopTasksForSummary(list);
       const total = scopedTasks.length;
       const completed = scopedTasks.filter((t) => t.status === 'done').length;
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
-      api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => {});
     } catch (_) {
       /* giữ state cũ */
     }
   }, [id, MOD.apiPrefix, pickWorkshopTasksForSummary]);
+
+  /** Phải đặt trước mọi return sớm (loadError / loading) — Rules of Hooks */
+  const scopedWorkshopTasksForTab = useMemo(
+    () => pickWorkshopTasksForSummary(workshopTasksForProject),
+    [workshopTasksForProject, pickWorkshopTasksForSummary],
+  );
+
+  const toggleWorkshopTaskDone = useCallback(async (task) => {
+    if (!task?.id) return;
+    const next = task.status === 'done' ? 'todo' : 'done';
+    try {
+      await api.patch(`/tasks/${task.id}/status`, { status: next });
+      await refreshProjectSilently();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi cập nhật');
+    }
+  }, [refreshProjectSilently]);
 
   const setProductionPerson = useCallback(async (userId) => {
     if (!project?.id) return;
@@ -869,31 +947,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       // Nếu optimistic sai do lỗi server, đồng bộ lại
       refreshProjectSilently();
     }
-  };
-
-  const generateAllWorkshopTemplates = async () => {
-    if (!project?.id || bulkGenTplLoading) return;
-    setBulkGenTplLoading(true);
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 45000);
-    try {
-      const { data } = await api.post(
-        `/production/projects/${encodeURIComponent(project.id)}/tasks/generate-from-templates`,
-        { workshop_area: 'production' },
-        { signal: controller.signal },
-      );
-      const created = data?.created_tasks || 0;
-      const applied = data?.templates_applied || 0;
-      const total = data?.templates_total || 0;
-      const skipped = data?.templates_skipped || 0;
-      alert(`Đã gen ${created} nhiệm vụ từ ${applied}/${total} bộ mẫu${skipped ? ` (bỏ qua ${skipped} bộ đã có)` : ''}.`);
-      await refreshProjectSilently();
-    } catch (e) {
-      const isAbort = e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED' || String(e?.message || '').includes('canceled');
-      alert(isAbort ? 'Gen nhiệm vụ quá lâu (timeout). Vui lòng thử lại.' : (e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ từ bộ mẫu'));
-    }
-    window.clearTimeout(timeout);
-    setBulkGenTplLoading(false);
   };
 
   const saveTitle = async () => {
@@ -1209,17 +1262,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">Nhiệm vụ {MOD.label}</p>
               <p className="text-xl font-bold text-purple-600">{taskCount}</p>
-              {!isVC && (
-                <button
-                  type="button"
-                  onClick={generateAllWorkshopTemplates}
-                  disabled={bulkGenTplLoading}
-                  className="mt-2 w-full h-8 px-2 rounded-lg text-[11px] font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
-                  title="Gen cùng lúc các bộ mẫu xưởng (Sản xuất) theo công ty dự án"
-                >
-                  {bulkGenTplLoading ? 'Đang gen…' : 'Gen 8 bộ mẫu'}
-                </button>
-              )}
             </div>
           </div>
 
@@ -1343,7 +1385,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           <div className="bg-white rounded-xl border">
             {/* Tab bar — giống LeadDetail, bỏ Facebook và Tổng đài */}
             <div className="flex border-b flex-wrap">
-              {tabBtn('orders', `🛒 Đơn hàng${orderCount ? ` (${orderCount})` : ''}`)}
+              {tabBtn('tasks', `✅ Công việc${taskCount ? ` (${taskCount})` : ''}`)}
               {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + (project.sharedDocuments?.length || 0) + safeTaskFiles.length})`)}
               {tabBtn('activities', `💬 Hoạt động (${crmLeadId ? sharedActivities.length : projectActivities.length})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
@@ -1356,16 +1398,29 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             </div>
 
             <div className="p-5">
-              {activeTab === 'orders' && (
-                <ProjectOrdersTab
-                  projectId={project.id}
-                  users={taskUsers}
-                  logisticsView={moduleKey === 'vc'}
-                  // Ở module SX: chỉ hiển thị nhiệm vụ "SX đơn" (stage_slug sx_*), không lẫn nhiệm vụ CRM deal_*.
-                  taskScope={moduleKey === 'vc' ? 'crm' : 'production'}
-                  onChanged={() => { refreshProjectSilently(); api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => {}); }}
-                  onTaskArtifactsSynced={refreshProjectSilently}
-                />
+              {activeTab === 'tasks' && (
+                crmLeadId ? (
+                  <CRMTasksTab
+                    leadId={crmLeadId}
+                    leadType="deal"
+                    users={taskUsers}
+                    taskScope={moduleKey === 'vc' ? 'crm' : 'production'}
+                    onArtifactsSynced={refreshProjectSilently}
+                  />
+                ) : scopedWorkshopTasksForTab.length > 0 ? (
+                  <WorkshopTasksFallbackPanel
+                    tasks={scopedWorkshopTasksForTab}
+                    moduleLabel={MOD.label}
+                    onToggleDone={toggleWorkshopTaskDone}
+                  />
+                ) : (
+                  <div className="text-center py-12 text-gray-500 text-sm border border-dashed border-gray-200 rounded-xl space-y-2 px-4">
+                    <p>Chưa có deal CRM gắn dự án (<span className="font-mono text-xs">crm_leads.project_id</span>) và chưa có nhiệm vụ xưởng trên dự án.</p>
+                    <p className="text-xs text-gray-400">
+                      Gắn deal từ CRM (deal phải trỏ đúng <span className="font-mono">project_id</span>) để dùng tab pipeline CRM; hoặc thêm nhiệm vụ trực tiếp trên dự án / CRM.
+                    </p>
+                  </div>
+                )
               )}
 
               {/* Tài liệu */}

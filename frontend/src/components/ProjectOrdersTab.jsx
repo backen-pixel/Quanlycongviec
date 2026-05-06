@@ -22,8 +22,6 @@ export default function ProjectOrdersTab({
   const [msg, setMsg] = useState('');
   const [selected, setSelected] = useState({});
   const [bulkPushing, setBulkPushing] = useState(false);
-  const [generatingForLead, setGeneratingForLead] = useState(null);
-  const [tasksRefreshTick, setTasksRefreshTick] = useState(0);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [sxModal, setSxModal] = useState({ open: false, mode: 'single', orderId: null });
   const [sxCompanies, setSxCompanies] = useState([]);
@@ -172,40 +170,6 @@ export default function ProjectOrdersTab({
       setMsg(e.response?.data?.error || e.message || 'Lỗi chuyển SX');
     }
     setBulkPushing(false);
-  };
-
-  const generateSxTasks = async (fulfillmentLeadId) => {
-    if (!fulfillmentLeadId) return;
-    setGeneratingForLead(fulfillmentLeadId);
-    setMsg('');
-    try {
-      const { data } = await api.post(
-        `/crm/leads/${encodeURIComponent(fulfillmentLeadId)}/tasks/generate-production-template`,
-        { force: false },
-      );
-      if ((data?.created || 0) > 0) setMsg(`Đã gen ${data.created} nhiệm vụ SX cho đơn.`);
-      else if (data?.reason === 'already_has_sx_tasks') {
-        const ok = window.confirm(
-          'Đơn đã có nhiệm vụ SX trước đó.\n\nBạn muốn GEN LẠI không?\nHệ thống sẽ XÓA toàn bộ nhiệm vụ SX (sx_*) của đơn này rồi tạo lại đúng theo bộ mẫu.',
-        );
-        if (ok) {
-          const { data: data2 } = await api.post(
-            `/crm/leads/${encodeURIComponent(fulfillmentLeadId)}/tasks/generate-production-template`,
-            { force: true },
-          );
-          if ((data2?.created || 0) > 0) setMsg(`Đã gen lại ${data2.created} nhiệm vụ SX cho đơn.`);
-          else setMsg('Không gen thêm nhiệm vụ SX.');
-        } else {
-          setMsg('Đơn đã có nhiệm vụ SX trước đó.');
-        }
-      } else setMsg('Không gen thêm nhiệm vụ SX.');
-      await load();
-      onChanged?.();
-      setTasksRefreshTick((x) => x + 1);
-    } catch (e) {
-      setMsg(e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ SX');
-    }
-    setGeneratingForLead(null);
   };
 
   const deleteOrder = async (orderId, orderLabel) => {
@@ -443,18 +407,6 @@ export default function ProjectOrdersTab({
                       <Factory className="h-3.5 w-3.5" />
                       Chuyển SX
                     </button>
-                    {!!o.fulfillment_lead_id && (
-                      <button
-                        type="button"
-                        onClick={() => generateSxTasks(o.fulfillment_lead_id)}
-                        disabled={generatingForLead === o.fulfillment_lead_id}
-                        className="h-8 px-3 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
-                        title="Gen nhiệm vụ SX cho đơn (stage sx_*) nếu chưa có"
-                      >
-                        {generatingForLead === o.fulfillment_lead_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                        Gen nhiệm vụ đơn (SX)
-                      </button>
-                    )}
                     {!logisticsView && (
                       <button
                         type="button"
@@ -479,7 +431,7 @@ export default function ProjectOrdersTab({
                       users={users}
                       taskScope={taskScope}
                       onArtifactsSynced={onTaskArtifactsSynced}
-                      refreshKey={`${o.fulfillment_lead_id}:${tasksRefreshTick}`}
+                      refreshKey={String(o.fulfillment_lead_id)}
                     />
                   </div>
                 )}

@@ -5,7 +5,7 @@ import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film,
-  FileSpreadsheet, Edit3
+  FileSpreadsheet, Edit3,
 } from 'lucide-react';
 import ExcelQuotationImport from './ExcelQuotationImport';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
@@ -39,12 +39,47 @@ const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCirc
 
 export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], taskScope = 'all', onArtifactsSynced = null, refreshKey = null }) {
   const [tasks, setTasks] = useState([]);
+  const isSxStageSlug = useMemo(() => (slug) => String(slug || '').startsWith('sx_'), []);
+  const hasSxTasks = useMemo(() => tasks.some((t) => isSxStageSlug(t.stage_slug)), [tasks, isSxStageSlug]);
+  const hasCrmDealTasks = useMemo(
+    () => tasks.some((t) => !!t.stage_slug && !isSxStageSlug(t.stage_slug)),
+    [tasks, isSxStageSlug],
+  );
+
+  /**
+   * Deal có thể có 2 nhóm:
+   * - CRM tasks: deal_* (bộ nhiệm vụ CRM)
+   * - SX tasks: sx_* (bộ nhiệm vụ sản xuất)
+   * UI cho phép chọn hiển thị nhóm nào (mặc định CRM).
+   */
+  const [dealTaskView, setDealTaskView] = useState(() => {
+    try {
+      const s = localStorage.getItem(`crm_deal_task_view:${leadId}`);
+      return s === 'sx' ? 'sx' : 'crm';
+    } catch {
+      return 'crm';
+    }
+  });
+  useEffect(() => {
+    if (leadType !== 'deal') return;
+    try {
+      localStorage.setItem(`crm_deal_task_view:${leadId}`, dealTaskView);
+    } catch { /* ignore */ }
+  }, [leadId, dealTaskView, leadType]);
+
+  const isProductionScope = taskScope === 'production';
+  const showSxTasksInUi = leadType === 'deal' && (isProductionScope || (hasSxTasks && dealTaskView === 'sx'));
+
+  const uiTasks = useMemo(() => {
+    if (leadType !== 'deal') return tasks;
+    if (showSxTasksInUi) return tasks.filter((t) => isSxStageSlug(t.stage_slug));
+    return tasks.filter((t) => !isSxStageSlug(t.stage_slug));
+  }, [leadType, tasks, showSxTasksInUi, isSxStageSlug]);
+
   const isSxOrderTaskFlow = useMemo(() => {
     if (leadType !== 'deal') return false;
-    // Khi đang ở task_scope=production thì UI luôn hiển thị theo pipeline sx_* (kể cả khi chưa có task).
-    if (taskScope === 'production') return true;
-    return tasks.some((t) => String(t.stage_slug || '').startsWith('sx_'));
-  }, [leadType, taskScope, tasks]);
+    return showSxTasksInUi;
+  }, [leadType, showSxTasksInUi]);
   const STAGES = useMemo(() => {
     if (leadType !== 'deal') return LEAD_STAGES;
     return isSxOrderTaskFlow ? SX_ORDER_STAGES : DEAL_STAGES;
@@ -56,6 +91,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generatingDefaults, setGeneratingDefaults] = useState(false);
+  const [generatingProduction, setGeneratingProduction] = useState(false);
   const [viewMode, setViewMode] = useState('list'); // list, deadline, planner, calendar
   const [expandedStages, setExpandedStages] = useState({});
   const [showAdd, setShowAdd] = useState(null); // stage_slug
@@ -63,8 +99,6 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   const [editingTask, setEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
-  const isProductionScope = taskScope === 'production';
-
   /** Task có thể thuộc deal con (fulfillment) khi deal gốc dùng đơn — API đính kèm/ghi chú cần đúng lead_id */
   const apiLeadIdForTaskId = (taskId) => {
     const t = tasks.find((x) => x.id === taskId);
@@ -184,6 +218,35 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     }
   };
 
+  const generateProductionTasks = async () => {
+    if (generatingProduction) return;
+    if (leadType !== 'deal') return;
+    if (isProductionScope) return;
+    setGeneratingProduction(true);
+    try {
+      const r1 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, { force: false });
+      const data = r1.data || {};
+      if ((data.created || 0) > 0) {
+        alert(`Đã tạo ${data.created} nhiệm vụ Sản xuất`);
+        await loadTasks();
+        return;
+      }
+      if (data.reason === 'already_has_sx_tasks') {
+        const ok = window.confirm('Deal đã có nhiệm vụ Sản xuất (sx_*).\n\nBạn có muốn tạo lại (xóa & gen lại) theo bộ mẫu công ty của deal không?');
+        if (!ok) return;
+        const r2 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, { force: true });
+        alert(`Đã tạo lại ${r2.data?.created || 0} nhiệm vụ Sản xuất`);
+        await loadTasks();
+        return;
+      }
+      alert('Không có nhiệm vụ Sản xuất được tạo.');
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ Sản xuất');
+    } finally {
+      setGeneratingProduction(false);
+    }
+  };
+
   const updateTask = async (taskId, updates) => {
     const prevTasks = tasks;
     setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...updates } : t)));
@@ -255,27 +318,27 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
 
   // Stats
   const stats = useMemo(() => {
-    const total = tasks.length;
-    const completed = tasks.filter(t => t.status === 'completed').length;
-    const overdue = tasks.filter(t => t.deadline && new Date(t.deadline) < new Date() && t.status !== 'completed').length;
-    const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+    const total = uiTasks.length;
+    const completed = uiTasks.filter(t => t.status === 'completed').length;
+    const overdue = uiTasks.filter(t => t.deadline && new Date(t.deadline) < new Date() && t.status !== 'completed').length;
+    const inProgress = uiTasks.filter(t => t.status === 'in_progress').length;
     return { total, completed, overdue, inProgress, percent: total ? Math.round(completed / total * 100) : 0 };
-  }, [tasks]);
+  }, [uiTasks]);
 
   // Group tasks by stage
   const tasksByStage = useMemo(() => {
     const map = {};
     STAGES.forEach(s => { map[s.slug] = []; });
-    tasks.forEach(t => { const key = t.stage_slug || 'other'; if (!map[key]) map[key] = []; map[key].push(t); });
+    uiTasks.forEach(t => { const key = t.stage_slug || 'other'; if (!map[key]) map[key] = []; map[key].push(t); });
     return map;
-  }, [tasks]);
+  }, [uiTasks, STAGES]);
 
   // Deadline view groups
   const deadlineGroups = useMemo(() => {
     const now = new Date(); const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekEnd = new Date(today); weekEnd.setDate(weekEnd.getDate() + 7);
     const groups = { overdue: [], today: [], thisWeek: [], later: [], noDeadline: [] };
-    tasks.filter(t => t.status !== 'completed').forEach(t => {
+    uiTasks.filter(t => t.status !== 'completed').forEach(t => {
       if (!t.deadline) { groups.noDeadline.push(t); return; }
       const d = new Date(t.deadline);
       if (d < today) groups.overdue.push(t);
@@ -284,31 +347,31 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       else groups.later.push(t);
     });
     return groups;
-  }, [tasks]);
+  }, [uiTasks]);
 
   // Planner view - group by assignee
   const plannerGroups = useMemo(() => {
     const map = {}; const unassigned = [];
-    tasks.filter(t => t.status !== 'completed').forEach(t => {
+    uiTasks.filter(t => t.status !== 'completed').forEach(t => {
       if (t.assignee_id && t.assignee) {
         if (!map[t.assignee_id]) map[t.assignee_id] = { user: t.assignee, tasks: [] };
         map[t.assignee_id].tasks.push(t);
       } else { unassigned.push(t); }
     });
     return { assignees: Object.values(map), unassigned };
-  }, [tasks]);
+  }, [uiTasks]);
 
   // Calendar view
   const calendarTasks = useMemo(() => {
     const map = {};
-    tasks.forEach(t => {
+    uiTasks.forEach(t => {
       if (!t.deadline) return;
       const key = t.deadline.substring(0, 10);
       if (!map[key]) map[key] = [];
       map[key].push(t);
     });
     return map;
-  }, [tasks]);
+  }, [uiTasks]);
 
   const [calMonth, setCalMonth] = useState(() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() }; });
   const calDays = useMemo(() => {
@@ -826,9 +889,6 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-red-600 font-medium">
-        Tích vào ô nhiệm vụ trong chi tiết deal và lead
-      </p>
       {/* Header: Stats + Views + Templates */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3">
@@ -841,6 +901,37 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {leadType === 'deal' && hasSxTasks && !isProductionScope && (
+            <div className="flex items-center gap-1 mr-1 bg-gray-50 border border-gray-200 rounded-lg p-0.5">
+              <button
+                type="button"
+                onClick={() => setDealTaskView('crm')}
+                className={`h-6 px-2 rounded-md text-[10px] font-semibold cursor-pointer ${dealTaskView === 'crm' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                title="Hiển thị bộ nhiệm vụ CRM (deal_*)"
+              >
+                CRM
+              </button>
+              <button
+                type="button"
+                onClick={() => setDealTaskView('sx')}
+                className={`h-6 px-2 rounded-md text-[10px] font-semibold cursor-pointer ${dealTaskView === 'sx' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                title="Hiển thị bộ nhiệm vụ Sản xuất (sx_*)"
+              >
+                SX
+              </button>
+            </div>
+          )}
+          {leadType === 'deal' && !isProductionScope && (
+            <button
+              onClick={generateProductionTasks}
+              disabled={generatingProduction}
+              className="h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
+              title="Gen nhiệm vụ Sản xuất (sx_*) từ bộ mẫu xưởng — bắt buộc đúng công ty của deal"
+            >
+              {generatingProduction ? <span className="animate-spin h-3 w-3 border-2 border-white/80 border-t-transparent rounded-full" /> : <span>🏭</span>}
+              Gen SX
+            </button>
+          )}
           {templates.length > 0 && tasks.length === 0 && !showTemplatePanel && (
             <button
               onClick={generateDefaultTasks}
@@ -879,7 +970,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           {ALL_STAGES.map(stage => {
             const stageTpls = templates.filter(t => t.stage_slug === stage.slug);
             if (!stageTpls.length) return null;
-            const existingCount = tasks.filter(t => t.stage_slug === stage.slug).length;
+            const existingCount = uiTasks.filter(t => t.stage_slug === stage.slug).length;
             return (
               <div key={stage.slug}>
                 <p className="text-[10px] font-bold mb-1.5 flex items-center gap-1" style={{ color: stage.color }}>
@@ -1004,7 +1095,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
               </div>
             </div>
           ))}
-          {tasks.filter(t => t.status !== 'completed').length === 0 && (
+          {uiTasks.filter(t => t.status !== 'completed').length === 0 && (
             <p className="text-center text-sm text-gray-400 py-8">Không có công việc đang chờ</p>
           )}
         </div>
@@ -1031,7 +1122,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
               <div>{plannerGroups.unassigned.map(t => renderTaskRow(t))}</div>
             </div>
           )}
-          {tasks.filter(t => t.status !== 'completed').length === 0 && (
+          {uiTasks.filter(t => t.status !== 'completed').length === 0 && (
             <p className="text-center text-sm text-gray-400 py-8">Không có công việc đang chờ</p>
           )}
         </div>
@@ -1074,13 +1165,13 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       )}
 
             {/* Completed tasks (collapsed) */}
-      {tasks.filter(t => t.status === 'completed').length > 0 && viewMode !== 'list' && (
+      {uiTasks.filter(t => t.status === 'completed').length > 0 && viewMode !== 'list' && (
         <details className="mt-4">
           <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">
-            ✅ Đã hoàn thành ({tasks.filter(t => t.status === 'completed').length})
+            ✅ Đã hoàn thành ({uiTasks.filter(t => t.status === 'completed').length})
           </summary>
           <div className="mt-2 opacity-50">
-            {tasks.filter(t => t.status === 'completed').map(t => renderTaskRow(t))}
+            {uiTasks.filter(t => t.status === 'completed').map(t => renderTaskRow(t))}
           </div>
         </details>
       )}

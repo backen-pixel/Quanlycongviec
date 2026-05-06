@@ -125,6 +125,10 @@ async function applyProductionTemplateToFulfillmentLead({
   createdBy,
   assigneeId = null,
   force = false,
+  /** Nếu true: chỉ cho phép lấy bộ mẫu thuộc đúng company_id của deal (không fallback global / công ty khác). */
+  requireTemplateCompanyMatch = false,
+  /** Company của deal gọi API (ưu tiên hơn leadRow.company_id khi requireTemplateCompanyMatch). */
+  dealCompanyId = null,
 }) {
   if (!leadId || !createdBy) return { created: 0, reason: 'missing_params' };
 
@@ -149,8 +153,124 @@ async function applyProductionTemplateToFulfillmentLead({
     .select('id, company_id, project_id')
     .eq('id', leadId)
     .maybeSingle();
-  let targetCompanyId = leadRow?.company_id || null;
-  if (leadRow?.project_id) {
+
+  if (requireTemplateCompanyMatch) {
+    const mustCompanyId = dealCompanyId || leadRow?.company_id || null;
+    if (!mustCompanyId) return { created: 0, reason: 'missing_deal_company' };
+
+    // Strict mode: chỉ lấy template đúng company_id của deal (không global fallback).
+    let { data: templates, error: tplErr } = await supabase
+      .from('workshop_task_templates')
+      .select('id, name, is_default, order_index, company_id')
+      .eq('workshop_area', 'production')
+      .eq('is_active', true)
+      .eq('company_id', mustCompanyId)
+      .order('order_index', { ascending: true });
+    if (tplErr?.message?.includes('order_index')) {
+      const r2 = await supabase
+        .from('workshop_task_templates')
+        .select('id, name, is_default, company_id')
+        .eq('workshop_area', 'production')
+        .eq('is_active', true)
+        .eq('company_id', mustCompanyId);
+      templates = r2.data;
+      tplErr = r2.error;
+    }
+    if (tplErr) throw tplErr;
+    if (!templates?.length) return { created: 0, reason: 'no_production_templates_for_deal_company', company_id: mustCompanyId };
+
+    const templateIds = templates.map((t) => t.id).filter(Boolean);
+    const { data: items, error: itemErr } = await supabase
+      .from('workshop_task_template_items')
+      .select('template_id, title, description, priority, order_index, checklist')
+      .in('template_id', templateIds)
+      .order('template_id')
+      .order('order_index');
+    if (itemErr) throw itemErr;
+    if (!items?.length) return { created: 0, reason: 'template_items_empty', company_id: mustCompanyId };
+
+    const normalizeText = (raw) => String(raw || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+
+    const slugByTemplateName = (nameRaw) => {
+      const t = normalizeText(nameRaw);
+      if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
+      if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
+      if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
+      if (t.includes('vat tu')) return 'sx_vat_tu';
+      if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
+      if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
+      if (t.includes('hoan thien')) return 'sx_hoan_thien';
+      if (t.includes('dong goi')) return 'sx_dong_goi';
+      if (t.includes('giao hang')) return 'sx_giao_hang';
+      return 'sx_other';
+    };
+
+    const stageSlugByTemplateId = new Map(
+      (templates || [])
+        .filter((t) => t?.id)
+        .map((t) => [String(t.id), slugByTemplateName(t.name)]),
+    );
+    const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
+    const sortedItems = [...items].sort((a, b) => {
+      const ta = templateOrder.get(String(a.template_id)) ?? 9999;
+      const tb = templateOrder.get(String(b.template_id)) ?? 9999;
+      if (ta !== tb) return ta - tb;
+      return (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
+    });
+
+    const inserts = sortedItems.map((it, idx) => {
+      const checklist = Array.isArray(it.checklist) ? it.checklist.filter(Boolean) : [];
+      const checklistText = checklist.length
+        ? `\n\nNhiệm vụ nhỏ:\n${checklist.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
+        : '';
+      const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
+      return {
+        lead_id: leadId,
+        title: it.title,
+        description: `${it.description || ''}${checklistText}`.trim() || null,
+        status: 'pending',
+        priority: it.priority || 'medium',
+        stage_slug: stageSlug,
+        order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
+        assignee_id: assigneeId || null,
+        supervisor_id: null,
+        deadline: null,
+        created_by: createdBy,
+      };
+    });
+
+    const { error: insErr } = await supabase.from('crm_tasks').insert(inserts);
+    if (insErr) throw insErr;
+    return {
+      created: inserts.length,
+      reason: 'ok',
+      template_count: templates.length,
+      template_names: templates.map((t) => t.name).filter(Boolean),
+      company_id: mustCompanyId,
+    };
+  }
+
+  // Ưu tiên xác định "công ty SX" để lấy đúng bộ mẫu theo công ty:
+  // 1) orders.sx_company_id (đơn đã chuyển SX)
+  // 2) projects.company_id (dự án xưởng)
+  // 3) leadRow.company_id (công ty CRM) — chỉ dùng nếu thuộc module SX
+  let targetCompanyId = null;
+  try {
+    const { data: ord } = await supabase
+      .from('orders')
+      .select('sx_company_id')
+      .eq('fulfillment_lead_id', leadId)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (ord?.sx_company_id) targetCompanyId = ord.sx_company_id;
+  } catch (_) { /* ignore */ }
+
+  if (!targetCompanyId && leadRow?.project_id) {
     const { data: p } = await supabase
       .from('projects')
       .select('company_id')
@@ -158,9 +278,13 @@ async function applyProductionTemplateToFulfillmentLead({
       .maybeSingle();
     if (p?.company_id) targetCompanyId = p.company_id;
   }
+
+  if (!targetCompanyId && leadRow?.company_id) targetCompanyId = leadRow.company_id;
+
+  // Chỉ "scope theo công ty" khi company thuộc module SX; nếu không thì fallback sang template global.
   if (targetCompanyId) {
     const co = await validateProductionCompanyId(targetCompanyId);
-    if (!co.ok) return { created: 0, reason: 'company_not_in_production_module', error: co.error };
+    if (!co.ok) targetCompanyId = null;
   }
 
   const fetchTemplates = async (companyMode) => {
