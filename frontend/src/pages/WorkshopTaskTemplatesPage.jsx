@@ -53,6 +53,7 @@ export default function WorkshopTaskTemplatesPage() {
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [seedingNine, setSeedingNine] = useState(false);
 
   const currentStages = activeTab === 'logistics' ? WORKSHOP_LOGISTICS_STAGES : WORKSHOP_PRODUCTION_STAGES;
 
@@ -86,6 +87,94 @@ export default function WorkshopTaskTemplatesPage() {
   useEffect(() => { load(); }, [selectedCompanyId]);
 
   const filteredTemplates = templates.filter((t) => t.workshop_area === activeTab);
+
+  const norm = (s) => String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const ensureNineProductionTemplates = async () => {
+    if (seedingNine) return;
+    if (activeTab !== 'production') return;
+    if (!selectedCompanyId) {
+      alert('Chọn Công ty trước khi tạo đủ 9 bộ mẫu SX.');
+      return;
+    }
+    const ok = window.confirm('Tạo/chuẩn hoá đủ 9 bộ mẫu Sản xuất cho công ty đang chọn?\n\n- Nếu đang có bộ "Sản xuất" sẽ đổi tên thành "Sản xuất thùng".\n- Sẽ tạo thêm bộ thiếu và thêm 3 công việc mẫu cho các bộ mới (nếu đang trống).');
+    if (!ok) return;
+    setSeedingNine(true);
+    try {
+      const desired = [
+        { name: 'Tiếp nhận', seed: [] },
+        { name: 'Thiết kế và lên kế hoạch', seed: [] },
+        { name: 'Kiểm tra chéo', seed: [] },
+        { name: 'Vật tư', seed: [] },
+        { name: 'Sản xuất thùng', seed: ['Chuẩn bị máy móc & jig', 'Gia công chính', 'Lắp ráp bán thành phẩm'] },
+        { name: 'Sản xuất alu', seed: ['Chuẩn bị vật tư alu', 'Gia công alu', 'Lắp ráp & QC alu'] },
+        { name: 'Hoàn thiện', seed: [] },
+        { name: 'Đóng gói', seed: ['Chuẩn bị vật liệu đóng gói', 'Đóng gói theo quy cách', 'Dán nhãn & bàn giao kho xuất'] },
+        { name: 'Giao hàng', seed: [] },
+      ];
+
+      const existing = (templates || [])
+        .filter((t) => t.workshop_area === 'production' && String(t.company_id || '') === String(selectedCompanyId));
+      const byNorm = new Map(existing.map((t) => [norm(t.name), t]));
+
+      const legacy = byNorm.get('san xuat');
+      if (legacy && !byNorm.get(norm('Sản xuất thùng'))) {
+        await api.put(`/production/task-templates/${legacy.id}`, {
+          name: 'Sản xuất thùng',
+          workshop_area: legacy.workshop_area,
+          company_id: selectedCompanyId,
+        });
+      }
+
+      // reload after rename / create
+      await load();
+      const after = (templates || [])
+        .filter((t) => t.workshop_area === 'production' && String(t.company_id || '') === String(selectedCompanyId));
+      const afterByNorm = new Map(after.map((t) => [norm(t.name), t]));
+
+      for (const d of desired) {
+        const key = norm(d.name);
+        let tpl = afterByNorm.get(key);
+        if (!tpl) {
+          await api.post('/production/task-templates', {
+            name: d.name,
+            workshop_area: 'production',
+            company_id: selectedCompanyId,
+            order_index: after.length + 1,
+          });
+          await load();
+          const latest = (templates || [])
+            .filter((t) => t.workshop_area === 'production' && String(t.company_id || '') === String(selectedCompanyId));
+          tpl = latest.find((t) => norm(t.name) === key) || null;
+        }
+        if (!tpl) continue;
+
+        const items = Array.isArray(tpl.items) ? tpl.items : [];
+        if (d.seed?.length && items.length === 0) {
+          for (let i = 0; i < d.seed.length; i += 1) {
+            await api.post(`/production/task-templates/${tpl.id}/items`, {
+              title: d.seed[i],
+              priority: 'medium',
+              deadline_days: 0,
+              order_index: i,
+              checklist: [],
+            });
+          }
+        }
+      }
+
+      await load();
+      alert('Đã chuẩn hoá/tạo đủ 9 bộ mẫu SX cho công ty đã chọn.');
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi tạo bộ mẫu');
+    }
+    setSeedingNine(false);
+  };
 
   // ═══ CRUD ═══
   const createTemplate = async () => {
@@ -324,6 +413,17 @@ export default function WorkshopTaskTemplatesPage() {
           <Link to="/sx/dashboard" className="text-sm text-blue-600 hover:text-blue-800 font-medium">
             ← Dashboard xưởng
           </Link>
+          {activeTab === 'production' && isAdmin && (
+            <button
+              type="button"
+              onClick={ensureNineProductionTemplates}
+              disabled={seedingNine}
+              className="h-9 px-3 rounded-lg text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 cursor-pointer"
+              title="Chuẩn hoá đủ 9 bộ mẫu SX (khớp 9 cột sx_*) cho công ty đang chọn"
+            >
+              {seedingNine ? '…' : '🏭'} Chuẩn hoá 9 bộ SX
+            </button>
+          )}
           <button onClick={() => { setShowAddTpl(true); setNewTpl({ name: '', workshop_area: currentStages[0]?.slug || activeTab }); }}
             className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
             <Plus className="h-4 w-4" /> Thêm bộ mẫu

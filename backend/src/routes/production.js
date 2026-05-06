@@ -23,6 +23,7 @@ const {
   applyWorkshopTemplateToProject,
   applyAllActiveWorkshopTemplatesForArea,
 } = require('../helpers/workshopApplyTemplates');
+const { applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
 const {
   buildPipelineStageSelect,
@@ -126,13 +127,103 @@ function calcTaskProgress(tasks) {
 }
 
 const CRM_DEALS_FOR_PROJECT_EMBED = `
-  id, code, title, type, estimated_value, status, lost_reason, created_at,
+  id, code, title, type, estimated_value, created_at,
   assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
   sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)
 `;
 
-const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, estimated_value, status, lost_reason, created_at';
+// Một số DB cũ chưa có các cột `status`, `lost_reason` trên crm_leads.
+// Giữ select tối thiểu để không làm vỡ màn hình chi tiết xưởng.
+const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, estimated_value, created_at';
+
+async function nextDealCode() {
+  const year = new Date().getFullYear();
+  const { data } = await supabase
+    .from('code_sequences')
+    .select('current_number, year')
+    .eq('prefix', 'DEAL')
+    .single();
+  let num = 1;
+  if (data) {
+    num = data.year === year ? data.current_number + 1 : 1;
+  }
+  await supabase.from('code_sequences').upsert({ prefix: 'DEAL', current_number: num, year });
+  return `DEAL-${year}-${String(num).padStart(3, '0')}`;
+}
+
+async function resolveDefaultPipelineAndStage(companyId) {
+  // pipeline ưu tiên theo công ty, fallback pipeline chung theo migration 21.
+  const PIPELINE_CHUNG_ID = '00000000-0000-0000-0000-000000000001';
+  let pipelineId = PIPELINE_CHUNG_ID;
+  try {
+    if (companyId) {
+      const { data: p } = await supabase
+        .from('crm_pipelines')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (p?.id) pipelineId = p.id;
+    }
+  } catch (_) { /* ignore */ }
+
+  let stageId = null;
+  try {
+    const { data: s } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('pipeline_id', pipelineId)
+      .eq('is_active', true)
+      .order('order_index', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (s?.id) stageId = s.id;
+  } catch (_) { /* ignore */ }
+
+  return { pipelineId, stageId };
+}
+
+async function insertCrmDealForProjectResilient(insertRow) {
+  // Một số DB cũ có thể thiếu cột pipeline_id / lead_owner_id / created_by... nên cần retry.
+  const tryInsert = async (row) => supabase.from('crm_leads').insert(row).select('id, company_id').single();
+  let row = { ...insertRow };
+  let r = await tryInsert(row);
+  if (!r.error) return r;
+
+  const msg = String(r.error?.message || r.error?.details || '');
+  const missing = (col) => msg.toLowerCase().includes(col.toLowerCase()) && (msg.includes('does not exist') || msg.includes('Could not find') || msg.includes('could not find'));
+  // Strip columns progressively based on error message
+  if (missing('lead_owner_id')) {
+    const { lead_owner_id: _x, ...rest } = row;
+    row = rest;
+    r = await tryInsert(row);
+    if (!r.error) return r;
+  }
+  if (missing('pipeline_id')) {
+    const { pipeline_id: _x, ...rest } = row;
+    row = rest;
+    r = await tryInsert(row);
+    if (!r.error) return r;
+  }
+  if (missing('stage_id')) {
+    const { stage_id: _x, ...rest } = row;
+    row = rest;
+    r = await tryInsert(row);
+    if (!r.error) return r;
+  }
+  if (missing('created_by')) {
+    const { created_by: _x, ...rest } = row;
+    row = rest;
+    r = await tryInsert(row);
+    if (!r.error) return r;
+  }
+  // Final: throw original error
+  return r;
+}
 
 /**
  * Deals CRM cho chi tiết dự án SX: mặc định crm_leads.project_id.
@@ -928,7 +1019,55 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     );
     const hiddenDocuments = documents.filter((doc) => !isDocSharedToWorkshop(doc));
 
-    const crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
+    let crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
+    // Nếu dự án được tạo thẳng từ module SX (không qua CRM / không có orders),
+    // thì auto tạo 1 deal CRM "master" gắn project_id để:
+    // - CRMTasksTab có leadId để load/gen sx_* tasks
+    // - Đồng bộ pipeline SX→CRM có target stage
+    if (!crmSummary?.length) {
+      try {
+        const { data: existedMaster } = await supabase
+          .from('crm_leads')
+          .select('id')
+          .eq('project_id', project.id)
+          .is('parent_lead_id', null)
+          .limit(1)
+          .maybeSingle();
+        if (!existedMaster?.id) {
+          const { pipelineId, stageId } = await resolveDefaultPipelineAndStage(project.company_id || null);
+          const code = await nextDealCode();
+          const insert = {
+            code,
+            title: project.name || project.code || 'Deal xưởng',
+            description: 'Tạo tự động từ module Sản xuất để gắn nhiệm vụ sx_*',
+            type: 'deal',
+            customer_id: project.customer_id || null,
+            company_id: project.company_id || null,
+            pipeline_id: pipelineId || null,
+            stage_id: stageId || null,
+            assigned_to: req.user.userId,
+            lead_owner_id: req.user.userId,
+            project_id: project.id,
+            estimated_value: project.estimated_value || 0,
+            created_by: req.user.userId,
+          };
+          const insRes = await insertCrmDealForProjectResilient(insert);
+          if (insRes.error) throw insRes.error;
+          const newDeal = insRes.data;
+
+          await applyProductionTemplateToFulfillmentLead({
+            leadId: newDeal.id,
+            createdBy: req.user.userId,
+            requireTemplateCompanyMatch: true,
+            dealCompanyId: newDeal.company_id || project.company_id || null,
+          });
+        }
+        crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
+      } catch (e) {
+        console.warn('[production] auto create master deal skipped:', e.message);
+        project.__crm_deal_autocreate_error = e.message || String(e);
+      }
+    }
 
     const leadIds = (crmSummary || []).map((d) => d.id).filter(Boolean);
     let crmSharedNotes = [];

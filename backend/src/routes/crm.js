@@ -4026,7 +4026,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     const { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('name, is_won, is_lost, pipeline_type, send_zalo_on_enter')
+      .select('name, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability')
       .eq('id', stage_id)
       .single();
     
@@ -4059,6 +4059,14 @@ r.patch('/leads/:id/stage', async (req, res) => {
     }
     
     const updates = { stage_id, updated_at: new Date().toISOString() };
+    // Đồng bộ % xác suất theo cấu hình của cột pipeline (nếu có).
+    // Mục tiêu: kéo lead/deal sang cột nào thì probability tự nhảy theo % của cột đó.
+    if (stage?.default_probability !== undefined && stage?.default_probability !== null && stage?.default_probability !== '') {
+      const p = Number(stage.default_probability);
+      if (Number.isFinite(p)) {
+        updates.probability = Math.max(0, Math.min(100, Math.round(p)));
+      }
+    }
     if (stage?.is_won) updates.actual_close_date = new Date().toISOString().split('T')[0];
     if (lead?.type === 'deal' && isProductionStage) {
       // Chuyển thẳng vào cột Sản xuất cũng coi như đã bàn giao SX/đã chốt để Kanban SX nhận diện.
@@ -4524,21 +4532,15 @@ r.post('/leads/:id/create-project', async (req, res) => {
       console.warn('[CREATE PROJECT] sync sx_pipeline_stage_id:', se.message);
     }
 
-    let orderOne = null;
-    try {
-      const { ensureDefaultOrderOneForProject } = require('../helpers/projectOrderFulfillment');
-      orderOne = await ensureDefaultOrderOneForProject({ projectId: project.id, userId: req.user.userId, defaultLabel: 'Đơn 1' });
-      if (orderOne?.created) console.log(`[CREATE PROJECT] Đơn 1: ${orderOne.order?.code || ''}`);
-    } catch (e) {
-      console.warn('[CREATE PROJECT] ensure Đơn 1:', e.message);
-    }
+    // NOTE: Không tự tạo Đơn 1/2/... từ deal. Đơn hàng chỉ tạo thủ công tại tab Đơn hàng.
+    const orderOne = null;
 
     res.json({
       id: project.id, code: project.code, name: project.name,
       tasks_created: taskCount, tasks_done: doneCount,
       tasks_pending: taskCount - doneCount,
       checklists_created: checkCount,
-      order_one: orderOne?.created ? { id: orderOne.order?.id, code: orderOne.order?.code, display_label: orderOne.order?.display_label } : null,
+      order_one: null,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5895,16 +5897,10 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
         'project', project.id);
     } catch (ne) { console.warn('[NOTIFY] convert_project:', ne.message); }
 
-    let orderOneConv = null;
-    try {
-      const { ensureDefaultOrderOneForProject } = require('../helpers/projectOrderFulfillment');
-      const o1 = await ensureDefaultOrderOneForProject({ projectId: project.id, userId: req.user.userId, defaultLabel: 'Đơn 1' });
-      if (o1?.created) {
-        orderOneConv = { id: o1.order.id, code: o1.order.code, display_label: o1.order.display_label };
-      }
-    } catch (e) { console.warn('[convert-to-project] ensure Đơn 1:', e.message); }
+    // NOTE: Không tự tạo Đơn 1/2/... từ deal. Đơn hàng chỉ tạo thủ công tại tab Đơn hàng.
+    const orderOneConv = null;
 
-    res.status(201).json({ ...project, tasks_created: totalCreated, order_one: orderOneConv });
+    res.status(201).json({ ...project, tasks_created: totalCreated, order_one: null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

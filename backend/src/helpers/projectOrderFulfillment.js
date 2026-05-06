@@ -132,6 +132,48 @@ async function applyProductionTemplateToFulfillmentLead({
 }) {
   if (!leadId || !createdBy) return { created: 0, reason: 'missing_params' };
 
+  const buildEmergencySxInserts = () => {
+    // Bộ tối thiểu 9 cột sx_* với 3 việc/cột (có thể chỉnh sau).
+    const seed = [
+      { stage_slug: 'sx_tiep_nhan', items: ['Xác nhận thông tin đơn hàng', 'Tiếp nhận file/tài liệu', 'Chốt yêu cầu kỹ thuật ban đầu'] },
+      { stage_slug: 'sx_thiet_ke_ke_hoach', items: ['Dựng/duyệt bản vẽ', 'Lập BOM & định mức', 'Lập kế hoạch tiến độ'] },
+      { stage_slug: 'sx_kiem_tra_cheo', items: ['Rà soát kỹ thuật chéo', 'Xác nhận điểm rủi ro', 'Phê duyệt trước sản xuất'] },
+      { stage_slug: 'sx_vat_tu', items: ['Kiểm kê tồn kho', 'Mua bù vật tư thiếu', 'Cấp phát vật tư'] },
+      { stage_slug: 'sx_san_xuat_thung', items: ['Chuẩn bị máy móc & jig', 'Gia công chính', 'Lắp ráp bán thành phẩm'] },
+      { stage_slug: 'sx_san_xuat_alu', items: ['Chuẩn bị vật tư alu', 'Gia công alu', 'Lắp ráp & QC alu'] },
+      { stage_slug: 'sx_hoan_thien', items: ['Xử lý bề mặt/hoàn thiện', 'QC cuối', 'Nghiệm thu nội bộ'] },
+      { stage_slug: 'sx_dong_goi', items: ['Chuẩn bị vật liệu đóng gói', 'Đóng gói theo quy cách', 'Dán nhãn & bàn giao kho xuất'] },
+      { stage_slug: 'sx_giao_hang', items: ['Tạo lệnh giao', 'Bàn giao đơn vị vận chuyển', 'Theo dõi và chốt giao'] },
+    ];
+
+    const out = [];
+    let globalOrder = 1;
+    for (const g of seed) {
+      let local = 1;
+      for (const title of g.items) {
+        out.push({
+          lead_id: leadId,
+          title,
+          description: null,
+          status: 'pending',
+          priority: 'medium',
+          stage_slug: g.stage_slug,
+          order_index: local,
+          assignee_id: assigneeId || null,
+          supervisor_id: null,
+          deadline: null,
+          created_by: createdBy,
+          // keep stable ordering across all inserts too
+          _global_order: globalOrder,
+        });
+        local += 1;
+        globalOrder += 1;
+      }
+    }
+    // Strip helper field
+    return out.map(({ _global_order, ...row }) => row);
+  };
+
   const { count: existingCount, error: exErr } = await supabase
     .from('crm_tasks')
     .select('id', { count: 'exact', head: true })
@@ -158,7 +200,8 @@ async function applyProductionTemplateToFulfillmentLead({
     const mustCompanyId = dealCompanyId || leadRow?.company_id || null;
     if (!mustCompanyId) return { created: 0, reason: 'missing_deal_company' };
 
-    // Strict mode: chỉ lấy template đúng company_id của deal (không global fallback).
+    // Strict mode: ưu tiên template đúng company_id của deal, nếu không có thì fallback global,
+    // và cuối cùng emergency seed để "bằng bất cứ giá nào" vẫn có sx_* tasks.
     let { data: templates, error: tplErr } = await supabase
       .from('workshop_task_templates')
       .select('id, name, is_default, order_index, company_id')
@@ -177,7 +220,23 @@ async function applyProductionTemplateToFulfillmentLead({
       tplErr = r2.error;
     }
     if (tplErr) throw tplErr;
-    if (!templates?.length) return { created: 0, reason: 'no_production_templates_for_deal_company', company_id: mustCompanyId };
+    if (!templates?.length) {
+      const g = await supabase
+        .from('workshop_task_templates')
+        .select('id, name, is_default, order_index, company_id')
+        .eq('workshop_area', 'production')
+        .eq('is_active', true)
+        .is('company_id', null)
+        .order('order_index', { ascending: true });
+      if (g.error) throw g.error;
+      templates = g.data || [];
+    }
+    if (!templates?.length) {
+      const emergency = buildEmergencySxInserts();
+      const { error: insErr } = await supabase.from('crm_tasks').insert(emergency);
+      if (insErr) throw insErr;
+      return { created: emergency.length, reason: 'emergency_seed', template_count: 0, template_names: [], company_id: mustCompanyId };
+    }
 
     const templateIds = templates.map((t) => t.id).filter(Boolean);
     const { data: items, error: itemErr } = await supabase
@@ -187,7 +246,12 @@ async function applyProductionTemplateToFulfillmentLead({
       .order('template_id')
       .order('order_index');
     if (itemErr) throw itemErr;
-    if (!items?.length) return { created: 0, reason: 'template_items_empty', company_id: mustCompanyId };
+    if (!items?.length) {
+      const emergency = buildEmergencySxInserts();
+      const { error: insErr } = await supabase.from('crm_tasks').insert(emergency);
+      if (insErr) throw insErr;
+      return { created: emergency.length, reason: 'emergency_seed', template_count: templates.length, template_names: templates.map((t) => t.name).filter(Boolean), company_id: mustCompanyId };
+    }
 
     const normalizeText = (raw) => String(raw || '')
       .toLowerCase()
@@ -318,7 +382,12 @@ async function applyProductionTemplateToFulfillmentLead({
     tplErr = g.error;
   }
   if (tplErr) throw tplErr;
-  if (!templates?.length) return { created: 0, reason: 'no_production_templates_for_company' };
+  if (!templates?.length) {
+    const emergency = buildEmergencySxInserts();
+    const { error: insErr } = await supabase.from('crm_tasks').insert(emergency);
+    if (insErr) throw insErr;
+    return { created: emergency.length, reason: 'emergency_seed', template_count: 0, template_names: [], company_id: targetCompanyId || null };
+  }
 
   const templateIds = templates.map((t) => t.id).filter(Boolean);
   const { data: items, error: itemErr } = await supabase
@@ -328,7 +397,12 @@ async function applyProductionTemplateToFulfillmentLead({
     .order('template_id')
     .order('order_index');
   if (itemErr) throw itemErr;
-  if (!items?.length) return { created: 0, reason: 'template_items_empty' };
+  if (!items?.length) {
+    const emergency = buildEmergencySxInserts();
+    const { error: insErr } = await supabase.from('crm_tasks').insert(emergency);
+    if (insErr) throw insErr;
+    return { created: emergency.length, reason: 'emergency_seed', template_count: templates.length, template_names: templates.map((t) => t.name).filter(Boolean), company_id: targetCompanyId || null };
+  }
 
   const normalizeText = (raw) => String(raw || '')
     .toLowerCase()
