@@ -491,149 +491,6 @@ async function createNotification(req, userId, type, title, message, entityType,
 
 // ─── autoGenCrmTasks + FALLBACK_*_TASKS: imported from helpers/autoGenCrmTasks.js ──
 
-/**
- * Sau khi Deal được auto-gen tasks, gom toàn bộ tasks đó thành "Đơn 1":
- * - Tạo deal con (fulfillment) = nơi chứa bộ nhiệm vụ theo đơn
- * - Tạo 1 bản ghi orders (CRM) gắn lead_id = deal gốc, fulfillment_lead_id = deal con
- * - Chuyển toàn bộ crm_tasks + crm_task_attachments từ deal gốc sang deal con
- *
- * Chỉ gọi cho Deal mới / Lead vừa chuyển Deal — không dùng cho Lead pipeline (task ở lại trên lead).
- */
-async function bootstrapOrderOneFromGeneratedTasks(parentLeadId, userId, label = 'Đơn 1') {
-  if (!parentLeadId || !userId) return { ok: false, reason: 'missing_params' };
-
-  // Nếu đã có Đơn 1 thì bỏ qua
-  try {
-    const { data: existingOrder } = await supabase
-      .from('orders')
-      .select('id, code, fulfillment_lead_id')
-      .eq('lead_id', parentLeadId)
-      .eq('display_label', label)
-      .limit(1)
-      .maybeSingle();
-    if (existingOrder?.id) return { ok: true, skipped: true, order: existingOrder };
-  } catch (_) {}
-
-  const { data: parent } = await supabase
-    .from('crm_leads')
-    .select('id, type, code, title, customer_id, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, estimated_value, project_id')
-    .eq('id', parentLeadId)
-    .single();
-  if (!parent?.id) return { ok: false, reason: 'parent_not_found' };
-
-  const orderTitle =
-    parent?.title && String(parent.title).trim()
-      ? `${String(parent.title).trim()} — ${label}`
-      : parent?.code
-        ? `${String(parent.code).trim()} — ${label}`
-        : label;
-
-  // Chỉ gom khi thực sự có tasks ở parent (đúng "gen đầu tiên")
-  const { count: taskCount } = await supabase
-    .from('crm_tasks')
-    .select('id', { count: 'exact', head: true })
-    .eq('lead_id', parentLeadId);
-  if (!taskCount) return { ok: false, reason: 'no_tasks_to_move' };
-
-  // Tạo deal con cho đơn 1
-  let childLeadId = null;
-  try {
-    childLeadId = await createFulfillmentChildDeal({
-      parentDeal: parent,
-      masterProjectId: parent.project_id || null,
-      displayLabel: orderTitle,
-      userId,
-      estimatedValue: parent.estimated_value || 0,
-    });
-  } catch (e) {
-    console.warn('[bootstrapOrderOne] create child deal:', e.message);
-    return { ok: false, reason: e.message || 'create_child_failed' };
-  }
-
-  // Chuyển tasks + attachments sang deal con
-  try {
-    await supabase.from('crm_tasks').update({ lead_id: childLeadId }).eq('lead_id', parentLeadId);
-  } catch (e) {
-    console.warn('[bootstrapOrderOne] move crm_tasks:', e.message);
-  }
-  try {
-    await supabase.from('crm_task_attachments').update({ lead_id: childLeadId }).eq('lead_id', parentLeadId);
-  } catch (e) {
-    console.warn('[bootstrapOrderOne] move crm_task_attachments:', e.message);
-  }
-
-  // Lấy thông tin khách để ghi nhanh lên orders
-  let cust = null;
-  try {
-    if (parent.customer_id) {
-      const { data: c } = await supabase.from('customers').select('id, full_name, phone, address').eq('id', parent.customer_id).maybeSingle();
-      cust = c || null;
-    }
-  } catch (_) {}
-
-  try {
-    const r = await dedupeCrmTasksByKey(childLeadId);
-    if (r?.deleted) console.log(`[bootstrapOrderOne] dedupe: removed ${r.deleted} duplicated tasks`);
-  } catch (e) {
-    console.warn('[bootstrapOrderOne] dedupe:', e.message);
-  }
-
-  // Tạo order CRM "Đơn 1"
-  try {
-    const code = await nextCode('DH');
-    const { data: order, error } = await supabase.from('orders').insert({
-      code,
-      title: orderTitle,
-      display_label: label,
-      status: 'draft',
-      project_id: parent.project_id || null,
-      lead_id: parentLeadId,
-      fulfillment_lead_id: childLeadId,
-      company_id: parent.company_id || null,
-      customer_id: parent.customer_id || null,
-      customer_name: cust?.full_name || null,
-      customer_phone: cust?.phone || null,
-      customer_address: cust?.address || null,
-      subtotal: 0,
-      total: 0,
-      created_by: userId,
-    }).select('id, code, display_label, fulfillment_lead_id').single();
-    if (error) throw error;
-
-    // Mark parent lead/deal: dùng chế độ tasks theo đơn (chỉ áp dụng lead/deal mới)
-    try {
-      await supabase.from('crm_leads').update({ use_order_tasks: true, updated_at: new Date().toISOString() }).eq('id', parentLeadId);
-    } catch (_) {}
-
-    return { ok: true, created: true, order };
-  } catch (e) {
-    console.warn('[bootstrapOrderOne] create order:', e.message);
-    return { ok: true, created: true, order: null, warning: e.message };
-  }
-}
-
-/** Xóa các crm_tasks trùng nhau theo (stage_slug, order_index, title) — giữ task cũ nhất. */
-async function dedupeCrmTasksByKey(leadId) {
-  if (!leadId) return { deleted: 0 };
-  const { data: rows, error } = await supabase
-    .from('crm_tasks')
-    .select('id, title, stage_slug, order_index, created_at')
-    .eq('lead_id', leadId)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
-  const seen = new Set();
-  const dupIds = [];
-  for (const r of rows || []) {
-    const key = `${String(r.stage_slug || '')}||${String(r.order_index ?? '')}||${String(r.title || '').trim().toLowerCase()}`;
-    if (seen.has(key)) dupIds.push(r.id);
-    else seen.add(key);
-  }
-  if (!dupIds.length) return { deleted: 0 };
-  // attachments of duplicated tasks will be cascade-deleted by FK task_id ON DELETE CASCADE
-  await supabase.from('crm_tasks').delete().in('id', dupIds);
-  return { deleted: dupIds.length };
-}
-
 async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata) {
   return await notifyMultipleShared(req, userIds, type, title, message, entityType, entityId, metadata || null);
 }
@@ -3087,8 +2944,7 @@ r.post('/leads', async (req, res) => {
       }
     } catch (autoErr) { console.error('Auto-create tasks error:', autoErr.message); }
 
-    // Lead: giữ toàn bộ nhiệm vụ trên chính lead (mẫu crm_task_templates + fallback) — không tạo Đơn 1 / deal con.
-    // Gom «Đơn 1» chỉ áp dụng khi tạo Deal (POST /deals) hoặc chuyển Lead → Deal.
+    // Lead: toàn bộ nhiệm vụ trên chính lead (không Đơn 1 / deal con).
 
     res.status(201).json(data);
   } catch (e) {
@@ -3206,9 +3062,7 @@ r.post('/deals', async (req, res) => {
       await autoGenCrmTasks(data.id, 'deal', req.user.userId);
     } catch (autoErr) { console.error('Auto-create tasks on deal create error:', autoErr.message); }
 
-    try {
-      await bootstrapOrderOneFromGeneratedTasks(data.id, req.user.userId, 'Đơn 1');
-    } catch (e) { console.warn('[deal_created] bootstrap Đơn 1:', e.message); }
+    // Một deal duy nhất; task CRM trên deal đó — không tự tạo đơn «Đơn 1» hay deal con.
 
     res.status(201).json(data);
   } catch (e) {
@@ -4039,9 +3893,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       }
     } catch (autoErr) { console.error('Auto-create tasks on convert-to-deal error:', autoErr.message); }
 
-    try {
-      await bootstrapOrderOneFromGeneratedTasks(req.params.id, req.user.userId, 'Đơn 1');
-    } catch (e) { console.warn('[convert-to-deal] bootstrap Đơn 1:', e.message); }
+    // Không bootstrap Đơn 1 — chuyển Lead→Deal giữ một deal duy nhất, task trên deal đó.
 
     res.status(200).json({
       lead: updatedLead,
@@ -7347,32 +7199,79 @@ r.get('/invoices/:id/pdf', async (req, res) => {
 // CRM TASKS — Công việc cho Lead/Deal
 // ═══════════════════════════════════════════════════════════════════════════
 
+const CRM_TASK_SELECT =
+  '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
+
+/** Deal gốc use_order_tasks: ghi nhiệm vụ mới vào deal fulfillment của đơn đầu tiên (khớp tab chi tiết deal). */
+async function resolveCrmTaskWriteLeadId(routeLeadId) {
+  const { data: leadRow } = await supabase
+    .from('crm_leads')
+    .select('use_order_tasks, parent_lead_id')
+    .eq('id', routeLeadId)
+    .maybeSingle();
+  if (!leadRow?.use_order_tasks || leadRow.parent_lead_id) return routeLeadId;
+  const { data: ords } = await supabase
+    .from('orders')
+    .select('fulfillment_lead_id')
+    .eq('lead_id', routeLeadId)
+    .not('fulfillment_lead_id', 'is', null)
+    .order('created_at', { ascending: true })
+    .limit(1);
+  const fid = ords?.[0]?.fulfillment_lead_id;
+  return fid ? String(fid) : routeLeadId;
+}
+
 // GET tasks for a lead/deal
 r.get('/leads/:id/tasks', async (req, res) => {
   try {
     const taskScope = String(req.query?.task_scope || 'all').toLowerCase();
     let { data, error } = await supabase.from('crm_tasks')
-      .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
+      .select(CRM_TASK_SELECT)
       .eq('lead_id', req.params.id)
       .order('stage_slug').order('order_index');
     if (error) throw error;
 
-    // Auto-gen nếu chưa có tasks (safeguard)
+    // Auto-gen hoặc gộp nhiệm vụ từ deal con (đơn hàng) khi deal gốc use_order_tasks
     if (!data?.length) {
       const { data: lead } = await supabase.from('crm_leads')
         .select('type, created_by, parent_lead_id, use_order_tasks')
         .eq('id', req.params.id)
-        .single();
-      if (lead) {
-        // Lead/Deal mới theo mô hình "đơn 1,2..." → deal gốc không auto-gen tasks (tránh hiện cả trên và dưới)
-        if (lead.use_order_tasks && !lead.parent_lead_id) {
-          return res.json([]);
+        .maybeSingle();
+      if (lead?.use_order_tasks && !lead.parent_lead_id) {
+        const { data: orderRows, error: oErr } = await supabase
+          .from('orders')
+          .select('id, display_label, code, fulfillment_lead_id')
+          .eq('lead_id', req.params.id);
+        if (oErr) throw oErr;
+        const fidToOrder = new Map();
+        (orderRows || []).forEach((o) => {
+          if (o.fulfillment_lead_id && !fidToOrder.has(o.fulfillment_lead_id)) {
+            fidToOrder.set(o.fulfillment_lead_id, o);
+          }
+        });
+        const childIds = [...fidToOrder.keys()];
+        if (childIds.length) {
+          const { data: merged, error: mErr } = await supabase.from('crm_tasks')
+            .select(CRM_TASK_SELECT)
+            .in('lead_id', childIds)
+            .order('stage_slug')
+            .order('order_index');
+          if (mErr) throw mErr;
+          data = (merged || []).map((t) => {
+            const ord = fidToOrder.get(t.lead_id);
+            return {
+              ...t,
+              order_id: ord?.id || null,
+              order_label: ord?.display_label || ord?.code || null,
+            };
+          });
         }
+      } else if (lead) {
         const type = lead.type || 'lead';
         const created = await autoGenCrmTasks(req.params.id, type, lead.created_by || req.user.userId);
         if (created > 0) {
           const { data: newData } = await supabase.from('crm_tasks')
-            .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
+            .select(CRM_TASK_SELECT)
             .eq('lead_id', req.params.id)
             .order('stage_slug').order('order_index');
           data = newData || [];
@@ -7419,8 +7318,9 @@ r.get('/leads/:id/tasks', async (req, res) => {
 r.post('/leads/:id/tasks', async (req, res) => {
   try {
     const b = req.body;
+    const targetLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
     const { data, error } = await supabase.from('crm_tasks').insert({
-      lead_id: req.params.id,
+      lead_id: targetLeadId,
       title: b.title,
       description: b.description || null,
       status: b.status || 'pending',
@@ -7461,8 +7361,9 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       .select('stage_slug').eq('id', template_id).single();
 
     const now = new Date();
+    const targetLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
     const inserts = items.map(item => ({
-      lead_id: req.params.id,
+      lead_id: targetLeadId,
       title: item.title,
       description: item.description || null,
       priority: item.priority || 'medium',

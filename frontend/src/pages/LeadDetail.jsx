@@ -7,7 +7,6 @@ import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
-import LeadDealWorkTab from '../components/LeadDealWorkTab';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import EmployeePicker from '../components/EmployeePicker';
@@ -68,8 +67,6 @@ export default function LeadDetail() {
   const [activities, setActivities] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [taskDocuments, setTaskDocuments] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [ordersLoading, setOrdersLoading] = useState(false);
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   const [headerLeadTypes, setHeaderLeadTypes] = useState([]);
@@ -112,6 +109,8 @@ export default function LeadDetail() {
   const [showDeleteLeadModal, setShowDeleteLeadModal] = useState(false);
   const [blockPhoneOnDeleteLead, setBlockPhoneOnDeleteLead] = useState(true);
   const [deletingLead, setDeletingLead] = useState(false);
+  /** Tăng khi cần tab Công việc refetch (ví dụ sau kéo giai đoạn) mà không «tải lại» cả trang. */
+  const [crmTasksRefreshKey, setCrmTasksRefreshKey] = useState(0);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -136,7 +135,7 @@ export default function LeadDetail() {
       setAutoCreateResult(data);
       setAutoCreateStatus('success');
       projectCompanyPickRef.current = false;
-      load();
+      load({ silent: true });
     } catch (e) {
       const msg = e.response?.data?.error || 'Lỗi tạo dự án';
       if (e.response?.data?.project_id) {
@@ -167,6 +166,9 @@ export default function LeadDetail() {
   }, [isAdminUser]);
 
   useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    setCrmTasksRefreshKey(0);
+  }, [id]);
 
   // Lead/Deal types (phân loại) cho header: load theo company của lead (fallback company user)
   useEffect(() => {
@@ -226,8 +228,9 @@ export default function LeadDetail() {
     setSearchParams(next, { replace: true });
   }, [id, searchParams, setSearchParams, lead]);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (opts = {}) => {
+    const silent = !!opts.silent;
+    if (!silent) setLoading(true);
     try {
       const [leadRes, actRes, docRes, flowsRes, usersRes, taskDocRes] = await Promise.all([
         api.get(`/crm/leads/${id}/detail`).then(r => r.data),
@@ -248,17 +251,6 @@ export default function LeadDetail() {
         api.get('/crm/pipeline-stages', { params: { type: 'lead', ...stagesParamsBase } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal', ...stagesParamsBase } }).catch(() => ({ data: [] })),
       ]);
-      // Orders for Deal (orders.lead_id = deal.id)
-      setOrdersLoading(true);
-      if (leadRes?.type === 'deal') {
-        api.get('/crm/orders', { params: { lead_id: leadRes.id, limit: 200 } })
-          .then((r) => setOrders(Array.isArray(r.data) ? r.data : []))
-          .catch(() => setOrders([]))
-          .finally(() => setOrdersLoading(false));
-      } else {
-        setOrders([]);
-        setOrdersLoading(false);
-      }
       setLead(leadRes);
       setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);
@@ -289,20 +281,10 @@ export default function LeadDetail() {
         }
       }
     } catch (e) { console.error(e); }
-    setLoading(false);
-  };
-
-  const reloadOrders = useCallback(async () => {
-    if (!id) return;
-    setOrdersLoading(true);
-    try {
-      const { data } = await api.get('/crm/orders', { params: { lead_id: id, limit: 200 } });
-      setOrders(Array.isArray(data) ? data : []);
-    } catch {
-      setOrders([]);
+    finally {
+      setLoading(false);
     }
-    setOrdersLoading(false);
-  }, [id, isAdminUser, productionCompaniesSx]);
+  };
 
   /** Sau khi ghi chú/đính kèm trên nhiệm vụ CRM — đồng bộ ngay tab Tài liệu (gộp deal gốc + deal đơn fulfillment nếu khác). */
   const refreshTaskSyncedDocuments = useCallback(async (payload) => {
@@ -387,7 +369,7 @@ export default function LeadDetail() {
         ? `${lead.type === 'deal' ? '🎯 Deal' : '💼 Lead'} ${[lead.code, lead.title].filter(Boolean).join(' — ')}`
         : '',
       contextBadge: lead?.code || '',
-      onPosted: () => loadRef.current?.(),
+      onPosted: () => loadRef.current?.({ silent: true }),
     });
   }, [loading, id, lead, noteActivities, setCrmNotesAnchor]);
 
@@ -413,7 +395,7 @@ export default function LeadDetail() {
       }
       if (sendRes?.ok && !sendRes?.skipped) {
         alert('Đã gửi tin Zalo OA tới khách hàng.');
-        load();
+        load({ silent: true });
       } else if (sendRes?.skipped && sendRes?.reason && sendRes?.reason !== 'already_sent') {
         alert(sendRes.message || sendRes.reason || 'Đã bỏ qua gửi Zalo');
       } else if (!sendRes?.ok) {
@@ -441,13 +423,14 @@ export default function LeadDetail() {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId, ...extraData });
       if (data?.requires_conversion) setShowConvertModal(true);
       if (data?.deal_won) autoCreateProject(id, null);
-      await loadRef.current?.();
+      await loadRef.current?.({ silent: true });
+      setCrmTasksRefreshKey((k) => k + 1);
       return data;
     } catch (e) {
       if (e.response?.data?.requires_conversion) {
         setShowConvertModal(true);
       } else {
-        await loadRef.current?.();
+        await loadRef.current?.({ silent: true });
         alert(e.response?.data?.error || 'Lỗi');
       }
       return null;
@@ -1050,7 +1033,7 @@ export default function LeadDetail() {
                 </div>
               </div>
             ) : (
-              <CustomerCreateForm leadId={lead?.id} onCreated={(c) => { setCustomer(c); load(); }} />
+              <CustomerCreateForm leadId={lead?.id} onCreated={(c) => { setCustomer(c); load({ silent: true }); }} />
             )}
           </div>
 
@@ -1058,7 +1041,7 @@ export default function LeadDetail() {
           <LeadInfoPanel
             lead={lead}
             allUsers={allUsers}
-            onUpdate={load}
+            onUpdate={() => load({ silent: true })}
             currentUser={user}
             canAssignOwner={isAdminUser}
             productionCompaniesSx={productionCompaniesSx}
@@ -1093,11 +1076,9 @@ export default function LeadDetail() {
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
-                title={lead?.type === 'deal' ? 'Đơn hàng và nhiệm vụ theo từng đơn (Sản xuất)' : 'Công việc theo nhiệm vụ'}
+                title="Nhiệm vụ CRM (pipeline deal / lead)"
               >
-                {lead?.type === 'deal'
-                  ? `📦 Đơn hàng${orders.length ? ` (${orders.length})` : ''}`
-                  : '✅ Công việc'}
+                ✅ Công việc
               </button>
               <button
                 onClick={() => setActiveTab('documents')}
@@ -1210,28 +1191,13 @@ export default function LeadDetail() {
             {/* Tab Content */}
             <div className="p-5">
               {activeTab === 'tasks' ? (
-                lead?.type === 'deal' ? (
-                  <LeadDealWorkTab
-                    dealLeadId={id}
-                    dealCompanyId={lead?.company_id || null}
-                    isAdminUser={isAdminUser}
-                    projectId={lead?.project_id || null}
-                    useOrderTasks
-                    users={allUsers}
-                    orders={orders}
-                    ordersLoading={ordersLoading}
-                    onOrdersRefresh={reloadOrders}
-                    onProjectRefresh={load}
-                    onArtifactsSynced={refreshTaskSyncedDocuments}
-                  />
-                ) : (
-                  <CRMTasksTab
-                    leadId={id}
-                    leadType={lead?.type || 'lead'}
-                    users={allUsers}
-                    onArtifactsSynced={refreshTaskSyncedDocuments}
-                  />
-                )
+                <CRMTasksTab
+                  leadId={id}
+                  leadType={lead?.type || 'lead'}
+                  users={allUsers}
+                  onArtifactsSynced={refreshTaskSyncedDocuments}
+                  refreshKey={crmTasksRefreshKey}
+                />
               ) : activeTab === 'documents' ? (
                 <>
                   <div className="flex items-center justify-between mb-4">
@@ -1431,7 +1397,7 @@ export default function LeadDetail() {
                   variant="embedded"
                   leadId={id}
                   notes={noteActivities}
-                  onPosted={load}
+                  onPosted={() => load({ silent: true })}
                   currentUserId={user?.id || user?.userId}
                   canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
                   contextLine={
@@ -1456,7 +1422,7 @@ export default function LeadDetail() {
                   <ProjectApprovalsTab
                     projectId={lead.project_id}
                     project={lead}
-                    onUpdated={load}
+                    onUpdated={() => load({ silent: true })}
                   />
                 ) : (
                   <div className="text-center py-10 text-gray-400 space-y-3">
@@ -1480,7 +1446,7 @@ export default function LeadDetail() {
       </div>
 
       {/* Modals */}
-      {showAddActivity && <AddActivityModal leadId={id} onClose={() => setShowAddActivity(false)} onSave={() => { setShowAddActivity(false); load(); }} />}
+      {showAddActivity && <AddActivityModal leadId={id} onClose={() => setShowAddActivity(false)} onSave={() => { setShowAddActivity(false); load({ silent: true }); }} />}
       {showAddDoc && (
         <AddDocumentModal
           onClose={() => setShowAddDoc(false)}
@@ -1632,7 +1598,7 @@ export default function LeadDetail() {
           dealId={id}
           onImportDone={(data) => {
             setShowExcelImport(false);
-            load();
+            load({ silent: true });
             if (data?.id) navigate(`/crm/quotations/${data.id}`);
           }}
           onClose={() => setShowExcelImport(false)}

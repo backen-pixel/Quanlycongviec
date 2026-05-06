@@ -65,14 +65,24 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   const isProductionScope = taskScope === 'production';
 
-  const notifyArtifactsSynced = () => {
+  /** Task có thể thuộc deal con (fulfillment) khi deal gốc dùng đơn — API đính kèm/ghi chú cần đúng lead_id */
+  const apiLeadIdForTaskId = (taskId) => {
+    const t = tasks.find((x) => x.id === taskId);
+    return (t?.lead_id && String(t.lead_id)) || leadId;
+  };
+
+  const notifyArtifactsSynced = (optTaskId) => {
     try {
-      onArtifactsSynced?.({ artifactLeadId: leadId });
+      const lid = optTaskId ? apiLeadIdForTaskId(optTaskId) : leadId;
+      onArtifactsSynced?.({ artifactLeadId: lid });
     } catch (_) { /* ignore */ }
   };
 
-  const loadTasks = async () => {
-    setLoading(true);
+  const prevLeadIdForTasksRef = useRef(null);
+
+  const loadTasks = async (opts = {}) => {
+    const silent = !!opts.silent;
+    if (!silent) setLoading(true);
     try {
       const [tasksRes, tplRes] = await Promise.all([
         api.get(`/crm/leads/${leadId}/tasks`, { params: { task_scope: taskScope } }),
@@ -85,9 +95,17 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       (tasksRes.data || []).forEach(t => { if (t.stage_slug) stages[t.stage_slug] = true; });
       setExpandedStages(stages);
     } catch (e) { console.error(e); }
-    setLoading(false);
+    finally {
+      setLoading(false);
+    }
   };
-  useEffect(() => { loadTasks(); }, [leadId, taskScope, isProductionScope, refreshKey]);
+  useEffect(() => {
+    const first = prevLeadIdForTasksRef.current === null;
+    const leadSwitched = !first && prevLeadIdForTasksRef.current !== leadId;
+    prevLeadIdForTasksRef.current = leadId;
+    const silent = !first && !leadSwitched && refreshKey > 0;
+    loadTasks({ silent });
+  }, [leadId, taskScope, isProductionScope, refreshKey]);
 
   const addTask = async (stageSlug) => {
     if (!newTask.title.trim()) return;
@@ -170,7 +188,8 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     const prevTasks = tasks;
     setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...updates } : t)));
     try {
-      const { data } = await api.put(`/crm/leads/${leadId}/tasks/${taskId}`, updates);
+      const lid = apiLeadIdForTaskId(taskId);
+      const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, updates);
       setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
     } catch (e) {
       setTasks(prevTasks);
@@ -188,7 +207,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     const prevTasks = tasks;
     setTasks((p) => p.filter((t) => t.id !== taskId));
     try {
-      await api.delete(`/crm/leads/${leadId}/tasks/${taskId}`);
+      await api.delete(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}`);
     } catch (e) {
       setTasks(prevTasks);
       alert('Lỗi');
@@ -212,7 +231,8 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     if (!editForm.title.trim()) return alert('Nhập tên nhiệm vụ');
     const taskId = editingTask.id;
     try {
-      const { data } = await api.put(`/crm/leads/${leadId}/tasks/${taskId}`, {
+      const lid = apiLeadIdForTaskId(taskId);
+      const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, {
         title: editForm.title,
         description: editForm.description,
         priority: editForm.priority,
@@ -228,7 +248,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
 
   const toggleShare = async (taskId) => {
     try {
-      const { data } = await api.put(`/crm/leads/${leadId}/tasks/${taskId}/toggle-share`);
+      const { data } = await api.put(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/toggle-share`);
       setTasks(prev => prev.map(t => t.id === taskId ? { ...t, shared_to_project: data.shared_to_project } : t));
     } catch (e) { alert('Lỗi kích hoạt chia sẻ'); }
   };
@@ -318,9 +338,11 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
 
   if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
-  const loadAttachments = async (taskId) => {
+  const loadAttachments = async (task) => {
+    const taskId = task.id;
     try {
-      const { data } = await api.get(`/crm/leads/${leadId}/tasks/${taskId}/attachments`);
+      const lid = apiLeadIdForTaskId(taskId);
+      const { data } = await api.get(`/crm/leads/${lid}/tasks/${taskId}/attachments`);
       setTaskAttachments(p => ({ ...p, [taskId]: data || [] }));
     } catch (e) { console.error(e); }
   };
@@ -332,17 +354,17 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     } else {
       setExpandedTask(taskId);
       setTaskNoteText((p) => ({ ...p, [taskId]: task.notes || '' }));
-      loadAttachments(taskId);
+      loadAttachments(task);
     }
   };
 
   const saveTaskNotes = async (taskId) => {
     setSavingNote(taskId);
     try {
-      await api.put(`/crm/leads/${leadId}/tasks/${taskId}/notes`, { notes: taskNoteText[taskId] || '' });
+      await api.put(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/notes`, { notes: taskNoteText[taskId] || '' });
       // Update local tasks state
       setTasks(prev => prev.map(t => t.id === taskId ? { ...t, notes: taskNoteText[taskId] } : t));
-      notifyArtifactsSynced();
+      notifyArtifactsSynced(taskId);
       setSavingNote('saved-' + taskId);
       setTimeout(() => setSavingNote(null), 1500);
     } catch (e) {
@@ -439,10 +461,10 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           file_size: up.file_size,
           mime_type: up.mime_type,
         }));
-        await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments/bulk`, { items });
-        loadAttachments(taskId);
+        await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, { items });
+        loadAttachments({ id: taskId });
         loadTasks(); // Refresh counts
-        notifyArtifactsSynced();
+        notifyArtifactsSynced(taskId);
       } catch (err) {
         setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
         alert(err.response?.data?.error || err.message || 'Upload lỗi');
@@ -455,7 +477,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   const addAttachmentNote = async (taskId) => {
     if (!attNoteText.trim()) return alert('Nhập nội dung ghi chú');
     try {
-      await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
+      await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments`, {
         name: attNoteName.trim() || 'Ghi chú',
         doc_type: 'task_note',
         notes: attNoteText,
@@ -463,32 +485,34 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       setAddingAttNote(null);
       setAttNoteText('');
       setAttNoteName('');
-      loadAttachments(taskId);
-      notifyArtifactsSynced();
+      loadAttachments({ id: taskId });
+      notifyArtifactsSynced(taskId);
     } catch (e) { alert(e.response?.data?.error || 'Lỗi thêm ghi chú'); }
   };
 
   const deleteAttachment = async (taskId, attId) => {
     if (!confirm('Xóa đính kèm này?')) return;
     try {
-      await api.delete(`/crm/leads/${leadId}/tasks/${taskId}/attachments/${attId}`);
-      loadAttachments(taskId);
-      notifyArtifactsSynced();
+      await api.delete(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/${attId}`);
+      loadAttachments({ id: taskId });
+      notifyArtifactsSynced(taskId);
     } catch (e) { alert('Lỗi'); }
   };
 
   const toggleShareAttachment = async (taskId, attId) => {
     try {
-      const { data } = await api.put(`/crm/leads/${leadId}/tasks/${taskId}/attachments/${attId}/toggle-share`);
+      const { data } = await api.put(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/${attId}/toggle-share`);
       setTaskAttachments(p => ({
         ...p,
         [taskId]: (p[taskId] || []).map(a => a.id === attId ? { ...a, shared_to_project: data.shared_to_project } : a)
       }));
-      notifyArtifactsSynced();
+      notifyArtifactsSynced(taskId);
     } catch (e) { alert('Lỗi chia sẻ'); }
   };
 
   const ATT_ICONS = { image: ImageIcon, video: Film, drawing: FileText, task_note: MessageSquare, other: FileText };
+
+  const excelQuotationLeadId = excelImportTaskId ? apiLeadIdForTaskId(excelImportTaskId) : leadId;
 
   // TaskRow renders inline — see renderTaskRow below
   const renderTaskRow = (task) => {
@@ -514,15 +538,22 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
             onClick={() => toggleExpand(task)}
             title="Click: ghi chú & đính kèm · Double-click: chỉnh sửa nhiệm vụ"
           >
-            <p
-              className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                openEditModal(task);
-              }}
-            >
-              {task.title}
-            </p>
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              <p
+                className={`text-sm min-w-0 ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  openEditModal(task);
+                }}
+              >
+                {task.title}
+              </p>
+              {task.order_label && (
+                <span className="shrink-0 text-[10px] font-medium text-amber-900 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded">
+                  Đơn: {task.order_label}
+                </span>
+              )}
+            </div>
             {!isExpanded && hasNotes && (
               <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1 italic" title={task.notes}>
                 💬 {task.notes.slice(0, 80)}{task.notes.length > 80 ? '...' : ''}
@@ -1057,13 +1088,13 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       {/* Excel Quotation Import Modal */}
       {excelImportTaskId && (
         <ExcelQuotationImport
-          dealId={leadId}
-          leadId={leadId}
+          dealId={excelQuotationLeadId}
+          leadId={excelQuotationLeadId}
           taskId={excelImportTaskId}
           onImportDone={(data) => {
             setExcelImportTaskId(null);
             loadTasks();
-            notifyArtifactsSynced();
+            notifyArtifactsSynced(excelImportTaskId);
             if (data?.draft_only) {
               setImportToast({
                 message: 'Đã mở trang tạo báo giá với dữ liệu Excel — chỉnh sửa và bấm Lưu để tạo báo giá & hoàn thành nhiệm vụ.',
