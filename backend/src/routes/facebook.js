@@ -1523,32 +1523,47 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
 
   try {
 
-  // ── ANTI-DUPLICATE: 4 tầng kiểm tra ──
+  // Công ty của page đích — dùng cho mọi bước «chống trùng» (không gộp lead giữa 2 công ty / 2 page)
+  let companyId = null;
+  try {
+    if (page.default_company_id) companyId = page.default_company_id;
+  } catch (e) { /* column may not exist */ }
+  if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
+
+  // ── ANTI-DUPLICATE: chỉ gộp trong phạm vi cùng page + cùng công ty ──
   const { data: freshContact } = await supabase.from('facebook_contacts')
-    .select('lead_id, customer_id, psid, phone').eq('id', contact.id).single();
-  
+    .select('lead_id, customer_id, psid, phone, page_id').eq('id', contact.id).single();
+
   // 1. Check contact đã có lead_id
   if (freshContact?.lead_id) {
     return { id: freshContact.lead_id };
   }
-  
-  // 2. Check trùng theo customer_id
-  if (freshContact?.customer_id) {
-     const { data: existing } = await supabase.from('crm_leads')
-       .select('id').eq('customer_id', freshContact.customer_id).eq('type', 'lead').limit(1);
-     if (existing?.length > 0) {
-       console.log(`[FB] ⚠️  Đã có lead cho customer ${freshContact.customer_id}, sync lại lead_id.`);
-       await supabase.from('facebook_contacts').update({ lead_id: existing[0].id }).eq('id', contact.id);
-       return { id: existing[0].id };
-     }
+
+  // 2. Đã gán customer: chỉ tái dùng lead nếu lead thuộc đúng công ty của page này (1 KH có thể có nhiều lead theo công ty)
+  if (freshContact?.customer_id && companyId) {
+    const { data: existing } = await supabase.from('crm_leads')
+      .select('id')
+      .eq('customer_id', freshContact.customer_id)
+      .eq('type', 'lead')
+      .eq('company_id', companyId)
+      .limit(1);
+    if (existing?.length > 0) {
+      console.log(`[FB] ⚠️  Đã có lead (cùng công ty ${companyId}) cho customer ${freshContact.customer_id}, sync lead_id.`);
+      await supabase.from('facebook_contacts').update({ lead_id: existing[0].id }).eq('id', contact.id);
+      return { id: existing[0].id };
+    }
   }
 
-  // 3. Check trùng theo PSID (cùng người FB dù khác contact record)
-  if (freshContact?.psid) {
+  // 3. Cùng PSID chỉ tra trong cùng page_id (không gộp khách nhắn page A sang lead của page B)
+  if (freshContact?.psid && freshContact?.page_id) {
     const { data: samePsid } = await supabase.from('facebook_contacts')
-      .select('lead_id').eq('psid', freshContact.psid).not('lead_id', 'is', null).limit(1);
+      .select('lead_id')
+      .eq('psid', freshContact.psid)
+      .eq('page_id', freshContact.page_id)
+      .not('lead_id', 'is', null)
+      .limit(1);
     if (samePsid?.length > 0) {
-      console.log(`[FB] ⚠️  Đã có lead cho PSID ${freshContact.psid}, sync lại.`);
+      console.log(`[FB] ⚠️  Đã có lead cho PSID trên cùng page ${freshContact.page_id}, sync lại.`);
       await supabase.from('facebook_contacts').update({ lead_id: samePsid[0].lead_id }).eq('id', contact.id);
       return { id: samePsid[0].lead_id };
     }
@@ -1580,20 +1595,23 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
       return null;
     }
   }
-  if (phone && String(phone).trim()) {
+  if (phone && String(phone).trim() && companyId) {
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     if (cleanPhone.length >= 9) {
-      // Tìm customer trùng SĐT
       const { data: sameCust } = await supabase.from('customers')
         .select('id').ilike('phone', `%${cleanPhone.slice(-9)}`).limit(1);
       if (sameCust?.length > 0) {
         const { data: existLead } = await supabase.from('crm_leads')
-          .select('id').eq('customer_id', sameCust[0].id).eq('type', 'lead').limit(1);
+          .select('id')
+          .eq('customer_id', sameCust[0].id)
+          .eq('type', 'lead')
+          .eq('company_id', companyId)
+          .limit(1);
         if (existLead?.length > 0) {
-          console.log(`[FB] ⚠️  Đã có lead cho SĐT ${cleanPhone}, gộp vào lead ${existLead[0].id}`);
-          await supabase.from('facebook_contacts').update({ 
-            lead_id: existLead[0].id, 
-            customer_id: sameCust[0].id 
+          console.log(`[FB] ⚠️  Đã có lead cùng công ty cho SĐT ${cleanPhone}, gộp vào lead ${existLead[0].id}`);
+          await supabase.from('facebook_contacts').update({
+            lead_id: existLead[0].id,
+            customer_id: sameCust[0].id,
           }).eq('id', contact.id);
           return { id: existLead[0].id };
         }
@@ -1668,15 +1686,6 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
       .select('id').eq('pipeline_type', 'lead').order('order_index').limit(1).single();
     stageId = defaultStage?.id || null;
   }
-
-  // Default company: từ page config
-  let companyId = null;
-  try {
-    if (page.default_company_id) companyId = page.default_company_id;
-  } catch (e) { /* column may not exist */ }
-
-  // Fallback company từ auto-lead-config (nếu page chưa set)
-  if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
 
   let resolvedRegionId = null;
   if (companyId && page?.default_region_id) {

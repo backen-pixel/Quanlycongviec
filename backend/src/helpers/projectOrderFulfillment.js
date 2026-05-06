@@ -181,7 +181,7 @@ async function applyProductionTemplateToFulfillmentLead({
         .eq('is_active', true);
       if (companyMode === 'scoped' && targetCompanyId) q2 = q2.eq('company_id', targetCompanyId);
       if (companyMode === 'global') q2 = q2.is('company_id', null);
-      return q2;
+      return await q2;
     }
     return r;
   };
