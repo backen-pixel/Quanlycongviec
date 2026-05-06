@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../lib/api';
 import CRMTasksTab from './CRMTasksTab';
-import { Plus, Truck, Loader2, ChevronDown, ChevronRight, Package, Factory } from 'lucide-react';
+import { Plus, Truck, Loader2, ChevronDown, ChevronRight, Package, Factory, Trash2 } from 'lucide-react';
 
 // Internal phase UI removed per request.
 
@@ -23,6 +23,8 @@ export default function ProjectOrdersTab({
   const [selected, setSelected] = useState({});
   const [bulkPushing, setBulkPushing] = useState(false);
   const [generatingForLead, setGeneratingForLead] = useState(null);
+  const [tasksRefreshTick, setTasksRefreshTick] = useState(0);
+  const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [sxModal, setSxModal] = useState({ open: false, mode: 'single', orderId: null });
   const [sxCompanies, setSxCompanies] = useState([]);
   const [sxCompanyId, setSxCompanyId] = useState('');
@@ -177,15 +179,50 @@ export default function ProjectOrdersTab({
     setGeneratingForLead(fulfillmentLeadId);
     setMsg('');
     try {
-      const { data } = await api.post(`/crm/leads/${encodeURIComponent(fulfillmentLeadId)}/tasks/generate-production-template`);
+      const { data } = await api.post(
+        `/crm/leads/${encodeURIComponent(fulfillmentLeadId)}/tasks/generate-production-template`,
+        { force: false },
+      );
       if ((data?.created || 0) > 0) setMsg(`Đã gen ${data.created} nhiệm vụ SX cho đơn.`);
-      else setMsg('Đơn đã có nhiệm vụ SX trước đó.');
+      else if (data?.reason === 'already_has_sx_tasks') {
+        const ok = window.confirm(
+          'Đơn đã có nhiệm vụ SX trước đó.\n\nBạn muốn GEN LẠI không?\nHệ thống sẽ XÓA toàn bộ nhiệm vụ SX (sx_*) của đơn này rồi tạo lại đúng theo bộ mẫu.',
+        );
+        if (ok) {
+          const { data: data2 } = await api.post(
+            `/crm/leads/${encodeURIComponent(fulfillmentLeadId)}/tasks/generate-production-template`,
+            { force: true },
+          );
+          if ((data2?.created || 0) > 0) setMsg(`Đã gen lại ${data2.created} nhiệm vụ SX cho đơn.`);
+          else setMsg('Không gen thêm nhiệm vụ SX.');
+        } else {
+          setMsg('Đơn đã có nhiệm vụ SX trước đó.');
+        }
+      } else setMsg('Không gen thêm nhiệm vụ SX.');
       await load();
       onChanged?.();
+      setTasksRefreshTick((x) => x + 1);
     } catch (e) {
       setMsg(e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ SX');
     }
     setGeneratingForLead(null);
+  };
+
+  const deleteOrder = async (orderId, orderLabel) => {
+    if (!orderId || deletingOrderId) return;
+    const ok = window.confirm(`Xóa đơn "${orderLabel || '—'}"?\n\nSẽ xóa cả deal con + nhiệm vụ của đơn (nếu có).\nKhông thể hoàn tác.`);
+    if (!ok) return;
+    setDeletingOrderId(orderId);
+    setMsg('');
+    try {
+      await api.delete(`/projects/${projectId}/orders/${orderId}`);
+      setMsg('Đã xóa đơn.');
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setMsg(e.response?.data?.error || e.message || 'Lỗi xóa đơn');
+    }
+    setDeletingOrderId(null);
   };
 
   if (loading) {
@@ -412,10 +449,22 @@ export default function ProjectOrdersTab({
                         onClick={() => generateSxTasks(o.fulfillment_lead_id)}
                         disabled={generatingForLead === o.fulfillment_lead_id}
                         className="h-8 px-3 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
-                        title="Gen bộ nhiệm vụ SX nếu chưa có"
+                        title="Gen nhiệm vụ SX cho đơn (stage sx_*) nếu chưa có"
                       >
                         {generatingForLead === o.fulfillment_lead_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                        Gen nhiệm vụ SX
+                        Gen nhiệm vụ đơn (SX)
+                      </button>
+                    )}
+                    {!logisticsView && (
+                      <button
+                        type="button"
+                        onClick={() => deleteOrder(o.id, o.display_label || o.title || o.code)}
+                        disabled={deletingOrderId === o.id || bulkPushing || pushing === o.id}
+                        className="h-8 px-3 rounded-lg text-xs font-semibold bg-white border border-red-200 text-red-700 hover:bg-red-50 hover:border-red-300 disabled:opacity-50 flex items-center gap-1.5"
+                        title="Xóa đơn"
+                      >
+                        {deletingOrderId === o.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        Xóa đơn
                       </button>
                     )}
                   </div>
@@ -430,6 +479,7 @@ export default function ProjectOrdersTab({
                       users={users}
                       taskScope={taskScope}
                       onArtifactsSynced={onTaskArtifactsSynced}
+                      refreshKey={`${o.fulfillment_lead_id}:${tasksRefreshTick}`}
                     />
                   </div>
                 )}

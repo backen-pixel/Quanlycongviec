@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import Modal from '../components/Modal';
 import UserRolesModal from '../components/UserRolesModal';
-import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield } from 'lucide-react';
+import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 
-const ROLES = { admin: 'Admin', manager: 'Quản lý', sales: 'Kinh doanh', designer: 'Thiết kế', production: 'Sản xuất', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
-const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', staff: 'bg-gray-100 text-gray-600' };
+const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales: 'Kinh doanh', designer: 'Thiết kế', production: 'Sản xuất', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
+const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', staff: 'bg-gray-100 text-gray-600' };
 
 export default function UsersPage() {
   const [users, setUsers] = useState([]);
@@ -295,6 +295,8 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [teams, setTeams] = useState([]);
+  /** Khu vực CRM theo công ty (company_regions) */
+  const [companyRegions, setCompanyRegions] = useState([]);
 
   // Selection
   const [selDivision, setSelDivision] = useState('');
@@ -316,16 +318,49 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
         department_id: editUser.department_id || editUser.department?.id || '',
         team_id: editUser.team_id || editUser.team?.id || '',
         password: '',
+        crm_region_ids: [],
       });
       if (editUser.department?.company_id) {
         setSelCompany(editUser.department.company_id);
       }
     } else {
-      setForm({ full_name: '', email: '', phone: '', role: 'staff', position: '', department_id: '', team_id: '', password: '', date_of_birth: '', hire_date: '', address: '', emergency_contact: '', notes: '' });
+      setForm({
+        full_name: '',
+        email: '',
+        phone: '',
+        role: 'staff',
+        position: '',
+        department_id: '',
+        team_id: '',
+        password: '',
+        date_of_birth: '',
+        hire_date: '',
+        address: '',
+        emergency_contact: '',
+        notes: '',
+        crm_region_ids: [],
+      });
       setSelDivision('');
       setSelCompany('');
     }
+    setCompanyRegions([]);
   }, [open, editUser]);
+
+  useEffect(() => {
+    if (!open || !editUser?.id) return;
+    let cancelled = false;
+    api
+      .get(`/users/${editUser.id}`)
+      .then((r) => {
+        if (cancelled) return;
+        const ids = r.data?.user?.crm_region_ids;
+        if (Array.isArray(ids)) setForm((f) => ({ ...f, crm_region_ids: ids }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, editUser?.id]);
 
   /** Sau khi có danh sách công ty — suy ra Khối từ company.division_unit_id (không cần chờ load PB) */
   useEffect(() => {
@@ -352,6 +387,35 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
     }
   }, [selCompany, editUser]);
 
+  useEffect(() => {
+    if (!selCompany) {
+      setCompanyRegions([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get('/crm/company-regions', { params: { company_id: selCompany } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setCompanyRegions(list.filter((x) => x.is_active !== false));
+      })
+      .catch(() => {
+        if (!cancelled) setCompanyRegions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selCompany]);
+
+  useEffect(() => {
+    if (!companyRegions.length) return;
+    setForm((f) => ({
+      ...f,
+      crm_region_ids: (f.crm_region_ids || []).filter((id) => companyRegions.some((r) => String(r.id) === String(id))),
+    }));
+  }, [companyRegions]);
+
   // Load teams when department changes
   useEffect(() => {
     if (form.department_id) {
@@ -369,6 +433,17 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  const toggleCrmRegion = (regionId) => {
+    const id = String(regionId);
+    setForm((f) => {
+      const cur = Array.isArray(f.crm_region_ids) ? [...f.crm_region_ids] : [];
+      const i = cur.findIndex((x) => String(x) === id);
+      if (i >= 0) cur.splice(i, 1);
+      else cur.push(regionId);
+      return { ...f, crm_region_ids: cur };
+    });
+  };
+
   const submit = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
@@ -376,6 +451,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
       if (!payload.password) delete payload.password;
       payload.department_id = payload.department_id || null;
       payload.team_id = payload.team_id || null;
+      payload.crm_region_ids = Array.isArray(form.crm_region_ids) ? form.crm_region_ids : [];
       if (editUser) await api.put(`/users/${editUser.id}`, payload);
       else await api.post('/users', payload);
       onSaved?.(); onClose();
@@ -414,7 +490,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
                   const v = e.target.value;
                   setSelDivision(v);
                   setSelCompany('');
-                  setForm((f) => ({ ...f, department_id: '', team_id: '' }));
+                  setForm((f) => ({ ...f, department_id: '', team_id: '', crm_region_ids: [] }));
                   setTeams([]);
                 }}
                 className="w-full h-9 px-3 border rounded-lg text-sm"
@@ -435,7 +511,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
                 onChange={(e) => {
                   const v = e.target.value;
                   setSelCompany(v);
-                  setForm((f) => ({ ...f, department_id: '', team_id: '' }));
+                  setForm((f) => ({ ...f, department_id: '', team_id: '', crm_region_ids: [] }));
                   setTeams([]);
                 }}
                 className="w-full h-9 px-3 border rounded-lg text-sm"
@@ -467,6 +543,47 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
               </select>
               {!form.department_id && <p className="text-[9px] text-gray-400 mt-0.5">Chọn PB trước</p>}
             </div>
+          </div>
+
+          {/* Khu vực CRM — theo công ty đã chọn */}
+          <div className="pt-1 border-t border-blue-100">
+            <label className="text-[11px] font-semibold text-gray-700 flex items-center gap-1.5 mb-2">
+              <MapPin className="h-3.5 w-3.5 text-blue-600" />
+              Khu vực CRM (pipeline / lead theo vùng)
+            </label>
+            {!selCompany ? (
+              <p className="text-[11px] text-gray-500">Chọn <strong>Công ty</strong> phía trên để gán khu vực.</p>
+            ) : companyRegions.length === 0 ? (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
+                Công ty chưa có khu vực CRM. Tạo khu vực qua API hoặc cấu hình DB (migration 131).
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2 max-h-28 overflow-y-auto">
+                {companyRegions.map((reg) => {
+                  const checked = (form.crm_region_ids || []).some((id) => String(id) === String(reg.id));
+                  return (
+                    <label
+                      key={reg.id}
+                      className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border cursor-pointer select-none ${
+                        checked ? 'bg-blue-100 border-blue-300 text-blue-900' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleCrmRegion(reg.id)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>{reg.name}</span>
+                      {reg.code ? <span className="text-[10px] text-gray-400">({reg.code})</span> : null}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[10px] text-gray-500 mt-1.5">
+              Gán một hoặc nhiều khu vực để lọc lead/deal CRM. Vai trò «Admin khu vực» chỉ thấy dữ liệu các khu vực được chọn.
+            </p>
           </div>
         </div>
 

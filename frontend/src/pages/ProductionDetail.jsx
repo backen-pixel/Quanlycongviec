@@ -404,6 +404,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const MOD = moduleKey === 'vc'
     ? { apiPrefix: '/logistics', routePrefix: '/vc', label: 'Vận chuyển', icon: '🚚', stageField: 'vc_kanban_column_id', stagesKey: 'vcKanbanStages' }
     : { apiPrefix: '/production', routePrefix: '/sx', label: 'Sản xuất', icon: '🏭', stageField: 'sx_kanban_column_id', stagesKey: 'sxKanbanStages' };
+  const isVC = moduleKey === 'vc';
+
+  // Chỉ tính "Nhiệm vụ Sản xuất" theo nhóm nhiệm vụ xưởng (không tính tasks CRM seed như tư vấn/báo giá).
+  const WORKSHOP_TASK_SLUGS_SX = useMemo(
+    () => new Set(['planning', 'quality-check', 'packaging', 'production', 'delivery', 'customer-care']),
+    [],
+  );
+  const pickWorkshopTasksForSummary = useCallback((list) => {
+    const arr = Array.isArray(list) ? list : [];
+    if (isVC) return arr;
+    return arr.filter((t) => {
+      if (t?.metadata?.workshop_template_id) return true;
+      const slug = t?.stage?.slug ? String(t.stage.slug) : '';
+      return WORKSHOP_TASK_SLUGS_SX.has(slug);
+    });
+  }, [isVC, WORKSHOP_TASK_SLUGS_SX]);
 
   const { id } = useParams();
   const navigate = useNavigate();
@@ -465,6 +481,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [showIncidentForm, setShowIncidentForm] = useState(false);
   const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'medium' });
   const [savingIncident, setSavingIncident] = useState(false);
+  const [bulkGenTplLoading, setBulkGenTplLoading] = useState(false);
 
   const noteActivities = useMemo(
     () => (crmActivities || []).filter((a) => a.type === 'note'),
@@ -635,8 +652,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         return;
       }
       const list = tasksRes.data?.tasks || tasksRes.data || [];
-      const total = Array.isArray(list) ? list.length : 0;
-      const completed = Array.isArray(list) ? list.filter((t) => t.status === 'done').length : 0;
+      const scopedTasks = pickWorkshopTasksForSummary(list);
+      const total = scopedTasks.length;
+      const completed = scopedTasks.filter((t) => t.status === 'done').length;
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
@@ -708,8 +726,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       ]);
       const proj = projRes.data?.project;
       const list = tasksRes.data?.tasks || tasksRes.data || [];
-      const total = Array.isArray(list) ? list.length : 0;
-      const completed = Array.isArray(list) ? list.filter((t) => t.status === 'done').length : 0;
+      const scopedTasks = pickWorkshopTasksForSummary(list);
+      const total = scopedTasks.length;
+      const completed = scopedTasks.filter((t) => t.status === 'done').length;
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
@@ -717,7 +736,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     } catch (_) {
       /* giữ state cũ */
     }
-  }, [id, moduleKey]);
+  }, [id, MOD.apiPrefix, pickWorkshopTasksForSummary]);
 
   const setProductionPerson = useCallback(async (userId) => {
     if (!project?.id) return;
@@ -776,6 +795,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const moveStage = async (stageId) => {
     try {
       let body;
+      let optimisticPatch = null;
       if (moduleKey === 'vc') {
         // stageId là logistics_pipeline_stages.id → gửi vc_stage_id
         // Tìm thêm workflow_stage_id nếu có
@@ -786,9 +806,44 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         if (vcStage?.bucket_slug === 'delivery_pending') {
           body = { move_to_intake: true };
         }
+        optimisticPatch = {
+          vc_kanban_column_id: vcStage?.bucket_slug === 'delivery_pending' ? stageId : stageId,
+        };
       } else {
-        body = { stage_id: stageId };
+        const sxStage = pipelineStages.find((s) => String(s.id) === String(stageId));
+        // Intake (Chờ vào xưởng) không có workflow_stage_id → dùng move_to_intake giống Kanban drag.
+        if (sxStage?.bucket_slug === 'won_pending' || String(sxStage?.id || '').startsWith('__fb_')) {
+          body = { move_to_intake: true };
+          optimisticPatch = {
+            sx_kanban_column_id: sxStage?.id || stageId,
+            sx_intake: true,
+            current_stage_id: null,
+            current_stage: null,
+          };
+        } else {
+          // Click theo cột Kanban (production_pipeline_stages.id) → gửi workflow_stage_id để patch current_stage_id
+          const wid = sxStage?.workflow_stage_id || sxStage?.workflow_stage?.id || stageId;
+          body = { stage_id: wid };
+          optimisticPatch = {
+            sx_kanban_column_id: sxStage?.id || stageId,
+            sx_intake: false,
+            current_stage_id: wid,
+            current_stage: wid ? {
+              id: wid,
+              slug: sxStage?.slug || sxStage?.workflow_stage?.slug,
+              name: sxStage?.workflow_stage?.name || sxStage?.name,
+              color: sxStage?.color,
+              icon: sxStage?.icon,
+            } : null,
+          };
+        }
       }
+
+      // Optimistic update: đổi tag/cột ngay, không reload trang
+      if (optimisticPatch) {
+        setProject((prev) => (prev ? { ...prev, ...optimisticPatch } : prev));
+      }
+
       const { data } = await api.patch(`${MOD.apiPrefix}/projects/${id}/stage`, body);
       const p = data.project || data;
       setProject((prev) => (prev && p ? {
@@ -796,8 +851,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         status: p.status,
         current_stage_id: p.current_stage_id,
         vc_kanban_column_id: p.vc_kanban_column_id ?? prev.vc_kanban_column_id,
+        sx_kanban_column_id: p.sx_kanban_column_id ?? prev.sx_kanban_column_id,
+        sx_intake: p.sx_intake ?? prev.sx_intake,
         current_stage: p.current_stage || prev.current_stage,
       } : prev));
+
+      // Refresh nhẹ để đồng bộ sx_kanban_column_id/sx_intake (API patch không trả đủ field)
+      window.setTimeout(() => { refreshProjectSilently(); }, 120);
+
       if (typeof window !== 'undefined' && id) {
         window.setTimeout(() => {
           window.dispatchEvent(new CustomEvent('crm-project-badges-refresh', { detail: { projectId: String(id) } }));
@@ -805,7 +866,34 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       }
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
+      // Nếu optimistic sai do lỗi server, đồng bộ lại
+      refreshProjectSilently();
     }
+  };
+
+  const generateAllWorkshopTemplates = async () => {
+    if (!project?.id || bulkGenTplLoading) return;
+    setBulkGenTplLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 45000);
+    try {
+      const { data } = await api.post(
+        `/production/projects/${encodeURIComponent(project.id)}/tasks/generate-from-templates`,
+        { workshop_area: 'production' },
+        { signal: controller.signal },
+      );
+      const created = data?.created_tasks || 0;
+      const applied = data?.templates_applied || 0;
+      const total = data?.templates_total || 0;
+      const skipped = data?.templates_skipped || 0;
+      alert(`Đã gen ${created} nhiệm vụ từ ${applied}/${total} bộ mẫu${skipped ? ` (bỏ qua ${skipped} bộ đã có)` : ''}.`);
+      await refreshProjectSilently();
+    } catch (e) {
+      const isAbort = e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED' || String(e?.message || '').includes('canceled');
+      alert(isAbort ? 'Gen nhiệm vụ quá lâu (timeout). Vui lòng thử lại.' : (e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ từ bộ mẫu'));
+    }
+    window.clearTimeout(timeout);
+    setBulkGenTplLoading(false);
   };
 
   const saveTitle = async () => {
@@ -993,10 +1081,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const safePipelineStages = Array.isArray(pipelineStages) ? pipelineStages : [];
 
   // VC dùng vc_kanban_column_id (logistics_pipeline_stages.id) để match stepper
-  // SX dùng current_stage_id (workflow_stages.id) hoặc stage ID từ fallback
+  // SX phải dùng sx_kanban_column_id (production_pipeline_stages.id hoặc __fb_intake__) để match stepper + đúng cột/tag.
+  // current_stage_id chỉ là workflow_stages.id (khác namespace với id cột Kanban).
   const currentStageId = moduleKey === 'vc'
     ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
-    : (project.current_stage_id || project.current_stage?.id);
+    : (project.sx_kanban_column_id || project.current_stage_id || project.current_stage?.id);
   const primaryCrmDeal = project.crmDeals?.[0];
   const crmLeadId = primaryCrmDeal?.id;
   const displayCode = primaryCrmDeal?.code || project.code;
@@ -1120,6 +1209,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">Nhiệm vụ {MOD.label}</p>
               <p className="text-xl font-bold text-purple-600">{taskCount}</p>
+              {!isVC && (
+                <button
+                  type="button"
+                  onClick={generateAllWorkshopTemplates}
+                  disabled={bulkGenTplLoading}
+                  className="mt-2 w-full h-8 px-2 rounded-lg text-[11px] font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+                  title="Gen cùng lúc các bộ mẫu xưởng (Sản xuất) theo công ty dự án"
+                >
+                  {bulkGenTplLoading ? 'Đang gen…' : 'Gen 8 bộ mẫu'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1261,6 +1361,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   projectId={project.id}
                   users={taskUsers}
                   logisticsView={moduleKey === 'vc'}
+                  // Ở module SX: chỉ hiển thị nhiệm vụ "SX đơn" (stage_slug sx_*), không lẫn nhiệm vụ CRM deal_*.
                   taskScope={moduleKey === 'vc' ? 'crm' : 'production'}
                   onChanged={() => { refreshProjectSilently(); api.get(`/projects/${id}/orders`).then((r) => setOrderCount((r.data?.orders || []).length)).catch(() => {}); }}
                   onTaskArtifactsSynced={refreshProjectSilently}

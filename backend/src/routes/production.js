@@ -161,14 +161,30 @@ async function allowedWorkflowStageIdsForPatch(companyId = null) {
     return _allowedWorkflowStageIdsCache;
   }
   const ids = new Set();
-  const [pipeRows, { ids: workshop }] = await Promise.all([
+
+  // Ưu tiên lấy từ bảng production_pipeline_stages (đầy đủ mapping).
+  // Nếu bảng này lỗi/thiếu schema và helper trả null, fallback sang pipeline đã resolve (có cả fallback stages)
+  // để tránh chặn thao tác kéo Kanban bằng stage_id hợp lệ.
+  const [pipeRows, workshopMap] = await Promise.all([
     loadProductionPipelineStagesRows(true, companyId),
     getWorkshopStageMap(),
   ]);
-  (pipeRows || []).forEach((r) => {
-    if (r.workflow_stage_id) ids.add(String(r.workflow_stage_id));
-  });
-  workshop.forEach((wid) => ids.add(String(wid)));
+
+  if (pipeRows === null) {
+    const { stages } = await getResolvedKanbanStages(companyId);
+    (stages || []).forEach((s) => {
+      const wid = s.workflow_stage_id || s.workflow_stage?.id || null;
+      if (wid) ids.add(String(wid));
+    });
+  } else {
+    (pipeRows || []).forEach((r) => {
+      if (r.workflow_stage_id) ids.add(String(r.workflow_stage_id));
+    });
+  }
+
+  // Luôn cho phép các workflow stage thuộc “xưởng” (để kéo card về các cột workshop chuẩn).
+  (workshopMap?.ids || []).forEach((wid) => ids.add(String(wid)));
+
   _allowedWorkflowStageIdsCache = ids;
   _allowedWorkflowStageIdsCacheKey = cacheKey;
   _allowedWorkflowStageIdsAt = now;
@@ -443,7 +459,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     const sortedKanban = [...kanbanStages].sort((a, b) => a.order_index - b.order_index);
 
     const orFilter = buildScopeOrFilter(stageIds, wonIds);
-    let query = supabase
+    const runQuery = (fallback = false) => supabase
       .from('projects')
       .select(`
         id, code, name, estimated_value, status, deadline, created_at, company_id,
@@ -451,16 +467,31 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name),
         company:companies(id, name, short_name),
-        workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)
+        ${fallback ? '' : 'workshop_type:workshop_project_types(id, name, applies_to),'}
       `)
       .or(orFilter);
 
+    let query = runQuery(false);
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.eq('company_id', company_id);
     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
 
-    const { data: projects = [] } = await query.order('created_at', { ascending: false });
+    let projects = [];
+    let { data, error } = await query.order('created_at', { ascending: false });
+    const needsFallback = error && (
+      error.message?.includes('workshop_project_types') ||
+      error.message?.includes('relationship')
+    );
+    if (needsFallback) {
+      let q2 = runQuery(true);
+      if (division_id) q2 = q2.eq('division_id', division_id);
+      if (company_id) q2 = q2.eq('company_id', company_id);
+      if (workshop_type_id) q2 = q2.eq('workshop_type_id', workshop_type_id);
+      ({ data, error } = await q2.order('created_at', { ascending: false }));
+    }
+    if (error) throw error;
+    projects = data || [];
 
     const enriched = await enrichProjectsForSx(projects, wonIds, company_id);
     const enhancedProjects = enriched.map((project) => ({
@@ -670,6 +701,25 @@ const PROJECT_DETAIL_SELECT = `
         )
       `;
 
+// Fallback select khi DB thiếu cột/relationship mới (FK users, task_checklists, participants…)
+// Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
+const PROJECT_DETAIL_SELECT_MIN = `
+        id, company_id, code, name, description, estimated_value, priority, deadline, status, notes, created_at,
+        current_stage_id,
+        current_stage:workflow_stages(id, slug, name, color, icon),
+        customer:customers(id, full_name, phone, email, address, city),
+        company:companies(id, name, short_name),
+        tasks(
+          id, title, description, status, order_index, priority, deadline, due_date, metadata,
+          stage:workflow_stages(id, slug, name, color)
+        ),
+        stage_transitions(
+          id, from_stage_id, to_stage_id, created_at,
+          from_stage:workflow_stages!stage_transitions_from_stage_id_fkey(id, name, slug),
+          to_stage:workflow_stages!stage_transitions_to_stage_id_fkey(id, name, slug)
+        )
+      `;
+
 r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { id } = req.params;
@@ -688,6 +738,10 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     if (error && error.message?.includes('production_deadline')) {
       const fallbackSelect = PROJECT_DETAIL_SELECT.replace(MIGRATION_76_COLS, '');
       ({ data: project, error } = await supabase.from('projects').select(fallbackSelect).eq('id', projectId).single());
+    }
+    // Relationship/columns not ready — retry with minimal select (no optional embeds)
+    if (error && (error.message?.includes('relationship') || error.message?.includes('does not exist'))) {
+      ({ data: project, error } = await supabase.from('projects').select(PROJECT_DETAIL_SELECT_MIN).eq('id', projectId).single());
     }
 
     if (error || !project) {
@@ -740,6 +794,9 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         if (error && error.message?.includes('production_deadline')) {
           const fallbackSelect = PROJECT_DETAIL_SELECT.replace(MIGRATION_76_COLS, '');
           ({ data: project, error } = await supabase.from('projects').select(fallbackSelect).eq('id', projectId).single());
+        }
+        if (error && (error.message?.includes('relationship') || error.message?.includes('does not exist'))) {
+          ({ data: project, error } = await supabase.from('projects').select(PROJECT_DETAIL_SELECT_MIN).eq('id', projectId).single());
         }
       }
     }
@@ -973,8 +1030,12 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       return res.status(400).json({ error: 'stage_id required' });
     }
 
+    // Lưu ý: project.company_id đôi khi null/khác scope hiện tại của xưởng.
+    // Dùng effectiveWorkshopCompanyId để khớp pipeline stage theo company đang thao tác.
+    const companyIdForPipeline = effectiveWorkshopCompanyId(req, project.company_id);
+
     const [allowed, targetRes] = await Promise.all([
-      allowedWorkflowStageIdsForPatch(project.company_id),
+      allowedWorkflowStageIdsForPatch(companyIdForPipeline),
       supabase
         .from('workflow_stages')
         .select('id, slug')
@@ -1041,12 +1102,12 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
         // Kiểm tra cột SX có cờ is_handover_to_logistics → chuyển sang module VC
         try {
-          const sxPipeStage = await findSxPipelineStageRowForWorkflow(toStageId, project.company_id);
+          const sxPipeStage = await findSxPipelineStageRowForWorkflow(toStageId, companyIdForPipeline);
 
           if (sxPipeStage?.is_handover_to_logistics) {
             let autoVcStageId = null;
             try {
-              autoVcStageId = await resolveLogisticsVcIntakeColumnId(project.company_id);
+              autoVcStageId = await resolveLogisticsVcIntakeColumnId(companyIdForPipeline);
               if (!autoVcStageId) {
                 const { data: vcFirst } = await supabase
                   .from('logistics_pipeline_stages').select('id').eq('is_active', true).order('order_index').limit(1).maybeSingle();
@@ -1593,6 +1654,73 @@ r.post('/projects/:id/tasks/from-template', requirePermission('projects', 'edit'
       return res.status(result.statusCode || 400).json({ error: result.error });
     }
     res.status(201).json({ count: result.count, task_ids: result.task_ids });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Gen hàng loạt nhiệm vụ từ bộ mẫu xưởng (workshop_task_templates) theo khu vực.
+ * - Ưu tiên template theo company_id của dự án (nếu có), fallback template global (company_id NULL).
+ * - Idempotent: nếu đã có tasks chứa metadata.workshop_template_id = template.id thì bỏ qua template đó.
+ */
+r.post('/projects/:id/tasks/generate-from-templates', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const userId = req.user.userId;
+    const workshop_area = String(req.body?.workshop_area || 'production');
+    if (!['production', 'logistics'].includes(workshop_area)) {
+      return res.status(400).json({ error: 'workshop_area phải là production hoặc logistics' });
+    }
+
+    const { data: proj, error: pErr } = await supabase
+      .from('projects')
+      .select('id, company_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    if (pErr) throw pErr;
+    if (!proj?.id) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+
+    const companyId = proj.company_id || null;
+
+    const baseQuery = (scope) => {
+      let q = supabase
+        .from('workshop_task_templates')
+        .select('id, name, order_index, company_id')
+        .eq('workshop_area', workshop_area)
+        .eq('is_active', true)
+        .order('order_index');
+      if (scope === 'company' && companyId) q = q.eq('company_id', companyId);
+      if (scope === 'global') q = q.is('company_id', null);
+      return q;
+    };
+
+    let templates = [];
+    if (companyId) {
+      const { data: scoped, error } = await baseQuery('company');
+      if (error && !isWorkshopTemplateCompanyIdMissingError(error)) throw error;
+      if (scoped?.length) templates = scoped;
+    }
+    if (!templates.length) {
+      const { data: globalRows, error } = await baseQuery('global');
+      if (error && !isWorkshopTemplateCompanyIdMissingError(error)) throw error;
+      templates = globalRows || [];
+    }
+    if (!templates.length) {
+      return res.status(400).json({ error: 'Chưa có bộ mẫu xưởng cho khu vực này' });
+    }
+
+    let created = 0;
+    let skipped = 0;
+    const applied = [];
+    const skipped_templates = [];
+
+    // Use shared helper (also used by sx-handover)
+    const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
+    const out = await applyAllActiveWorkshopTemplatesForArea(projectId, userId, { workshopArea: workshop_area, companyId });
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    res.json(out);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });

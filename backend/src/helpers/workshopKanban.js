@@ -39,9 +39,10 @@ async function getWonDealProjectIds() {
     .or('pipeline_type.eq.deal,pipeline_type.is.null');
   const wonStageIds = (wonStages || []).map((s) => s.id).filter(Boolean);
 
-  // Lấy deals có project (đã thắng trước đây — actual_close_date IS NOT NULL)
-  // OR đang ở stage is_won=true. Dùng union để không bỏ sót deals đã chuyển
-  // sang cột "Sản xuất"/"Vận chuyển" nhưng project vẫn đang trong xưởng.
+  // Lấy deals có project:
+  // - đang ở stage is_won=true
+  // - hoặc đã từng thắng (actual_close_date IS NOT NULL)
+  // - hoặc (fallback) chỉ cần có project_id (tránh mất deal khi stage đã đổi nhưng chưa set actual_close_date)
   const queries = [];
   if (wonStageIds.length) {
     queries.push(
@@ -61,6 +62,15 @@ async function getWonDealProjectIds() {
       .eq('type', 'deal')
       .not('project_id', 'is', null)
       .not('actual_close_date', 'is', null),
+  );
+
+  // Fallback: chỉ cần có project_id (để intake không bị mất card ngay sau khi chuyển stage CRM)
+  queries.push(
+    supabase
+      .from('crm_leads')
+      .select('project_id')
+      .eq('type', 'deal')
+      .not('project_id', 'is', null),
   );
 
   const results = await Promise.all(queries);

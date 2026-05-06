@@ -3,6 +3,8 @@ export type CrmStage = {
   name: string;
   color?: string;
   icon?: string | null;
+  /** Mô tả ngắn theo cột Kanban (CRM web) */
+  description?: string | null;
   pipeline_type?: string;
   order_index?: number;
   is_won?: boolean;

@@ -124,6 +124,7 @@ async function applyProductionTemplateToFulfillmentLead({
   leadId,
   createdBy,
   assigneeId = null,
+  force = false,
 }) {
   if (!leadId || !createdBy) return { created: 0, reason: 'missing_params' };
 
@@ -133,7 +134,15 @@ async function applyProductionTemplateToFulfillmentLead({
     .eq('lead_id', leadId)
     .like('stage_slug', 'sx_%');
   if (exErr) throw exErr;
-  if ((existingCount || 0) > 0) return { created: 0, reason: 'already_has_sx_tasks' };
+  if ((existingCount || 0) > 0) {
+    if (!force) return { created: 0, reason: 'already_has_sx_tasks' };
+    // Force regen: xóa toàn bộ tasks sx_* của deal đơn rồi tạo lại đúng mapping.
+    await supabase
+      .from('crm_tasks')
+      .delete()
+      .eq('lead_id', leadId)
+      .like('stage_slug', 'sx_%');
+  }
 
   const { data: leadRow } = await supabase
     .from('crm_leads')
@@ -197,12 +206,16 @@ async function applyProductionTemplateToFulfillmentLead({
   if (itemErr) throw itemErr;
   if (!items?.length) return { created: 0, reason: 'template_items_empty' };
 
-  const slugByTitle = (titleRaw) => {
-    const t = String(titleRaw || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .trim();
+  const normalizeText = (raw) => String(raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+  // Map stage slug theo TÊN BỘ MẪU (template.name), không theo title của item.
+  // Vì item title thường là việc nhỏ (vd "Xác nhận thông tin đơn hàng") không chứa tên giai đoạn.
+  const slugByTemplateName = (nameRaw) => {
+    const t = normalizeText(nameRaw);
     if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
     if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
     if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
@@ -214,6 +227,12 @@ async function applyProductionTemplateToFulfillmentLead({
     if (t.includes('giao hang')) return 'sx_giao_hang';
     return 'sx_other';
   };
+
+  const stageSlugByTemplateId = new Map(
+    (templates || [])
+      .filter((t) => t?.id)
+      .map((t) => [String(t.id), slugByTemplateName(t.name)]),
+  );
 
   const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
   const sortedItems = [...items].sort((a, b) => {
@@ -228,13 +247,14 @@ async function applyProductionTemplateToFulfillmentLead({
     const checklistText = checklist.length
       ? `\n\nNhiệm vụ nhỏ:\n${checklist.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
       : '';
+    const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
     return {
       lead_id: leadId,
       title: it.title,
       description: `${it.description || ''}${checklistText}`.trim() || null,
       status: 'pending',
       priority: it.priority || 'medium',
-      stage_slug: slugByTitle(it.title),
+      stage_slug: stageSlug,
       order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
       assignee_id: assigneeId || null,
       supervisor_id: null,

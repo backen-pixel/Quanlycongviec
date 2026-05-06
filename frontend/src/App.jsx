@@ -63,6 +63,7 @@ import ProductsPage from './pages/ProductsPage';
 import ProjectTemplatesPage from './pages/ProjectTemplatesPage';
 import PersonalTasks from './pages/PersonalTasks';
 import CompaniesPage from './pages/CompaniesPage';
+import CompanyCrmRegionsPage from './pages/CompanyCrmRegionsPage';
 import DepartmentsPage from './pages/DepartmentsPage';
 import TeamsPage from './pages/TeamsPage';
 import WorkflowSettings from './pages/WorkflowSettings';
@@ -256,6 +257,7 @@ export default function App() {
             <Route path="/projects/:id" element={<ProjectDetail />} />
             <Route path="/project-workflow" element={<ProjectWorkflowPage />} />
             <Route path="/tasks" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><Tasks /></Suspense>} />
+            <Route path="/tasks/regions" element={<CompanyCrmRegionsPage />} />
             <Route path="/stage/:slug" element={<StageView />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/customers" element={<CustomersPage />} />

@@ -307,6 +307,46 @@ r.put('/:id/orders/:orderId', async (req, res) => {
   }
 });
 
+/** Xóa đơn hàng con khỏi dự án (tab Đơn hàng). */
+r.delete('/:id/orders/:orderId', async (req, res) => {
+  try {
+    const pid = req.params.id;
+    const oid = req.params.orderId;
+    const userId = req.user.userId;
+
+    const { data: existing, error: exErr } = await supabase
+      .from('orders')
+      .select('id, code, project_id, fulfillment_lead_id, logistics_project_id')
+      .eq('id', oid)
+      .single();
+    if (exErr || !existing || String(existing.project_id) !== String(pid)) {
+      return res.status(404).json({ error: 'Không tìm thấy đơn trên dự án này' });
+    }
+    if (existing.logistics_project_id) {
+      return res.status(400).json({ error: 'Đơn đã đẩy sang VC/LĐ — không cho xóa. Hãy xử lý dự án VC trước.' });
+    }
+
+    // Xóa deal con (fulfillment) nếu có
+    if (existing.fulfillment_lead_id) {
+      try {
+        await supabase.from('crm_tasks').delete().eq('lead_id', existing.fulfillment_lead_id);
+      } catch (_) { /* ignore */ }
+      try {
+        await supabase.from('crm_leads').delete().eq('id', existing.fulfillment_lead_id);
+      } catch (_) { /* ignore */ }
+    }
+
+    const { error: delErr } = await supabase.from('orders').delete().eq('id', oid);
+    if (delErr) throw delErr;
+
+    await logActivity(userId, 'deleted', 'order', oid, `Xóa đơn con ${existing.code || ''} trên dự án ${pid}`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || 'Lỗi xóa đơn' });
+  }
+});
+
 r.post('/:id/orders/:orderId/push-to-logistics', async (req, res) => {
   try {
     const pid = req.params.id;

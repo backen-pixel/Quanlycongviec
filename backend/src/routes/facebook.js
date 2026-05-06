@@ -30,6 +30,7 @@ const {
   DEFAULT_MAX_CONTACTS_LINK_CLEANUP,
   MAX_CONTACTS_LINK_CLEANUP_CAP,
 } = require('../helpers/facebookLinkOnlyPhoneTool');
+const { assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
 
 function parseMaxContactsLinkCleanup(raw) {
   const n = parseInt(raw, 10);
@@ -1677,6 +1678,12 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   // Fallback company từ auto-lead-config (nếu page chưa set)
   if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
 
+  let resolvedRegionId = null;
+  if (companyId && page?.default_region_id) {
+    const rr = await assertRegionBelongsToCompany(supabase, companyId, page.default_region_id);
+    if (rr.ok) resolvedRegionId = page.default_region_id;
+  }
+
   // Default lead type (company-scoped)
   let leadTypeId = null;
   const candidateLeadTypeId = (page?.default_lead_type_id || autoLeadCfg?.default_lead_type_id) || null;
@@ -1733,6 +1740,7 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     stage_id: stageId,
     pipeline_id: pipelineId,
     company_id: companyId,
+    region_id: resolvedRegionId,
     lead_type_id: leadTypeId,
     install_address: extraData.address || null,
     description: `Nguồn: Facebook ${source}\nTên: ${extraData.full_name || contact.fb_name || ''}\nSĐT: ${extraData.phone || contact.phone || ''}\nĐịa chỉ: ${extraData.address || ''}`.trim(),
@@ -2522,8 +2530,14 @@ r.get('/pages', authMiddleware, async (req, res) => {
   try {
     // Try with all columns first
     let { data, error } = await supabase.from('facebook_pages')
-      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, default_lead_type_id, created_at, webhook_verify_token')
+      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, default_region_id, default_lead_type_id, created_at, webhook_verify_token')
       .order('created_at', { ascending: false });
+
+    if (error && (error.message?.includes('default_region_id') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('facebook_pages')
+        .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, default_lead_type_id, created_at, webhook_verify_token')
+        .order('created_at', { ascending: false }));
+    }
     
     // Fallback: if column doesn't exist, retry without it
     if (error && (error.message?.includes('default_lead_owner_id') || error.code === '42703')) {
@@ -2555,7 +2569,7 @@ r.get('/pages', authMiddleware, async (req, res) => {
 
 r.post('/pages', authMiddleware, async (req, res) => {
   try {
-    const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id, default_company_id, default_lead_owner_id, default_lead_type_id } = req.body;
+    const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id } = req.body;
     const insertData = {
       page_id, page_name, access_token,
       webhook_verify_token: webhook_verify_token || 'tubep_pro_verify_2024',
@@ -2566,13 +2580,15 @@ r.post('/pages', authMiddleware, async (req, res) => {
       created_by: req.user.userId,
     };
     if (default_company_id) insertData.default_company_id = default_company_id;
+    if (default_region_id && String(default_region_id).trim()) insertData.default_region_id = String(default_region_id).trim();
     if (default_lead_owner_id) insertData.default_lead_owner_id = default_lead_owner_id;
     if (default_lead_type_id) insertData.default_lead_type_id = default_lead_type_id;
 
     let { data, error } = await supabase.from('facebook_pages').insert(insertData).select().single();
     // Retry without optional columns if they don't exist
-    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id')) {
+    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id') || error?.message?.includes('default_region_id')) {
       delete insertData.default_company_id;
+      delete insertData.default_region_id;
       delete insertData.default_lead_owner_id;
       delete insertData.default_lead_type_id;
       ({ data, error } = await supabase.from('facebook_pages').insert(insertData).select().single());
@@ -2589,10 +2605,15 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
      'webhook_verify_token', 'default_source_id', 'default_stage_id', 'default_pipeline_id', 'default_company_id', 'default_lead_owner_id', 'default_lead_type_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    if (req.body.default_region_id !== undefined) {
+      const rv = req.body.default_region_id;
+      update.default_region_id = rv && String(rv).trim() ? String(rv).trim() : null;
+    }
     update.updated_at = new Date().toISOString();
     let { data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single();
-    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id')) {
+    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id') || error?.message?.includes('default_region_id')) {
       delete update.default_company_id;
+      delete update.default_region_id;
       delete update.default_lead_owner_id;
       delete update.default_lead_type_id;
       ({ data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single());
@@ -2908,6 +2929,13 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     const resolvedSourceId = await resolveFacebookSourceId(page);
 
     const ownerId = page?.default_lead_owner_id || page?.created_by || req.user.userId;
+
+    let manualRegionId = null;
+    if (companyId && page?.default_region_id) {
+      const rr = await assertRegionBelongsToCompany(supabase, companyId, page.default_region_id);
+      if (rr.ok) manualRegionId = page.default_region_id;
+    }
+
     // IMPORTANT: tạo lead qua API CRM chuẩn để auto-gen tasks + tạo Đơn 1 (fulfillment)
     const port = process.env.PORT || 3000;
     const { data: lead } = await axios.post(`http://localhost:${port}/api/crm/leads`, {
@@ -2915,6 +2943,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       customer_id: customerId || null,
       stage_id: stageId || null,
       company_id: companyId || null,
+      region_id: manualRegionId,
       lead_type_id: leadTypeId || null,
       source_id: resolvedSourceId || null,
       install_address: extractedAddress || null,

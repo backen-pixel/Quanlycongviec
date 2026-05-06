@@ -30,6 +30,14 @@ r.post('/login', async (req, res) => {
       } catch (_) {}
     }
 
+    let crm_region_ids = [];
+    try {
+      const { data: ur } = await supabase.from('user_company_regions').select('region_id').eq('user_id', user.id);
+      crm_region_ids = (ur || []).map((r) => r.region_id).filter(Boolean);
+    } catch (_) {
+      crm_region_ids = [];
+    }
+
     // Không đặt expiresIn — JWT không có `exp`, phiên chỉ hết khi đăng xuất hoặc đổi JWT_SECRET.
     // Include company_id so CRM pipeline scoping works immediately.
     const token = jwt.sign({
@@ -39,9 +47,26 @@ r.post('/login', async (req, res) => {
       fullName: user.full_name,
       company_id,
       department_id: user.department_id || null,
+      crm_region_ids,
     }, config.jwtSecret);
 
-    res.json({ token, user: { id: user.id, userId: user.id, email: user.email, fullName: user.full_name, full_name: user.full_name, role: user.role, avatar: user.avatar, phone: user.phone, department_id: user.department_id || null, company_id, position: user.position || null } });
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        userId: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        full_name: user.full_name,
+        role: user.role,
+        avatar: user.avatar,
+        phone: user.phone,
+        department_id: user.department_id || null,
+        company_id,
+        crm_region_ids,
+        position: user.position || null,
+      },
+    });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
 });
 
@@ -119,7 +144,29 @@ r.get('/me', auth, async (req, res) => {
       const { data: dept } = await supabase.from('departments').select('company_id').eq('id', u.department_id).single();
       company_id = dept?.company_id || null;
     }
-    res.json({ user: { id: u.id, userId: u.id, email: u.email, fullName: u.full_name, full_name: u.full_name, role: u.role, avatar: u.avatar, phone: u.phone, department_id: u.department_id, company_id, position: u.position } });
+    let crm_region_ids = [];
+    try {
+      const { data: ur } = await supabase.from('user_company_regions').select('region_id').eq('user_id', u.id);
+      crm_region_ids = (ur || []).map((r) => r.region_id).filter(Boolean);
+    } catch (_) {
+      crm_region_ids = [];
+    }
+    res.json({
+      user: {
+        id: u.id,
+        userId: u.id,
+        email: u.email,
+        fullName: u.full_name,
+        full_name: u.full_name,
+        role: u.role,
+        avatar: u.avatar,
+        phone: u.phone,
+        department_id: u.department_id,
+        company_id,
+        crm_region_ids,
+        position: u.position,
+      },
+    });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
 });
 

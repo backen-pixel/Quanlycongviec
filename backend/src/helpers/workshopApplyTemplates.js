@@ -225,12 +225,19 @@ async function resolveDefaultWorkshopTemplateId(workshopArea, companyId) {
  * Sau khi tạo dự án từ deal thắng: áp bộ mẫu xưởng được đánh dấu «mặc định» (mỗi khu SX / VC-LĐ tối đa 1 bộ).
  */
 async function applyDefaultWorkshopTemplatesForNewProject(projectId, userId) {
-  const { data: proj } = await supabase
-    .from('projects')
-    .select('company_id')
-    .eq('id', projectId)
-    .maybeSingle();
-  const companyId = proj?.company_id || null;
+  let companyId = null;
+  // Allow overriding company scope (e.g. sx-handover assigns company_id then needs correct templates immediately)
+  if (arguments.length >= 3 && arguments[2] && typeof arguments[2] === 'object') {
+    companyId = arguments[2].companyId || null;
+  }
+  if (!companyId) {
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('company_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    companyId = proj?.company_id || null;
+  }
 
   let total = 0;
   for (const area of ['production', 'logistics']) {
@@ -247,9 +254,96 @@ async function applyDefaultWorkshopTemplatesForNewProject(projectId, userId) {
   return total;
 }
 
+/**
+ * Gen hàng loạt mọi bộ mẫu đang active theo workshop_area.
+ * Idempotent: nếu dự án đã có task với metadata.workshop_template_id = template.id thì skip template đó.
+ * Ưu tiên template theo company_id dự án, nếu không có thì dùng global (company_id NULL).
+ */
+async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, { workshopArea = 'production', companyId = null } = {}) {
+  const area = String(workshopArea || 'production');
+  if (!['production', 'logistics'].includes(area)) {
+    return { ok: false, error: 'workshop_area phải là production hoặc logistics' };
+  }
+
+  let cid = companyId || null;
+  if (!cid) {
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('company_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    cid = proj?.company_id || null;
+  }
+
+  const baseQuery = (scope) => {
+    let q = supabase
+      .from('workshop_task_templates')
+      .select('id, name, order_index, company_id')
+      .eq('workshop_area', area)
+      .eq('is_active', true)
+      .order('order_index');
+    if (scope === 'company' && cid) q = q.eq('company_id', cid);
+    if (scope === 'global') q = q.is('company_id', null);
+    return q;
+  };
+
+  let templates = [];
+  if (cid) {
+    const { data: scoped, error } = await baseQuery('company');
+    if (!error && scoped?.length) templates = scoped;
+    if (error && !isWorkshopCompanyColumnError(error)) {
+      console.warn('[workshop-all-templates] company list:', error.message);
+    }
+  }
+  if (!templates.length) {
+    const { data: globalRows, error } = await baseQuery('global');
+    if (error && !isWorkshopCompanyColumnError(error)) {
+      console.warn('[workshop-all-templates] global list:', error.message);
+    }
+    templates = globalRows || [];
+  }
+  if (!templates.length) {
+    return { ok: false, error: 'Chưa có bộ mẫu xưởng cho khu vực này' };
+  }
+
+  let created_tasks = 0;
+  const applied = [];
+  const skipped_templates = [];
+
+  for (const tpl of templates) {
+    const tid = tpl.id;
+    if (!tid) continue;
+    const { count } = await supabase
+      .from('tasks')
+      .select('id', { count: 'exact', head: true })
+      .eq('project_id', projectId)
+      .contains('metadata', { workshop_template_id: tid });
+    if (count && count > 0) {
+      skipped_templates.push({ id: tid, name: tpl.name });
+      continue;
+    }
+    const r0 = await applyWorkshopTemplateToProject(projectId, tid, userId);
+    if (!r0.ok) return { ok: false, error: r0.error, template_id: tid, template_name: tpl.name || null };
+    created_tasks += r0.count || 0;
+    applied.push({ id: tid, name: tpl.name, created: r0.count || 0 });
+  }
+
+  return {
+    ok: true,
+    workshop_area: area,
+    templates_total: templates.length,
+    templates_applied: applied.length,
+    templates_skipped: skipped_templates.length,
+    created_tasks,
+    applied,
+    skipped_templates,
+  };
+}
+
 module.exports = {
   applyWorkshopTemplateToProject,
   applyDefaultWorkshopTemplatesForNewProject,
+  applyAllActiveWorkshopTemplatesForArea,
   resolveDefaultWorkshopTemplateId,
   normalizeChecklistForTaskInsert,
   resolveStageIdForWorkshopArea,
