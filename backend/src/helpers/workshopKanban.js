@@ -472,13 +472,43 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     .single();
   if (!project) return;
 
-  const [stageUuid, pipeRows] = await Promise.all([
+  const [stageUuid, pipeRows0] = await Promise.all([
     resolveSxPipelineStageUuidForProject(project),
     loadProductionPipelineStagesRows(true, project.company_id),
   ]);
-  const prodPipeList = (pipeRows || [])
-    .filter((r) => r.workflow_stage_id)
+
+  // Nếu project.company_id lệch với company của deal CRM (hoặc kanban column id thuộc company khác),
+  // thì pipeRows theo project.company_id có thể không chứa stageUuid => CRM không nhảy cột.
+  let pipeRows = pipeRows0 || [];
+  const hasStageUuidInRows = stageUuid && pipeRows.some((r) => r?.id && String(r.id) === String(stageUuid));
+  if (stageUuid && !hasStageUuidInRows) {
+    try {
+      const { data: leadCompanyRow } = await supabase
+        .from('crm_leads')
+        .select('company_id')
+        .eq('project_id', projectId)
+        .eq('type', 'deal')
+        .limit(1)
+        .maybeSingle();
+      const leadCompanyId = leadCompanyRow?.company_id || null;
+      if (leadCompanyId && String(leadCompanyId) !== String(project.company_id || '')) {
+        const altRows = await loadProductionPipelineStagesRows(true, leadCompanyId);
+        if (Array.isArray(altRows) && altRows.length) pipeRows = altRows;
+      } else {
+        // Fallback cuối: load pipeline global (company_id null) nếu có
+        const gRows = await loadProductionPipelineStagesRows(true, null);
+        if (Array.isArray(gRows) && gRows.length) pipeRows = gRows;
+      }
+    } catch (e) {
+      console.warn('[syncCrmLeadSxPipelineFromProject] pipeline company mismatch fallback:', e.message);
+    }
+  }
+
+  // pipeRows có thể có cả các cột bucket (vd "Chờ vào xưởng") không có workflow_stage_id.
+  // Ta cần giữ lại để lookup currentRow theo stageUuid/crm_target_stage_id.
+  const prodPipeAll = (pipeRows || [])
     .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const prodPipeList = prodPipeAll.filter((r) => r.workflow_stage_id);
   const prodWorkflowStageIds = new Set(
     prodPipeList.map((r) => r.workflow_stage_id).filter(Boolean).map(String),
   );
@@ -490,8 +520,8 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
 
   // Tìm cột hiện tại trong pipeline config
   const currentRow =
-    prodPipeList.find((r) => project.current_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id))
-    || prodPipeList.find((r) => stageUuid && String(r.id) === String(stageUuid));
+    prodPipeAll.find((r) => project.current_stage_id && r.workflow_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id))
+    || prodPipeAll.find((r) => stageUuid && String(r.id) === String(stageUuid));
 
   // ── Ưu tiên: dùng crm_target_stage_id trực tiếp nếu đã cấu hình ──
   if (currentRow?.crm_target_stage_id) {
@@ -532,7 +562,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
 
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id, stage_id, sx_handover_at')
+    .select('id, stage_id')
     .eq('project_id', projectId)
     .eq('type', 'deal');
 
@@ -540,16 +570,12 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     (leads || []).map((lead) => {
       const update = { sx_pipeline_stage_id: stageUuid };
 
-      const isOnWonOrSx =
-        (thangStageId && lead.stage_id === thangStageId) ||
-        (sanXuatStageId && lead.stage_id === sanXuatStageId);
-
-      if (isOnWonOrSx) {
-        if (isInCrmProductionTriggerStage && sanXuatStageId) {
-          update.stage_id = sanXuatStageId;
-        } else if (!isInCrmProductionTriggerStage && thangStageId) {
-          update.stage_id = thangStageId;
-        }
+      // Khi project di chuyển trên Kanban xưởng, CRM phải nhảy về cột đã map (Sản xuất/Thắng),
+      // không phụ thuộc deal đang ở cột CRM nào trước đó.
+      if (isInCrmProductionTriggerStage && sanXuatStageId) {
+        update.stage_id = sanXuatStageId;
+      } else if (!isInCrmProductionTriggerStage && thangStageId) {
+        update.stage_id = thangStageId;
       }
 
       return supabase.from('crm_leads').update(update).eq('id', lead.id);
