@@ -75,12 +75,16 @@ function resolveEventsCompanyScope(req, res) {
   return { ok: true, companyId: String(cid).trim() };
 }
 
-/** Lọc sự kiện thuộc công ty: company_id khớp HOẶC (legacy) lead/deal thuộc công ty đó. */
-async function applyEventsCompanyFilter(queryBuilder, companyId) {
+const EVENTS_COMPANY_OR_MAX_IN = 320;
+
+/**
+ * Lọc sự kiện thuộc công ty: company_id khớp HOẶC (legacy) lead/deal thuộc công ty đó.
+ * Phải là hàm đồng bộ — không được `async` + `return queryBuilder`: builder Supabase là thenable,
+ * async function sẽ await nhầm và trả về { data, error } → lỗi «q.order is not a function».
+ */
+function applyEventsCompanyFilter(queryBuilder, companyId, leadIdsForCompany) {
   if (!companyId) return queryBuilder;
-  const lids = await fetchAllLeadIdsForCompany(companyId);
-  const MAX_OR_IN = 320;
-  const slice = lids.slice(0, MAX_OR_IN);
+  const slice = (leadIdsForCompany || []).slice(0, EVENTS_COMPANY_OR_MAX_IN);
   if (slice.length === 0) {
     return queryBuilder.eq('company_id', companyId);
   }
@@ -190,8 +194,12 @@ r.get('/', async (req, res) => {
     const sc = resolveEventsCompanyScope(req, res);
     if (!sc.ok) return;
     const { type, status, user_id, lead_id, customer_id, date_from, date_to, search, limit, offset } = req.query;
+    let companyLeadIds = [];
+    if (sc.companyId) {
+      companyLeadIds = await fetchAllLeadIdsForCompany(sc.companyId);
+    }
     let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
-    q = await applyEventsCompanyFilter(q, sc.companyId);
+    q = applyEventsCompanyFilter(q, sc.companyId, companyLeadIds);
 
     if (type) q = q.eq('event_type', type);
     if (status) q = q.eq('status', status);
@@ -224,12 +232,16 @@ r.get('/calendar', async (req, res) => {
     const startDate = new Date(`${y}-${pad(m)}-01T00:00:00+07:00`).toISOString();
     const endDate = new Date(`${y}-${pad(m)}-${pad(lastDay)}T23:59:59.999+07:00`).toISOString();
 
+    let companyLeadIds = [];
+    if (sc.companyId) {
+      companyLeadIds = await fetchAllLeadIdsForCompany(sc.companyId);
+    }
     let cq = supabase.from('crm_events')
       .select(EVENT_SELECT)
       .gte('start_time', startDate)
-      .lte('start_time', endDate)
-      .order('start_time');
-    cq = await applyEventsCompanyFilter(cq, sc.companyId);
+      .lte('start_time', endDate);
+    cq = applyEventsCompanyFilter(cq, sc.companyId, companyLeadIds);
+    cq = cq.order('start_time');
     const { data, error } = await cq;
     if (error) throw error;
     res.json(data || []);
