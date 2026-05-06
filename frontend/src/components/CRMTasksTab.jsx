@@ -37,12 +37,14 @@ const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
-export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], taskScope = 'all', onArtifactsSynced = null }) {
+export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], taskScope = 'all', onArtifactsSynced = null, refreshKey = null }) {
   const [tasks, setTasks] = useState([]);
-  const isSxOrderTaskFlow = useMemo(
-    () => leadType === 'deal' && tasks.some((t) => String(t.stage_slug || '').startsWith('sx_')),
-    [leadType, tasks],
-  );
+  const isSxOrderTaskFlow = useMemo(() => {
+    if (leadType !== 'deal') return false;
+    // Khi đang ở task_scope=production thì UI luôn hiển thị theo pipeline sx_* (kể cả khi chưa có task).
+    if (taskScope === 'production') return true;
+    return tasks.some((t) => String(t.stage_slug || '').startsWith('sx_'));
+  }, [leadType, taskScope, tasks]);
   const STAGES = useMemo(() => {
     if (leadType !== 'deal') return LEAD_STAGES;
     return isSxOrderTaskFlow ? SX_ORDER_STAGES : DEAL_STAGES;
@@ -53,6 +55,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   );
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [generatingDefaults, setGeneratingDefaults] = useState(false);
   const [viewMode, setViewMode] = useState('list'); // list, deadline, planner, calendar
   const [expandedStages, setExpandedStages] = useState({});
   const [showAdd, setShowAdd] = useState(null); // stage_slug
@@ -84,7 +87,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     } catch (e) { console.error(e); }
     setLoading(false);
   };
-  useEffect(() => { loadTasks(); }, [leadId, taskScope, isProductionScope]);
+  useEffect(() => { loadTasks(); }, [leadId, taskScope, isProductionScope, refreshKey]);
 
   const addTask = async (stageSlug) => {
     if (!newTask.title.trim()) return;
@@ -115,6 +118,52 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
         setExpandedStages((s) => ({ ...s, ...stages }));
       } else loadTasks();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+  };
+
+  const generateDefaultTasks = async () => {
+    if (generatingDefaults) return;
+    setGeneratingDefaults(true);
+    try {
+      // Tạo theo các bộ mẫu được đánh dấu is_default, khớp stage_slug của pipeline hiện tại.
+      const defaults = (templates || []).filter((t) => t?.is_default && t?.is_active !== false);
+      const byStage = new Map();
+      defaults.forEach((t) => {
+        if (!t?.stage_slug) return;
+        if (!byStage.has(t.stage_slug)) byStage.set(t.stage_slug, t);
+      });
+
+      const stageSlugs = (STAGES || []).map((s) => s.slug).filter(Boolean);
+      const tplIds = stageSlugs
+        .map((slug) => byStage.get(slug)?.id)
+        .filter(Boolean);
+
+      if (!tplIds.length) {
+        alert('Chưa có bộ mẫu mặc định (is_default) cho các cột nhiệm vụ này. Vào Cài đặt → Bộ mẫu CRM để cấu hình.');
+        return;
+      }
+
+      let created = 0;
+      const allCreated = [];
+      for (const tid of tplIds) {
+        const { data } = await api.post(`/crm/leads/${leadId}/tasks/from-template`, { template_id: tid });
+        created += data?.count || 0;
+        if (Array.isArray(data?.tasks) && data.tasks.length) allCreated.push(...data.tasks);
+      }
+
+      if (allCreated.length) {
+        setTasks((prev) => [...prev, ...allCreated]);
+        const stages = {};
+        allCreated.forEach((t) => { if (t.stage_slug) stages[t.stage_slug] = true; });
+        setExpandedStages((s) => ({ ...s, ...stages }));
+      } else {
+        await loadTasks();
+      }
+      alert(created > 0 ? `Đã gen ${created} nhiệm vụ mặc định` : 'Không tạo thêm nhiệm vụ (có thể bộ mẫu trống hoặc đã tồn tại)');
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ');
+    } finally {
+      setGeneratingDefaults(false);
+    }
   };
 
   const updateTask = async (taskId, updates) => {
@@ -761,6 +810,17 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {templates.length > 0 && tasks.length === 0 && !showTemplatePanel && (
+            <button
+              onClick={generateDefaultTasks}
+              disabled={generatingDefaults}
+              className="h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+              title="Tạo nhanh theo các bộ mẫu được đánh dấu ⭐ (is_default)"
+            >
+              {generatingDefaults ? <span className="animate-spin h-3 w-3 border-2 border-white/80 border-t-transparent rounded-full" /> : <ListChecks className="h-3 w-3" />}
+              Gen nhiệm vụ (CRM)
+            </button>
+          )}
           {templates.length > 0 && (
             <button onClick={() => setShowTemplatePanel(p => !p)}
               className={`h-7 px-2.5 rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer transition-colors ${showTemplatePanel ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100'}`}>

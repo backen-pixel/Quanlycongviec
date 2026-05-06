@@ -3922,15 +3922,70 @@ function SettingsTab() {
   const [leadTypesLoading, setLeadTypesLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_company_id: '', default_lead_type_id: '', default_stage_id: '', default_lead_owner_id: '' };
+  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_company_id: '', default_region_id: '', default_lead_type_id: '', default_stage_id: '', default_lead_owner_id: '' };
   const [form, setForm] = useState({ ...emptyForm });
+  const [formCompanyRegions, setFormCompanyRegions] = useState([]);
+  const [regionsByCompanyId, setRegionsByCompanyId] = useState({});
 
   const load = () => { fetch(`${API}/api/facebook/pages`, { headers: hdr() }).then(r => r.ok ? r.json() : []).then(setPages).catch(() => {}); };
   useEffect(() => {
     load();
-    api.get('/companies').then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
+    api.get('/companies', { params: { for_module: 'crm' } })
+      .then((r) => setCompanies(r.data?.companies || r.data || []))
+      .catch(() => {});
     api.get('/users').then(r => setUsers(r.data?.users || r.data || [])).catch(() => {});
   }, []);
+
+  /** Tên khu vực cho badge từng Page (theo công ty mặc định của Page) */
+  useEffect(() => {
+    const ids = [...new Set((pages || []).map((p) => p.default_company_id).filter(Boolean))];
+    if (!ids.length) {
+      setRegionsByCompanyId({});
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      ids.map((cid) =>
+        api
+          .get('/crm/company-regions', { params: { company_id: cid } })
+          .then((r) => [cid, Array.isArray(r.data) ? r.data : []])
+          .catch(() => [cid, []]),
+      ),
+    ).then((pairs) => {
+      if (!cancelled) setRegionsByCompanyId(Object.fromEntries(pairs));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pages]);
+
+  useEffect(() => {
+    const cid = form.default_company_id;
+    if (!cid) {
+      setFormCompanyRegions([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get('/crm/company-regions', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        setFormCompanyRegions(Array.isArray(r.data) ? r.data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setFormCompanyRegions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.default_company_id]);
+
+  useEffect(() => {
+    if (!form.default_region_id || !form.default_company_id) return;
+    if (formCompanyRegions.length === 0) return;
+    const ok = formCompanyRegions.some((reg) => String(reg.id) === String(form.default_region_id));
+    if (!ok) setForm((prev) => ({ ...prev, default_region_id: '' }));
+  }, [formCompanyRegions, form.default_region_id, form.default_company_id]);
 
   // Giai đoạn (lead) theo pipeline CRM của công ty đang chọn
   useEffect(() => {
@@ -3992,7 +4047,22 @@ function SettingsTab() {
     await fetch(`${API}/api/facebook/pages/${id}`, { method: 'DELETE', headers: hdr() });
     setPages(prev => prev.filter(p => p.id !== id));
   };
-  const startEdit = (p) => { setEditingId(p.id); setForm({ page_id: p.page_id, page_name: p.page_name || '', access_token: '', webhook_verify_token: p.webhook_verify_token || '', auto_reply_message: p.auto_reply_message || '', auto_create_lead: p.auto_create_lead, default_company_id: p.default_company_id || '', default_lead_type_id: p.default_lead_type_id || '', default_stage_id: p.default_stage_id || '', default_lead_owner_id: p.default_lead_owner_id || '' }); };
+  const startEdit = (p) => {
+    setEditingId(p.id);
+    setForm({
+      page_id: p.page_id,
+      page_name: p.page_name || '',
+      access_token: '',
+      webhook_verify_token: p.webhook_verify_token || '',
+      auto_reply_message: p.auto_reply_message || '',
+      auto_create_lead: p.auto_create_lead,
+      default_company_id: p.default_company_id || '',
+      default_region_id: p.default_region_id || '',
+      default_lead_type_id: p.default_lead_type_id || '',
+      default_stage_id: p.default_stage_id || '',
+      default_lead_owner_id: p.default_lead_owner_id || '',
+    });
+  };
   const saveEdit = async (id) => {
     const updates = { ...form }; if (!updates.access_token) delete updates.access_token;
             await fetch(`${API}/api/facebook/pages/${id}`, { method: 'PUT', headers: hdr(), body: JSON.stringify(updates) });
@@ -4022,20 +4092,73 @@ function SettingsTab() {
   }, [form.default_company_id]);
 
   const CompanyStageSelectors = () => (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="space-y-3">
+      <div className="rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2">
+        <p className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">Công ty và phân khu vực CRM</p>
+        <p className="text-[10px] text-gray-500 mt-0.5">
+          Lead tạo từ Page sẽ gán đúng <strong>công ty</strong> và <strong>khu vực</strong> (danh mục khu vực theo từng công ty — cấu hình tại{' '}
+          <Link to="/tasks/regions" className="text-blue-600 underline font-medium">Khu vực công ty</Link>
+          ).
+        </p>
+      </div>
       <div>
-        <label className="text-xs text-gray-600 mb-1 block">Công ty mặc định (Lead vào)</label>
+        <label className="text-xs text-gray-600 mb-1 block font-medium">Công ty mặc định (Lead vào) *</label>
         <select
           value={form.default_company_id}
           onChange={(e) =>
-            setForm({ ...form, default_company_id: e.target.value, default_lead_type_id: '', default_stage_id: '' })
+            setForm({
+              ...form,
+              default_company_id: e.target.value,
+              default_lead_type_id: '',
+              default_stage_id: '',
+              default_region_id: '',
+            })
           }
           className="w-full px-3 py-2 text-sm border rounded cursor-pointer"
         >
-          <option value="">-- Không chọn --</option>
+          <option value="">-- Chọn công ty --</option>
           {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
         </select>
       </div>
+
+      {/* Luôn hiển thị — đặt ngay sau công ty để dễ thấy (phân khu vực theo công ty đã chọn) */}
+      <div
+        className="rounded-xl border-2 border-teal-500 bg-teal-50 px-3 py-3 shadow-sm"
+        data-fb-setup-region
+      >
+        <p className="text-sm font-bold text-teal-900 mb-2 flex items-center gap-2">
+          <span className="text-lg" aria-hidden>📍</span>
+          Khu vực CRM
+          <span className="text-[10px] font-normal text-teal-700">(theo công ty đã chọn)</span>
+        </p>
+        <select
+          value={form.default_region_id || ''}
+          onChange={(e) => setForm({ ...form, default_region_id: e.target.value })}
+          disabled={!form.default_company_id}
+          className="w-full px-3 py-2.5 text-sm border-2 border-teal-300 rounded-lg bg-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <option value="">— Chưa chọn khu vực —</option>
+          {formCompanyRegions
+            .filter((reg) => reg.is_active !== false)
+            .map((reg) => (
+              <option key={reg.id} value={reg.id}>
+                {reg.name}
+                {reg.code ? ` (${reg.code})` : ''}
+              </option>
+            ))}
+        </select>
+        {!form.default_company_id ? (
+          <p className="text-[11px] text-teal-900 mt-2">Chọn <strong>công ty mặc định</strong> phía trên để mở danh sách khu vực.</p>
+        ) : formCompanyRegions.length === 0 ? (
+          <p className="text-[11px] text-amber-800 mt-2 font-medium">
+            Công ty này chưa có khu vực trong CRM. Vào{' '}
+            <Link to="/tasks/regions" className="underline text-blue-700">Không gian làm việc → Khu vực công ty</Link> để tạo.
+          </p>
+        ) : (
+          <p className="text-[11px] text-teal-800 mt-2">Lead từ Facebook sẽ gắn đúng khu vực này.</p>
+        )}
+      </div>
+
       <div>
         <label className="text-xs text-gray-600 mb-1 block">Loại Lead mặc định</label>
         <select
@@ -4052,6 +4175,8 @@ function SettingsTab() {
         </select>
         {!form.default_company_id && <p className="text-[10px] text-gray-400 mt-1">Chọn công ty để load phân loại</p>}
       </div>
+
+      <div className="grid grid-cols-1 gap-3">
       <div className="col-span-2">
         <label className="text-xs text-gray-600 mb-1 block">Giai đoạn mặc định (pipeline lead của công ty)</label>
         <select
@@ -4083,6 +4208,7 @@ function SettingsTab() {
           {users.map(u => <option key={u.id} value={u.id}>{u.full_name || u.email} {u.role === 'admin' ? '(Admin)' : ''}</option>)}
         </select>
         <p className="text-[10px] text-gray-400 mt-1">Khi có lead mới từ Facebook, người này sẽ được gán làm chủ lead + người phụ trách</p>
+      </div>
       </div>
     </div>
   );
@@ -4161,6 +4287,15 @@ function SettingsTab() {
                   </button>
                   {p.auto_reply_message && <span className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200">💬 "{p.auto_reply_message.substring(0, 25)}..."</span>}
                   {p.default_company_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">🏢 {companies.find(c => c.id === p.default_company_id)?.short_name || companies.find(c => c.id === p.default_company_id)?.name || 'Công ty'}</span>}
+                  {p.default_region_id && (() => {
+                    const list = regionsByCompanyId[p.default_company_id] || [];
+                    const reg = list.find((x) => String(x.id) === String(p.default_region_id));
+                    return (
+                      <span className="text-xs px-3 py-1.5 rounded-lg bg-teal-50 text-teal-800 border border-teal-200" title="Khu vực CRM gán cho lead từ Page">
+                        📍 {reg?.name || 'Khu vực'}
+                      </span>
+                    );
+                  })()}
                   {p.default_lead_type_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">🏷️ Loại Lead</span>}
                   {p.default_lead_owner_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">👤 {users.find(u => u.id === p.default_lead_owner_id)?.full_name || 'Người phụ trách'}</span>}
                 </div>

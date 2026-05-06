@@ -3,6 +3,7 @@ const { requirePermission } = require('../middleware/newPermission');
 const bcrypt = require('bcryptjs');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { normalizeRegionIdList, assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
 
 const r = Router();
 r.use(auth);
@@ -511,7 +512,15 @@ r.get('/:id', async (req, res) => {
       recentTasks = rt || [];
     } catch { }
 
-    res.json({ user: { ...user, taskStats, recentTasks } });
+    let crm_region_ids = [];
+    try {
+      const { data: ur } = await supabase.from('user_company_regions').select('region_id').eq('user_id', req.params.id);
+      crm_region_ids = normalizeRegionIdList((ur || []).map((r) => r.region_id));
+    } catch {
+      crm_region_ids = [];
+    }
+
+    res.json({ user: { ...user, taskStats, recentTasks, crm_region_ids } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -538,6 +547,22 @@ r.post('/', async (req, res) => {
       if (b[f] !== undefined) insertObj[f] = b[f] || null;
     });
 
+    if (b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
+      let targetCo = null;
+      if (b.department_id) {
+        const { data: d } = await supabase.from('departments').select('company_id').eq('id', b.department_id).maybeSingle();
+        targetCo = d?.company_id || null;
+      }
+      const ids = normalizeRegionIdList(b.crm_region_ids);
+      if (ids.length && !targetCo) {
+        return res.status(400).json({ error: 'Chọn phòng ban thuộc công ty trước khi gán khu vực CRM' });
+      }
+      for (const rid of ids) {
+        const v = await assertRegionBelongsToCompany(supabase, targetCo, rid);
+        if (!v.ok) return res.status(400).json({ error: v.error || 'Khu vực CRM không hợp lệ' });
+      }
+    }
+
     const { data, error } = await supabase.from('users').insert(insertObj)
       .select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
     if (error) {
@@ -549,10 +574,41 @@ r.post('/', async (req, res) => {
           phone: b.phone || null, role: b.role || 'staff', department_id: b.department_id || null,
         }).select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
         if (e2) throw e2;
+        if (d2?.id && b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
+          const ids = normalizeRegionIdList(b.crm_region_ids);
+          let targetCo = null;
+          if (b.department_id) {
+            const { data: dpt } = await supabase.from('departments').select('company_id').eq('id', b.department_id).maybeSingle();
+            targetCo = dpt?.company_id || null;
+          }
+          if (ids.length && targetCo) {
+            await supabase.from('user_company_regions').delete().eq('user_id', d2.id);
+            const { error: insErr } = await supabase.from('user_company_regions').insert(
+              ids.map((region_id) => ({ user_id: d2.id, region_id })),
+            );
+            if (insErr) console.warn('[users POST] user_company_regions:', insErr.message);
+          }
+        }
         return res.status(201).json({ user: d2 });
       }
       throw error;
     }
+
+    if (data?.id && b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
+      const ids = normalizeRegionIdList(b.crm_region_ids);
+      let targetCo = null;
+      if (b.department_id) {
+        const { data: dpt } = await supabase.from('departments').select('company_id').eq('id', b.department_id).maybeSingle();
+        targetCo = dpt?.company_id || null;
+      }
+      if (ids.length && targetCo) {
+        const { error: insErr } = await supabase.from('user_company_regions').insert(
+          ids.map((region_id) => ({ user_id: data.id, region_id })),
+        );
+        if (insErr) console.warn('[users POST] user_company_regions:', insErr.message);
+      }
+    }
+
     res.status(201).json({ user: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -590,6 +646,35 @@ r.put('/:id', async (req, res) => {
         .select('id,email,full_name,phone,role,department_id,is_active,created_at').single());
     }
     if (error) throw error;
+
+    if (b.crm_region_ids !== undefined) {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Không có quyền gán khu vực CRM' });
+      }
+      const { data: targetUser } = await supabase
+        .from('users')
+        .select('id, company_id, department_id')
+        .eq('id', targetId)
+        .maybeSingle();
+      let targetCo = targetUser?.company_id || null;
+      if (!targetCo && targetUser?.department_id) {
+        const { data: d } = await supabase.from('departments').select('company_id').eq('id', targetUser.department_id).maybeSingle();
+        targetCo = d?.company_id || null;
+      }
+      const ids = normalizeRegionIdList(b.crm_region_ids);
+      for (const rid of ids) {
+        const v = await assertRegionBelongsToCompany(supabase, targetCo, rid);
+        if (!v.ok) return res.status(400).json({ error: v.error || 'Khu vực không hợp lệ' });
+      }
+      await supabase.from('user_company_regions').delete().eq('user_id', targetId);
+      if (ids.length) {
+        const { error: insErr } = await supabase.from('user_company_regions').insert(
+          ids.map((region_id) => ({ user_id: targetId, region_id })),
+        );
+        if (insErr) throw insErr;
+      }
+    }
+
     res.json({ user: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });

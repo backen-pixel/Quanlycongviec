@@ -2201,6 +2201,8 @@ function AddDocumentModal({ onClose, onSave }) {
 function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner = false, productionCompaniesSx = [] }) {
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
+  /** Khu vực CRM — chỉ theo company_id của lead (company_regions) */
+  const [companyRegions, setCompanyRegions] = useState([]);
   const [editing, setEditing] = useState(null);
   const [editVal, setEditVal] = useState('');
   const [saving, setSaving] = useState(false);
@@ -2260,6 +2262,28 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
     return () => { cancelled = true; };
   }, [lead?.company_id, currentUser?.company_id]);
 
+  useEffect(() => {
+    const cid = lead?.company_id;
+    if (!cid) {
+      setCompanyRegions([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get('/crm/company-regions', { params: { company_id: String(cid) } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setCompanyRegions(list.filter((x) => x.is_active !== false));
+      })
+      .catch(() => {
+        if (!cancelled) setCompanyRegions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lead?.company_id]);
+
   const saveField = async (field, value) => {
     setSaving(true);
     try {
@@ -2278,6 +2302,11 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
       else if (field === 'expected_close_date') payload.expected_close_date = value || null;
       else if (field === 'description') payload.description = value || null;
       else if (field === 'next_follow_up') payload.next_follow_up = value || null;
+      else if (field === 'region_id') payload.region_id = value || null;
+      else if (field === 'company_id') {
+        payload.company_id = value || null;
+        payload.region_id = null;
+      }
       else payload[field] = value;
 
       await api.put(`/crm/leads/${lead.id}`, payload);
@@ -2437,6 +2466,37 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
         displayValue={lead?.company_id ? companies.find(c => c.id === lead.company_id)?.name || null : null}
         type="select"
         options={companies.map(c => ({ value: c.id, label: c.name }))} />
+
+      {lead?.company_id ? (
+        <EditableRow
+          icon="📍"
+          label="Khu vực"
+          field="region_id"
+          value={lead?.region_id || ''}
+          displayValue={
+            lead?.region_id
+              ? (companyRegions.find((r) => String(r.id) === String(lead.region_id))?.name
+                || lead?.crm_region?.name
+                || '—')
+              : null
+          }
+          type="select"
+          options={companyRegions.map((r) => ({
+            value: r.id,
+            label: `${r.name}${r.code ? ` (${r.code})` : ''}`,
+          }))}
+        />
+      ) : (
+        <div className="group">
+          <div className="flex items-start gap-2 py-2 px-1 rounded-lg -mx-1">
+            <span className="text-sm mt-0.5 shrink-0">📍</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Khu vực</p>
+              <p className="text-xs text-amber-600 italic">Chọn công ty trước để gán khu vực</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Một người phụ trách cho cả Lead và Deal */}
       <div className="group">

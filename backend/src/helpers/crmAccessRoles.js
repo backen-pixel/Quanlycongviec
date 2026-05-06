@@ -30,6 +30,23 @@ function isCrmCompanyAdminUser(user) {
   return normalizeCrmUserRole(user?.role) === 'admin' && user?.company_id != null && String(user.company_id).trim() !== '';
 }
 
+/** Admin khu vực: xem/gán lead-deal trong các khu vực được gán (JWT crm_region_ids), không toàn công ty. */
+function isCrmRegionAdminUser(user) {
+  return normalizeCrmUserRole(user?.role) === 'region_admin' && user?.company_id != null && String(user.company_id).trim() !== '';
+}
+
+/** Giống userSeesAllCrmLeads(role) nhưng gồm admin khu vực (phạm vi region filter riêng trên query). */
+function userSeesAllCrmLeadsForScope(user) {
+  if (userSeesAllCrmLeads(user?.role)) return true;
+  return isCrmRegionAdminUser(user);
+}
+
+/** Giống userSeesAllCrmDeals(role) nhưng gồm admin khu vực. */
+function userSeesAllCrmDealsForScope(user) {
+  if (userSeesAllCrmDeals(user?.role)) return true;
+  return isCrmRegionAdminUser(user);
+}
+
 function userSeesAllCrmDeals(role) {
   return CRM_DEAL_VIEW_ALL_ROLES.has(normalizeCrmUserRole(role));
 }
@@ -112,4 +129,7 @@ module.exports = {
   fetchCrmLeadsForCustomerScoped,
   isCrmSystemAdminUser,
   isCrmCompanyAdminUser,
+  isCrmRegionAdminUser,
+  userSeesAllCrmLeadsForScope,
+  userSeesAllCrmDealsForScope,
 };

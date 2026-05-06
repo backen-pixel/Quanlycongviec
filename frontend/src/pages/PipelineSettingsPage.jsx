@@ -74,6 +74,7 @@ export default function PipelineSettingsPage() {
     name: '',
     color: '#94A3B8',
     icon: '🆕',
+    description: '',
     is_won: false,
     is_lost: false,
     send_zalo_on_enter: false,
@@ -423,6 +424,7 @@ export default function PipelineSettingsPage() {
       name: '',
       color: COLORS[filtered.length % COLORS.length],
       icon: '🆕',
+      description: '',
       is_won: false,
       is_lost: false,
       send_zalo_on_enter: false,
@@ -439,6 +441,7 @@ export default function PipelineSettingsPage() {
       name: stage.name,
       color: stage.color,
       icon: stage.icon || '',
+      description: stage.description != null ? String(stage.description) : '',
       is_won: stage.is_won,
       is_lost: stage.is_lost,
       send_zalo_on_enter: !!stage.send_zalo_on_enter,
@@ -663,7 +666,9 @@ export default function PipelineSettingsPage() {
           <Settings className="h-6 w-6 text-blue-600" />
           <div>
             <h1 className="text-xl font-bold text-gray-900">Cài đặt Pipeline</h1>
-            <p className="text-sm text-gray-500">Quản lý giai đoạn cho Lead và Deal</p>
+            <p className="text-sm text-gray-500">
+              Bấm <strong>Sửa</strong> trên từng giai đoạn và điền <strong>Mô tả cột Kanban</strong> — lưu vào database và hiện ngay dưới tên cột trên Kanban CRM.
+            </p>
           </div>
         </div>
       </div>
@@ -1235,6 +1240,18 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <label className="text-[10px] font-medium text-gray-500 block mb-1">
+            Mô tả cột Kanban (tùy chọn — hiển thị nhỏ dưới tên cột trên CRM)
+          </label>
+          <textarea
+            value={form.description ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            rows={2}
+            className="w-full px-3 py-2 border rounded-lg text-sm resize-y min-h-[2.75rem]"
+            placeholder="VD: Gọi lại trong 24h — chốt lịch khảo sát."
+          />
+        </div>
         <div>
           <label className="text-[10px] font-medium text-gray-500 block mb-1">Tên giai đoạn *</label>
           <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}

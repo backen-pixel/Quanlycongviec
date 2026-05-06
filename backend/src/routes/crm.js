@@ -12,10 +12,24 @@ const { syncCrmLeadSxPipelineFromProject, emitCrmBadgeUpdateForProject } = requi
 const {
   userSeesAllCrmDeals,
   userSeesAllCrmLeads,
+  userSeesAllCrmDealsForScope,
+  userSeesAllCrmLeadsForScope,
   normalizeCrmUserRole,
   isCrmCompanyAdminUser,
+  isCrmRegionAdminUser,
+  isCrmSystemAdminUser,
 } = require('../helpers/crmAccessRoles');
-const { applyDefaultWorkshopTemplatesForNewProject, applyWorkshopTemplateToProject } = require('../helpers/workshopApplyTemplates');
+const {
+  getCrmLeadRegionConstraint,
+  applyCrmLeadRegionFilterToQuery,
+  assertLeadReadableByRegionScope,
+  assertRegionBelongsToCompany,
+} = require('../helpers/crmRegionScope');
+const {
+  applyDefaultWorkshopTemplatesForNewProject,
+  applyWorkshopTemplateToProject,
+  applyAllActiveWorkshopTemplatesForArea,
+} = require('../helpers/workshopApplyTemplates');
 const { autoGenCrmTasks, FALLBACK_LEAD_TASKS, FALLBACK_DEAL_TASKS } = require('../helpers/autoGenCrmTasks');
 const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
@@ -47,10 +61,23 @@ function userIsAdmin(role) {
   return normalizeCrmUserRole(role) === 'admin';
 }
 
+/** Gán lead/deal, bulk — admin hệ thống/công ty hoặc admin khu vực */
+function userIsCrmCompanyOrRegionAdmin(req) {
+  return userIsAdmin(req.user?.role) || isCrmRegionAdminUser(req.user);
+}
+
 /** Admin công ty: `admin` + `company_id` trên JWT — khác admin hệ thống (`admin` không `company_id`). */
 function scopedAdminCompanyId(req) {
   if (!isCrmCompanyAdminUser(req.user)) return null;
   return String(req.user.company_id).trim();
+}
+
+/** Khóa `company_id` khi tạo/sửa CRM: admin công ty hoặc admin khu vực. */
+function scopedCrmCompanyIdForWrite(req) {
+  const sac = scopedAdminCompanyId(req);
+  if (sac) return sac;
+  if (isCrmRegionAdminUser(req.user) && req.user.company_id) return String(req.user.company_id).trim();
+  return null;
 }
 
 function requireUserCompanyId(req, res) {
@@ -635,7 +662,7 @@ async function nextCode(prefix) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** PostgREST mặc định ~1000 dòng/truy vấn — gom đủ bản ghi theo filter để KPI / pipeline không bị trần 1000. */
-async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, date_to, assigned_to_only }, pageSize = 1000) {
+async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, date_to, assigned_to_only, req }, pageSize = 1000) {
   const rows = [];
   let from = 0;
   for (;;) {
@@ -644,6 +671,7 @@ async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, d
       .select('id, stage_id, estimated_value, probability, type')
       .eq('type', type);
     if (company_id) q = q.eq('company_id', company_id);
+    if (req) q = applyCrmLeadRegionFilterToQuery(q, req);
     if (assigned_to_only) {
       if (type === 'lead') {
         q = q.or(`assigned_to.eq.${assigned_to_only},lead_owner_id.eq.${assigned_to_only}`);
@@ -699,9 +727,9 @@ r.get('/dashboard', async (req, res) => {
     const { data: stages } = await stagesQuery;
 
     const dealAssigneeOnly =
-      type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role) ? req.user.userId : null;
+      type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user) ? req.user.userId : null;
     const leadAssigneeOnly =
-      type === 'lead' && req.user?.userId && !userSeesAllCrmLeads(req.user.role) ? req.user.userId : null;
+      type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user) ? req.user.userId : null;
     const assigneeOnly = dealAssigneeOnly || leadAssigneeOnly;
 
     // Leads/Deals theo filter (đủ trang) — tránh trần 1000 dòng của Supabase
@@ -710,6 +738,7 @@ r.get('/dashboard', async (req, res) => {
       date_from,
       date_to,
       assigned_to_only: assigneeOnly,
+      req,
     });
 
     const stageStats = (stages || []).map(s => {
@@ -747,10 +776,12 @@ r.get('/dashboard', async (req, res) => {
         allLeadsQ = allLeadsQ.eq('company_id', effectiveCompanyId);
         dealsConvertedQ = dealsConvertedQ.eq('company_id', effectiveCompanyId);
       }
-      if (uid && !userSeesAllCrmLeads(req.user.role)) {
+      allLeadsQ = applyCrmLeadRegionFilterToQuery(allLeadsQ, req);
+      dealsConvertedQ = applyCrmLeadRegionFilterToQuery(dealsConvertedQ, req);
+      if (uid && !userSeesAllCrmLeadsForScope(req.user)) {
         allLeadsQ = allLeadsQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
       }
-      if (uid && !userSeesAllCrmDeals(req.user.role)) {
+      if (uid && !userSeesAllCrmDealsForScope(req.user)) {
         dealsConvertedQ = dealsConvertedQ.eq('assigned_to', uid);
       }
       const { count: allLeadsCount } = await allLeadsQ;
@@ -1035,6 +1066,7 @@ r.post('/pipelines/:id/copy', async (req, res) => {
         create_event_on_enter: !!s.create_event_on_enter,
         sync_role: s.sync_role || null,
         default_probability: s.default_probability != null && s.default_probability !== '' ? s.default_probability : null,
+        description: s.description != null && String(s.description).trim() !== '' ? String(s.description).trim() : null,
       }));
       await supabase.from('crm_pipeline_stages').insert(inserts);
     }
@@ -1143,6 +1175,10 @@ r.post('/pipeline-stages', async (req, res) => {
       const n = Number(b.default_probability);
       if (Number.isFinite(n)) defaultProbability = Math.max(0, Math.min(100, Math.round(n)));
     }
+    const stageDesc =
+      b.description != null && String(b.description).trim() !== ''
+        ? String(b.description).trim()
+        : null;
     const { data, error } = await supabase.from('crm_pipeline_stages').insert({
       name: b.name, pipeline_type: b.pipeline_type, pipeline_id: b.pipeline_id || null,
       color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
@@ -1151,6 +1187,7 @@ r.post('/pipeline-stages', async (req, res) => {
       create_event_on_enter: !!b.create_event_on_enter,
       sync_role: b.sync_role || null,
       default_probability: defaultProbability,
+      description: stageDesc,
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -1176,6 +1213,12 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter', 'create_event_on_enter', 'sync_role'].forEach(f => {
       if (b[f] !== undefined) update[f] = (f === 'send_zalo_on_enter' || f === 'create_event_on_enter') ? !!b[f] : b[f];
     });
+    if (b.description !== undefined) {
+      update.description =
+        b.description == null || String(b.description).trim() === ''
+          ? null
+          : String(b.description).trim();
+    }
     if (b.default_probability !== undefined) {
       if (b.default_probability === null || b.default_probability === '') {
         update.default_probability = null;
@@ -2396,10 +2439,11 @@ r.get('/leads-by-fb-page', async (req, res) => {
       .select('*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), company:companies(id, name, short_name)')
       .in('id', leadIds).eq('type', type);
     if (filterCompanyId) q = q.eq('company_id', filterCompanyId);
-    if (type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role)) {
+    q = applyCrmLeadRegionFilterToQuery(q, req);
+    if (type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user)) {
       q = q.eq('assigned_to', req.user.userId);
     }
-    if (type === 'lead' && req.user?.userId && !userSeesAllCrmLeads(req.user.role)) {
+    if (type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user)) {
       q = q.or(`assigned_to.eq.${req.user.userId},lead_owner_id.eq.${req.user.userId}`);
     }
     const { data } = await q.order('created_at', { ascending: false });
@@ -2413,8 +2457,9 @@ r.get('/leads-by-fb-page', async (req, res) => {
 
 /** linked_project embed added in migration 76 — included here, stripped by runtime fallback if migration not applied */
 const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, production_deadline, production_note)';
+const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
-  '*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies(id, name, short_name), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)';
+  `*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
 let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
 let _crmLeadSelectMigrationChecked = false;
 let _vcPipelineStageAvailable = true; // migration 81
@@ -2571,7 +2616,13 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
   const byId = new Map();
   for (let i = 0; i < list.length; i += chunkSize) {
     const chunk = list.slice(i, i + chunkSize);
-    const { data, error } = await supabase.from('crm_leads').select(selectStr).in('id', chunk);
+    let { data, error } = await supabase.from('crm_leads').select(selectStr).in('id', chunk);
+    if (error && /region|company_regions|crm_leads_region_id/i.test(String(error.message || ''))) {
+      const stripped = selectStr.replace(CRM_LEAD_REGION_EMBED, '');
+      const r2 = await supabase.from('crm_leads').select(stripped).in('id', chunk);
+      data = r2.data;
+      error = r2.error;
+    }
     if (error) throw error;
     (data || []).forEach((row) => byId.set(row.id, row));
   }
@@ -2580,7 +2631,7 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
 
 /** Fallback: dùng .range() — giới hạn parsedLimit dòng để tránh egress lớn. */
 async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
-  const { assigneeStrict = false, viewerUserId = null } = opts;
+  const { assigneeStrict = false, viewerUserId = null, req: scopeReq = null } = opts;
   const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, type = 'lead', company_id, date_from, date_to, phone_filter, lead_type_id } = reqQuery;
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
@@ -2606,6 +2657,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (df) q = q.gte('created_at', df);
     if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
     if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
+    if (scopeReq) q = applyCrmLeadRegionFilterToQuery(q, scopeReq);
     return q;
   };
 
@@ -2635,6 +2687,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (df) q = q.gte('created_at', df);
     if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
     if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
+    if (scopeReq) q = applyCrmLeadRegionFilterToQuery(q, scopeReq);
     let { data, error } = await q.range(from, from + need - 1);
     if (error && isVcRelationshipError(error)) {
       // FK chưa có — strip join và retry
@@ -2642,6 +2695,11 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
       _crmLeadSelectMigrationChecked = false;
       currentSelectStr = currentSelectStr.replace(', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)', '');
       console.warn('[crm] Auto-strip vc_pipeline_stage join do FK chưa tồn tại trong schema cache');
+      ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
+    }
+    if (error && /region|company_regions|crm_leads_region_id/i.test(String(error.message || ''))) {
+      currentSelectStr = currentSelectStr.replace(CRM_LEAD_REGION_EMBED, '');
+      console.warn('[crm] Auto-strip crm_region embed (migration 131 / FK)');
       ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
     }
     if (error) throw error;
@@ -2681,8 +2739,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
 r.get('/leads', async (req, res) => {
   try {
     const type = req.query.type || 'lead';
-    const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDeals(req.user.role);
-    const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeads(req.user.role);
+    const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
+    const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user);
     let mergedQuery =
       forcedDealSelf || forcedLeadSelf ? { ...req.query, assigned_to: req.user.userId } : { ...req.query };
     const sacLeads = scopedAdminCompanyId(req);
@@ -2707,9 +2765,13 @@ r.get('/leads', async (req, res) => {
       const legacy = await getCrmLeadsListLegacy(mergedQuery, {
         assigneeStrict: rpcAssigneeStrict,
         viewerUserId: req.user?.userId,
+        req,
       });
       return res.json(legacy);
     }
+
+    const rcForRpc = getCrmLeadRegionConstraint(req);
+    const rpcRegionIds = rcForRpc.mode === 'in' && rcForRpc.ids?.length ? rcForRpc.ids : null;
 
     const rpcParams = {
       p_type: type,
@@ -2724,13 +2786,18 @@ r.get('/leads', async (req, res) => {
       p_limit: parsedLimit,
       p_offset: parsedOffset,
       p_assigned_strict: rpcAssigneeStrict,
+      p_region_ids: rpcRegionIds,
     };
 
     let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
-    // DB cũ (database/51): function 11 tham số, không có p_assigned_strict — PostgREST báo không tìm thấy function.
-    if (rpcError && /crm_leads_page_ids|does not exist|Could not find/i.test(String(rpcError.message || ''))) {
-      const { p_assigned_strict: _s, ...rpcLegacy } = rpcParams;
-      const r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
+    // DB cũ: không có p_region_ids — thử bỏ tham số cuối
+    if (rpcError && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(rpcError.message || ''))) {
+      const { p_region_ids: _reg, ...rpcNoRegion } = rpcParams;
+      let r2 = await supabase.rpc('crm_leads_page_ids', rpcNoRegion);
+      if (r2.error && /crm_leads_page_ids|does not exist|Could not find/i.test(String(r2.error.message || ''))) {
+        const { p_assigned_strict: _s, ...rpcLegacy } = rpcNoRegion;
+        r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
+      }
       if (!r2.error) {
         rpcData = r2.data;
         rpcError = null;
@@ -2760,7 +2827,11 @@ r.get('/leads', async (req, res) => {
     if (rpcError) {
       console.warn('[crm/leads] crm_leads_page_ids RPC unavailable, using legacy (max 5000 rows):', rpcError.message);
     }
-    const legacy = await getCrmLeadsListLegacy(mergedQuery, { assigneeStrict: rpcAssigneeStrict, viewerUserId: req.user?.userId });
+    const legacy = await getCrmLeadsListLegacy(mergedQuery, {
+      assigneeStrict: rpcAssigneeStrict,
+      viewerUserId: req.user?.userId,
+      req,
+    });
     return res.json(legacy);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2832,23 +2903,100 @@ r.put('/customers/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══ KHU VỰC CRM (company_regions) ═══
+r.get('/company-regions', async (req, res) => {
+  try {
+    const co = req.query.company_id && String(req.query.company_id).trim();
+    if (!co) return res.status(400).json({ error: 'Thiếu company_id' });
+    const sac = scopedAdminCompanyId(req);
+    if (sac && String(co) !== String(sac)) return res.status(403).json({ error: 'Không xem khu vực công ty khác' });
+    if (isCrmRegionAdminUser(req.user)) {
+      if (String(co) !== String(req.user.company_id)) return res.status(403).json({ error: 'Không có quyền' });
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      if (String(co) !== String(cid)) return res.status(403).json({ error: 'Không có quyền' });
+    }
+    const { data, error } = await supabase
+      .from('company_regions')
+      .select('*')
+      .eq('company_id', co)
+      .order('order_index');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    if (String(e.message || '').includes('company_regions')) {
+      return res.json([]);
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/company-regions', async (req, res) => {
+  try {
+    const { company_id, name, code } = req.body || {};
+    if (!company_id || !String(name || '').trim()) return res.status(400).json({ error: 'company_id và name là bắt buộc' });
+    const sac = scopedAdminCompanyId(req);
+    if (!isCrmSystemAdminUser(req.user) && !sac) {
+      return res.status(403).json({ error: 'Chỉ admin công ty hoặc admin hệ thống thêm khu vực' });
+    }
+    if (sac && String(company_id) !== String(sac)) return res.status(403).json({ error: 'Không tạo khu vực cho công ty khác' });
+    const { data, error } = await supabase
+      .from('company_regions')
+      .insert({
+        company_id,
+        name: String(name).trim(),
+        code: code != null && String(code).trim() ? String(code).trim() : null,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.patch('/company-regions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: row } = await supabase.from('company_regions').select('id, company_id').eq('id', id).maybeSingle();
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy' });
+    const sac = scopedAdminCompanyId(req);
+    if (!isCrmSystemAdminUser(req.user) && !sac) {
+      return res.status(403).json({ error: 'Chỉ admin công ty hoặc admin hệ thống sửa khu vực' });
+    }
+    if (sac && String(row.company_id) !== String(sac)) return res.status(403).json({ error: 'Không có quyền' });
+    const patch = { updated_at: new Date().toISOString() };
+    ['name', 'code', 'order_index', 'is_active'].forEach((f) => {
+      if (req.body[f] !== undefined) patch[f] = req.body[f];
+    });
+    const { data, error } = await supabase.from('company_regions').update(patch).eq('id', id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/leads', async (req, res) => {
   try {
     const code = await nextCode('LEAD');
     const body = { ...req.body };
-    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id', 'pipeline_id', 'lead_type_id'].forEach(f => {
+    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id', 'pipeline_id', 'lead_type_id', 'region_id'].forEach(f => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
     if (!body.assigned_to) body.assigned_to = req.user.userId;
-    if (!userSeesAllCrmLeads(req.user.role)) body.assigned_to = req.user.userId;
+    if (!userSeesAllCrmLeadsForScope(req.user)) body.assigned_to = req.user.userId;
     body.lead_owner_id = body.assigned_to;
 
-    const sacLeadPost = scopedAdminCompanyId(req);
-    if (sacLeadPost) {
-      if (body.company_id && String(body.company_id) !== String(sacLeadPost)) {
+    const lockedLeadCo = scopedCrmCompanyIdForWrite(req);
+    if (lockedLeadCo) {
+      if (body.company_id && String(body.company_id) !== String(lockedLeadCo)) {
         return res.status(403).json({ error: 'Không tạo lead/deal cho công ty khác' });
       }
-      body.company_id = sacLeadPost;
+      body.company_id = lockedLeadCo;
     } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
@@ -2857,6 +3005,25 @@ r.post('/leads', async (req, res) => {
 
     // Resolve pipeline_id + first stage by company (company-scoped pipelines)
     if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
+
+    if (body.region_id) {
+      const v = await assertRegionBelongsToCompany(supabase, body.company_id, body.region_id);
+      if (!v.ok) return res.status(400).json({ error: v.error });
+      const rc = getCrmLeadRegionConstraint(req);
+      if (rc.mode === 'in' && rc.ids?.length && !rc.ids.includes(String(body.region_id))) {
+        return res.status(403).json({ error: 'Không tạo lead ngoài khu vực được phân' });
+      }
+    } else {
+      const { data: defR } = await supabase
+        .from('company_regions')
+        .select('id')
+        .eq('company_id', body.company_id)
+        .eq('is_active', true)
+        .order('order_index')
+        .limit(1)
+        .maybeSingle();
+      body.region_id = defR?.id || null;
+    }
     if (!body.pipeline_id) {
       const { data: def } = await supabase
         .from('crm_pipelines')
@@ -2932,25 +3099,45 @@ r.post('/leads', async (req, res) => {
 r.post('/deals', async (req, res) => {
   try {
     const body = { ...req.body };
-    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id', 'pipeline_id', 'lead_type_id'].forEach(f => {
+    ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id', 'pipeline_id', 'lead_type_id', 'region_id'].forEach(f => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
 
     if (!body.title) return res.status(400).json({ error: 'Nhập tên Deal' });
-    const sacDealPost = scopedAdminCompanyId(req);
-    if (sacDealPost) {
-      if (body.company_id && String(body.company_id) !== String(sacDealPost)) {
+    const lockedDealCo = scopedCrmCompanyIdForWrite(req);
+    if (lockedDealCo) {
+      if (body.company_id && String(body.company_id) !== String(lockedDealCo)) {
         return res.status(403).json({ error: 'Không tạo deal cho công ty khác' });
       }
-      body.company_id = sacDealPost;
+      body.company_id = lockedDealCo;
     } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       body.company_id = cid;
     }
     if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
+
+    if (body.region_id) {
+      const v = await assertRegionBelongsToCompany(supabase, body.company_id, body.region_id);
+      if (!v.ok) return res.status(400).json({ error: v.error });
+      const rc = getCrmLeadRegionConstraint(req);
+      if (rc.mode === 'in' && rc.ids?.length && !rc.ids.includes(String(body.region_id))) {
+        return res.status(403).json({ error: 'Không tạo deal ngoài khu vực được phân' });
+      }
+    } else {
+      const { data: defR } = await supabase
+        .from('company_regions')
+        .select('id')
+        .eq('company_id', body.company_id)
+        .eq('is_active', true)
+        .order('order_index')
+        .limit(1)
+        .maybeSingle();
+      body.region_id = defR?.id || null;
+    }
+
     if (!body.assigned_to) body.assigned_to = req.user.userId;
-    if (!userSeesAllCrmDeals(req.user.role)) body.assigned_to = req.user.userId;
+    if (!userSeesAllCrmDealsForScope(req.user)) body.assigned_to = req.user.userId;
     body.lead_owner_id = body.assigned_to;
 
     // Resolve pipeline_id + first stage by company (company-scoped pipelines)
@@ -3082,6 +3269,7 @@ async function resolveCanonicalCrmLeadId(rawId) {
 /** Nhiều lớp select để tránh 500 khi DB thiếu cột/embed (customers, stage, SX/VC pipeline). */
 async function fetchCrmLeadDetailRow(leadId) {
   const LEAD_DETAIL_EMBED_CORE = 'source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar), creator:users!crm_leads_created_by_fkey(id, full_name)';
+  const LEAD_DETAIL_REGION_EMBED = CRM_LEAD_REGION_EMBED;
   const sxE = ', sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)';
   const vcE = ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)';
   const combos = [
@@ -3109,8 +3297,12 @@ async function fetchCrmLeadDetailRow(leadId) {
     if (a.useVc && skipVcAttempts) continue;
     const sxPart = a.sx ? sxE : '';
     const vcPart = a.useVc ? vcE : '';
-    const sel = `*, ${a.cust}, ${a.st}, ${LEAD_DETAIL_EMBED_CORE}${sxPart}${vcPart}`;
-    const { data, error } = await supabase.from('crm_leads').select(sel).eq('id', leadId).single();
+    let sel = `*, ${a.cust}, ${a.st}, ${LEAD_DETAIL_EMBED_CORE}${sxPart}${vcPart}${LEAD_DETAIL_REGION_EMBED}`;
+    let { data, error } = await supabase.from('crm_leads').select(sel).eq('id', leadId).single();
+    if (error && /region|company_regions|crm_leads_region_id/i.test(String(error.message || ''))) {
+      sel = `*, ${a.cust}, ${a.st}, ${LEAD_DETAIL_EMBED_CORE}${sxPart}${vcPart}`;
+      ({ data, error } = await supabase.from('crm_leads').select(sel).eq('id', leadId).single());
+    }
     lastErr = error;
     if (!error && data) return { data, error: null };
     if (error?.code === 'PGRST116') {
@@ -3175,6 +3367,8 @@ r.get('/leads/:id/detail', async (req, res) => {
     if (sacLd && String(data.company_id || '') !== String(sacLd)) {
       return res.status(403).json({ error: 'Không có quyền xem lead/deal của công ty khác' });
     }
+    const arLd = assertLeadReadableByRegionScope(req, data);
+    if (!arLd.ok) return res.status(403).json({ error: arLd.error });
     const uid = req.user?.userId;
     if (uid) {
       const key = String(uid).trim().toLowerCase();
@@ -3196,12 +3390,19 @@ r.get('/leads/:id/detail', async (req, res) => {
 r.put('/leads/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type, company_id').eq('id', id).single();
+    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type, company_id, region_id').eq('id', id).single();
     const sacPut = scopedAdminCompanyId(req);
     if (sacPut) {
       if (!oldLead || String(oldLead.company_id || '') !== String(sacPut)) {
         return res.status(403).json({ error: 'Không có quyền sửa lead/deal của công ty khác' });
       }
+    } else if (isCrmRegionAdminUser(req.user) && req.user.company_id) {
+      const regCo = String(req.user.company_id).trim();
+      if (!oldLead || String(oldLead.company_id || '') !== String(regCo)) {
+        return res.status(403).json({ error: 'Không có quyền sửa lead/deal của công ty khác' });
+      }
+      const ar0 = assertLeadReadableByRegionScope(req, oldLead);
+      if (!ar0.ok) return res.status(403).json({ error: ar0.error });
     }
 
     const safeBody = { ...req.body };
@@ -3223,18 +3424,27 @@ r.put('/leads/:id', async (req, res) => {
     const wantsOwnerChange =
       Object.prototype.hasOwnProperty.call(req.body, 'assigned_to')
       || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id');
-    if (wantsOwnerChange && !userIsAdmin(req.user?.role)) {
+    if (wantsOwnerChange && !userIsCrmCompanyOrRegionAdmin(req)) {
       return res.status(403).json({ error: 'Chỉ admin mới được gán / điều chỉnh người phụ trách.' });
     }
 
-    if (oldLead?.type === 'deal' && !userSeesAllCrmDeals(req.user.role)) {
+    if (oldLead?.type === 'deal' && !userSeesAllCrmDealsForScope(req.user)) {
       if (safeBody.assigned_to != null && String(safeBody.assigned_to) !== String(req.user.userId)) {
         return res.status(403).json({ error: 'Bạn không thể giao phụ trách deal cho người khác.' });
       }
     }
-    if (oldLead?.type === 'lead' && !userSeesAllCrmLeads(req.user.role)) {
+    if (oldLead?.type === 'lead' && !userSeesAllCrmLeadsForScope(req.user)) {
       if (safeBody.assigned_to != null && String(safeBody.assigned_to) !== String(req.user.userId)) {
         return res.status(403).json({ error: 'Chỉ admin mới giao phụ trách lead cho người khác.' });
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(safeBody, 'region_id') && safeBody.region_id != null) {
+      const v = await assertRegionBelongsToCompany(supabase, oldLead?.company_id, safeBody.region_id);
+      if (!v.ok) return res.status(400).json({ error: v.error });
+      const rc = getCrmLeadRegionConstraint(req);
+      if (rc.mode === 'in' && rc.ids?.length && !rc.ids.includes(String(safeBody.region_id))) {
+        return res.status(403).json({ error: 'Không đổi lead/deal sang khu vực ngoài phạm vi của bạn' });
       }
     }
 
@@ -7273,6 +7483,7 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
 r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
   try {
     const leadId = req.params.id;
+    const force = !!req.body?.force;
     const { data: lead } = await supabase
       .from('crm_leads')
       .select('id, type, assigned_to, lead_owner_id')
@@ -7285,12 +7496,14 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
       leadId,
       createdBy: req.user.userId,
       assigneeId: lead.assigned_to || lead.lead_owner_id || null,
+      force,
     });
     res.json({
       ok: true,
       created: r0.created || 0,
       reason: r0.reason || 'ok',
       template_name: r0.template_name || null,
+      forced: force,
     });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Lỗi tạo nhiệm vụ SX' });
@@ -7969,27 +8182,57 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     // Auto-generate default workshop tasks for production (nhiệm vụ mẫu xưởng)
     // Only apply once: check if the project already has tasks created from workshop templates.
     try {
+      const forcedCompanyId = pcv?.company?.id || null;
       const { data: defTpl } = await supabase
         .from('workshop_task_templates')
         .select('id')
         .eq('workshop_area', 'production')
         .eq('is_default', true)
         .eq('is_active', true)
+        .eq('company_id', forcedCompanyId)
         .limit(1)
         .maybeSingle();
-      if (defTpl?.id) {
+      // Fallback: dùng bộ mẫu global nếu công ty chưa có
+      let defTplId = defTpl?.id || null;
+      if (!defTplId) {
+        const { data: globalTpl } = await supabase
+          .from('workshop_task_templates')
+          .select('id')
+          .eq('workshop_area', 'production')
+          .eq('is_default', true)
+          .eq('is_active', true)
+          .is('company_id', null)
+          .limit(1)
+          .maybeSingle();
+        defTplId = globalTpl?.id || null;
+      }
+
+      if (defTplId) {
         const { count } = await supabase
           .from('tasks')
           .select('id', { count: 'exact', head: true })
           .eq('project_id', lead.project_id)
-          .contains('metadata', { workshop_template_id: defTpl.id });
+          .contains('metadata', { workshop_template_id: defTplId });
         if (!count || count === 0) {
-          const r = await applyWorkshopTemplateToProject(lead.project_id, defTpl.id, uid);
+          const r = await applyWorkshopTemplateToProject(lead.project_id, defTplId, uid);
           if (!r.ok) console.warn('[sx-handover] apply workshop template:', r.error);
         }
       }
     } catch (wt) {
       console.warn('[sx-handover] workshop templates:', wt.message);
+    }
+
+    // Gen toàn bộ bộ mẫu xưởng (khu SX) theo cấu hình /sx/task-templates (ưu tiên theo company đã chọn).
+    // Idempotent theo metadata.workshop_template_id nên gọi nhiều lần vẫn an toàn.
+    try {
+      const forcedCompanyId = pcv?.company?.id || null;
+      const rAll = await applyAllActiveWorkshopTemplatesForArea(lead.project_id, uid, {
+        workshopArea: 'production',
+        companyId: forcedCompanyId,
+      });
+      if (!rAll.ok) console.warn('[sx-handover] gen all workshop templates:', rAll.error);
+    } catch (e) {
+      console.warn('[sx-handover] gen all workshop templates:', e.message);
     }
 
     res.json({

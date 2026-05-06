@@ -22,7 +22,7 @@ import {
   getLocallyViewedLeadIdSet,
   getCurrentUserKeyForLeadSeen,
 } from '../lib/crmPipelineStorage';
-import { userSeesAllCrmDeals } from '../lib/crmDealAccess';
+import { userSeesAllCrmDealsScoped } from '../lib/crmDealAccess';
 import {
   findDefaultAdminCrmCompanyPhucDat,
   getStoredCrmFilterCompanyId,
@@ -105,7 +105,7 @@ function isActiveCrmPipelineItem(item) {
 
 export default function CRMDashboard() {
   const { user } = useAuth();
-  const seesAllCrmDeals = userSeesAllCrmDeals(user?.role);
+  const seesAllCrmDeals = userSeesAllCrmDealsScoped(user);
   const isAdmin = user?.role === 'admin';
   /** Admin công ty (khác admin hệ thống): backend khóa API + GET /companies chỉ trả một công ty. */
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
@@ -143,6 +143,9 @@ export default function CRMDashboard() {
   const [filterAssigneeName, setFilterAssigneeName] = useState(() => P?.filterAssigneeName ?? '');
   const [filterSource, setFilterSource] = useState(() => P?.filterSource ?? '');
   const [filterStage, setFilterStage] = useState(() => P?.filterStage ?? '');
+  /** Lọc pipeline theo khu vực CRM (company_regions); `__none__` = chưa gán khu vực */
+  const [filterRegion, setFilterRegion] = useState(() => P?.filterRegion ?? '');
+  const [companyRegions, setCompanyRegions] = useState([]);
   const [filterLeadType, setFilterLeadType] = useState(() => P?.filterLeadType ?? '');
   const companyFilterFromLsRef = useRef(false);
   /** Admin + filter rỗng: chỉ tự gán Phúc Đạt một lần; sau đó NV chọn «Tất cả» (= '') vẫn load đúng */
@@ -649,6 +652,35 @@ export default function CRMDashboard() {
     return c?.name || '';
   }, [dashboardScopeCompanyId, companies]);
 
+  useEffect(() => {
+    if (!dashboardScopeCompanyId) {
+      setCompanyRegions([]);
+      return;
+    }
+    let cancel = false;
+    api
+      .get('/crm/company-regions', { params: { company_id: dashboardScopeCompanyId } })
+      .then((r) => {
+        if (cancel) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setCompanyRegions(list);
+      })
+      .catch(() => {
+        if (!cancel) setCompanyRegions([]);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [dashboardScopeCompanyId]);
+
+  /** Đổi công ty / danh sách khu vực → bỏ chọn uuid không còn trong danh mục (chỉ khi đã có danh mục tải về) */
+  useEffect(() => {
+    if (!filterRegion || filterRegion === '__none__') return;
+    if (companyRegions.length === 0) return;
+    const ok = companyRegions.some((reg) => String(reg.id) === String(filterRegion));
+    if (!ok) setFilterRegion('');
+  }, [companyRegions, filterRegion]);
+
   const companyHasNoPipeline = useMemo(() => {
     if (!dashboardScopeCompanyId) return false;
     const list = pipelines || [];
@@ -1019,6 +1051,15 @@ export default function CRMDashboard() {
       result = result.filter(l => l.stage_id === filterStage);
     }
 
+    // Khu vực CRM (company_regions)
+    if (filterRegion) {
+      if (filterRegion === '__none__') {
+        result = result.filter((l) => l.region_id == null || String(l.region_id).trim() === '');
+      } else {
+        result = result.filter((l) => String(l.region_id || '') === String(filterRegion));
+      }
+    }
+
     // Phone filter
     // Phone filter đã được ưu tiên xử lý ở backend để không bị phụ thuộc vào 500 bản ghi đầu.
 
@@ -1048,7 +1089,7 @@ export default function CRMDashboard() {
     // Ưu tiên đẩy lead/deal có số điện thoại lên đầu danh sách trước khi render Kanban
     result = [...result].sort((a, b) => Number(hasPhoneNumber(b)) - Number(hasPhoneNumber(a)));
     return result;
-  }, [searchText, filterCompany, filterAssignee, filterAssigneeName, filterSource, filterStage, filterPhone, fbPageLeadIds, hasPhoneNumber]);
+  }, [searchText, filterCompany, filterAssignee, filterAssigneeName, filterSource, filterStage, filterRegion, filterPhone, fbPageLeadIds, hasPhoneNumber]);
 
   const leads = useMemo(() => filterItemsForPipeline(allLeads, 'lead'), [allLeads, filterItemsForPipeline]);
   const deals = useMemo(() => filterItemsForPipeline(allDeals, 'deal'), [allDeals, filterItemsForPipeline]);
@@ -1093,6 +1134,7 @@ export default function CRMDashboard() {
       filterAssigneeName,
       filterSource,
       filterStage,
+      filterRegion,
       filterLeadType,
       filterPhone,
       showAdvSearch,
@@ -1123,6 +1165,7 @@ export default function CRMDashboard() {
     filterAssigneeName,
     filterSource,
     filterStage,
+    filterRegion,
     filterLeadType,
     filterPhone,
     showAdvSearch,
@@ -1660,21 +1703,21 @@ export default function CRMDashboard() {
           {/* Toggle advanced filters */}
           <button onClick={() => setShowAdvSearch(!showAdvSearch)}
             className={`h-10 px-4 rounded-xl text-sm font-medium flex items-center gap-2 cursor-pointer transition-all border ${
-              showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterLeadType || filterPhone
+              showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone
                 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             }`}>
             <Filter className="h-4 w-4" />
             Bộ lọc
-            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterLeadType || filterPhone === 'no_phone') && (
+            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone === 'no_phone') && (
               <span className="bg-blue-600 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {[filterAssignee, filterAssigneeName, filterCompany, filterSource, filterStage, filterLeadType, filterPhone === 'no_phone' ? filterPhone : ''].filter(Boolean).length}
+                {[filterAssignee, filterAssigneeName, filterCompany, filterSource, filterStage, filterRegion, filterLeadType, filterPhone === 'no_phone' ? filterPhone : ''].filter(Boolean).length}
               </span>
             )}
           </button>
 
           {/* Clear all filters */}
-          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterLeadType || filterPhone !== 'has_phone' || timePreset) && (
+          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone !== 'has_phone' || timePreset) && (
             <button onClick={() => {
               setSearchText('');
               setFilterAssignee('');
@@ -1683,6 +1726,7 @@ export default function CRMDashboard() {
               setFilterCompany('');
               setFilterSource('');
               setFilterStage('');
+              setFilterRegion('');
               setFilterLeadType('');
               setFilterPhone('has_phone');
               handleTimePresetChange('');
@@ -1699,7 +1743,7 @@ export default function CRMDashboard() {
           )}
 
           {/* Result count */}
-          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterLeadType || filterPhone === 'no_phone' || timePreset) && (
+          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone === 'no_phone' || timePreset) && (
             <span className="text-xs text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
               {pipelineType === 'lead' ? leads.length : deals.length} / {pipelineType === 'lead' ? allLeads.length : allDeals.length} trên Kanban
               {activePipelinePhoneTotals?.all != null && filterPhone && (
@@ -1858,6 +1902,36 @@ export default function CRMDashboard() {
               <option value="">📊 Tất cả giai đoạn</option>
               {(pipelineType === 'lead' ? stagesLead : stagesDeal).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+
+            {/* Khu vực CRM — danh sách theo công ty đang phạm vi dashboard */}
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[10px] text-gray-500 font-medium flex items-center gap-1">
+                <MapPin className="h-3 w-3 shrink-0" /> Khu vực
+              </label>
+              <select
+                value={filterRegion}
+                onChange={(e) => setFilterRegion(e.target.value)}
+                disabled={!dashboardScopeCompanyId}
+                title={
+                  !dashboardScopeCompanyId
+                    ? 'Chọn phạm vi công ty để lọc theo khu vực'
+                    : 'Lọc lead và deal theo khu vực (CRM)'
+                }
+                className={`h-9 min-w-[11rem] px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  dashboardScopeCompanyId ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                }`}
+              >
+                <option value="">Tất cả khu vực</option>
+                <option value="__none__">Chưa gán khu vực</option>
+                {companyRegions.map((reg) => (
+                  <option key={reg.id} value={reg.id}>
+                    {reg.is_active === false ? '· ' : ''}
+                    {reg.name}
+                    {reg.code ? ` (${reg.code})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             {/* Lead/Deal type (always visible; disabled when chưa cấu hình) */}
             <div className="flex items-center gap-2">
@@ -2963,10 +3037,20 @@ function KanbanStageCard({
       <div className={`bg-white border border-gray-200 border-t-0 transition-all ${
         compact ? 'p-2.5' : 'p-4'
       } ${isOverColumn ? 'bg-blue-50' : ''}`}>
-        <div className={`flex items-center justify-between gap-2 ${compact ? 'mb-1' : 'mb-2'}`}>
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className={compact ? 'text-base shrink-0' : 'text-lg shrink-0'}>{stage.icon || '📌'}</span>
-            <h3 className={`font-semibold text-gray-900 truncate ${compact ? 'text-sm' : ''}`}>{stage.name}</h3>
+        <div className={`flex items-start justify-between gap-2 ${compact ? 'mb-1' : 'mb-2'}`}>
+          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className={compact ? 'text-base shrink-0' : 'text-lg shrink-0'}>{stage.icon || '📌'}</span>
+              <h3 className={`font-semibold text-gray-900 truncate ${compact ? 'text-sm' : ''}`}>{stage.name}</h3>
+            </div>
+            {String(stage.description || '').trim() !== '' && (
+              <p
+                className={`text-gray-500 leading-snug pl-0.5 ${compact ? 'text-[10px] line-clamp-2' : 'text-[11px] line-clamp-3'}`}
+                title={String(stage.description).trim()}
+              >
+                {String(stage.description).trim()}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
             {columnItemIds.length > 0 && onToggleSelectAllInColumn && (
@@ -3140,6 +3224,21 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
           <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-white bg-rose-500 px-1.5 py-0.5 rounded leading-tight">Mới</span>
         )}
       </div>
+
+      {(item.company?.short_name || item.company?.name || item.crm_region?.name) && (
+        <div className={`flex flex-wrap gap-1 ${compact ? 'mb-1' : 'mb-2'}`}>
+          {(item.company?.short_name || item.company?.name) && (
+            <span className="max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-700">
+              🏢 {item.company.short_name || item.company.name}
+            </span>
+          )}
+          {item.crm_region?.name && (
+            <span className="max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium bg-teal-50 text-teal-800">
+              📍 {item.crm_region.name}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Customer name + Phone */}
       {(item.customer?.full_name || item.customer?.phone) && (
@@ -3451,6 +3550,7 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
     customer_email: '',
     source_id: '',
     company_id: defaultCompanyId || '',
+    region_id: '',
     lead_type_id: '',
     estimated_value: 0,
     probability: 50,
@@ -3459,6 +3559,7 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
   });
   const [saving, setSaving] = useState(false);
   const [modalSources, setModalSources] = useState([]);
+  const [modalRegions, setModalRegions] = useState([]);
 
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
@@ -3484,6 +3585,33 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
     return () => { cancelled = true; };
   }, [formData.company_id]);
 
+  useEffect(() => {
+    const cid = String(formData.company_id || '').trim();
+    if (!cid) {
+      setModalRegions([]);
+      return;
+    }
+    let cancelled = false;
+    api.get('/crm/company-regions', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setModalRegions(list.filter((x) => x.is_active !== false));
+      })
+      .catch(() => { if (!cancelled) setModalRegions([]); });
+    return () => { cancelled = true; };
+  }, [formData.company_id]);
+
+  useEffect(() => {
+    const uidRegions = currentUser?.crm_region_ids;
+    if (!Array.isArray(uidRegions) || uidRegions.length !== 1) return;
+    const only = String(uidRegions[0]);
+    const ok = modalRegions.some((r) => String(r.id) === only);
+    if (ok && String(formData.region_id || '') !== only) {
+      setFormData((prev) => ({ ...prev, region_id: only }));
+    }
+  }, [modalRegions, currentUser?.crm_region_ids, formData.region_id]);
+
   // Lock company for non-admin — ưu tiên company trên user, không lấy filter Kanban (có thể là admin/LS khác)
   useEffect(() => {
     if (isAdmin) return;
@@ -3506,12 +3634,19 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
     if (!ok) setFormData((prev) => ({ ...prev, source_id: '' }));
   }, [modalSources, formData.source_id]);
 
+  useEffect(() => {
+    if (!formData.region_id) return;
+    const ok = modalRegions.some((r) => String(r.id) === String(formData.region_id));
+    if (!ok) setFormData((prev) => ({ ...prev, region_id: '' }));
+  }, [modalRegions, formData.region_id]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.title) return alert('Nhập tên Deal');
     if (!formData.company_id) return alert('Vui lòng chọn công ty');
     if (!formData.customer_name) return alert('Nhập tên khách hàng');
     if (!formData.customer_phone) return alert('Nhập số điện thoại khách hàng');
+    if (modalRegions.length > 0 && !formData.region_id) return alert('Chọn khu vực');
 
     setSaving(true);
     try {
@@ -3531,6 +3666,7 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
         customer_id: customerId || null,
         source_id: formData.source_id || null,
         company_id: formData.company_id || null,
+        region_id: formData.region_id || null,
         lead_type_id: formData.lead_type_id || null,
         estimated_value: parseFloat(formData.estimated_value) || 0,
         probability: parseInt(formData.probability) || 50,
@@ -3570,7 +3706,7 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
           <div>
             <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty *</label>
             {isAdmin ? (
-              <select value={formData.company_id} onChange={e => set('company_id', e.target.value)} required
+              <select value={formData.company_id} onChange={(e) => setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '' }))} required
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}>
                 <option value="">-- Chọn công ty --</option>
                 {(companies || []).map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
@@ -3583,6 +3719,23 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
               </div>
             )}
           </div>
+
+          {modalRegions.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1.5">📍 Khu vực *</label>
+              <select
+                required
+                value={formData.region_id}
+                onChange={(e) => set('region_id', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              >
+                <option value="">-- Chọn khu vực --</option>
+                {modalRegions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Khách hàng */}
           <div className="bg-blue-50 rounded-lg p-4 space-y-3">
@@ -3703,6 +3856,7 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
     customer_phone: '',
     source_id: '',
     company_id: defaultCompanyId || '',
+    region_id: '',
     lead_type_id: '',
     estimated_value: 0,
     probability: 50,
@@ -3710,6 +3864,7 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
   });
   const [saving, setSaving] = useState(false);
   const [modalSources, setModalSources] = useState([]);
+  const [modalRegions, setModalRegions] = useState([]);
 
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
@@ -3735,6 +3890,33 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
     return () => { cancelled = true; };
   }, [formData.company_id]);
 
+  useEffect(() => {
+    const cid = String(formData.company_id || '').trim();
+    if (!cid) {
+      setModalRegions([]);
+      return;
+    }
+    let cancelled = false;
+    api.get('/crm/company-regions', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setModalRegions(list.filter((x) => x.is_active !== false));
+      })
+      .catch(() => { if (!cancelled) setModalRegions([]); });
+    return () => { cancelled = true; };
+  }, [formData.company_id]);
+
+  useEffect(() => {
+    const uidRegions = currentUser?.crm_region_ids;
+    if (!Array.isArray(uidRegions) || uidRegions.length !== 1) return;
+    const only = String(uidRegions[0]);
+    const ok = modalRegions.some((r) => String(r.id) === only);
+    if (ok && String(formData.region_id || '') !== only) {
+      setFormData((prev) => ({ ...prev, region_id: only }));
+    }
+  }, [modalRegions, currentUser?.crm_region_ids, formData.region_id]);
+
   // Lock company for non-admin — ưu tiên công ty nhân viên, tránh mặc định Phúc Đạt từ bộ lọc admin/LS
   useEffect(() => {
     if (isAdmin) return;
@@ -3757,11 +3939,18 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
     if (!ok) setFormData((prev) => ({ ...prev, source_id: '' }));
   }, [modalSources, formData.source_id]);
 
+  useEffect(() => {
+    if (!formData.region_id) return;
+    const ok = modalRegions.some((r) => String(r.id) === String(formData.region_id));
+    if (!ok) setFormData((prev) => ({ ...prev, region_id: '' }));
+  }, [modalRegions, formData.region_id]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.title) return alert('Nhập tên lead');
     if (!formData.company_id) return alert('Vui lòng chọn công ty');
     if (!formData.customer_name) return alert('Nhập tên khách hàng');
+    if (modalRegions.length > 0 && !formData.region_id) return alert('Chọn khu vực');
 
     if (!formData.customer_phone) {
       if (!confirm('⚠️ Chưa có số điện thoại khách hàng.\nBạn có thể nhập sau ở trang chi tiết Lead.\n\nTiếp tục tạo Lead?')) return;
@@ -3789,6 +3978,7 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
         customer_id: customerId || null,
         source_id: formData.source_id || null,
         company_id: formData.company_id || null,
+        region_id: formData.region_id || null,
         lead_type_id: formData.lead_type_id || null,
         assigned_to: formData.assigned_to || null,
         type: 'lead',
@@ -3829,7 +4019,7 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
             {isAdmin ? (
               <select
                 value={formData.company_id}
-                onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
+                onChange={(e) => setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '' }))}
                 required
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}
               >
@@ -3847,6 +4037,23 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
             )}
             {!formData.company_id && <p className="text-xs text-red-500 mt-1">Bắt buộc chọn công ty</p>}
           </div>
+
+          {modalRegions.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1.5">📍 Khu vực *</label>
+              <select
+                required
+                value={formData.region_id}
+                onChange={(e) => setFormData({ ...formData, region_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              >
+                <option value="">-- Chọn khu vực --</option>
+                {modalRegions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="bg-blue-50 rounded-lg p-4 space-y-3">
             <p className="text-xs font-bold text-blue-800 uppercase">👤 Khách hàng mới</p>
