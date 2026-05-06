@@ -6,6 +6,7 @@ const { applyDefaultWorkshopTemplatesForNewProject } = require('./workshopApplyT
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('./projectCode');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
+const { applyProductionTemplateToFulfillmentLead } = require('./projectOrderFulfillment');
 
 /**
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
@@ -163,7 +164,17 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
   );
   allCreatedTasks.push(...generatedBySteps.flat());
 
-  await supabase.from('crm_leads').update({ project_id: projectId }).eq('id', dealId);
+  {
+    const { error: upErr } = await supabase
+      .from('crm_leads')
+      .update({ project_id: projectId, updated_at: new Date().toISOString() })
+      .eq('id', dealId);
+    if (upErr) {
+      // Không thể liên kết deal ↔ project => ProductionDetail sẽ không thấy crmDeals.
+      // Fail fast để phía caller báo lỗi rõ ràng.
+      throw new Error(`[auto-project] Không cập nhật được project_id lên deal: ${upErr.message || 'unknown error'}`);
+    }
+  }
 
   try {
     await ensureDealLeadDocumentsForModuleTransition({ leadId: dealId, projectId });
@@ -180,6 +191,20 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     });
   } catch (e) {
     console.warn('[auto-project] sync existing CRM orders:', e.message);
+  }
+
+  // Auto gen nhiệm vụ SX (sx_*) trên chính deal khi mới vào xưởng (không phụ thuộc Đơn 1).
+  // Dùng strict company match theo công ty SX đã chọn.
+  try {
+    await applyProductionTemplateToFulfillmentLead({
+      leadId: dealId,
+      createdBy: userId,
+      assigneeId: deal.assigned_to || deal.lead_owner_id || userId,
+      requireTemplateCompanyMatch: true,
+      dealCompanyId: coCheck.company.id,
+    });
+  } catch (e) {
+    console.warn('[auto-project] applyProductionTemplateToFulfillmentLead:', e.message);
   }
 
   // Giữ status/current_stage ở KD (consulting): Kanban xưởng gán deal thắng vào cột bucket won_pending
@@ -237,26 +262,7 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     }
   } catch (_) {}
 
-  try {
-    const {
-      ensureDefaultOrderOneForProject,
-      migrateDealInternalsToFulfillmentLead,
-    } = require('./projectOrderFulfillment');
-    const r1 = await ensureDefaultOrderOneForProject({ projectId, userId, defaultLabel: 'Đơn 1' });
-    if (r1.created) {
-      console.log(`[auto-project] ${r1.order?.code} — Đơn 1 (nhiệm vụ từng lượt)`);
-      const fulfillmentLeadId = r1.order?.fulfillment_lead_id;
-      if (fulfillmentLeadId) {
-        await migrateDealInternalsToFulfillmentLead({
-          fromLeadId: dealId,
-          toLeadId: fulfillmentLeadId,
-          projectId,
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('[auto-project] ensure Đơn 1:', e.message);
-  }
+  // NOTE: Không tự tạo Đơn 1/2/... từ deal thắng. Đơn hàng chỉ tạo thủ công tại tab Đơn hàng.
 
   console.log(`[auto-project] Deal ${dealId} → Project ${project.code} (${allCreatedTasks.length + workshopTemplateTaskCount} tasks)`);
 

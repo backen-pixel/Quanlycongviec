@@ -62,6 +62,16 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   });
   useEffect(() => {
     if (leadType !== 'deal') return;
+    // Nếu điều hướng giữa nhiều deal trong cùng component instance, sync lại state theo leadId.
+    try {
+      const s = localStorage.getItem(`crm_deal_task_view:${leadId}`);
+      setDealTaskView(s === 'sx' ? 'sx' : 'crm');
+    } catch {
+      setDealTaskView('crm');
+    }
+  }, [leadId, leadType]);
+  useEffect(() => {
+    if (leadType !== 'deal') return;
     try {
       localStorage.setItem(`crm_deal_task_view:${leadId}`, dealTaskView);
     } catch { /* ignore */ }
@@ -69,6 +79,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
 
   const isProductionScope = taskScope === 'production';
   const showSxTasksInUi = leadType === 'deal' && (isProductionScope || (hasSxTasks && dealTaskView === 'sx'));
+  const showCrmTemplatesUi = !showSxTasksInUi && !isProductionScope;
 
   const uiTasks = useMemo(() => {
     if (leadType !== 'deal') return tasks;
@@ -221,7 +232,6 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   const generateProductionTasks = async () => {
     if (generatingProduction) return;
     if (leadType !== 'deal') return;
-    if (isProductionScope) return;
     setGeneratingProduction(true);
     try {
       const r1 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, { force: false });
@@ -921,7 +931,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
               </button>
             </div>
           )}
-          {leadType === 'deal' && !isProductionScope && (
+          {leadType === 'deal' && (
             <button
               onClick={generateProductionTasks}
               disabled={generatingProduction}
@@ -932,7 +942,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
               Gen SX
             </button>
           )}
-          {templates.length > 0 && tasks.length === 0 && !showTemplatePanel && (
+          {showCrmTemplatesUi && templates.length > 0 && uiTasks.length === 0 && !showTemplatePanel && (
             <button
               onClick={generateDefaultTasks}
               disabled={generatingDefaults}
@@ -943,7 +953,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
               Gen nhiệm vụ (CRM)
             </button>
           )}
-          {templates.length > 0 && (
+          {showCrmTemplatesUi && templates.length > 0 && (
             <button onClick={() => setShowTemplatePanel(p => !p)}
               className={`h-7 px-2.5 rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer transition-colors ${showTemplatePanel ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100'}`}>
               <ClipboardList className="h-3 w-3" /> Gắn mẫu
@@ -995,7 +1005,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       )}
 
       {/* Template quick-apply — only when no tasks exist */}
-      {templates.length > 0 && tasks.length === 0 && !showTemplatePanel && (
+      {showCrmTemplatesUi && templates.length > 0 && uiTasks.length === 0 && !showTemplatePanel && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
           <p className="text-xs font-medium text-amber-800 mb-2">📋 Chưa có công việc — Áp dụng bộ mẫu nhanh:</p>
           <div className="flex flex-wrap gap-2">

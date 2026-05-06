@@ -1,2 +1,10 @@
 # APK debug copy at repo root (tải lên điện thoại; không nên commit)
 TuBep-VoiceSync-debug.apk
+
+# Cursor local config
+.cursor/
+
+# Local env files (contain secrets)
+backend/.env
+frontend/.env
+.env

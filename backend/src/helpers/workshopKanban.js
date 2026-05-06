@@ -489,20 +489,19 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     prodWorkflowStageIds.has(String(project.current_stage_id));
 
   // Tìm cột hiện tại trong pipeline config
-  const currentRow = prodPipeList.find(
-    (r) => project.current_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id),
-  );
+  const currentRow =
+    prodPipeList.find((r) => project.current_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id))
+    || prodPipeList.find((r) => stageUuid && String(r.id) === String(stageUuid));
 
   // ── Ưu tiên: dùng crm_target_stage_id trực tiếp nếu đã cấu hình ──
   if (currentRow?.crm_target_stage_id) {
     const { data: leads } = await supabase
       .from('crm_leads')
-      .select('id, stage_id, sx_handover_at')
+      .select('id, stage_id')
       .eq('project_id', projectId)
       .eq('type', 'deal');
     await Promise.all(
       (leads || []).map((lead) => {
-        if (!lead.sx_handover_at) return Promise.resolve();
         return supabase.from('crm_leads').update({
           sx_pipeline_stage_id: stageUuid,
           stage_id: currentRow.crm_target_stage_id,
@@ -539,8 +538,6 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
 
   await Promise.all(
     (leads || []).map((lead) => {
-      if (!lead.sx_handover_at) return Promise.resolve();
-
       const update = { sx_pipeline_stage_id: stageUuid };
 
       const isOnWonOrSx =

@@ -393,6 +393,9 @@ r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
     const pid = req.params.id;
     const oid = req.params.orderId;
     const b = req.body || {};
+    if (!b.sx_company_id) {
+      return res.status(400).json({ error: 'Thiếu sx_company_id (công ty Sản xuất) — không thể gen nhiệm vụ SX theo công ty.' });
+    }
     const updates = {
       updated_at: new Date().toISOString(),
       order_phase: 'in_production',
@@ -412,10 +415,21 @@ r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
     if (!existing.fulfillment_lead_id) {
       return res.status(400).json({ error: 'Đơn chưa có deal nhiệm vụ (fulfillment)' });
     }
-    // Dữ liệu cũ có thể chưa có bộ nhiệm vụ SX ở deal fulfillment -> auto bù.
-    await applyProductionTemplateToFulfillmentLead({
+    // Lưu sx_company_id trước để gen đúng bộ mẫu theo công ty SX.
+    const { data: orderAfter, error: upErr } = await supabase
+      .from('orders')
+      .update(updates)
+      .eq('id', oid)
+      .select('*')
+      .single();
+    if (upErr) throw upErr;
+
+    // Đảm bảo deal fulfillment có bộ nhiệm vụ SX thuộc công ty SX đã chọn.
+    const rGen = await applyProductionTemplateToFulfillmentLead({
       leadId: existing.fulfillment_lead_id,
       createdBy: req.user.userId,
+      requireTemplateCompanyMatch: true,
+      dealCompanyId: b.sx_company_id,
     });
     try {
       await ensureDealLeadDocumentsForModuleTransition({
@@ -425,10 +439,8 @@ r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
     } catch (e) {
       console.warn('[push-to-production] ensure lead_documents:', e.message);
     }
-    const { data, error } = await supabase.from('orders').update(updates).eq('id', oid).select('*').single();
-    if (error) throw error;
     await logActivity(req.user.userId, 'updated', 'order', oid, `Chuyển SX: ${existing.code || ''} ${existing.display_label || ''}`);
-    res.json({ ok: true, order: data });
+    res.json({ ok: true, order: orderAfter, production_tasks: { created: rGen?.created || 0, reason: rGen?.reason || 'ok', company_id: rGen?.company_id || b.sx_company_id } });
   } catch (e) {
     console.error(e);
     res.status(400).json({ error: e.message || 'Lỗi' });
@@ -440,6 +452,9 @@ r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
   try {
     const pid = req.params.id;
     const b = req.body || {};
+    if (!b.sx_company_id) {
+      return res.status(400).json({ error: 'Thiếu sx_company_id (công ty Sản xuất) — không thể gen nhiệm vụ SX theo công ty.' });
+    }
     const orderIds = Array.isArray(b.order_ids) ? b.order_ids.map(String).filter(Boolean) : [];
     if (!orderIds.length) return res.status(400).json({ error: 'Thiếu order_ids' });
     if (orderIds.length > 50) return res.status(400).json({ error: 'Tối đa 50 đơn/lần' });
@@ -453,10 +468,28 @@ r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
           .eq('project_id', pid)
           .maybeSingle();
         if (!existing) throw new Error('Không tìm thấy/không cập nhật được');
+        const upd = {
+          updated_at: new Date().toISOString(),
+          order_phase: 'in_production',
+          sx_company_id: b.sx_company_id || null,
+          sx_start_date: b.sx_start_date || null,
+          sx_expected_end_date: b.sx_expected_end_date || null,
+          sx_construction_assignee_id: b.sx_construction_assignee_id || null,
+        };
+        const r0 = await supabase.from('orders')
+          .update(upd)
+          .eq('id', oid)
+          .eq('project_id', pid)
+          .select('id, code, display_label')
+          .maybeSingle();
+        if (!r0.data) throw new Error(r0.error?.message || 'Không tìm thấy/không cập nhật được');
+
         if (existing.fulfillment_lead_id) {
-          await applyProductionTemplateToFulfillmentLead({
+          const rGen = await applyProductionTemplateToFulfillmentLead({
             leadId: existing.fulfillment_lead_id,
             createdBy: req.user.userId,
+            requireTemplateCompanyMatch: true,
+            dealCompanyId: b.sx_company_id,
           });
           try {
             await ensureDealLeadDocumentsForModuleTransition({
@@ -466,23 +499,11 @@ r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
           } catch (ee) {
             console.warn('[push-to-production-bulk] ensure lead_documents:', ee.message);
           }
+          results.push({ order_id: oid, ok: true, production_tasks: { created: rGen?.created || 0, reason: rGen?.reason || 'ok', company_id: rGen?.company_id || b.sx_company_id } });
+        } else {
+          results.push({ order_id: oid, ok: true });
         }
-        const r0 = await supabase.from('orders')
-          .update({
-            updated_at: new Date().toISOString(),
-            order_phase: 'in_production',
-            sx_company_id: b.sx_company_id || null,
-            sx_start_date: b.sx_start_date || null,
-            sx_expected_end_date: b.sx_expected_end_date || null,
-            sx_construction_assignee_id: b.sx_construction_assignee_id || null,
-          })
-          .eq('id', oid)
-          .eq('project_id', pid)
-          .select('id, code, display_label')
-          .maybeSingle();
-        if (!r0.data) throw new Error(r0.error?.message || 'Không tìm thấy/không cập nhật được');
         await logActivity(req.user.userId, 'updated', 'order', oid, `Chuyển SX hàng loạt: ${r0.data.code || ''} ${r0.data.display_label || ''}`);
-        results.push({ order_id: oid, ok: true });
       } catch (e) {
         results.push({ order_id: oid, ok: false, error: e.message || 'Lỗi' });
       }
@@ -1345,10 +1366,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       } catch (e) { console.warn(`Auto-create tasks for ${slug} failed:`, e.message); }
     }
 
-    try {
-      const o1 = await ensureDefaultOrderOneForProject({ projectId: data.id, userId: req.user.userId, defaultLabel: 'Đơn 1' });
-      if (o1.created) console.log(`[POST /projects] Đơn 1: ${o1.order?.code || ''}`);
-    } catch (e) { console.warn('[POST /projects] ensure Đơn 1:', e.message); }
+    // NOTE: Không tự tạo Đơn 1/2/... từ dự án. Đơn hàng chỉ tạo thủ công tại tab Đơn hàng.
 
     res.status(201).json({ project: data });
   } catch (e) {

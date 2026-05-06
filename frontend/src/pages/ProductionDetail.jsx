@@ -402,7 +402,7 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
 }
 
 /** Tab Công việc khi chưa có deal CRM gắn `project_id`: hiển thị nhiệm vụ bảng `tasks` (pipeline workflow dự án). */
-function WorkshopTasksFallbackPanel({ tasks, moduleLabel, onToggleDone }) {
+function WorkshopTasksFallbackPanel({ tasks, moduleLabel, onToggleDone, onEnsureCrmDeal, ensuringCrmDeal = false }) {
   const grouped = useMemo(() => {
     const m = new Map();
     for (const t of tasks) {
@@ -421,6 +421,20 @@ function WorkshopTasksFallbackPanel({ tasks, moduleLabel, onToggleDone }) {
           Dự án này chưa có deal CRM nào được gắn <span className="font-mono bg-amber-100/90 px-1 rounded">project_id</span> — không tải được
           pipeline CRM (nhiệm vụ <span className="font-mono">sx_*</span> trên deal). Các dòng dưới là nhiệm vụ trên dự án (quy trình {moduleLabel}).
         </p>
+        <div className="flex flex-wrap items-center gap-2 pt-3">
+          <button
+            type="button"
+            onClick={() => onEnsureCrmDeal?.()}
+            disabled={!onEnsureCrmDeal || ensuringCrmDeal}
+            className="h-8 px-3 rounded-lg bg-amber-900 text-amber-50 text-xs font-semibold hover:bg-amber-950 disabled:opacity-60"
+            title="Tạo deal CRM gắn project_id và gen nhiệm vụ sx_*"
+          >
+            {ensuringCrmDeal ? 'Đang gen…' : 'Gen nhiệm vụ SX (tự tạo deal)'}
+          </button>
+          <p className="text-[11px] text-amber-900/80">
+            Nếu lúc đầu lỗi / mạng chập chờn, bấm nút này để thử lại (không ảnh hưởng nhiệm vụ đang có trên dự án).
+          </p>
+        </div>
       </div>
 
       <div className="space-y-6">
@@ -496,6 +510,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fallbackDealIdForTasks, setFallbackDealIdForTasks] = useState(null);
+  const [ensuringCrmDeal, setEnsuringCrmDeal] = useState(false);
   const tabFromUrl = searchParams.get('tab');
   const normalizedUrlTab = LEGACY_TAB_MAP[tabFromUrl] || tabFromUrl;
   const tabAllowed = (t) => DEAL_TAB_KEYS.has(t);
@@ -720,6 +736,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
+      setFallbackDealIdForTasks(null);
+      try {
+        const primaryDealId = proj?.crmDeals?.[0]?.id || null;
+        if (!primaryDealId && proj?.id) {
+          // Fallback giống tab Đơn hàng: tìm deal đơn (fulfillment) theo orders của dự án để gen/hiển thị sx_*.
+          const { data: ordData } = await api.get(`/projects/${proj.id}/orders`).catch(() => ({ data: null }));
+          const orders = ordData?.orders || [];
+          const fid = orders.find((o) => o?.fulfillment_lead_id)?.fulfillment_lead_id || null;
+          if (fid) setFallbackDealIdForTasks(String(fid));
+        }
+      } catch (_) { /* ignore */ }
       if (proj?.incidents) setIncidents(proj.incidents);
       loadProjectDocs(id);
       loadTaskFiles(id);
@@ -798,6 +825,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       /* giữ state cũ */
     }
   }, [id, MOD.apiPrefix, pickWorkshopTasksForSummary]);
+
+  const ensureCrmDealAndSxTasks = useCallback(async () => {
+    if (ensuringCrmDeal) return;
+    setEnsuringCrmDeal(true);
+    try {
+      // Backend GET /production/projects/:id đã tự đảm bảo có crmDeals + sx_* nếu thiếu.
+      await refreshProjectSilently();
+      // Sau refresh silent, gọi load lại nhẹ để cập nhật fallbackDealIdForTasks nếu cần.
+      await load();
+    } catch (e) {
+      console.error(e);
+      alert(e.response?.data?.error || e.message || 'Không gen được nhiệm vụ SX');
+    } finally {
+      setEnsuringCrmDeal(false);
+    }
+  }, [ensuringCrmDeal, refreshProjectSilently]);
 
   /** Phải đặt trước mọi return sớm (loadError / loading) — Rules of Hooks */
   const scopedWorkshopTasksForTab = useMemo(
@@ -1140,7 +1183,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
     : (project.sx_kanban_column_id || project.current_stage_id || project.current_stage?.id);
   const primaryCrmDeal = project.crmDeals?.[0];
-  const crmLeadId = primaryCrmDeal?.id;
+  const crmLeadId = primaryCrmDeal?.id || fallbackDealIdForTasks;
   const displayCode = primaryCrmDeal?.code || project.code;
   const displayTitle = primaryCrmDeal?.title || project.name;
   const taskCount = productionTaskSummary.total || 0;
@@ -1412,6 +1455,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     tasks={scopedWorkshopTasksForTab}
                     moduleLabel={MOD.label}
                     onToggleDone={toggleWorkshopTaskDone}
+                    onEnsureCrmDeal={ensureCrmDealAndSxTasks}
+                    ensuringCrmDeal={ensuringCrmDeal}
                   />
                 ) : (
                   <div className="text-center py-12 text-gray-500 text-sm border border-dashed border-gray-200 rounded-xl space-y-2 px-4">
