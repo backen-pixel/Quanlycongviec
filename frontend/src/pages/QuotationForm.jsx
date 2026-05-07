@@ -452,12 +452,9 @@ export default function QuotationForm() {
         const r = await api.get(`/crm/quotations/${id}/history`);
         setQuotationHistory(r.data.history || []);
       } catch (_) {}
-      // Auto-flow: BG chấp nhận → tự tạo ĐH + Project
-      if (data.auto?.order) {
-        const msg = data.auto.autoProject
-          ? `🚀 Tự động:\n• Tạo đơn hàng ${data.auto.order.code}\n• Tạo dự án ${data.auto.autoProject.code}\n• Gen tasks tự động`
-          : `🚀 Tự động tạo đơn hàng ${data.auto.order.code}`;
-        alert(msg);
+      // Auto-flow: BG chấp nhận → có thể tạo dự án (không tạo đơn hàng)
+      if (data.auto?.autoProject && !data.auto.autoProject.existing) {
+        alert(`🚀 Đã tạo dự án ${data.auto.autoProject.code} và gen tác vụ ban đầu.`);
       }
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
     setStatusLoading(false);

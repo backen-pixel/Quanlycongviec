@@ -81,15 +81,18 @@ async function postLocalNotification(n: AppNotification): Promise<void> {
           body,
           subtitle: 'TuBep CRM',
           data: dataPayload,
-          android: {
-            channelId,
-            color: '#0068FF',
-            // Luôn bật âm mặc định — kênh cũng có sound: default (user có thể tắt trong Cài đặt TB)
-            sound: true,
-            // HIGH + kênh IMPORTANCE_HIGH → heads-up trên khay / khóa (tùy OEM & cài đặt user)
-            priority: Notifications.AndroidNotificationPriority.HIGH,
-            vibrate: isChat ? [0, 200, 100, 200] : [0, 120, 80, 120],
-          },
+          // expo-notifications typings thay đổi theo version; Android-specific fields vẫn chạy thực tế.
+          ...( {
+            android: {
+              channelId,
+              color: '#0068FF',
+              // Luôn bật âm mặc định — kênh cũng có sound: default (user có thể tắt trong Cài đặt TB)
+              sound: true,
+              // HIGH + kênh IMPORTANCE_HIGH → heads-up trên khay / khóa (tùy OEM & cài đặt user)
+              priority: Notifications.AndroidNotificationPriority.HIGH,
+              vibrate: isChat ? [0, 200, 100, 200] : [0, 120, 80, 120],
+            },
+          } as unknown as Record<string, unknown>),
         },
         trigger: null,
       });

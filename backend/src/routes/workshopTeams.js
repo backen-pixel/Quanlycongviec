@@ -25,11 +25,12 @@ async function getTeamMemberIds(teamId) {
 // ─── GET /workshop-teams ──────────────────────────────────────────────────────
 r.get('/', requirePermission('projects', 'view'), async (req, res) => {
   try {
-    const { type } = req.query; // 'delivery' | 'installation' | undefined
+    const { type } = req.query; // 'delivery' | 'installation' | 'production' | undefined
+    const companyId = req.query.company_id && String(req.query.company_id).trim();
     let q = supabase
       .from('workshop_teams')
       .select(`
-        id, name, type, description, color, is_active, created_at,
+        id, name, type, description, color, is_active, created_at, company_id,
         members:workshop_team_members(
           id, role, joined_at,
           user:users(id, full_name, email, role, avatar)
@@ -37,6 +38,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
       `)
       .order('created_at');
     if (type) q = q.eq('type', type);
+    if (companyId) q = q.eq('company_id', companyId);
     const { data, error } = await q;
     if (error && error.message?.includes('workshop_teams')) {
       return res.json([]); // table chưa tồn tại
@@ -54,16 +56,22 @@ r.post('/', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const b = req.body;
     if (!b.name?.trim()) return res.status(400).json({ error: 'Thiếu tên đội' });
-    if (!['delivery', 'installation'].includes(b.type)) {
-      return res.status(400).json({ error: 'type phải là delivery hoặc installation' });
+    if (!['delivery', 'installation', 'production'].includes(b.type)) {
+      return res.status(400).json({ error: 'type phải là delivery, installation hoặc production' });
+    }
+    if (b.type === 'production' && !(b.company_id && String(b.company_id).trim())) {
+      return res.status(400).json({ error: 'Đội sản xuất cần company_id (công ty xưởng)' });
     }
     const { data, error } = await supabase
       .from('workshop_teams')
       .insert({
         name: b.name.trim(),
         type: b.type,
+        company_id: b.company_id || null,
         description: b.description || null,
-        color: b.color || (b.type === 'delivery' ? '#f97316' : '#d97706'),
+        color:
+          b.color ||
+          (b.type === 'delivery' ? '#f97316' : b.type === 'installation' ? '#d97706' : '#0d9488'),
         is_active: b.is_active !== false,
       })
       .select('*')
@@ -124,7 +132,8 @@ r.post('/:id/members', requirePermission('projects', 'edit'), async (req, res) =
     // Thông báo người vừa được thêm
     const { data: team } = await supabase
       .from('workshop_teams').select('name, type').eq('id', req.params.id).single();
-    const typeLabel = team?.type === 'delivery' ? 'vận chuyển' : 'lắp đặt';
+    const typeLabel =
+      team?.type === 'delivery' ? 'vận chuyển' : team?.type === 'installation' ? 'lắp đặt' : 'sản xuất';
     await createNotification(
       req, user_id, 'task_assigned',
       `👥 Bạn đã tham gia đội ${typeLabel}`,

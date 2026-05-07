@@ -1165,6 +1165,13 @@ r.post('/lead-types', async (req, res) => {
       .limit(1);
     const nextOrder = (last?.[0]?.order_index ?? 0) + 1;
 
+    let defaultProductionCompanyId = null;
+    if (b.default_production_company_id != null && String(b.default_production_company_id).trim() !== '') {
+      const pv = await validateProductionCompanyId(b.default_production_company_id);
+      if (!pv.ok) return res.status(400).json({ error: pv.error });
+      defaultProductionCompanyId = pv.company.id;
+    }
+
     const { data, error } = await supabase.from('crm_lead_types').insert({
       company_id,
       name: b.name.trim(),
@@ -1172,6 +1179,7 @@ r.post('/lead-types', async (req, res) => {
       order_index: b.order_index ?? nextOrder,
       is_active: b.is_active !== false,
       workshop_production_templates: !!b.workshop_production_templates,
+      default_production_company_id: defaultProductionCompanyId,
       updated_at: new Date().toISOString(),
     }).select('*').single();
     if (error) throw error;
@@ -1198,6 +1206,16 @@ r.put('/lead-types/:id', async (req, res) => {
     if (b.applies_to !== undefined) {
       const at = String(b.applies_to || 'both');
       update.applies_to = ['lead','deal','both'].includes(at) ? at : 'both';
+    }
+    if (b.default_production_company_id !== undefined) {
+      const raw = b.default_production_company_id;
+      if (raw === null || raw === '') {
+        update.default_production_company_id = null;
+      } else {
+        const pv = await validateProductionCompanyId(raw);
+        if (!pv.ok) return res.status(400).json({ error: pv.error });
+        update.default_production_company_id = pv.company.id;
+      }
     }
     update.updated_at = new Date().toISOString();
     const { data, error } = await supabase.from('crm_lead_types').update(update).eq('id', req.params.id).select('*').single();
@@ -2433,6 +2451,53 @@ function mapLeadDisplayPhone(rows) {
   }));
 }
 
+/** Ưu tiên production_company_id client gửi; nếu trống → crm_lead_types.default_production_company_id của deal. */
+async function resolveProductionCompanyForDealStage(leadId, explicitProductionCompanyId) {
+  const raw = String(explicitProductionCompanyId || '').trim();
+  if (raw) {
+    const v = await validateProductionCompanyId(raw);
+    return v.ok ? raw : null;
+  }
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('lead_type_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!lead?.lead_type_id) return null;
+  const { data: lt } = await supabase
+    .from('crm_lead_types')
+    .select('default_production_company_id')
+    .eq('id', lead.lead_type_id)
+    .maybeSingle();
+  const def = String(lt?.default_production_company_id || '').trim();
+  if (!def) return null;
+  const v = await validateProductionCompanyId(def);
+  return v.ok ? def : null;
+}
+
+function normalizeTitleFold(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+/** Nhiệm vụ CRM «Chốt sản xuất» — đặt ngày hẹn → đồng bộ dự kiến SX + thông báo xưởng. */
+function isChotSanXuatCrmTaskTitle(title) {
+  const t = normalizeTitleFold(title);
+  return t.includes('chot') && t.includes('san xuat');
+}
+
+function deadlineToDateOnlyIso(deadlineVal) {
+  if (deadlineVal == null || deadlineVal === '') return null;
+  const d = new Date(deadlineVal);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function uuidQueryOrNull(v) {
   if (v == null || v === '') return null;
   const s = String(v).trim();
@@ -2474,11 +2539,27 @@ function parseCrmLeadsPageRpc(raw) {
     else ids = [];
   }
   ids = ids.map((id) => String(id).trim()).filter(Boolean);
+  const seenRpc = new Set();
+  ids = ids.filter((id) => {
+    if (seenRpc.has(id)) return false;
+    seenRpc.add(id);
+    return true;
+  });
   return { total, ids };
 }
 
 async function fetchCrmLeadsByIdsOrdered(ids) {
-  const list = Array.isArray(ids) ? ids : [];
+  const raw = Array.isArray(ids) ? ids : [];
+  if (raw.length === 0) return [];
+  // RPC có thể trả trùng id trong một page → hydrate ra hai row giống id khác stage snapshot → Kanban hai cột.
+  const seen = new Set();
+  const list = [];
+  for (const id of raw) {
+    const sid = String(id == null ? '' : id).trim();
+    if (!sid || seen.has(sid)) continue;
+    seen.add(sid);
+    list.push(sid);
+  }
   if (list.length === 0) return [];
   const selectStr = await getCrmLeadListSelect();
   const chunkSize = 300;
@@ -2493,9 +2574,11 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
       error = r2.error;
     }
     if (error) throw error;
-    (data || []).forEach((row) => byId.set(row.id, row));
+    (data || []).forEach((row) => {
+      if (row?.id != null) byId.set(String(row.id), row);
+    });
   }
-  return list.map((id) => byId.get(id)).filter(Boolean);
+  return list.map((id) => byId.get(String(id))).filter(Boolean);
 }
 
 /** Fallback: dùng .range() — giới hạn parsedLimit dòng để tránh egress lớn. */
@@ -2847,6 +2930,7 @@ r.put('/customers/:id', async (req, res) => {
 r.get('/company-regions', async (req, res) => {
   try {
     const co = req.query.company_id && String(req.query.company_id).trim();
+    const div = req.query.division_unit_id && String(req.query.division_unit_id).trim();
     if (!co) return res.status(400).json({ error: 'Thiếu company_id' });
     const sac = scopedAdminCompanyId(req);
     if (sac && String(co) !== String(sac)) return res.status(403).json({ error: 'Không xem khu vực công ty khác' });
@@ -2857,11 +2941,13 @@ r.get('/company-regions', async (req, res) => {
       if (!cid) return;
       if (String(co) !== String(cid)) return res.status(403).json({ error: 'Không có quyền' });
     }
-    const { data, error } = await supabase
+    let q = supabase
       .from('company_regions')
       .select('*')
       .eq('company_id', co)
       .order('order_index');
+    if (div) q = q.eq('division_unit_id', div);
+    const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
   } catch (e) {
@@ -2872,19 +2958,45 @@ r.get('/company-regions', async (req, res) => {
   }
 });
 
+async function assertDivisionAllowedForCompany(companyId, divisionUnitId) {
+  if (!companyId || !divisionUnitId) return { ok: true };
+  const sid = String(divisionUnitId);
+  const { data: link } = await supabase.from('company_division_units')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('division_unit_id', divisionUnitId)
+    .maybeSingle();
+  if (link) return { ok: true };
+  const { data: co } = await supabase.from('companies').select('division_unit_id').eq('id', companyId).maybeSingle();
+  if (co?.division_unit_id && String(co.division_unit_id) === sid) return { ok: true };
+  return { ok: false };
+}
+
 r.post('/company-regions', async (req, res) => {
   try {
-    const { company_id, name, code } = req.body || {};
+    const { company_id, name, code, division_unit_id } = req.body || {};
     if (!company_id || !String(name || '').trim()) return res.status(400).json({ error: 'company_id và name là bắt buộc' });
     const sac = scopedAdminCompanyId(req);
     if (!isCrmSystemAdminUser(req.user) && !sac) {
       return res.status(403).json({ error: 'Chỉ admin công ty hoặc admin hệ thống thêm khu vực' });
     }
     if (sac && String(company_id) !== String(sac)) return res.status(403).json({ error: 'Không tạo khu vực cho công ty khác' });
+
+    let divId = division_unit_id || null;
+    if (!divId) {
+      const { data: co } = await supabase.from('companies').select('division_unit_id').eq('id', company_id).maybeSingle();
+      divId = co?.division_unit_id || null;
+    }
+    if (divId) {
+      const { ok } = await assertDivisionAllowedForCompany(company_id, divId);
+      if (!ok) return res.status(400).json({ error: 'Khối không thuộc công ty này' });
+    }
+
     const { data, error } = await supabase
       .from('company_regions')
       .insert({
         company_id,
+        division_unit_id: divId,
         name: String(name).trim(),
         code: code != null && String(code).trim() ? String(code).trim() : null,
         updated_at: new Date().toISOString(),
@@ -2901,7 +3013,7 @@ r.post('/company-regions', async (req, res) => {
 r.patch('/company-regions/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { data: row } = await supabase.from('company_regions').select('id, company_id').eq('id', id).maybeSingle();
+    const { data: row } = await supabase.from('company_regions').select('id, company_id, division_unit_id').eq('id', id).maybeSingle();
     if (!row) return res.status(404).json({ error: 'Không tìm thấy' });
     const sac = scopedAdminCompanyId(req);
     if (!isCrmSystemAdminUser(req.user) && !sac) {
@@ -2909,9 +3021,13 @@ r.patch('/company-regions/:id', async (req, res) => {
     }
     if (sac && String(row.company_id) !== String(sac)) return res.status(403).json({ error: 'Không có quyền' });
     const patch = { updated_at: new Date().toISOString() };
-    ['name', 'code', 'order_index', 'is_active'].forEach((f) => {
+    ['name', 'code', 'order_index', 'is_active', 'division_unit_id'].forEach((f) => {
       if (req.body[f] !== undefined) patch[f] = req.body[f];
     });
+    if (patch.division_unit_id) {
+      const { ok } = await assertDivisionAllowedForCompany(row.company_id, patch.division_unit_id);
+      if (!ok) return res.status(400).json({ error: 'Khối không thuộc công ty này' });
+    }
     const { data, error } = await supabase.from('company_regions').update(patch).eq('id', id).select().single();
     if (error) throw error;
     res.json(data);
@@ -4042,9 +4158,10 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const isProductionStage = stageName.includes('san xuat');
     const requiresProductionPick = lead?.type === 'deal' && !lead?.project_id && (stage?.is_won || isProductionStage);
 
-    // Deal → Thắng hoặc cột Sản xuất, chưa có dự án: bắt buộc chọn công ty thuộc module Sản xuất
+    let effectiveProductionCompanyId = null;
     if (requiresProductionPick) {
-      const v = await validateProductionCompanyId(production_company_id);
+      effectiveProductionCompanyId = await resolveProductionCompanyForDealStage(req.params.id, production_company_id);
+      const v = await validateProductionCompanyId(effectiveProductionCompanyId);
       if (!v.ok) {
         return res.status(400).json({ error: v.error, requires_production_company: true });
       }
@@ -4176,7 +4293,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         req,
         dealId: req.params.id,
         userId: req.user.userId,
-        productionCompanyId: production_company_id,
+        productionCompanyId: effectiveProductionCompanyId,
       });
 
       if (auto.ok) {
@@ -7577,6 +7694,67 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       }
     } catch (ne) { console.warn('[NOTIFY] crm_task_update:', ne.message); }
 
+    // «Chốt sản xuất»: đặt ngày hẹn → ghi dự kiến SX lên deal + dự án, thông báo phụ trách xưởng
+    if (b.deadline !== undefined && b.deadline && isChotSanXuatCrmTaskTitle(data.title)) {
+      const dateOnly = deadlineToDateOnlyIso(b.deadline);
+      if (dateOnly) {
+        try {
+          const nowIso = new Date().toISOString();
+          const { data: leadRow } = await supabase
+            .from('crm_leads')
+            .select('id, project_id, title, code, assigned_to, lead_owner_id')
+            .eq('id', req.params.leadId)
+            .maybeSingle();
+          await supabase
+            .from('crm_leads')
+            .update({ expected_production_start_date: dateOnly, updated_at: nowIso })
+            .eq('id', req.params.leadId);
+          if (leadRow?.project_id) {
+            await supabase
+              .from('projects')
+              .update({ expected_production_start_date: dateOnly, updated_at: nowIso })
+              .eq('id', leadRow.project_id);
+            const { data: proj } = await supabase
+              .from('projects')
+              .select('production_person_id, project_manager_id, code')
+              .eq('id', leadRow.project_id)
+              .maybeSingle();
+            const teamIds = [...new Set([proj?.production_person_id, proj?.project_manager_id].filter(Boolean))].filter(
+              (uid) => String(uid) !== String(req.user.userId),
+            );
+            if (teamIds.length) {
+              await notifyMultiple(
+                req,
+                teamIds,
+                'crm_chot_sx_date',
+                '📅 Chốt sản xuất — ngày dự kiến',
+                `Deal ${leadRow?.code || ''} ${leadRow?.title || ''} — Dự kiến SX: ${dateOnly} (từ nhiệm vụ «${data.title}») · Dự án ${proj?.code || ''}`,
+                'project',
+                leadRow.project_id,
+              );
+            }
+            try {
+              const io = req.app.get('io');
+              if (io) await emitCrmBadgeUpdateForProject(leadRow.project_id, io);
+            } catch (em) {
+              console.warn('[crm_task] emit badge:', em.message);
+            }
+          }
+          try {
+            await supabase.from('crm_activities').insert({
+              lead_id: req.params.leadId,
+              type: 'note',
+              title: '📅 Cập nhật dự kiến sản xuất',
+              description: `Từ nhiệm vụ CRM «${data.title}»: ngày hẹn ${dateOnly}`,
+              created_by: req.user.userId,
+            });
+          } catch (_) {}
+        } catch (sxDateErr) {
+          console.warn('[crm_task] chốt SX sync:', sxDateErr.message);
+        }
+      }
+    }
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -8088,11 +8266,12 @@ r.put('/auto-project-config', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.post('/deals/:id/auto-create-project', async (req, res) => {
   try {
+    const resolvedPc = await resolveProductionCompanyForDealStage(req.params.id, req.body?.production_company_id);
     const result = await autoCreateProjectFromWonDeal({
       req,
       dealId: req.params.id,
       userId: req.user.userId,
-      productionCompanyId: req.body?.production_company_id,
+      productionCompanyId: resolvedPc,
     });
     if (!result.ok) {
       if (result.existing_project_id) {
@@ -8135,7 +8314,8 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
 
     const b = req.body || {};
     if (!b.sale_acknowledged) return res.status(400).json({ error: 'Cần tick xác nhận Sale' });
-    const pcv = await validateProductionCompanyId(b.production_company_id);
+    const resolvedHandoverPc = await resolveProductionCompanyForDealStage(leadId, b.production_company_id);
+    const pcv = await validateProductionCompanyId(resolvedHandoverPc);
     if (!pcv.ok) return res.status(400).json({ error: pcv.error, requires_production_company: true });
     const cStart = b.construction_start_date || null;
     const pStart = b.expected_production_start_date || null;

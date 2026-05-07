@@ -2,8 +2,8 @@
  * Gắn meta phân loại cho lead_documents khi đồng bộ từ crm_tasks (ghi chú / đính kèm).
  * - crm_stage_slug / crm_stage_group_label: "nhiệm vụ lớn" = giai đoạn pipeline (KD / Deal / SX).
  * - SX (slug bắt đầu sx_): bật chia sẻ xưởng + giới hạn module production/workshop.
- * - Deal/lead (không phải sx_): nếu deal đã gắn dự án (linkToProject) vẫn bật shared_to_workshop
- *   để ghi chú/đính kèm đồng bộ hiện ở module Sản xuất; allowed_share_modules null = cả VC (trừ khi sau này chỉnh tay).
+ * - Deal/lead (không phải sx_): nếu deal đã gắn dự án (linkToProject) mặc định bật shared_to_workshop
+ *   cho bản ghi mới; user có thể tắt («khóa») trên CRM — đồng bộ project_id không ghi đè cờ này.
  */
 
 const SX_PREFIX = 'sx_';

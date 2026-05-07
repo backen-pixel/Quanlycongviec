@@ -195,35 +195,18 @@ const ACTIONS = {
     const { data: q } = await supabase.from('quotations').select('*').eq('id', quotation_id).single();
     if (!q) throw new Error('BG không tồn tại');
     await supabase.from('quotations').update({ status: 'accepted' }).eq('id', quotation_id);
-
-    // Auto tạo ĐH
-    const { data: qItems } = await supabase.from('quotation_items').select('*').eq('quotation_id', quotation_id).order('item_order');
-    const orderR = await ACTIONS.create_order({ customer_id: q.customer_id, customer_name: q.customer_name, items: qItems, from_quotation_id: quotation_id, project_id: q.project_id }, userId);
-
-    return { success: true, message: `✅ BG ${q.code} chấp nhận!\n${orderR.message}`, navigate: orderR.navigate };
+    let autoFlow = null;
+    try {
+      autoFlow = require('./autoFlow');
+    } catch (_) { /* ignore */ }
+    const auto = autoFlow?.onQuotationAccepted ? await autoFlow.onQuotationAccepted(quotation_id, userId) : null;
+    const proj = auto?.autoProject;
+    const nav = proj?.id && !proj.existing ? `/projects/${proj.id}` : `/crm/quotations/${quotation_id}`;
+    const extra = proj?.code && !proj.existing ? `\n🏗 Dự án **${proj.code}** đã tạo.` : '';
+    return { success: true, message: `✅ BG ${q.code} chấp nhận!${extra}`, navigate: nav };
   },
 
   // ─── 5. ĐƠN HÀNG ─────────────────────────────────────────────────────
-  create_order: async ({ customer_id, customer_name, items, from_quotation_id, project_id }, userId) => {
-    const code = await nextCode('DH');
-    let orderItems = items || [];
-    if (from_quotation_id && !orderItems.length) {
-      const { data: qItems } = await supabase.from('quotation_items').select('*').eq('quotation_id', from_quotation_id).order('item_order');
-      orderItems = (qItems || []).map(i => ({ product_name: i.product_name, description: i.description, unit: i.unit, quantity: i.quantity, unit_price: i.unit_price, amount: i.amount, item_order: i.item_order }));
-    }
-    const total = orderItems.reduce((s, i) => s + (i.amount || (i.quantity || 1) * (i.unit_price || 0)), 0);
-
-    const { data, error } = await supabase.from('orders').insert({
-      code, customer_id, customer_name, status: 'confirmed',
-      total, paid_amount: 0, quotation_id: from_quotation_id || null,
-      project_id: project_id || null, created_by: userId,
-    }).select('*').single();
-    if (error) throw error;
-
-    if (orderItems.length) await supabase.from('order_items').insert(orderItems.map(i => ({ ...i, order_id: data.id })));
-    return { success: true, message: `✅ Tạo ĐH **${code}** | Tổng: **${fmt(total)}đ**`, data, navigate: `/crm/orders/${data.id}` };
-  },
-
   update_order_status: async ({ order_id, status }) => {
     const ts = {};
     if (status === 'shipped') ts.shipped_date = new Date().toISOString().split('T')[0];

@@ -184,7 +184,8 @@ export default function CrmVoiceRecordingsPanel({ leadId, customerPhone }: Props
     const notes = noteDraft.trim().slice(0, NOTES_MAX);
     const form = new FormData();
     form.append('audio', {
-      uri: Platform.OS === 'ios' ? localUri.replace('file://', '') : localUri,
+      // React Native fetch FormData expects a valid file URI. Stripping `file://` on iOS can break upload.
+      uri: localUri,
       name: fileName,
       type: mime,
     } as unknown as Parameters<FormData['append']>[1]);
@@ -284,12 +285,11 @@ export default function CrmVoiceRecordingsPanel({ leadId, customerPhone }: Props
     }
 
     try {
-      await performUpload(
-        localUri,
-        `crm_mobile_${Date.now()}.m4a`,
-        'audio/m4a',
-        durationSec > 0 ? durationSec : undefined,
-      );
+      const uriName = String(localUri).split('/').pop() || '';
+      const ext = uriName.includes('.') ? uriName.split('.').pop() : '';
+      const fileName = `crm_mobile_${Date.now()}${ext ? `.${ext}` : '.m4a'}`;
+      const mime = guessAudioMimeFromFileName(fileName) || 'audio/m4a';
+      await performUpload(localUri, fileName, mime, durationSec > 0 ? durationSec : undefined);
     } catch (e: unknown) {
       Alert.alert('Ghi âm', formatApiError(e));
     } finally {

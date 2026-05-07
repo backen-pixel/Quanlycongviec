@@ -3,7 +3,7 @@ const { getLeadDocumentFieldsFromCrmTask } = require('./crmTaskLeadDocumentMeta'
 
 /**
  * Đưa đính kèm nhiệm vụ CRM và ghi chú task vào lead_documents (cùng lead_id deal).
- * Dùng trước syncLeadDocumentsToProject để SX nhận đủ file/ghi chú qua project_id + shared_to_workshop.
+ * Dùng trước syncLeadDocumentsToProject để mỗi artifact có lead_documents + project_id (cờ chia sẻ xưởng do CRM).
  *
  * @param {string} leadId — crm_leads.id (deal/lead)
  * @returns {Promise<{ attachmentsCopied: number, notesCopied: number }>}

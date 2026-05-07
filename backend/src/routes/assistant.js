@@ -96,14 +96,6 @@ function parseIntent(msg, ctx) {
     return { action: 'create_quotation', data: { customer_id: customer?.id, customer_name: customer?.name || custName, items: [] }, needItems: true };
   }
 
-  // Create order
-  if (m.match(/(tạo|thêm)\s+(đơn hàng|đh|order)/)) {
-    const custMatch = m.match(/(?:cho|kh|khách)\s+(.+?)(?:\s|$)/i);
-    const custName = custMatch?.[1]?.trim();
-    const customer = findCustomer(custName, ctx.customers);
-    return { action: 'create_order', data: { customer_id: customer?.id, customer_name: customer?.name || custName }};
-  }
-
   // Create invoice
   if (m.match(/(tạo|thêm)\s+(hóa đơn|hđ|invoice)/)) {
     return { action: 'create_invoice', data: {} };

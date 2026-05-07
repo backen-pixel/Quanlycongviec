@@ -10,9 +10,6 @@ try { stageFlow = require('../helpers/stageFlow'); } catch (e) { stageFlow = nul
 const { requirePermission, getAccessibleUnits, checkPermission } = require('../middleware/newPermission');
 const {
   ORDER_PHASES,
-  nextDhCode,
-  createChildOrderOnProject,
-  ensureDefaultOrderOneForProject,
   pushOrderToLogistics,
   applyProductionTemplateToFulfillmentLead,
 } = require('../helpers/projectOrderFulfillment');
@@ -238,37 +235,9 @@ r.get('/:id/orders', async (req, res) => {
   }
 });
 
-r.post('/:id/orders', async (req, res) => {
-  try {
-    const pid = req.params.id;
-    const userId = req.user.userId;
-    const { display_label: displayLabel, title, total } = req.body || {};
-    const label = (displayLabel || title || '').trim();
-    if (!label) return res.status(400).json({ error: 'Nhập tên đơn (vd: Đơn 1)' });
-
-    const order = await createChildOrderOnProject({
-      projectId: pid,
-      userId,
-      displayLabel: label,
-      title: title || null,
-      total: total != null ? Number(total) : null,
-    });
-
-    await logActivity(userId, 'created', 'order', order.id, `Tạo đơn con ${order.code} trên dự án ${pid}: ${order.display_label || label}`);
-
-    res.status(201).json(order);
-  } catch (e) {
-    const msg = e.message || 'Lỗi';
-    if (msg.includes('Không tìm thấy dự án')) {
-      return res.status(404).json({ error: msg });
-    }
-    if (msg.includes('Dự án chưa có') || msg.includes('Lead/Deal')) {
-      return res.status(400).json({ error: 'Dự án chưa có Lead/Deal CRM gắn (gán project_id trên bản ghi gốc). Tạo/chốt từ CRM trước khi thêm đơn hàng con.' });
-    }
-    console.error(e);
-    res.status(500).json({ error: msg });
-  }
-});
+r.post('/:id/orders', (req, res) =>
+  res.status(403).json({ error: 'Tạo đơn hàng đã tắt.' }),
+);
 
 r.put('/:id/orders/:orderId', async (req, res) => {
   try {
@@ -1685,11 +1654,6 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
         console.error('[deal] Integration error:', dealErr.message);
       }
     }
-
-    try {
-      const o1 = await ensureDefaultOrderOneForProject({ projectId, userId: req.user.userId, defaultLabel: 'Đơn 1' });
-      if (o1.created) console.log(`[create-with-flow] Đơn 1: ${o1.order?.code || ''}`);
-    } catch (e) { console.warn('[create-with-flow] ensure Đơn 1:', e.message); }
 
     // Activity log
     await logActivity(req.user.userId, 'created', 'project', projectId,

@@ -123,7 +123,9 @@ export default function PipelineSettingsPage() {
     applies_to: 'both',
     is_active: true,
     workshop_production_templates: false,
+    default_production_company_id: '',
   });
+  const [productionCompaniesForSx, setProductionCompaniesForSx] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -198,6 +200,16 @@ export default function PipelineSettingsPage() {
     })();
     return () => { cancelled = true; };
   }, [selectedCompanyId, user?.company_id]);
+
+  useEffect(() => {
+    api
+      .get('/companies', { params: { for_module: 'production' } })
+      .then((r) => {
+        const cos = r.data?.companies || r.data || [];
+        setProductionCompaniesForSx(Array.isArray(cos) ? cos : []);
+      })
+      .catch(() => setProductionCompaniesForSx([]));
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -751,6 +763,7 @@ export default function PipelineSettingsPage() {
         <p className="text-[11px] text-gray-600">
           Mỗi công ty có danh mục riêng. Khi tạo Lead/Deal, hệ thống sẽ chỉ cho chọn loại thuộc đúng công ty đó.
           Với Deal: có thể bật «SX mẫu» để khi tạo deal loại đó, hệ thống tự sinh nhiệm vụ pipeline SX (sx_*) theo bộ mẫu xưởng của công ty (công ty phải thuộc module Sản xuất).
+          Cột «Công ty SX mặc định»: khi deal loại đó chuyển <strong>Thắng</strong> hoặc cột <strong>Sản xuất</strong> (chưa có dự án), hệ thống dùng công ty xưởng này nếu không chọn tay — có thể bỏ trống để luôn hỏi khi kéo Kanban.
         </p>
 
         {/* Add new type */}
@@ -787,6 +800,7 @@ export default function PipelineSettingsPage() {
                   applies_to: leadTypeNew.applies_to,
                   is_active: leadTypeNew.is_active !== false,
                   workshop_production_templates: !!leadTypeNew.workshop_production_templates,
+                  default_production_company_id: leadTypeNew.default_production_company_id || null,
                 });
                 setLeadTypes((prev) => [data, ...(prev || [])]);
                 setLeadTypeNew({
@@ -794,6 +808,7 @@ export default function PipelineSettingsPage() {
                   applies_to: 'both',
                   is_active: true,
                   workshop_production_templates: false,
+                  default_production_company_id: '',
                 });
               } catch (e) {
                 alert(e.response?.data?.error || 'Lỗi tạo loại');
@@ -815,6 +830,19 @@ export default function PipelineSettingsPage() {
           <span>
             <strong>Deal Sản xuất:</strong> khi tạo Deal chọn loại này, tự tạo nhiệm vụ SX theo bộ mẫu đã cấu hình cho công ty (workshop — khu vực Sản xuất).
           </span>
+        </label>
+        <label className="flex flex-col gap-1 text-[11px] text-gray-700 max-w-md">
+          <span className="font-semibold">Công ty SX mặc định (khi chốt deal loại mới)</span>
+          <select
+            value={leadTypeNew.default_production_company_id || ''}
+            onChange={(e) => setLeadTypeNew((v) => ({ ...v, default_production_company_id: e.target.value }))}
+            className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
+          >
+            <option value="">— Chưa gán —</option>
+            {productionCompaniesForSx.map((c) => (
+              <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+            ))}
+          </select>
         </label>
 
         {/* List */}
@@ -871,6 +899,23 @@ export default function PipelineSettingsPage() {
                     />
                     SX mẫu
                   </label>
+                  <select
+                    value={t.default_production_company_id || ''}
+                    onChange={(e) =>
+                      setLeadTypes((prev) =>
+                        (prev || []).map((x) =>
+                          x.id === t.id ? { ...x, default_production_company_id: e.target.value || null } : x,
+                        ),
+                      )
+                    }
+                    className="min-w-[140px] max-w-[200px] border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] bg-white"
+                    title="Công ty xưởng mặc định khi chốt deal (Thắng / Sản xuất)"
+                  >
+                    <option value="">SX mặc định…</option>
+                    {productionCompaniesForSx.map((c) => (
+                      <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                    ))}
+                  </select>
                   <button
                     type="button"
                     onClick={async () => {
@@ -881,6 +926,7 @@ export default function PipelineSettingsPage() {
                           order_index: t.order_index ?? 0,
                           is_active: t.is_active !== false,
                           workshop_production_templates: !!t.workshop_production_templates,
+                          default_production_company_id: t.default_production_company_id || null,
                         };
                         const { data } = await api.put(`/crm/lead-types/${t.id}`, payload);
                         setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? data : x));

@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { normalizeRegionIdList, assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
+const { syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
 
 const r = Router();
 r.use(auth);
@@ -609,6 +610,15 @@ r.post('/', async (req, res) => {
       }
     }
 
+    // Auto sync org membership to ecosystem (department/team)
+    try {
+      if (data?.id && (insertObj.department_id || insertObj.team_id)) {
+        await syncUserOrgToEcosystem(data.id, { old_department_id: null, old_team_id: null });
+      }
+    } catch (syncErr) {
+      console.warn('[users POST] syncUserOrgToEcosystem:', syncErr.message);
+    }
+
     res.status(201).json({ user: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -618,6 +628,11 @@ r.put('/:id', async (req, res) => {
   try {
     const b = req.body;
     const targetId = req.params.id;
+    const { data: beforeOrg } = await supabase
+      .from('users')
+      .select('department_id, team_id')
+      .eq('id', targetId)
+      .maybeSingle();
     const update = { updated_at: new Date().toISOString() };
     const fields = ['full_name','phone','role','position','department_id','team_id','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills','is_active','avatar'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
@@ -673,6 +688,19 @@ r.put('/:id', async (req, res) => {
         );
         if (insErr) throw insErr;
       }
+    }
+
+    // Auto sync org membership changes to ecosystem
+    try {
+      const old_department_id = beforeOrg?.department_id || null;
+      const old_team_id = beforeOrg?.team_id || null;
+      const new_department_id = b.department_id !== undefined ? (b.department_id || null) : old_department_id;
+      const new_team_id = b.team_id !== undefined ? (b.team_id || null) : old_team_id;
+      if (String(old_department_id || '') !== String(new_department_id || '') || String(old_team_id || '') !== String(new_team_id || '')) {
+        await syncUserOrgToEcosystem(targetId, { old_department_id, old_team_id });
+      }
+    } catch (syncErr) {
+      console.warn('[users PUT] syncUserOrgToEcosystem:', syncErr.message);
     }
 
     res.json({ user: data });

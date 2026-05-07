@@ -286,7 +286,17 @@ export default function UsersPage() {
 }
 
 // ═══ Staff Form Modal — Cascade: Khối → Cty → PB → Team ═══
-function StaffFormModal({ open, onClose, onSaved, editUser }) {
+/** Export để dùng tại trang «Thiết lập tổ chức nhanh» — preset Khối/Cty khi mở từ đó */
+export function StaffFormModal({
+  open,
+  onClose,
+  onSaved,
+  editUser,
+  presetDivisionId,
+  presetCompanyId,
+  /** Khi tạo mới: điền sẵn mật khẩu (vd: thiết lập tổ chức nhanh dùng 123456) */
+  defaultNewUserPassword,
+}) {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
 
@@ -332,7 +342,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
         position: '',
         department_id: '',
         team_id: '',
-        password: '',
+        password: defaultNewUserPassword || '',
         date_of_birth: '',
         hire_date: '',
         address: '',
@@ -344,7 +354,23 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
       setSelCompany('');
     }
     setCompanyRegions([]);
-  }, [open, editUser]);
+  }, [open, editUser, defaultNewUserPassword]);
+
+  useEffect(() => {
+    if (!open || editUser) return;
+    if (presetDivisionId) setSelDivision(String(presetDivisionId));
+    if (presetCompanyId) setSelCompany(String(presetCompanyId));
+  }, [open, editUser, presetDivisionId, presetCompanyId]);
+
+  // Reload company list when selecting a Khối (include companies linked via company_division_units)
+  useEffect(() => {
+    if (!open) return;
+    const params = selDivision ? { division_unit_id: selDivision } : {};
+    api
+      .get('/companies', { params })
+      .then((r) => setCompanies(r.data.companies || []))
+      .catch(() => setCompanies([]));
+  }, [open, selDivision]);
 
   useEffect(() => {
     if (!open || !editUser?.id) return;
@@ -375,9 +401,10 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
   // Load departments when company changes
   useEffect(() => {
     if (selCompany) {
-      api.get('/departments').then((r) => {
-        setDepartments((r.data.departments || []).filter((d) => d.company_id === selCompany));
-      });
+      api
+        .get('/departments', { params: { company_id: selCompany, division_unit_id: selDivision || undefined } })
+        .then((r) => setDepartments(r.data.departments || []))
+        .catch(() => setDepartments([]));
     } else {
       setDepartments([]);
     }
@@ -385,7 +412,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
       setForm((f) => ({ ...f, department_id: '', team_id: '' }));
       setTeams([]);
     }
-  }, [selCompany, editUser]);
+  }, [selCompany, selDivision, editUser]);
 
   useEffect(() => {
     if (!selCompany) {
@@ -394,7 +421,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
     }
     let cancelled = false;
     api
-      .get('/crm/company-regions', { params: { company_id: selCompany } })
+      .get('/crm/company-regions', { params: { company_id: selCompany, division_unit_id: selDivision || undefined } })
       .then((r) => {
         if (cancelled) return;
         const list = Array.isArray(r.data) ? r.data : [];
@@ -406,7 +433,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
     return () => {
       cancelled = true;
     };
-  }, [selCompany]);
+  }, [selCompany, selDivision]);
 
   useEffect(() => {
     if (!companyRegions.length) return;
@@ -429,7 +456,8 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
     if (!editUser) setForm((f) => ({ ...f, team_id: '' }));
   }, [form.department_id, editUser]);
 
-  const divCompanies = selDivision ? companies.filter((c) => c.division_unit_id === selDivision) : companies;
+  // companies state is already filtered by selDivision via API above
+  const divCompanies = companies;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -469,7 +497,7 @@ function StaffFormModal({ open, onClose, onSaved, editUser }) {
           <div><label className="block text-sm font-medium mb-1">Họ tên *</label><input value={form.full_name || ''} onChange={e => set('full_name', e.target.value)} required className="input" autoComplete="off" /></div>
           <div><label className="block text-sm font-medium mb-1">Email *</label><input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required className="input" disabled={!!editUser} autoComplete="off" readOnly={!!editUser} /></div>
           <div><label className="block text-sm font-medium mb-1">SĐT</label><input value={form.phone || ''} onChange={e => set('phone', e.target.value)} className="input" autoComplete="off" /></div>
-          <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUser ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUser} placeholder={editUser ? '••••••' : 'admin123'} autoComplete="new-password" /></div>
+          <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUser ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUser} placeholder={editUser ? '••••••' : (defaultNewUserPassword || '123456')} autoComplete="new-password" /></div>
           <div><label className="block text-sm font-medium mb-1">Vai trò</label>
             <select value={form.role || 'staff'} onChange={e => set('role', e.target.value)} className="input">
               {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}

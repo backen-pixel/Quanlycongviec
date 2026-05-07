@@ -64,6 +64,7 @@ import ProjectTemplatesPage from './pages/ProjectTemplatesPage';
 import PersonalTasks from './pages/PersonalTasks';
 import CompaniesPage from './pages/CompaniesPage';
 import CompanyCrmRegionsPage from './pages/CompanyCrmRegionsPage';
+import OrganizationQuickSetupPage from './pages/OrganizationQuickSetupPage';
 import DepartmentsPage from './pages/DepartmentsPage';
 import TeamsPage from './pages/TeamsPage';
 import WorkflowSettings from './pages/WorkflowSettings';
@@ -79,6 +80,7 @@ import ProductionDetail from './pages/ProductionDetail';
 import ProductionApprovalsPage from './pages/ProductionApprovalsPage';
 import ProductionPipelineSettingsPage from './pages/ProductionPipelineSettingsPage';
 const WorkshopTaskTemplatesPage = lazy(() => import('./pages/WorkshopTaskTemplatesPage'));
+const ProductionHandoverSettingsPage = lazy(() => import('./pages/ProductionHandoverSettingsPage'));
 import LogisticsDashboard from './pages/LogisticsDashboard';
 import LogisticsDetail from './pages/LogisticsDetail';
 import LogisticsPipelineSettingsPage from './pages/LogisticsPipelineSettingsPage';
@@ -259,6 +261,7 @@ export default function App() {
             <Route path="/project-workflow" element={<ProjectWorkflowPage />} />
             <Route path="/tasks" element={<Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" /></div>}><Tasks /></Suspense>} />
             <Route path="/tasks/regions" element={<CompanyCrmRegionsPage />} />
+            <Route path="/workspace/org-setup" element={<OrganizationQuickSetupPage />} />
             <Route path="/stage/:slug" element={<StageView />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/customers" element={<CustomersPage />} />
@@ -295,7 +298,7 @@ export default function App() {
             <Route path="/crm/quotations/new" element={<QuotationForm />} />
             <Route path="/crm/quotations/:id" element={<QuotationForm />} />
             <Route path="/crm/orders" element={<OrdersPage />} />
-            <Route path="/crm/orders/new" element={<OrderForm />} />
+            <Route path="/crm/orders/new" element={<Navigate to="/crm/orders" replace />} />
             <Route path="/crm/orders/:id/edit" element={<OrderForm />} />
             <Route path="/crm/orders/:id" element={<OrderDetail />} />
             <Route path="/crm/invoices" element={<InvoicesPage />} />
@@ -331,6 +334,14 @@ export default function App() {
                 element={(
                   <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-teal-600 border-t-transparent rounded-full" /></div>}>
                     <WorkshopTaskTemplatesPage />
+                  </Suspense>
+                )}
+              />
+              <Route
+                path="handover-settings"
+                element={(
+                  <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-3 border-teal-600 border-t-transparent rounded-full" /></div>}>
+                    <ProductionHandoverSettingsPage />
                   </Suspense>
                 )}
               />

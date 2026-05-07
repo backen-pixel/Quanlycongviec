@@ -130,24 +130,21 @@ export default function OrderForm() {
   const _isSaving = useRef(false);
   const save = async () => {
     if (_isSaving.current) return;
+    if (!isEdit || !id) {
+      navigate('/crm/orders', { replace: true });
+      return;
+    }
     if (!form.title && !form.customer_name) return alert('Nhập tiêu đề hoặc khách hàng');
     if (items.filter(i => i.row_type !== 'section').every(i => !i.name)) return alert('Thêm ít nhất 1 sản phẩm');
     _isSaving.current = true;
     setSaveStatus('loading');
-    setSaveMsg(isEdit ? 'Đang cập nhật đơn hàng...' : 'Đang tạo đơn hàng...');
+    setSaveMsg('Đang cập nhật đơn hàng...');
     try {
       const payload = { ...form, items: calcs.rows };
-      if (isEdit) {
-        await api.put(`/crm/orders/${id}`, payload);
-        setSaveMsg('Cập nhật đơn hàng thành công!');
-        setSaveStatus('success');
-        setTimeout(() => navigate(`/crm/orders/${id}`), 1200);
-      } else {
-        const { data } = await api.post('/crm/orders', payload);
-        setSaveMsg('Tạo đơn hàng thành công!');
-        setSaveStatus('success');
-        setTimeout(() => navigate(`/crm/orders/${data.id}`), 1200);
-      }
+      await api.put(`/crm/orders/${id}`, payload);
+      setSaveMsg('Cập nhật đơn hàng thành công!');
+      setSaveStatus('success');
+      setTimeout(() => navigate(`/crm/orders/${id}`), 1200);
     } catch (e) {
       setSaveMsg(e.response?.data?.error || 'Có lỗi xảy ra khi lưu');
       setSaveStatus('error');
@@ -166,11 +163,11 @@ export default function OrderForm() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(isEdit ? `/crm/orders/${id}` : '/crm/orders')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
+          <button onClick={() => navigate(id ? `/crm/orders/${id}` : '/crm/orders')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
             <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
               <ShoppingCart className="h-5 w-5 text-emerald-600" />
-              {isEdit ? 'Sửa đơn hàng' : 'Tạo đơn hàng mới'}
+              Sửa đơn hàng
             </h1>
             {isEdit && form.code && <p className="text-xs text-emerald-600 font-bold">{form.code}</p>}
           </div>

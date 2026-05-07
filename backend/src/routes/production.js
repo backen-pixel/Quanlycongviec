@@ -37,6 +37,7 @@ const {
 } = require('../helpers/productionPipelineSchema');
 const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
 const { ensureDealLeadDocumentsForProjectId } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
+const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
 
 const r = Router();
 r.use(auth);
@@ -297,8 +298,13 @@ async function loadCrmDealsSummaryForProductionProject(projectId) {
   return rows;
 }
 
-/** Chỉ hiện tài liệu ở module Xưởng khi bật cờ chia sẻ rõ ràng (hoặc từ khóa đồng bộ cũ). Không dùng allowed_departments/companies — đó là phân quyền nội bộ CRM, không phải chia sẻ xưởng. */
+/**
+ * Chỉ hiện tài liệu ở module xưởng khi CRM bật chia sẻ.
+ * shared_to_workshop === false → đã khóa: không áp dụng heuristic/từ khóa hay cột legacy.
+ * Chỉ khi cờ không phải false rõ ràng (dữ liệu cũ) mới fallback legacy.
+ */
 function isDocSharedToWorkshop(doc) {
+  if (doc?.shared_to_workshop === false) return false;
   if (doc?.shared_to_workshop === true) return true;
   const notes = `${doc?.notes || ''} ${doc?.name || ''}`.toLowerCase();
   return Boolean(
@@ -1123,7 +1129,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         productionTaskCount: productionTasks.length,
         logisticsTaskCount: logisticsTasks.length,
         tasksByStage,
-        documents,
+        // Chỉ trả tài liệu CRM được phép xem ở SX (tránh lộ file đã khóa qua field documents)
+        documents: sharedDocuments,
         sharedDocuments,
         hiddenDocumentsCount: hiddenDocuments.length,
         crmDeals: crmSummary || [],
@@ -1987,6 +1994,168 @@ r.patch('/projects/:projectId/incidents/:incidentId', requirePermission('project
       .single();
     if (error) throw error;
     res.json({ incident: data });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function userCanAccessProductionHandover(req, productionCompanyId) {
+  const pid = String(productionCompanyId || '').trim();
+  if (!pid) return false;
+  const role = String(req.user?.role || '').toLowerCase();
+  const lockedCo =
+    req.user?.company_id != null && String(req.user.company_id).trim() !== '';
+  if (role === 'admin' && !lockedCo) return true;
+  if (String(req.user?.company_id || '') === pid) return true;
+  return false;
+}
+
+// ─── Bàn giao CRM → SX: người phụ trách + phân công mục mẫu + đội SX ───
+r.get('/handover-settings/:companyId', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const v = await validateProductionCompanyId(companyId);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    if (!userCanAccessProductionHandover(req, companyId)) return res.status(403).json({ error: 'Không có quyền xem cấu hình công ty này' });
+
+    const { data: settings } = await supabase
+      .from('production_handover_settings')
+      .select('*')
+      .eq('production_company_id', companyId)
+      .maybeSingle();
+
+    const { data: assignments } = await supabase
+      .from('production_handover_task_assignments')
+      .select('*')
+      .eq('production_company_id', companyId);
+
+    const { data: teams } = await supabase
+      .from('workshop_teams')
+      .select('id, name, type, company_id, color, is_active')
+      .eq('company_id', companyId)
+      .eq('type', 'production')
+      .order('name');
+
+    const { data: tplScoped } = await supabase
+      .from('workshop_task_templates')
+      .select('id, name')
+      .eq('workshop_area', 'production')
+      .eq('is_active', true)
+      .eq('company_id', companyId);
+    const { data: tplGlobal } = await supabase
+      .from('workshop_task_templates')
+      .select('id, name')
+      .eq('workshop_area', 'production')
+      .eq('is_active', true)
+      .is('company_id', null);
+
+    const tplList = [...(tplScoped || []), ...(tplGlobal || [])];
+    const tplIds = [...new Set(tplList.map((t) => t.id).filter(Boolean))];
+    let template_items = [];
+    if (tplIds.length) {
+      const { data: items } = await supabase
+        .from('workshop_task_template_items')
+        .select('id, template_id, title, order_index')
+        .in('template_id', tplIds)
+        .order('order_index');
+      const nameByTpl = Object.fromEntries(tplList.map((t) => [t.id, t.name]));
+      template_items = (items || []).map((it) => ({
+        ...it,
+        template_name: nameByTpl[it.template_id] || '',
+      }));
+    }
+
+    const { data: usersCo } = await supabase
+      .from('users')
+      .select('id, full_name, email, role')
+      .eq('company_id', companyId)
+      .eq('is_active', true)
+      .order('full_name');
+
+    res.json({
+      settings: settings || null,
+      assignments: assignments || [],
+      production_teams: teams || [],
+      template_items,
+      users: usersCo || [],
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const v = await validateProductionCompanyId(companyId);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    if (!userCanAccessProductionHandover(req, companyId)) return res.status(403).json({ error: 'Không có quyền sửa cấu hình công ty này' });
+
+    const { responsible_user_id, default_production_team_id, assignments } = req.body || {};
+
+    if (default_production_team_id) {
+      const { data: wt } = await supabase
+        .from('workshop_teams')
+        .select('id, company_id, type')
+        .eq('id', default_production_team_id)
+        .maybeSingle();
+      if (!wt || wt.type !== 'production' || String(wt.company_id || '') !== String(companyId)) {
+        return res.status(400).json({ error: 'Đội SX mặc định không hợp lệ cho công ty này' });
+      }
+    }
+
+    if (responsible_user_id) {
+      const { data: ru } = await supabase.from('users').select('id, company_id').eq('id', responsible_user_id).maybeSingle();
+      if (!ru || String(ru.company_id || '') !== String(companyId)) {
+        return res.status(400).json({ error: 'Người phụ trách phải thuộc đúng công ty sản xuất' });
+      }
+    }
+
+    const now = new Date().toISOString();
+    const { error: upErr } = await supabase.from('production_handover_settings').upsert(
+      {
+        production_company_id: companyId,
+        responsible_user_id: responsible_user_id || null,
+        default_production_team_id: default_production_team_id || null,
+        updated_at: now,
+      },
+      { onConflict: 'production_company_id' },
+    );
+    if (upErr) throw upErr;
+
+    await supabase.from('production_handover_task_assignments').delete().eq('production_company_id', companyId);
+
+    const rows = [];
+    if (Array.isArray(assignments)) {
+      for (const a of assignments) {
+        const tid = a.template_item_id && String(a.template_item_id).trim();
+        if (!tid) continue;
+        rows.push({
+          production_company_id: companyId,
+          template_item_id: tid,
+          assignee_user_id: a.assignee_user_id || null,
+        });
+      }
+    }
+    if (rows.length) {
+      const { error: insA } = await supabase.from('production_handover_task_assignments').insert(rows);
+      if (insA) throw insA;
+    }
+
+    const { data: settings } = await supabase
+      .from('production_handover_settings')
+      .select('*')
+      .eq('production_company_id', companyId)
+      .single();
+
+    const { data: assignmentsOut } = await supabase
+      .from('production_handover_task_assignments')
+      .select('*')
+      .eq('production_company_id', companyId);
+
+    res.json({ settings, assignments: assignmentsOut || [] });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });

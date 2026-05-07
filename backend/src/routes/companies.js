@@ -9,6 +9,49 @@ const { isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
 const r = Router();
 r.use(auth);
 
+/**
+ * @param {string} companyId
+ * @param {string[]} divisionUnitIds
+ * @param {string|null} primaryId — khối chính (= companies.division_unit_id, cây HST)
+ */
+async function replaceCompanyDivisionLinks(companyId, divisionUnitIds, primaryId) {
+  const uniq = [...new Set((divisionUnitIds || []).map((x) => String(x).trim()).filter(Boolean))];
+  const primary = primaryId && uniq.includes(String(primaryId)) ? String(primaryId) : (uniq[0] || null);
+  await supabase.from('company_division_units').delete().eq('company_id', companyId);
+  if (!uniq.length) return { primary: null };
+  const rows = uniq.map((divId) => ({
+    company_id: companyId,
+    division_unit_id: divId,
+    is_primary: !!primary && divId === primary,
+  }));
+  const { error } = await supabase.from('company_division_units').insert(rows);
+  if (error) throw error;
+  return { primary };
+}
+
+/** Bổ sung division_unit_ids + primary_division_unit_id (từ bảng nối hoặc cột legacy). */
+async function companyWithDivisionFields(data) {
+  if (!data?.id) return data;
+  let division_unit_ids = [];
+  let primary_division_unit_id = data.division_unit_id || null;
+  const { data: divLinks, error: divErr } = await supabase
+    .from('company_division_units')
+    .select('division_unit_id, is_primary')
+    .eq('company_id', data.id);
+  if (!divErr && divLinks?.length) {
+    division_unit_ids = divLinks.map((r) => r.division_unit_id).filter(Boolean);
+    const pr = divLinks.find((r) => r.is_primary);
+    if (pr?.division_unit_id) primary_division_unit_id = pr.division_unit_id;
+  } else if (data.division_unit_id) {
+    division_unit_ids = [data.division_unit_id];
+  }
+  return {
+    ...data,
+    division_unit_ids,
+    primary_division_unit_id,
+  };
+}
+
 // ═══ LIST COMPANIES ═══
 // Query: for_module = crm | production | logistics | … — chỉ trả công ty thuộc khối được phép trong /ecosystem/modules (nếu có cấu hình scope)
 r.get('/', async (req, res) => {
@@ -25,10 +68,38 @@ r.get('/', async (req, res) => {
       .order('name');
     if (search) q = q.or(`name.ilike.%${search}%,short_name.ilike.%${search}%`);
 
+    // Filter by a specific division (Khối): include junction links too
+    const divFilter = req.query.division_unit_id;
+    if (divFilter) {
+      const ids = [String(divFilter).trim()].filter(Boolean);
+      if (ids.length) {
+        const { data: linkRows, error: linkErr } = await supabase
+          .from('company_division_units')
+          .select('company_id')
+          .in('division_unit_id', ids);
+        const fromLinks = !linkErr && linkRows?.length
+          ? [...new Set(linkRows.map((r) => r.company_id).filter(Boolean))]
+          : [];
+        const orParts = [`division_unit_id.in.(${ids.join(',')})`];
+        if (fromLinks.length) orParts.push(`id.in.(${fromLinks.join(',')})`);
+        q = q.or(orParts.join(','));
+      }
+    }
+
     if (useModuleFilter) {
       const restricted = await getRestrictedDivisionIdsForModule(mod);
       if (restricted && restricted.size > 0) {
-        q = q.in('division_unit_id', [...restricted]);
+        const ids = [...restricted];
+        const { data: linkRows, error: linkErr } = await supabase
+          .from('company_division_units')
+          .select('company_id')
+          .in('division_unit_id', ids);
+        const fromLinks = !linkErr && linkRows?.length
+          ? [...new Set(linkRows.map((r) => r.company_id).filter(Boolean))]
+          : [];
+        const orParts = [`division_unit_id.in.(${ids.join(',')})`];
+        if (fromLinks.length) orParts.push(`id.in.(${fromLinks.join(',')})`);
+        q = q.or(orParts.join(','));
       }
     }
 
@@ -60,6 +131,7 @@ r.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase.from('companies').select('*').eq('id', req.params.id).single();
     if (error) throw error;
+    const companyRow = await companyWithDivisionFields(data);
 
     // Load employees of this company
     const { data: members } = await supabase.from('user_companies')
@@ -72,7 +144,7 @@ r.get('/:id', async (req, res) => {
       .eq('company_id', req.params.id).order('created_at', { ascending: false });
 
     res.json({
-      company: data,
+      company: companyRow,
       members: (members || []).map(m => ({ ...m.user, is_primary: m.is_primary, joined_at: m.joined_at })),
       projects: projects || [],
     });
@@ -84,20 +156,35 @@ r.post('/', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const b = req.body;
+    const rawIds = Array.isArray(b.division_unit_ids)
+      ? b.division_unit_ids.map((x) => String(x).trim()).filter(Boolean)
+      : (b.division_unit_id ? [b.division_unit_id] : []);
+    const primaryDiv =
+      (b.primary_division_unit_id && rawIds.includes(b.primary_division_unit_id) ? b.primary_division_unit_id : null)
+      || rawIds[0]
+      || b.division_unit_id
+      || null;
+
     const { data, error } = await supabase.from('companies').insert({
       name: b.name, short_name: b.short_name || null,
       tax_code: b.tax_code || null, address: b.address || null,
       phone: b.phone || null, email: b.email || null, logo_url: b.logo_url || null,
-      division_unit_id: b.division_unit_id || null,
+      division_unit_id: primaryDiv,
     }).select().single();
     if (error) throw error;
 
-    // Auto sync to ecosystem
-    if (b.division_unit_id) {
-      await syncCompanyToEcosystem({ ...data, division_unit_id: b.division_unit_id });
+    if (rawIds.length) {
+      await replaceCompanyDivisionLinks(data.id, rawIds, primaryDiv);
     }
 
-    res.status(201).json({ company: data });
+    // Auto sync to ecosystem (theo khối chính)
+    if (primaryDiv) {
+      await syncCompanyToEcosystem({ ...data, division_unit_id: primaryDiv });
+    }
+
+    const { data: fresh } = await supabase.from('companies').select('*').eq('id', data.id).single();
+    const company = await companyWithDivisionFields(fresh);
+    res.status(201).json({ company });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -107,16 +194,32 @@ r.put('/:id', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    ['name', 'short_name', 'tax_code', 'address', 'phone', 'email', 'logo_url', 'is_active', 'division_unit_id'].forEach(f => {
+    ['name', 'short_name', 'tax_code', 'address', 'phone', 'email', 'logo_url', 'is_active'].forEach(f => {
       if (b[f] !== undefined) update[f] = b[f];
     });
+
+    const hasMany = Array.isArray(b.division_unit_ids);
+    const hasLegacyDiv = b.division_unit_id !== undefined;
+    if (hasMany || hasLegacyDiv) {
+      const rawIds = hasMany
+        ? (b.division_unit_ids || []).map((x) => String(x).trim()).filter(Boolean)
+        : (hasLegacyDiv && b.division_unit_id ? [b.division_unit_id] : []);
+      const primaryDiv =
+        (b.primary_division_unit_id && rawIds.includes(b.primary_division_unit_id) ? b.primary_division_unit_id : null)
+        || rawIds[0]
+        || null;
+      update.division_unit_id = primaryDiv;
+      await replaceCompanyDivisionLinks(req.params.id, rawIds, primaryDiv);
+    }
+
     const { data, error } = await supabase.from('companies').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
 
     // Auto sync to ecosystem
     await syncCompanyToEcosystem(data);
 
-    res.json({ company: data });
+    const company = await companyWithDivisionFields(data);
+    res.json({ company });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 

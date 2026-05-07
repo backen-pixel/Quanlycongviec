@@ -365,7 +365,7 @@ export default function ProductionTasksTab({
     const hasNotes = !!(task.description || task.notes);
 
     return (
-      <div key={task.id} className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'} ${task.status === 'done' ? 'opacity-50' : ''}`}>
+      <div key={task.id} className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'}`}>
         {/* Main row */}
         <div className="flex items-center gap-2 py-2 px-3 group">
           <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
@@ -811,7 +811,7 @@ export default function ProductionTasksTab({
           <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">
             ✅ Đã hoàn thành ({tasks.filter(t => t.status === 'done' || t.status === 'completed').length})
           </summary>
-          <div className="mt-2 opacity-50">{tasks.filter(t => t.status === 'done' || t.status === 'completed').map(t => renderTaskRow(t))}</div>
+          <div className="mt-2">{tasks.filter(t => t.status === 'done' || t.status === 'completed').map(t => renderTaskRow(t))}</div>
         </details>
       )}
 
