@@ -2437,7 +2437,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
           type="select"
           options={companyRegions.map((r) => ({
             value: r.id,
-            label: `${r.name}${r.code ? ` (${r.code})` : ''}`,
+            label: `${r.name}${r.code ? ` (${r.code})` : ''}${r.division?.short_name || r.division?.name ? ` — ${r.division?.short_name || r.division?.name}` : ''}`,
           }))}
         />
       ) : (

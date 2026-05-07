@@ -25,6 +25,7 @@ export default function ProductionPipelineSettingsPage() {
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', workflow_stage_id: '', is_active: true,
     is_handover_to_logistics: false, crm_sync_type: null, crm_target_stage_id: '',
+    progress_percent: '',
   });
 
   const load = useCallback(async () => {
@@ -94,6 +95,7 @@ export default function ProductionPipelineSettingsPage() {
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
       workflow_stage_id: '', is_active: true, is_handover_to_logistics: false,
       crm_sync_type: null, crm_target_stage_id: '',
+      progress_percent: '',
     });
   };
 
@@ -109,6 +111,7 @@ export default function ProductionPipelineSettingsPage() {
       is_handover_to_logistics: stage.is_handover_to_logistics || false,
       crm_sync_type: stage.crm_sync_type || null,
       crm_target_stage_id: stage.crm_target_stage_id || '',
+      progress_percent: stage.progress_percent ?? '',
     });
   };
 
@@ -119,6 +122,7 @@ export default function ProductionPipelineSettingsPage() {
         name: form.name.trim(),
         color: form.color,
         icon: form.icon,
+        progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
         workflow_stage_id: form.workflow_stage_id || null,
         is_active: form.is_active,
         is_handover_to_logistics: form.is_handover_to_logistics,
@@ -141,6 +145,7 @@ export default function ProductionPipelineSettingsPage() {
         name: form.name.trim(),
         color: form.color,
         icon: form.icon,
+        progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
         workflow_stage_id: intakeRow ? null : (form.workflow_stage_id || null),
         is_active: form.is_active,
         is_handover_to_logistics: intakeRow ? false : form.is_handover_to_logistics,
@@ -448,6 +453,21 @@ export default function ProductionPipelineSettingsPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 block mb-1">% hoàn thành theo cột (0–100)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.progress_percent ?? ''}
+                  onChange={(e) => setForm((f) => ({ ...f, progress_percent: e.target.value }))}
+                  className="w-full max-w-[160px] h-8 px-3 border rounded-lg text-sm"
+                  placeholder="VD: 60"
+                />
+                <p className="text-[10px] text-gray-400 mt-1 leading-snug">
+                  Dùng để hiển thị thanh % trên thẻ SX. Để trống nếu không muốn áp dụng.
+                </p>
               </div>
               <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 text-xs cursor-pointer">

@@ -84,6 +84,7 @@ const ProductionHandoverSettingsPage = lazy(() => import('./pages/ProductionHand
 import LogisticsDashboard from './pages/LogisticsDashboard';
 import LogisticsDetail from './pages/LogisticsDetail';
 import LogisticsPipelineSettingsPage from './pages/LogisticsPipelineSettingsPage';
+import LogisticsTaskTemplatesPage from './pages/LogisticsTaskTemplatesPage';
 import WorkshopTeamsPage from './pages/WorkshopTeamsPage';
 import QuotationsPage from './pages/QuotationsPage';
 import QuotationForm from './pages/QuotationForm';
@@ -352,6 +353,7 @@ export default function App() {
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<LogisticsDashboard />} />
               <Route path="pipeline-settings" element={<LogisticsPipelineSettingsPage />} />
+              <Route path="task-templates" element={<LogisticsTaskTemplatesPage />} />
               <Route path="teams" element={<WorkshopTeamsPage />} />
               <Route path="projects/:id" element={<LogisticsDetail />} />
             </Route>

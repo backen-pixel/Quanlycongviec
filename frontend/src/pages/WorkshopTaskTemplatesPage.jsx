@@ -36,7 +36,7 @@ function SortableItem({ id, children }) {
   );
 }
 
-export default function WorkshopTaskTemplatesPage() {
+export default function WorkshopTaskTemplatesPage({ initialArea = 'production', fixedArea = '' } = {}) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [templates, setTemplates] = useState([]);
@@ -45,8 +45,10 @@ export default function WorkshopTaskTemplatesPage() {
   const [editingTpl, setEditingTpl] = useState(null);
   const [newItem, setNewItem] = useState({});
   const [showAddTpl, setShowAddTpl] = useState(false);
-  const [newTpl, setNewTpl] = useState({ name: '', workshop_area: 'production' });
-  const [activeTab, setActiveTab] = useState('production');
+  const effectiveInitialArea = fixedArea || initialArea || 'production';
+
+  const [newTpl, setNewTpl] = useState({ name: '', workshop_area: effectiveInitialArea });
+  const [activeTab, setActiveTab] = useState(effectiveInitialArea);
   const [editingChecklist, setEditingChecklist] = useState({});
   const [newCheckItem, setNewCheckItem] = useState({});
   const [editingVisibility, setEditingVisibility] = useState({}); // {itemId: true/false}
@@ -70,6 +72,7 @@ export default function WorkshopTaskTemplatesPage() {
           params: {
             active_only: 'false',
             ...(selectedCompanyId ? { company_id: selectedCompanyId } : {}),
+            ...(fixedArea ? { workshop_area: fixedArea } : {}),
           },
         }),
         api.get('/companies', { params: { for_module: activeTab === 'logistics' ? 'logistics' : 'production' } }).catch(() => ({ data: [] })),
@@ -84,7 +87,7 @@ export default function WorkshopTaskTemplatesPage() {
     } catch {}
     setLoading(false);
   };
-  useEffect(() => { load(); }, [selectedCompanyId]);
+  useEffect(() => { load(); }, [selectedCompanyId, activeTab, fixedArea]);
 
   const filteredTemplates = templates.filter((t) => t.workshop_area === activeTab);
 
@@ -182,7 +185,7 @@ export default function WorkshopTaskTemplatesPage() {
     try {
       await api.post('/production/task-templates', {
         name: newTpl.name.trim(),
-        workshop_area: newTpl.workshop_area,
+        workshop_area: fixedArea || newTpl.workshop_area,
         company_id: selectedCompanyId || null,
         order_index: filteredTemplates.filter((x) => x.workshop_area === newTpl.workshop_area).length,
       });
@@ -230,7 +233,7 @@ export default function WorkshopTaskTemplatesPage() {
     try {
       await api.put(`/production/task-templates/${editingTpl.id}`, {
         name: editingTpl.name.trim(),
-        workshop_area: editingTpl.workshop_area,
+        workshop_area: fixedArea || editingTpl.workshop_area,
         company_id: selectedCompanyId || null,
       });
       setEditingTpl(null);
@@ -432,20 +435,22 @@ export default function WorkshopTaskTemplatesPage() {
       </div>
 
       {/* Tab Lead / Deal */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-        {[
-          { key: 'production', label: '🏭 Sản xuất', desc: 'Nhiệm vụ giai đoạn SX' },
-          { key: 'logistics', label: '🚚 VC & Lắp đặt', desc: 'Giao hàng & lắp đặt' },
-        ].map((tab) => (
-          <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-            className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all cursor-pointer ${
-              activeTab === tab.key ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'
-            }`}>
-            {tab.label}
-            <span className="block text-[10px] font-normal mt-0.5 opacity-70">{tab.desc}</span>
-          </button>
-        ))}
-      </div>
+      {!fixedArea && (
+        <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+          {[
+            { key: 'production', label: '🏭 Sản xuất', desc: 'Nhiệm vụ giai đoạn SX' },
+            { key: 'logistics', label: '🚚 VC & Lắp đặt', desc: 'Giao hàng & lắp đặt' },
+          ].map((tab) => (
+            <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
+              className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all cursor-pointer ${
+                activeTab === tab.key ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'
+              }`}>
+              {tab.label}
+              <span className="block text-[10px] font-normal mt-0.5 opacity-70">{tab.desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Stages preview */}
       <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4 border border-blue-100">
@@ -474,10 +479,12 @@ export default function WorkshopTaskTemplatesPage() {
             <input value={newTpl.name} onChange={e => setNewTpl(p => ({...p, name: e.target.value}))}
               placeholder="Tên bộ mẫu..." className="flex-1 h-9 px-3 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-blue-500" autoFocus
               onKeyDown={e => e.key === 'Enter' && createTemplate()} />
-            <select value={newTpl.workshop_area} onChange={e => setNewTpl(p => ({...p, workshop_area: e.target.value}))}
-              className="h-9 px-3 rounded-lg border text-sm bg-white">
-              {ALL_WORKSHOP_AREAS.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
-            </select>
+            {!fixedArea && (
+              <select value={newTpl.workshop_area} onChange={e => setNewTpl(p => ({...p, workshop_area: e.target.value}))}
+                className="h-9 px-3 rounded-lg border text-sm bg-white">
+                {ALL_WORKSHOP_AREAS.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
+              </select>
+            )}
             <button onClick={createTemplate} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm cursor-pointer hover:bg-blue-700">Tạo</button>
             <button onClick={() => setShowAddTpl(false)} className="h-9 px-3 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button>
           </div>
@@ -603,10 +610,12 @@ function TemplateCard({
           <input value={editingTpl.name} onChange={e => setEditingTpl(p => ({ ...p, name: e.target.value }))}
             className="flex-1 h-8 px-2 rounded border text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500"
             autoFocus onKeyDown={e => e.key === 'Enter' && updateTemplate()} />
-          <select value={editingTpl.workshop_area} onChange={e => setEditingTpl(p => ({ ...p, workshop_area: e.target.value }))}
-            className="h-8 px-2 rounded border text-xs bg-white">
-            {ALL_WORKSHOP_AREAS.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
-          </select>
+          {!fixedArea && (
+            <select value={editingTpl.workshop_area} onChange={e => setEditingTpl(p => ({ ...p, workshop_area: e.target.value }))}
+              className="h-8 px-2 rounded border text-xs bg-white">
+              {ALL_WORKSHOP_AREAS.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
+            </select>
+          )}
           <button onClick={updateTemplate} className="h-8 px-3 bg-blue-600 text-white rounded text-xs cursor-pointer hover:bg-blue-700 flex items-center gap-1">
             <Save className="h-3 w-3" /> Lưu
           </button>

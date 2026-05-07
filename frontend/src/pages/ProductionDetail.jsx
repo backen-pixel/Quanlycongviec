@@ -489,15 +489,28 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     () => new Set(['planning', 'quality-check', 'packaging', 'production', 'delivery', 'customer-care']),
     [],
   );
+  const WORKSHOP_TASK_SLUGS_VC = useMemo(
+    () => new Set(['delivery', 'shipping', 'installation', 'installing', 'customer-care']),
+    [],
+  );
   const pickWorkshopTasksForSummary = useCallback((list) => {
     const arr = Array.isArray(list) ? list : [];
-    if (isVC) return arr;
+    if (isVC) {
+      // VC/LĐ: chỉ hiển thị nhiệm vụ thuộc quy trình VC (tránh lẫn task CRM như tư vấn/báo giá/hợp đồng…)
+      return arr.filter((t) => {
+        const slug = t?.stage?.slug ? String(t.stage.slug) : '';
+        if (WORKSHOP_TASK_SLUGS_VC.has(slug)) return true;
+        const guessed = t?.metadata?.guessed_stage_slug ? String(t.metadata.guessed_stage_slug) : '';
+        if (WORKSHOP_TASK_SLUGS_VC.has(guessed)) return true;
+        return false;
+      });
+    }
     return arr.filter((t) => {
       if (t?.metadata?.workshop_template_id) return true;
       const slug = t?.stage?.slug ? String(t.stage.slug) : '';
       return WORKSHOP_TASK_SLUGS_SX.has(slug);
     });
-  }, [isVC, WORKSHOP_TASK_SLUGS_SX]);
+  }, [isVC, WORKSHOP_TASK_SLUGS_SX, WORKSHOP_TASK_SLUGS_VC]);
 
   const { id } = useParams();
   const navigate = useNavigate();
@@ -550,6 +563,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   // Production pipeline stages (loaded from API)
   const [productionStages, setProductionStages] = useState([]);
+  const [handoverModal, setHandoverModal] = useState(null); // { projectId, projectName, targetSxStageId }
+  const [handoverLogisticsCompanyId, setHandoverLogisticsCompanyId] = useState('');
+  const [handoverCompanies, setHandoverCompanies] = useState([]);
+  const [handoverErr, setHandoverErr] = useState('');
+  const [handoverSaving, setHandoverSaving] = useState(false);
 
   // Document upload state
   const [uploadingDoc, setUploadingDoc] = useState(false);
@@ -826,6 +844,60 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     }
   }, [id, MOD.apiPrefix, pickWorkshopTasksForSummary]);
 
+  useEffect(() => {
+    if (!handoverModal) return;
+    let cancelled = false;
+    setHandoverErr('');
+    setHandoverSaving(false);
+    setHandoverLogisticsCompanyId('');
+    api.get('/companies', { params: { for_module: 'logistics' } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.data?.companies || r.data || [];
+        setHandoverCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => { if (!cancelled) setHandoverCompanies([]); });
+    return () => { cancelled = true; };
+  }, [handoverModal]);
+
+  const closeHandoverModal = useCallback(() => {
+    setHandoverModal(null);
+    setHandoverLogisticsCompanyId('');
+    setHandoverCompanies([]);
+    setHandoverErr('');
+    setHandoverSaving(false);
+  }, []);
+
+  const confirmHandoverFromDetail = useCallback(async () => {
+    if (!handoverModal?.projectId) return;
+    if (!handoverLogisticsCompanyId) {
+      setHandoverErr('Vui lòng chọn công ty Vận chuyển/Lắp đặt.');
+      return;
+    }
+    setHandoverSaving(true);
+    setHandoverErr('');
+    try {
+      // Optimistic: ghim thẻ sang trạng thái VC ngay trên chi tiết
+      setProject((prev) => (prev ? {
+        ...prev,
+        status: 'shipping',
+        current_stage_id: null,
+        current_stage: null,
+        logistics_company_id: handoverLogisticsCompanyId,
+      } : prev));
+
+      await api.patch(`/production/projects/${handoverModal.projectId}/handover-vc`, {
+        logistics_company_id: handoverLogisticsCompanyId,
+      });
+      closeHandoverModal();
+      window.setTimeout(() => { refreshProjectSilently(); }, 200);
+    } catch (e) {
+      setHandoverErr(e.response?.data?.error || e.message || 'Lỗi bàn giao VC/LĐ');
+      refreshProjectSilently();
+    }
+    setHandoverSaving(false);
+  }, [handoverModal?.projectId, handoverLogisticsCompanyId, closeHandoverModal, refreshProjectSilently]);
+
   const ensureCrmDealAndSxTasks = useCallback(async () => {
     if (ensuringCrmDeal) return;
     setEnsuringCrmDeal(true);
@@ -932,6 +1004,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         };
       } else {
         const sxStage = pipelineStages.find((s) => String(s.id) === String(stageId));
+        // Nếu cột SX có cờ "bàn giao VC" → mở modal chọn công ty VC/LĐ thay vì patch stage thường
+        if (sxStage?.is_handover_to_logistics === true) {
+          setHandoverModal({ projectId: id, projectName: project?.name || project?.code || '', targetSxStageId: sxStage?.id || stageId });
+          return;
+        }
         // Intake (Chờ vào xưởng) không có workflow_stage_id → dùng move_to_intake giống Kanban drag.
         if (sxStage?.bucket_slug === 'won_pending' || String(sxStage?.id || '').startsWith('__fb_')) {
           body = { move_to_intake: true };
@@ -1415,9 +1492,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             <div className="border-t border-gray-100 pt-3">
               <p className="text-[10px] text-gray-400 uppercase font-medium mb-1">Công ty phụ trách</p>
               <p className="text-sm text-gray-800">
-                {project.company
-                  ? `${project.company.name}${project.company.short_name ? ` (${project.company.short_name})` : ''}`
-                  : '—'}
+                {(() => {
+                  const c = isVC ? (project.logistics_company || null) : (project.company || null);
+                  const fallback = project.company || null;
+                  const pick = c || (isVC ? fallback : null);
+                  return pick
+                    ? `${pick.name}${pick.short_name ? ` (${pick.short_name})` : ''}`
+                    : '—';
+                })()}
               </p>
             </div>
           </div>
@@ -1884,6 +1966,60 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   {savingCrmActivity ? 'Đang lưu...' : 'Lưu'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SX → VC/LĐ handover modal (khi đổi stage tới cột có cờ bàn giao VC) */}
+      {handoverModal && moduleKey !== 'vc' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeHandoverModal}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-900">🚚 Bàn giao sang VC/LĐ</h2>
+              <button type="button" onClick={closeHandoverModal} className="p-1 hover:bg-gray-100 rounded cursor-pointer">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-3">
+              Chọn <strong>công ty VC/LĐ</strong> để bàn giao dự án. Sau khi xác nhận, dự án sẽ hiển thị trong dashboard VC của công ty đó.
+            </p>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-gray-700">🏢 Công ty VC/LĐ *</label>
+              <select
+                value={handoverLogisticsCompanyId}
+                onChange={(e) => setHandoverLogisticsCompanyId(e.target.value)}
+                className={`w-full h-10 px-3 border rounded-lg text-sm bg-white focus:ring-2 focus:ring-orange-500 ${
+                  !handoverLogisticsCompanyId && handoverErr ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                }`}
+              >
+                <option value="">-- Chọn công ty --</option>
+                {(handoverCompanies || []).map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+              {handoverErr && <p className="text-xs text-red-600">{handoverErr}</p>}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <button
+                type="button"
+                onClick={closeHandoverModal}
+                disabled={handoverSaving}
+                className="h-10 px-4 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={confirmHandoverFromDetail}
+                disabled={handoverSaving}
+                className="h-10 px-4 text-sm bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {handoverSaving ? 'Đang bàn giao...' : 'Xác nhận bàn giao'}
+              </button>
             </div>
           </div>
         </div>

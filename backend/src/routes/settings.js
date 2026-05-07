@@ -179,6 +179,7 @@ r.get('/api-keys', (req, res) => {
       preview: k.key.slice(0, 8) + '••••••••••••••••',
       active: k.active !== false,
       default_assigned_to: k.default_assigned_to || null,
+      company_id: k.company_id || null,
       webhook_url: k.webhook_url || null,
       created_at: k.created_at,
     }));
@@ -194,9 +195,12 @@ r.post('/api-keys', (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới tạo được API key' });
     }
-    const { name, default_assigned_to, webhook_url } = req.body;
+    const { name, default_assigned_to, webhook_url, company_id } = req.body;
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'Nhập tên để nhận biết key này (VD: "Website form", "Zap")' });
+    }
+    if (!company_id) {
+      return res.status(400).json({ error: 'Thiếu company_id — mỗi API key phải gắn cố định 1 công ty' });
     }
     const key = 'tbp_' + crypto.randomBytes(24).toString('hex');
     const record = {
@@ -205,6 +209,7 @@ r.post('/api-keys', (req, res) => {
       key,
       active: true,
       default_assigned_to: default_assigned_to || null,
+      company_id,
       webhook_url: webhook_url || null,
       created_by: req.user.userId,
       created_at: new Date().toISOString(),
@@ -228,13 +233,52 @@ r.patch('/api-keys/:id', (req, res) => {
     const keys = loadKeys();
     const idx = keys.findIndex((k) => k.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy key' });
-    const { name, default_assigned_to, active, webhook_url } = req.body;
+    const { name, default_assigned_to, active, webhook_url, company_id } = req.body;
     if (name != null) keys[idx].name = String(name).trim();
     if (default_assigned_to !== undefined) keys[idx].default_assigned_to = default_assigned_to || null;
     if (active !== undefined) keys[idx].active = !!active;
     if (webhook_url !== undefined) keys[idx].webhook_url = webhook_url || null;
+    if (company_id !== undefined) keys[idx].company_id = company_id || null;
     saveKeys(keys);
-    res.json({ id: keys[idx].id, name: keys[idx].name, active: keys[idx].active, default_assigned_to: keys[idx].default_assigned_to, webhook_url: keys[idx].webhook_url || null });
+    res.json({
+      id: keys[idx].id,
+      name: keys[idx].name,
+      active: keys[idx].active,
+      default_assigned_to: keys[idx].default_assigned_to,
+      company_id: keys[idx].company_id || null,
+      webhook_url: keys[idx].webhook_url || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/settings/api-keys/:id/rotate — rotate key (trả giá trị đầy đủ 1 lần)
+r.post('/api-keys/:id/rotate', (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Chỉ admin/manager mới rotate được API key' });
+    }
+    const keys = loadKeys();
+    const idx = keys.findIndex((k) => k.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy key' });
+    const newKey = 'tbp_' + crypto.randomBytes(24).toString('hex');
+    keys[idx].key = newKey;
+    keys[idx].rotated_at = new Date().toISOString();
+    keys[idx].rotated_by = req.user.userId;
+    saveKeys(keys);
+    res.json({
+      id: keys[idx].id,
+      name: keys[idx].name,
+      key: newKey,
+      preview: newKey.slice(0, 8) + '••••••••••••••••',
+      active: keys[idx].active !== false,
+      default_assigned_to: keys[idx].default_assigned_to || null,
+      company_id: keys[idx].company_id || null,
+      webhook_url: keys[idx].webhook_url || null,
+      rotated_at: keys[idx].rotated_at,
+      _note: 'Key mới chỉ hiển thị 1 lần. Sao chép và lưu ở nơi an toàn.',
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

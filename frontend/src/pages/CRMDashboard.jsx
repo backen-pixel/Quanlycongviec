@@ -32,6 +32,7 @@ import {
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import DealStageEventModal from '../components/DealStageEventModal';
+import DateRangePickerPopover from '../components/DateRangePickerPopover';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -237,6 +238,7 @@ export default function CRMDashboard() {
   const [customDateFrom, setCustomDateFrom] = useState(() => P?.customDateFrom ?? '');
   const [customDateTo, setCustomDateTo] = useState(() => P?.customDateTo ?? '');
   const [showCustomDate, setShowCustomDate] = useState(() => !!P?.showCustomDate);
+  const [showDateRangePicker, setShowDateRangePicker] = useState(false);
 
   // ── COMPANY-BASED EMPLOYEE FILTER ──
   const [companyEmployees, setCompanyEmployees] = useState([]);
@@ -1808,30 +1810,14 @@ export default function CRMDashboard() {
             <span className="text-xs font-bold text-purple-600 uppercase flex items-center gap-1.5">
               <Calendar className="h-3.5 w-3.5" /> Khoảng thời gian:
             </span>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={customDateFrom}
-                onChange={e => setCustomDateFrom(e.target.value)}
-                className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer"
-              />
-              <span className="text-gray-400 text-sm">→</span>
-              <input
-                type="date"
-                value={customDateTo}
-                onChange={e => setCustomDateTo(e.target.value)}
-                min={customDateFrom || undefined}
-                className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer"
-              />
-            </div>
-            {customDateFrom && customDateTo && (
-              <button
-                onClick={() => load()}
-                className="h-9 px-4 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition cursor-pointer flex items-center gap-1.5"
-              >
-                <Search className="h-3.5 w-3.5" /> Áp dụng
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setShowDateRangePicker(true)}
+              className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-sm hover:bg-purple-50 cursor-pointer"
+              title="Chọn khoảng ngày"
+            >
+              {customDateFrom && customDateTo ? `${customDateFrom} → ${customDateTo}` : 'Chọn ngày bắt đầu/kết thúc'}
+            </button>
             <button
               onClick={() => { handleTimePresetChange(''); }}
               className="h-9 px-3 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg text-sm transition cursor-pointer border border-gray-200"
@@ -1840,6 +1826,19 @@ export default function CRMDashboard() {
             </button>
           </div>
         )}
+
+        <DateRangePickerPopover
+          open={showDateRangePicker}
+          title="Phạm vi tuỳ chỉnh"
+          from={customDateFrom}
+          to={customDateTo}
+          onChange={({ from, to }) => {
+            setCustomDateFrom(from);
+            setCustomDateTo(to);
+            if (from && to) window.setTimeout(() => load(), 0);
+          }}
+          onClose={() => setShowDateRangePicker(false)}
+        />
 
         {/* ── ACTIVE TIME FILTER BADGE ── */}
         {timePreset && timePreset !== 'custom' && (
@@ -3780,7 +3779,10 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
               >
                 <option value="">-- Chọn khu vực --</option>
                 {modalRegions.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                    {r.division?.short_name || r.division?.name ? ` — ${r.division?.short_name || r.division?.name}` : ''}
+                  </option>
                 ))}
               </select>
             </div>
@@ -4103,7 +4105,10 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
               >
                 <option value="">-- Chọn khu vực --</option>
                 {modalRegions.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                    {r.division?.short_name || r.division?.name ? ` — ${r.division?.short_name || r.division?.name}` : ''}
+                  </option>
                 ))}
               </select>
             </div>

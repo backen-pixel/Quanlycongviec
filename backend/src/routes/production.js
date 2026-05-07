@@ -30,14 +30,17 @@ const {
   isHandoverMissingError,
   isCrmTargetStageMissingError,
   isCrmTargetStageEmbedRelationshipError,
+  isPipelineProgressPercentMissingError,
   markHandoverColumnMissing,
   markCrmTargetStageColumnMissing,
   markCrmTargetStageJoinMissing,
+  markPipelineProgressPercentColumnMissing,
   stripHandoverFields,
 } = require('../helpers/productionPipelineSchema');
 const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
 const { ensureDealLeadDocumentsForProjectId } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
+const { getRestrictedDivisionIdsForModule } = require('../helpers/ecosystemModuleScope');
 
 const r = Router();
 r.use(auth);
@@ -410,6 +413,7 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       icon: b.icon || '📋',
       order_index: b.order_index ?? nextOrder,
       is_active: b.is_active !== false,
+      progress_percent: b.progress_percent ?? null,
       workflow_stage_id: isIntake ? null : (b.workflow_stage_id || null),
       bucket_slug: b.bucket_slug || null,
       is_handover_to_logistics: isIntake ? false : (b.is_handover_to_logistics || false),
@@ -426,6 +430,17 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       .single();
     if (error && isHandoverMissingError(error)) {
       markHandoverColumnMissing();
+      ins = stripHandoverFields({ ...insertPayload });
+      const r2 = await supabase
+        .from('production_pipeline_stages')
+        .insert(ins)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = r2.data;
+      error = r2.error;
+    }
+    if (error && isPipelineProgressPercentMissingError(error)) {
+      markPipelineProgressPercentColumnMissing();
       ins = stripHandoverFields({ ...insertPayload });
       const r2 = await supabase
         .from('production_pipeline_stages')
@@ -496,7 +511,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       .single();
     const update = {};
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
-      'is_handover_to_logistics', 'crm_sync_type', 'crm_target_stage_id'].forEach((f) => {
+      'is_handover_to_logistics', 'crm_sync_type', 'crm_target_stage_id', 'progress_percent'].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
@@ -517,6 +532,18 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       .single();
     if (error && isHandoverMissingError(error)) {
       markHandoverColumnMissing();
+      u = stripHandoverFields({ ...update });
+      const r2 = await supabase
+        .from('production_pipeline_stages')
+        .update(u)
+        .eq('id', req.params.id)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = r2.data;
+      error = r2.error;
+    }
+    if (error && isPipelineProgressPercentMissingError(error)) {
+      markPipelineProgressPercentColumnMissing();
       u = stripHandoverFields({ ...update });
       const r2 = await supabase
         .from('production_pipeline_stages')
@@ -647,7 +674,8 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name),
-        company:companies(id, name, short_name),
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
         tasks(id, status)
         ${fallback ? '' : 'workshop_type:workshop_project_types(id, name, applies_to),'}
       `)
@@ -740,10 +768,12 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         current_stage:workflow_stages(id, slug, name, color, icon),
         vc_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug),
         customer:customers(id, full_name, phone),
-        company:companies(id, name, short_name),
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
         production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         supervisor:users!projects_supervisor_id_fkey(id, full_name),
+        crm_deals:crm_leads(id, type, region_id, crm_region:company_regions(id, name, code)),
         workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)
       `, { count: 'exact' });
@@ -804,10 +834,12 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name, phone),
-          company:companies(id, name, short_name),
+          company:companies!projects_company_id_fkey(id, name, short_name),
+          logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
           production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
           sales_person:users!projects_sales_person_id_fkey(id, full_name),
           supervisor:users!projects_supervisor_id_fkey(id, full_name),
+          crm_deals:crm_leads(id, type, region_id, crm_region:company_regions(id, name, code)),
           tasks(id, status)
         `, { count: 'exact' });
       if (String(sx_intake) === '1') {
@@ -859,7 +891,8 @@ const PROJECT_DETAIL_SELECT = `
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
-        company:companies(id, name, short_name),
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
         sales_person:users!projects_sales_person_id_fkey(id, full_name, avatar, email),
         project_manager:users!projects_project_manager_id_fkey(id, full_name, avatar, email),
         supervisor:users!projects_supervisor_id_fkey(id, full_name, avatar, email),
@@ -889,7 +922,8 @@ const PROJECT_DETAIL_SELECT_MIN = `
         current_stage_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
-        company:companies(id, name, short_name),
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
         tasks(
           id, title, description, status, order_index, priority, deadline, due_date, metadata,
           stage:workflow_stages(id, slug, name, color)
@@ -1239,8 +1273,8 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     }
 
     // Lưu ý: project.company_id đôi khi null/khác scope hiện tại của xưởng.
-    // Dùng effectiveWorkshopCompanyId để khớp pipeline stage theo company đang thao tác.
-    const companyIdForPipeline = effectiveWorkshopCompanyId(req, project.company_id);
+    // UI dashboard có thể đang thao tác theo 1 company filter → cho phép truyền company_id từ client để validate đúng pipeline.
+    const companyIdForPipeline = effectiveWorkshopCompanyId(req, req.body?.company_id || project.company_id);
 
     const [allowed, targetRes] = await Promise.all([
       allowedWorkflowStageIdsForPatch(companyIdForPipeline),
@@ -1429,6 +1463,35 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
     const { id } = req.params;
     const userId = req.user.userId;
     const logisticsPersonId = req.body?.logistics_person_id || null;
+    const logisticsCompanyId = req.body?.logistics_company_id || null;
+    const deliveryTeamId = req.body?.delivery_team_id || null;
+    const installationTeamId = req.body?.installation_team_id || null;
+
+    if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Vận chuyển/Lắp đặt.' });
+
+    // Validate logistics company belongs to module scope (logistics)
+    const { data: lco, error: lcoErr } = await supabase
+      .from('companies')
+      .select('id, division_unit_id, is_active')
+      .eq('id', logisticsCompanyId)
+      .maybeSingle();
+    if (lcoErr || !lco) return res.status(400).json({ error: 'Công ty VC/Lắp đặt không tồn tại.' });
+    if (lco.is_active === false) return res.status(400).json({ error: 'Công ty VC/Lắp đặt đã ngưng hoạt động.' });
+    try {
+      const restricted = await getRestrictedDivisionIdsForModule('logistics');
+      if (restricted && restricted.size > 0) {
+        const primary = lco.division_unit_id ? String(lco.division_unit_id) : '';
+        let ok = primary && restricted.has(primary);
+        if (!ok) {
+          const { data: links } = await supabase
+            .from('company_division_units')
+            .select('division_unit_id')
+            .eq('company_id', logisticsCompanyId);
+          ok = (links || []).some((r) => r?.division_unit_id && restricted.has(String(r.division_unit_id)));
+        }
+        if (!ok) return res.status(400).json({ error: 'Công ty VC/Lắp đặt không thuộc phạm vi module Vận chuyển & Lắp đặt.' });
+      }
+    } catch (_e) { /* ignore */ }
 
     if (logisticsPersonId) {
       const { data: u, error: uErr } = await supabase
@@ -1441,6 +1504,28 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       if (!['logistics', 'installer', 'manager', 'admin'].includes(String(u.role || ''))) {
         return res.status(400).json({ error: 'Người nhận bàn giao phải thuộc nhóm Vận chuyển/Lắp đặt.' });
       }
+    }
+
+    // Validate teams nếu có gửi lên (không bắt buộc)
+    if (deliveryTeamId) {
+      const { data: delTeam } = await supabase
+        .from('workshop_teams')
+        .select('id, type, is_active')
+        .eq('id', deliveryTeamId)
+        .maybeSingle();
+      if (!delTeam) return res.status(400).json({ error: 'Đơn vị vận chuyển không tồn tại.' });
+      if (delTeam.is_active === false) return res.status(400).json({ error: 'Đơn vị vận chuyển đã ngưng hoạt động.' });
+      if (String(delTeam.type || '') !== 'delivery') return res.status(400).json({ error: 'Đơn vị vận chuyển không hợp lệ.' });
+    }
+    if (installationTeamId) {
+      const { data: insTeam } = await supabase
+        .from('workshop_teams')
+        .select('id, type, is_active')
+        .eq('id', installationTeamId)
+        .maybeSingle();
+      if (!insTeam) return res.status(400).json({ error: 'Đội lắp đặt không tồn tại.' });
+      if (insTeam.is_active === false) return res.status(400).json({ error: 'Đội lắp đặt đã ngưng hoạt động.' });
+      if (String(insTeam.type || '') !== 'installation') return res.status(400).json({ error: 'Đội lắp đặt không hợp lệ.' });
     }
 
     const { data: project } = await supabase
@@ -1465,7 +1550,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       }
     } catch (_e) { /* ignore */ }
 
-    // ── 1. Lấy cột intake của VC pipeline ──────────────────────────────────
+    // ── 1. Lấy cột intake của VC pipeline theo công ty VC đã chọn ──────────
     let vcStageId = null;
     try {
       const { data: vcIntakeRow } = await supabase
@@ -1473,6 +1558,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
         .select('id, name')
         .eq('bucket_slug', 'delivery_pending')
         .eq('is_active', true)
+        .eq('company_id', logisticsCompanyId)
         .order('order_index')
         .limit(1)
         .maybeSingle();
@@ -1481,10 +1567,24 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
           .from('logistics_pipeline_stages')
           .select('id')
           .eq('is_active', true)
+          .eq('company_id', logisticsCompanyId)
           .order('order_index')
           .limit(1)
           .maybeSingle();
         vcStageId = vcFirstRow?.id || null;
+        // Fallback pipeline global nếu công ty chưa có pipeline riêng
+        if (!vcStageId) {
+          const { data: gIntake } = await supabase
+            .from('logistics_pipeline_stages')
+            .select('id')
+            .eq('bucket_slug', 'delivery_pending')
+            .eq('is_active', true)
+            .is('company_id', null)
+            .order('order_index')
+            .limit(1)
+            .maybeSingle();
+          vcStageId = gIntake?.id || null;
+        }
       } else {
         vcStageId = vcIntakeRow.id;
       }
@@ -1495,6 +1595,9 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
     // ── 2. Đổi status sang 'shipping', xoá current_stage_id, gán vc_kanban_column_id ──
     const projectUpdate = { status: 'shipping', current_stage_id: null };
     if (logisticsPersonId) projectUpdate.logistics_person_id = logisticsPersonId;
+    projectUpdate.logistics_company_id = logisticsCompanyId;
+    if (deliveryTeamId) projectUpdate.delivery_team_id = deliveryTeamId;
+    if (installationTeamId) projectUpdate.installation_team_id = installationTeamId;
     if (vcStageId) projectUpdate.vc_kanban_column_id = vcStageId;
 
     const { error: updateError } = await supabase
@@ -1506,7 +1609,27 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       if (updateError.message?.includes('vc_kanban_column_id')) {
         const { error: retryErr } = await supabase
           .from('projects')
-          .update({ status: 'shipping', current_stage_id: null })
+          .update({
+            status: 'shipping',
+            current_stage_id: null,
+            logistics_company_id: logisticsCompanyId,
+            ...(deliveryTeamId ? { delivery_team_id: deliveryTeamId } : {}),
+            ...(installationTeamId ? { installation_team_id: installationTeamId } : {}),
+          })
+          .eq('id', id);
+        if (retryErr) throw retryErr;
+      } else if (updateError.message?.includes('logistics_company_id')) {
+        // DB chưa có cột logistics_company_id — bỏ qua, vẫn bàn giao theo pipeline global
+        const { error: retryErr } = await supabase
+          .from('projects')
+          .update({
+            status: 'shipping',
+            current_stage_id: null,
+            ...(deliveryTeamId ? { delivery_team_id: deliveryTeamId } : {}),
+            ...(installationTeamId ? { installation_team_id: installationTeamId } : {}),
+            ...(vcStageId ? { vc_kanban_column_id: vcStageId } : {}),
+            ...(logisticsPersonId ? { logistics_person_id: logisticsPersonId } : {}),
+          })
           .eq('id', id);
         if (retryErr) throw retryErr;
       } else {
@@ -1519,6 +1642,20 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       await ensureLeadDocumentsIncludeShareModules(id, ['logistics']);
     } catch (mdErr) {
       console.warn('[production/handover-vc] expand doc modules for VC:', mdErr.message);
+    }
+
+    // ── 2b. Gen nhiệm vụ VC/LĐ theo bộ mẫu của công ty VC đã chọn ────────────
+    // Idempotent theo metadata.workshop_template_id nên gọi lại an toàn.
+    try {
+      const out = await applyAllActiveWorkshopTemplatesForArea(id, userId, {
+        workshopArea: 'logistics',
+        companyId: logisticsCompanyId,
+      });
+      if (!out?.ok) {
+        console.warn('[production/handover-vc] gen logistics templates:', out?.error || 'unknown');
+      }
+    } catch (tplErr) {
+      console.warn('[production/handover-vc] gen logistics templates:', tplErr.message);
     }
 
     try {
@@ -2066,12 +2203,37 @@ r.get('/handover-settings/:companyId', requirePermission('projects', 'view'), as
       }));
     }
 
-    const { data: usersCo } = await supabase
-      .from('users')
-      .select('id, full_name, email, role')
-      .eq('company_id', companyId)
-      .eq('is_active', true)
-      .order('full_name');
+    // Users theo công ty: hệ thống có thể không set `users.company_id` (chỉ suy ra qua departments.company_id).
+    // Vì vậy: ưu tiên lấy trực tiếp theo users.company_id; nếu rỗng thì fallback qua departments → users.department_id.
+    let usersCo = [];
+    try {
+      const { data: direct } = await supabase
+        .from('users')
+        .select('id, full_name, email, role, department:departments!users_department_id_fkey(id, name, company_id)')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('full_name');
+      usersCo = direct || [];
+    } catch (_e) {
+      usersCo = [];
+    }
+    if (!usersCo.length) {
+      const { data: dpts } = await supabase
+        .from('departments')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('is_active', true);
+      const deptIds = (dpts || []).map((d) => d.id).filter(Boolean);
+      if (deptIds.length) {
+        const { data: viaDept } = await supabase
+          .from('users')
+          .select('id, full_name, email, role, department:departments!users_department_id_fkey(id, name, company_id)')
+          .in('department_id', deptIds)
+          .eq('is_active', true)
+          .order('full_name');
+        usersCo = viaDept || [];
+      }
+    }
 
     res.json({
       settings: settings || null,
@@ -2107,8 +2269,14 @@ r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), as
     }
 
     if (responsible_user_id) {
-      const { data: ru } = await supabase.from('users').select('id, company_id').eq('id', responsible_user_id).maybeSingle();
-      if (!ru || String(ru.company_id || '') !== String(companyId)) {
+      // User có thể không set `users.company_id` (suy ra qua department.company_id)
+      const { data: ru } = await supabase
+        .from('users')
+        .select('id, company_id, department:departments!users_department_id_fkey(id, company_id)')
+        .eq('id', responsible_user_id)
+        .maybeSingle();
+      const resolvedCompanyId = ru?.company_id || ru?.department?.company_id || null;
+      if (!ru || String(resolvedCompanyId || '') !== String(companyId)) {
         return res.status(400).json({ error: 'Người phụ trách phải thuộc đúng công ty sản xuất' });
       }
     }

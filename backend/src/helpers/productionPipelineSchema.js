@@ -10,6 +10,8 @@ let crmTargetStageColumnAvailable = true;
 let crmTargetStageJoinAvailable = true;
 /** Cột company_id (migration 101) — tắt nếu DB chưa migrate */
 let productionCompanyIdColumnAvailable = true;
+/** Cột progress_percent (migration 141) — tắt nếu DB chưa migrate */
+let pipelineProgressPercentColumnAvailable = true;
 
 function isHandoverMissingError(err) {
   if (!err) return false;
@@ -94,10 +96,26 @@ function markProductionCompanyIdColumnMissing() {
   productionCompanyIdColumnAvailable = false;
 }
 
+function isPipelineProgressPercentMissingError(err) {
+  if (!err || !pipelineProgressPercentColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('progress_percent') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineProgressPercentColumnMissing() {
+  if (pipelineProgressPercentColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột progress_percent chưa tồn tại. Chạy database/141_pipeline_stage_progress_percent.sql trên Supabase.',
+    );
+  }
+  pipelineProgressPercentColumnAvailable = false;
+}
+
 /** Chuỗi .select() cho bảng production_pipeline_stages (+ join workflow_stage) */
 function buildPipelineStageSelect() {
   const cid = productionCompanyIdColumnAvailable ? 'company_id, ' : '';
   const h = handoverToLogisticsColumnAvailable ? 'is_handover_to_logistics, ' : '';
+  const pp = pipelineProgressPercentColumnAvailable ? 'progress_percent, ' : '';
   let t = '';
   if (crmTargetStageColumnAvailable) {
     if (crmTargetStageJoinAvailable) {
@@ -106,7 +124,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${pp}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Bỏ field khỏi object insert/update nếu DB không có cột */
@@ -115,6 +133,7 @@ function stripHandoverFields(obj) {
   const o = { ...obj };
   if (!handoverToLogisticsColumnAvailable) delete o.is_handover_to_logistics;
   if (!crmTargetStageColumnAvailable) delete o.crm_target_stage_id;
+  if (!pipelineProgressPercentColumnAvailable) delete o.progress_percent;
   return o;
 }
 
@@ -126,6 +145,7 @@ function _resetForTests() {
   crmTargetStageColumnAvailable = true;
   crmTargetStageJoinAvailable = true;
   productionCompanyIdColumnAvailable = true;
+  pipelineProgressPercentColumnAvailable = true;
 }
 
 module.exports = {
@@ -137,6 +157,8 @@ module.exports = {
   markCrmTargetStageJoinMissing,
   isProductionCompanyIdMissingError,
   markProductionCompanyIdColumnMissing,
+  isPipelineProgressPercentMissingError,
+  markPipelineProgressPercentColumnMissing,
   isHandoverColumnInSchema,
   isCrmTargetStageColumnInSchema,
   isCrmTargetStageJoinInSchema,

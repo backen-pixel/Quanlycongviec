@@ -23,12 +23,14 @@ function apiKeyAuth(req, res, next) {
   const keys = loadKeys();
   const found = keys.find((k) => k.key === key && k.active !== false);
   if (!found) return res.status(401).json({ error: 'API key không hợp lệ hoặc đã bị thu hồi' });
+  if (!found.company_id) return res.status(401).json({ error: 'API key thiếu company_id (cần rotate/tạo lại key)' });
 
   req.apiKey = {
     id: found.id,
     name: found.name,
     created_at: found.created_at,
     default_assigned_to: found.default_assigned_to || null,
+    company_id: found.company_id || null,
     webhook_url: found.webhook_url || null,
   };
   next();

@@ -221,16 +221,20 @@ function enrichOneSxProject(project, sortedStages, wonSet) {
   const handoverCol = sortedStages.find((s) => s.is_handover_to_logistics === true);
   const VC_STATUSES = new Set(['shipping', 'installing', 'warranty']);
   let colId = kanbanColumnIdForProject(project, sortedStages, wonSet);
-  if (!colId && VC_STATUSES.has(project.status) && handoverCol) {
+  // Khi đã bàn giao sang VC (status shipping/installing/warranty), ưu tiên ghim ở cột "bàn giao VC"
+  // (tránh bị rơi lại cột intake do wonSet).
+  if (VC_STATUSES.has(project.status) && handoverCol) {
     colId = handoverCol.id;
   }
   const intakeCol = sortedStages.find((s) => s.bucket_slug === INTAKE_BUCKET);
   const inIntake = intakeCol && colId === intakeCol.id;
+  const matchedCol = sortedStages.find((s) => String(s.id) === String(colId)) || null;
   return {
     ...project,
     sx_won_deal: wonSet.has(project.id),
     sx_kanban_column_id: colId,
     sx_intake: Boolean(inIntake),
+    sx_pipeline_percent: matchedCol?.progress_percent ?? null,
   };
 }
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
+import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import {
   getStoredCrmFilterCompanyId,
   resolveDefaultCrmAdminCompanyId,
@@ -106,6 +107,7 @@ export default function CrmFollowUpCarePage() {
   const [timePreset, setTimePreset] = useState('w1');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
+  const [showDateRangePicker, setShowDateRangePicker] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [onlyOpenStages, setOnlyOpenStages] = useState(true);
@@ -416,26 +418,28 @@ export default function CrmFollowUpCarePage() {
 
         {timePreset === 'custom' && (
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">Từ ngày</span>
-              <input
-                type="date"
-                value={customFrom}
-                onChange={(e) => setCustomFrom(e.target.value)}
-                className="h-9 px-2 rounded-lg border border-gray-200 text-sm"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">Đến ngày</span>
-              <input
-                type="date"
-                value={customTo}
-                onChange={(e) => setCustomTo(e.target.value)}
-                className="h-9 px-2 rounded-lg border border-gray-200 text-sm"
-              />
-            </label>
+            <button
+              type="button"
+              onClick={() => setShowDateRangePicker(true)}
+              className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm hover:bg-gray-50 cursor-pointer"
+              title="Chọn ngày bắt đầu/kết thúc"
+            >
+              {customFrom && customTo ? `${customFrom} → ${customTo}` : 'Phạm vi tuỳ chỉnh'}
+            </button>
           </div>
         )}
+
+        <DateRangePickerPopover
+          open={showDateRangePicker}
+          title="Phạm vi tuỳ chỉnh"
+          from={customFrom}
+          to={customTo}
+          onChange={({ from, to }) => {
+            setCustomFrom(from);
+            setCustomTo(to);
+          }}
+          onClose={() => setShowDateRangePicker(false)}
+        />
 
         <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-stretch sm:items-center">
           <div className="relative flex-1 min-w-[200px]">

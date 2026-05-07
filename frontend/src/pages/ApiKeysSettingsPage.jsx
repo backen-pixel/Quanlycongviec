@@ -167,10 +167,11 @@ export default function ApiKeysSettingsPage() {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', default_assigned_to: '', webhook_url: '' });
+  const [form, setForm] = useState({ name: '', default_assigned_to: '', webhook_url: '', company_id: '' });
   const [showForm, setShowForm] = useState(false);
   const [newKeyValue, setNewKeyValue] = useState(null);
   const [users, setUsers] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [error, setError] = useState('');
   const [copiedId, setCopiedId] = useState(null);
 
@@ -179,17 +180,20 @@ export default function ApiKeysSettingsPage() {
   const [activeTab, setActiveTab] = useState('curl');
   const [keyStats, setKeyStats] = useState({});
   const [pingResult, setPingResult] = useState({});
+  const [keySecrets, setKeySecrets] = useState({}); // { [keyId]: fullKeyValue }
 
   const load = async () => {
     setLoading(true);
     try {
-      const [keysRes, usersRes] = await Promise.all([
+      const [keysRes, usersRes, companiesRes] = await Promise.all([
         api.get('/settings/api-keys'),
         api.get('/users').catch(() => ({ data: [] })),
+        api.get('/companies').catch(() => ({ data: { companies: [] } })),
       ]);
       setKeys(keysRes.data || []);
       const u = usersRes.data?.users || usersRes.data || [];
       setUsers(Array.isArray(u) ? u : []);
+      setCompanies(companiesRes.data?.companies || []);
     } catch (e) {
       setError(e.response?.data?.error || 'Lỗi tải danh sách key');
     }
@@ -200,6 +204,7 @@ export default function ApiKeysSettingsPage() {
 
   const createKey = async () => {
     if (!form.name.trim()) { setError('Nhập tên để nhận biết key này'); return; }
+    if (!form.company_id) { setError('Chọn công ty gắn với key này'); return; }
     setCreating(true);
     setError('');
     try {
@@ -207,9 +212,10 @@ export default function ApiKeysSettingsPage() {
         name: form.name.trim(),
         default_assigned_to: form.default_assigned_to || null,
         webhook_url: form.webhook_url.trim() || null,
+        company_id: form.company_id,
       });
       setNewKeyValue(data.key);
-      setForm({ name: '', default_assigned_to: '', webhook_url: '' });
+      setForm({ name: '', default_assigned_to: '', webhook_url: '', company_id: '' });
       setShowForm(false);
       await load();
     } catch (e) {
@@ -260,6 +266,43 @@ export default function ApiKeysSettingsPage() {
       setPingResult((p) => ({ ...p, [keyPreview]: res.ok ? 'ok' : 'fail' }));
     } catch {
       setPingResult((p) => ({ ...p, [keyPreview]: 'fail' }));
+    }
+  };
+
+  const rotateKey = async (id) => {
+    try {
+      const { data } = await api.post(`/settings/api-keys/${id}/rotate`);
+      setKeySecrets((s) => ({ ...s, [id]: data.key }));
+      setNewKeyValue(data.key); // show big banner once so user can copy
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi rotate key');
+    }
+  };
+
+  const pingWithKey = async (id) => {
+    const key = keySecrets[id];
+    if (!key) return;
+    setPingResult((p) => ({ ...p, [id]: { loading: true } }));
+    try {
+      const res = await fetch(`${API_BASE}/ping`, { headers: { 'X-Api-Key': key } });
+      const data = await res.json().catch(() => ({}));
+      setPingResult((p) => ({ ...p, [id]: { loading: false, ok: res.ok, status: res.status, data } }));
+    } catch (e) {
+      setPingResult((p) => ({ ...p, [id]: { loading: false, ok: false, status: 0, data: { error: e.message } } }));
+    }
+  };
+
+  const loadStats = async (id) => {
+    const key = keySecrets[id];
+    if (!key) return;
+    setKeyStats((s) => ({ ...s, [id]: { loading: true } }));
+    try {
+      const res = await fetch(`${API_BASE}/leads/stats`, { headers: { 'X-Api-Key': key } });
+      const data = await res.json().catch(() => ({}));
+      setKeyStats((s) => ({ ...s, [id]: { loading: false, ok: res.ok, status: res.status, data } }));
+    } catch (e) {
+      setKeyStats((s) => ({ ...s, [id]: { loading: false, ok: false, status: 0, data: { error: e.message } } }));
     }
   };
 
@@ -390,6 +433,20 @@ export default function ApiKeysSettingsPage() {
               />
             </div>
             <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Công ty gắn với key <span className="text-red-500">*</span></label>
+              <select
+                value={form.company_id}
+                onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value }))}
+                className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm"
+              >
+                <option value="">— Chọn công ty —</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-400 mt-1">Mỗi key chỉ được tạo lead cho 1 công ty cố định.</p>
+            </div>
+            <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Nhân viên phụ trách mặc định</label>
               <select
                 value={form.default_assigned_to}
@@ -474,12 +531,15 @@ export default function ApiKeysSettingsPage() {
                         {k.default_assigned_to && (
                           <span className="ml-2">· Phụ trách: {users.find((u) => u.id === k.default_assigned_to)?.full_name || '—'}</span>
                         )}
+                        {k.company_id && (
+                          <span className="ml-2">· Công ty: {companies.find((c) => c.id === k.company_id)?.short_name || companies.find((c) => c.id === k.company_id)?.name || '—'}</span>
+                        )}
                       </p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => copyText(k.preview.replace(/•/g, ''), k.id + '_copy')}
-                        title="Copy key preview"
+                        onClick={() => copyText(keySecrets[k.id] || k.preview, k.id + '_copy')}
+                        title={keySecrets[k.id] ? 'Copy key thật (đã rotate / tạo mới)' : 'Copy preview (mask)'}
                         className="p-1.5 hover:bg-gray-100 rounded-lg cursor-pointer transition"
                       >
                         {copiedId === k.id + '_copy' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4 text-gray-400" />}
@@ -513,6 +573,65 @@ export default function ApiKeysSettingsPage() {
                   {/* Expanded section */}
                   {isExpanded && (
                     <div className="border-t border-gray-100 p-4 space-y-4 bg-gray-50 rounded-b-xl">
+                      {/* Rotate / Ping / Stats */}
+                      <div className="bg-white border border-gray-200 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-semibold text-gray-800 flex items-center gap-2">
+                            <Activity className="h-4 w-4 text-blue-600" />
+                            Test kết nối (Ping / Stats)
+                          </div>
+                          <button
+                            onClick={() => rotateKey(k.id)}
+                            className="h-7 px-3 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-medium cursor-pointer"
+                            title="Tạo key mới (rotate). Key cũ sẽ bị vô hiệu ngay."
+                          >
+                            Rotate key để test
+                          </button>
+                        </div>
+                        {!keySecrets[k.id] ? (
+                          <div className="text-[11px] text-gray-500">
+                            Vì bảo mật, hệ thống không hiển thị lại key thật. Bấm <b>Rotate</b> để nhận key mới 1 lần, rồi mới ping/test được.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => pingWithKey(k.id)}
+                                className="h-7 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium cursor-pointer"
+                              >
+                                Ping
+                              </button>
+                              <button
+                                onClick={() => loadStats(k.id)}
+                                className="h-7 px-3 border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-xs font-medium cursor-pointer"
+                              >
+                                Load stats
+                              </button>
+                            </div>
+                            {pingResult[k.id] && !pingResult[k.id].loading && (
+                              <div className={`rounded-xl p-2 text-[10px] font-mono ${pingResult[k.id].ok ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+                                <div className={`font-bold mb-1 ${pingResult[k.id].ok ? 'text-emerald-700' : 'text-red-700'}`}>
+                                  Ping HTTP {pingResult[k.id].status}
+                                </div>
+                                <pre className="overflow-x-auto whitespace-pre-wrap break-all">
+                                  {JSON.stringify(pingResult[k.id].data, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                            {keyStats[k.id] && !keyStats[k.id].loading && (
+                              <div className={`rounded-xl p-2 text-[10px] font-mono ${keyStats[k.id].ok ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+                                <div className={`font-bold mb-1 ${keyStats[k.id].ok ? 'text-emerald-700' : 'text-red-700'}`}>
+                                  Stats HTTP {keyStats[k.id].status}
+                                </div>
+                                <pre className="overflow-x-auto whitespace-pre-wrap break-all">
+                                  {JSON.stringify(keyStats[k.id].data, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
                       {/* Webhook config */}
                       <WebhookEditor keyData={k} onSave={(url) => saveWebhook(k.id, url)} />
 
@@ -532,10 +651,14 @@ export default function ApiKeysSettingsPage() {
                             </button>
                           ))}
                         </div>
-                        {activeTab === 'curl' && <CodeBlock code={buildCurl(k.preview)} lang="bash" />}
-                        {activeTab === 'javascript' && <CodeBlock code={buildJS(k.preview)} lang="javascript" />}
-                        {activeTab === 'python' && <CodeBlock code={buildPython(k.preview)} lang="python" />}
-                        {activeTab === 'test' && <TestPanel apiKey={k.preview} />}
+                        {activeTab === 'curl' && <CodeBlock code={buildCurl(keySecrets[k.id] || k.preview)} lang="bash" />}
+                        {activeTab === 'javascript' && <CodeBlock code={buildJS(keySecrets[k.id] || k.preview)} lang="javascript" />}
+                        {activeTab === 'python' && <CodeBlock code={buildPython(keySecrets[k.id] || k.preview)} lang="python" />}
+                        {activeTab === 'test' && (
+                          keySecrets[k.id]
+                            ? <TestPanel apiKey={keySecrets[k.id]} />
+                            : <div className="text-xs text-gray-500 bg-white border border-gray-200 rounded-xl p-3">Rotate key để nhận key thật rồi mới test được.</div>
+                        )}
                       </div>
                     </div>
                   )}
