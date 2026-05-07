@@ -251,29 +251,133 @@ function CompanyFormModal({ open, company, onClose, onSaved }) {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
   const [divisions, setDivisions] = useState([]);
+  const [companyDepts, setCompanyDepts] = useState([]);
+  const [newDeptNameByDiv, setNewDeptNameByDiv] = useState({});
+  const [addingDeptDiv, setAddingDeptDiv] = useState(null);
 
   useEffect(() => {
     if (open) {
-      setForm(company || { name: '', short_name: '', tax_code: '', address: '', phone: '', email: '', division_unit_id: '' });
-      // Load Khối
+      const divIds = company?.division_unit_ids?.length
+        ? [...company.division_unit_ids]
+        : (company?.division_unit_id ? [company.division_unit_id] : []);
+      const primary =
+        company?.primary_division_unit_id
+        || company?.division_unit_id
+        || divIds[0]
+        || '';
+      setForm(
+        company
+          ? {
+              ...company,
+              division_unit_ids: divIds,
+              primary_division_unit_id: primary,
+            }
+          : {
+              name: '',
+              short_name: '',
+              tax_code: '',
+              address: '',
+              phone: '',
+              email: '',
+              division_unit_ids: [],
+              primary_division_unit_id: '',
+            },
+      );
       api.get('/ecosystem/units').then(r => {
         const divs = (r.data.units || []).filter(u => u.level?.depth === 1);
         setDivisions(divs);
       }).catch(() => {});
+      setNewDeptNameByDiv({});
     }
   }, [open, company]);
 
+  const loadCompanyDepts = () => {
+    if (!company?.id) {
+      setCompanyDepts([]);
+      return;
+    }
+    api.get('/departments', { params: { company_id: company.id } })
+      .then((r) => setCompanyDepts(r.data.departments || []))
+      .catch(() => setCompanyDepts([]));
+  };
+
+  useEffect(() => {
+    if (open && company?.id) loadCompanyDepts();
+  }, [open, company?.id]);
+
+  const savedDivisionIdSet = new Set((company?.division_unit_ids || []).map(String));
+  const primaryForDepts =
+    form.primary_division_unit_id || (form.division_unit_ids || [])[0] || '';
+
+  const deptsForDivision = (divId) => {
+    const sid = String(divId);
+    return companyDepts.filter((d) => {
+      if (d.division_unit_id) return String(d.division_unit_id) === sid;
+      return primaryForDepts && String(primaryForDepts) === sid;
+    });
+  };
+
+  const addDepartmentUnderDivision = async (divId) => {
+    if (!company?.id) return;
+    const name = (newDeptNameByDiv[divId] || '').trim();
+    if (!name) return;
+    if (!savedDivisionIdSet.has(String(divId))) return;
+    setAddingDeptDiv(divId);
+    try {
+      await api.post('/departments', {
+        name,
+        company_id: company.id,
+        division_unit_id: divId,
+        color: '#6366F1',
+      });
+      setNewDeptNameByDiv((p) => ({ ...p, [divId]: '' }));
+      loadCompanyDepts();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không thêm được phòng ban');
+    }
+    setAddingDeptDiv(null);
+  };
+
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const toggleDivision = (id) => {
+    const sid = String(id);
+    setForm((f) => {
+      const cur = Array.isArray(f.division_unit_ids) ? f.division_unit_ids.map(String) : [];
+      const has = cur.includes(sid);
+      let next = has ? cur.filter((x) => x !== sid) : [...cur, sid];
+      let primary = f.primary_division_unit_id ? String(f.primary_division_unit_id) : '';
+      if (has && primary === sid) primary = next[0] || '';
+      if (!has && !primary) primary = sid;
+      return { ...f, division_unit_ids: next, primary_division_unit_id: primary };
+    });
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     if (!form.name?.trim()) return;
     setLoading(true);
     try {
+      const ids = (form.division_unit_ids || []).map(String).filter(Boolean);
+      const primary = (form.primary_division_unit_id && ids.includes(String(form.primary_division_unit_id)))
+        ? String(form.primary_division_unit_id)
+        : (ids[0] || null);
+      const payload = {
+        name: form.name,
+        short_name: form.short_name || null,
+        tax_code: form.tax_code || null,
+        address: form.address || null,
+        phone: form.phone || null,
+        email: form.email || null,
+        logo_url: form.logo_url || null,
+        division_unit_ids: ids,
+        primary_division_unit_id: primary,
+        division_unit_id: primary,
+      };
       if (company?.id) {
-        await api.put(`/companies/${company.id}`, form);
+        await api.put(`/companies/${company.id}`, payload);
       } else {
-        await api.post('/companies', form);
+        await api.post('/companies', payload);
       }
       onSaved(); onClose();
     } catch { }
@@ -292,15 +396,113 @@ function CompanyFormModal({ open, company, onClose, onSaved }) {
             <input value={form.tax_code || ''} onChange={e => set('tax_code', e.target.value)} className="input" placeholder="0123456789" /></div>
         </div>
 
-        {/* Gán vào Khối trong Hệ sinh thái */}
+        {/* Gán vào một hoặc nhiều Khối (Hệ sinh thái) */}
         <div>
-          <label className="block text-sm font-medium mb-1">🔗 Thuộc Khối <span className="text-xs text-gray-400 font-normal">(Hệ sinh thái)</span></label>
-          <select value={form.division_unit_id || ''} onChange={e => set('division_unit_id', e.target.value || null)} className="input">
-            <option value="">— Chưa gán Khối —</option>
-            {divisions.map(d => <option key={d.id} value={d.id}>{d.level?.icon} {d.name}{d.short_name ? ` (${d.short_name})` : ''}</option>)}
-          </select>
-          {form.division_unit_id && <p className="text-[10px] text-green-600 mt-1">✓ Khi lưu sẽ tự động thêm vào cấu trúc tổ chức</p>}
+          <label className="block text-sm font-medium mb-1">
+            🔗 Thuộc Khối <span className="text-xs text-gray-400 font-normal">(có thể chọn nhiều)</span>
+          </label>
+          <div className="max-h-40 overflow-y-auto border rounded-lg p-2 space-y-1.5 bg-gray-50/80">
+            {divisions.length === 0 ? (
+              <p className="text-xs text-gray-400">Chưa có khối (depth 1) trong Hệ sinh thái.</p>
+            ) : (
+              divisions.map((d) => {
+                const checked = (form.division_unit_ids || []).map(String).includes(String(d.id));
+                return (
+                  <label key={d.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleDivision(d.id)}
+                      className="rounded border-gray-300"
+                    />
+                    <span>{d.level?.icon} {d.name}{d.short_name ? ` (${d.short_name})` : ''}</span>
+                  </label>
+                );
+              })
+            )}
+          </div>
+          {(form.division_unit_ids || []).length > 0 && (
+            <div className="mt-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Khối chính (cây tổ chức &amp; đồng bộ)</label>
+              <select
+                value={form.primary_division_unit_id || ''}
+                onChange={(e) => set('primary_division_unit_id', e.target.value || '')}
+                className="input text-sm"
+              >
+                {(form.division_unit_ids || []).map((id) => {
+                  const d = divisions.find((x) => String(x.id) === String(id));
+                  return d ? (
+                    <option key={id} value={id}>
+                      {d.level?.icon} {d.name}{d.short_name ? ` (${d.short_name})` : ''}
+                    </option>
+                  ) : (
+                    <option key={id} value={id}>{id.slice(0, 8)}…</option>
+                  );
+                })}
+              </select>
+              <p className="text-[10px] text-green-600 mt-1">
+                ✓ Các khối đã chọn dùng cho lọc module CRM / SX / VC; khối chính quyết định vị trí trên cây HST.
+              </p>
+            </div>
+          )}
         </div>
+
+        {company?.id && (form.division_unit_ids || []).length > 0 && (
+          <div className="border border-dashed border-gray-200 rounded-xl p-3 space-y-3 bg-slate-50/60">
+            <p className="text-sm font-medium text-gray-800">Phòng ban theo từng Khối</p>
+            <p className="text-xs text-gray-500">
+              Phòng ban được gắn với đúng khối để đồng bộ cây Hệ sinh thái (Khối → Công ty → Phòng ban).
+              Nếu vừa thêm khối mới, hãy lưu công ty trước, rồi mở sửa lại để thêm phòng ban cho khối đó.
+            </p>
+            <div className="space-y-4 max-h-64 overflow-y-auto pr-1">
+              {(form.division_unit_ids || []).map((divId) => {
+                const dmeta = divisions.find((x) => String(x.id) === String(divId));
+                const label = dmeta
+                  ? `${dmeta.level?.icon || ''} ${dmeta.name}${dmeta.short_name ? ` (${dmeta.short_name})` : ''}`.trim()
+                  : `Khối ${String(divId).slice(0, 8)}…`;
+                const canManage = savedDivisionIdSet.has(String(divId));
+                const list = deptsForDivision(divId);
+                return (
+                  <div key={divId} className="rounded-lg border bg-white p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-gray-800">{label}</span>
+                      {!canManage && (
+                        <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Chưa lưu khối</span>
+                      )}
+                    </div>
+                    {list.length > 0 && (
+                      <ul className="text-xs text-gray-600 space-y-1 pl-2 border-l-2 border-indigo-100">
+                        {list.map((dep) => (
+                          <li key={dep.id}>{dep.name}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {canManage && (
+                      <div className="flex gap-2">
+                        <input
+                          value={newDeptNameByDiv[divId] || ''}
+                          onChange={(e) => setNewDeptNameByDiv((p) => ({ ...p, [divId]: e.target.value }))}
+                          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addDepartmentUnderDivision(divId))}
+                          className="input text-xs flex-1"
+                          placeholder="Tên phòng ban mới…"
+                          disabled={addingDeptDiv === divId}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => addDepartmentUnderDivision(divId)}
+                          disabled={addingDeptDiv === divId || !(newDeptNameByDiv[divId] || '').trim()}
+                          className="h-8 px-3 rounded-lg bg-indigo-600 text-white text-xs font-medium shrink-0 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                        >
+                          {addingDeptDiv === divId ? '…' : 'Thêm'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <div><label className="block text-sm font-medium mb-1">Điện thoại</label>

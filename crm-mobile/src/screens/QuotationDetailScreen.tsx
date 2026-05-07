@@ -85,25 +85,6 @@ export default function QuotationDetailScreen({ route, navigation }: Props) {
     ]);
   };
 
-  const convertOrder = () => {
-    Alert.alert('Chuyển thành đơn hàng?', 'Báo giá sẽ chuyển trạng thái converted.', [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Chuyển',
-        onPress: async () => {
-          try {
-            const { data } = await api.post<{ id: string; code?: string }>(`/crm/quotations/${id}/convert-to-order`);
-            Alert.alert('Đã tạo đơn', data.code || 'Thành công', [
-              { text: 'OK', onPress: () => navigation.navigate('OrderDetail', { id: data.id }) },
-            ]);
-          } catch (e: unknown) {
-            Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không chuyển được');
-          }
-        },
-      },
-    ]);
-  };
-
   if (loading && !doc) {
     return (
       <View style={styles.center}>
@@ -119,8 +100,6 @@ export default function QuotationDetailScreen({ route, navigation }: Props) {
       </View>
     );
   }
-
-  const converted = doc.status === 'converted';
 
   return (
     <ScrollView
@@ -162,11 +141,6 @@ export default function QuotationDetailScreen({ route, navigation }: Props) {
         <TouchableOpacity style={styles.btnGhost} onPress={() => navigation.navigate('QuotationForm', { mode: 'edit', id })}>
           <Text style={styles.btnGhostTxt}>Sửa</Text>
         </TouchableOpacity>
-        {!converted ? (
-          <TouchableOpacity style={styles.btnAccent} onPress={() => void convertOrder()}>
-            <Text style={styles.btnAccentTxt}>→ Đơn hàng</Text>
-          </TouchableOpacity>
-        ) : null}
         <TouchableOpacity style={styles.btnDanger} onPress={() => void remove()}>
           <Text style={styles.btnDangerTxt}>Xóa</Text>
         </TouchableOpacity>
@@ -217,15 +191,6 @@ const styles = StyleSheet.create({
     backgroundColor: CrmColors.white,
   },
   btnGhostTxt: { fontWeight: '800', color: CrmColors.gray800 },
-  btnAccent: {
-    flexGrow: 1,
-    minWidth: '30%',
-    backgroundColor: CrmColors.blue600,
-    paddingVertical: 12,
-    borderRadius: CrmRadii.md,
-    alignItems: 'center',
-  },
-  btnAccentTxt: { fontWeight: '800', color: '#fff' },
   btnDanger: {
     flexGrow: 1,
     minWidth: '30%',

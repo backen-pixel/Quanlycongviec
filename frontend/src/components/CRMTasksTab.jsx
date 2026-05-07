@@ -105,6 +105,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   const [generatingProduction, setGeneratingProduction] = useState(false);
   const [viewMode, setViewMode] = useState('list'); // list, deadline, planner, calendar
   const [expandedStages, setExpandedStages] = useState({});
+  const [bulkCompleting, setBulkCompleting] = useState(false);
   const [showAdd, setShowAdd] = useState(null); // stage_slug
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
   const [editingTask, setEditingTask] = useState(null);
@@ -241,6 +242,20 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
         await loadTasks();
         return;
       }
+      if (data.reason === 'no_missing_sx_tasks') {
+        const ok = window.confirm(
+          'Theo bộ mẫu SX hiện tại, không còn nhiệm vụ nào thiếu (đã bổ sung hết hoặc trùng tiêu đề + cột).\n\n'
+            + 'Bạn có muốn xóa toàn bộ nhiệm vụ sx_* và gen lại từ đầu theo mẫu công ty?',
+        );
+        if (!ok) {
+          await loadTasks();
+          return;
+        }
+        const r2 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, { force: true });
+        alert(`Đã tạo lại ${r2.data?.created || 0} nhiệm vụ Sản xuất`);
+        await loadTasks();
+        return;
+      }
       if (data.reason === 'already_has_sx_tasks') {
         const ok = window.confirm('Deal đã có nhiệm vụ Sản xuất (sx_*).\n\nBạn có muốn tạo lại (xóa & gen lại) theo bộ mẫu công ty của deal không?');
         if (!ok) return;
@@ -273,6 +288,32 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
   const toggleStatus = (task) => {
     const next = task.status === 'completed' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'completed';
     updateTask(task.id, { status: next });
+  };
+
+  const completeTasksBulk = async (taskList, confirmMessage) => {
+    const toComplete = taskList.filter((t) => t.status !== 'completed');
+    if (!toComplete.length) return;
+    if (!window.confirm(confirmMessage)) return;
+    const prevTasks = tasks;
+    const ids = new Set(toComplete.map((t) => t.id));
+    setBulkCompleting(true);
+    setTasks((p) => p.map((t) => (ids.has(t.id) ? { ...t, status: 'completed' } : t)));
+    try {
+      await Promise.all(
+        toComplete.map((t) => {
+          const lid = apiLeadIdForTaskId(t.id);
+          return api.put(`/crm/leads/${lid}/tasks/${t.id}`, { status: 'completed' });
+        }),
+      );
+    } catch (e) {
+      setTasks(prevTasks);
+      alert(e.response?.data?.error || 'Lỗi khi đánh dấu hoàn thành hàng loạt');
+    } finally {
+      setBulkCompleting(false);
+      try {
+        await loadTasks({ silent: true });
+      } catch (_) { /* ignore */ }
+    }
   };
 
   const deleteTask = async (taskId) => {
@@ -600,7 +641,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     const noteCount = task.note_count || 0;
     const hasNotes = !!task.notes;
     return (
-      <div key={task.id} className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'} ${task.status === 'completed' ? 'opacity-50' : ''}`}>
+      <div key={task.id} className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'}`}>
         {/* Main row */}
         <div className="flex items-center gap-2 py-2 px-3 group">
           <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
@@ -1035,30 +1076,49 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
             const tpl = templates.find(t => t.stage_slug === stage.slug);
             return (
               <div key={stage.slug} className="border rounded-lg overflow-hidden">
-                <button onClick={() => setExpandedStages(p => ({...p, [stage.slug]: !expanded}))}
-                  className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 cursor-pointer">
-                  {expanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400" />}
-                  <span className="text-sm">{stage.icon}</span>
-                  <span className="text-sm font-semibold" style={{color: stage.color}}>{stage.label}</span>
-                  <span className="text-[10px] text-gray-400">{completed}/{stageTasks.length}</span>
-                  {/* Tổng file + ghi chú của nhóm */}
-                  {(() => {
-                    const totalFiles = stageTasks.reduce((s, t) => s + (t.file_count || 0), 0);
-                    const totalNotes = stageTasks.reduce((s, t) => s + (t.note_count || 0), 0);
-                    return (
-                      <>
-                        {totalFiles > 0 && <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">📎 {totalFiles}</span>}
-                        {totalNotes > 0 && <span className="text-[9px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full">📝 {totalNotes}</span>}
-                      </>
-                    );
-                  })()}
-                  <span className="ml-auto" />
-                  {stageTasks.length > 0 && (
-                    <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-500 rounded-full" style={{width: `${stageTasks.length ? completed/stageTasks.length*100 : 0}%`}} />
-                    </div>
+                <div className="flex items-stretch gap-1 px-2 py-1.5 bg-gray-50 border-b border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedStages(p => ({ ...p, [stage.slug]: !expanded }))}
+                    className="flex flex-1 min-w-0 items-center gap-2 px-1 py-1 rounded-md hover:bg-gray-100 cursor-pointer text-left"
+                  >
+                    {expanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />}
+                    <span className="text-sm shrink-0">{stage.icon}</span>
+                    <span className="text-sm font-semibold truncate" style={{ color: stage.color }}>{stage.label}</span>
+                    <span className="text-[10px] text-gray-400 shrink-0">{completed}/{stageTasks.length}</span>
+                    {(() => {
+                      const totalFiles = stageTasks.reduce((s, t) => s + (t.file_count || 0), 0);
+                      const totalNotes = stageTasks.reduce((s, t) => s + (t.note_count || 0), 0);
+                      return (
+                        <>
+                          {totalFiles > 0 && <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full shrink-0">📎 {totalFiles}</span>}
+                          {totalNotes > 0 && <span className="text-[9px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full shrink-0">📝 {totalNotes}</span>}
+                        </>
+                      );
+                    })()}
+                    {stageTasks.length > 0 && (
+                      <div className="ml-auto w-14 sm:w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden shrink-0">
+                        <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${stageTasks.length ? (completed / stageTasks.length) * 100 : 0}%` }} />
+                      </div>
+                    )}
+                  </button>
+                  {stageTasks.length > 0 && stageTasks.some((t) => t.status !== 'completed') && (
+                    <button
+                      type="button"
+                      disabled={bulkCompleting}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const n = stageTasks.filter((t) => t.status !== 'completed').length;
+                        void completeTasksBulk(stageTasks, `Đánh dấu hoàn thành ${n} nhiệm vụ trong «${stage.label}»?`);
+                      }}
+                      className="shrink-0 self-center flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1.5 rounded-md disabled:opacity-50 cursor-pointer"
+                      title="Hoàn thành nhanh mọi việc chưa xong trong nhóm này"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Xong hết</span>
+                    </button>
                   )}
-                </button>
+                </div>
                 {expanded && (
                   <div className="px-2 py-1">
                     {stageTasks.map(t => renderTaskRow(t))}
@@ -1097,8 +1157,25 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
             { key: 'noDeadline', label: '⏳ Chưa có hạn', tasks: deadlineGroups.noDeadline, color: 'border-gray-200 bg-gray-50' },
           ].filter(g => g.tasks.length > 0).map(group => (
             <div key={group.key} className={`border rounded-lg ${group.color}`}>
-              <div className="px-3 py-2 font-semibold text-xs flex items-center gap-2">
-                {group.label} <span className="text-gray-400 font-normal">({group.tasks.length})</span>
+              <div className="px-3 py-2 font-semibold text-xs flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2 min-w-0">
+                  {group.label} <span className="text-gray-400 font-normal">({group.tasks.length})</span>
+                </span>
+                {group.tasks.some((t) => t.status !== 'completed') && (
+                  <button
+                    type="button"
+                    disabled={bulkCompleting}
+                    onClick={() => {
+                      const n = group.tasks.filter((t) => t.status !== 'completed').length;
+                      void completeTasksBulk(group.tasks, `Đánh dấu hoàn thành ${n} nhiệm vụ trong nhóm ${group.label}?`);
+                    }}
+                    className="shrink-0 flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-white/80 hover:bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md disabled:opacity-50 cursor-pointer"
+                    title="Hoàn thành nhanh mọi việc chưa xong trong nhóm này"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Xong hết
+                  </button>
+                )}
               </div>
               <div className="bg-white rounded-b-lg">
                 {group.tasks.map(t => renderTaskRow(t))}
@@ -1116,19 +1193,53 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
         <div className="space-y-3">
           {plannerGroups.assignees.map(group => (
             <div key={group.user.id} className="border rounded-lg">
-              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50">
-                <div className="h-6 w-6 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-bold">
-                  {group.user.full_name?.charAt(0) || '?'}
+              <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="h-6 w-6 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-bold shrink-0">
+                    {group.user.full_name?.charAt(0) || '?'}
+                  </div>
+                  <span className="text-sm font-semibold truncate">{group.user.full_name}</span>
+                  <span className="text-[10px] text-gray-400 shrink-0">({group.tasks.length} việc)</span>
                 </div>
-                <span className="text-sm font-semibold">{group.user.full_name}</span>
-                <span className="text-[10px] text-gray-400">({group.tasks.length} việc)</span>
+                {group.tasks.some((t) => t.status !== 'completed') && (
+                  <button
+                    type="button"
+                    disabled={bulkCompleting}
+                    onClick={() => {
+                      const n = group.tasks.filter((t) => t.status !== 'completed').length;
+                      void completeTasksBulk(group.tasks, `Đánh dấu hoàn thành ${n} nhiệm vụ đang giao cho ${group.user.full_name || 'người này'}?`);
+                    }}
+                    className="shrink-0 flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-md disabled:opacity-50 cursor-pointer"
+                    title="Hoàn thành nhanh mọi việc chưa xong của người này"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Xong hết
+                  </button>
+                )}
               </div>
               <div>{group.tasks.map(t => renderTaskRow(t))}</div>
             </div>
           ))}
           {plannerGroups.unassigned.length > 0 && (
             <div className="border rounded-lg border-dashed">
-              <div className="px-3 py-2 bg-gray-50 text-sm font-semibold text-gray-500">Chưa giao ({plannerGroups.unassigned.length})</div>
+              <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50">
+                <span className="text-sm font-semibold text-gray-500">Chưa giao ({plannerGroups.unassigned.length})</span>
+                {plannerGroups.unassigned.some((t) => t.status !== 'completed') && (
+                  <button
+                    type="button"
+                    disabled={bulkCompleting}
+                    onClick={() => {
+                      const n = plannerGroups.unassigned.filter((t) => t.status !== 'completed').length;
+                      void completeTasksBulk(plannerGroups.unassigned, `Đánh dấu hoàn thành ${n} nhiệm vụ chưa được giao?`);
+                    }}
+                    className="shrink-0 flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-md disabled:opacity-50 cursor-pointer"
+                    title="Hoàn thành nhanh mọi việc chưa giao trong nhóm này"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Xong hết
+                  </button>
+                )}
+              </div>
               <div>{plannerGroups.unassigned.map(t => renderTaskRow(t))}</div>
             </div>
           )}
@@ -1180,7 +1291,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">
             ✅ Đã hoàn thành ({uiTasks.filter(t => t.status === 'completed').length})
           </summary>
-          <div className="mt-2 opacity-50">
+          <div className="mt-2">
             {uiTasks.filter(t => t.status === 'completed').map(t => renderTaskRow(t))}
           </div>
         </details>

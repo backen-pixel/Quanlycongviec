@@ -50,8 +50,11 @@ function mediaUrl(u: string | null | undefined): string | null {
   return `${API_ORIGIN}${u.startsWith('/') ? '' : '/'}${u}`;
 }
 
-function isSameDay(a: string, b: string): boolean {
-  return a.slice(0, 10) === b.slice(0, 10);
+function isSameDay(a: string | null | undefined, b: string | null | undefined): boolean {
+  const aa = String(a || '');
+  const bb = String(b || '');
+  if (!aa || !bb) return false;
+  return aa.slice(0, 10) === bb.slice(0, 10);
 }
 
 function fmtSecs(secs: number): string {
@@ -511,7 +514,7 @@ export default function MessengerGroupChatScreen({
       if (item.is_system) {
         return (
           <View>
-            {showDate && <DateSep date={item.created_at} />}
+            {showDate && <DateSep date={String(item.created_at || '')} />}
             <View style={s.sysWrap}>
               <Text style={s.sysTxt}>{item.content || '—'}</Text>
             </View>
@@ -529,7 +532,7 @@ export default function MessengerGroupChatScreen({
 
       return (
         <View>
-          {showDate && <DateSep date={item.created_at} />}
+          {showDate && <DateSep date={String(item.created_at || '')} />}
           <View style={[s.row, mine && s.rowMine]}>
             {/* Avatar — chỉ với người khác */}
             {!mine ? (
@@ -1022,7 +1025,7 @@ const s = StyleSheet.create({
   bubbleTimeMine: { color: 'rgba(255,255,255,0.6)' },
 
   // Reply
-  replyBar: { borderLeftWidth: 3, borderLeftColor: CrmColors.blue300, paddingLeft: 8, marginBottom: 6, opacity: 0.85 },
+  replyBar: { borderLeftWidth: 3, borderLeftColor: CrmColors.blue100, paddingLeft: 8, marginBottom: 6, opacity: 0.85 },
   replyBarMine: { borderLeftColor: 'rgba(255,255,255,0.5)' },
   replyTxt: { fontSize: 12, color: CrmColors.gray500 },
   replyTxtMine: { color: 'rgba(255,255,255,0.7)' },

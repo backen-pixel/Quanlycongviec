@@ -28,20 +28,28 @@ async function userHasEcosystemModuleAccess(user, moduleKey) {
   if (!moduleKey || moduleKey === 'core') return true;
   if (user?.role === 'admin') return true;
 
-  let divisionId = null;
+  let divisionIds = [];
   if (user?.company_id) {
     const { data: co } = await supabase
       .from('companies')
       .select('division_unit_id')
       .eq('id', user.company_id)
       .maybeSingle();
-    divisionId = co?.division_unit_id || null;
+    if (co?.division_unit_id) divisionIds.push(String(co.division_unit_id));
+    const { data: links } = await supabase
+      .from('company_division_units')
+      .select('division_unit_id')
+      .eq('company_id', user.company_id);
+    (links || []).forEach((r) => {
+      const id = r?.division_unit_id && String(r.division_unit_id);
+      if (id && !divisionIds.includes(id)) divisionIds.push(id);
+    });
   }
-  if (!divisionId) return true;
+  if (!divisionIds.length) return true;
 
   const restricted = await getRestrictedDivisionIdsForModule(moduleKey);
   if (restricted == null) return true;
-  return restricted.has(String(divisionId));
+  return divisionIds.some((id) => restricted.has(id));
 }
 
 async function buildMyModuleAccessMap(user) {

@@ -1473,7 +1473,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 <>
                   {/* Bản vẽ kỹ thuật nổi bật */}
                   {(() => {
-                    const allDocs = [...(project.documents || []), ...projectDocs];
+                    const crmForDrawings = project.sharedDocuments?.length
+                      ? project.sharedDocuments
+                      : (project.documents || []);
+                    const allDocs = [...crmForDrawings, ...projectDocs];
                     const seen = new Set();
                     const drawings = allDocs.filter((d) => {
                       if (seen.has(d.id)) return false;

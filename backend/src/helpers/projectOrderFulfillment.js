@@ -1,6 +1,7 @@
 const { supabase } = require('../config/supabase');
 const { getCrmVcDeliveryStageId } = require('./workshopKanban');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
+const { loadProductionHandoverMaps, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
 
 const ORDER_PHASES = ['draft', 'confirmed', 'in_production', 'ready_logistics', 'in_logistics', 'completed'];
 
@@ -132,7 +133,7 @@ async function applyProductionTemplateToFulfillmentLead({
 }) {
   if (!leadId || !createdBy) return { created: 0, reason: 'missing_params' };
 
-  const buildEmergencySxInserts = () => {
+  const buildEmergencySxInserts = (handoverMaps = null) => {
     // Bộ tối thiểu 9 cột sx_* với 3 việc/cột (có thể chỉnh sau).
     const seed = [
       { stage_slug: 'sx_tiep_nhan', items: ['Xác nhận thông tin đơn hàng', 'Tiếp nhận file/tài liệu', 'Chốt yêu cầu kỹ thuật ban đầu'] },
@@ -159,7 +160,7 @@ async function applyProductionTemplateToFulfillmentLead({
           priority: 'medium',
           stage_slug: g.stage_slug,
           order_index: local,
-          assignee_id: assigneeId || null,
+          assignee_id: assigneeId || handoverMaps?.responsibleUserId || null,
           supervisor_id: null,
           deadline: null,
           created_by: createdBy,
@@ -174,14 +175,49 @@ async function applyProductionTemplateToFulfillmentLead({
     return out.map(({ _global_order, ...row }) => row);
   };
 
+  /** Chuẩn hoá để so khớp «đã có nhiệm vụ này chưa» (bổ sung thiếu, không nhân đôi). */
+  const normalizeSxTaskText = (raw) =>
+    String(raw || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+
+  const sxTaskFingerprint = (title, stageSlug) =>
+    `${normalizeSxTaskText(title)}|${String(stageSlug || '').trim()}`;
+
+  const filterMissingSxInserts = async (inserts) => {
+    const { data: existingSx } = await supabase
+      .from('crm_tasks')
+      .select('title, stage_slug')
+      .eq('lead_id', leadId)
+      .like('stage_slug', 'sx_%');
+    const keys = new Set((existingSx || []).map((t) => sxTaskFingerprint(t.title, t.stage_slug)));
+    return inserts.filter((row) => !keys.has(sxTaskFingerprint(row.title, row.stage_slug)));
+  };
+
+  /** Map stage slug theo TÊN BỘ MẪU (template.name), không theo title của item. */
+  const slugByTemplateName = (nameRaw) => {
+    const t = normalizeSxTaskText(nameRaw);
+    if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
+    if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
+    if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
+    if (t.includes('vat tu')) return 'sx_vat_tu';
+    if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
+    if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
+    if (t.includes('hoan thien')) return 'sx_hoan_thien';
+    if (t.includes('dong goi')) return 'sx_dong_goi';
+    if (t.includes('giao hang')) return 'sx_giao_hang';
+    return 'sx_other';
+  };
+
   const { count: existingCount, error: exErr } = await supabase
     .from('crm_tasks')
     .select('id', { count: 'exact', head: true })
     .eq('lead_id', leadId)
     .like('stage_slug', 'sx_%');
   if (exErr) throw exErr;
-  if ((existingCount || 0) > 0) {
-    if (!force) return { created: 0, reason: 'already_has_sx_tasks' };
+  if ((existingCount || 0) > 0 && force) {
     // Force regen: xóa toàn bộ tasks sx_* của deal đơn rồi tạo lại đúng mapping.
     await supabase
       .from('crm_tasks')
@@ -199,6 +235,8 @@ async function applyProductionTemplateToFulfillmentLead({
   if (requireTemplateCompanyMatch) {
     const mustCompanyId = dealCompanyId || leadRow?.company_id || null;
     if (!mustCompanyId) return { created: 0, reason: 'missing_deal_company' };
+
+    const handoverStrict = await loadProductionHandoverMaps(mustCompanyId);
 
     // Strict mode: ưu tiên template đúng company_id của deal, nếu không có thì fallback global,
     // và cuối cùng emergency seed để "bằng bất cứ giá nào" vẫn có sx_* tasks.
@@ -232,46 +270,46 @@ async function applyProductionTemplateToFulfillmentLead({
       templates = g.data || [];
     }
     if (!templates?.length) {
-      const emergency = buildEmergencySxInserts();
-      const { error: insErr } = await supabase.from('crm_tasks').insert(emergency);
+      const emergency = buildEmergencySxInserts(handoverStrict);
+      const toAdd = await filterMissingSxInserts(emergency);
+      if (!toAdd.length) {
+        return { created: 0, reason: 'no_missing_sx_tasks', template_count: 0, template_names: [], company_id: mustCompanyId };
+      }
+      const { error: insErr } = await supabase.from('crm_tasks').insert(toAdd);
       if (insErr) throw insErr;
-      return { created: emergency.length, reason: 'emergency_seed', template_count: 0, template_names: [], company_id: mustCompanyId };
+      return { created: toAdd.length, reason: 'emergency_seed', template_count: 0, template_names: [], company_id: mustCompanyId };
     }
 
     const templateIds = templates.map((t) => t.id).filter(Boolean);
     const { data: items, error: itemErr } = await supabase
       .from('workshop_task_template_items')
-      .select('template_id, title, description, priority, order_index, checklist')
+      .select('id, template_id, title, description, priority, order_index, checklist')
       .in('template_id', templateIds)
       .order('template_id')
       .order('order_index');
     if (itemErr) throw itemErr;
     if (!items?.length) {
-      const emergency = buildEmergencySxInserts();
-      const { error: insErr } = await supabase.from('crm_tasks').insert(emergency);
+      const emergency = buildEmergencySxInserts(handoverStrict);
+      const toAdd = await filterMissingSxInserts(emergency);
+      if (!toAdd.length) {
+        return {
+          created: 0,
+          reason: 'no_missing_sx_tasks',
+          template_count: templates.length,
+          template_names: templates.map((t) => t.name).filter(Boolean),
+          company_id: mustCompanyId,
+        };
+      }
+      const { error: insErr } = await supabase.from('crm_tasks').insert(toAdd);
       if (insErr) throw insErr;
-      return { created: emergency.length, reason: 'emergency_seed', template_count: templates.length, template_names: templates.map((t) => t.name).filter(Boolean), company_id: mustCompanyId };
+      return {
+        created: toAdd.length,
+        reason: 'emergency_seed',
+        template_count: templates.length,
+        template_names: templates.map((t) => t.name).filter(Boolean),
+        company_id: mustCompanyId,
+      };
     }
-
-    const normalizeText = (raw) => String(raw || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .trim();
-
-    const slugByTemplateName = (nameRaw) => {
-      const t = normalizeText(nameRaw);
-      if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
-      if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
-      if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
-      if (t.includes('vat tu')) return 'sx_vat_tu';
-      if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
-      if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
-      if (t.includes('hoan thien')) return 'sx_hoan_thien';
-      if (t.includes('dong goi')) return 'sx_dong_goi';
-      if (t.includes('giao hang')) return 'sx_giao_hang';
-      return 'sx_other';
-    };
 
     const stageSlugByTemplateId = new Map(
       (templates || [])
@@ -300,17 +338,27 @@ async function applyProductionTemplateToFulfillmentLead({
         priority: it.priority || 'medium',
         stage_slug: stageSlug,
         order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
-        assignee_id: assigneeId || null,
+        assignee_id: resolveSxAssigneeForTemplateItem(it, handoverStrict, assigneeId),
         supervisor_id: null,
         deadline: null,
         created_by: createdBy,
       };
     });
 
-    const { error: insErr } = await supabase.from('crm_tasks').insert(inserts);
+    const toInsertStrict = await filterMissingSxInserts(inserts);
+    if (!toInsertStrict.length) {
+      return {
+        created: 0,
+        reason: 'no_missing_sx_tasks',
+        template_count: templates.length,
+        template_names: templates.map((t) => t.name).filter(Boolean),
+        company_id: mustCompanyId,
+      };
+    }
+    const { error: insErr } = await supabase.from('crm_tasks').insert(toInsertStrict);
     if (insErr) throw insErr;
     return {
-      created: inserts.length,
+      created: toInsertStrict.length,
       reason: 'ok',
       template_count: templates.length,
       template_names: templates.map((t) => t.name).filter(Boolean),
@@ -351,6 +399,10 @@ async function applyProductionTemplateToFulfillmentLead({
     if (!co.ok) targetCompanyId = null;
   }
 
+  const handoverLoose = targetCompanyId
+    ? await loadProductionHandoverMaps(targetCompanyId)
+    : { responsibleUserId: null, assigneeByTemplateItemId: new Map() };
+
   const fetchTemplates = async (companyMode) => {
     let q = supabase
       .from('workshop_task_templates')
@@ -383,48 +435,46 @@ async function applyProductionTemplateToFulfillmentLead({
   }
   if (tplErr) throw tplErr;
   if (!templates?.length) {
-    const emergency = buildEmergencySxInserts();
-    const { error: insErr } = await supabase.from('crm_tasks').insert(emergency);
+    const emergency = buildEmergencySxInserts(handoverLoose);
+    const toAdd = await filterMissingSxInserts(emergency);
+    if (!toAdd.length) {
+      return { created: 0, reason: 'no_missing_sx_tasks', template_count: 0, template_names: [], company_id: targetCompanyId || null };
+    }
+    const { error: insErr } = await supabase.from('crm_tasks').insert(toAdd);
     if (insErr) throw insErr;
-    return { created: emergency.length, reason: 'emergency_seed', template_count: 0, template_names: [], company_id: targetCompanyId || null };
+    return { created: toAdd.length, reason: 'emergency_seed', template_count: 0, template_names: [], company_id: targetCompanyId || null };
   }
 
   const templateIds = templates.map((t) => t.id).filter(Boolean);
   const { data: items, error: itemErr } = await supabase
     .from('workshop_task_template_items')
-    .select('template_id, title, description, priority, order_index, checklist')
+    .select('id, template_id, title, description, priority, order_index, checklist')
     .in('template_id', templateIds)
     .order('template_id')
     .order('order_index');
   if (itemErr) throw itemErr;
   if (!items?.length) {
-    const emergency = buildEmergencySxInserts();
-    const { error: insErr } = await supabase.from('crm_tasks').insert(emergency);
+    const emergency = buildEmergencySxInserts(handoverLoose);
+    const toAdd = await filterMissingSxInserts(emergency);
+    if (!toAdd.length) {
+      return {
+        created: 0,
+        reason: 'no_missing_sx_tasks',
+        template_count: templates.length,
+        template_names: templates.map((t) => t.name).filter(Boolean),
+        company_id: targetCompanyId || null,
+      };
+    }
+    const { error: insErr } = await supabase.from('crm_tasks').insert(toAdd);
     if (insErr) throw insErr;
-    return { created: emergency.length, reason: 'emergency_seed', template_count: templates.length, template_names: templates.map((t) => t.name).filter(Boolean), company_id: targetCompanyId || null };
+    return {
+      created: toAdd.length,
+      reason: 'emergency_seed',
+      template_count: templates.length,
+      template_names: templates.map((t) => t.name).filter(Boolean),
+      company_id: targetCompanyId || null,
+    };
   }
-
-  const normalizeText = (raw) => String(raw || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
-
-  // Map stage slug theo TÊN BỘ MẪU (template.name), không theo title của item.
-  // Vì item title thường là việc nhỏ (vd "Xác nhận thông tin đơn hàng") không chứa tên giai đoạn.
-  const slugByTemplateName = (nameRaw) => {
-    const t = normalizeText(nameRaw);
-    if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
-    if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
-    if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
-    if (t.includes('vat tu')) return 'sx_vat_tu';
-    if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
-    if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
-    if (t.includes('hoan thien')) return 'sx_hoan_thien';
-    if (t.includes('dong goi')) return 'sx_dong_goi';
-    if (t.includes('giao hang')) return 'sx_giao_hang';
-    return 'sx_other';
-  };
 
   const stageSlugByTemplateId = new Map(
     (templates || [])
@@ -454,17 +504,27 @@ async function applyProductionTemplateToFulfillmentLead({
       priority: it.priority || 'medium',
       stage_slug: stageSlug,
       order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
-      assignee_id: assigneeId || null,
+      assignee_id: resolveSxAssigneeForTemplateItem(it, handoverLoose, assigneeId),
       supervisor_id: null,
       deadline: null,
       created_by: createdBy,
     };
   });
 
-  const { error: insErr } = await supabase.from('crm_tasks').insert(inserts);
+  const toInsertLoose = await filterMissingSxInserts(inserts);
+  if (!toInsertLoose.length) {
+    return {
+      created: 0,
+      reason: 'no_missing_sx_tasks',
+      template_count: templates.length,
+      template_names: templates.map((t) => t.name).filter(Boolean),
+      company_id: targetCompanyId || null,
+    };
+  }
+  const { error: insErr } = await supabase.from('crm_tasks').insert(toInsertLoose);
   if (insErr) throw insErr;
   return {
-    created: inserts.length,
+    created: toInsertLoose.length,
     reason: 'ok',
     template_count: templates.length,
     template_names: templates.map((t) => t.name).filter(Boolean),
@@ -715,61 +775,8 @@ async function createChildOrderOnProject(p) {
  * Nếu dự án chưa có đơn từng lượt nào, tạo sẵn "Đơn 1" (1 bộ nhiệm vụ = 1 bản ghi order + deal fulfillment).
  * Gọi sau mọi luồng tạo dự án từ Lead/Deal.
  */
-async function ensureDefaultOrderOneForProject({ projectId, userId, defaultLabel = 'Đơn 1' }) {
-  if (!projectId || !userId) {
-    return { created: false, reason: 'missing params' };
-  }
-  const { data: anyOrder, error: cErr } = await supabase
-    .from('orders')
-    .select('id')
-    .eq('project_id', projectId)
-    .limit(1);
-  if (cErr) {
-    console.warn('[ensureDefaultOrderOneForProject] query orders', cErr.message);
-    return { created: false, reason: cErr.message };
-  }
-  if (anyOrder?.length) {
-    return { created: false, reason: 'already_has_orders' };
-  }
-  if (!(await findMasterDealForProject(projectId))) {
-    return { created: false, reason: 'no_parent_crm_lead' };
-  }
-  try {
-    const master = await findMasterDealForProject(projectId);
-    const orderTitle =
-      master?.title && String(master.title).trim()
-        ? `${String(master.title).trim()} — ${defaultLabel}`
-        : master?.code
-          ? `${String(master.code).trim()} — ${defaultLabel}`
-          : defaultLabel;
-    const order = await createChildOrderOnProject({
-      projectId,
-      userId,
-      displayLabel: defaultLabel,
-      title: orderTitle,
-      total: 0,
-    });
-    try {
-      await supabase.from('activity_logs').insert({
-        user_id: userId, action: 'created', entity_type: 'order', entity_id: order.id,
-        description: `Hệ thống tạo sẵn ${defaultLabel} (đơn hàng & nhiệm vụ đầu) trên dự án ${projectId}`,
-      });
-    } catch (_) { /* bảng optional */ }
-    if (master?.id) {
-      try {
-        await supabase.from('crm_activities').insert({
-          lead_id: master.id, type: 'note',
-          title: `📦 ${defaultLabel} (tự động)`,
-          description: `Hệ thống tạo sẵn bộ nhiệm vụ từng lượt — **${defaultLabel}**. Thêm **Đơn 2, 3…** khi có đợt bàn giao mới.`,
-          created_by: userId,
-        });
-      } catch (_) { /* optional */ }
-    }
-    return { created: true, order };
-  } catch (e) {
-    console.warn('[ensureDefaultOrderOneForProject]', e.message);
-    return { created: false, reason: e.message || 'create_failed' };
-  }
+async function ensureDefaultOrderOneForProject() {
+  return { created: false, reason: 'order_creation_disabled' };
 }
 
 /**

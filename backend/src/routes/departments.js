@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -20,6 +21,40 @@ const deptChatUpload = multer({
 
 const r = Router();
 r.use(auth);
+
+async function assertDivisionAllowedForCompany(companyId, divisionUnitId) {
+  if (!companyId || !divisionUnitId) return { ok: true };
+  const sid = String(divisionUnitId);
+  const { data: link } = await supabase.from('company_division_units')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('division_unit_id', divisionUnitId)
+    .maybeSingle();
+  if (link) return { ok: true };
+  const { data: co } = await supabase.from('companies').select('division_unit_id').eq('id', companyId).maybeSingle();
+  if (co?.division_unit_id && String(co.division_unit_id) === sid) return { ok: true };
+  return { ok: false };
+}
+
+/** Slug UNIQUE toàn DB — không được chỉ dựa trên tên (trùng giữa các công ty / trùng seed). */
+function uniqueDeptSlug({ slugInput, name, companyId }) {
+  let base = String(slugInput || name || '').toLowerCase().trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  if (!base) {
+    base = companyId ? `d-${String(companyId).replace(/-/g, '').slice(0, 12)}` : 'dept';
+  }
+  const suffix = crypto.randomBytes(4).toString('hex');
+  const out = `${base}-${suffix}`;
+  return out.length > 100 ? out.slice(0, 100) : out;
+}
+
+function formatDbError(err) {
+  if (!err) return 'Lỗi';
+  return err.message || err.details || err.hint || String(err.code || err);
+}
 
 // ═══════════════════════════════════════════════
 // DEPARTMENTS CRUD
@@ -51,8 +86,10 @@ r.get('/', async (req, res) => {
       resolvedCompanyId = unit?.company_id;
     }
 
-    let q = supabase.from('departments').select('id, name, company_id, color, is_active').order('name');
+    let q = supabase.from('departments').select('id, name, company_id, division_unit_id, color, is_active').order('name');
     if (resolvedCompanyId) q = q.eq('company_id', resolvedCompanyId);
+    const divFilter = req.query.division_unit_id;
+    if (divFilter) q = q.eq('division_unit_id', divFilter);
     q = q.eq('is_active', true);
     
     const { data: depts, error } = await q;
@@ -110,21 +147,31 @@ r.post('/', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const b = req.body;
-    const slug = (b.slug || b.name || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    let divisionUnitId = b.division_unit_id || null;
+    if (b.company_id && !divisionUnitId) {
+      const { data: co } = await supabase.from('companies').select('division_unit_id').eq('id', b.company_id).maybeSingle();
+      divisionUnitId = co?.division_unit_id || null;
+    }
+    if (b.company_id && divisionUnitId) {
+      const { ok } = await assertDivisionAllowedForCompany(b.company_id, divisionUnitId);
+      if (!ok) return res.status(400).json({ error: 'Khối không thuộc công ty này' });
+    }
+    const slug = uniqueDeptSlug({ slugInput: b.slug, name: b.name, companyId: b.company_id });
     const { data, error } = await supabase.from('departments').insert({
       name: b.name, slug, description: b.description || null,
       color: b.color || '#6366F1', manager_id: b.manager_id || null,
       parent_id: b.parent_id || null, company_id: b.company_id || null,
+      division_unit_id: divisionUnitId,
     }).select().single();
     if (error) throw error;
 
     // Auto sync to ecosystem
     if (b.company_id) {
-      await syncDepartmentToEcosystem({ ...data, company_id: b.company_id });
+      await syncDepartmentToEcosystem({ ...data, company_id: b.company_id, division_unit_id: data.division_unit_id });
     }
 
     res.status(201).json({ department: data });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) { console.error(e); res.status(500).json({ error: formatDbError(e) }); }
 });
 
 // UPDATE department
@@ -133,9 +180,20 @@ r.put('/:id', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    ['name', 'slug', 'description', 'color', 'manager_id', 'parent_id', 'is_active', 'company_id'].forEach(f => {
+    ['name', 'slug', 'description', 'color', 'manager_id', 'parent_id', 'is_active', 'company_id', 'division_unit_id'].forEach(f => {
       if (b[f] !== undefined) update[f] = b[f];
     });
+    const { data: before } = await supabase.from('departments').select('company_id, division_unit_id').eq('id', req.params.id).single();
+    const targetCompany = b.company_id !== undefined ? b.company_id : before?.company_id;
+    let targetDiv = b.division_unit_id !== undefined ? b.division_unit_id : before?.division_unit_id;
+    if (targetCompany && !targetDiv) {
+      const { data: co } = await supabase.from('companies').select('division_unit_id').eq('id', targetCompany).maybeSingle();
+      targetDiv = co?.division_unit_id || null;
+    }
+    if (targetCompany && targetDiv) {
+      const { ok } = await assertDivisionAllowedForCompany(targetCompany, targetDiv);
+      if (!ok) return res.status(400).json({ error: 'Khối không thuộc công ty này' });
+    }
     const { data, error } = await supabase.from('departments').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
 
@@ -145,7 +203,7 @@ r.put('/:id', async (req, res) => {
     }
 
     res.json({ department: data });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) { console.error(e); res.status(500).json({ error: formatDbError(e) }); }
 });
 
 // DELETE (soft) — sync ecosystem

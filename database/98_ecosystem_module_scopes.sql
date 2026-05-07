@@ -1,4 +1,4 @@
--- Quản lý: công ty thuộc khối (companies.division_unit_id) → chỉ thấy module mà khối đó được phép (ecosystem_units cấp division).
+-- Quản lý: công ty thuộc khối (companies.division_unit_id = khối chính; company_division_units = mọi khối) → chỉ thấy module mà ít nhất một khối được phép.
 -- Nếu không có dòng nào cho một module_key → module đó mở cho mọi khối (tương thích ngược).
 -- Khi có dòng: chỉ công ty có division_unit_id nằm trong danh sách khối của module đó mới thấy module (sidebar + GET /ecosystem/my-module-access).
 

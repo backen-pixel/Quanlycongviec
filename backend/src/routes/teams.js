@@ -2,7 +2,7 @@ const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
-const { syncUserToEcosystem, removeUserFromEcosystem } = require('../helpers/ecosystemSync');
+const { syncTeamToEcosystem, syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
 
 const r = Router();
 r.use(auth);
@@ -71,24 +71,8 @@ r.post('/', async (req, res) => {
     }).select().single();
     if (error) throw error;
 
-    // Auto sync to ecosystem (tạo unit cấp Team)
-    try {
-      const { data: dept } = await supabase.from('departments').select('company_id').eq('id', department_id).single();
-      if (dept?.company_id) {
-        // Find department ecosystem unit
-        const { data: deptUnit } = await supabase.from('ecosystem_units')
-          .select('id').eq('department_id', department_id).eq('is_active', true).single();
-        if (deptUnit) {
-          const { data: teamLevel } = await supabase.from('ecosystem_levels').select('id').eq('slug', 'team').single();
-          if (teamLevel) {
-            await supabase.from('ecosystem_units').insert({
-              name, short_name: short_name || null,
-              level_id: teamLevel.id, parent_id: deptUnit.id,
-            });
-          }
-        }
-      }
-    } catch (syncErr) { console.error('Team sync error:', syncErr.message); }
+    // Auto sync to ecosystem
+    try { await syncTeamToEcosystem(data); } catch (syncErr) { console.error('Team sync error:', syncErr.message); }
 
     res.status(201).json({ team: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
@@ -104,6 +88,7 @@ r.put('/:id', async (req, res) => {
     });
     const { data, error } = await supabase.from('teams').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
+    try { await syncTeamToEcosystem(data); } catch (syncErr) { console.error('Team sync error:', syncErr.message); }
     res.json({ team: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -118,19 +103,16 @@ r.delete('/:id', async (req, res) => {
     const { data: members } = await supabase.from('users').select('id').eq('team_id', req.params.id).eq('is_active', true);
 
     // Soft delete team
-    await supabase.from('teams').update({ is_active: false }).eq('id', req.params.id);
+    const { data: softTeam } = await supabase.from('teams').update({ is_active: false }).eq('id', req.params.id).select().single();
 
     // Remove members from team + ecosystem
     for (const m of (members || [])) {
       await supabase.from('users').update({ team_id: null }).eq('id', m.id);
-      try { await removeUserFromEcosystem(m.id, team?.department_id); } catch {}
+      try { await syncUserOrgToEcosystem(m.id, { old_department_id: team?.department_id || null, old_team_id: req.params.id }); } catch {}
     }
 
     // Soft delete ecosystem unit linked to this team
-    try {
-      await supabase.from('ecosystem_units').update({ is_active: false })
-        .eq('name', team?.name).eq('is_active', true);
-    } catch {}
+    try { if (softTeam) await syncTeamToEcosystem(softTeam); } catch {}
 
     res.json({ message: 'Đã vô hiệu hóa' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
@@ -150,20 +132,9 @@ r.post('/:id/members', async (req, res) => {
     const { data: team } = await supabase.from('teams').select('id,name,department_id').eq('id', req.params.id).single();
     if (!team) return res.status(404).json({ error: 'Team không tồn tại' });
 
-    // Find ecosystem unit for this team (for auto sync)
-    let ecoUnitId = null;
-    try {
-      const { data: deptUnit } = await supabase.from('ecosystem_units')
-        .select('id').eq('department_id', team.department_id).eq('is_active', true).single();
-      if (deptUnit) {
-        const { data: teamUnits } = await supabase.from('ecosystem_units')
-          .select('id').eq('parent_id', deptUnit.id).eq('name', team.name).eq('is_active', true).limit(1);
-        ecoUnitId = teamUnits?.[0]?.id || deptUnit.id;
-      }
-    } catch {}
-
     const addedMembers = [];
     for (const uid of ids) {
+      const { data: beforeOrg } = await supabase.from('users').select('department_id, team_id').eq('id', uid).maybeSingle();
       // Update user's team_id + department_id
       await supabase.from('users').update({
         team_id: req.params.id,
@@ -172,18 +143,9 @@ r.post('/:id/members', async (req, res) => {
       }).eq('id', uid);
 
       // Auto sync to ecosystem
-      if (ecoUnitId) {
-        try {
-          const { data: existing } = await supabase.from('ecosystem_unit_members')
-            .select('id').eq('unit_id', ecoUnitId).eq('user_id', uid).single();
-          if (!existing) {
-            await supabase.from('ecosystem_unit_members').insert({
-              unit_id: ecoUnitId, user_id: uid,
-              unit_role: 'member', can_manage_children: false,
-            });
-          }
-        } catch (syncErr) { console.error('Team member sync:', syncErr.message); }
-      }
+      try {
+        await syncUserOrgToEcosystem(uid, { old_department_id: beforeOrg?.department_id || null, old_team_id: beforeOrg?.team_id || null });
+      } catch (syncErr) { console.error('Team member sync:', syncErr.message); }
 
       const { data: user } = await supabase.from('users')
         .select('id,full_name,email,phone,avatar,role,position').eq('id', uid).single();
@@ -201,24 +163,15 @@ r.delete('/:id/members/:userId', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
 
     // Clear team_id on user (keep department_id)
+    const { data: beforeOrg } = await supabase.from('users').select('department_id, team_id').eq('id', req.params.userId).maybeSingle();
     await supabase.from('users').update({
       team_id: null,
       updated_at: new Date().toISOString(),
     }).eq('id', req.params.userId).eq('team_id', req.params.id);
 
-    // Remove from ecosystem_unit_members
+    // Sync ecosystem membership
     try {
-      const { data: team } = await supabase.from('teams').select('department_id,name').eq('id', req.params.id).single();
-      if (team) {
-        const { data: deptUnit } = await supabase.from('ecosystem_units')
-          .select('id').eq('department_id', team.department_id).eq('is_active', true).single();
-        if (deptUnit) {
-          const { data: teamUnits } = await supabase.from('ecosystem_units')
-            .select('id').eq('parent_id', deptUnit.id).eq('name', team.name).eq('is_active', true).limit(1);
-          const unitId = teamUnits?.[0]?.id || deptUnit.id;
-          await supabase.from('ecosystem_unit_members').delete().eq('unit_id', unitId).eq('user_id', req.params.userId);
-        }
-      }
+      await syncUserOrgToEcosystem(req.params.userId, { old_department_id: beforeOrg?.department_id || null, old_team_id: beforeOrg?.team_id || null });
     } catch (syncErr) { console.error('Remove member sync:', syncErr.message); }
 
     res.json({ message: 'Đã xóa khỏi team' });

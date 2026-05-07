@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../lib/api';
 import CRMTasksTab from './CRMTasksTab';
-import { Plus, Truck, Loader2, ChevronDown, ChevronRight, Package, Factory, Trash2 } from 'lucide-react';
+import { Truck, Loader2, ChevronDown, ChevronRight, Package, Factory, Trash2 } from 'lucide-react';
 
 // Internal phase UI removed per request.
 
@@ -16,8 +16,6 @@ export default function ProjectOrdersTab({
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
-  const [creating, setCreating] = useState(false);
-  const [newLabel, setNewLabel] = useState('');
   const [pushing, setPushing] = useState(null);
   const [msg, setMsg] = useState('');
   const [selected, setSelected] = useState({});
@@ -71,24 +69,6 @@ export default function ProjectOrdersTab({
     setExpanded({ [orders[0].id]: true });
     didAutoExpandFirstRef.current = true;
   }, [orders]);
-
-  const createOrder = async () => {
-    if (logisticsView) return;
-    const label = newLabel.trim();
-    if (!label) return;
-    setCreating(true);
-    setMsg('');
-    try {
-      await api.post(`/projects/${projectId}/orders`, { display_label: label });
-      setNewLabel('');
-      await load();
-      onChanged?.();
-    } catch (e) {
-      setMsg(e.response?.data?.error || e.message || 'Lỗi tạo đơn');
-    }
-    setCreating(false);
-  };
-
 
   const pushVc = async (orderId, masterProjectId) => {
     const pid = masterProjectId || projectId;
@@ -278,27 +258,12 @@ export default function ProjectOrdersTab({
           <h3 className="text-sm font-bold text-gray-900">{logisticsView ? 'Đơn hàng trên dự án VC' : 'Đơn hàng theo dự án'}</h3>
           <p className="text-xs text-gray-600 mt-1 max-w-xl">
             {logisticsView
-              ? 'Các đơn đã bàn giao từ Sản xuất sang Vận chuyển. Cập nhật tiến độ đơn và nhiệm vụ deal con; thêm đơn mới thực hiện trên dự án Sản xuất.'
-              : 'Mỗi đơn có pipeline riêng và bộ nhiệm vụ CRM (deal con). Khi sẵn sàng, đẩy từng đơn sang VC — hệ thống tạo dự án con trên Kanban vận chuyển và gắn deal đó với dự án VC.'}
+              ? 'Các đơn đã bàn giao từ Sản xuất sang Vận chuyển. Cập nhật tiến độ đơn và nhiệm vụ deal con.'
+              : 'Mỗi đơn (nếu có trong hệ thống) có pipeline và nhiệm vụ CRM gắn deal con. Thêm đơn mới từ giao diện đã tắt — chỉ xem/xử lý đơn đã tồn tại. Khi sẵn sàng, đẩy đơn sang VC.'}
           </p>
         </div>
         {!logisticsView && (
           <div className="flex flex-wrap items-center gap-2">
-            <input
-              value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
-              placeholder="Tên đơn (vd: Đơn 1)"
-              className="h-10 px-3 border border-gray-300 rounded-lg text-sm min-w-[160px]"
-            />
-            <button
-              type="button"
-              onClick={createOrder}
-              disabled={creating || !newLabel.trim()}
-              className="h-10 px-4 bg-amber-600 text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-amber-700 disabled:opacity-50"
-            >
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              Thêm đơn
-            </button>
             {eligibleForVcIds.length > 0 && (
               <button
                 type="button"

@@ -165,7 +165,7 @@ export default function CRMTasksPage() {
     const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
     const stage = ALL_STAGES.find(s => s.slug === task.stage_slug);
     return (
-      <div className={`flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-gray-50 border-b last:border-0 ${task.status === 'completed' ? 'opacity-40' : ''}`}>
+      <div className="flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-gray-50 border-b last:border-0">
         <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
           <StatusIcon className={`h-4 w-4 ${task.status === 'completed' ? 'text-emerald-500' : task.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`} />
         </button>

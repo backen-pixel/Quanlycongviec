@@ -19,6 +19,7 @@ import {
   Building2,
   Target,
   Filter,
+  Tag,
 } from 'lucide-react';
 
 function startOfDay(d) {
@@ -110,6 +111,8 @@ export default function CrmFollowUpCarePage() {
   const [onlyOpenStages, setOnlyOpenStages] = useState(true);
   const [users, setUsers] = useState([]);
   const [filterAssignee, setFilterAssignee] = useState('');
+  const [sources, setSources] = useState([]);
+  const [filterSourceId, setFilterSourceId] = useState('');
 
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -179,6 +182,25 @@ export default function CrmFollowUpCarePage() {
     if (!isAdmin) setFilterAssignee((prev) => prev || (user?.id ? String(user.id) : ''));
   }, [isAdmin, user?.id]);
 
+  useEffect(() => {
+    setFilterSourceId('');
+  }, [filterCompany]);
+
+  useEffect(() => {
+    let cancel = false;
+    const params = {};
+    if (isAdmin && filterCompany) params.company_id = filterCompany;
+    api
+      .get('/crm/sources', { params })
+      .then((r) => {
+        if (!cancel) setSources(Array.isArray(r.data?.sources) ? r.data.sources : []);
+      })
+      .catch(() => {
+        if (!cancel) setSources([]);
+      });
+    return () => { cancel = true; };
+  }, [isAdmin, filterCompany]);
+
   const buildParams = useCallback(() => {
     const params = {
       type: pipelineType,
@@ -190,6 +212,7 @@ export default function CrmFollowUpCarePage() {
     if (pipelineId) params.pipeline_id = pipelineId;
     if (stageId) params.stage_id = stageId;
     if (isAdmin && filterAssignee) params.assigned_to = filterAssignee;
+    if (filterSourceId) params.source_id = filterSourceId;
     if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
 
     if (timePreset === 'custom') {
@@ -211,6 +234,7 @@ export default function CrmFollowUpCarePage() {
     pipelineId,
     stageId,
     filterAssignee,
+    filterSourceId,
     debouncedSearch,
     timePreset,
     customFrom,
@@ -372,6 +396,22 @@ export default function CrmFollowUpCarePage() {
               </select>
             </label>
           )}
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-gray-500 flex items-center gap-1"><Tag className="h-3.5 w-3.5" /> Nguồn khách hàng</span>
+            <select
+              value={filterSourceId}
+              onChange={(e) => setFilterSourceId(e.target.value)}
+              className="h-9 px-2 rounded-lg border border-gray-200 text-sm bg-white"
+            >
+              <option value="">Tất cả nguồn</option>
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {(s.icon ? `${s.icon} ` : '')}{s.name || s.id}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {timePreset === 'custom' && (
@@ -448,6 +488,7 @@ export default function CrmFollowUpCarePage() {
               <tr>
                 <th className="px-3 py-2.5">Lead / Deal</th>
                 <th className="px-3 py-2.5">Khách</th>
+                <th className="px-3 py-2.5">Nguồn</th>
                 <th className="px-3 py-2.5">SĐT</th>
                 <th className="px-3 py-2.5">Cột pipeline</th>
                 <th className="px-3 py-2.5">Theo dõi tiếp</th>
@@ -459,6 +500,7 @@ export default function CrmFollowUpCarePage() {
                 const st = row.stage;
                 const assignee = row.assignee || row.lead_owner;
                 const phone = row.display_phone || row.customer?.phone || row.phone;
+                const src = row.source;
                 const nf = row.next_follow_up;
                 const nfMs = nf ? new Date(nf).getTime() : null;
                 const today0 = startOfDay(new Date()).getTime();
@@ -475,6 +517,16 @@ export default function CrmFollowUpCarePage() {
                     </td>
                     <td className="px-3 py-2 align-top text-gray-800">
                       {row.customer?.full_name || '—'}
+                    </td>
+                    <td className="px-3 py-2 align-top text-gray-700">
+                      {src ? (
+                        <span className="inline-flex items-center gap-1 text-xs">
+                          {src.icon ? <span aria-hidden>{src.icon}</span> : null}
+                          {src.name || '—'}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
                     </td>
                     <td className="px-3 py-2 align-top">
                       {phone ? (

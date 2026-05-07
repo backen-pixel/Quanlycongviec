@@ -103,6 +103,28 @@ function isActiveCrmPipelineItem(item) {
   return !st?.is_won && !st?.is_lost;
 }
 
+/**
+ * Kanban phải có đúng một dòng mỗi id. RPC/load-more có thể trả cùng id hai lần với stage_id khác thời điểm
+ * → cùng deal hiện ở hai cột; xóa một thẻ vẫn chỉ một bản ghi DB nên cả hai biến mất.
+ */
+function dedupeCrmKanbanRows(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const map = new Map();
+  for (const r of list) {
+    if (!r || r.id == null || r.id === '') continue;
+    const k = String(r.id);
+    const prev = map.get(k);
+    if (!prev) {
+      map.set(k, r);
+      continue;
+    }
+    const ta = new Date(prev.updated_at || prev.created_at || 0).getTime();
+    const tb = new Date(r.updated_at || r.created_at || 0).getTime();
+    map.set(k, tb >= ta ? r : prev);
+  }
+  return [...map.values()];
+}
+
 export default function CRMDashboard() {
   const { user } = useAuth();
   const seesAllCrmDeals = userSeesAllCrmDealsScoped(user);
@@ -514,8 +536,8 @@ export default function CRMDashboard() {
 
       const matchId = (row) => String(row.id) === lid;
       console.log('[CRM] badge realtime update:', lid, '→', patch.vc_pipeline_stage?.name || patch.sx_pipeline_stage?.name);
-      setAllDeals((prev) => prev.map((d) => (matchId(d) ? { ...d, ...patch } : d)));
-      setAllLeads((prev) => prev.map((l) => (matchId(l) ? { ...l, ...patch } : l)));
+      setAllDeals((prev) => dedupeCrmKanbanRows(prev.map((d) => (matchId(d) ? { ...d, ...patch } : d))));
+      setAllLeads((prev) => dedupeCrmKanbanRows(prev.map((l) => (matchId(l) ? { ...l, ...patch } : l))));
     };
 
     socket.on('crm:badge_updated', badgeHandler);
@@ -545,16 +567,18 @@ export default function CRMDashboard() {
       setAllDeals((prev) => {
         const map = new Map((patches.filter(Boolean) || []).map((p) => [String(p.id), p.data]));
         if (map.size === 0) return prev;
-        return prev.map((x) => {
-          const badge = map.get(String(x.id));
-          if (!badge) return x;
-          return {
-            ...x,
-            sx_pipeline_stage: badge.sx_pipeline_stage ?? null,
-            vc_pipeline_stage: badge.vc_pipeline_stage ?? null,
-            stage_id: badge.stage_id != null ? badge.stage_id : x.stage_id,
-          };
-        });
+        return dedupeCrmKanbanRows(
+          prev.map((x) => {
+            const badge = map.get(String(x.id));
+            if (!badge) return x;
+            return {
+              ...x,
+              sx_pipeline_stage: badge.sx_pipeline_stage ?? null,
+              vc_pipeline_stage: badge.vc_pipeline_stage ?? null,
+              stage_id: badge.stage_id != null ? badge.stage_id : x.stage_id,
+            };
+          }),
+        );
       });
     };
     window.addEventListener(EVENT, onRefresh);
@@ -588,16 +612,10 @@ export default function CRMDashboard() {
         viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
       );
       if (type === 'lead') {
-        setAllLeads((prev) => {
-          const existing = new Set(prev.map((x) => x.id));
-          return [...prev, ...merged.filter((x) => !existing.has(x.id))];
-        });
+        setAllLeads((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
         setLoadMoreState((s) => ({ ...s, leadOffset: newNextOffset, leadTotal: newTotal, loading: false }));
       } else {
-        setAllDeals((prev) => {
-          const existing = new Set(prev.map((x) => x.id));
-          return [...prev, ...merged.filter((x) => !existing.has(x.id))];
-        });
+        setAllDeals((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
         setLoadMoreState((s) => ({ ...s, dealOffset: newNextOffset, dealTotal: newTotal, loading: false }));
       }
     } catch (e) {
@@ -882,8 +900,8 @@ export default function CRMDashboard() {
       const dealsResult = dealsRows || { rows: [], nextOffset: 0, total: null };
       const leadsData = Array.isArray(leadsResult) ? leadsResult : leadsResult.rows;
       const dealsData = Array.isArray(dealsResult) ? dealsResult : dealsResult.rows;
-      setAllLeads(mergeLeadSeenLocal(leadsData));
-      setAllDeals(mergeLeadSeenLocal(dealsData));
+      setAllLeads(dedupeCrmKanbanRows(mergeLeadSeenLocal(leadsData)));
+      setAllDeals(dedupeCrmKanbanRows(mergeLeadSeenLocal(dealsData)));
       setLoadMoreState({
         leadOffset: Array.isArray(leadsResult) ? leadsData.length : (leadsResult.nextOffset ?? leadsData.length),
         dealOffset: Array.isArray(dealsResult) ? dealsData.length : (dealsResult.nextOffset ?? dealsData.length),
@@ -1014,7 +1032,7 @@ export default function CRMDashboard() {
 
     // Company filter
     if (filterCompany) {
-      result = result.filter(l => l.company_id === filterCompany);
+      result = result.filter((l) => String(l.company_id || '') === String(filterCompany));
     }
 
     // Assignee filter (UUID — so khớp cả chuỗi normalize + embed id)
@@ -1048,7 +1066,7 @@ export default function CRMDashboard() {
 
     // Stage filter
     if (filterStage) {
-      result = result.filter(l => l.stage_id === filterStage);
+      result = result.filter((l) => String(l.stage_id || '') === String(filterStage));
     }
 
     // Khu vực CRM (company_regions)
@@ -1105,19 +1123,19 @@ export default function CRMDashboard() {
   // Pipeline view: group leads/deals by stage
   const pipelineLead = useMemo(() => {
     if (!stagesLead.length) return [];
-    return stagesLead.map(s => ({
+    return stagesLead.map((s) => ({
       ...s,
-      items: leads.filter(l => l.stage_id === s.id),
-      totalValue: leads.filter(l => l.stage_id === s.id).reduce((sum, l) => sum + (l.estimated_value || 0), 0),
+      items: leads.filter((l) => String(l.stage_id || '') === String(s.id)),
+      totalValue: leads.filter((l) => String(l.stage_id || '') === String(s.id)).reduce((sum, l) => sum + (l.estimated_value || 0), 0),
     }));
   }, [stagesLead, leads]);
 
   const pipelineDeal = useMemo(() => {
     if (!stagesDeal.length) return [];
-    return stagesDeal.map(s => ({
+    return stagesDeal.map((s) => ({
       ...s,
-      items: deals.filter(l => l.stage_id === s.id),
-      totalValue: deals.filter(l => l.stage_id === s.id).reduce((sum, l) => sum + (l.estimated_value || 0), 0),
+      items: deals.filter((l) => String(l.stage_id || '') === String(s.id)),
+      totalValue: deals.filter((l) => String(l.stage_id || '') === String(s.id)).reduce((sum, l) => sum + (l.estimated_value || 0), 0),
     }));
   }, [stagesDeal, deals]);
 
@@ -1211,10 +1229,15 @@ export default function CRMDashboard() {
       const throwOnError = !!opts.throwOnError;
       const prevLeads = allLeads;
       const prevDeals = allDeals;
+      const lid = String(leadId);
       if (pipelineType === 'lead') {
-        setAllLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l)));
+        setAllLeads((prev) =>
+          dedupeCrmKanbanRows(prev.map((l) => (String(l.id) === lid ? { ...l, stage_id: newStageId, ...extraData } : l))),
+        );
       } else {
-        setAllDeals((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage_id: newStageId, ...extraData } : l)));
+        setAllDeals((prev) =>
+          dedupeCrmKanbanRows(prev.map((l) => (String(l.id) === lid ? { ...l, stage_id: newStageId, ...extraData } : l))),
+        );
       }
       try {
         const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: newStageId, ...extraData });
@@ -1269,11 +1292,26 @@ export default function CRMDashboard() {
       if (pipelineType === 'deal' && (targetStage?.is_won || isProductionStage)) {
         const deal = allDeals.find((d) => d.id === leadId);
         if (deal && !deal.project_id) {
-          setDealWonProductionError('');
-          const pref = isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '';
-          setDealWonProductionCompanyId(filterCompany || (deal.company_id ? String(deal.company_id) : '') || pref);
-          setDealWonProductionCtx({ leadId, newStageId, extraData, targetStage, deal });
-          return;
+          try {
+            await applyKanbanStageChange(leadId, newStageId, extraData, { throwOnError: true });
+            return;
+          } catch (e) {
+            const needsCo = e.response?.data?.requires_production_company;
+            if (!needsCo) {
+              console.error(e);
+              window.alert(e.response?.data?.error || e.message || 'Không chuyển được giai đoạn');
+              return;
+            }
+            setDealWonProductionError(e.response?.data?.error || '');
+            const pref = isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '';
+            const lt = deal.lead_type_id && leadTypes.find((t) => String(t.id) === String(deal.lead_type_id));
+            const fromType = lt?.default_production_company_id ? String(lt.default_production_company_id) : '';
+            setDealWonProductionCompanyId(
+              fromType || filterCompany || (deal.company_id ? String(deal.company_id) : '') || pref,
+            );
+            setDealWonProductionCtx({ leadId, newStageId, extraData, targetStage, deal });
+            return;
+          }
         }
       }
 
@@ -1295,7 +1333,18 @@ export default function CRMDashboard() {
 
       await applyKanbanStageChange(leadId, newStageId, extraData);
     },
-    [pipelineType, stagesLead, stagesDeal, allLeads, allDeals, applyKanbanStageChange, isAdmin, filterCompany, productionCompaniesForSx],
+    [
+      pipelineType,
+      stagesLead,
+      stagesDeal,
+      allLeads,
+      allDeals,
+      applyKanbanStageChange,
+      isAdmin,
+      filterCompany,
+      productionCompaniesForSx,
+      leadTypes,
+    ],
   );
 
   /** Chuyển hàng loạt sang giai đoạn (Kanban) — không áp dụng Thắng / deal đặc biệt */

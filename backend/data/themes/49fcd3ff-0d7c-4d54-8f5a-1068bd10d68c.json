@@ -1,0 +1,16 @@
+{
+  "id": "custom",
+  "name": "🌊 Đại dương",
+  "sidebar": "#0c2d48",
+  "sidebarHover": "#14394f",
+  "sidebarActive": "#1a4a6e",
+  "sidebarText": "#7eb8d8",
+  "pageBg": "#e8f4f8",
+  "accent": "#0ea5e9",
+  "textHeading": "#0c2d48",
+  "textBody": "#1e4b6e",
+  "textMuted": "#5a8faa",
+  "textCard": "#0f3652",
+  "bgImage": null,
+  "bgOverlay": "rgba(0,0,0,0.03)"
+}

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Plus, Search, FileText, Filter, ShoppingCart, Calendar, Download, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Search, FileText, Filter, Calendar, Download, Trash2, Loader2 } from 'lucide-react';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 
 const STATUS_MAP = { draft: 'Nháp', sent: 'Đã gửi', accepted: 'Chấp nhận', rejected: 'Từ chối', expired: 'Hết hạn', converted: 'Đã chuyển ĐH' };
@@ -15,7 +15,6 @@ export default function QuotationsPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
-  const [convertLoadingId, setConvertLoadingId] = useState(null);
   const [pdfLoadingId, setPdfLoadingId] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
   const navigate = useNavigate();
@@ -87,7 +86,7 @@ export default function QuotationsPage() {
           <table className="w-full text-sm">
             <thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
               <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-              <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Người tạo</th><th className="py-3 px-3">Ngày tạo</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th><th className="py-3 px-3"></th>
+              <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Người tạo</th><th className="py-3 px-3">Ngày tạo</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th>
             </tr></thead>
             <tbody>
               {filtered.map(q => (
@@ -108,14 +107,6 @@ export default function QuotationsPage() {
                     <button onClick={e => downloadPdf(q.id, q.code, e)} disabled={pdfLoadingId === q.id} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer disabled:opacity-50" title="Tải PDF">
                       {pdfLoadingId === q.id ? <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> : <Download className="h-4 w-4" />}
                     </button>
-                  </td>
-                  <td className="py-3 px-3">
-                    {q.status !== 'converted' && (
-                      <button onClick={e => { e.stopPropagation(); convertToOrder(q.id); }} disabled={convertLoadingId === q.id} className="text-xs text-emerald-600 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50">
-                        {convertLoadingId === q.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
-                        {convertLoadingId === q.id ? 'Đang tạo...' : '→ĐH'}
-                      </button>
-                    )}
                   </td>
                   <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa báo giá ' + q.code + '?')) api.delete('/crm/quotations/' + q.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>
                 </tr>
@@ -140,12 +131,4 @@ export default function QuotationsPage() {
     </div>
   );
 
-  async function convertToOrder(id) {
-    if (convertLoadingId) return;
-    if (!confirm('Chuyển báo giá thành đơn hàng?')) return;
-    setConvertLoadingId(id);
-    try { const { data } = await api.post(`/crm/quotations/${id}/convert-to-order`); alert(`Đã tạo đơn hàng ${data.code}`); load(); }
-    catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
-    setConvertLoadingId(null);
-  }
 }

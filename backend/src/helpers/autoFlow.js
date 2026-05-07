@@ -4,7 +4,7 @@
 //
 // LUỒNG TỰ ĐỘNG:
 // 1. Lead chốt (is_won)      → Auto tạo Project + Gen Tasks
-// 2. BG chấp nhận (accepted)  → Auto tạo ĐH
+// 2. BG chấp nhận (accepted)  → Tạo dự án nếu lead chưa có (không tạo đơn hàng)
 // 3. ĐH xác nhận (confirmed) → Auto tạo Project (nếu chưa có) + Gen Tasks
 // 4. Project chuyển stage     → Sync ĐH status (SX → processing, Giao → shipped...)
 // 5. Project hoàn thành       → Auto tạo Hóa đơn từ ĐH chưa xuất HĐ
@@ -15,8 +15,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const { supabase } = require('../config/supabase');
-const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('./orderFromQuotation');
-
 // ─── HELPERS ─────────────────────────────────────────────────────────────
 
 async function nextCode(prefix) {
@@ -128,43 +126,59 @@ async function createProjectFromLead(lead, userId, overrideFlowId) {
   return project;
 }
 
-// ─── 2. BÁO GIÁ CHẤP NHẬN → AUTO TẠO ĐH ──────────────────────────────
+// ─── 2. BÁO GIÁ CHẤP NHẬN → DỰ ÁN (không tạo đơn hàng) ───────────────
+
+async function createProjectFromAcceptedQuotation(quote, userId) {
+  if (!quote?.lead_id) return null;
+  const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', quote.lead_id).single();
+  if (!lead) return null;
+  if (lead.project_id) {
+    await supabase
+      .from('quotations')
+      .update({ project_id: lead.project_id, updated_at: new Date().toISOString() })
+      .eq('id', quote.id)
+      .is('project_id', null);
+    return { id: lead.project_id, code: 'existing', existing: true };
+  }
+
+  const [flowId, firstStageId, code] = await Promise.all([getDefaultFlow(), getFirstStage(), nextProjectCode()]);
+  const { data: project, error } = await supabase
+    .from('projects')
+    .insert({
+      code,
+      name: quote.title || `Báo giá ${quote.code}`,
+      status: 'active',
+      customer_id: quote.customer_id,
+      estimated_value: quote.total,
+      flow_id: flowId,
+      current_stage_id: firstStageId,
+      created_by: userId,
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  await supabase.from('orders').update({ project_id: project.id }).eq('lead_id', quote.lead_id).is('project_id', null);
+  await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', quote.lead_id);
+  await supabase.from('quotations').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', quote.id);
+
+  await generateTasksForProject(project.id, userId);
+  return project;
+}
 
 async function onQuotationAccepted(quotationId, userId) {
   const { data: quote } = await supabase.from('quotations').select('*').eq('id', quotationId).single();
   if (!quote) return null;
 
-  // Check đã có ĐH từ BG này chưa
-  const { data: existing } = await supabase.from('orders').select('id, code').eq('quotation_id', quotationId).limit(1);
-  if (existing?.length) return { existing: true, order: existing[0] };
-
-  // Copy items
-  const { data: qItems } = await supabase.from('quotation_items').select('*').eq('quotation_id', quotationId).order('item_order');
-
-  const orderCode = await nextCode('DH');
-  const { data: order, error } = await supabase.from('orders').insert({
-    code: orderCode,
-    ...snapshotOrderRowFromQuotation(quote),
-    status: 'confirmed',
-    confirmed_at: new Date().toISOString(),
-    created_by: userId,
-  }).select('*').single();
-  if (error) throw error;
-
-  if (qItems?.length) {
-    await supabase.from('order_items').insert(mapQuotationItemsToOrderRows(qItems, order.id));
-  }
-
-  // Update quotation → converted
-  await supabase.from('quotations').update({ status: 'converted', updated_at: new Date().toISOString() }).eq('id', quotationId);
-
-  // Auto tạo project nếu ĐH confirmed + chưa có project
   let autoProject = null;
-  if (!order.project_id) {
-    autoProject = await onOrderConfirmed(order.id, userId);
+  if (quote.lead_id) {
+    const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', quote.lead_id).single();
+    if (lead && !lead.project_id) {
+      autoProject = await createProjectFromAcceptedQuotation(quote, userId);
+    }
   }
 
-  return { order, autoProject };
+  return { order: null, autoProject };
 }
 
 // ─── 3. ĐƠN HÀNG XÁC NHẬN → AUTO PROJECT ──────────────────────────────

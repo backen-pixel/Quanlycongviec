@@ -1,5 +1,5 @@
 /**
- * Tạo đơn từ báo giá — một chỗ để convert-to-order và autoFlow giữ cùng snapshot.
+ * Snapshot báo giá → cấu trúc hàng đơn hàng (chỉ còn dùng nếu có script/migration tương thích).
  */
 function snapshotOrderRowFromQuotation(quote) {
   return {

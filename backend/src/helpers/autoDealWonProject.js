@@ -97,6 +97,22 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
 
   const projectId = project.id;
 
+  try {
+    const { data: hop } = await supabase
+      .from('production_handover_settings')
+      .select('responsible_user_id, default_production_team_id')
+      .eq('production_company_id', coCheck.company.id)
+      .maybeSingle();
+    const patchHo = {};
+    if (hop?.responsible_user_id) patchHo.production_person_id = hop.responsible_user_id;
+    if (hop?.default_production_team_id) patchHo.production_workshop_team_id = hop.default_production_team_id;
+    if (Object.keys(patchHo).length) {
+      await supabase.from('projects').update({ ...patchHo, updated_at: new Date().toISOString() }).eq('id', projectId);
+    }
+  } catch (he) {
+    console.warn('[auto-project] production_handover_settings:', he.message);
+  }
+
   const { data: flowSteps } = await supabase.from('workflow_flow_steps')
     .select('id, order_index, division_unit_id, company_unit_id, template_set_id')
     .eq('flow_id', flowId).order('order_index');

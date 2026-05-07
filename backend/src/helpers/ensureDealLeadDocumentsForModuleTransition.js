@@ -7,7 +7,7 @@ const { syncLeadDocumentsToProject } = require('./syncLeadDocumentsToProject');
  * đã có bản lead_documents và đã gắn đúng project_id + chia sẻ xưởng.
  *
  * 1) copyCrmTaskArtifactsToLeadDocuments — bù các attachment/ghi chú task chưa có dòng tài liệu
- * 2) syncLeadDocumentsToProject — gán project_id + shared_to_workshop cho toàn bộ tài liệu của deal
+ * 2) syncLeadDocumentsToProject — gán project_id (giữ nguyên cờ chia sẻ / khóa từ CRM)
  *
  * @param {{ leadId: string, projectId?: string|null }} p — projectId lấy từ crm_leads nếu thiếu
  */
@@ -34,7 +34,7 @@ async function ensureDealLeadDocumentsForModuleTransition({ leadId, projectId })
   let synced = { ok: true, skipped: !pid };
   if (pid) {
     try {
-      synced = await syncLeadDocumentsToProject({ leadId, projectId: pid, shareToWorkshop: true });
+      synced = await syncLeadDocumentsToProject({ leadId, projectId: pid });
     } catch (e) {
       console.warn('[ensureDealLeadDocuments] sync:', e.message);
       synced = { ok: false, error: e.message };

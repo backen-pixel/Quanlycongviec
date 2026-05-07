@@ -16,15 +16,17 @@ export default function CompanyCrmRegionsPage() {
   const canMutate = user?.role === 'admin';
 
   const [companies, setCompanies] = useState([]);
+  const [divisions, setDivisions] = useState([]);
   const [lockedCompanyLabel, setLockedCompanyLabel] = useState('');
   const [filterCompany, setFilterCompany] = useState('');
+  const [filterDivision, setFilterDivision] = useState('');
   const [regions, setRegions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
-  const [form, setForm] = useState({ name: '', code: '', order_index: 0 });
+  const [form, setForm] = useState({ name: '', code: '', order_index: 0, division_unit_id: '' });
 
   const effectiveCompanyId = useMemo(() => {
     if (companyAdmin && user?.company_id) return String(user.company_id);
@@ -42,6 +44,13 @@ export default function CompanyCrmRegionsPage() {
       .catch(() => setCompanies([]));
   }, [systemAdmin]);
 
+  const loadDivisions = useCallback(() => {
+    api
+      .get('/ecosystem/units?level=1')
+      .then((r) => setDivisions(r.data?.units || []))
+      .catch(() => setDivisions([]));
+  }, []);
+
   const loadRegions = useCallback(() => {
     if (!effectiveCompanyId) {
       setRegions([]);
@@ -50,24 +59,43 @@ export default function CompanyCrmRegionsPage() {
     }
     setLoading(true);
     api
-      .get('/crm/company-regions', { params: { company_id: effectiveCompanyId } })
+      .get('/crm/company-regions', { params: { company_id: effectiveCompanyId, division_unit_id: filterDivision || undefined } })
       .then((r) => {
         const list = Array.isArray(r.data) ? r.data : [];
         setRegions(list);
       })
       .catch(() => setRegions([]))
       .finally(() => setLoading(false));
-  }, [effectiveCompanyId]);
+  }, [effectiveCompanyId, filterDivision]);
 
   useEffect(() => {
     loadCompanies();
   }, [loadCompanies]);
 
   useEffect(() => {
+    loadDivisions();
+  }, [loadDivisions]);
+
+  useEffect(() => {
     if (companyAdmin && user?.company_id) {
       setFilterCompany(String(user.company_id));
     }
   }, [companyAdmin, user?.company_id]);
+
+  useEffect(() => {
+    if (!effectiveCompanyId) {
+      setFilterDivision('');
+      return;
+    }
+    api
+      .get(`/companies/${effectiveCompanyId}`)
+      .then((r) => {
+        const c = r.data?.company;
+        const primary = c?.primary_division_unit_id || c?.division_unit_id || '';
+        setFilterDivision((prev) => prev || primary || '');
+      })
+      .catch(() => {});
+  }, [effectiveCompanyId]);
 
   useEffect(() => {
     if (!companyAdmin || !user?.company_id) {
@@ -89,7 +117,7 @@ export default function CompanyCrmRegionsPage() {
 
   const openCreate = () => {
     setEditRow(null);
-    setForm({ name: '', code: '', order_index: (regions?.length || 0) * 10 });
+    setForm({ name: '', code: '', order_index: (regions?.length || 0) * 10, division_unit_id: filterDivision || '' });
     setShowModal(true);
   };
 
@@ -99,6 +127,7 @@ export default function CompanyCrmRegionsPage() {
       name: row.name || '',
       code: row.code || '',
       order_index: row.order_index ?? 0,
+      division_unit_id: row.division_unit_id || '',
     });
     setShowModal(true);
   };
@@ -115,6 +144,7 @@ export default function CompanyCrmRegionsPage() {
           name: form.name.trim(),
           code: form.code?.trim() || null,
           order_index: Number(form.order_index) || 0,
+          division_unit_id: form.division_unit_id || null,
         });
       } else {
         await api.post('/crm/company-regions', {
@@ -122,6 +152,7 @@ export default function CompanyCrmRegionsPage() {
           name: form.name.trim(),
           code: form.code?.trim() || null,
           order_index: Number(form.order_index) || 0,
+          division_unit_id: form.division_unit_id || null,
         });
       }
       setShowModal(false);
@@ -192,6 +223,22 @@ export default function CompanyCrmRegionsPage() {
               ))}
             </select>
           )}
+        </div>
+        <div className="min-w-[240px] flex-1">
+          <label className="text-xs font-semibold text-gray-600 flex items-center gap-1 mb-1">Khối</label>
+          <select
+            value={filterDivision}
+            onChange={(e) => setFilterDivision(e.target.value)}
+            className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm"
+            disabled={!effectiveCompanyId}
+          >
+            <option value="">— Chọn khối —</option>
+            {divisions.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.level?.icon} {d.name}
+              </option>
+            ))}
+          </select>
         </div>
         {canMutate && effectiveCompanyId && (
           <button

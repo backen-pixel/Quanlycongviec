@@ -110,8 +110,8 @@ const GUIDES = [
     color: 'from-purple-500 to-pink-500',
     steps: [
       {
-        title: 'Đơn hàng được tạo tự động hoặc thủ công',
-        content: 'TỰ ĐỘNG: Khi báo giá được chấp nhận → ĐH tạo auto\nTHỦ CÔNG: Menu CRM → "Đơn hàng" → Bấm "+ Tạo đơn hàng"\n\nForm tạo ĐH giống báo giá: chọn KH, thêm SP (gõ tên tìm / modal tìm nâng cao), nhập SL + giá.',
+        title: 'Đơn hàng (dữ liệu cũ / luồng khác)',
+        content: 'Tạo đơn hàng mới từ giao diện đã tắt.\nKhi báo giá được chấp nhận → hệ thống có thể tạo dự án (nếu deal chưa có dự án), không tạo đơn hàng tự động.\nXem và sửa đơn đã tồn tại tại menu Đơn hàng.',
         link: { to: '/crm/orders', label: 'Xem đơn hàng' },
       },
       {
@@ -292,7 +292,7 @@ export default function GuidePage() {
           {[
             { to: '/crm', icon: Target, label: 'CRM Dashboard', color: 'text-emerald-600 bg-emerald-50' },
             { to: '/crm/quotations/new', icon: FileText, label: 'Tạo báo giá', color: 'text-amber-600 bg-amber-50' },
-            { to: '/crm/orders/new', icon: ShoppingCart, label: 'Tạo đơn hàng', color: 'text-blue-600 bg-blue-50' },
+            { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng', color: 'text-blue-600 bg-blue-50' },
             { to: '/crm/invoices/new', icon: Receipt, label: 'Tạo hóa đơn', color: 'text-purple-600 bg-purple-50' },
             { to: '/projects', icon: FolderKanban, label: 'Dự án', color: 'text-indigo-600 bg-indigo-50' },
             { to: '/projects/create', icon: FolderKanban, label: 'Tạo dự án', color: 'text-teal-600 bg-teal-50' },

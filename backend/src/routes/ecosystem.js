@@ -302,6 +302,28 @@ r.put('/units/:id', async (req, res) => {
     const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.id);
     if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
 
+    // Limited edit policy: HST chỉ là projection; unit linked (company/department/team) không được đổi cấu trúc/mapping từ đây.
+    const { data: existingUnit, error: existingErr } = await supabase
+      .from('ecosystem_units')
+      .select('id, company_id, department_id, team_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (existingErr) throw existingErr;
+    const isLinked = !!(existingUnit?.company_id || existingUnit?.department_id || existingUnit?.team_id);
+    if (isLinked) {
+      const forbidden = [];
+      if (req.body.parent_id !== undefined) forbidden.push('parent_id');
+      if (req.body.company_id !== undefined) forbidden.push('company_id');
+      if (req.body.department_id !== undefined) forbidden.push('department_id');
+      if (req.body.team_id !== undefined) forbidden.push('team_id');
+      if (req.body.level_id !== undefined) forbidden.push('level_id');
+      if (forbidden.length) {
+        return res.status(400).json({
+          error: `Không cho sửa ${forbidden.join(', ')} trên cây HST với đơn vị đã liên kết. Hãy sửa ở trang Công ty/Phòng ban/Team/Nhân viên.`,
+        });
+      }
+    }
+
     const { name, short_name, code, level_id, parent_id, company_id, department_id, description, logo_url, address, phone, email, order_index, is_active } = req.body;
     const opt = (v) => (v && typeof v === 'string' && v.trim() !== '') ? v.trim() : null;
     const update = { updated_at: new Date().toISOString() };
@@ -347,6 +369,18 @@ r.post('/units/:id/members', async (req, res) => {
     const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.id);
     if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
 
+    // Limited edit policy: không quản lý members trực tiếp trên unit linked (company/department/team)
+    const { data: u } = await supabase
+      .from('ecosystem_units')
+      .select('company_id, department_id, team_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (u?.company_id || u?.department_id || u?.team_id) {
+      return res.status(400).json({
+        error: 'Không thêm thành viên trực tiếp trên cây HST cho đơn vị đã liên kết. Hãy thao tác ở trang Phòng ban/Team/Nhân viên.',
+      });
+    }
+
     const { user_id, unit_role, can_manage_children, is_primary } = req.body;
     if (!user_id || (typeof user_id === 'string' && !user_id.trim())) return res.status(400).json({ error: 'Chọn nhân viên' });
 
@@ -362,6 +396,17 @@ r.put('/units/:unitId/members/:memberId', async (req, res) => {
   try {
     const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.unitId);
     if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
+
+    const { data: u } = await supabase
+      .from('ecosystem_units')
+      .select('company_id, department_id, team_id')
+      .eq('id', req.params.unitId)
+      .maybeSingle();
+    if (u?.company_id || u?.department_id || u?.team_id) {
+      return res.status(400).json({
+        error: 'Không sửa vai trò thành viên trực tiếp trên cây HST cho đơn vị đã liên kết. Hãy thao tác ở trang Phòng ban/Team/Nhân viên.',
+      });
+    }
 
     const { unit_role, can_manage_children, is_primary } = req.body;
     const update = {};
@@ -381,6 +426,18 @@ r.delete('/units/:unitId/members/:memberId', async (req, res) => {
   try {
     const hasAccess = await canManageUnit(req.user.userId, req.user.role, req.params.unitId);
     if (!hasAccess) return res.status(403).json({ error: 'Không có quyền' });
+
+    const { data: u } = await supabase
+      .from('ecosystem_units')
+      .select('company_id, department_id, team_id')
+      .eq('id', req.params.unitId)
+      .maybeSingle();
+    if (u?.company_id || u?.department_id || u?.team_id) {
+      return res.status(400).json({
+        error: 'Không xóa thành viên trực tiếp trên cây HST cho đơn vị đã liên kết. Hãy thao tác ở trang Phòng ban/Team/Nhân viên.',
+      });
+    }
+
     await supabase.from('ecosystem_unit_members').delete().eq('id', req.params.memberId);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -610,7 +667,7 @@ r.get('/available-companies', async (req, res) => {
 r.get('/available-departments', async (req, res) => {
   try {
     const { company_id } = req.query;
-    let q = supabase.from('departments').select('id, name, short_name, company_id, is_active').eq('is_active', true).order('name');
+    let q = supabase.from('departments').select('id, name, short_name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
     if (company_id) q = q.eq('company_id', company_id);
     const { data, error } = await q;
     if (error) throw error;
