@@ -277,23 +277,27 @@ async function resolveDefaultWorkshopTemplateId(workshopArea, companyId) {
  */
 async function applyDefaultWorkshopTemplatesForNewProject(projectId, userId) {
   let companyId = null;
+  let logisticsCompanyId = null;
   // Allow overriding company scope (e.g. sx-handover assigns company_id then needs correct templates immediately)
   if (arguments.length >= 3 && arguments[2] && typeof arguments[2] === 'object') {
     companyId = arguments[2].companyId || null;
+    logisticsCompanyId = arguments[2].logisticsCompanyId || null;
   }
   if (!companyId) {
     const { data: proj } = await supabase
       .from('projects')
-      .select('company_id')
+      .select('company_id, logistics_company_id')
       .eq('id', projectId)
       .maybeSingle();
     companyId = proj?.company_id || null;
+    logisticsCompanyId = proj?.logistics_company_id || null;
   }
 
   let total = 0;
   for (const area of ['production', 'logistics']) {
     try {
-      const defId = await resolveDefaultWorkshopTemplateId(area, companyId);
+      const cidForArea = area === 'logistics' ? (logisticsCompanyId || companyId) : companyId;
+      const defId = await resolveDefaultWorkshopTemplateId(area, cidForArea);
       if (!defId) continue;
       const r = await applyWorkshopTemplateToProject(projectId, defId, userId);
       if (r.ok) total += r.count;
@@ -316,18 +320,28 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, { works
     return { ok: false, error: 'workshop_area phải là production hoặc logistics' };
   }
 
-  const { data: proj, error: pe } = await supabase
+  let proj;
+  let pe;
+  ({ data: proj, error: pe } = await supabase
     .from('projects')
-    .select('id, company_id')
+    .select('id, company_id, logistics_company_id')
     .eq('id', projectId)
-    .maybeSingle();
+    .maybeSingle());
+  if (pe && String(pe.message || '').includes('logistics_company_id')) {
+    // Backward compatibility: DB chưa có cột logistics_company_id
+    ({ data: proj, error: pe } = await supabase
+      .from('projects')
+      .select('id, company_id')
+      .eq('id', projectId)
+      .maybeSingle());
+  }
   if (pe) return { ok: false, error: pe.message };
   if (!proj?.id) return { ok: false, error: 'Không tìm thấy dự án' };
 
   const cid =
     companyId !== undefined && companyId !== null && companyId !== ''
       ? companyId
-      : (proj.company_id || null);
+      : (area === 'logistics' ? (proj.logistics_company_id || proj.company_id || null) : (proj.company_id || null));
 
   const templates = await fetchActiveWorkshopTemplatesForArea(area, cid);
   if (!templates.length) {

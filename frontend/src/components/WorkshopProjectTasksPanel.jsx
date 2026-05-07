@@ -79,15 +79,22 @@ export default function WorkshopProjectTasksPanel({
     setTemplatesLoading(true);
     try {
       const area = workArea === 'logistics' ? 'logistics' : 'production';
+      const cid = area === 'logistics'
+        ? (project?.logistics_company_id || project?.logistics_company?.id || null)
+        : (project?.company_id || project?.company?.id || null);
       const { data } = await api.get('/production/task-templates', {
-        params: { workshop_area: area, active_only: 'true' },
+        params: {
+          workshop_area: area,
+          active_only: 'true',
+          ...(cid ? { company_id: cid } : {}),
+        },
       });
       setTemplates(data || []);
     } catch {
       setTemplates([]);
     }
     setTemplatesLoading(false);
-  }, [workArea]);
+  }, [workArea, project?.company_id, project?.logistics_company_id, project?.company?.id, project?.logistics_company?.id]);
 
   useEffect(() => {
     if (showTemplatePanel) loadTemplates();

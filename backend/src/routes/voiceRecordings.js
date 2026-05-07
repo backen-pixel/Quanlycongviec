@@ -139,6 +139,39 @@ r.get('/phone-preview', async (req, res) => {
   }
 });
 
+/**
+ * GET /voice-recordings/exists?file_name=&file_size=
+ * Background sync (Android) gọi trước khi upload để tránh up lại file đã có trong tài khoản.
+ * Chỉ scope theo user hiện tại (mỗi user có không gian dedup riêng).
+ */
+r.get('/exists', async (req, res) => {
+  try {
+    const fileName = req.query.file_name != null ? String(req.query.file_name).trim() : '';
+    if (!fileName) return res.status(400).json({ error: 'Thiếu file_name' });
+    const safeName = fileName.slice(0, 256);
+
+    let q = supabase
+      .from('voice_recordings')
+      .select('id, file_name, file_size, created_at')
+      .eq('user_id', req.user.userId)
+      .eq('file_name', safeName);
+
+    const fileSizeRaw = req.query.file_size != null ? String(req.query.file_size).trim() : '';
+    if (fileSizeRaw) {
+      const n = Number(fileSizeRaw);
+      if (Number.isFinite(n) && n >= 0) q = q.eq('file_size', n);
+    }
+    q = q.order('created_at', { ascending: false }).limit(1);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    const hit = data && data[0];
+    res.json({ exists: !!hit, id: hit?.id || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi kiểm tra' });
+  }
+});
+
 /** GET /voice-recordings — mặc định: của user; `?lead_id=` = mọi bản đã ghép lead/deal (nếu có quyền xem CRM). */
 r.get('/', async (req, res) => {
   try {
@@ -308,6 +341,35 @@ r.post('/', upload.single('audio'), async (req, res) => {
           }
         }
         return res.status(200).json({ recording: attachPlayableUrl(existing), duplicate: true });
+      }
+    }
+
+    // Dedup theo (user_id, file_name, file_size) — chống up lại file đã có sau khi user logout/login
+    // hoặc cài lại app làm reset cache local. Chỉ dedup khi cả tên + size khớp để tránh "false positive"
+    // với các file khác cùng tên.
+    {
+      const baseName = (req.file.originalname || req.file.filename || '').slice(0, 256);
+      const fileSize = Number(req.file.size || 0);
+      if (baseName && Number.isFinite(fileSize) && fileSize > 0) {
+        const { data: dup, error: dupErr } = await supabase
+          .from('voice_recordings')
+          .select(RECORDING_SELECT)
+          .eq('user_id', req.user.userId)
+          .eq('file_name', baseName)
+          .eq('file_size', fileSize)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!dupErr && dup) {
+          if (req.file?.path && fs.existsSync(req.file.path)) {
+            try {
+              fs.unlinkSync(req.file.path);
+            } catch {
+              /* ignore */
+            }
+          }
+          return res.status(200).json({ recording: attachPlayableUrl(dup), duplicate: true });
+        }
       }
     }
 

@@ -2943,7 +2943,7 @@ r.get('/company-regions', async (req, res) => {
     }
     let q = supabase
       .from('company_regions')
-      .select('*')
+      .select('*, division:ecosystem_units(id, name, short_name)')
       .eq('company_id', co)
       .order('order_index');
     if (div) q = q.eq('division_unit_id', div);

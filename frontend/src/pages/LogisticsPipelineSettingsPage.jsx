@@ -23,7 +23,7 @@ export default function LogisticsPipelineSettingsPage() {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📦', workflow_stage_id: '', is_active: true,
-    crm_sync_type: '', crm_target_stage_id: '',
+    crm_sync_type: '', crm_target_stage_id: '', progress_percent: '',
   });
 
   const load = useCallback(async () => {
@@ -91,7 +91,7 @@ export default function LogisticsPipelineSettingsPage() {
     setEditId(null);
     setForm({
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
-      workflow_stage_id: '', is_active: true, crm_sync_type: '', crm_target_stage_id: '',
+      workflow_stage_id: '', is_active: true, crm_sync_type: '', crm_target_stage_id: '', progress_percent: '',
     });
   };
 
@@ -106,6 +106,7 @@ export default function LogisticsPipelineSettingsPage() {
       is_active: stage.is_active !== false,
       crm_sync_type: stage.crm_sync_type || '',
       crm_target_stage_id: stage.crm_target_stage_id || '',
+      progress_percent: stage.progress_percent ?? '',
     });
   };
 
@@ -114,6 +115,7 @@ export default function LogisticsPipelineSettingsPage() {
     try {
       await api.post('/logistics/pipeline-stages', {
         name: form.name.trim(), color: form.color, icon: form.icon,
+        progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
         workflow_stage_id: form.workflow_stage_id || null,
         is_active: form.is_active,
         crm_sync_type: form.crm_target_stage_id ? null : (form.crm_sync_type || null),
@@ -131,6 +133,7 @@ export default function LogisticsPipelineSettingsPage() {
       const intakeRow = stages.find((s) => s.id === editId)?.bucket_slug === INTAKE;
       await api.put(`/logistics/pipeline-stages/${editId}`, {
         name: form.name.trim(), color: form.color, icon: form.icon,
+        progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
         workflow_stage_id: intakeRow ? null : (form.workflow_stage_id || null),
         is_active: form.is_active,
         crm_sync_type: intakeRow ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
@@ -393,6 +396,21 @@ export default function LogisticsPipelineSettingsPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 block mb-1">% hoàn thành theo cột (0–100)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.progress_percent ?? ''}
+                  onChange={(e) => setForm((f) => ({ ...f, progress_percent: e.target.value }))}
+                  className="w-full max-w-[160px] h-8 px-3 border rounded-lg text-sm"
+                  placeholder="VD: 80"
+                />
+                <p className="text-[10px] text-gray-400 mt-1 leading-snug">
+                  Dùng để hiển thị % hoàn thành trên thẻ VC/LĐ (không dựa vào % task done). Để trống nếu không muốn áp dụng.
+                </p>
               </div>
               <label className="flex items-center gap-2 text-xs cursor-pointer">
                 <input type="checkbox" checked={form.is_active} onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))} className="rounded border-gray-300" />

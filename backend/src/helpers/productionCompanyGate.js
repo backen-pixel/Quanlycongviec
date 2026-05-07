@@ -23,8 +23,23 @@ async function validateProductionCompanyId(rawId) {
   }
   const restricted = await getRestrictedDivisionIdsForModule('production');
   if (restricted && restricted.size > 0) {
-    const div = co.division_unit_id ? String(co.division_unit_id) : '';
-    if (!restricted.has(div)) {
+    const primary = co.division_unit_id ? String(co.division_unit_id) : '';
+    let ok = primary && restricted.has(primary);
+    // Company có thể thuộc nhiều Khối qua bảng nối company_division_units
+    if (!ok) {
+      try {
+        const { data: links, error: linkErr } = await supabase
+          .from('company_division_units')
+          .select('division_unit_id')
+          .eq('company_id', id);
+        if (!linkErr && Array.isArray(links) && links.length) {
+          ok = links.some((r) => r?.division_unit_id && restricted.has(String(r.division_unit_id)));
+        }
+      } catch (_e) {
+        // ignore
+      }
+    }
+    if (!ok) {
       return {
         ok: false,
         error: 'Công ty được chọn không thuộc phạm vi module Sản xuất.',

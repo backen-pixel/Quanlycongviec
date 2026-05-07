@@ -88,7 +88,13 @@ export default function ProductionDashboard() {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [handoverModal, setHandoverModal] = useState(null); // { projectId, projectName }
-  const [handoverUserId, setHandoverUserId] = useState('');
+  const [handoverTargetSxColId, setHandoverTargetSxColId] = useState('');
+  const [handoverLogisticsCompanyId, setHandoverLogisticsCompanyId] = useState('');
+  const [handoverLogisticsCompanies, setHandoverLogisticsCompanies] = useState([]);
+  const [handoverDeliveryTeamId, setHandoverDeliveryTeamId] = useState('');
+  const [handoverInstallationTeamId, setHandoverInstallationTeamId] = useState('');
+  const [handoverDeliveryTeams, setHandoverDeliveryTeams] = useState([]);
+  const [handoverInstallationTeams, setHandoverInstallationTeams] = useState([]);
   const [handoverErr, setHandoverErr] = useState('');
   const [handoverSaving, setHandoverSaving] = useState(false);
 
@@ -208,6 +214,16 @@ export default function ProductionDashboard() {
   const selectAll = useCallback(() => {
     const allVisible = filteredKanbanPipelineRef.current.flatMap(s => s.items).map(p => p.id);
     setSelectedIds(new Set(allVisible));
+  }, []);
+
+  const selectColumn = useCallback((stageId) => {
+    const col = (filteredKanbanPipelineRef.current || []).find((s) => String(s.id) === String(stageId));
+    const ids = (col?.items || []).map((p) => p.id);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
   }, []);
 
   const applyBulkDeadline = useCallback(async () => {
@@ -394,30 +410,8 @@ export default function ProductionDashboard() {
 
     // Cột được đánh dấu "bàn giao VC" → gọi handover-vc, giữ card trong cột
     if (isHandover) {
-      setProjects((prev) => prev.map((p) => (p.id === projectId
-        ? { ...p, status: 'shipping', sx_kanban_column_id: targetCol.id, current_stage: null }
-        : p)));
-      try {
-        const { data } = await api.patch(`/production/projects/${projectId}/handover-vc`);
-        const updated = data?.project;
-        if (updated) {
-          setProjects((prev) => prev.map((p) => (p.id === projectId
-            ? {
-                ...p,
-                status: updated.status ?? p.status,
-                current_stage_id: updated.current_stage_id ?? null,
-                current_stage: updated.current_stage ?? null,
-                sx_kanban_column_id: targetCol.id,
-                vc_kanban_column_id: updated.vc_kanban_column_id ?? p.vc_kanban_column_id,
-                logistics_person_id: updated.logistics_person_id ?? p.logistics_person_id,
-              }
-            : p)));
-        }
-        scheduleCrmBadgeRefresh(projectId);
-      } catch (e) {
-        console.error(e);
-        load();
-      }
+      // Không auto-call API khi kéo thả vào cột bàn giao VC vì cần chọn công ty VC + đội + người nhận.
+      openHandoverModal(projectId, current?.name || current?.code || projectId, targetCol?.id || '');
       return;
     }
 
@@ -436,7 +430,7 @@ export default function ProductionDashboard() {
       : p)));
 
     try {
-      await api.patch(`/production/projects/${projectId}/stage`, { stage_id: wid });
+      await api.patch(`/production/projects/${projectId}/stage`, { stage_id: wid, company_id: companyParam || undefined });
       scheduleCrmBadgeRefresh(projectId);
     } catch (e) {
       console.error(e);
@@ -444,14 +438,14 @@ export default function ProductionDashboard() {
     }
   }, [load, projects]);
 
-  const handleHandoverVC = useCallback(async (projectId, projectName, logisticsPersonId) => {
+  const handleHandoverVC = useCallback(async (projectId, projectName, logisticsCompanyId) => {
     try {
       // Cập nhật optimistic: đổi status thành shipping, GIỮ trong kanban
       setProjects((prev) => prev.map((p) => (p.id === projectId
         ? { ...p, status: 'shipping', current_stage: null }
         : p)));
       const { data } = await api.patch(`/production/projects/${projectId}/handover-vc`, {
-        logistics_person_id: logisticsPersonId || undefined,
+        logistics_company_id: logisticsCompanyId || undefined,
       });
       const updated = data?.project;
       if (updated) {
@@ -463,6 +457,8 @@ export default function ProductionDashboard() {
               current_stage: updated.current_stage ?? null,
               vc_kanban_column_id: updated.vc_kanban_column_id ?? p.vc_kanban_column_id,
               logistics_person_id: updated.logistics_person_id ?? p.logistics_person_id,
+              delivery_team_id: updated.delivery_team_id ?? p.delivery_team_id,
+              installation_team_id: updated.installation_team_id ?? p.installation_team_id,
             }
           : p)));
       }
@@ -474,25 +470,85 @@ export default function ProductionDashboard() {
     }
   }, [load]);
 
-  const openHandoverModal = useCallback((projectId, projectName) => {
+  const openHandoverModal = useCallback((projectId, projectName, sxTargetColId = '') => {
     setHandoverModal({ projectId, projectName });
+    setHandoverTargetSxColId(sxTargetColId ? String(sxTargetColId) : '');
     setHandoverErr('');
-    setHandoverUserId('');
+    setHandoverLogisticsCompanyId('');
+    setHandoverLogisticsCompanies([]);
+    setHandoverDeliveryTeamId('');
+    setHandoverInstallationTeamId('');
+    setHandoverDeliveryTeams([]);
+    setHandoverInstallationTeams([]);
   }, []);
+
+  // Load logistics companies for VC handover modal
+  useEffect(() => {
+    if (!handoverModal) return;
+    api
+      .get('/companies', { params: { for_module: 'logistics' } })
+      .then((r) => {
+        const list = r.data?.companies || r.data || [];
+        const arr = Array.isArray(list) ? list : [];
+        setHandoverLogisticsCompanies(arr);
+        if (arr.length === 1) setHandoverLogisticsCompanyId(String(arr[0].id));
+      })
+      .catch(() => {
+        setHandoverLogisticsCompanies([]);
+      });
+  }, [handoverModal, companyParam]);
+
+  // Load teams for VC handover modal after choosing logistics company
+  useEffect(() => {
+    if (!handoverModal) return;
+    if (!handoverLogisticsCompanyId) return;
+    const params = { company_id: handoverLogisticsCompanyId };
+    Promise.all([
+      api.get('/workshop-teams', { params: { ...params, type: 'delivery' } }).catch(() => ({ data: [] })),
+      api.get('/workshop-teams', { params: { ...params, type: 'installation' } }).catch(() => ({ data: [] })),
+    ])
+      .then(([d, i]) => {
+        setHandoverDeliveryTeams(Array.isArray(d.data) ? d.data : []);
+        setHandoverInstallationTeams(Array.isArray(i.data) ? i.data : []);
+      })
+      .catch(() => {
+        setHandoverDeliveryTeams([]);
+        setHandoverInstallationTeams([]);
+      });
+  }, [handoverModal, handoverLogisticsCompanyId]);
 
   const confirmHandoverVC = useCallback(async () => {
     if (!handoverModal) return;
-    if (!handoverUserId) {
-      setHandoverErr('Vui lòng chọn người nhận bàn giao VC.');
+    if (!handoverLogisticsCompanyId) {
+      setHandoverErr('Vui lòng chọn công ty Vận chuyển/Lắp đặt.');
       return;
     }
     setHandoverSaving(true);
-    await handleHandoverVC(handoverModal.projectId, handoverModal.projectName, handoverUserId);
+
+    // Optimistic: ghim thẻ ở cột bàn giao VC để không bị nhảy cột
+    setProjects((prev) => prev.map((p) => (String(p.id) === String(handoverModal.projectId)
+      ? {
+          ...p,
+          status: 'shipping',
+          current_stage: null,
+          current_stage_id: null,
+          sx_kanban_column_id: handoverTargetSxColId || p.sx_kanban_column_id,
+        }
+      : p)));
+
+    await handleHandoverVC(
+      handoverModal.projectId,
+      handoverModal.projectName,
+      handoverLogisticsCompanyId,
+    );
     setHandoverSaving(false);
     setHandoverModal(null);
-    setHandoverUserId('');
+    setHandoverTargetSxColId('');
+    setHandoverLogisticsCompanyId('');
+    setHandoverDeliveryTeamId('');
+    setHandoverInstallationTeamId('');
     setHandoverErr('');
-  }, [handoverModal, handoverUserId, handleHandoverVC]);
+  }, [handoverModal, handoverLogisticsCompanyId, handoverTargetSxColId, handleHandoverVC]);
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
@@ -848,7 +904,7 @@ export default function ProductionDashboard() {
 
       {viewMode === 'kanban' && (
         <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
-          selectedIds={selectedIds} onToggleSelect={toggleSelect} onHandoverVC={openHandoverModal} />
+          selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn} onHandoverVC={openHandoverModal} />
       )}
 
       {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
@@ -942,24 +998,32 @@ export default function ProductionDashboard() {
             <p className="text-sm text-gray-600 mb-3">
               Chọn người nhận cho dự án <strong>{handoverModal.projectName}</strong>.
             </p>
-            <select
-              value={handoverUserId}
-              onChange={(e) => { setHandoverUserId(e.target.value); setHandoverErr(''); }}
-              className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 mb-3 bg-white"
-              autoFocus
-            >
-              <option value="">— Chọn người nhận VC/LĐ —</option>
-              {allUsers
-                .filter((u) => ['logistics', 'installer', 'manager', 'admin'].includes(String(u.role || '')))
-                .map((u) => (
-                  <option key={u.id} value={u.id}>{u.full_name} {u.role ? `(${u.role})` : ''}</option>
+            <label className="flex flex-col gap-1 mb-3">
+              <span className="text-xs font-semibold text-gray-600">Công ty VC/Lắp đặt *</span>
+              <select
+                value={handoverLogisticsCompanyId}
+                onChange={(e) => {
+                  setHandoverLogisticsCompanyId(e.target.value);
+                  setHandoverErr('');
+                  setHandoverDeliveryTeamId('');
+                  setHandoverInstallationTeamId('');
+                }}
+                className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 bg-white"
+              >
+                <option value="">— Chọn công ty —</option>
+                {handoverLogisticsCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
                 ))}
-            </select>
+              </select>
+              <span className="text-[11px] text-gray-500">
+                Pipeline VC và danh sách đội sẽ theo công ty này.
+              </span>
+            </label>
             {handoverErr && <p className="text-xs text-red-600 mb-3">{handoverErr}</p>}
             <div className="flex gap-2">
               <button onClick={() => !handoverSaving && setHandoverModal(null)}
                 className="flex-1 h-10 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 cursor-pointer">Hủy</button>
-              <button onClick={confirmHandoverVC} disabled={!handoverUserId || handoverSaving}
+              <button onClick={confirmHandoverVC} disabled={!handoverLogisticsCompanyId || handoverSaving}
                 className="flex-1 h-10 bg-orange-600 text-white rounded-lg text-sm font-semibold hover:bg-orange-700 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2">
                 {handoverSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
                 {handoverSaving ? 'Đang bàn giao...' : 'Xác nhận bàn giao'}
@@ -992,7 +1056,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value }) {
 }
 
 // ── KANBAN STAGE CARD (y hệt CRM KanbanStageCard) ──────────────────────────
-function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onHandoverVC }) {
+function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
@@ -1050,6 +1114,16 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {onSelectColumn && items.length > 0 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onSelectColumn(stage.id); }}
+                className="px-2 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 text-[11px] font-semibold rounded border border-blue-100 cursor-pointer"
+                title="Chọn tất cả dự án trong cột này"
+              >
+                Chọn cột
+              </button>
+            )}
             <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs font-bold rounded">{items.length}</span>
           </div>
         </div>
@@ -1107,6 +1181,15 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
   // Deal mới từ CRM (sx_intake) luôn ưu tiên badge "Mới"; fallback theo 24h như cũ
   const isNew = !!item.sx_intake || (item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000);
   const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(item.status || ''));
+  const crmRegionName = (() => {
+    try {
+      const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
+      const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
+      return deal?.crm_region?.name || null;
+    } catch {
+      return null;
+    }
+  })();
 
   return (
     <div
@@ -1167,6 +1250,13 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </p>
       )}
 
+      {/* Khu vực CRM — hiển thị giống CRM */} 
+      {crmRegionName && (
+        <p className="text-[11px] text-slate-600 mb-2 truncate" title={crmRegionName}>
+          📍 {crmRegionName}
+        </p>
+      )}
+
       {/* Customer name + phone */}
       {(item.customer?.full_name || item.customer?.phone) && (
         <div className="space-y-0.5 mb-2">
@@ -1222,6 +1312,22 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
+      {/* % hoàn thành theo cột pipeline SX (setup %) */}
+      {item.sx_pipeline_percent !== null && item.sx_pipeline_percent !== undefined && (
+        <div className="mt-2">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[10px] text-gray-400">🏭 % hoàn thành (theo cột)</span>
+            <span className="text-[10px] font-bold text-teal-700">{Number(item.sx_pipeline_percent) || 0}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-300 bg-teal-500"
+              style={{ width: `${Math.max(0, Math.min(100, Number(item.sx_pipeline_percent) || 0))}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Deadline — màu sắc như CRM */}
       {item.deadline && !item.production_deadline && (
         <div className={`mt-2 text-[10px] px-2 py-1 rounded-lg font-medium ${
@@ -1269,7 +1375,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
             e.stopPropagation();
             if (handingOver) return;
             setHandingOver(true);
-            Promise.resolve(onHandoverVC(item.id, item.name)).finally(() => setHandingOver(false));
+            Promise.resolve(onHandoverVC(item.id, item.name, stage?.id)).finally(() => setHandingOver(false));
           }}
           className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-semibold
             bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 hover:border-orange-400
@@ -1287,7 +1393,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 }
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
-function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onHandoverVC }) {
+function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC }) {
   return (
     <WorkshopPipelineKanbanScroll cardSelector="[data-sx-kanban-card]">
       <div className="flex gap-0 min-w-max">
@@ -1300,6 +1406,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
             calculateDays={calculateDays}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
+            onSelectColumn={onSelectColumn}
             onHandoverVC={onHandoverVC}
           />
         ))}

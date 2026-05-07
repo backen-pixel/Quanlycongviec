@@ -35,6 +35,42 @@ const r = Router();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// Simple in-memory rate limiter (per key + ip)
+const _rateBucket = new Map();
+function checkRateLimit({ apiKeyId, ip, windowMs = 60_000, limit = 60 }) {
+  const now = Date.now();
+  const bucketKey = `${apiKeyId || 'unknown'}:${ip || 'unknown'}`;
+  const cur = _rateBucket.get(bucketKey) || { t: now, c: 0 };
+  if (now - cur.t > windowMs) {
+    _rateBucket.set(bucketKey, { t: now, c: 1 });
+    return { ok: true, remaining: limit - 1 };
+  }
+  if (cur.c >= limit) return { ok: false, remaining: 0 };
+  cur.c += 1;
+  _rateBucket.set(bucketKey, cur);
+  return { ok: true, remaining: Math.max(0, limit - cur.c) };
+}
+
+async function tryAuditLog(req, { status, error, created_lead_id } = {}) {
+  try {
+    await supabase.from('external_api_logs').insert({
+      api_key_id: req.apiKey?.id || null,
+      api_key_name: req.apiKey?.name || null,
+      company_id: req.apiKey?.company_id || null,
+      endpoint: req.originalUrl || null,
+      method: req.method || null,
+      status: status || null,
+      ip: req.ip || (req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : null),
+      user_agent: req.headers['user-agent'] || null,
+      error: error ? String(error) : null,
+      created_lead_id: created_lead_id || null,
+      created_at: new Date().toISOString(),
+    });
+  } catch (_) {
+    // ignore if table doesn't exist / permission issue
+  }
+}
+
 async function nextLeadCode() {
   const { count } = await supabase
     .from('crm_leads')
@@ -149,6 +185,11 @@ async function notifyAssignee(req, userId, lead, apiKeyName) {
 // ── POST /api/external/leads ──────────────────────────────────────────────────
 
 r.post('/leads', apiKeyAuth, async (req, res) => {
+  const rl = checkRateLimit({ apiKeyId: req.apiKey?.id, ip: req.ip });
+  if (!rl.ok) {
+    await tryAuditLog(req, { status: 429, error: 'rate_limited' });
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  }
   try {
     const {
       title,
@@ -156,7 +197,6 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       source_name,
       stage_id,
       assigned_to,
-      company_id,
       estimated_value,
       description,
       notes,
@@ -164,10 +204,38 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     } = req.body;
 
     if (!title || !String(title).trim()) {
+      await tryAuditLog(req, { status: 400, error: 'missing_title' });
       return res.status(400).json({ error: 'Trường title (tên lead) là bắt buộc' });
     }
 
-    const customerId = await findOrCreateCustomer({ full_name, phone, email, address, company: customerCompany });
+    const normalizePhone = (v) => (v == null ? '' : String(v)).replace(/\s+/g, '').trim();
+    const normalizeEmail = (v) => (v == null ? '' : String(v)).trim().toLowerCase();
+    const nPhone = normalizePhone(phone);
+    const nEmail = normalizeEmail(email);
+
+    // assigned_to: nếu gửi lên thì bắt buộc thuộc đúng công ty của API key
+    if (assigned_to) {
+      const { data: u, error: ue } = await supabase.from('users').select('id, company_id, is_active').eq('id', assigned_to).maybeSingle();
+      if (ue) throw ue;
+      if (!u || u.is_active === false) {
+        await tryAuditLog(req, { status: 400, error: 'invalid_assigned_to' });
+        return res.status(400).json({ error: 'assigned_to không hợp lệ (user không tồn tại hoặc đã bị tắt)' });
+      }
+      if (u.company_id !== req.apiKey.company_id) {
+        await tryAuditLog(req, { status: 400, error: 'assigned_to_wrong_company' });
+        return res.status(400).json({ error: 'assigned_to phải thuộc đúng công ty của API key' });
+      }
+    }
+
+    if (estimated_value != null && estimated_value !== '') {
+      const n = Number(estimated_value);
+      if (!Number.isFinite(n) || n < 0) {
+        await tryAuditLog(req, { status: 400, error: 'invalid_estimated_value' });
+        return res.status(400).json({ error: 'estimated_value không hợp lệ (phải là số >= 0)' });
+      }
+    }
+
+    const customerId = await findOrCreateCustomer({ full_name, phone: nPhone || null, email: nEmail || null, address, company: customerCompany });
     const sourceId = await findOrCreateSource(source_name);
     const resolvedStageId = stage_id || (await getFirstLeadStage());
     const resolvedAssignee = assigned_to || req.apiKey.default_assigned_to || null;
@@ -184,7 +252,7 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
         stage_id: resolvedStageId,
         assigned_to: resolvedAssignee,
         lead_owner_id: resolvedAssignee,
-        company_id: company_id || null,
+        company_id: req.apiKey.company_id,
         estimated_value: estimated_value ? Number(estimated_value) : null,
         description: description || null,
         notes: notes || null,
@@ -198,6 +266,8 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       .single();
 
     if (error) throw error;
+
+    await tryAuditLog(req, { status: 201, created_lead_id: lead.id });
 
     // Ghi log nguồn gốc vào activity
     await supabase.from('crm_activities').insert({
@@ -243,6 +313,7 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     });
   } catch (e) {
     console.error('[External API] Error:', e.message);
+    await tryAuditLog(req, { status: 500, error: e.message });
     res.status(500).json({ error: e.message });
   }
 });

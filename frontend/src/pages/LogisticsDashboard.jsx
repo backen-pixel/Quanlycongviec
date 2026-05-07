@@ -49,6 +49,7 @@ export default function LogisticsDashboard() {
   const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);
   const [pipeline, setPipeline] = useState([]);
+  const projectsRef = useRef([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
   const [priorityFilter, setPriorityFilter] = useState(() => (typeof P0?.priorityFilter === 'string' ? P0.priorityFilter : ''));
@@ -114,16 +115,24 @@ export default function LogisticsDashboard() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
   // Tự reload khi có project bàn giao sang VC qua socket
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
     const handler = (data) => {
-      // Reload nếu project chuyển sang trạng thái logistics
+      // Chỉ reload khi có dự án "mới xuất hiện" trong module VC (bàn giao từ SX),
+      // tránh reload toàn trang khi user đang kéo thả đổi cột ngay trong VC.
+      const pid = data?.id || data?.project_id || data?.project?.id;
+      if (!pid) return;
+      const existed = (projectsRef.current || []).some((p) => String(p.id) === String(pid));
+      if (existed) return;
+
       const s = data?.status || data?.project?.status;
-      if (s === 'shipping' || s === 'installing' || s === 'warranty' || s === 'completed') {
-        load();
-      }
+      if (s === 'shipping' || s === 'installing' || s === 'warranty' || s === 'completed') load();
     };
     socket.on('project:stage_changed', handler);
     return () => socket.off('project:stage_changed', handler);
@@ -845,7 +854,8 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) 
   const stageColor = stage.color || '#f97316';
   const doneTasks = item.done_tasks ?? 0;
   const totalTasks = item.task_total ?? 0;
-  const progressPercent = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : (item.progress || 0);
+  const pipelinePercent = item.vc_pipeline_percent;
+  const taskPercent = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : (item.progress || 0);
   const assignee = item.logistics_person || item.production_person || item.assignee;
   const getInitials = (name) => !name ? '?' : name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
   const isNew = item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000;
@@ -940,19 +950,35 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) 
         </div>
       )}
 
-      {totalTasks > 0 && (
+      {/* % hoàn thành theo cột pipeline VC/LĐ (setup %) — ưu tiên hiển thị */}
+      {pipelinePercent !== null && pipelinePercent !== undefined ? (
         <div className="mt-2">
           <div className="flex items-center justify-between mb-0.5">
-            <span className="text-[10px] text-gray-400">✅ Hoàn thành <span className="text-gray-500">{doneTasks}/{totalTasks} việc</span></span>
-            <span className={`text-[10px] font-bold ${progressPercent >= 100 ? 'text-green-600' : progressPercent >= 50 ? 'text-orange-600' : 'text-amber-600'}`}>{progressPercent}%</span>
+            <span className="text-[10px] text-gray-400">🚚 % hoàn thành (theo cột)</span>
+            <span className="text-[10px] font-bold text-orange-700">{Number(pipelinePercent) || 0}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all duration-300 ${progressPercent >= 100 ? 'bg-green-500' : progressPercent >= 50 ? 'bg-orange-500' : 'bg-amber-500'}`}
-              style={{ width: `${progressPercent}%` }}
+              className="h-full rounded-full transition-all duration-300 bg-orange-500"
+              style={{ width: `${Math.max(0, Math.min(100, Number(pipelinePercent) || 0))}%` }}
             />
           </div>
         </div>
+      ) : (
+        totalTasks > 0 && (
+          <div className="mt-2">
+            <div className="flex items-center justify-between mb-0.5">
+              <span className="text-[10px] text-gray-400">✅ Hoàn thành <span className="text-gray-500">{doneTasks}/{totalTasks} việc</span></span>
+              <span className={`text-[10px] font-bold ${taskPercent >= 100 ? 'text-green-600' : taskPercent >= 50 ? 'text-orange-600' : 'text-amber-600'}`}>{taskPercent}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${taskPercent >= 100 ? 'bg-green-500' : taskPercent >= 50 ? 'bg-orange-500' : 'bg-amber-500'}`}
+                style={{ width: `${taskPercent}%` }}
+              />
+            </div>
+          </div>
+        )
       )}
     </div>
   );
