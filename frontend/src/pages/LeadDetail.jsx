@@ -460,26 +460,8 @@ export default function LeadDetail() {
     if (targetStage?.is_won && lead?.type !== 'deal') {
       const hasAssignee = !!(lead?.assigned_to || lead?.lead_owner_id);
       if (!hasAssignee) {
-        // Chưa có người phụ trách: chỉ admin chọn người; NV tự gắn phụ trách = chính mình (backend convert-to-deal fallback)
-        if (isAdminUser) {
-          setAssignBeforeWonUser('');
-          setShowAssignBeforeWonModal(true);
-        } else {
-          (async () => {
-            setAssigningForWon(true);
-            setAssignBeforeWonError('');
-            try {
-              const { data } = await api.post(`/crm/leads/${id}/convert-to-deal`, {
-                company_id: lead?.company_id || undefined,
-              });
-              navigateToCrmDealFocused(data?.deal?.id || data?.id || id);
-            } catch (e) {
-              alert(e.response?.data?.error || 'Lỗi chuyển sang Deal');
-            } finally {
-              setAssigningForWon(false);
-            }
-          })();
-        }
+        setAssignBeforeWonUser('');
+        setShowAssignBeforeWonModal(true);
       } else {
         setShowConvertModal(true);
       }
@@ -598,7 +580,7 @@ export default function LeadDetail() {
         company_id: lead?.company_id || undefined,
       });
       setShowAssignBeforeWonModal(false);
-      navigateToCrmDealFocused(data?.deal?.id || data?.id || id);
+      navigateToCrmDealFocused(data?.lead?.id || data?.deal?.id || data?.id || id);
     } catch (e) {
       setAssignBeforeWonError(e.response?.data?.error || 'Lỗi chuyển sang Deal');
     } finally {
@@ -1043,7 +1025,6 @@ export default function LeadDetail() {
             allUsers={allUsers}
             onUpdate={() => load({ silent: true })}
             currentUser={user}
-            canAssignOwner={isAdminUser}
             productionCompaniesSx={productionCompaniesSx}
           />
 
@@ -1187,6 +1168,7 @@ export default function LeadDetail() {
                   users={allUsers}
                   onArtifactsSynced={refreshTaskSyncedDocuments}
                   refreshKey={crmTasksRefreshKey}
+                  sxTemplateCompanyId={lead?.sx_template_company_id || null}
                 />
               ) : activeTab === 'documents' ? (
                 <>
@@ -1510,7 +1492,7 @@ export default function LeadDetail() {
       </Modal>
 
       {/* Modal chọn người phụ trách trước khi chuyển sang Deal (won stage) */}
-      {showAssignBeforeWonModal && isAdminUser && (
+      {showAssignBeforeWonModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!assigningForWon) { setShowAssignBeforeWonModal(false); setAssignBeforeWonError(''); } }}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-1">
@@ -2152,7 +2134,7 @@ function AddDocumentModal({ onClose, onSave }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LeadInfoPanel — Inline editable fields (always visible)
 // ═══════════════════════════════════════════════════════════════════════════
-function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner = false, productionCompaniesSx = [] }) {
+function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompaniesSx = [] }) {
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
   /** Khu vực CRM — chỉ theo company_id của lead (company_regions) */
@@ -2179,11 +2161,13 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
       expected_production_start_date: lead.expected_production_start_date || '',
       expected_production_end_date: lead.expected_production_end_date || '',
       sale_acknowledged: false,
-      production_company_id: lead.company_id ? String(lead.company_id) : '',
+      production_company_id: lead.sx_template_company_id
+        ? String(lead.sx_template_company_id)
+        : (lead.company_id ? String(lead.company_id) : ''),
     });
     setSxHandoverNotice('');
     setSxHandoverExpanded(false);
-  }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_handover_at, lead?.construction_start_date, lead?.expected_production_start_date, lead?.expected_production_end_date]);
+  }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_handover_at, lead?.sx_template_company_id, lead?.construction_start_date, lead?.expected_production_start_date, lead?.expected_production_end_date]);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'crm' } }).then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
@@ -2462,7 +2446,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
             </p>
             {!lead?.company_id ? (
               <p className="text-xs text-amber-500 italic">⚠️ Chọn công ty trước</p>
-            ) : canAssignOwner ? (
+            ) : (
               <EmployeePicker
                 companyId={lead?.company_id}
                 value={lead?.assigned_to || lead?.lead_owner_id || ''}
@@ -2470,13 +2454,6 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, canAssignOwner =
                 placeholder="👤 Chọn nhân viên phụ trách..."
                 size="sm"
               />
-            ) : (
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-gray-900">
-                  {lead?.assignee?.full_name || lead?.lead_owner?.full_name || '—'}
-                </p>
-                <p className="text-[10px] text-gray-400">Chỉ admin mới đổi người phụ trách.</p>
-              </div>
             )}
           </div>
         </div>
@@ -2748,8 +2725,6 @@ function CustomerCreateForm({ leadId, onCreated }) {
 }
 
 function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose, onSuccess }) {
-  const { user: authUser } = useAuth();
-  const canPickOwner = authUser?.role === 'admin';
   const [converting, setConverting] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState('');
@@ -2776,11 +2751,11 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
     setConverting(true);
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`, {
-        ...(canPickOwner && selectedSales ? { assigned_to: selectedSales } : {}),
+        ...(selectedSales ? { assigned_to: selectedSales } : {}),
         company_id: selectedCompany || undefined,
       });
       alert(`✅ ${data.message}`);
-      onSuccess(data?.deal?.id || data?.id || leadId);
+      onSuccess(data?.lead?.id || data?.deal?.id || data?.id || leadId);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
     }
@@ -2826,29 +2801,19 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
             </div>
           )}
 
-          {canPickOwner ? (
-            <div>
-              <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Người phụ trách sau khi chuyển Deal</label>
-              <EmployeePicker
-                companyId={selectedCompany}
-                value={selectedSales}
-                onChange={(userId) => setSelectedSales(userId || '')}
-                placeholder="Chọn nhân viên phụ trách..."
-                size="md"
-              />
-              {!selectedCompany && (
-                <p className="text-[10px] text-amber-500 mt-0.5">⚠️ Chọn công ty trước để lọc nhân viên</p>
-              )}
-            </div>
-          ) : (
-            <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-              <p className="text-xs font-bold text-gray-700 mb-1">👤 Người phụ trách sau khi chuyển Deal</p>
-              <p className="text-sm text-gray-800">
-                {lead?.assignee?.full_name || lead?.lead_owner?.full_name || 'Theo mặc định hệ thống (tài khoản của bạn nếu chưa có).'}
-              </p>
-              <p className="text-[10px] text-gray-500 mt-1">Chỉ admin mới được chọn người phụ trách khi chuyển Deal.</p>
-            </div>
-          )}
+          <div>
+            <label className="text-xs font-bold text-gray-700 mb-1 block">👤 Người phụ trách sau khi chuyển Deal</label>
+            <EmployeePicker
+              companyId={selectedCompany}
+              value={selectedSales}
+              onChange={(userId) => setSelectedSales(userId || '')}
+              placeholder="Chọn nhân viên phụ trách..."
+              size="md"
+            />
+            {!selectedCompany && (
+              <p className="text-[10px] text-amber-500 mt-0.5">⚠️ Chọn công ty trước để lọc nhân viên</p>
+            )}
+          </div>
 
           <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
             <p className="text-sm text-blue-800">

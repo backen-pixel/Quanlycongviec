@@ -9,6 +9,7 @@ export type CrmStackParamList = {
 
 export type VoiceStackParamList = {
   VoiceRecordingsList: undefined;
+  VoiceLocalRecordings: undefined;
 };
 
 export type MoreStackParamList = {

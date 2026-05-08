@@ -1,6 +1,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import VoiceRecordingsScreen from '../screens/VoiceRecordingsScreen';
+import VoiceLocalRecordingsScreen from '../screens/VoiceLocalRecordingsScreen';
 import type { VoiceStackParamList } from './types';
 import { CrmColors } from '../theme/crmTheme';
 
@@ -25,6 +26,11 @@ export default function VoiceStackNavigator() {
         name="VoiceRecordingsList"
         component={VoiceRecordingsScreen}
         options={{ title: 'Ghi âm CRM' }}
+      />
+      <Stack.Screen
+        name="VoiceLocalRecordings"
+        component={VoiceLocalRecordingsScreen}
+        options={{ title: 'Bản ghi trên máy' }}
       />
     </Stack.Navigator>
   );

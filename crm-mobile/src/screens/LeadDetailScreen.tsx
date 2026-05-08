@@ -21,7 +21,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api, formatApiError, postMultipart } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { canAssigneeFilterDeals, canAssigneeFilterLeads } from '../lib/crmMobilePrefs';
 import type { CrmActivity, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmStage, CrmTask } from '../types/crm';
 import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
@@ -496,8 +495,7 @@ export default function LeadDetailScreen() {
 
   const saveLeadCoreMeta = async () => {
     if (!lead) return;
-    const canPick =
-      lead.type === 'deal' ? canAssigneeFilterDeals(user?.role) : canAssigneeFilterLeads(user?.role);
+    const pickAssigneeAllowed = !!lead.company_id;
     const dateStr = createdAtDraft.trim();
     if (dateStr && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       Alert.alert('Ngày tạo', 'Dùng định dạng YYYY-MM-DD (ví dụ 2026-04-16).');
@@ -508,7 +506,7 @@ export default function LeadDetailScreen() {
 
     const body: Record<string, unknown> = { estimated_value };
     if (dateStr) body.created_at = `${dateStr}T12:00:00.000Z`;
-    if (canPick) {
+    if (pickAssigneeAllowed) {
       body.assigned_to = assignDraftId.trim() || null;
     }
 
@@ -659,7 +657,7 @@ export default function LeadDetailScreen() {
   const c = lead.customer;
   const isDeal = lead.type === 'deal';
   const canConvert = !isDeal;
-  const canPickAssignee = isDeal ? canAssigneeFilterDeals(user?.role) : canAssigneeFilterLeads(user?.role);
+  const canPickAssignee = !!lead.company_id;
   const assigneeLabel = !assignDraftId
     ? '— Chưa gán —'
     : pickerUsers.find((u) => u.id === assignDraftId)?.full_name ||
@@ -1024,12 +1022,12 @@ export default function LeadDetailScreen() {
               <View style={styles.fieldBlock}>
                 <Text style={styles.fieldLabel}>👤 Người phụ trách</Text>
                 <Text style={styles.fieldValue}>{assigneeLabel}</Text>
-                {canPickAssignee ? (
+                {!lead.company_id ? (
+                  <Text style={styles.metaHintSm}>Chọn công ty cho lead/deal trên web trước khi đổi người phụ trách.</Text>
+                ) : (
                   <TouchableOpacity style={styles.pickAssignBtn} onPress={() => void openAssigneePicker()}>
                     <Text style={styles.pickAssignBtnTxt}>Chọn nhân viên…</Text>
                   </TouchableOpacity>
-                ) : (
-                  <Text style={styles.metaHintSm}>Chỉ tài khoản có quyền quản trị mới đổi phụ trách trên mobile.</Text>
                 )}
               </View>
 

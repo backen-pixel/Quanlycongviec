@@ -189,6 +189,19 @@ function unifyCrmLeadResponsibleFields(body) {
   return body;
 }
 
+/** Gán phụ trách: nhân viên mới phải cùng `company_id` với lead/deal (khi bản ghi đã có công ty). */
+async function assertCrmAssigneeUserMatchesLeadCompany(sb, assigneeUserId, leadCompanyId) {
+  if (!assigneeUserId) return { ok: true };
+  const { data: u, error } = await sb.from('users').select('id, company_id').eq('id', assigneeUserId).maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!u) return { ok: false, error: 'Nhân viên không tồn tại.' };
+  if (!leadCompanyId) return { ok: false, error: 'Lead/Deal chưa có công ty — chọn công ty trước khi gán người phụ trách.' };
+  if (String(u.company_id || '').trim() !== String(leadCompanyId).trim()) {
+    return { ok: false, error: 'Người phụ trách phải thuộc công ty của lead/deal.' };
+  }
+  return { ok: true };
+}
+
 function shallowMergeTemplateData(globalObj, pipelineObj) {
   const g = globalObj && typeof globalObj === 'object' && !Array.isArray(globalObj) ? globalObj : {};
   const p = pipelineObj && typeof pipelineObj === 'object' && !Array.isArray(pipelineObj) ? pipelineObj : {};
@@ -3490,6 +3503,7 @@ r.put('/leads/:id', async (req, res) => {
     delete safeBody.sx_pipeline_stage_id;
     delete safeBody.lead_seen_by;
     delete safeBody.sx_handover_at;
+    delete safeBody.sx_template_company_id;
     delete safeBody.sx_handover_confirmed_by;
     delete safeBody.construction_start_date;
     delete safeBody.expected_production_start_date;
@@ -3501,22 +3515,26 @@ r.put('/leads/:id', async (req, res) => {
       return res.status(403).json({ error: 'Không thể chuyển lead/deal sang công ty khác' });
     }
 
-    // Chỉ admin mới được đổi người phụ trách / gán nhân viên trên chi tiết Lead/Deal
     const wantsOwnerChange =
       Object.prototype.hasOwnProperty.call(req.body, 'assigned_to')
       || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id');
-    if (wantsOwnerChange && !userIsCrmCompanyOrRegionAdmin(req)) {
-      return res.status(403).json({ error: 'Chỉ admin mới được gán / điều chỉnh người phụ trách.' });
-    }
-
-    if (oldLead?.type === 'deal' && !userSeesAllCrmDealsForScope(req.user)) {
-      if (safeBody.assigned_to != null && String(safeBody.assigned_to) !== String(req.user.userId)) {
-        return res.status(403).json({ error: 'Bạn không thể giao phụ trách deal cho người khác.' });
+    if (wantsOwnerChange) {
+      const newOwner = safeBody.assigned_to;
+      const prevOwner = oldLead?.assigned_to || oldLead?.lead_owner_id;
+      const adminLike = userIsCrmCompanyOrRegionAdmin(req);
+      if (newOwner == null && prevOwner != null && !adminLike) {
+        return res.status(403).json({ error: 'Chỉ admin mới được bỏ gán người phụ trách.' });
       }
-    }
-    if (oldLead?.type === 'lead' && !userSeesAllCrmLeadsForScope(req.user)) {
-      if (safeBody.assigned_to != null && String(safeBody.assigned_to) !== String(req.user.userId)) {
-        return res.status(403).json({ error: 'Chỉ admin mới giao phụ trách lead cho người khác.' });
+      if (newOwner != null) {
+        const lc = oldLead?.company_id;
+        if (!lc) {
+          if (!adminLike) {
+            return res.status(400).json({ error: 'Chọn công ty cho lead/deal trước khi đổi người phụ trách.' });
+          }
+        } else {
+          const v = await assertCrmAssigneeUserMatchesLeadCompany(supabase, newOwner, lc);
+          if (!v.ok) return res.status(400).json({ error: v.error });
+        }
       }
     }
 
@@ -4037,6 +4055,15 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     // Update lead → deal (một người phụ trách)
     const ownerId = req.body.assigned_to || lead.assigned_to || lead.lead_owner_id || req.user.userId;
+    if (req.body.assigned_to && !companyId) {
+      if (!userIsCrmCompanyOrRegionAdmin(req)) {
+        return res.status(400).json({ error: 'Chọn công ty cho lead trước khi gán người phụ trách khi chuyển Deal.' });
+      }
+    }
+    if (ownerId && companyId) {
+      const v = await assertCrmAssigneeUserMatchesLeadCompany(supabase, ownerId, companyId);
+      if (!v.ok) return res.status(400).json({ error: v.error });
+    }
     const { data: updatedLead, error: leadError } = await supabase
       .from('crm_leads')
       .update({
@@ -4138,7 +4165,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 r.patch('/leads/:id/stage', async (req, res) => {
   try {
     const { stage_id, lost_reason, production_company_id } = req.body;
-    const { data: lead } = await supabase.from('crm_leads').select('type, project_id').eq('id', req.params.id).single();
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id')
+      .eq('id', req.params.id)
+      .single();
     
     const { data: stage } = await supabase
       .from('crm_pipeline_stages')
@@ -4165,6 +4196,23 @@ r.patch('/leads/:id/stage', async (req, res) => {
       if (!v.ok) {
         return res.status(400).json({ error: v.error, requires_production_company: true });
       }
+    } else if (lead?.type === 'deal' && isProductionStage && lead?.project_id) {
+      let pc = await resolveProductionCompanyForDealStage(req.params.id, production_company_id);
+      if (!pc) {
+        const { data: proj } = await supabase
+          .from('projects')
+          .select('company_id')
+          .eq('id', lead.project_id)
+          .maybeSingle();
+        if (proj?.company_id) pc = proj.company_id;
+      }
+      if (pc) {
+        const v = await validateProductionCompanyId(pc);
+        if (!v.ok) {
+          return res.status(400).json({ error: v.error, requires_production_company: true });
+        }
+        effectiveProductionCompanyId = pc;
+      }
     }
 
     // For leads: if moving to "Chuyển Deal" stage, return error requesting convert-to-deal
@@ -4189,6 +4237,9 @@ r.patch('/leads/:id/stage', async (req, res) => {
       // Chuyển thẳng vào cột Sản xuất cũng coi như đã bàn giao SX/đã chốt để Kanban SX nhận diện.
       updates.actual_close_date = updates.actual_close_date || new Date().toISOString().split('T')[0];
       updates.sx_handover_at = new Date().toISOString();
+      if (effectiveProductionCompanyId) {
+        updates.sx_template_company_id = effectiveProductionCompanyId;
+      }
     }
     if (stage?.is_lost) {
       updates.lost_reason = lost_reason || null;
@@ -4333,6 +4384,37 @@ r.patch('/leads/:id/stage', async (req, res) => {
           template_sets: (tplSets || []).filter(s => s.task_count > 0),
           auto_project_error: auto.error || null,
         };
+      }
+    }
+
+    // Gắn bộ nhiệm vụ CRM sx_* theo workshop_task_templates của công ty xưởng phụ trách
+    if (lead?.type === 'deal' && isProductionStage && effectiveProductionCompanyId) {
+      try {
+        const taskLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
+        const assigneeForSx =
+          responseLead?.assigned_to ||
+          responseLead?.lead_owner_id ||
+          updatedLeadRow?.assigned_to ||
+          updatedLeadRow?.lead_owner_id ||
+          lead?.assigned_to ||
+          lead?.lead_owner_id ||
+          null;
+        const rSx = await applyProductionTemplateToFulfillmentLead({
+          leadId: taskLeadId,
+          createdBy: req.user.userId,
+          assigneeId: assigneeForSx,
+          force: false,
+          requireTemplateCompanyMatch: true,
+          dealCompanyId: null,
+          templateSourceCompanyId: effectiveProductionCompanyId,
+        });
+        if ((rSx?.created || 0) > 0) {
+          console.log(
+            `[crm/stage] SX CRM tasks +${rSx.created} lead=${taskLeadId} workshop_company=${effectiveProductionCompanyId}`,
+          );
+        }
+      } catch (sxTplErr) {
+        console.warn('[crm/stage] apply SX CRM tasks:', sxTplErr.message);
       }
     }
 
@@ -7611,11 +7693,22 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
     const targetLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
     const { data: lead } = await supabase
       .from('crm_leads')
-      .select('id, type, company_id, assigned_to, lead_owner_id')
+      .select('id, type, company_id, assigned_to, lead_owner_id, sx_template_company_id')
       .eq('id', targetLeadId)
       .maybeSingle();
     if (!lead?.id) return res.status(404).json({ error: 'Không tìm thấy deal' });
     if (lead.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
+
+    let templateSourceCompanyId = null;
+    const bodyPc = req.body?.production_company_id;
+    if (bodyPc != null && String(bodyPc).trim() !== '') {
+      const vPc = await validateProductionCompanyId(bodyPc);
+      if (!vPc.ok) return res.status(400).json({ error: vPc.error, requires_production_company: true });
+      templateSourceCompanyId = vPc.company.id;
+    } else if (lead.sx_template_company_id) {
+      const vStored = await validateProductionCompanyId(lead.sx_template_company_id);
+      if (vStored.ok) templateSourceCompanyId = vStored.company.id;
+    }
 
     const r0 = await applyProductionTemplateToFulfillmentLead({
       leadId: targetLeadId,
@@ -7624,6 +7717,7 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
       force,
       requireTemplateCompanyMatch: true,
       dealCompanyId: lead.company_id || null,
+      templateSourceCompanyId,
     });
     if (r0?.reason === 'missing_deal_company') {
       return res.status(400).json({ error: 'Deal chưa có công ty — không thể gen nhiệm vụ SX theo công ty.' });
@@ -8314,6 +8408,30 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
 
     const b = req.body || {};
     if (!b.sale_acknowledged) return res.status(400).json({ error: 'Cần tick xác nhận Sale' });
+
+    const targetTaskLeadId = await resolveCrmTaskWriteLeadId(leadId);
+    const { data: sxTasksAll } = await supabase
+      .from('crm_tasks')
+      .select('id, status')
+      .eq('lead_id', targetTaskLeadId)
+      .like('stage_slug', 'sx_%');
+    const sxTasks = (sxTasksAll || []).filter((t) => t.status !== 'cancelled');
+    if (!sxTasks.length) {
+      return res.status(400).json({
+        error:
+          'Deal chưa có nhiệm vụ Sản xuất (tab Công việc). Chuyển deal sang cột Sản xuất (chọn công ty xưởng) để hệ thống gắn bộ nhiệm vụ, hoặc bấm Gen trong tab Công việc.',
+        code: 'requires_sx_crm_tasks',
+      });
+    }
+    const incompleteSx = sxTasks.filter((t) => t.status !== 'completed');
+    if (incompleteSx.length) {
+      return res.status(400).json({
+        error: `Còn ${incompleteSx.length} nhiệm vụ Sản xuất (sx_*) chưa hoàn thành. Hoàn tất 100% trước khi bàn giao.`,
+        code: 'requires_sx_crm_tasks_complete',
+        incomplete_count: incompleteSx.length,
+      });
+    }
+
     const resolvedHandoverPc = await resolveProductionCompanyForDealStage(leadId, b.production_company_id);
     const pcv = await validateProductionCompanyId(resolvedHandoverPc);
     if (!pcv.ok) return res.status(400).json({ error: pcv.error, requires_production_company: true });
@@ -8333,6 +8451,7 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     const { error: upLeadErr } = await supabase.from('crm_leads').update({
       sx_handover_at: now,
       sx_handover_confirmed_by: uid,
+      sx_template_company_id: pcv.company.id,
       construction_start_date: cStart,
       expected_production_start_date: pStart,
       expected_production_end_date: pEnd,
