@@ -72,6 +72,7 @@ const PREF_KEYS = new Set<string>([
 export function preferenceKeyForNotificationType(
   type: string | undefined,
   entityType?: string | null,
+  metadata?: Record<string, unknown> | null,
 ): NotifPrefToggleKey | null {
   if (!type || typeof type !== 'string') return null;
 
@@ -84,6 +85,8 @@ export function preferenceKeyForNotificationType(
     type === 'crm_deadline_overdue' ||
     type === 'crm_deadline_set'
   ) {
+    const mk = metadata && typeof metadata === 'object' ? String((metadata as { module_key?: string }).module_key || '') : '';
+    if (mk === 'production') return 'production_deadlines';
     return 'crm_lead_deadlines';
   }
 
@@ -112,8 +115,9 @@ export function isNotificationTypeEnabled(
   prefs: Partial<NotificationPrefs> | null,
   type: string | undefined,
   entityType?: string | null,
+  metadata?: Record<string, unknown> | null,
 ): boolean {
-  const key = preferenceKeyForNotificationType(type, entityType);
+  const key = preferenceKeyForNotificationType(type, entityType, metadata);
   if (!key) return true;
   if (!prefs) return true;
   const v = prefs[key];

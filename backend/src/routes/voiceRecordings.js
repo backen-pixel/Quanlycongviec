@@ -142,14 +142,19 @@ r.get('/phone-preview', async (req, res) => {
 /**
  * POST /voice-recordings/bulk-check
  * Body: { items: [{ file_name, file_size? }, ...] }
- * Trả về: { existing: [{ file_name, file_size, id, created_at, customer_id, lead_id, phone_number }] }
+ * Trả về: {
+ *   existing: [{ file_name, file_size, id, created_at, customer_id, lead_id, phone_number }],
+ *   tombstoned: [{ file_name, file_size, deleted_at, original_id }],
+ * }
  *
- * Mobile app dùng để so sánh danh sách file local với server (1 round-trip thay vì N).
+ * Mobile dùng để so danh sách file local với server (1 round-trip thay vì N).
+ * - existing  = bản ghi đang còn trên server (status: synced).
+ * - tombstoned = đã từng có nhưng bị xóa → KHÔNG quét up lại (status: deleted_on_server).
  */
 r.post('/bulk-check', async (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
-    if (items.length === 0) return res.json({ existing: [] });
+    if (items.length === 0) return res.json({ existing: [], tombstoned: [] });
     const MAX_ITEMS = 500;
     const safe = items.slice(0, MAX_ITEMS);
     const fileNames = Array.from(
@@ -159,17 +164,9 @@ r.post('/bulk-check', async (req, res) => {
           .filter((n) => !!n),
       ),
     );
-    if (fileNames.length === 0) return res.json({ existing: [] });
+    if (fileNames.length === 0) return res.json({ existing: [], tombstoned: [] });
 
-    const { data, error } = await supabase
-      .from('voice_recordings')
-      .select('id, file_name, file_size, created_at, customer_id, lead_id, phone_number')
-      .eq('user_id', req.user.userId)
-      .in('file_name', fileNames)
-      .limit(2000);
-    if (error) throw error;
-
-    // Map theo "name|size" để khớp chính xác (cùng tên có thể nhiều size khác nhau).
+    // Map theo "name" → mảng size client gửi lên (có thể nhiều size cùng tên).
     const sizeIndex = new Map();
     for (const it of safe) {
       const n = it && typeof it.file_name === 'string' ? it.file_name.trim().slice(0, 256) : '';
@@ -178,17 +175,43 @@ r.post('/bulk-check', async (req, res) => {
       if (!sizeIndex.has(n)) sizeIndex.set(n, []);
       sizeIndex.get(n).push(Number.isFinite(sz) ? sz : null);
     }
+    const matchByName = (rowName, rowSize) => {
+      const sizes = sizeIndex.get(rowName);
+      if (!sizes) return false;
+      const wantsAnySize = sizes.some((s) => s == null || s <= 0);
+      return wantsAnySize || sizes.includes(rowSize);
+    };
+
+    const [activeRes, tombRes] = await Promise.all([
+      supabase
+        .from('voice_recordings')
+        .select('id, file_name, file_size, created_at, customer_id, lead_id, phone_number')
+        .eq('user_id', req.user.userId)
+        .in('file_name', fileNames)
+        .limit(2000),
+      supabase
+        .from('voice_recordings_deleted')
+        .select('original_id, file_name, file_size, deleted_at')
+        .eq('user_id', req.user.userId)
+        .in('file_name', fileNames)
+        .limit(2000),
+    ]);
+    if (activeRes.error) throw activeRes.error;
+    if (tombRes.error && tombRes.error.code !== '42P01') throw tombRes.error; // 42P01: bảng chưa migrate → bỏ qua tombstone.
 
     const existing = [];
-    for (const row of data || []) {
-      const sizes = sizeIndex.get(row.file_name);
-      if (!sizes) continue;
-      const wantsAnySize = sizes.some((s) => s == null || s <= 0);
-      const matchSize = wantsAnySize || sizes.includes(row.file_size);
-      if (!matchSize) continue;
-      existing.push(row);
+    for (const row of activeRes.data || []) {
+      if (matchByName(row.file_name, row.file_size)) existing.push(row);
     }
-    res.json({ existing });
+    const activeKeys = new Set(existing.map((r) => `${r.file_name}|${r.file_size ?? -1}`));
+    const tombstoned = [];
+    for (const row of tombRes.data || []) {
+      if (!matchByName(row.file_name, row.file_size)) continue;
+      // Nếu file đã có active record cùng (name,size) thì coi như đã restore → không gắn tombstone.
+      if (activeKeys.has(`${row.file_name}|${row.file_size ?? -1}`)) continue;
+      tombstoned.push(row);
+    }
+    res.json({ existing, tombstoned });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Lỗi bulk-check' });
   }
@@ -196,32 +219,55 @@ r.post('/bulk-check', async (req, res) => {
 
 /**
  * GET /voice-recordings/exists?file_name=&file_size=
- * Background sync (Android) gọi trước khi upload để tránh up lại file đã có trong tài khoản.
+ * Background sync (Android) gọi trước khi upload để tránh up lại file đã có **hoặc đã từng bị xóa** trong tài khoản.
  * Chỉ scope theo user hiện tại (mỗi user có không gian dedup riêng).
+ *
+ * Trả về:
+ *  - exists: true nếu có active record HOẶC tombstone match.
+ *  - reason: 'active' | 'tombstoned' | null.
  */
 r.get('/exists', async (req, res) => {
   try {
     const fileName = req.query.file_name != null ? String(req.query.file_name).trim() : '';
     if (!fileName) return res.status(400).json({ error: 'Thiếu file_name' });
     const safeName = fileName.slice(0, 256);
+    const fileSizeRaw = req.query.file_size != null ? String(req.query.file_size).trim() : '';
+    let sizeNum = null;
+    if (fileSizeRaw) {
+      const n = Number(fileSizeRaw);
+      if (Number.isFinite(n) && n >= 0) sizeNum = n;
+    }
 
-    let q = supabase
+    let activeQ = supabase
       .from('voice_recordings')
       .select('id, file_name, file_size, created_at')
       .eq('user_id', req.user.userId)
       .eq('file_name', safeName);
+    if (sizeNum != null) activeQ = activeQ.eq('file_size', sizeNum);
+    activeQ = activeQ.order('created_at', { ascending: false }).limit(1);
 
-    const fileSizeRaw = req.query.file_size != null ? String(req.query.file_size).trim() : '';
-    if (fileSizeRaw) {
-      const n = Number(fileSizeRaw);
-      if (Number.isFinite(n) && n >= 0) q = q.eq('file_size', n);
+    const { data: activeRows, error: activeErr } = await activeQ;
+    if (activeErr) throw activeErr;
+    if (activeRows && activeRows[0]) {
+      return res.json({ exists: true, reason: 'active', id: activeRows[0].id });
     }
-    q = q.order('created_at', { ascending: false }).limit(1);
 
-    const { data, error } = await q;
-    if (error) throw error;
-    const hit = data && data[0];
-    res.json({ exists: !!hit, id: hit?.id || null });
+    let tombQ = supabase
+      .from('voice_recordings_deleted')
+      .select('original_id, file_name, file_size, deleted_at')
+      .eq('user_id', req.user.userId)
+      .eq('file_name', safeName);
+    if (sizeNum != null) tombQ = tombQ.eq('file_size', sizeNum);
+    tombQ = tombQ.order('deleted_at', { ascending: false }).limit(1);
+
+    const { data: tombRows, error: tombErr } = await tombQ;
+    // Nếu bảng chưa migrate (42P01), bỏ qua tombstone — không treo background sync.
+    if (tombErr && tombErr.code !== '42P01') throw tombErr;
+    if (tombRows && tombRows[0]) {
+      return res.json({ exists: true, reason: 'tombstoned', id: tombRows[0].original_id || null });
+    }
+
+    res.json({ exists: false, reason: null, id: null });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Lỗi kiểm tra' });
   }
@@ -521,6 +567,28 @@ r.post('/', upload.single('audio'), async (req, res) => {
       .single();
 
     if (error) throw error;
+
+    // User chủ động upload file đã từng bị xóa → gỡ tombstone để không hiển thị "deleted_on_server" nữa.
+    try {
+      const fnameForTomb = (req.file.originalname || req.file.filename || '').slice(0, 256);
+      const fsizeForTomb = Number(req.file.size || 0);
+      if (fnameForTomb) {
+        let delQ = supabase
+          .from('voice_recordings_deleted')
+          .delete()
+          .eq('user_id', req.user.userId)
+          .eq('file_name', fnameForTomb);
+        if (Number.isFinite(fsizeForTomb) && fsizeForTomb > 0) {
+          delQ = delQ.eq('file_size', fsizeForTomb);
+        }
+        const { error: delErr } = await delQ;
+        if (delErr && delErr.code !== '42P01') {
+          console.warn('[voice-recordings] gỡ tombstone lỗi (bỏ qua):', delErr.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[voice-recordings] gỡ tombstone block lỗi (bỏ qua):', e.message);
+    }
 
     // Ghép lại một lần nếu vừa insert xong DB đã có thêm lead (race nhỏ)
     if (phone_number && data?.id && (!data.customer_id || !data.lead_id)) {
@@ -840,11 +908,14 @@ r.patch('/:id', async (req, res) => {
   }
 });
 
-/** DELETE /voice-recordings/:id */
+/** DELETE /voice-recordings/:id — xóa bản ghi + ghi tombstone để background sync không upload lại file đó. */
 r.delete('/:id', async (req, res) => {
   try {
     const admin = isVoiceRecordingsAdmin(req.user?.role);
-    let q = supabase.from('voice_recordings').select('id, storage_path').eq('id', req.params.id);
+    let q = supabase
+      .from('voice_recordings')
+      .select('id, user_id, file_name, file_size, device_label, storage_path')
+      .eq('id', req.params.id);
     if (!admin) q = q.eq('user_id', req.user.userId);
     const { data: row, error: fe } = await q.single();
     if (fe || !row) return res.status(404).json({ error: 'Không tìm thấy' });
@@ -855,7 +926,7 @@ r.delete('/:id', async (req, res) => {
       } catch {
         /* ignore */
       }
-    } else {
+    } else if (row.storage_path) {
       const abs = path.resolve(path.join(__dirname, '../../', row.storage_path));
       const rootResolved = path.resolve(UPLOAD_ROOT);
       if (abs.startsWith(rootResolved) && fs.existsSync(abs)) {
@@ -869,6 +940,29 @@ r.delete('/:id', async (req, res) => {
 
     const { error: de } = await supabase.from('voice_recordings').delete().eq('id', row.id);
     if (de) throw de;
+
+    // Ghi tombstone — KHÔNG fail toàn bộ DELETE nếu lỗi (ví dụ bảng chưa migrate).
+    try {
+      const fname = (row.file_name || '').slice(0, 256);
+      if (fname) {
+        const sizeRaw = Number(row.file_size);
+        const tombstone = {
+          user_id: row.user_id,
+          file_name: fname,
+          file_size: Number.isFinite(sizeRaw) && sizeRaw >= 0 ? sizeRaw : 0,
+          original_id: row.id,
+          device_label: row.device_label ? String(row.device_label).slice(0, 200) : null,
+        };
+        const { error: tErr } = await supabase
+          .from('voice_recordings_deleted')
+          .upsert(tombstone, { onConflict: 'user_id,file_name,file_size' });
+        if (tErr && tErr.code !== '42P01' && tErr.code !== '23505') {
+          console.warn('[voice-recordings] tombstone insert lỗi (bỏ qua):', tErr.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[voice-recordings] tombstone block lỗi (bỏ qua):', e.message);
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Xóa thất bại' });

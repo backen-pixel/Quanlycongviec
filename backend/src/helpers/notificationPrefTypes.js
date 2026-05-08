@@ -55,7 +55,7 @@ const PREF_KEYS = new Set([
  * @param {string} type
  * @param {string|null|undefined} entityType — ví dụ 'task', 'crm_lead'
  */
-function preferenceKeyForNotificationType(type, entityType) {
+function preferenceKeyForNotificationType(type, entityType, metadata = null) {
   if (!type || typeof type !== 'string') return null;
 
   if (type === 'lead_created') return 'lead_new';
@@ -67,6 +67,8 @@ function preferenceKeyForNotificationType(type, entityType) {
     type === 'crm_deadline_overdue' ||
     type === 'crm_deadline_set'
   ) {
+    const mk = metadata && typeof metadata === 'object' ? String(metadata.module_key || '') : '';
+    if (mk === 'production') return 'production_deadlines';
     return 'crm_lead_deadlines';
   }
 
@@ -91,9 +93,9 @@ function preferenceKeyForNotificationType(type, entityType) {
 }
 
 /** Loại không nằm trong map → không chặn (coi như bật). */
-function isNotificationTypeAllowed(prefs, notificationType, entityType) {
+function isNotificationTypeAllowed(prefs, notificationType, entityType, metadata = null) {
   if (!prefs || !notificationType) return true;
-  const key = preferenceKeyForNotificationType(notificationType, entityType);
+  const key = preferenceKeyForNotificationType(notificationType, entityType, metadata);
   if (!key) return true;
   return prefs[key] !== false;
 }
