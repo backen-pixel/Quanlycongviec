@@ -18,7 +18,7 @@ async function createNotification(req, userId, type, title, message, entityType,
   if (!userId) return null;
   if (isExpiryDeadlineNotificationType(type)) return null;
 
-  const allowed = await isNotificationAllowedForUser(userId, type, entityType);
+  const allowed = await isNotificationAllowedForUser(userId, type, entityType, metadata);
   if (!allowed) return null;
 
   const insert = {

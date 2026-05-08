@@ -3,6 +3,7 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const {
   isExpiryDeadlineNotificationType,
+  EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
   postgrestNotInTypesForDeadlines,
 } = require('../helpers/notificationOperationalFilter');
 
@@ -69,6 +70,43 @@ r.get('/notifications', async (req, res) => {
     res.json({ notifications: rows });
   } catch (e) {
     console.error('Dashboard notifications error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /dashboard/notifications/deadlines — TB nhắc/quá hạn (theo module trong metadata)
+r.get('/notifications/deadlines', async (req, res) => {
+  try {
+    const mod = String(req.query.module || 'all').toLowerCase();
+    const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 80, 1), 200);
+    const fetchCap = Math.min(lim * 4, 600);
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', req.user.userId)
+      .in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST)
+      .order('created_at', { ascending: false })
+      .limit(fetchCap);
+    if (error) return res.status(500).json({ error: error.message });
+    let rows = (data || []).filter((n) => isExpiryDeadlineNotificationType(n.type));
+    if (mod !== 'all') {
+      rows = rows.filter((n) => {
+        const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+        const mk = String(meta.module_key || '');
+        if (mk) return mk === mod;
+        const ty = String(n.type || '');
+        if (mod === 'crm') {
+          return ty.startsWith('crm_deadline') || ty === 'invoice_overdue' || ty === 'deadline_reminder';
+        }
+        if (mod === 'production') return ty.includes('production_task_deadline');
+        if (mod === 'logistics') return ty.includes('logistics_task_deadline');
+        if (mod === 'project') return ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue';
+        return false;
+      });
+    }
+    res.json({ notifications: rows.slice(0, lim) });
+  } catch (e) {
+    console.error('Dashboard deadline notifications error:', e);
     res.status(500).json({ error: e.message });
   }
 });

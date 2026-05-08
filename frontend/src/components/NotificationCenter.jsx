@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -57,6 +57,10 @@ const ICON_MAP = {
   workshop_new_deal: Factory,
   item_deleted: AlertTriangle,
   system: Bell,
+  crm_deadline_1h: Clock,
+  crm_deadline_warning: Clock,
+  crm_deadline_overdue: AlertTriangle,
+  crm_deadline_set: Calendar,
 };
 
 const COLOR_MAP = {
@@ -91,7 +95,39 @@ const COLOR_MAP = {
   invoice_overdue: 'bg-red-100 text-red-600',
   workshop_new_deal: 'bg-sky-100 text-sky-700',
   system: 'bg-gray-100 text-gray-600',
+  crm_deadline_1h: 'bg-amber-100 text-amber-700',
+  crm_deadline_warning: 'bg-amber-100 text-amber-700',
+  crm_deadline_overdue: 'bg-red-100 text-red-600',
+  crm_deadline_set: 'bg-blue-100 text-blue-600',
 };
+
+const MODULE_FILTER_OPTIONS = [
+  { id: 'all', label: 'Tất cả module' },
+  { id: 'crm', label: 'CRM / Lead' },
+  { id: 'production', label: 'Sản xuất' },
+  { id: 'logistics', label: 'Vận chuyển' },
+  { id: 'project', label: 'Dự án' },
+];
+
+function inferNotificationModuleKey(n) {
+  const mk = n?.metadata && typeof n.metadata === 'object' ? String(n.metadata.module_key || '').trim() : '';
+  if (mk) return mk;
+  const ty = String(n?.type || '');
+  if (ty.startsWith('crm_deadline') || ty === 'invoice_overdue') return 'crm';
+  if (ty.includes('production_task_deadline')) return 'production';
+  if (ty.includes('logistics_task_deadline')) return 'logistics';
+  if (ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue') return 'project';
+  return '';
+}
+
+function moduleChipLabel(key) {
+  const k = String(key || '');
+  if (k === 'crm') return 'CRM';
+  if (k === 'production') return 'SX';
+  if (k === 'logistics') return 'VC';
+  if (k === 'project') return 'DA';
+  return k || '—';
+}
 
 export default function NotificationCenter({ socket }) {
   const navigate = useNavigate();
@@ -100,6 +136,7 @@ export default function NotificationCenter({ socket }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('all');
+  const [deadlinesModule, setDeadlinesModule] = useState('all');
   const [toastNotification, setToastNotification] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const panelRef = useRef(null);
@@ -107,10 +144,17 @@ export default function NotificationCenter({ socket }) {
   const load = async () => {
     setLoading(true);
     try {
-      const params = tab === 'unread' ? { unread: 'true' } : {};
-      const { data } = await api.get('/dashboard/notifications', { params });
-      const raw = data.notifications || [];
-      setNotifications(raw.filter((n) => !isExpiryDeadlineNotificationType(n.type)));
+      if (tab === 'deadlines') {
+        const { data } = await api.get('/dashboard/notifications/deadlines', {
+          params: { module: deadlinesModule, limit: 80 },
+        });
+        setNotifications(data.notifications || []);
+      } else {
+        const params = tab === 'unread' ? { unread: 'true' } : {};
+        const { data } = await api.get('/dashboard/notifications', { params });
+        const raw = data.notifications || [];
+        setNotifications(raw.filter((n) => !isExpiryDeadlineNotificationType(n.type)));
+      }
     } catch { }
     setLoading(false);
   };
@@ -170,7 +214,7 @@ export default function NotificationCenter({ socket }) {
     if (!socket) return;
     const handler = (notif) => {
       if (isExpiryDeadlineNotificationType(notif?.type)) return;
-      if (!isNotificationTypeEnabled(notif?.type, notif?.entity_type)) return;
+      if (!isNotificationTypeEnabled(notif?.type, notif?.entity_type, notif?.metadata)) return;
 
       cancelNotificationSpeech();
 
@@ -189,7 +233,7 @@ export default function NotificationCenter({ socket }) {
 
   useEffect(() => {
     if (open) load();
-  }, [open, tab]);
+  }, [open, tab, deadlinesModule]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -261,7 +305,8 @@ export default function NotificationCenter({ socket }) {
             } else if (notif.entity_type === 'invoice') {
               navigate(`/crm/invoices/${notif.entity_id}`);
             } else if (notif.entity_type === 'crm_task') {
-              navigate(`/crm/tasks`);
+              const lid = notif.metadata?.lead_id;
+              navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
             } else if (notif.entity_type === 'event') {
               navigate(`/crm/events`);
             } else if (notif.entity_type === 'release_note') {
@@ -311,15 +356,36 @@ export default function NotificationCenter({ socket }) {
           </div>
 
           <div className="flex border-b border-gray-100">
-            <button onClick={() => setTab('all')}
+            <button type="button" onClick={() => { setTab('all'); setDeadlinesModule('all'); }}
               className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'all' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
               Tất cả
             </button>
-            <button onClick={() => setTab('unread')}
+            <button type="button" onClick={() => { setTab('unread'); setDeadlinesModule('all'); }}
               className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'unread' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
               Chưa đọc {unreadCount > 0 && `(${unreadCount})`}
             </button>
+            <button type="button" onClick={() => setTab('deadlines')}
+              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'deadlines' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+              Nhắc hạn
+            </button>
           </div>
+
+          {tab === 'deadlines' && (
+            <div className="flex flex-wrap gap-1 px-2 py-2 border-b border-gray-50 bg-slate-50/80">
+              {MODULE_FILTER_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setDeadlinesModule(opt.id)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer ${
+                    deadlinesModule === opt.id ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="max-h-[400px] overflow-y-auto">
             {loading ? (
@@ -332,7 +398,7 @@ export default function NotificationCenter({ socket }) {
             ) : notifications.length === 0 ? (
               <div className="text-center py-10">
                 <Bell className="h-8 w-8 mx-auto text-gray-300 mb-2" />
-                <p className="text-sm text-gray-400">{tab === 'unread' ? 'Không có thông báo chưa đọc' : 'Chưa có thông báo'}</p>
+                <p className="text-sm text-gray-400">{tab === 'unread' ? 'Không có thông báo chưa đọc' : tab === 'deadlines' ? 'Không có thông báo nhắc hạn' : 'Chưa có thông báo'}</p>
               </div>
             ) : (
               notifications.map(n => {
@@ -363,7 +429,8 @@ export default function NotificationCenter({ socket }) {
                       } else if (n.entity_type === 'invoice') {
                         navigate(`/crm/invoices/${n.entity_id}`);
                       } else if (n.entity_type === 'crm_task') {
-                        navigate(`/crm/tasks`);
+                        const lid = n.metadata?.lead_id;
+                        navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
                       } else if (n.entity_type === 'event') {
                         navigate(`/crm/events`);
                       } else if (n.entity_type === 'release_note') {
@@ -382,7 +449,14 @@ export default function NotificationCenter({ socket }) {
                           <p className={`text-sm ${!n.is_read ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
                             {n.title}
                           </p>
-                          {!n.is_read && !isApproval && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />}
+                          <div className="flex items-center gap-1 shrink-0">
+                            {inferNotificationModuleKey(n) && (
+                              <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+                                {moduleChipLabel(inferNotificationModuleKey(n))}
+                              </span>
+                            )}
+                            {!n.is_read && !isApproval && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />}
+                          </div>
                         </div>
                         <p className="text-xs text-gray-500 mt-0.5 line-clamp-2 whitespace-pre-line">{n.message}</p>
 

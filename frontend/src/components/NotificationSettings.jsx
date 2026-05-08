@@ -36,45 +36,128 @@ const PREFS_FALLBACK = {
   logistics_deadlines: true,
 };
 
+/** Mỗi dòng: label + mô tả ngắn + ví dụ TB khi BẬT chế độ đó */
 const MODULE_SECTIONS = [
   {
     title: 'CRM — Lead',
     rows: [
-      { key: 'lead_new', label: 'Lead mới', sub: 'Tạo lead, tự động từ Facebook…' },
-      { key: 'lead_assigned', label: 'Được giao / chuyển lead' },
-      { key: 'crm_lead_deadlines', label: 'Hạn nhiệm vụ CRM trên lead', sub: 'Nhắc trước hạn, quá hạn (nhiệm vụ gắn lead)' },
+      {
+        key: 'lead_new',
+        label: 'Lead mới',
+        sub: 'Thông báo khi có lead mới trong hệ thống hoặc tự động từ kênh (Facebook, form…).',
+        examples: ['Có lead mới được tạo', 'Lead tự động từ tin nhắn / quét Facebook'],
+      },
+      {
+        key: 'lead_assigned',
+        label: 'Được giao / chuyển lead',
+        sub: 'Khi bạn được chỉ định phụ trách lead hoặc lead được chuyển cho bạn.',
+        examples: ['Bạn được giao làm chủ lead / phụ trách', 'Lead chuyển từ sale khác sang bạn'],
+      },
+      {
+        key: 'crm_lead_deadlines',
+        label: 'Nhắc hạn nhiệm vụ CRM (lead & deal, không gồm cột SX)',
+        sub: 'Nhiệm vụ tab Công việc trên lead/deal: tư vấn, báo giá, hợp đồng… (trừ nhóm sx_* — nhóm đó dùng mục «Xưởng» bên dưới).',
+        examples: ['Ngày mai đến hạn nhiệm vụ', 'Còn 1 giờ đến hạn', 'Đã quá hạn nhiệm vụ', 'Ai đó đặt / đổi deadline trên nhiệm vụ (TB trong luồng thao tác)'],
+      },
     ],
   },
   {
     title: 'CRM — Deal',
     rows: [
-      { key: 'deal_new', label: 'Deal mới & giao deal', sub: 'deal_created, deal_assigned' },
-      { key: 'deal_won', label: 'Deal thắng' },
-      { key: 'stage_changed', label: 'Đổi giai đoạn pipeline' },
+      {
+        key: 'deal_new',
+        label: 'Deal mới & giao deal',
+        sub: 'Deal vừa tạo hoặc deal được giao cho bạn.',
+        examples: ['Deal mới sau khi chốt từ lead', 'Bạn được giao deal / đổi người phụ trách deal'],
+      },
+      {
+        key: 'deal_won',
+        label: 'Deal thắng',
+        sub: 'Khi deal chuyển sang trạng thái thắng / chốt.',
+        examples: ['Deal thắng (có thể kèm TB nội bộ cho admin / pipeline)'],
+      },
+      {
+        key: 'stage_changed',
+        label: 'Đổi giai đoạn pipeline',
+        sub: 'Lead hoặc deal được kéo sang cột khác trên Kanban CRM.',
+        examples: ['Deal chuyển từ «Báo giá» sang «Hợp đồng»', 'Lead đổi giai đoạn tư vấn'],
+      },
     ],
   },
   {
     title: 'Dự án & sản xuất',
     rows: [
-      { key: 'task_assigned', label: 'Nhiệm vụ được giao' },
-      { key: 'task_completed', label: 'Nhiệm vụ hoàn thành / cập nhật' },
-      { key: 'production_deadlines', label: 'Hạn nhiệm vụ — module Xưởng (SX)', sub: 'Task dự án khi đang sản xuất — chỉ người được giao' },
-      { key: 'logistics_deadlines', label: 'Hạn nhiệm vụ — Vận chuyển / lắp đặt / BH', sub: 'Task khi dự án ở giai đoạn VC — chỉ người được giao' },
-      { key: 'deadline_warning', label: 'Hạn nhiệm vụ — pipeline dự án (trước SX)', sub: 'Tư vấn, thiết kế, báo giá… — chỉ người được giao' },
-      { key: 'checklist_completed', label: 'Checklist hoàn thành' },
-      { key: 'comment_added', label: 'Bình luận' },
+      {
+        key: 'task_assigned',
+        label: 'Nhiệm vụ được giao (dự án)',
+        sub: 'Task trên dự án / xưởng khi có người được giao.',
+        examples: ['Bạn được giao một task trên dự án', 'Đổi người thực hiện task'],
+      },
+      {
+        key: 'task_completed',
+        label: 'Nhiệm vụ hoàn thành / cập nhật',
+        sub: 'Khi task đổi trạng thái hoàn thành hoặc cập nhật đáng chú ý (theo cấu hình hệ thống).',
+        examples: ['Task được đánh dấu hoàn thành', 'Cập nhật tiến độ liên quan đến bạn'],
+      },
+      {
+        key: 'production_deadlines',
+        label: 'Nhắc / quá hạn — Xưởng & nhiệm vụ SX trên deal',
+        sub: 'Gồm: task dự án khi dự án đang ở giai đoạn sản xuất, và nhiệm vụ CRM cột sx_* (Sản xuất) trên deal — chỉ gửi người liên quan thuộc đúng module xưởng.',
+        examples: ['Sắp hết hạn / quá hạn task xưởng', 'Nhắc hạn nhiệm vụ pipeline SX trên tab Công việc deal'],
+      },
+      {
+        key: 'logistics_deadlines',
+        label: 'Nhắc / quá hạn — Vận chuyển & lắp đặt',
+        sub: 'Task dự án khi dự án ở giai đoạn giao hàng, lắp đặt, bảo hành — chỉ người được giao task.',
+        examples: ['Sắp đến hạn giao / lắp', 'Task VC quá hạn'],
+      },
+      {
+        key: 'deadline_warning',
+        label: 'Nhắc / quá hạn — Giai đoạn dự án trước SX',
+        sub: 'Task dự án khi dự án chưa vào chế độ «đang sản xuất» (tư vấn kỹ thuật, khảo sát…).',
+        examples: ['Hạn task trong giai đoạn chuẩn bị / thiết kế dự án'],
+      },
+      {
+        key: 'checklist_completed',
+        label: 'Checklist hoàn thành',
+        sub: 'Khi mục checklist trên task / quy trình được tick xong.',
+        examples: ['Một hạng mục checklist hoàn thành (có thông báo cho người liên quan)'],
+      },
+      {
+        key: 'comment_added',
+        label: 'Bình luận',
+        sub: 'Có bình luận mới trên task, dự án hoặc luồng bạn tham gia.',
+        examples: ['Ai đó nhắc bạn trong comment', 'Bình luận mới trên công việc bạn theo dõi'],
+      },
     ],
   },
   {
     title: 'Bán hàng & kế toán',
     rows: [
-      { key: 'order_confirmed', label: 'Đơn hàng (tạo / cập nhật)' },
-      { key: 'invoice_overdue', label: 'Hóa đơn quá hạn thanh toán' },
+      {
+        key: 'order_confirmed',
+        label: 'Đơn hàng (tạo / cập nhật)',
+        sub: 'Sự kiện đơn hàng: tạo mới, xác nhận, thay đổi trạng thái quan trọng.',
+        examples: ['Đơn hàng mới', 'Đơn được xác nhận / cập nhật'],
+      },
+      {
+        key: 'invoice_overdue',
+        label: 'Hóa đơn quá hạn thanh toán',
+        sub: 'Nhắc khi hóa đơn đã quá hạn thanh toán theo ngày đến hạn (thường gửi người tạo / phụ trách).',
+        examples: ['Hóa đơn quá hạn N ngày', 'Còn nợ chưa thanh toán đủ'],
+      },
     ],
   },
   {
     title: 'Khác',
-    rows: [{ key: 'approval_request', label: 'Phê duyệt tạm ứng / yêu cầu duyệt' }],
+    rows: [
+      {
+        key: 'approval_request',
+        label: 'Phê duyệt tạm ứng / yêu cầu duyệt',
+        sub: 'Luồng duyệt chi phí, tạm ứng, bước cần chữ ký.',
+        examples: ['Có yêu cầu phê duyệt cần bạn xử lý', 'Kết quả duyệt / từ chối'],
+      },
+    ],
   },
 ];
 
@@ -377,8 +460,9 @@ export default function NotificationSettings({ isOpen, onClose }) {
 
           <div className="space-y-3 border rounded-xl p-3 bg-slate-50/80 border-slate-100">
             <h3 className="font-semibold text-xs text-slate-600 uppercase tracking-wide">Loại thông báo (theo module)</h3>
-            <p className="text-[10px] text-slate-500 leading-snug">
-              Tắt một mục để không nhận thông báo trong app và web push cho loại đó (áp dụng sau khi lưu).
+            <p className="text-[10px] text-slate-600 leading-relaxed">
+              Bật / tắt từng nhóm để điều khiển cả <strong>thông báo trong app</strong> và <strong>Web Push</strong> (nếu đã đăng ký).
+              Khi <strong>Tắt</strong>, bạn sẽ không nhận các ví dụ liệt kê bên dưới mục đó.
             </p>
             {MODULE_SECTIONS.map((sec) => (
               <div key={sec.title} className="space-y-2 pt-1 border-t border-slate-200/80 first:border-t-0 first:pt-0">
@@ -387,10 +471,20 @@ export default function NotificationSettings({ isOpen, onClose }) {
                   {sec.rows.map((row) => {
                     const on = modulePrefs[row.key] !== false;
                     return (
-                      <div key={row.key} className="flex items-center justify-between gap-2 rounded-lg bg-white px-2 py-2 border border-slate-100">
+                      <div key={row.key} className="flex items-start justify-between gap-2 rounded-lg bg-white px-2 py-2.5 border border-slate-100">
                         <div className="min-w-0 flex-1">
                           <p className="text-sm text-slate-800 font-medium">{row.label}</p>
-                          {row.sub ? <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{row.sub}</p> : null}
+                          {row.sub ? <p className="text-[10px] text-slate-600 mt-1 leading-snug">{row.sub}</p> : null}
+                          {row.examples?.length ? (
+                            <div className="mt-1.5 pl-0.5">
+                              <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide">Ví dụ khi bật</p>
+                              <ul className="mt-0.5 space-y-0.5 list-disc list-inside text-[10px] text-slate-500 leading-snug">
+                                {row.examples.map((ex) => (
+                                  <li key={ex}>{ex}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
                         </div>
                         <button
                           type="button"
@@ -399,8 +493,9 @@ export default function NotificationSettings({ isOpen, onClose }) {
                           className={`shrink-0 h-8 px-3 rounded-full text-xs font-bold transition ${
                             on ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
                           } ${savingPrefKey ? 'opacity-60' : 'hover:opacity-90'}`}
+                          title={on ? 'Nhấn để tắt nhóm thông báo này' : 'Nhấn để bật nhóm thông báo này'}
                         >
-                          {savingPrefKey === row.key ? '…' : on ? 'Tắt' : 'Bật'}
+                          {savingPrefKey === row.key ? '…' : on ? 'Đang bật' : 'Đang tắt'}
                         </button>
                       </div>
                     );

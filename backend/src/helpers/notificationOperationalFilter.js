@@ -32,8 +32,12 @@ function postgrestNotInTypesForDeadlines() {
   return `(${EXPIRY_DEADLINE_NOTIFICATION_TYPES.join(',')})`;
 }
 
+/** Cho `.in('type', …)` PostgREST */
+const EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST = [...EXPIRY_DEADLINE_NOTIFICATION_TYPES];
+
 module.exports = {
   EXPIRY_DEADLINE_NOTIFICATION_TYPES,
+  EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
   isExpiryDeadlineNotificationType,
   postgrestNotInTypesForDeadlines,
 };

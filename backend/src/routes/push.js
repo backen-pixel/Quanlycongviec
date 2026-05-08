@@ -195,7 +195,7 @@ async function sendWebPush(userId, notification) {
 
     if (!prefs?.browser_push) return; // User disabled browser push
 
-    if (!isNotificationTypeAllowed(prefs, notification.type, notification.entity_type)) return;
+    if (!isNotificationTypeAllowed(prefs, notification.type, notification.entity_type, notification.metadata)) return;
 
     // Send to each subscription
     const payload = JSON.stringify({

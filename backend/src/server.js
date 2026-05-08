@@ -182,7 +182,6 @@ server.listen(config.port, () => {
   const checkDeadlines = async () => {
     try {
       const { supabase } = require('./config/supabase');
-      const { isExpiryDeadlineNotificationType } = require('./helpers/notificationOperationalFilter');
       const now = new Date();
       const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -247,7 +246,35 @@ server.listen(config.port, () => {
         (leads || []).forEach(l => { leadMap[l.id] = l; });
       }
 
-      const { pickCrmDeadlineRecipient, buildProjectTaskDeadlineNotif } = require('./helpers/deadlineModuleNotifications');
+      const {
+        pickCrmDeadlineRecipientForTaskWithModule,
+        buildProjectTaskDeadlineNotif,
+        crmTaskDeadlineModuleKey,
+        buildCrmTaskDeadlineMetadata,
+        loadDeadlineUserCompanyDivisionContext,
+        userRowMatchesCompanyModuleDivision,
+        MODULE_LABEL,
+      } = require('./helpers/deadlineModuleNotifications');
+      const { getRestrictedDivisionIdsForModule } = require('./helpers/ecosystemModuleScope');
+
+      const restrictedEco = {
+        crm: await getRestrictedDivisionIdsForModule('crm'),
+        production: await getRestrictedDivisionIdsForModule('production'),
+        logistics: await getRestrictedDivisionIdsForModule('logistics'),
+        projects: await getRestrictedDivisionIdsForModule('projects'),
+      };
+
+      const crmAllTasks = [...(crmDueSoon || []), ...(crmDueTomorrow || []), ...(crmOverdue || [])];
+      const crmCandidateUserIds = [];
+      for (const t of crmAllTasks) {
+        const lead = leadMap[t.lead_id] || {};
+        crmCandidateUserIds.push(t.assignee_id, lead.lead_owner_id, lead.assigned_to);
+      }
+      const projectAssigneeIds = [...(dueSoon || []), ...(overdue || [])].map((t) => t.assignee_id);
+      const { usersById, companyToDivisions } = await loadDeadlineUserCompanyDivisionContext(supabase, [
+        ...crmCandidateUserIds,
+        ...projectAssigneeIds,
+      ]);
 
       // Dedup: check existing notifications in last 4 hours (theo từng nhiệm vụ / task)
       const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
@@ -268,21 +295,33 @@ server.listen(config.port, () => {
       // Batch: collect all notifications to insert
       const notifs = [];
 
-      /** CRM: một người duy nhất (assignee nhiệm vụ → chủ lead → phụ trách lead). */
+      /** CRM: một người (assignee → chủ lead → phụ trách) thuộc công ty có quyền module CRM hoặc SX (sx_*). */
       const addCrmNotif = (taskList, type, titleText, msgFn) => {
         for (const t of (taskList || [])) {
           if (!shouldNotify(type, t.id)) continue;
           const lead = leadMap[t.lead_id] || {};
-          const uid = pickCrmDeadlineRecipient(t);
+          const moduleKey = crmTaskDeadlineModuleKey(t.stage_slug);
+          const ecoKey = moduleKey === 'production' ? 'production' : 'crm';
+          const uid = pickCrmDeadlineRecipientForTaskWithModule(
+            t,
+            lead,
+            moduleKey,
+            usersById,
+            companyToDivisions,
+            restrictedEco[ecoKey],
+          );
           if (!uid) continue;
           const deadlineStr = new Date(t.deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+          const modLabel = MODULE_LABEL[moduleKey] || moduleKey;
+          const meta = buildCrmTaskDeadlineMetadata(t, lead, moduleKey);
           notifs.push({
             user_id: uid,
             type,
-            title: titleText,
+            title: `[${modLabel}] ${titleText}`,
             message: msgFn(t, lead, deadlineStr),
             entity_type: 'crm_task',
             entity_id: t.id,
+            metadata: meta,
           });
         }
       };
@@ -299,16 +338,28 @@ server.listen(config.port, () => {
       for (const t of (crmOverdue || [])) {
         if (!shouldNotify('crm_deadline_overdue', t.id)) continue;
         const lead = leadMap[t.lead_id] || {};
-        const uid = pickCrmDeadlineRecipient(t);
+        const moduleKey = crmTaskDeadlineModuleKey(t.stage_slug);
+        const ecoKey = moduleKey === 'production' ? 'production' : 'crm';
+        const uid = pickCrmDeadlineRecipientForTaskWithModule(
+          t,
+          lead,
+          moduleKey,
+          usersById,
+          companyToDivisions,
+          restrictedEco[ecoKey],
+        );
         if (!uid) continue;
         const daysLate = Math.floor((now - new Date(t.deadline)) / (1000 * 60 * 60 * 24));
+        const modLabel = MODULE_LABEL[moduleKey] || moduleKey;
+        const meta = buildCrmTaskDeadlineMetadata(t, lead, moduleKey);
         notifs.push({
           user_id: uid,
           type: 'crm_deadline_overdue',
-          title: '🚨 Quá hạn nhiệm vụ!',
+          title: `[${modLabel}] 🚨 Quá hạn nhiệm vụ!`,
           message: `"${t.title}" — ${lead.code || ''} ${lead.title || ''} — quá hạn ${daysLate} ngày`,
           entity_type: 'crm_task',
           entity_id: t.id,
+          metadata: meta,
         });
       }
 
@@ -334,6 +385,11 @@ server.listen(config.port, () => {
         if (!n) continue;
         if (String(n.user_id) !== String(t.assignee_id)) continue;
         if (!shouldNotify(n.type, t.id)) continue;
+        const eco = n.metadata?.ecosystem_module_key || 'projects';
+        const row = usersById.get(String(n.user_id));
+        if (!userRowMatchesCompanyModuleDivision(row, companyToDivisions, restrictedEco[eco] ?? restrictedEco.projects)) {
+          continue;
+        }
         notifs.push(n);
       }
       for (const t of (overdue || [])) {
@@ -341,6 +397,11 @@ server.listen(config.port, () => {
         if (!n) continue;
         if (String(n.user_id) !== String(t.assignee_id)) continue;
         if (!shouldNotify(n.type, t.id)) continue;
+        const eco = n.metadata?.ecosystem_module_key || 'projects';
+        const row = usersById.get(String(n.user_id));
+        if (!userRowMatchesCompanyModuleDivision(row, companyToDivisions, restrictedEco[eco] ?? restrictedEco.projects)) {
+          continue;
+        }
         notifs.push(n);
       }
 
@@ -356,6 +417,7 @@ server.listen(config.port, () => {
             message: `Hóa đơn ${inv.code} quá hạn ${daysOverdue} ngày — Còn nợ: ${((inv.total - inv.paid_amount) || 0).toLocaleString('vi-VN')} VND`,
             entity_type: 'invoice',
             entity_id: inv.id,
+            metadata: { module_key: 'crm', ecosystem_module_key: 'crm' },
           });
         }
       }
@@ -364,12 +426,12 @@ server.listen(config.port, () => {
       const { isNotificationAllowedForUser } = require('./helpers/notificationPrefsUser');
       const filteredNotifs = [];
       for (const n of notifs) {
-        if (n.user_id && (await isNotificationAllowedForUser(n.user_id, n.type, n.entity_type))) {
+        if (n.user_id && (await isNotificationAllowedForUser(n.user_id, n.type, n.entity_type, n.metadata || null))) {
           filteredNotifs.push(n);
         }
       }
 
-      const toInsert = filteredNotifs.filter((n) => !isExpiryDeadlineNotificationType(n.type));
+      const toInsert = filteredNotifs;
       if (toInsert.length) {
         const { data: inserted } = await supabase.from('notifications').insert(toInsert).select('*');
         (inserted || []).forEach((n) => io.to(`user:${n.user_id}`).emit('notification', n));

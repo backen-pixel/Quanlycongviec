@@ -70,7 +70,7 @@ const PREF_KEYS = new Set([
   'logistics_deadlines',
 ]);
 
-export function preferenceKeyForNotificationType(type, entityType) {
+export function preferenceKeyForNotificationType(type, entityType, metadata = null) {
   if (!type || typeof type !== 'string') return null;
 
   if (type === 'lead_created') return 'lead_new';
@@ -82,6 +82,8 @@ export function preferenceKeyForNotificationType(type, entityType) {
     type === 'crm_deadline_overdue' ||
     type === 'crm_deadline_set'
   ) {
+    const mk = metadata && typeof metadata === 'object' ? String(metadata.module_key || '') : '';
+    if (mk === 'production') return 'production_deadlines';
     return 'crm_lead_deadlines';
   }
 
@@ -210,8 +212,8 @@ export function clearNotificationCustomSoundMeta() {
 }
 
 /** Loại không map được → coi như bật (thông báo hệ thống / loại mới). */
-export function isNotificationTypeEnabled(type, entityType) {
-  const key = preferenceKeyForNotificationType(type, entityType);
+export function isNotificationTypeEnabled(type, entityType, metadata = null) {
+  const key = preferenceKeyForNotificationType(type, entityType, metadata);
   if (!key) return true;
   return prefs[key] !== false;
 }

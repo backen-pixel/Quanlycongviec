@@ -36,12 +36,21 @@ type ServerExisting = {
   phone_number: string | null;
 };
 
+type ServerTombstoned = {
+  original_id: string | null;
+  file_name: string;
+  file_size: number | null;
+  deleted_at: string;
+};
+
 type Status = 'synced' | 'deleted_on_server' | 'pending';
 
 type Row = LocalCallRecording & {
   status: Status;
   serverId: string | null;
   serverPhone: string | null;
+  /** True nếu server có tombstone (đã từng upload + đã xóa). */
+  serverTombstoned: boolean;
 };
 
 type StatusFilter = 'all' | Status;
@@ -119,37 +128,46 @@ export default function VoiceLocalRecordingsScreen() {
         file_size: it.size,
       }));
       let existing: ServerExisting[] = [];
+      let tombstoned: ServerTombstoned[] = [];
       try {
-        const { data } = await api.post<{ existing?: ServerExisting[] }>(
-          '/voice-recordings/bulk-check',
-          { items },
-        );
+        const { data } = await api.post<{
+          existing?: ServerExisting[];
+          tombstoned?: ServerTombstoned[];
+        }>('/voice-recordings/bulk-check', { items });
         existing = Array.isArray(data?.existing) ? data.existing : [];
-      } catch (e) {
+        tombstoned = Array.isArray(data?.tombstoned) ? data.tombstoned : [];
+      } catch {
         // Mất mạng / 5xx — vẫn hiển thị danh sách local; status sẽ rơi về local-only.
         existing = [];
+        tombstoned = [];
       }
 
       const serverByName = new Map<string, ServerExisting>();
       for (const r of existing) {
         const k = `${r.file_name}|${r.file_size ?? 0}`;
         serverByName.set(k, r);
-        // Cũng lưu key chỉ tên (fallback nếu size không khớp).
         if (!serverByName.has(r.file_name)) serverByName.set(r.file_name, r);
+      }
+      const tombSet = new Set<string>();
+      for (const t of tombstoned) {
+        tombSet.add(`${t.file_name}|${t.file_size ?? 0}`);
+        tombSet.add(t.file_name); // fallback theo tên
       }
 
       const enriched: Row[] = local.map((it) => {
         const k = `${it.name}|${it.size}`;
         const onServer = serverByName.get(k) || serverByName.get(it.name) || null;
+        const isTomb = tombSet.has(k) || tombSet.has(it.name);
         let status: Status;
         if (onServer) status = 'synced';
-        else if (it.locallyUploaded) status = 'deleted_on_server';
+        else if (isTomb || it.locallyUploaded) status = 'deleted_on_server';
         else status = 'pending';
         return {
           ...it,
           status,
           serverId: onServer?.id || null,
           serverPhone: onServer?.phone_number || null,
+          serverTombstoned: isTomb,
         };
       });
 

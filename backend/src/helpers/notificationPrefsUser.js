@@ -61,9 +61,9 @@ function invalidateNotificationPrefsCache(userId) {
 /**
  * Có được gửi thông báo (DB + socket + push) cho user không — theo notification_preferences.
  */
-async function isNotificationAllowedForUser(userId, type, entityType) {
+async function isNotificationAllowedForUser(userId, type, entityType, metadata = null) {
   const prefs = await getCachedPrefsForUser(userId);
-  return isNotificationTypeAllowed(prefs, type, entityType);
+  return isNotificationTypeAllowed(prefs, type, entityType, metadata);
 }
 
 module.exports = {
