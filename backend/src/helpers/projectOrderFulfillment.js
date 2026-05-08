@@ -130,6 +130,8 @@ async function applyProductionTemplateToFulfillmentLead({
   requireTemplateCompanyMatch = false,
   /** Company của deal gọi API (ưu tiên hơn leadRow.company_id khi requireTemplateCompanyMatch). */
   dealCompanyId = null,
+  /** Công ty xưởng phụ trách SX — ưu tiên khi chọn workshop_task_templates (cột Sản xuất / bàn giao). */
+  templateSourceCompanyId = null,
 }) {
   if (!leadId || !createdBy) return { created: 0, reason: 'missing_params' };
 
@@ -233,12 +235,14 @@ async function applyProductionTemplateToFulfillmentLead({
     .maybeSingle();
 
   if (requireTemplateCompanyMatch) {
-    const mustCompanyId = dealCompanyId || leadRow?.company_id || null;
+    const normCo = (v) => (v != null && String(v).trim() !== '' ? String(v).trim() : null);
+    const mustCompanyId =
+      normCo(templateSourceCompanyId) || normCo(dealCompanyId) || normCo(leadRow?.company_id) || null;
     if (!mustCompanyId) return { created: 0, reason: 'missing_deal_company' };
 
     const handoverStrict = await loadProductionHandoverMaps(mustCompanyId);
 
-    // Strict mode: ưu tiên template đúng company_id của deal, nếu không có thì fallback global,
+    // Strict mode: ưu tiên template đúng company xưởng (templateSourceCompanyId) / company CRM deal, fallback global,
     // và cuối cùng emergency seed để "bằng bất cứ giá nào" vẫn có sx_* tasks.
     let { data: templates, error: tplErr } = await supabase
       .from('workshop_task_templates')
@@ -367,20 +371,32 @@ async function applyProductionTemplateToFulfillmentLead({
   }
 
   // Ưu tiên xác định "công ty SX" để lấy đúng bộ mẫu theo công ty:
+  // 0) templateSourceCompanyId (API / cột Sản xuất)
   // 1) orders.sx_company_id (đơn đã chuyển SX)
   // 2) projects.company_id (dự án xưởng)
   // 3) leadRow.company_id (công ty CRM) — chỉ dùng nếu thuộc module SX
   let targetCompanyId = null;
-  try {
-    const { data: ord } = await supabase
-      .from('orders')
-      .select('sx_company_id')
-      .eq('fulfillment_lead_id', leadId)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (ord?.sx_company_id) targetCompanyId = ord.sx_company_id;
-  } catch (_) { /* ignore */ }
+  const normTplSrc =
+    templateSourceCompanyId != null && String(templateSourceCompanyId).trim() !== ''
+      ? String(templateSourceCompanyId).trim()
+      : null;
+  if (normTplSrc) {
+    const co0 = await validateProductionCompanyId(normTplSrc);
+    if (co0.ok) targetCompanyId = co0.company.id;
+  }
+
+  if (!targetCompanyId) {
+    try {
+      const { data: ord } = await supabase
+        .from('orders')
+        .select('sx_company_id')
+        .eq('fulfillment_lead_id', leadId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (ord?.sx_company_id) targetCompanyId = ord.sx_company_id;
+    } catch (_) { /* ignore */ }
+  }
 
   if (!targetCompanyId && leadRow?.project_id) {
     const { data: p } = await supabase

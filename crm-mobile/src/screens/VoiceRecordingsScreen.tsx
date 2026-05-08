@@ -272,8 +272,14 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
         <TouchableOpacity style={styles.btn} onPress={() => void load()} disabled={loading}>
           <Text style={styles.btnTxt}>{loading ? '…' : 'Làm mới'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.btnPrimary} onPress={() => void relinkMine()} disabled={relinkBusy}>
-          <Text style={styles.btnPrimaryTxt}>{relinkBusy ? '…' : 'Quét ghép (của tôi)'}</Text>
+        <TouchableOpacity
+          style={styles.btnPrimary}
+          onPress={() => navigation.navigate('VoiceLocalRecordings')}
+        >
+          <Text style={styles.btnPrimaryTxt}>📱 Bản ghi trên máy</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.btnGhost} onPress={() => void relinkMine()} disabled={relinkBusy}>
+          <Text style={styles.btnGhostTxt}>{relinkBusy ? '…' : 'Quét ghép (của tôi)'}</Text>
         </TouchableOpacity>
         {admin ? (
           <TouchableOpacity style={styles.btnWarn} onPress={() => void relinkCompany()} disabled={relinkBusy}>
@@ -431,6 +437,15 @@ const styles = StyleSheet.create({
     backgroundColor: CrmColors.blue600,
   },
   btnPrimaryTxt: { fontWeight: '700', color: '#fff', fontSize: 13 },
+  btnGhost: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: CrmRadii.md,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  btnGhostTxt: { fontWeight: '700', color: CrmColors.gray700, fontSize: 13 },
   btnWarn: {
     paddingVertical: 10,
     paddingHorizontal: 12,

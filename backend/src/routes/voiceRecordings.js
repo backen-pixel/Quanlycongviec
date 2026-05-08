@@ -140,6 +140,61 @@ r.get('/phone-preview', async (req, res) => {
 });
 
 /**
+ * POST /voice-recordings/bulk-check
+ * Body: { items: [{ file_name, file_size? }, ...] }
+ * Trả về: { existing: [{ file_name, file_size, id, created_at, customer_id, lead_id, phone_number }] }
+ *
+ * Mobile app dùng để so sánh danh sách file local với server (1 round-trip thay vì N).
+ */
+r.post('/bulk-check', async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (items.length === 0) return res.json({ existing: [] });
+    const MAX_ITEMS = 500;
+    const safe = items.slice(0, MAX_ITEMS);
+    const fileNames = Array.from(
+      new Set(
+        safe
+          .map((it) => (it && typeof it.file_name === 'string' ? it.file_name.trim().slice(0, 256) : ''))
+          .filter((n) => !!n),
+      ),
+    );
+    if (fileNames.length === 0) return res.json({ existing: [] });
+
+    const { data, error } = await supabase
+      .from('voice_recordings')
+      .select('id, file_name, file_size, created_at, customer_id, lead_id, phone_number')
+      .eq('user_id', req.user.userId)
+      .in('file_name', fileNames)
+      .limit(2000);
+    if (error) throw error;
+
+    // Map theo "name|size" để khớp chính xác (cùng tên có thể nhiều size khác nhau).
+    const sizeIndex = new Map();
+    for (const it of safe) {
+      const n = it && typeof it.file_name === 'string' ? it.file_name.trim().slice(0, 256) : '';
+      if (!n) continue;
+      const sz = Number(it.file_size);
+      if (!sizeIndex.has(n)) sizeIndex.set(n, []);
+      sizeIndex.get(n).push(Number.isFinite(sz) ? sz : null);
+    }
+
+    const existing = [];
+    for (const row of data || []) {
+      const sizes = sizeIndex.get(row.file_name);
+      if (!sizes) continue;
+      const wantsAnySize = sizes.some((s) => s == null || s <= 0);
+      const matchSize = wantsAnySize || sizes.includes(row.file_size);
+      if (!matchSize) continue;
+      existing.push(row);
+    }
+    res.json({ existing });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi bulk-check' });
+  }
+});
+
+/**
  * GET /voice-recordings/exists?file_name=&file_size=
  * Background sync (Android) gọi trước khi upload để tránh up lại file đã có trong tài khoản.
  * Chỉ scope theo user hiện tại (mỗi user có không gian dedup riêng).

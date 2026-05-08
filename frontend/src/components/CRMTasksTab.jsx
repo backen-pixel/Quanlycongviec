@@ -37,7 +37,16 @@ const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
-export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], taskScope = 'all', onArtifactsSynced = null, refreshKey = null }) {
+export default function CRMTasksTab({
+  leadId,
+  leadType = 'lead',
+  users = [],
+  taskScope = 'all',
+  onArtifactsSynced = null,
+  refreshKey = null,
+  /** Công ty xưởng đã gắn với deal (sx_template_company_id) — gửi khi Gen bộ nhiệm vụ SX */
+  sxTemplateCompanyId = null,
+}) {
   const [tasks, setTasks] = useState([]);
   const isSxStageSlug = useMemo(() => (slug) => String(slug || '').startsWith('sx_'), []);
   const hasSxTasks = useMemo(() => tasks.some((t) => isSxStageSlug(t.stage_slug)), [tasks, isSxStageSlug]);
@@ -235,7 +244,12 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
     if (leadType !== 'deal') return;
     setGeneratingProduction(true);
     try {
-      const r1 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, { force: false });
+      const genPayload = (force) => {
+        const o = { force };
+        if (sxTemplateCompanyId) o.production_company_id = sxTemplateCompanyId;
+        return o;
+      };
+      const r1 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, genPayload(false));
       const data = r1.data || {};
       if ((data.created || 0) > 0) {
         alert(`Đã tạo ${data.created} nhiệm vụ Sản xuất`);
@@ -251,7 +265,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
           await loadTasks();
           return;
         }
-        const r2 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, { force: true });
+        const r2 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, genPayload(true));
         alert(`Đã tạo lại ${r2.data?.created || 0} nhiệm vụ Sản xuất`);
         await loadTasks();
         return;
@@ -259,7 +273,7 @@ export default function CRMTasksTab({ leadId, leadType = 'lead', users = [], tas
       if (data.reason === 'already_has_sx_tasks') {
         const ok = window.confirm('Deal đã có nhiệm vụ Sản xuất (sx_*).\n\nBạn có muốn tạo lại (xóa & gen lại) theo bộ mẫu công ty của deal không?');
         if (!ok) return;
-        const r2 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, { force: true });
+        const r2 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, genPayload(true));
         alert(`Đã tạo lại ${r2.data?.created || 0} nhiệm vụ Sản xuất`);
         await loadTasks();
         return;
