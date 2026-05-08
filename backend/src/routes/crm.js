@@ -189,14 +189,17 @@ function unifyCrmLeadResponsibleFields(body) {
   return body;
 }
 
-/** Gán phụ trách: nhân viên mới phải cùng `company_id` với lead/deal (khi bản ghi đã có công ty). */
+/** Gán phụ trách: nhân viên mới phải cùng `company_id` với lead/deal (khi bản ghi đã có công ty).
+ *  Ngoại lệ: admin hệ thống (user.company_id = null) được phụ trách mọi lead/deal. */
 async function assertCrmAssigneeUserMatchesLeadCompany(sb, assigneeUserId, leadCompanyId) {
   if (!assigneeUserId) return { ok: true };
-  const { data: u, error } = await sb.from('users').select('id, company_id').eq('id', assigneeUserId).maybeSingle();
+  const { data: u, error } = await sb.from('users').select('id, company_id, role').eq('id', assigneeUserId).maybeSingle();
   if (error) return { ok: false, error: error.message };
   if (!u) return { ok: false, error: 'Nhân viên không tồn tại.' };
   if (!leadCompanyId) return { ok: false, error: 'Lead/Deal chưa có công ty — chọn công ty trước khi gán người phụ trách.' };
-  if (String(u.company_id || '').trim() !== String(leadCompanyId).trim()) {
+  // Admin hệ thống (không gắn company_id) được phụ trách mọi lead/deal
+  if (!u.company_id) return { ok: true };
+  if (String(u.company_id).trim() !== String(leadCompanyId).trim()) {
     return { ok: false, error: 'Người phụ trách phải thuộc công ty của lead/deal.' };
   }
   return { ok: true };
