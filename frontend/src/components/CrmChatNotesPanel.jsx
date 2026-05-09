@@ -1,6 +1,19 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { StickyNote, Send, X, Pencil, Check, Loader2, Minimize2, Maximize2, Search } from 'lucide-react';
+import {
+  StickyNote,
+  Send,
+  X,
+  Pencil,
+  Check,
+  Loader2,
+  Minimize2,
+  Maximize2,
+  Search,
+  Paperclip,
+  Image as ImageIcon,
+} from 'lucide-react';
 import api from '../lib/api';
+import { publicFileUrl } from '../lib/publicFileUrl';
 
 function sortNotesAsc(notes) {
   return [...(notes || [])].sort((a, b) => {
@@ -37,6 +50,12 @@ export default function CrmChatNotesPanel({
   const [editText, setEditText] = useState('');
   const [savingEditId, setSavingEditId] = useState(null);
   const listRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
+
+  /** Đã upload, chờ gửi kèm ghi chú — { url, name, type, size } */
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
 
   /** Chỉ panel nổi: ghi chú cho lead/deal khác (tìm từ API) */
   const [pickOverride, setPickOverride] = useState(null);
@@ -178,6 +197,10 @@ export default function CrmChatNotesPanel({
     setPickResults([]);
   }, [leadId]);
 
+  useEffect(() => {
+    setPendingAttachments([]);
+  }, [leadId]);
+
   const setFabDockedPersist = (docked) => {
     setFabDocked(docked);
     if (!dockStorageKey) return;
@@ -216,19 +239,51 @@ export default function CrmChatNotesPanel({
     }
   };
 
+  const uploadNoteFile = async (file) => {
+    const tid = targetLeadId;
+    if (!file || !tid) return;
+    setUploadingFile(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post(`/crm/leads/${tid}/activities/upload`, fd);
+      if (data?.url) {
+        setPendingAttachments((prev) => [
+          ...prev,
+          {
+            url: data.url,
+            name: data.name || file.name,
+            type: data.type || file.type,
+            size: data.size ?? file.size,
+          },
+        ]);
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không upload được file');
+    }
+    setUploadingFile(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  };
+
   const send = async () => {
     const body = text.trim();
     const tid = targetLeadId;
-    if (!body || !tid) return;
+    if ((!body && !pendingAttachments.length) || !tid) return;
     setSending(true);
     try {
-      const title = body.split('\n')[0].slice(0, 120) || 'Ghi chú';
+      const title =
+        body.split('\n')[0]?.slice(0, 120) ||
+        (pendingAttachments[0]?.name ? String(pendingAttachments[0].name).slice(0, 120) : '') ||
+        'Ghi chú';
       await api.post(`/crm/leads/${tid}/activities`, {
         type: 'note',
         title,
         description: body,
+        attachments: pendingAttachments.length ? pendingAttachments : undefined,
       });
       setText('');
+      setPendingAttachments([]);
       if (pickOverride) {
         await refreshRemoteActivities();
       } else {
@@ -259,10 +314,14 @@ export default function CrmChatNotesPanel({
   const saveEdit = async (n) => {
     const body = editText.trim();
     const tid = targetLeadId;
-    if (!body || !tid) return;
+    const keepFiles = Array.isArray(n.attachments) && n.attachments.length > 0;
+    if ((!body && !keepFiles) || !tid) return;
     setSavingEditId(n.id);
     try {
-      const title = body.split('\n')[0].slice(0, 120) || 'Ghi chú';
+      const title =
+        body.split('\n')[0]?.slice(0, 120) ||
+        (n.attachments?.[0]?.name ? String(n.attachments[0].name).slice(0, 120) : '') ||
+        'Ghi chú';
       await api.patch(`/crm/leads/${tid}/activities/${n.id}`, {
         title,
         description: body,
@@ -312,6 +371,7 @@ export default function CrmChatNotesPanel({
           });
           const name = n.creator?.full_name || 'Thành viên';
           const content = (n.description && String(n.description).trim()) || n.title || '';
+          const attachments = Array.isArray(n.attachments) ? n.attachments : [];
           const editable = canEditNote(n);
           const isEditing = editingId === n.id;
           return (
@@ -378,7 +438,10 @@ export default function CrmChatNotesPanel({
                       <button
                         type="button"
                         onClick={() => saveEdit(n)}
-                        disabled={!!savingEditId || !editText.trim()}
+                        disabled={
+                          !!savingEditId ||
+                          (!editText.trim() && !(Array.isArray(n.attachments) && n.attachments.length > 0))
+                        }
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                       >
                         {savingEditId === n.id ? (
@@ -391,13 +454,60 @@ export default function CrmChatNotesPanel({
                     </div>
                   </div>
                 ) : (
-                  <p
-                    className={`text-sm whitespace-pre-wrap break-words leading-relaxed ${
-                      editable ? 'pr-7' : ''
-                    }`}
-                  >
-                    {content}
-                  </p>
+                  <>
+                    {content ? (
+                      <p
+                        className={`text-sm whitespace-pre-wrap break-words leading-relaxed ${
+                          editable ? 'pr-7' : ''
+                        }`}
+                      >
+                        {content}
+                      </p>
+                    ) : null}
+                    {attachments.length > 0 && (
+                      <div
+                        className={`mt-1.5 space-y-2 ${content && editable ? 'pr-7' : ''} ${
+                          content ? 'mt-2' : ''
+                        }`}
+                      >
+                        {attachments.map((a, idx) => {
+                          const href = publicFileUrl(a.url);
+                          const isImg = String(a.type || '').startsWith('image/');
+                          if (isImg && href) {
+                            return (
+                              <a
+                                key={`${a.url}-${idx}`}
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block"
+                              >
+                                <img
+                                  src={href}
+                                  alt={a.name || ''}
+                                  className="max-h-52 max-w-full rounded-lg border border-white/20 object-contain bg-black/10"
+                                />
+                              </a>
+                            );
+                          }
+                          return (
+                            <a
+                              key={`${a.url}-${idx}`}
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={`inline-flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium underline-offset-2 hover:underline ${
+                                mine ? 'bg-white/15 text-white' : 'bg-gray-100 text-gray-800'
+                              }`}
+                            >
+                              <Paperclip className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                              <span className="truncate">{a.name || 'Tệp đính kèm'}</span>
+                            </a>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
                 )}
                 <p className={`text-[10px] mt-1.5 tabular-nums ${mine ? 'text-blue-100' : 'text-gray-400'}`}>
                   {when}
@@ -412,33 +522,107 @@ export default function CrmChatNotesPanel({
 
   const composer = (
     <div
-      className={`flex gap-2 items-end shrink-0 ${
+      className={`shrink-0 space-y-2 ${
         variant === 'floating' ? 'mt-3 pt-3 border-t border-gray-100' : 'mt-4 pt-4 border-t border-gray-100'
       }`}
     >
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={variant === 'embedded' ? 3 : 2}
-        placeholder="Nhập ghi chú… Ctrl+Enter để gửi"
-        disabled={showRemoteLoading}
-        className="flex-1 min-h-[44px] max-h-36 px-3 py-2 rounded-xl border border-gray-200 text-sm resize-y focus:ring-2 focus:ring-blue-400 focus:border-blue-400 bg-white disabled:opacity-50"
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            send();
-          }
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) uploadNoteFile(f);
         }}
       />
-      <button
-        type="button"
-        onClick={send}
-        disabled={sending || showRemoteLoading || !text.trim() || !targetLeadId}
-        className="shrink-0 h-11 w-11 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 disabled:opacity-40 shadow-md cursor-pointer disabled:cursor-not-allowed"
-        title="Gửi (Ctrl+Enter)"
-      >
-        <Send className="h-4 w-4" />
-      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) uploadNoteFile(f);
+        }}
+      />
+      {pendingAttachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {pendingAttachments.map((a, i) => (
+            <span
+              key={`${a.url}-${i}`}
+              className="inline-flex max-w-full items-center gap-1 rounded-full border border-gray-200 bg-gray-50 py-0.5 pl-2 pr-1 text-[11px] text-gray-700"
+            >
+              <span className="truncate">{a.name || 'File'}</span>
+              <button
+                type="button"
+                className="rounded-full p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-800 cursor-pointer"
+                onClick={() => setPendingAttachments((prev) => prev.filter((_, j) => j !== i))}
+                aria-label="Bỏ file"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2 items-end">
+        <div className="flex flex-1 flex-col gap-1.5 min-w-0">
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              disabled={showRemoteLoading || uploadingFile || !targetLeadId}
+              onClick={() => imageInputRef.current?.click()}
+              className="rounded-lg p-1.5 text-gray-500 hover:bg-violet-50 hover:text-violet-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              title="Đính kèm ảnh"
+            >
+              <ImageIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              disabled={showRemoteLoading || uploadingFile || !targetLeadId}
+              onClick={() => fileInputRef.current?.click()}
+              className="rounded-lg p-1.5 text-gray-500 hover:bg-violet-50 hover:text-violet-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              title="Đính kèm tệp"
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
+            {uploadingFile && (
+              <span className="text-[10px] text-violet-600 flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" /> Đang tải…
+              </span>
+            )}
+          </div>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={variant === 'embedded' ? 3 : 2}
+            placeholder="Nhập ghi chú… Ctrl+Enter để gửi"
+            disabled={showRemoteLoading || uploadingFile}
+            className="w-full min-h-[44px] max-h-36 px-3 py-2 rounded-xl border border-gray-200 text-sm resize-y focus:ring-2 focus:ring-blue-400 focus:border-blue-400 bg-white disabled:opacity-50"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={send}
+          disabled={
+            sending ||
+            showRemoteLoading ||
+            uploadingFile ||
+            (!text.trim() && !pendingAttachments.length) ||
+            !targetLeadId
+          }
+          className="shrink-0 h-11 w-11 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 disabled:opacity-40 shadow-md cursor-pointer disabled:cursor-not-allowed"
+          title="Gửi (Ctrl+Enter)"
+        >
+          <Send className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 

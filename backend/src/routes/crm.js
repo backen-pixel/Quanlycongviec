@@ -1052,6 +1052,11 @@ r.post('/pipeline-stages', async (req, res) => {
       b.description != null && String(b.description).trim() !== ''
         ? String(b.description).trim()
         : null;
+    let slaInsert = null;
+    if (b.sla_days !== undefined && b.sla_days !== null && b.sla_days !== '') {
+      const n = Number(b.sla_days);
+      if (Number.isFinite(n) && n >= 1) slaInsert = Math.round(n);
+    }
     const { data, error } = await supabase.from('crm_pipeline_stages').insert({
       name: b.name, pipeline_type: b.pipeline_type, pipeline_id: b.pipeline_id || null,
       color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
@@ -1061,6 +1066,7 @@ r.post('/pipeline-stages', async (req, res) => {
       sync_role: b.sync_role || null,
       default_probability: defaultProbability,
       description: stageDesc,
+      ...(slaInsert != null ? { sla_days: slaInsert } : {}),
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -1086,6 +1092,13 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter', 'create_event_on_enter', 'sync_role'].forEach(f => {
       if (b[f] !== undefined) update[f] = (f === 'send_zalo_on_enter' || f === 'create_event_on_enter') ? !!b[f] : b[f];
     });
+    if (b.sla_days !== undefined) {
+      if (b.sla_days === null || b.sla_days === '') update.sla_days = null;
+      else {
+        const n = Number(b.sla_days);
+        update.sla_days = Number.isFinite(n) && n >= 1 ? Math.round(n) : null;
+      }
+    }
     if (b.description !== undefined) {
       update.description =
         b.description == null || String(b.description).trim() === ''
@@ -3135,7 +3148,7 @@ r.post('/leads', async (req, res) => {
     }
 
     const { data, error } = await supabase.from('crm_leads')
-      .insert({ ...body, code, type: 'lead', lead_owner_id: body.assigned_to, created_by: req.user.userId })
+      .insert({ ...body, code, type: 'lead', lead_owner_id: body.assigned_to, created_by: req.user.userId, stage_entered_at: new Date().toISOString() })
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
       .single();
     if (error) throw error;
@@ -3267,6 +3280,7 @@ r.post('/deals', async (req, res) => {
         stage_id: body.stage_id || firstStage.id,
         lead_owner_id: body.assigned_to,
         created_by: req.user.userId,
+        stage_entered_at: new Date().toISOString(),
       })
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
       .single();
@@ -3487,7 +3501,7 @@ r.get('/leads/:id/detail', async (req, res) => {
 r.put('/leads/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type, company_id, region_id').eq('id', id).single();
+    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type, company_id, region_id, stage_id').eq('id', id).single();
     const sacPut = scopedAdminCompanyId(req);
     if (sacPut) {
       if (!oldLead || String(oldLead.company_id || '') !== String(sacPut)) {
@@ -3503,6 +3517,7 @@ r.put('/leads/:id', async (req, res) => {
     }
 
     const safeBody = { ...req.body };
+    delete safeBody.stage_entered_at;
     delete safeBody.sx_pipeline_stage_id;
     delete safeBody.lead_seen_by;
     delete safeBody.sx_handover_at;
@@ -3548,6 +3563,13 @@ r.put('/leads/:id', async (req, res) => {
       if (rc.mode === 'in' && rc.ids?.length && !rc.ids.includes(String(safeBody.region_id))) {
         return res.status(403).json({ error: 'Không đổi lead/deal sang khu vực ngoài phạm vi của bạn' });
       }
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(safeBody, 'stage_id')
+      && String(safeBody.stage_id || '') !== String(oldLead?.stage_id || '')
+    ) {
+      safeBody.stage_entered_at = new Date().toISOString();
     }
 
     if (Object.prototype.hasOwnProperty.call(safeBody, 'lead_type_id')) {
@@ -4077,6 +4099,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
         lead_owner_id: ownerId,
         company_id: companyId,
         updated_at: new Date().toISOString(),
+        stage_entered_at: new Date().toISOString(),
       })
       .eq('id', req.params.id)
       .select('*')
@@ -4170,7 +4193,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const { stage_id, lost_reason, production_company_id } = req.body;
     const { data: lead } = await supabase
       .from('crm_leads')
-      .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id')
+      .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id')
       .eq('id', req.params.id)
       .single();
     
@@ -4227,6 +4250,9 @@ r.patch('/leads/:id/stage', async (req, res) => {
     }
     
     const updates = { stage_id, updated_at: new Date().toISOString() };
+    if (String(lead?.stage_id || '') !== String(stage_id || '')) {
+      updates.stage_entered_at = new Date().toISOString();
+    }
     // Đồng bộ % xác suất theo cấu hình của cột pipeline (nếu có).
     // Mục tiêu: kéo lead/deal sang cột nào thì probability tự nhảy theo % của cột đó.
     if (stage?.default_probability !== undefined && stage?.default_probability !== null && stage?.default_probability !== '') {
@@ -4445,6 +4471,52 @@ r.get('/leads/:id/activities', async (req, res) => {
     .eq('lead_id', req.params.id)
     .order('activity_date', { ascending: false });
   res.json(data || []);
+});
+
+/** Chuẩn hoá đính kèm ghi chú — chỉ URL nội bộ uploads đã xác thực qua upload */
+function normalizeCrmActivityAttachments(raw) {
+  if (raw == null) return null;
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const a of arr) {
+    if (!a || typeof a !== 'object') continue;
+    const url = typeof a.url === 'string' ? a.url.trim() : '';
+    if (!url || !url.startsWith('/uploads/')) continue;
+    out.push({
+      url: url.slice(0, 600),
+      name: String(a.name != null ? a.name : '').slice(0, 400),
+      type: String(a.type != null ? a.type : '').slice(0, 120),
+      size: Number.isFinite(Number(a.size)) ? Number(a.size) : 0,
+    });
+  }
+  return out.length ? out : null;
+}
+
+/** Upload file/hình cho ghi chú (không tạo tin nhắn chat lead) */
+const crmNoteActivityUpload = multer({
+  storage: multer.diskStorage({
+    destination: 'uploads/lead-chat/',
+    filename: (_, file, cb) =>
+      cb(null, Date.now() + '-' + String(file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_')),
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+r.post('/leads/:id/activities/upload', crmNoteActivityUpload.single('file'), async (req, res) => {
+  try {
+    const uid = req.user?.userId ?? req.user?.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    const url = `/uploads/lead-chat/${req.file.filename}`;
+    res.json({
+      url,
+      name: req.file.originalname || req.file.filename,
+      type: req.file.mimetype || 'application/octet-stream',
+      size: req.file.size || 0,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4749,13 +4821,50 @@ r.post('/leads/:id/create-project', async (req, res) => {
 
 r.post('/leads/:id/activities', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('crm_activities')
-      .insert({ ...req.body, lead_id: req.params.id, created_by: req.user.userId })
-      .select('*')
-      .single();
+    const b = req.body || {};
+    const leadId = req.params.id;
+    const attachments = normalizeCrmActivityAttachments(b.attachments);
+    const type = String(b.type || 'note').trim() || 'note';
+    let title = b.title != null ? String(b.title).trim().slice(0, 500) : '';
+    const description = b.description != null ? String(b.description).trim() : '';
+    const outcome = b.outcome != null && String(b.outcome).trim() ? String(b.outcome).trim().slice(0, 500) : null;
+    let durationMinutes = null;
+    if (b.duration_minutes !== '' && b.duration_minutes != null && !Number.isNaN(Number(b.duration_minutes))) {
+      durationMinutes = parseInt(b.duration_minutes, 10);
+    }
+    const activityDate = b.activity_date || null;
+    const customerId = b.customer_id || null;
+
+    if (String(type).toLowerCase() === 'note') {
+      if (!description && !attachments?.length) {
+        return res.status(400).json({ error: 'Ghi chú cần nội dung hoặc đính kèm' });
+      }
+      if (!title) {
+        title =
+          (description && description.split('\n')[0]?.slice(0, 120)) ||
+          (attachments?.[0]?.name ? String(attachments[0].name).slice(0, 120) : '') ||
+          'Ghi chú';
+      }
+    } else if (!title) {
+      return res.status(400).json({ error: 'Thiếu tiêu đề hoạt động' });
+    }
+
+    const row = {
+      lead_id: leadId,
+      type,
+      title,
+      description: description || null,
+      outcome,
+      duration_minutes: durationMinutes,
+      activity_date: activityDate,
+      customer_id: customerId,
+      attachments,
+      created_by: req.user.userId,
+    };
+
+    const { data, error } = await supabase.from('crm_activities').insert(row).select('*').single();
     if (error) throw error;
-    // Update last_activity_at
-    await supabase.from('crm_leads').update({ last_activity_at: new Date().toISOString() }).eq('id', req.params.id);
+    await supabase.from('crm_leads').update({ last_activity_at: new Date().toISOString() }).eq('id', leadId);
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4768,10 +4877,10 @@ r.patch('/leads/:id/activities/:activityId', async (req, res) => {
     const leadId = req.params.id;
     const activityId = req.params.activityId;
     const uid = req.user?.userId;
-    const { title, description } = req.body || {};
+    const { title, description, attachments: attachmentsRaw } = req.body || {};
 
     const { data: act, error: fe } = await supabase.from('crm_activities')
-      .select('id, lead_id, type, created_by, title')
+      .select('id, lead_id, type, created_by, title, description, attachments')
       .eq('id', activityId)
       .single();
     if (fe || !act) return res.status(404).json({ error: 'Không tìm thấy hoạt động' });
@@ -4784,8 +4893,14 @@ r.patch('/leads/:id/activities/:activityId', async (req, res) => {
       return res.status(403).json({ error: 'Chỉ tác giả hoặc quản lý/admin mới sửa được ghi chú này' });
     }
 
-    const desc = description != null ? String(description).trim() : '';
-    if (!desc) return res.status(400).json({ error: 'Nội dung ghi chú không được để trống' });
+    const desc =
+      description !== undefined ? String(description).trim() : String(act.description || '').trim();
+    const nextAttachments =
+      attachmentsRaw !== undefined ? normalizeCrmActivityAttachments(attachmentsRaw) : act.attachments;
+
+    if (!desc && !(Array.isArray(nextAttachments) && nextAttachments.length)) {
+      return res.status(400).json({ error: 'Ghi chú cần nội dung hoặc ít nhất một đính kèm' });
+    }
 
     let nextTitle = act.title;
     if (title != null && String(title).trim()) {
@@ -4794,12 +4909,15 @@ r.patch('/leads/:id/activities/:activityId', async (req, res) => {
       nextTitle = desc.split('\n')[0].slice(0, 120) || 'Ghi chú';
     }
 
+    const patch = {
+      title: nextTitle,
+      description: desc || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (attachmentsRaw !== undefined) patch.attachments = nextAttachments;
+
     const { data, error } = await supabase.from('crm_activities')
-      .update({
-        title: nextTitle,
-        description: desc,
-        updated_at: new Date().toISOString(),
-      })
+      .update(patch)
       .eq('id', activityId)
       .select('*, creator:users!crm_activities_created_by_fkey(id, full_name)')
       .single();

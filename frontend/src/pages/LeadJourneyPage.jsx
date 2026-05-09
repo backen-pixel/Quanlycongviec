@@ -1,5 +1,9 @@
-import { useState } from 'react';
-import { Bell, RefreshCw, GitBranch, LayoutGrid } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Bell, RefreshCw, GitBranch, LayoutGrid, Filter, Building2 } from 'lucide-react';
+import api from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
+import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 
 // ─── Step data ─────────────────────────────────────────────────────────────
 // col = index within the module (used by swim-lane diagram)
@@ -593,6 +597,398 @@ function DetailPanel({ step }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Biểu đồ phễu SVG — hình dạng thu hẹp dần theo thứ tự giai đoạn (không phụ thuộc số lượng)
+// ─────────────────────────────────────────────────────────────────────────────
+function CrmFunnelSvg({ stages, accent }) {
+  const list = Array.isArray(stages) ? stages : [];
+  if (list.length === 0) return null;
+
+  const counts = list.map((s) => Math.max(0, s.count || 0));
+  const n = list.length;
+  const VW = 440;
+  const cx = VW / 2;
+  const padT = 8;
+  const padB = 16;
+  const rowH = 46;
+  const maxHalf = (VW - 48) / 2;
+  /** Mép trên/dưới phễu: chỉ theo vị trí bậc (trên rộng → dưới hẹp), tuyến tính */
+  const Wmax = Math.min(maxHalf * 2, 352);
+  const Wtip = 24;
+  const wEdge = [];
+  for (let k = 0; k <= n; k += 1) {
+    wEdge[k] = Wmax - ((Wmax - Wtip) * k) / n;
+  }
+
+  const VH = padT + n * rowH + padB;
+  let y = padT;
+  const polygons = [];
+
+  for (let i = 0; i < n; i += 1) {
+    const topW = wEdge[i];
+    const botW = wEdge[i + 1];
+    const col = list[i].color || accent.fallback;
+    const y0 = y;
+    const y1 = y + rowH;
+    const pts = `${cx - topW / 2},${y0} ${cx + topW / 2},${y0} ${cx + botW / 2},${y1} ${cx - botW / 2},${y1}`;
+    polygons.push({ pts, col, key: list[i].id, label: list[i].name, icon: list[i].icon, count: counts[i], yMid: (y0 + y1) / 2 });
+    y = y1;
+  }
+
+  return (
+    <div style={{ width: '100%', maxWidth: 520, margin: '0 auto' }}>
+      <svg
+        width="100%"
+        height={VH}
+        viewBox={`0 0 ${VW} ${VH}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ display: 'block', filter: 'drop-shadow(0 6px 16px rgba(15,23,42,0.08))' }}
+      >
+        <defs>
+          {polygons.map((p, i) => (
+            <linearGradient key={`g-${p.key}`} id={`funnel-grad-${accent.id}-${p.key}`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor={p.col} stopOpacity={0.92} />
+              <stop offset="100%" stopColor={p.col} stopOpacity={0.72} />
+            </linearGradient>
+          ))}
+          <filter id={`funnel-soft-${accent.id}`} x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="0.5" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        {/* đường trục nhẹ */}
+        <line x1={cx} y1={padT} x2={cx} y2={VH - padB} stroke="#e2e8f0" strokeWidth={1} strokeDasharray="4 6" opacity={0.85} />
+        {polygons.map((p, i) => (
+          <g key={p.key}>
+            <polygon
+              points={p.pts}
+              fill={`url(#funnel-grad-${accent.id}-${p.key})`}
+              stroke="white"
+              strokeWidth={2}
+              filter={`url(#funnel-soft-${accent.id})`}
+              style={{ transition: 'opacity .25s ease' }}
+            />
+            {/* Số — bên phải phễu */}
+            <text
+              x={cx + maxHalf + 12}
+              y={p.yMid + 4}
+              fill="#0f172a"
+              fontSize={13}
+              fontWeight={800}
+              fontFamily="system-ui, sans-serif"
+            >
+              {p.count}
+            </text>
+            {/* Nhãn — trái */}
+            <text
+              x={24}
+              y={p.yMid + 4}
+              fill="#475569"
+              fontSize={11}
+              fontWeight={700}
+              fontFamily="system-ui, sans-serif"
+            >
+              {p.icon ? `${p.icon} ` : ''}
+              {p.label && p.label.length > 18 ? `${p.label.slice(0, 16)}…` : p.label}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
+        {list.map((s) => (
+          <span
+            key={s.id}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: '#64748b',
+              padding: '4px 10px',
+              borderRadius: 999,
+              background: `${s.color || accent.fallback}18`,
+              border: `1px solid ${s.color || accent.fallback}35`,
+            }}
+          >
+            {(s.icon ? `${s.icon} ` : '') + (s.name || '')}: <strong style={{ color: '#0f172a' }}>{s.count ?? 0}</strong>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tab Phễu CRM — giai đoạn Lead + Deal từ pipeline thật (không cột Thua)
+// ─────────────────────────────────────────────────────────────────────────────
+function LeadDealFunnelPanel() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const companyScopedAdmin = isCrmCompanyAdmin(user);
+
+  const [companies, setCompanies] = useState([]);
+  const [companyId, setCompanyId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [leadStages, setLeadStages] = useState([]);
+  const [dealStages, setDealStages] = useState([]);
+  const [kpis, setKpis] = useState({ lead: null, deal: null });
+
+  useEffect(() => {
+    if (!isAdmin || companyScopedAdmin) {
+      const cid = user?.company_id ? String(user.company_id) : '';
+      setCompanyId(cid);
+      return;
+    }
+    let cancel = false;
+    api
+      .get('/companies', { params: { for_module: 'crm' } })
+      .then((r) => {
+        const list = r.data?.companies || r.data || [];
+        const arr = Array.isArray(list) ? list : [];
+        if (cancel) return;
+        setCompanies(arr);
+        const def = resolveDefaultCrmAdminCompanyId(arr);
+        setCompanyId((prev) => prev || def || '');
+      })
+      .catch(() => {
+        if (!cancel) setCompanies([]);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [isAdmin, companyScopedAdmin, user?.company_id]);
+
+  const loadFunnel = useCallback(async () => {
+    if (!companyId) {
+      setLeadStages([]);
+      setDealStages([]);
+      setKpis({ lead: null, deal: null });
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setErr('');
+    try {
+      const params = { company_id: companyId };
+      const [lr, dr] = await Promise.all([
+        api.get('/crm/dashboard', { params: { type: 'lead', ...params } }),
+        api.get('/crm/dashboard', { params: { type: 'deal', ...params } }),
+      ]);
+      const lp = (lr.data?.pipeline || []).filter((s) => !s.is_lost).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+      const dp = (dr.data?.pipeline || []).filter((s) => !s.is_lost).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+      setLeadStages(lp);
+      setDealStages(dp);
+      setKpis({ lead: lr.data?.kpis || null, deal: dr.data?.kpis || null });
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Không tải được phễu');
+      setLeadStages([]);
+      setDealStages([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId]);
+
+  useEffect(() => {
+    loadFunnel();
+  }, [loadFunnel]);
+
+  const onPickCompany = (id) => {
+    const v = String(id || '');
+    setCompanyId(v);
+    if (isAdmin && !companyScopedAdmin && v) {
+      try {
+        setStoredCrmFilterCompanyId(v);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const sumLead = useMemo(() => leadStages.reduce((a, s) => a + (s.count || 0), 0), [leadStages]);
+  const sumDeal = useMemo(() => dealStages.reduce((a, s) => a + (s.count || 0), 0), [dealStages]);
+
+  const showCompanyPicker = isAdmin && !companyScopedAdmin;
+
+  return (
+    <div style={{ padding: '16px 14px 22px' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 16,
+          paddingBottom: 14,
+          borderBottom: '1px solid #e2e8f0',
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Filter size={18} style={{ color: '#7c3aed', flexShrink: 0 }} />
+            Phễu Lead → Deal
+          </div>
+          <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4, lineHeight: 1.45 }}>
+            Giai đoạn lấy từ pipeline CRM của công ty (Lead rồi Deal).{' '}
+            <strong>Không hiển thị cột Thua</strong> — chỉ các giai đoạn còn &quot;lọc&quot; khách trong kinh doanh.
+          </div>
+        </div>
+        {showCompanyPicker && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: '#475569' }}>
+            <Building2 size={16} />
+            Công ty
+            <select
+              value={companyId}
+              onChange={(e) => onPickCompany(e.target.value)}
+              style={{
+                minWidth: 200,
+                padding: '8px 12px',
+                borderRadius: 10,
+                border: '1.5px solid #e2e8f0',
+                fontSize: 13,
+                fontWeight: 600,
+                background: 'white',
+                cursor: 'pointer',
+              }}
+            >
+              <option value="">— Chọn công ty —</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.short_name || c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button
+          type="button"
+          onClick={() => loadFunnel()}
+          disabled={loading || !companyId}
+          style={{
+            height: 36,
+            padding: '0 14px',
+            borderRadius: 10,
+            border: '1.5px solid #e2e8f0',
+            background: loading ? '#f8fafc' : 'white',
+            fontSize: 12,
+            fontWeight: 700,
+            color: '#475569',
+            cursor: loading || !companyId ? 'not-allowed' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+        >
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          Làm mới
+        </button>
+      </div>
+
+      {!companyId && (
+        <div style={{ textAlign: 'center', padding: '36px 16px', color: '#94a3b8', fontSize: 13 }}>
+          Chọn công ty để xem phễu theo pipeline CRM.
+        </div>
+      )}
+
+      {companyId && err && (
+        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: 12, fontSize: 13, color: '#b91c1c' }}>
+          {err}
+        </div>
+      )}
+
+      {companyId && loading && (
+        <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8', fontSize: 13 }}>Đang tải dữ liệu pipeline…</div>
+      )}
+
+      {companyId && !loading && !err && (
+        <>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
+            <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 12, padding: '10px 14px', minWidth: 120 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: '#7c3aed', letterSpacing: '0.04em' }}>LEAD (không Thua)</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#5b21b6' }}>{sumLead}</div>
+            </div>
+            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 12, padding: '10px 14px', minWidth: 120 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: '#2563eb', letterSpacing: '0.04em' }}>DEAL (không Thua)</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#1d4ed8' }}>{sumDeal}</div>
+            </div>
+            {kpis?.lead?.conversion_rate != null && (
+              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, padding: '10px 14px', minWidth: 140 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: '#15803d', letterSpacing: '0.04em' }}>TỶ LỆ LEAD→DEAL (CRM)</div>
+                <div style={{ fontSize: 22, fontWeight: 900, color: '#166534' }}>{kpis.lead.conversion_rate}%</div>
+              </div>
+            )}
+          </div>
+
+          {/* Phễu Lead — SVG */}
+          <div
+            style={{
+              marginBottom: 12,
+              padding: '14px 12px 18px',
+              borderRadius: 16,
+              background: 'linear-gradient(180deg, #faf5ff 0%, #ffffff 55%)',
+              border: '1px solid #ede9fe',
+            }}
+          >
+            <div style={{ marginBottom: 12, fontSize: 12, fontWeight: 800, color: '#6d28d9', letterSpacing: '0.08em', textAlign: 'center' }}>
+              PIPELINE LEAD
+            </div>
+            {leadStages.length === 0 ? (
+              <div style={{ textAlign: 'center', fontSize: 13, color: '#94a3b8', padding: '24px 8px' }}>
+                Chưa có giai đoạn Lead hoặc chưa có dữ liệu.
+              </div>
+            ) : (
+              <CrmFunnelSvg stages={leadStages} accent={{ id: 'lead', fallback: '#8b5cf6' }} />
+            )}
+          </div>
+
+          <div
+            style={{
+              textAlign: 'center',
+              fontSize: 12,
+              fontWeight: 800,
+              color: '#64748b',
+              padding: '12px 0',
+              borderTop: '1px dashed #e2e8f0',
+              borderBottom: '1px dashed #e2e8f0',
+              marginBottom: 16,
+            }}
+          >
+            ↓ Chuyển đổi · lọc cơ hội sang Deal ↓
+          </div>
+
+          {/* Phễu Deal — SVG */}
+          <div
+            style={{
+              marginBottom: 8,
+              padding: '14px 12px 18px',
+              borderRadius: 16,
+              background: 'linear-gradient(180deg, #eff6ff 0%, #ffffff 55%)',
+              border: '1px solid #dbeafe',
+            }}
+          >
+            <div style={{ marginBottom: 12, fontSize: 12, fontWeight: 800, color: '#1d4ed8', letterSpacing: '0.08em', textAlign: 'center' }}>
+              PIPELINE DEAL
+            </div>
+            {dealStages.length === 0 ? (
+              <div style={{ textAlign: 'center', fontSize: 13, color: '#94a3b8', padding: '24px 8px' }}>
+                Chưa có giai đoạn Deal hoặc chưa có dữ liệu.
+              </div>
+            ) : (
+              <CrmFunnelSvg stages={dealStages} accent={{ id: 'deal', fallback: '#3b82f6' }} />
+            )}
+          </div>
+
+          <p style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 18, lineHeight: 1.55, marginBottom: 0 }}>
+            Hình phễu chỉ thể hiện <strong>thứ tự lọc</strong> (trên rộng → dưới hẹp), không phản ánh tỷ lệ số lượng giữa các cột; số hiển thị bên cạnh mỗi giai đoạn là số liệu thực.
+            Dữ liệu theo quyền xem CRM của bạn. Giai đoạn Thắng vẫn có trong phễu; chỉ ẩn cột <strong>Thua</strong>.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main Page
 // ─────────────────────────────────────────────────────────────────────────────
 export default function LeadJourneyPage() {
@@ -608,6 +1004,7 @@ export default function LeadJourneyPage() {
     total:STEPS.filter(s=>s.mod===mod).length,
     isActive:cur.mod===mod,
   }));
+  const showStepDiagram = tab === 0 || tab === 1;
 
   return (
     <div style={{minHeight:'100vh',background:'#f1f5f9',padding:'18px 18px 48px'}}>
@@ -622,9 +1019,13 @@ export default function LeadJourneyPage() {
         <div style={{background:'white',borderRadius:20,padding:'14px 20px',marginBottom:12,border:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
           <div style={{flex:1,minWidth:200}}>
             <div style={{fontSize:17,fontWeight:900,color:'#111'}}>🗺️ Hành trình Deal</div>
-            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Lead CRM → Sản xuất → Vận chuyển → CSKH → Quay về CRM</div>
+            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>
+              {tab === 2
+                ? 'Phễu theo pipeline CRM (Lead + Deal) — lọc khách hàng qua từng giai đoạn'
+                : 'Lead CRM → Sản xuất → Vận chuyển → CSKH → Quay về CRM'}
+            </div>
           </div>
-          {modProgress.map(({mod,l,done,total,isActive})=>(
+          {showStepDiagram && modProgress.map(({mod,l,done,total,isActive})=>(
             <div key={mod} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 12px',borderRadius:12,
               background:isActive?l.light:'#f8fafc',border:`1.5px solid ${isActive?l.border:'#f1f5f9'}`,transition:'all .3s'}}>
               <span style={{fontSize:16}}>{l.icon}</span>
@@ -637,22 +1038,30 @@ export default function LeadJourneyPage() {
               </div>
             </div>
           ))}
+          {showStepDiagram ? (
           <div style={{textAlign:'right'}}>
             <div style={{fontSize:28,fontWeight:900,color:nodeColor,lineHeight:1,transition:'color .3s'}}>{pct}<span style={{fontSize:13,color:'#94a3b8',fontWeight:400}}>%</span></div>
             <div style={{fontSize:10,color:'#94a3b8'}}>bước {active+1}/14</div>
           </div>
+          ) : (
+          <div style={{textAlign:'right',paddingLeft:12}}>
+            <div style={{fontSize:12,fontWeight:800,color:'#7c3aed'}}>Phễu CRM</div>
+            <div style={{fontSize:10,color:'#94a3b8',marginTop:2}}>Theo cột pipeline</div>
+          </div>
+          )}
         </div>
 
         {/* Tabs */}
-        <div style={{display:'flex',gap:6,marginBottom:10}}>
+        <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
           {[
             {id:1,icon:<GitBranch size={13}/>,label:'Sơ đồ Luồng Nhánh (CRM đầy đủ)'},
             {id:0,icon:<LayoutGrid size={13}/>,label:'Swim Lanes'},
+            {id:2,icon:<Filter size={13}/>,label:'Phễu Lead → Deal'},
           ].map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{
               height:34,padding:'0 16px',borderRadius:10,cursor:'pointer',
-              border:`1.5px solid ${tab===t.id?nodeColor:'#e2e8f0'}`,
-              background:tab===t.id?nodeColor:'white',
+              border:`1.5px solid ${tab===t.id?(tab===2?'#7c3aed':nodeColor):'#e2e8f0'}`,
+              background:tab===t.id?(tab===2?'#7c3aed':nodeColor):'white',
               color:tab===t.id?'white':'#64748b',
               fontSize:12,fontWeight:700,
               display:'flex',alignItems:'center',gap:6,
@@ -664,14 +1073,17 @@ export default function LeadJourneyPage() {
         {/* Diagram */}
         <div style={{background:'white',borderRadius:20,border:'1px solid #e2e8f0',overflowX:'auto',
           padding:'6px 4px 8px',boxShadow:'0 4px 24px rgba(0,0,0,0.06)'}}>
-          {tab===0
-            ?<SwimLaneDiagram active={active} setActive={setActive}/>
-            :<BranchFlowDiagram active={active} setActive={setActive}/>
-          }
+          {tab===2 ? (
+            <LeadDealFunnelPanel />
+          ) : tab===0 ? (
+            <SwimLaneDiagram active={active} setActive={setActive}/>
+          ) : (
+            <BranchFlowDiagram active={active} setActive={setActive}/>
+          )}
         </div>
 
         {/* Slider */}
-        <div style={{background:'white',borderRadius:14,border:'1px solid #e2e8f0',padding:'10px 18px',marginTop:10,display:'flex',alignItems:'center',gap:12}}>
+        {showStepDiagram && (<div style={{background:'white',borderRadius:14,border:'1px solid #e2e8f0',padding:'10px 18px',marginTop:10,display:'flex',alignItems:'center',gap:12}}>
           <span style={{fontSize:20}}>{cur.icon}</span>
           <input type="range" min={0} max={13} value={active} onChange={e=>setActive(Number(e.target.value))}
             style={{flex:1,accentColor:nodeColor,cursor:'pointer'}}/>
@@ -679,14 +1091,17 @@ export default function LeadJourneyPage() {
             <span style={{fontSize:12,fontWeight:800,color:nodeColor}}>{cur.label}</span>
             <span style={{fontSize:11,color:'#94a3b8',marginLeft:6}}>{lane.label}</span>
           </div>
-        </div>
+        </div>)}
 
         {/* Detail */}
+        {showStepDiagram && (
         <div key={active} className="panel-in" style={{marginTop:12}}>
           <DetailPanel step={cur}/>
         </div>
+        )}
 
         {/* Quick-jump */}
+        {showStepDiagram && (
         <div style={{marginTop:12,background:'white',borderRadius:14,border:'1px solid #e2e8f0',padding:'12px 18px',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
           <span style={{fontSize:11,color:'#94a3b8',fontWeight:600,marginRight:4}}>Nhảy nhanh:</span>
           {STEPS.map(s=>{
@@ -705,6 +1120,7 @@ export default function LeadJourneyPage() {
             );
           })}
         </div>
+        )}
 
       </div>
     </div>

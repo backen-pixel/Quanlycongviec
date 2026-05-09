@@ -646,6 +646,12 @@ function TemplateCard({
       {/* Items with drag & drop */}
       {expanded && (
         <div className="px-4 py-2 space-y-1">
+          <p className="text-[10px] text-gray-600 mb-2 leading-snug bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2">
+            <span className="font-semibold text-gray-700">Hạn nối tiếp trong bộ:</span>{' '}
+            Mục đầu — số ngày (N) tính từ khi gắn bộ mẫu vào dự án. Các mục sau — N ngày tính từ{' '}
+            <span className="font-medium">thời điểm nhiệm vụ ngay phía trước được tích hoàn thành</span>
+            (deadline nhiệm vụ kế = lúc hoàn thành + N ngày theo mẫu).
+          </p>
           <DndContext sensors={sensors} collisionDetection={closestCenter}
             onDragEnd={(e) => handleItemDragEnd(e, tpl.id)}>
             <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
@@ -669,7 +675,11 @@ function TemplateCard({
                           item.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                           item.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                         }`}>{item.priority === 'urgent' ? 'Gấp' : item.priority === 'high' ? 'Cao' : item.priority === 'medium' ? 'TB' : 'Thấp'}</span>
-                        {item.deadline_days > 0 && <span className="text-[10px] text-gray-400">+{item.deadline_days}d</span>}
+                        {item.deadline_days > 0 && (
+                          <span className="text-[10px] text-gray-400" title="Số ngày deadline theo quy tắc nối tiếp (xem chú thích trên)">
+                            +{item.deadline_days} ngày
+                          </span>
+                        )}
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
@@ -714,14 +724,14 @@ function TemplateCard({
                               <option value="urgent">Gấp</option>
                             </select>
                             <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
-                              <span className="whitespace-nowrap">Hạn +N ngày</span>
+                              <span className="whitespace-nowrap">Ngày deadline (N)</span>
                               <input
                                 type="number"
                                 min={0}
                                 value={itemEditForm.deadline_days}
                                 onChange={e => setItemEditForm(f => ({ ...f, deadline_days: e.target.value }))}
                                 className="h-8 w-16 px-2 rounded border text-xs text-right"
-                                title="Số ngày từ khi gắn mẫu đến deadline mặc định"
+                                title="N ngày: với mục đầu = từ lúc gắn bộ; mục sau = từ lúc xong nhiệm trước"
                               />
                             </label>
                             <span className="flex-1" />
@@ -789,7 +799,7 @@ function TemplateCard({
             </select>
             <input type="number" value={newItem[tpl.id]?.deadline_days || 0}
               onChange={e => setNewItem(p => ({ ...p, [tpl.id]: { ...(p[tpl.id] || {}), deadline_days: parseInt(e.target.value) || 0 } }))}
-              className="h-8 w-16 px-2 rounded border text-xs text-right" placeholder="Ngày" title="Deadline (ngày)" />
+              className="h-8 w-16 px-2 rounded border text-xs text-right" placeholder="N" title="N ngày (mục đầu: từ gắn bộ; mục sau: từ khi xong nhiệm trước)" />
             <button onClick={() => addItem(tpl.id)} className="h-8 px-3 bg-blue-600 text-white rounded text-xs cursor-pointer hover:bg-blue-700">
               <Plus className="h-3 w-3" /></button>
           </div>

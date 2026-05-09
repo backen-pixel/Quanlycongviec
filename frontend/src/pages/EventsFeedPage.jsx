@@ -86,6 +86,7 @@ export default function EventsFeedPage() {
   const [eventTypes, setEventTypes] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [calLoading, setCalLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -105,8 +106,12 @@ export default function EventsFeedPage() {
   }, []);
 
   useEffect(() => {
-    if (view === 'feed') loadFeed();
-    if (view === 'calendar') loadCalendar();
+    if (view === 'feed') {
+      loadFeed();
+      loadCalendar();
+    } else if (view === 'calendar') {
+      loadCalendar();
+    }
   }, [view, filterType, filterStatus, filterUser, calMonth, calYear, listParams]);
 
   const loadEventTypes = () => api.get('/events/event-types').then(r => setEventTypes(r.data || [])).catch(() => {});
@@ -126,18 +131,18 @@ export default function EventsFeedPage() {
   };
 
   const loadCalendar = async () => {
-    setLoading(true);
+    setCalLoading(true);
     try {
       const { data } = await api.get('/events/calendar', { params: { month: calMonth, year: calYear, ...listParams } });
       setCalEvents(data || []);
     } catch (e) { console.error(e); }
-    setLoading(false);
+    setCalLoading(false);
   };
 
   const handleRespond = async (eventId, status) => {
     try {
       await api.put(`/events/${eventId}/respond`, { status });
-      if (view === 'feed') loadFeed(); else loadCalendar();
+      if (view === 'feed') { loadFeed(); loadCalendar(); } else loadCalendar();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
@@ -145,14 +150,14 @@ export default function EventsFeedPage() {
     if (!confirm('Xóa sự kiện này?')) return;
     try {
       await api.delete(`/events/${id}`);
-      if (view === 'feed') loadFeed(); else loadCalendar();
+      if (view === 'feed') { loadFeed(); loadCalendar(); } else loadCalendar();
     } catch (e) { alert('Lỗi xóa'); }
   };
 
   const handleStatusChange = async (id, status) => {
     try {
       await api.put(`/events/${id}`, { status });
-      if (view === 'feed') loadFeed(); else loadCalendar();
+      if (view === 'feed') { loadFeed(); loadCalendar(); } else loadCalendar();
     } catch (e) { alert('Lỗi'); }
   };
 
@@ -229,29 +234,50 @@ export default function EventsFeedPage() {
         </div>
       )}
 
-      {/* Feed View */}
+      {/* Feed: lịch phía trên, danh sách feed phía dưới */}
       {view === 'feed' && (
-        <div className="space-y-4">
-          {loading ? (
-            <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
-          ) : events.length === 0 ? (
-            <div className="text-center py-16 text-gray-400">
-              <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p className="text-sm">Chưa có sự kiện nào</p>
+        <div className="space-y-6">
+          <CalendarView
+            month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
+            loading={calLoading} selectedDay={selectedDay}
+            onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
+            onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
+            onSelectDay={setSelectedDay}
+            onOpenCreateForDay={(day) => {
+              setEditEvent(null);
+              setCreatePresetDay({ year: calYear, month: calMonth, day });
+              setSelectedDay(day);
+              setShowCreate(true);
+            }}
+            onEdit={(ev) => { setEditEvent(ev); setCreatePresetDay(null); setShowCreate(true); }}
+          />
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
+            </h2>
+            <div className="space-y-4">
+              {loading ? (
+                <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
+              ) : events.length === 0 ? (
+                <div className="text-center py-16 text-gray-400">
+                  <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">Chưa có sự kiện nào</p>
+                </div>
+              ) : events.map(ev => (
+                <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
+                  onRespond={handleRespond} onDelete={handleDelete} onStatusChange={handleStatusChange}
+                  onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
+              ))}
             </div>
-          ) : events.map(ev => (
-            <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
-              onRespond={handleRespond} onDelete={handleDelete} onStatusChange={handleStatusChange}
-              onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
-          ))}
+          </div>
         </div>
       )}
 
-      {/* Calendar View */}
+      {/* Calendar View (toàn màn hình lịch) */}
       {view === 'calendar' && (
         <CalendarView
           month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
-          loading={loading} selectedDay={selectedDay}
+          loading={calLoading} selectedDay={selectedDay}
           onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
           onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
           onSelectDay={setSelectedDay}
@@ -278,7 +304,7 @@ export default function EventsFeedPage() {
           eventTypes={eventTypes}
           users={users}
           onClose={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); }}
-          onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); if (view === 'feed') loadFeed(); else loadCalendar(); }}
+          onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); if (view === 'feed') { loadFeed(); loadCalendar(); } else loadCalendar(); }}
         />
       )}
     </div>
@@ -514,9 +540,150 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Chi tiết một sự kiện trong khung « ngày đã chọn » (lịch) — đủ trường như feed
+// ═══════════════════════════════════════════════════════════════
+function SelectedDayEventDetail({ ev, eventTypes, onEdit }) {
+  const typeInfo = eventTypes.find((t) => t.slug === ev.event_type) || ev.event_type_ref || { icon: '📋', name: ev.event_type, color: '#6B7280' };
+  const statusInfo = STATUS_MAP[ev.status] || STATUS_MAP.planned;
+  const confirmed = (ev.participants || []).filter((p) => p.status === 'confirmed');
+  const declined = (ev.participants || []).filter((p) => p.status === 'declined');
+  const pending = (ev.participants || []).filter((p) => p.status === 'pending');
+
+  const timeRange = (() => {
+    const startLabel = isToday(ev.start_time) ? 'Hôm nay' : formatDateVN(ev.start_time);
+    const startTime = formatTime(ev.start_time);
+    if (!ev.end_time) return `${startLabel}, ${startTime}`;
+    const sameDay = isSameDay(ev.start_time, ev.end_time);
+    const endTime = formatTime(ev.end_time);
+    if (sameDay) return `${startLabel}, ${startTime} — ${endTime}`;
+    const endLabel = isToday(ev.end_time) ? 'Hôm nay' : formatDateVN(ev.end_time);
+    return `${startLabel}, ${startTime} → ${endLabel}, ${endTime}`;
+  })();
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onEdit(ev)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onEdit(ev);
+        }
+      }}
+      className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-blue-200 hover:shadow-md transition text-left cursor-pointer"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-xl"
+            style={{ backgroundColor: `${typeInfo.color || '#3B82F6'}22`, color: typeInfo.color || '#3B82F6' }}
+          >
+            {typeInfo.icon || '📋'}
+          </span>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{typeInfo.name || 'Sự kiện'}</p>
+            <p className="text-base font-bold text-gray-900 break-words">{ev.title}</p>
+          </div>
+        </div>
+        <span className={`text-[10px] px-2.5 py-1 rounded-full font-semibold shrink-0 ${statusInfo.color}`}>{statusInfo.label}</span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4">
+        <div className="flex sm:flex-col items-center sm:items-center gap-2 sm:w-16 shrink-0">
+          <div className="bg-blue-600 text-white text-[10px] font-bold py-0.5 px-2 rounded-t-lg uppercase text-center w-full">
+            {getDayOfWeek(ev.start_time)}
+          </div>
+          <div className="border border-t-0 rounded-b-lg py-2 text-center w-full">
+            <span className="text-2xl font-bold text-gray-900">{getDayNum(ev.start_time)}</span>
+          </div>
+        </div>
+        <div className="space-y-2 text-sm min-w-0">
+          <div className="flex flex-wrap gap-x-2 gap-y-1">
+            <span className="text-xs text-gray-500 shrink-0">Thời gian:</span>
+            <span className="text-gray-800 font-medium">{timeRange}</span>
+          </div>
+          {ev.assignee && (
+            <div className="flex flex-wrap gap-x-2 gap-y-1">
+              <span className="text-xs text-gray-500 shrink-0">Người phụ trách:</span>
+              <span className="text-gray-800">{ev.assignee.full_name}</span>
+            </div>
+          )}
+          {ev.location && (
+            <div className="flex flex-wrap gap-x-2 gap-y-1 items-start">
+              <span className="text-xs text-gray-500 shrink-0">Địa điểm:</span>
+              <span className="text-gray-800 flex items-start gap-1">
+                <MapPin className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" /> {ev.location}
+              </span>
+            </div>
+          )}
+          {ev.lead && (
+            <div className="flex flex-wrap gap-x-2 gap-y-1 items-start">
+              <span className="text-xs text-gray-500 shrink-0">Deal / Lead:</span>
+              <Link
+                to={`/crm/leads/${ev.lead.id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="text-blue-600 hover:underline font-medium"
+              >
+                {ev.lead.code} — {ev.lead.title}
+              </Link>
+            </div>
+          )}
+          {ev.customer && (
+            <div className="flex flex-wrap gap-x-2 gap-y-1">
+              <span className="text-xs text-gray-500 shrink-0">Khách hàng:</span>
+              <span className="text-gray-800">
+                {ev.customer.full_name}
+                {ev.customer.phone ? ` (${ev.customer.phone})` : ''}
+              </span>
+            </div>
+          )}
+          {ev.project && (
+            <div className="flex flex-wrap gap-x-2 gap-y-1">
+              <span className="text-xs text-gray-500 shrink-0">Dự án:</span>
+              <span className="text-gray-800">{ev.project.code ? `${ev.project.code} — ` : ''}{ev.project.name}</span>
+            </div>
+          )}
+          {ev.description && <p className="text-gray-600 text-sm whitespace-pre-wrap">{ev.description}</p>}
+          {ev.result && (
+            <p className="text-sm text-emerald-800 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">📝 Kết quả: {ev.result}</p>
+          )}
+          <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 pt-1 border-t border-gray-100">
+            <span className="flex items-center gap-1">
+              <Users className="h-3.5 w-3.5" /> Tạo: {ev.creator?.full_name || '—'}
+            </span>
+            {(confirmed.length > 0 || declined.length > 0 || pending.length > 0) && (
+              <span>
+                Tham dự:{' '}
+                {confirmed.length > 0 && <span className="text-emerald-600 font-medium">{confirmed.length} xác nhận</span>}
+                {pending.length > 0 && <span className="text-amber-600 font-medium ml-1">{pending.length} chờ</span>}
+                {declined.length > 0 && <span className="text-red-600 font-medium ml-1">{declined.length} từ chối</span>}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <p className="text-[11px] text-blue-600 font-medium mt-3">Nhấn để sửa sự kiện</p>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // CALENDAR VIEW — Monthly grid
 // ═══════════════════════════════════════════════════════════════
 function CalendarView({ month, year, events, eventTypes, loading, selectedDay, onPrevMonth, onNextMonth, onSelectDay, onOpenCreateForDay, onEdit }) {
+  const selectedDayDetailRef = useRef(null);
+  const [scrollToDetailNonce, setScrollToDetailNonce] = useState(0);
+
+  useLayoutEffect(() => {
+    if (scrollToDetailNonce === 0) return;
+    const el = selectedDayDetailRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [scrollToDetailNonce, selectedDay]);
+
   const monthNames = ['', 'Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
     'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
   const dayNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
@@ -542,7 +709,9 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
     eventsByDay[d].push(ev);
   });
 
-  const selectedDayEvents = selectedDay ? (eventsByDay[selectedDay] || []) : [];
+  const selectedDayEvents = selectedDay
+    ? [...(eventsByDay[selectedDay] || [])].sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
+    : [];
 
   return (
     <div className="bg-white rounded-xl border p-4">
@@ -564,7 +733,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
             ))}
           </div>
 
-          {/* Calendar grid */}
+          {/* Calendar grid — mỗi ô: vùng xanh nhạt (Tạo mới) + vùng vàng nhạt (Xem lịch) */}
           <div className="grid grid-cols-7 border-t border-l">
             {cells.map((day, i) => {
               const dayEvents = day ? (eventsByDay[day] || []) : [];
@@ -574,45 +743,77 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
                 <div
                   key={i}
                   role="presentation"
-                  onClick={(e) => {
-                    if (!day) return;
-                    if (e.target.closest?.('[data-cal-event-chip]')) return;
-                    onSelectDay(day);
-                    onOpenCreateForDay(day);
-                  }}
-                  className={`min-h-[90px] border-r border-b p-1 cursor-pointer transition
-                    ${day ? 'hover:bg-blue-50/50' : 'bg-gray-50'}
-                    ${isSelected ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : ''}
+                  className={`min-h-[100px] border-r border-b flex flex-col overflow-hidden transition
+                    ${!day ? 'bg-gray-50' : ''}
+                    ${isSelected ? 'ring-2 ring-blue-400 ring-inset z-[1]' : ''}
                   `}
                 >
                   {day && (
                     <>
-                      <div className={`text-sm font-medium mb-0.5 w-7 h-7 flex items-center justify-center rounded-full
-                        ${isTodayCell ? 'bg-blue-600 text-white' : 'text-gray-700'}
-                      `}>{day}</div>
-                      <div className="space-y-0.5">
-                        {dayEvents.slice(0, 3).map(ev => {
-                          const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || {};
-                          return (
-                            <div
-                              key={ev.id}
-                              data-cal-event-chip
-                              className="text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium"
-                              style={{ backgroundColor: (typeInfo.color || '#3B82F6') + '20', color: typeInfo.color || '#3B82F6' }}
-                              title={`${ev.title} — ${formatTime(ev.start_time)} — Nhấn để sửa`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onSelectDay(day);
-                                onEdit(ev);
-                              }}
-                            >
-                              {typeInfo.icon} {ev.title}
-                            </div>
-                          );
-                        })}
-                        {dayEvents.length > 3 && (
-                          <div className="text-[10px] text-gray-400 px-1">+{dayEvents.length - 3} khác</div>
-                        )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectDay(day);
+                          onOpenCreateForDay(day);
+                        }}
+                        className="flex-shrink-0 w-full text-left bg-sky-100 hover:bg-sky-200/90 border-b border-sky-200/60 px-1 py-1 flex items-center justify-between gap-0.5 cursor-pointer"
+                        aria-label={`Tạo sự kiện ngày ${day}`}
+                      >
+                        <span
+                          className={`text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full shrink-0
+                            ${isTodayCell ? 'bg-blue-600 text-white' : 'text-gray-800'}
+                          `}
+                        >
+                          {day}
+                        </span>
+                        <span className="text-[9px] font-semibold text-sky-900/80 leading-tight text-right">Tạo mới</span>
+                      </button>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onSelectDay(day);
+                            setScrollToDetailNonce((n) => n + 1);
+                          }
+                        }}
+                        onClick={(e) => {
+                          if (!day) return;
+                          if (e.target.closest?.('[data-cal-event-chip]')) return;
+                          onSelectDay(day);
+                          setScrollToDetailNonce((n) => n + 1);
+                        }}
+                        className="flex-1 min-h-[56px] bg-amber-50 hover:bg-amber-100/90 p-0.5 flex flex-col cursor-pointer border-t border-amber-100"
+                        aria-label={`Xem lịch ngày ${day}`}
+                      >
+                        <div className="text-[9px] font-semibold text-amber-900/70 px-0.5 mb-0.5 shrink-0">Xem lịch</div>
+                        <div className="space-y-0.5 flex-1 min-h-0 overflow-hidden">
+                          {dayEvents.slice(0, 3).map(ev => {
+                            const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || {};
+                            return (
+                              <div
+                                key={ev.id}
+                                data-cal-event-chip
+                                className="text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium"
+                                style={{ backgroundColor: (typeInfo.color || '#3B82F6') + '20', color: typeInfo.color || '#3B82F6' }}
+                                title={`${ev.title} — ${formatTime(ev.start_time)} — Nhấn để sửa`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectDay(day);
+                                  setScrollToDetailNonce((n) => n + 1);
+                                  onEdit(ev);
+                                }}
+                              >
+                                {typeInfo.icon} {ev.title}
+                              </div>
+                            );
+                          })}
+                          {dayEvents.length > 3 && (
+                            <div className="text-[10px] text-amber-800/60 px-1">+{dayEvents.length - 3} khác</div>
+                          )}
+                        </div>
                       </div>
                     </>
                   )}
@@ -621,37 +822,31 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
             })}
           </div>
 
-          {/* Selected day detail */}
+          {/* Selected day detail — cuộn tới đây khi bấm « Xem lịch » */}
           {selectedDay && (
-            <div className="mt-4 border-t pt-4">
-              <h3 className="text-sm font-bold text-gray-800 mb-2">
-                📅 Ngày {selectedDay}/{month}/{year} — {selectedDayEvents.length} sự kiện
+            <div
+              ref={selectedDayDetailRef}
+              id="events-calendar-day-detail"
+              className="mt-4 border-t pt-4 scroll-mt-24"
+            >
+              <h3 className="text-sm font-bold text-gray-800 mb-3 flex flex-wrap items-center gap-2">
+                <span>📅 Ngày {selectedDay}/{month}/{year}</span>
+                <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
+                  {selectedDayEvents.length} sự kiện
+                </span>
               </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Khảo sát / lịch trong ngày — đủ thông tin; nhấn thẻ để chỉnh sửa.
+              </p>
               {selectedDayEvents.length === 0 ? (
-                <p className="text-sm text-gray-400">Không có sự kiện</p>
+                <p className="text-sm text-gray-400 py-4 text-center border border-dashed border-gray-200 rounded-xl bg-gray-50">
+                  Không có sự kiện trong ngày này
+                </p>
               ) : (
-                <div className="space-y-2">
-                  {selectedDayEvents.map(ev => {
-                    const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || {};
-                    const statusInfo = STATUS_MAP[ev.status] || STATUS_MAP.planned;
-                    return (
-                      <div key={ev.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer" onClick={() => onEdit(ev)}>
-                        <div className="w-10 h-10 rounded-lg flex items-center justify-center text-lg"
-                          style={{ backgroundColor: (typeInfo.color || '#3B82F6') + '20' }}>
-                          {typeInfo.icon || '📋'}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-900 truncate">{ev.title}</p>
-                          <p className="text-xs text-gray-500">
-                            {formatTime(ev.start_time)}{ev.end_time ? ` — ${formatTime(ev.end_time)}` : ''}
-                            {ev.location ? ` · 📍 ${ev.location}` : ''}
-                          </p>
-                        </div>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusInfo.color}`}>{statusInfo.label}</span>
-                        <div className="text-xs text-gray-400">{ev.creator?.full_name}</div>
-                      </div>
-                    );
-                  })}
+                <div className="space-y-4">
+                  {selectedDayEvents.map((ev) => (
+                    <SelectedDayEventDetail key={ev.id} ev={ev} eventTypes={eventTypes} onEdit={onEdit} />
+                  ))}
                 </div>
               )}
             </div>
@@ -1081,11 +1276,129 @@ function UserMultiSelect({ users, value = [], onChange, placeholder = '👥 Ch�
   );
 }
 
+/** Bỏ tiền tố «Tên loại - » nếu khớp một loại trong danh sách */
+function stripEventTypeTitlePrefix(title, types) {
+  let rest = (title || '').trim();
+  for (const opt of types || []) {
+    const prefix = `${opt.name} - `;
+    if (rest.startsWith(prefix)) {
+      rest = rest.slice(prefix.length).trim();
+      break;
+    }
+  }
+  return rest;
+}
+
+const EVENT_HOURS_24 = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+const EVENT_MINUTES_5 = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0'));
+
+function snapMinuteToStep5(m) {
+  const n = parseInt(String(m || '0'), 10);
+  if (Number.isNaN(n)) return '00';
+  const s = Math.min(55, Math.round(n / 5) * 5);
+  return String(s).padStart(2, '0');
+}
+
+/** Chuỗi datetime-local → tách để chọn 24h rõ ràng */
+function splitLocalDateTime24h(localStr) {
+  if (!localStr || typeof localStr !== 'string' || !localStr.trim()) {
+    return { date: '', hour: '09', minute: '00' };
+  }
+  const s = localStr.trim();
+  if (!s.includes('T')) {
+    return { date: s.slice(0, 10) || '', hour: '09', minute: '00' };
+  }
+  const [date, timePart] = s.split('T');
+  const hm = (timePart || '09:00').slice(0, 5).split(':');
+  let h = parseInt(hm[0], 10);
+  let mi = parseInt(hm[1], 10);
+  if (Number.isNaN(h)) h = 9;
+  if (Number.isNaN(mi)) mi = 0;
+  h = Math.min(23, Math.max(0, h));
+  return {
+    date: date || '',
+    hour: String(h).padStart(2, '0'),
+    minute: snapMinuteToStep5(mi),
+  };
+}
+
+function joinLocalDateTime24h(date, hour, minute) {
+  if (!date || String(date).trim() === '') return '';
+  const h = hour != null && hour !== '' ? String(hour).padStart(2, '0') : '09';
+  const m = minute != null && minute !== '' ? snapMinuteToStep5(minute) : '00';
+  return `${date}T${h}:${m}`;
+}
+
+/** Ngày (lịch) + giờ/phút chọn list — luôn dạng 24 giờ */
+function EventDateTime24hPickers({ label, required, value, onChange, hint }) {
+  const p = splitLocalDateTime24h(value || '');
+  const hasDate = !!p.date;
+
+  const update = (patch) => {
+    const next = { ...p, ...patch };
+    if (!next.date || String(next.date).trim() === '') {
+      onChange('');
+      return;
+    }
+    onChange(joinLocalDateTime24h(next.date, next.hour, next.minute));
+  };
+
+  return (
+    <div>
+      <label className="text-xs font-semibold text-gray-800 block mb-1.5">
+        {label} {required ? '*' : ''}
+      </label>
+      <div className="flex flex-wrap items-end gap-2">
+        <input
+          type="date"
+          value={p.date}
+          onChange={(e) => update({ date: e.target.value })}
+          className="flex-1 min-w-[158px] h-11 px-3 border border-gray-300 rounded-xl text-sm bg-white shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        />
+        <div className={`flex items-center gap-1 rounded-xl border border-gray-300 bg-white px-1 shadow-sm ${!hasDate ? 'opacity-45' : ''}`}>
+          <select
+            value={p.hour}
+            disabled={!hasDate}
+            onChange={(e) => update({ hour: e.target.value })}
+            aria-label="Giờ (0–23)"
+            className="h-11 min-w-[4.25rem] pl-2 pr-6 py-1 border-0 rounded-lg text-sm font-mono font-semibold text-gray-900 bg-transparent cursor-pointer disabled:cursor-not-allowed"
+          >
+            {EVENT_HOURS_24.map((h) => (
+              <option key={h} value={h}>
+                {h}
+              </option>
+            ))}
+          </select>
+          <span className="text-gray-400 font-bold select-none">:</span>
+          <select
+            value={EVENT_MINUTES_5.includes(p.minute) ? p.minute : snapMinuteToStep5(p.minute)}
+            disabled={!hasDate}
+            onChange={(e) => update({ minute: e.target.value })}
+            aria-label="Phút (bước 5)"
+            className="h-11 min-w-[4.25rem] pl-2 pr-6 py-1 border-0 rounded-lg text-sm font-mono font-semibold text-gray-900 bg-transparent cursor-pointer disabled:cursor-not-allowed"
+          >
+            {EVENT_MINUTES_5.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+        <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md mb-0.5">
+          24h
+        </span>
+      </div>
+      {hint ? <p className="text-[10px] text-gray-500 mt-1">{hint}</p> : null}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 // EVENT CREATE/EDIT MODAL
 // ═══════════════════════════════════════════════════════════════
 function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSaved }) {
   const isEdit = !!event;
+  const participantsAutoFilled = useRef(false);
   const toLocalDateTimeInput = (value) => isoToDatetimeLocalValue(value);
   const startFromPreset = () => {
     if (!presetDay || event) return '';
@@ -1113,6 +1426,13 @@ function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSave
   const [leads, setLeads] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [saving, setSaving] = useState(false);
+
+  /** Tạo mới: tự mời tất cả nhân viên có trong danh sách (một lần khi load users) */
+  useEffect(() => {
+    if (isEdit || participantsAutoFilled.current || !users?.length) return;
+    participantsAutoFilled.current = true;
+    setParticipantIds(users.map((u) => u.id));
+  }, [isEdit, users]);
 
   useEffect(() => {
     api.get('/crm/leads', { params: { type: 'deal', limit: 200 } }).then(r => {
@@ -1163,6 +1483,17 @@ function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSave
 
   const selectedType = eventTypes.find(t => t.slug === form.event_type) || {};
 
+  const applyEventTypeAndTitle = (slug) => {
+    const t = eventTypes.find((x) => x.slug === slug);
+    if (!t) {
+      setForm((f) => ({ ...f, event_type: slug }));
+      return;
+    }
+    const rest = stripEventTypeTitlePrefix(form.title, eventTypes);
+    const nextTitle = rest ? `${t.name} - ${rest}` : `${t.name} - `;
+    setForm((f) => ({ ...f, event_type: slug, title: nextTitle }));
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
@@ -1180,7 +1511,7 @@ function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSave
             <label className="text-xs font-medium text-gray-600 block mb-2">Loại sự kiện</label>
             <div className="flex flex-wrap gap-2">
               {eventTypes.map(t => (
-                <button key={t.slug} onClick={() => setForm(f => ({ ...f, event_type: t.slug }))}
+                <button key={t.slug} type="button" onClick={() => applyEventTypeAndTitle(t.slug)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 cursor-pointer transition ${
                     form.event_type === t.slug ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:border-gray-300'
                   }`}>
@@ -1198,19 +1529,25 @@ function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSave
               className="w-full h-10 px-3 border rounded-lg text-sm" />
           </div>
 
-          {/* Date/Time */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">Bắt đầu *</label>
-              <input type="datetime-local" value={form.start_time}
-                onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))}
-                className="w-full h-10 px-3 border rounded-lg text-sm" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">Kết thúc</label>
-              <input type="datetime-local" value={form.end_time}
-                onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))}
-                className="w-full h-10 px-3 border rounded-lg text-sm" />
+          {/* Ngày + giờ 24h (dropdown giờ 00–23, phút bước 5) — không AM/PM */}
+          <div className="rounded-xl border border-gray-200 bg-gray-50/90 p-4 space-y-4">
+            <p className="text-[11px] text-gray-600">
+              Chọn <strong className="text-gray-800">ngày</strong> trên lịch, sau đó chọn <strong className="text-gray-800">giờ · phút</strong> theo đồng hồ{' '}
+              <strong className="text-emerald-800">24 giờ</strong> (vd. 14 = 2 giờ chiều).
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <EventDateTime24hPickers
+                label="Bắt đầu"
+                required
+                value={form.start_time}
+                onChange={(v) => setForm((f) => ({ ...f, start_time: v }))}
+              />
+              <EventDateTime24hPickers
+                label="Kết thúc"
+                value={form.end_time || ''}
+                onChange={(v) => setForm((f) => ({ ...f, end_time: v }))}
+                hint="Xóa ngày (để trống ô lịch) nếu chưa có giờ kết thúc."
+              />
             </div>
           </div>
 
