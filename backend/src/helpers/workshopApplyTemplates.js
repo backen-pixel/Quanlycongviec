@@ -126,12 +126,14 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
   }
 
   const now = Date.now();
-  const staged = items.map((item) => {
+  /** Deadline nối tiếp: chỉ nhiệm vụ đầu nhận hạn khi gắn bộ (từ lúc gắn + deadline_days). Các nhiệm vụ sau nhận hạn khi nhiệm trước hoàn thành — xử lý ở scheduleNextWorkshopTaskAfterComplete. */
+  const staged = items.map((item, idx) => {
     const guessedSlug = guessStageSlugForTemplateItemTitle(tpl.workshop_area, item.title);
     const stageId = resolveStageIdBySlug(guessedSlug) || fallbackStageId;
-    const dueDate = item.deadline_days
-      ? new Date(now + item.deadline_days * 86400000).toISOString()
-      : null;
+    let dueDate = null;
+    if (idx === 0 && Number(item.deadline_days) > 0) {
+      dueDate = new Date(now + Number(item.deadline_days) * 86400000).toISOString();
+    }
     return { item, guessedSlug, stageId, dueDate };
   });
 
@@ -382,6 +384,61 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, { works
   };
 }
 
+/**
+ * Khi một nhiệm vụ sinh từ bộ mẫu xưởng được đánh dấu hoàn thành: gán deadline cho nhiệm vụ kế tiếp trong cùng bộ
+ * (due = lúc hoàn thành nhiệm trước + deadline_days của mục mẫu tương ứng).
+ */
+async function scheduleNextWorkshopTaskAfterComplete(task) {
+  if (!task || task.status !== 'done') return { ok: false, skip: 'not_done' };
+  const meta = task.metadata || {};
+  const tplId = meta.workshop_template_id;
+  const itemId = meta.workshop_template_item_id;
+  const projectId = task.project_id;
+  if (!tplId || !itemId || !projectId) return { ok: true, skip: 'not_workshop_chain' };
+
+  const completedAt = task.completed_at ? new Date(task.completed_at) : new Date();
+
+  const { data: chainItems, error: ie } = await supabase
+    .from('workshop_task_template_items')
+    .select('id, order_index, deadline_days')
+    .eq('template_id', tplId)
+    .order('order_index');
+  if (ie || !chainItems?.length) return { ok: false, error: ie?.message };
+
+  const curIdx = chainItems.findIndex((i) => String(i.id) === String(itemId));
+  if (curIdx < 0 || curIdx >= chainItems.length - 1) return { ok: true, skip: 'no_next' };
+
+  const nextItem = chainItems[curIdx + 1];
+  const days = Number(nextItem.deadline_days) || 0;
+  let dueDate = null;
+  if (days > 0) {
+    const d = new Date(completedAt.getTime());
+    d.setDate(d.getDate() + days);
+    dueDate = d.toISOString();
+  }
+
+  const { data: projectTasks, error: te } = await supabase
+    .from('tasks')
+    .select('id, metadata')
+    .eq('project_id', projectId);
+  if (te) return { ok: false, error: te.message };
+
+  const nextTask = projectTasks?.find(
+    (t) =>
+      t.metadata?.workshop_template_item_id &&
+      String(t.metadata.workshop_template_id) === String(tplId) &&
+      String(t.metadata.workshop_template_item_id) === String(nextItem.id),
+  );
+  if (!nextTask?.id) return { ok: true, skip: 'next_task_missing' };
+
+  const { error: ue } = await supabase
+    .from('tasks')
+    .update({ due_date: dueDate, updated_at: new Date().toISOString() })
+    .eq('id', nextTask.id);
+  if (ue) return { ok: false, error: ue.message };
+  return { ok: true, next_task_id: nextTask.id, due_date: dueDate };
+}
+
 module.exports = {
   applyWorkshopTemplateToProject,
   applyDefaultWorkshopTemplatesForNewProject,
@@ -390,4 +447,5 @@ module.exports = {
   resolveDefaultWorkshopTemplateId,
   normalizeChecklistForTaskInsert,
   resolveStageIdForWorkshopArea,
+  scheduleNextWorkshopTaskAfterComplete,
 };

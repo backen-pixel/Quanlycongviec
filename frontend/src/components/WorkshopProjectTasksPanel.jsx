@@ -439,6 +439,26 @@ export default function WorkshopProjectTasksPanel({
                 </div>
                 {open && (
                   <div className="px-3 pb-3 pt-0 border-t border-gray-100 space-y-3 bg-slate-50/50">
+                    {task.metadata?.workshop_template_item_id && (
+                      <div className="rounded-lg border border-teal-200 bg-teal-50/90 px-3 py-2">
+                        <p className="text-[10px] font-bold text-teal-900 uppercase tracking-wide">Lên kế hoạch thực hiện</p>
+                        <p className="text-xs text-teal-950 mt-1">
+                          {task.due_date ? (
+                            <>
+                              Hạn hiện tại:{' '}
+                              <strong>{new Date(task.due_date).toLocaleString('vi-VN')}</strong>
+                            </>
+                          ) : (
+                            <span className="text-teal-800/95">
+                              Chưa gán hạn — thường bắt đầu sau khi nhiệm vụ đứng trước trong bộ mẫu được hoàn thành (số ngày N lấy từ cấu hình bộ).
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-[10px] text-teal-800/85 mt-1.5 leading-snug">
+                          Hạn được tính nối tiếp: khi nhiệm trước tích xong, hệ thống đặt deadline cho nhiệm này = thời điểm đó + N ngày đã nhập ở mục tương ứng trong bộ nhiệm vụ mẫu.
+                        </p>
+                      </div>
+                    )}
                     <div>
                       <label className="text-[10px] font-semibold text-gray-500 uppercase">Ghi chú (mô tả nhiệm vụ)</label>
                       <textarea

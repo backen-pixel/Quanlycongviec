@@ -36,6 +36,59 @@ import DateRangePickerPopover from '../components/DateRangePickerPopover';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
+/** Tuổi chi tiết từ mốc thời gian — ngày + giờ (+ phút nếu dưới 1 giờ) */
+function formatAgeDetailed(fromIso) {
+  if (!fromIso) return '—';
+  const ms = Date.now() - new Date(fromIso).getTime();
+  if (ms < 0) return '0 giờ';
+  const totalMins = Math.floor(ms / 60000);
+  const days = Math.floor(totalMins / (60 * 24));
+  const hours = Math.floor((totalMins - days * 24 * 60) / 60);
+  const mins = totalMins % 60;
+  const parts = [];
+  if (days) parts.push(`${days} ngày`);
+  if (hours) parts.push(`${hours} giờ`);
+  if (!days && !hours) parts.push(`${mins} phút`);
+  return parts.join(' ');
+}
+
+function formatRemainingMs(ms) {
+  if (ms == null || ms <= 0) return null;
+  const h = Math.floor(ms / 3600000);
+  const d = Math.floor(h / 24);
+  const hr = h % 24;
+  if (d > 0) return `${d} ngày ${hr} giờ`;
+  if (h > 0) return `${h} giờ`;
+  const m = Math.floor(ms / 60000);
+  return `${m} phút`;
+}
+
+/** SLA cột pipeline: mặc định 7 ngày nếu chưa cấuỉnh sla_days — vàng ≤3 ngày còn, cam ≤24h, đỏ quá hạn */
+function getPipelineStageSlaTone(stageEnteredAt, stage) {
+  if (!stageEnteredAt || !stage) return { level: 'ok', remainingMs: null, deadlineTs: null };
+  if (stage.is_won || stage.is_lost) return { level: 'ok', remainingMs: null, deadlineTs: null };
+  const slaDays = Number(stage.sla_days) > 0 ? Number(stage.sla_days) : 7;
+  const deadlineTs = new Date(stageEnteredAt).getTime() + slaDays * 86400000;
+  const remainingMs = deadlineTs - Date.now();
+  if (remainingMs < 0) return { level: 'overdue', remainingMs, deadlineTs };
+  if (remainingMs <= 24 * 3600000) return { level: 'soon', remainingMs, deadlineTs };
+  if (remainingMs <= 3 * 24 * 3600000) return { level: 'warn', remainingMs, deadlineTs };
+  return { level: 'ok', remainingMs, deadlineTs };
+}
+
+function pipelineCardToneClasses(level) {
+  switch (level) {
+    case 'overdue':
+      return 'bg-red-50 border-red-300';
+    case 'soon':
+      return 'bg-orange-50 border-orange-300';
+    case 'warn':
+      return 'bg-amber-50 border-amber-200';
+    default:
+      return 'bg-white border-gray-200';
+  }
+}
+
 // ── HELPER: tính khoảng thời gian ──
 function getDateRange(preset) {
   const now = new Date();
@@ -666,6 +719,170 @@ export default function CRMDashboard() {
     return '';
   }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompany]);
 
+  /** Sau khi tạo Lead/Deal: cập nhật Kanban + KPI header + số SĐT — không gọi load() full trang. */
+  const refreshKanbanListAfterCreate = useCallback(
+    async (type) => {
+      const dateParams = {};
+      if (customDateFrom) dateParams.date_from = customDateFrom;
+      if (customDateTo) dateParams.date_to = customDateTo;
+      const common = { type, phone_filter: filterPhone || undefined, ...dateParams };
+      if (filterAssignee) common.assigned_to = filterAssignee;
+      if (filterCompany) common.company_id = filterCompany;
+      if (filterLeadType) common.lead_type_id = filterLeadType;
+
+      const loadAll = String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
+      let rows = [];
+      let nextOffset = 0;
+      let total = null;
+
+      try {
+        if (loadAll) {
+          const chunk = 1000;
+          let offset = 0;
+          let guard = 0;
+          while (guard < 500) {
+            guard += 1;
+            const res = await api.get('/crm/leads', { params: { ...common, limit: chunk, offset } }).catch(() => ({ data: {} }));
+            const payload = res.data || {};
+            const page = Array.isArray(payload) ? payload : (payload.data || []);
+            rows.push(...page);
+            if (page.length === 0) break;
+            const totalKnown = typeof payload.total === 'number' ? payload.total : null;
+            const nextOff = typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
+            const hasMore =
+              typeof payload.hasMore === 'boolean'
+                ? payload.hasMore
+                : totalKnown != null
+                  ? nextOff < totalKnown
+                  : page.length >= chunk;
+            if (!hasMore) break;
+            offset = nextOff;
+          }
+          nextOffset = null;
+          total = rows.length;
+        } else {
+          const limit = parseInt(kanbanLoadLimit, 10) || 1000;
+          const res = await api.get('/crm/leads', { params: { ...common, limit, offset: 0 } }).catch(() => ({ data: {} }));
+          const d = res.data;
+          rows = Array.isArray(d) ? d : (d?.data || []);
+          total = typeof d?.total === 'number' ? d.total : null;
+          nextOffset = typeof d?.nextOffset === 'number' ? d.nextOffset : rows.length;
+        }
+
+        const userKey = getCurrentUserKeyForLeadSeen(user);
+        const viewedLocal = getLocallyViewedLeadIdSet(userKey);
+        const merged = dedupeCrmKanbanRows(
+          rows.map((l) => (viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l)),
+        );
+
+        if (type === 'lead') {
+          setAllLeads(merged);
+          setLoadMoreState((s) => ({
+            ...s,
+            leadOffset: nextOffset ?? merged.length,
+            leadTotal: total,
+            loading: false,
+          }));
+        } else {
+          setAllDeals(merged);
+          setLoadMoreState((s) => ({
+            ...s,
+            dealOffset: nextOffset ?? merged.length,
+            dealTotal: total,
+            loading: false,
+          }));
+        }
+      } catch (e) {
+        console.error('[refreshKanbanListAfterCreate]', e);
+      }
+    },
+    [
+      customDateFrom,
+      customDateTo,
+      filterPhone,
+      filterAssignee,
+      filterCompany,
+      filterLeadType,
+      kanbanLoadLimit,
+      user,
+    ],
+  );
+
+  const refreshCrmDashboardSlice = useCallback(
+    async (type) => {
+      const dateParams = {};
+      if (customDateFrom) dateParams.date_from = customDateFrom;
+      if (customDateTo) dateParams.date_to = customDateTo;
+      try {
+        const { data } = await api.get('/crm/dashboard', {
+          params: { type, ...dateParams, ...(dashboardScopeCompanyId ? { company_id: dashboardScopeCompanyId } : {}) },
+        });
+        if (type === 'lead') setDataLead(data);
+        else setDataDeal(data);
+      } catch (e) {
+        console.error('[refreshCrmDashboardSlice]', e);
+      }
+    },
+    [customDateFrom, customDateTo, dashboardScopeCompanyId],
+  );
+
+  const refreshPipelinePhoneTotalsForType = useCallback(
+    async (type) => {
+      const dateParams = {};
+      if (customDateFrom) dateParams.date_from = customDateFrom;
+      if (customDateTo) dateParams.date_to = customDateTo;
+      const co = dashboardScopeCompanyId || filterCompany;
+      const buildCountParams = (phone_filter) => {
+        const p = { type, ...dateParams, limit: 1, offset: 0 };
+        if (filterAssignee) p.assigned_to = filterAssignee;
+        if (co) p.company_id = co;
+        if (filterLeadType) p.lead_type_id = filterLeadType;
+        if (phone_filter) p.phone_filter = phone_filter;
+        return p;
+      };
+      const countListTotal = (payload) => {
+        const t = payload?.total;
+        return typeof t === 'number' ? t : null;
+      };
+      try {
+        const [hasRes, noRes, allRes] = await Promise.all([
+          api.get('/crm/leads', { params: buildCountParams('has_phone') }).catch(() => ({ data: {} })),
+          api.get('/crm/leads', { params: buildCountParams('no_phone') }).catch(() => ({ data: {} })),
+          api.get('/crm/leads', { params: buildCountParams() }).catch(() => ({ data: {} })),
+        ]);
+        setPipelinePhoneTotals((prev) => ({
+          ...prev,
+          [type]: {
+            hasPhone: countListTotal(hasRes.data),
+            noPhone: countListTotal(noRes.data),
+            all: countListTotal(allRes.data),
+          },
+        }));
+      } catch (e) {
+        console.error('[refreshPipelinePhoneTotalsForType]', e);
+      }
+    },
+    [
+      customDateFrom,
+      customDateTo,
+      filterAssignee,
+      filterCompany,
+      filterLeadType,
+      dashboardScopeCompanyId,
+    ],
+  );
+
+  const refreshAfterNewLeadOrDeal = useCallback(
+    (type) => {
+      void Promise.all([
+        refreshKanbanListAfterCreate(type),
+        refreshCrmDashboardSlice(type),
+        refreshPipelinePhoneTotalsForType(type),
+      ]);
+    },
+    [refreshKanbanListAfterCreate, refreshCrmDashboardSlice, refreshPipelinePhoneTotalsForType],
+  );
+
   const scopedCompanyName = useMemo(() => {
     if (!dashboardScopeCompanyId || !companies?.length) return '';
     const c = companies.find((x) => String(x.id) === String(dashboardScopeCompanyId));
@@ -1232,13 +1449,14 @@ export default function CRMDashboard() {
       const prevLeads = allLeads;
       const prevDeals = allDeals;
       const lid = String(leadId);
+      const entered = new Date().toISOString();
       if (pipelineType === 'lead') {
         setAllLeads((prev) =>
-          dedupeCrmKanbanRows(prev.map((l) => (String(l.id) === lid ? { ...l, stage_id: newStageId, ...extraData } : l))),
+          dedupeCrmKanbanRows(prev.map((l) => (String(l.id) === lid ? { ...l, stage_id: newStageId, stage_entered_at: entered, ...extraData } : l))),
         );
       } else {
         setAllDeals((prev) =>
-          dedupeCrmKanbanRows(prev.map((l) => (String(l.id) === lid ? { ...l, stage_id: newStageId, ...extraData } : l))),
+          dedupeCrmKanbanRows(prev.map((l) => (String(l.id) === lid ? { ...l, stage_id: newStageId, stage_entered_at: entered, ...extraData } : l))),
         );
       }
       try {
@@ -2229,7 +2447,6 @@ export default function CRMDashboard() {
               pipeline={currentPipeline}
               onMoveStage={handleMoveStage}
               pipelineType={pipelineType}
-              calculateDays={calculateDays}
               mergeSelectedIds={manualMergeIds}
               onToggleMergeSelect={toggleManualMergeSelect}
               onToggleSelectAllInColumn={toggleSelectAllInColumn}
@@ -2298,7 +2515,8 @@ export default function CRMDashboard() {
 
       {showNewLead && (
         <NewLeadModal
-          onClose={() => { setShowNewLead(false); load(); }}
+          onClose={() => setShowNewLead(false)}
+          onSuccess={() => refreshAfterNewLeadOrDeal('lead')}
           leadTypes={leadTypes}
           companies={companies}
           type={pipelineType}
@@ -2308,7 +2526,8 @@ export default function CRMDashboard() {
       )}
       {showNewDeal && (
         <NewDealModal
-          onClose={() => { setShowNewDeal(false); load(); }}
+          onClose={() => setShowNewDeal(false)}
+          onSuccess={() => refreshAfterNewLeadOrDeal('deal')}
           leadTypes={leadTypes}
           companies={companies}
           defaultCompanyId={isAdmin ? (filterCompany || user?.company_id || '') : (user?.company_id ? String(user.company_id) : '')}
@@ -3006,7 +3225,6 @@ function KanbanStageCard({
   items,
   onMoveStage,
   pipelineType,
-  calculateDays,
   mergeSelectedIds,
   onToggleMergeSelect,
   onToggleSelectAllInColumn,
@@ -3147,7 +3365,6 @@ function KanbanStageCard({
               stage={stage}
               onMoveStage={onMoveStage}
               pipelineType={pipelineType}
-              calculateDays={calculateDays}
               mergeSelectedIds={mergeSelectedIds}
               onToggleMergeSelect={onToggleMergeSelect}
               compact={compact}
@@ -3160,7 +3377,7 @@ function KanbanStageCard({
 }
 
 // Kanban Item Card - MISA Style
-function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mergeSelectedIds, onToggleMergeSelect, compact }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact }) {
   const navigate = useNavigate();
   const openLeadDetail = () => {
     localStorage.setItem('crm_pinned_tab', pipelineType);
@@ -3188,6 +3405,9 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
 
   const splitPickZones = !!onToggleMergeSelect;
 
+  const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
+  const cardSurface = pipelineCardToneClasses(slaTone.level);
+
   return (
     <div
       data-crm-pipeline-card={item.id}
@@ -3200,7 +3420,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
               openLeadDetail();
             }
       }
-      className={`relative min-h-[7rem] overflow-hidden rounded-lg border border-gray-200 bg-white transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-lg ${
+      className={`relative min-h-[7rem] overflow-hidden rounded-lg border transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-lg ${cardSurface} ${
         splitPickZones ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
       } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{
@@ -3259,7 +3479,12 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
       >
       {/* Header: Code + Value */}
       <div className={`flex items-start justify-between ${compact ? 'mb-1' : 'mb-2'}`}>
-        <p className={`font-semibold text-blue-600 ${compact ? 'text-[10px]' : 'text-xs'}`}>{item.code}</p>
+        <p className={`font-semibold text-blue-600 flex items-center gap-1 min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+          <span className="truncate">{item.code}</span>
+          {slaTone.level === 'overdue' && (
+            <AlertTriangle className={`${compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} text-red-600 shrink-0`} aria-hidden />
+          )}
+        </p>
         {item.estimated_value > 0 && (
           <p className={`font-bold text-emerald-600 ${compact ? 'text-[10px] leading-tight text-right max-w-[52%]' : 'text-sm'}`}>{formatVND(item.estimated_value)}</p>
         )}
@@ -3300,6 +3525,45 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
         </div>
       )}
 
+      {/* Thời gian tạo / thời gian tại cột — reset khi đổi cột */}
+      <div className={`space-y-0.5 border-t border-gray-200/70 ${compact ? 'mt-1 pt-1.5 mb-1' : 'mt-2 pt-2 mb-2'}`}>
+        <p className={`font-bold text-gray-500 uppercase tracking-wide ${compact ? 'text-[8px]' : 'text-[9px]'}`}>Lên kế hoạch thực hiện</p>
+        <p className={`text-gray-600 leading-snug ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+          <span className="text-gray-500">Tạo lead:</span>{' '}
+          {item.created_at ? (
+            <>
+              {formatDate(item.created_at)}
+              <span className="text-gray-400"> · {formatAgeDetailed(item.created_at)}</span>
+            </>
+          ) : (
+            '—'
+          )}
+        </p>
+        <p className={`text-gray-800 leading-snug ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+          <span className="text-gray-500">Tại cột:</span>{' '}
+          <span className="font-semibold text-gray-900">
+            {item.stage_entered_at ? formatAgeDetailed(item.stage_entered_at) : '—'}
+          </span>
+          {slaTone.deadlineTs != null && !stage?.is_won && !stage?.is_lost && (
+            <span className="block mt-0.5 text-gray-500 font-normal">
+              Hạn SLA cột: {new Date(slaTone.deadlineTs).toLocaleString('vi-VN')}
+              {slaTone.remainingMs != null && slaTone.level !== 'ok' && (
+                <>
+                  {' · '}
+                  {slaTone.level === 'overdue' ? (
+                    <span className="text-red-600 font-semibold">
+                      Quá hạn {formatRemainingMs(Math.abs(slaTone.remainingMs))}
+                    </span>
+                  ) : (
+                    <span>Còn {formatRemainingMs(slaTone.remainingMs)}</span>
+                  )}
+                </>
+              )}
+            </span>
+          )}
+        </p>
+      </div>
+
       {/* Một người phụ trách (Lead & Deal) */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
@@ -3326,9 +3590,6 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, calculateDays, mer
             );
           })()}
         </div>
-        <span className={`text-gray-500 bg-gray-100 rounded whitespace-nowrap shrink-0 ${compact ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'}`}>
-          {calculateDays(item.created_at)}
-        </span>
       </div>
 
       {/* Deadline */}
@@ -3414,7 +3675,6 @@ function KanbanView({
   pipeline,
   onMoveStage,
   pipelineType,
-  calculateDays,
   mergeSelectedIds,
   onToggleMergeSelect,
   onToggleSelectAllInColumn,
@@ -3575,7 +3835,6 @@ function KanbanView({
               items={stage.items}
               onMoveStage={onMoveStage}
               pipelineType={pipelineType}
-              calculateDays={calculateDays}
               mergeSelectedIds={mergeSelectedIds}
               onToggleMergeSelect={onToggleMergeSelect}
               onToggleSelectAllInColumn={onToggleSelectAllInColumn}
@@ -3589,7 +3848,7 @@ function KanbanView({
 }
 
 // ── NEW DEAL MODAL ─────────────────────────────────────────────────────────
-function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, currentUser }) {
+function NewDealModal({ onClose, onSuccess, leadTypes, companies, defaultCompanyId, currentUser }) {
   const isAdmin = currentUser?.role === 'admin';
   const [formData, setFormData] = useState({
     title: '',
@@ -3721,6 +3980,7 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
         install_address: formData.install_address || null,
         description: formData.description || null,
       });
+      onSuccess?.();
       onClose();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi tạo Deal');
@@ -3904,7 +4164,7 @@ function NewDealModal({ onClose, leadTypes, companies, defaultCompanyId, current
 }
 
 // New Lead Modal - Auto create customer
-function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, currentUser }) {
+function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultCompanyId, currentUser }) {
   const isAdmin = currentUser?.role === 'admin';
   const [formData, setFormData] = useState({
     title: '',
@@ -4042,6 +4302,7 @@ function NewLeadModal({ onClose, leadTypes, companies, type, defaultCompanyId, c
         estimated_value: parseFloat(formData.estimated_value) || 0,
         probability: parseInt(formData.probability) || 50,
       });
+      onSuccess?.();
       onClose();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');

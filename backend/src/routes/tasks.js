@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
+const { scheduleNextWorkshopTaskAfterComplete } = require('../helpers/workshopApplyTemplates');
 const { auth } = require('../middleware/auth');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const {
@@ -295,6 +296,14 @@ r.put('/:id', async (req, res) => {
     const io = req.app.get('io');
     notify(io, 'task:updated', data);
 
+    if (data?.status === 'done') {
+      try {
+        await scheduleNextWorkshopTaskAfterComplete(data);
+      } catch (chainErr) {
+        console.warn('[tasks] workshop deadline chain:', chainErr.message);
+      }
+    }
+
     res.json({ task: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -352,6 +361,15 @@ r.patch('/:id/status', async (req, res) => {
 
     const io = req.app.get('io');
     notify(io, 'task:updated', data);
+
+    if (data?.status === 'done') {
+      try {
+        await scheduleNextWorkshopTaskAfterComplete(data);
+      } catch (chainErr) {
+        console.warn('[tasks] workshop deadline chain (patch):', chainErr.message);
+      }
+    }
+
     res.json({ task: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
