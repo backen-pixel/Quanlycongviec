@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
+import { taskBelongsToWorkshopModule } from '../lib/workshopTaskScope';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { isLeadDocVisibleInModule, parseShareModules } from '../lib/documentShareScope';
 import { useAuth } from '../lib/auth';
@@ -494,33 +495,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     : { apiPrefix: '/production', routePrefix: '/sx', label: 'Sản xuất', icon: '🏭', stageField: 'sx_kanban_column_id', stagesKey: 'sxKanbanStages' };
   const isVC = moduleKey === 'vc';
 
-  // Chỉ tính "Nhiệm vụ Sản xuất" theo nhóm nhiệm vụ xưởng (không tính tasks CRM seed như tư vấn/báo giá).
-  const WORKSHOP_TASK_SLUGS_SX = useMemo(
-    () => new Set(['planning', 'quality-check', 'packaging', 'production', 'delivery', 'customer-care']),
-    [],
+  // Chỉ tính nhiệm vụ đúng khu SX hoặc VC (metadata.workshop_area + slug), không lẫn bộ mẫu giữa hai module.
+  const pickWorkshopTasksForSummary = useCallback(
+    (list) =>
+      (Array.isArray(list) ? list : []).filter((t) =>
+        taskBelongsToWorkshopModule(t, isVC ? 'vc' : 'sx'),
+      ),
+    [isVC],
   );
-  const WORKSHOP_TASK_SLUGS_VC = useMemo(
-    () => new Set(['delivery', 'shipping', 'installation', 'installing', 'customer-care']),
-    [],
-  );
-  const pickWorkshopTasksForSummary = useCallback((list) => {
-    const arr = Array.isArray(list) ? list : [];
-    if (isVC) {
-      // VC/LĐ: chỉ hiển thị nhiệm vụ thuộc quy trình VC (tránh lẫn task CRM như tư vấn/báo giá/hợp đồng…)
-      return arr.filter((t) => {
-        const slug = t?.stage?.slug ? String(t.stage.slug) : '';
-        if (WORKSHOP_TASK_SLUGS_VC.has(slug)) return true;
-        const guessed = t?.metadata?.guessed_stage_slug ? String(t.metadata.guessed_stage_slug) : '';
-        if (WORKSHOP_TASK_SLUGS_VC.has(guessed)) return true;
-        return false;
-      });
-    }
-    return arr.filter((t) => {
-      if (t?.metadata?.workshop_template_id) return true;
-      const slug = t?.stage?.slug ? String(t.stage.slug) : '';
-      return WORKSHOP_TASK_SLUGS_SX.has(slug);
-    });
-  }, [isVC, WORKSHOP_TASK_SLUGS_SX, WORKSHOP_TASK_SLUGS_VC]);
 
   const { id } = useParams();
   const navigate = useNavigate();

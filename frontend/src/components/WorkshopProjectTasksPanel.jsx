@@ -1,16 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { taskBelongsToWorkshopModule } from '../lib/workshopTaskScope';
 import { isLeadDocVisibleInModule } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { ClipboardList, X, ChevronDown, ChevronRight, UserPlus, Trash2, Save } from 'lucide-react';
 
-const PRODUCTION_SLUGS = new Set(['production']);
-const LOGISTICS_SLUGS = new Set(['delivery', 'shipping', 'installing', 'installation']);
-
 function filterProjectTasksByWorkArea(tasks, workArea) {
-  const sl = workArea === 'logistics' ? LOGISTICS_SLUGS : PRODUCTION_SLUGS;
-  return (tasks || []).filter((t) => sl.has(t.stage?.slug || ''));
+  const moduleKey = workArea === 'logistics' ? 'vc' : 'sx';
+  return (tasks || []).filter((t) => taskBelongsToWorkshopModule(t, moduleKey));
 }
 
 function isCrmDocSharedToWorkshop(doc) {

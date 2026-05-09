@@ -72,6 +72,7 @@ export default function VoiceRecordingsPage() {
   const [listTab, setListTab] = useState('all');
   const [relinking, setRelinking] = useState(false);
   const [relinkingRowId, setRelinkingRowId] = useState(null);
+  const [scanMetaBusy, setScanMetaBusy] = useState(false);
   const [scanMessage, setScanMessage] = useState('');
 
   const [bootstrapRecording, setBootstrapRecording] = useState(null);
@@ -273,6 +274,27 @@ export default function VoiceRecordingsPage() {
     setRelinking(false);
   };
 
+  /** Quét số di động trong tên file / ghi chú / nhãn thiết bị → điền SĐT và thử ghép khách + lead */
+  const runScanPhonesFromMetadata = async () => {
+    setScanMetaBusy(true);
+    setErr('');
+    setScanMessage('');
+    try {
+      const params = {};
+      if (voiceAdmin && filterUserId) params.user_id = filterUserId;
+      const { data } = await api.post('/voice-recordings/scan-metadata-phones', {}, { params });
+      await load();
+      if (data?.filled_phone != null) {
+        setScanMessage(
+          `Quét tên & ghi chú: xử lý ${data.processed} bản (trong tối đa 80 bản chưa có SĐT; còn ${data.queue_without_phone} bản trong hàng đợi). Đã điền/ghép ${data.filled_phone} bản.`,
+        );
+      }
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Quét tên file thất bại');
+    }
+    setScanMetaBusy(false);
+  };
+
   const saveBootstrap = async () => {
     if (!bootstrapRecording) return;
     const name = bootFullName.trim();
@@ -386,7 +408,9 @@ export default function VoiceRecordingsPage() {
           Cuộc gọi &amp; đồng bộ ghi âm
         </h1>
         <p className="text-sm text-gray-600 mt-2">
-          Ghi âm từ mobile hoặc upload web; có số thì tự ghép khách và Deal/Lead bạn phụ trách. Dùng tab và «Quét ghép CRM» khi cần.
+          Ghi âm từ mobile hoặc upload web; có số thì tự ghép khách và Deal/Lead bạn phụ trách. Nút «Quét SĐT từ tên ghi âm» lấy số từ tên file/ghi chú (kể cả dạng{' '}
+          <code className="text-xs bg-gray-100 px-1 rounded">…_0987654321…</code>
+          ); sau đó «Quét ghép CRM» ghép lại theo SĐT đã có.
         </p>
         {voiceAdmin ? (
           <p className="text-sm text-violet-800 mt-2 rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
@@ -462,6 +486,16 @@ export default function VoiceRecordingsPage() {
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Làm mới
+          </button>
+          <button
+            type="button"
+            onClick={() => void runScanPhonesFromMetadata()}
+            disabled={loading || relinking || scanMetaBusy || relinkingRowId != null}
+            className="h-10 px-4 rounded-lg border border-amber-300 bg-amber-50/80 text-amber-950 text-sm font-medium hover:bg-amber-100 disabled:opacity-50 flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+            title="Tìm số di động trong tên file, ghi chú, nhãn thiết bị — điền SĐT và thử ghép CRM (tối đa 80 bản/lần)"
+          >
+            <ScanLine className={`h-4 w-4 shrink-0 ${scanMetaBusy ? 'animate-pulse' : ''}`} />
+            {scanMetaBusy ? 'Đang quét…' : 'Quét SĐT từ tên ghi âm'}
           </button>
         </div>
         <details className="group rounded-lg border border-gray-100 bg-gray-50/50">
@@ -624,8 +658,18 @@ export default function VoiceRecordingsPage() {
             </button>
             <button
               type="button"
+              onClick={() => void runScanPhonesFromMetadata()}
+              disabled={loading || relinking || scanMetaBusy || relinkingRowId != null}
+              className="h-9 px-3 rounded-lg border border-amber-300 text-amber-900 text-sm hover:bg-amber-50 inline-flex items-center gap-1.5"
+              title="Tìm số di động Việt Nam trong tên file, ghi chú, nhãn thiết bị — điền ô SĐT và thử ghép CRM (tối đa 80 bản/lần)"
+            >
+              <ScanLine className={`h-3.5 w-3.5 ${scanMetaBusy ? 'animate-pulse' : ''}`} />
+              {scanMetaBusy ? 'Đang quét…' : 'Quét SĐT từ tên ghi âm'}
+            </button>
+            <button
+              type="button"
               onClick={() => void runAutoRelinkScan()}
-              disabled={loading || relinking || relinkingRowId != null}
+              disabled={loading || relinking || scanMetaBusy || relinkingRowId != null}
               className="h-9 px-3 rounded-lg border border-violet-300 text-violet-800 text-sm hover:bg-violet-50 inline-flex items-center gap-1.5"
               title="Quét & ghép KH/Lead theo SĐT cho các bản chưa gắn đủ (theo quyền của bạn)"
             >

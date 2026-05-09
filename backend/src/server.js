@@ -19,14 +19,27 @@ const io = new Server(server, {
 app.set('io', io);
 
 app.use(helmet());
-app.use(
-  cors({
-    origin: config.corsOrigins,
-    credentials: true,
-    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With'],
-    exposedHeaders: ['Content-Disposition'],
-  }),
-);
+
+// CORS: phần lớn app dùng whitelist; /api/external xác thực bằng X-Api-Key nên cần cho phép
+// gọi từ domain website khác (form landing, widget). Không dùng cookie ở route này.
+const corsMainApp = cors({
+  origin: config.corsOrigins,
+  credentials: true,
+  allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With', 'X-Api-Key'],
+  exposedHeaders: ['Content-Disposition'],
+});
+const corsExternalApi = cors({
+  origin: true,
+  credentials: false,
+  allowedHeaders: ['Content-Type', 'Accept', 'X-Api-Key'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+});
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/external')) {
+    return corsExternalApi(req, res, next);
+  }
+  return corsMainApp(req, res, next);
+});
 app.use(morgan('dev'));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
@@ -102,6 +115,7 @@ app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/crm/executive', require('./routes/executiveKpi'));
 app.use('/api/crm/deal-performance', require('./routes/dealScores'));
+app.use('/api/kpi', require('./routes/kpi'));
 app.use('/api/crm', require('./routes/crm'));
 app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));
@@ -178,6 +192,9 @@ server.listen(config.port, () => {
   console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);
   console.log(`⏱️ Server ready in ${process.uptime().toFixed(1)}s`);
 
+  // Cron KPI Tủ bếp: recompute hàng đêm 01:00 (disable bằng KPI_CRON_DISABLED=1)
+  try { require('./jobs/kpiNightly').start(); } catch (e) { console.warn('[kpi-cron] Failed to start:', e.message); }
+
   // ─── DEADLINE CHECKER — every hour (defer 60s to not impact startup) ──
   const checkDeadlines = async () => {
     try {
@@ -241,7 +258,7 @@ server.listen(config.port, () => {
       let leadMap = {};
       if (crmTaskLeadIds.length) {
         const { data: leads } = await supabase.from('crm_leads')
-          .select('id, title, code, assigned_to, lead_owner_id')
+          .select('id, title, code, assigned_to, lead_owner_id, region_id')
           .in('id', crmTaskLeadIds);
         (leads || []).forEach(l => { leadMap[l.id] = l; });
       }
@@ -276,6 +293,20 @@ server.listen(config.port, () => {
         ...projectAssigneeIds,
       ]);
 
+      const crmUidUnique = [...new Set(crmCandidateUserIds.filter(Boolean).map((x) => String(x)))];
+      let crmUserRegionMap = new Map();
+      if (crmUidUnique.length) {
+        const { data: urCrm } = await supabase
+          .from('user_company_regions')
+          .select('user_id, region_id')
+          .in('user_id', crmUidUnique);
+        for (const r of urCrm || []) {
+          const uid = String(r.user_id);
+          if (!crmUserRegionMap.has(uid)) crmUserRegionMap.set(uid, []);
+          crmUserRegionMap.get(uid).push(r.region_id);
+        }
+      }
+
       // Dedup: check existing notifications in last 4 hours (theo từng nhiệm vụ / task)
       const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
       const DEADLINE_DEDUP_TYPES = [
@@ -309,6 +340,7 @@ server.listen(config.port, () => {
             usersById,
             companyToDivisions,
             restrictedEco[ecoKey],
+            crmUserRegionMap,
           );
           if (!uid) continue;
           const deadlineStr = new Date(t.deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -347,6 +379,7 @@ server.listen(config.port, () => {
           usersById,
           companyToDivisions,
           restrictedEco[ecoKey],
+          crmUserRegionMap,
         );
         if (!uid) continue;
         const daysLate = Math.floor((now - new Date(t.deadline)) / (1000 * 60 * 60 * 24));

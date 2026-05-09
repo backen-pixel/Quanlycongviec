@@ -100,7 +100,14 @@ import FacebookPage from './pages/FacebookPage';
 import FacebookLinkPhoneCleanupPage from './pages/FacebookLinkPhoneCleanupPage';
 import LeadDetail from './pages/LeadDetail';
 import CRMReports from './pages/CRMReports';
+import CrmStaffLeadDealReport from './pages/CrmStaffLeadDealReport';
+import CrmSlaWatchlistPage from './pages/CrmSlaWatchlistPage';
+import CrmDealStageReportSettingsPage from './pages/CrmDealStageReportSettingsPage';
 import ExecutiveKpiPage from './pages/ExecutiveKpiPage';
+import KpiSalesAdminDashboard from './pages/KpiSalesAdminDashboard';
+import KpiDealDashboard from './pages/KpiDealDashboard';
+import KpiMonthlyScorecard from './pages/KpiMonthlyScorecard';
+import KpiSettingsPage from './pages/KpiSettingsPage';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMSourcesSettingsPage from './pages/CRMSourcesSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
@@ -293,6 +300,10 @@ export default function App() {
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
             <Route path="/crm/executive-kpi" element={<RequireExecutive><ExecutiveKpiPage /></RequireExecutive>} />
+            <Route path="/crm/kpi/sales-admin" element={<KpiSalesAdminDashboard />} />
+            <Route path="/crm/kpi/deal" element={<KpiDealDashboard />} />
+            <Route path="/crm/kpi/scorecard" element={<RequireExecutive><KpiMonthlyScorecard /></RequireExecutive>} />
+            <Route path="/crm/kpi/settings" element={<RequireExecutive><KpiSettingsPage /></RequireExecutive>} />
             <Route path="/crm/pipeline" element={<CRMDashboard />} />
             <Route path="/crm/leads/:id" element={<LeadDetail />} />
             <Route path="/crm/quotations" element={<QuotationsPage />} />
@@ -307,6 +318,9 @@ export default function App() {
             <Route path="/crm/invoices/:id/edit" element={<InvoiceForm />} />
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<RequireCrmElevated><CRMReports /></RequireCrmElevated>} />
+            <Route path="/crm/reports/staff-lead-deal" element={<RequireExecutive><CrmStaffLeadDealReport /></RequireExecutive>} />
+            <Route path="/crm/admin/sla-watchlist" element={<RequireExecutive><CrmSlaWatchlistPage /></RequireExecutive>} />
+            <Route path="/crm/settings/deal-stage-report" element={<RequireExecutive><CrmDealStageReportSettingsPage /></RequireExecutive>} />
             <Route path="/crm/facebook" element={<RequireCrmElevated><FacebookPage /></RequireCrmElevated>} />
             <Route path="/crm/facebook/link-phone-cleanup" element={<RequireCrmElevated><FacebookLinkPhoneCleanupPage /></RequireCrmElevated>} />
             <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />

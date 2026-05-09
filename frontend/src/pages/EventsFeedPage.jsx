@@ -63,6 +63,13 @@ export default function EventsFeedPage() {
     [isSystemAdmin, filterCompanyId],
   );
 
+  /** Danh sách nhân viên cho filter / form sự kiện — chỉ trong một công ty (không «tất cả» xuyên hệ thống). */
+  const effectiveCompanyIdForUsers = useMemo(() => {
+    if (isSystemAdmin && filterCompanyId) return filterCompanyId;
+    const cid = user?.company_id != null ? String(user.company_id).trim() : '';
+    return cid || '';
+  }, [isSystemAdmin, filterCompanyId, user?.company_id]);
+
   useEffect(() => {
     if (!isSystemAdmin) return;
     api.get('/companies', { params: { for_module: 'crm' } })
@@ -101,9 +108,23 @@ export default function EventsFeedPage() {
   const currentUser = user || {};
 
   useEffect(() => {
+    setFilterUser('');
+  }, [effectiveCompanyIdForUsers]);
+
+  useEffect(() => {
     loadEventTypes();
-    api.get('/users').then(r => setUsers(r.data.users || r.data || [])).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!effectiveCompanyIdForUsers) {
+      setUsers([]);
+      return;
+    }
+    api
+      .get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
+      .then((r) => setUsers(r.data.users || r.data || []))
+      .catch(() => setUsers([]));
+  }, [effectiveCompanyIdForUsers]);
 
   useEffect(() => {
     if (view === 'feed') {

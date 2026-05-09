@@ -46,6 +46,18 @@ function clampRange(a, b) {
   return a.getTime() <= b.getTime() ? { from: a, to: b } : { from: b, to: a };
 }
 
+/** Tuần 1–5 trong tháng: chia 7 ngày/lần (1–7, 8–14, …) */
+function weekOfMonthRange(year, monthIndex0, weekNum1To5) {
+  const lastDay = endOfMonth(new Date(year, monthIndex0, 1)).getDate();
+  const startDay = (weekNum1To5 - 1) * 7 + 1;
+  if (startDay > lastDay) return null;
+  const endDay = Math.min(weekNum1To5 * 7, lastDay);
+  return {
+    from: new Date(year, monthIndex0, startDay),
+    to: new Date(year, monthIndex0, endDay),
+  };
+}
+
 export default function DateRangePickerPopover({
   open,
   title = 'Chọn khoảng ngày',
@@ -53,6 +65,8 @@ export default function DateRangePickerPopover({
   to,
   onChange,
   onClose,
+  allowClear = true,
+  showPresets = true,
 }) {
   const fromD = useMemo(() => parseIso(from), [from]);
   const toD = useMemo(() => parseIso(to), [to]);
@@ -108,16 +122,56 @@ export default function DateRangePickerPopover({
     onClose?.();
   };
 
+  const applyPreset = (fromD, toD) => {
+    if (!fromD || !toD) return;
+    const { from: f, to: t } = clampRange(fromD, toD);
+    setDraftFrom(f);
+    setDraftTo(t);
+    onChange?.({ from: iso(f), to: iso(t) });
+    onClose?.();
+  };
+
   const clear = () => {
     onChange?.({ from: '', to: '' });
     onClose?.();
+  };
+
+  const now = new Date();
+  const yCur = cursorMonth.getFullYear();
+  const mCur = cursorMonth.getMonth();
+
+  const presetFullCursorMonth = () => {
+    const f = startOfMonth(cursorMonth);
+    const t = endOfMonth(cursorMonth);
+    applyPreset(f, t);
+  };
+
+  const presetThisMonth = () => {
+    const f = startOfMonth(now);
+    const t = endOfMonth(now);
+    setCursorMonth(startOfMonth(now));
+    applyPreset(f, t);
+  };
+
+  const presetPrevMonth = () => {
+    const ref = addMonths(now, -1);
+    const f = startOfMonth(ref);
+    const t = endOfMonth(ref);
+    setCursorMonth(startOfMonth(ref));
+    applyPreset(f, t);
+  };
+
+  const presetWeek = (weekNum) => {
+    const r = weekOfMonthRange(yCur, mCur, weekNum);
+    if (!r) return;
+    applyPreset(r.from, r.to);
   };
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden max-h-[min(92vh,720px)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
           <div className="flex items-center gap-2">
             <Calendar className="h-4 w-4 text-indigo-600" />
@@ -130,19 +184,70 @@ export default function DateRangePickerPopover({
 
         <div className="p-4 space-y-3">
           <div className="flex items-center gap-2">
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <p className="text-[10px] text-gray-500 font-medium mb-1">Từ ngày</p>
-              <div className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm flex items-center">
+              <div className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm flex items-center tabular-nums">
                 {draftFrom ? iso(draftFrom) : '—'}
               </div>
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <p className="text-[10px] text-gray-500 font-medium mb-1">Đến ngày</p>
-              <div className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm flex items-center">
+              <div className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm flex items-center tabular-nums">
                 {draftTo ? iso(draftTo) : '—'}
               </div>
             </div>
           </div>
+
+          {showPresets && (
+            <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-900">Chọn nhanh theo tháng</p>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={presetFullCursorMonth}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-900 font-medium hover:bg-indigo-50 cursor-pointer"
+                >
+                  Cả tháng đang xem
+                </button>
+                <button
+                  type="button"
+                  onClick={presetThisMonth}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-900 font-medium hover:bg-indigo-50 cursor-pointer"
+                >
+                  Tháng này
+                </button>
+                <button
+                  type="button"
+                  onClick={presetPrevMonth}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-900 font-medium hover:bg-indigo-50 cursor-pointer"
+                >
+                  Tháng trước
+                </button>
+              </div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-900 pt-1">Tuần trong tháng đang xem</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from({ length: 5 }, (_, i) => i + 1).map((w) => {
+                  const r = weekOfMonthRange(yCur, mCur, w);
+                  const disabled = !r;
+                  return (
+                    <button
+                      key={w}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => presetWeek(w)}
+                      className="text-xs px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-800 font-medium hover:bg-slate-50 disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer"
+                      title={r ? `${iso(r.from)} → ${iso(r.to)}` : undefined}
+                    >
+                      Tuần {w}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-slate-500 leading-snug">
+                Tuần 1 = ngày 1–7, tuần 2 = 8–14, … trong tháng của lịch (đổi tháng bằng mũi tên dưới).
+              </p>
+            </div>
+          )}
 
           <div className="flex items-center justify-between">
             <button type="button" onClick={() => setCursorMonth((m) => addMonths(m, -1))} className="p-2 rounded-lg hover:bg-gray-100 cursor-pointer">
@@ -181,9 +286,13 @@ export default function DateRangePickerPopover({
           </div>
 
           <div className="flex items-center justify-between pt-2">
-            <button type="button" onClick={clear} className="text-sm text-gray-600 hover:bg-gray-100 px-3 h-9 rounded-lg cursor-pointer">
-              Xóa
-            </button>
+            {allowClear ? (
+              <button type="button" onClick={clear} className="text-sm text-gray-600 hover:bg-gray-100 px-3 h-9 rounded-lg cursor-pointer">
+                Xóa
+              </button>
+            ) : (
+              <span />
+            )}
             <div className="flex items-center gap-2">
               <button type="button" onClick={onClose} className="text-sm text-gray-600 hover:bg-gray-100 px-3 h-9 rounded-lg cursor-pointer">
                 Hủy

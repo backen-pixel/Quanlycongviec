@@ -23,6 +23,8 @@ const DEFAULT_PREFS = {
   production_deadlines: true,
   crm_lead_deadlines: true,
   logistics_deadlines: true,
+  /** Pipeline dự án (DA): giai đoạn, NV/bình luận trên dự án, nhắc hạn task giai đoạn DA… — mặc định tắt */
+  project_notifications: false,
 };
 
 function mergePrefs(row) {

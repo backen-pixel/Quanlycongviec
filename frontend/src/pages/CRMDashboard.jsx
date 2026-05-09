@@ -76,6 +76,18 @@ function getPipelineStageSlaTone(stageEnteredAt, stage) {
   return { level: 'ok', remainingMs, deadlineTs };
 }
 
+/** Nhiệm vụ CRM có deadline (API `crm_next_open_task_deadline`): ngưỡng màu giống SLA cột — đỏ / cam / vàng / trắng. */
+function getCrmOpenTaskDeadlineTone(deadlineIso) {
+  if (deadlineIso == null || deadlineIso === '') return null;
+  const deadlineTs = new Date(deadlineIso).getTime();
+  if (Number.isNaN(deadlineTs)) return null;
+  const remainingMs = deadlineTs - Date.now();
+  if (remainingMs < 0) return { level: 'overdue', remainingMs, deadlineTs };
+  if (remainingMs <= 24 * 3600000) return { level: 'soon', remainingMs, deadlineTs };
+  if (remainingMs <= 3 * 24 * 3600000) return { level: 'warn', remainingMs, deadlineTs };
+  return { level: 'ok', remainingMs, deadlineTs };
+}
+
 function pipelineCardToneClasses(level) {
   switch (level) {
     case 'overdue':
@@ -157,6 +169,15 @@ function isActiveCrmPipelineItem(item) {
   return !st?.is_won && !st?.is_lost;
 }
 
+/** Cột Thắng — fallback lookup stages list nếu embed stage thiếu is_won. */
+function dealIsWonStage(item, stagesDeal) {
+  if (item?.stage?.is_won) return true;
+  const sid = item?.stage_id;
+  if (!sid || !Array.isArray(stagesDeal) || stagesDeal.length === 0) return false;
+  const st = stagesDeal.find((s) => String(s.id) === String(sid));
+  return !!st?.is_won;
+}
+
 /**
  * Kanban phải có đúng một dòng mỗi id. RPC/load-more có thể trả cùng id hai lần với stage_id khác thời điểm
  * → cùng deal hiện ở hai cột; xóa một thẻ vẫn chỉ một bản ghi DB nên cả hai biến mất.
@@ -234,7 +255,6 @@ export default function CRMDashboard() {
   });
   const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [users, setUsers] = useState([]);
-  const [alerts, setAlerts] = useState(null);
   const [pipelineType, setPipelineType] = useState(() => {
     const t = P?.pipelineType;
     if (t === 'lead' || t === 'deal') return t;
@@ -273,6 +293,8 @@ export default function CRMDashboard() {
   const [dealAutoCreateCompanyId, setDealAutoCreateCompanyId] = useState('');
   const [dealAutoCreatePickError, setDealAutoCreatePickError] = useState('');
   const loadRef = useRef(null);
+  /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
+  const crmLiveVersionRef = useRef(null);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
     const fromP = P?.kanbanLoadLimit != null ? String(P.kanbanLoadLimit) : null;
@@ -719,6 +741,10 @@ export default function CRMDashboard() {
     return '';
   }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompany]);
 
+  useEffect(() => {
+    crmLiveVersionRef.current = null;
+  }, [dashboardScopeCompanyId, customDateFrom, customDateTo]);
+
   /** Sau khi tạo Lead/Deal: cập nhật Kanban + KPI header + số SĐT — không gọi load() full trang. */
   const refreshKanbanListAfterCreate = useCallback(
     async (type) => {
@@ -953,8 +979,9 @@ export default function CRMDashboard() {
     return () => window.removeEventListener('crm-lead-seen', onSeen);
   }, []);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (opts) => {
+    const silent = !!(opts && opts.silent);
+    if (!silent) setLoading(true);
     try {
       let resolvedCompanyId = filterCompany;
       if (isCompanyScopedAdmin && user?.company_id) {
@@ -1069,7 +1096,7 @@ export default function CRMDashboard() {
         return { rows, nextOffset, total };
       };
 
-      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, alertsRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
+      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
         api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams, ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams, ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
         fetchKanbanRows('lead'),
@@ -1079,7 +1106,6 @@ export default function CRMDashboard() {
         api.get('/crm/pipeline-stages', { params: stagesDealParams }).catch(() => ({ data: [] })),
         api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
         api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
-        api.get('/crm/alerts/follow-ups').catch(() => ({ data: { overdue: [], stale: [], total: 0 } })),
         api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
         api.get('/users').catch(() => ({ data: [] })),
         api.get('/crm/leads', { params: buildCountParams('lead', 'has_phone') }).catch(() => ({ data: {} })),
@@ -1135,9 +1161,19 @@ export default function CRMDashboard() {
       if (sourcesRes.data?.fb_pages) setFbPages(sourcesRes.data.fb_pages);
       setCompanies(companiesRes.data?.companies || companiesRes.data || []);
       setUsers(Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || []);
-      setAlerts(alertsRes.data);
     } catch (e) { console.error(e); }
-    setLoading(false);
+    try {
+      const dateParamsLv = {};
+      if (customDateFrom) dateParamsLv.date_from = customDateFrom;
+      if (customDateTo) dateParamsLv.date_to = customDateTo;
+      const paramsLv = { ...dateParamsLv };
+      if (dashboardScopeCompanyId) paramsLv.company_id = dashboardScopeCompanyId;
+      const { data: lv } = await api.get('/crm/live-version', { params: paramsLv });
+      if (lv && lv.v != null) crmLiveVersionRef.current = lv.v;
+    } catch {
+      /* ignore */
+    }
+    if (!silent) setLoading(false);
   };
 
   // ── Reload when time filter changes (debounced) ──
@@ -1338,6 +1374,17 @@ export default function CRMDashboard() {
 
   const leadActiveCount = useMemo(() => leads.filter(isActiveCrmPipelineItem).length, [leads]);
   const dealNegotiatingCount = useMemo(() => deals.filter(isActiveCrmPipelineItem).length, [deals]);
+
+  /** KPI Deal (Tổng / Thắng / Doanh thu thắng) theo cùng bộ lọc UI như Kanban — không dùng kpis API thuần server. */
+  const dealKpisFromFilters = useMemo(() => {
+    const won = deals.filter((d) => dealIsWonStage(d, stagesDeal));
+    const wonValue = won.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
+    return {
+      total_deals: deals.length,
+      won_deals: won.length,
+      won_value: wonValue,
+    };
+  }, [deals, stagesDeal]);
 
   // Pipeline view: group leads/deals by stage
   const pipelineLead = useMemo(() => {
@@ -1740,6 +1787,55 @@ export default function CRMDashboard() {
 
   loadRef.current = load;
 
+  /**
+   * Đồng bộ nhẹ: poll GET /crm/live-version (~vài chục byte). Chỉ khi v thay đổi mới gọi load({ silent }).
+   * Tab ẩn: chu kỳ dài hơn; tab hiện: ~45s. Focus lại tab có thể chạy một lần ngay.
+   */
+  useEffect(() => {
+    /** Khi tab đang mở: ~45s một lần ping nhẹ; tab ẩn thì bỏ qua (không gọi API — tiết kiệm băng thông). */
+    const POLL_MS = 45000;
+    let intervalId = null;
+    const clearInt = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    const runTick = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (crmLiveVersionRef.current === null) return;
+      try {
+        const dateParams = {};
+        if (customDateFrom) dateParams.date_from = customDateFrom;
+        if (customDateTo) dateParams.date_to = customDateTo;
+        const params = { ...dateParams };
+        if (dashboardScopeCompanyId) params.company_id = dashboardScopeCompanyId;
+        const { data } = await api.get('/crm/live-version', { params });
+        const v = data?.v ?? 0;
+        if (v !== crmLiveVersionRef.current) {
+          crmLiveVersionRef.current = v;
+          await loadRef.current?.({ silent: true });
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    clearInt();
+    intervalId = setInterval(() => void runTick(), POLL_MS);
+    const onVis = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') void runTick();
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis);
+    }
+    return () => {
+      clearInt();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVis);
+      }
+    };
+  }, [dashboardScopeCompanyId, customDateFrom, customDateTo]);
+
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
     const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24));
@@ -1751,8 +1847,6 @@ export default function CRMDashboard() {
   };
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
-
-  const followUpAlert = alerts?.total > 0;
 
   const compactLeadUi = pipelineType === 'lead';
   const ctrlH = compactLeadUi ? 'h-9' : 'h-10';
@@ -1812,17 +1906,6 @@ export default function CRMDashboard() {
           </div>
         </div>
       )}
-      {/* Follow-up Alert Banner */}
-      {followUpAlert && (
-        <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg flex items-center gap-3">
-          <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-amber-900">⚠️ {alerts.total} lead cần follow-up</p>
-          </div>
-          <button onClick={() => navigate('/crm')} className="text-xs text-amber-600 hover:text-amber-800 font-medium">Xem →</button>
-        </div>
-      )}
-
       {/* Header — tab Lead: gọn hơn để nhường chỗ Kanban */}
       <div className={`flex items-center justify-between px-0 ${compactLeadUi ? 'gap-2' : ''}`}>
         <div>
@@ -2259,7 +2342,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-blue-100"
               iconColor="text-blue-600"
               label="Tổng Lead"
-              value={kpis.total_leads || 0}
+              value={leads.length}
               trend={null}
             />
             <KPICard
@@ -2297,7 +2380,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-cyan-100"
               iconColor="text-cyan-600"
               label="Tổng Deal"
-              value={kpis.total_deals || 0}
+              value={dealKpisFromFilters.total_deals}
               trend={null}
             />
             <KPICard
@@ -2313,7 +2396,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-green-100"
               iconColor="text-green-600"
               label="Thắng"
-              value={kpis.won_deals || 0}
+              value={dealKpisFromFilters.won_deals}
               trend={null}
             />
             <KPICard
@@ -2321,7 +2404,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-amber-100"
               iconColor="text-amber-600"
               label="Doanh thu thắng"
-              value={formatVND(kpis.won_value)}
+              value={formatVND(dealKpisFromFilters.won_value)}
               trend={null}
             />
           </>
@@ -3406,7 +3489,10 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   const splitPickZones = !!onToggleMergeSelect;
 
   const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
-  const cardSurface = pipelineCardToneClasses(slaTone.level);
+  // Có NV có deadline → màu theo deadline; không → SLA cột
+  const taskTone = getCrmOpenTaskDeadlineTone(item.crm_next_open_task_deadline);
+  const cardToneLevel = taskTone ? taskTone.level : slaTone.level;
+  const cardSurface = pipelineCardToneClasses(cardToneLevel);
 
   return (
     <div

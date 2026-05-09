@@ -19,13 +19,12 @@ async function buildContext(userId) {
   
   // CRM tables may not exist yet - safe queries
   let leads = { data: [] }, orders = { data: [] }, invoices = { data: [] };
-  try { leads = await supabase.from('crm_leads').select('id,code,title,estimated_value,stage_id,customer_id,next_follow_up,stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name,is_won,is_lost)').is('actual_close_date',null).order('created_at',{ascending:false}).limit(20); } catch {}
+  try { leads = await supabase.from('crm_leads').select('id,code,title,estimated_value,stage_id,customer_id,stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name,is_won,is_lost)').is('actual_close_date',null).order('created_at',{ascending:false}).limit(20); } catch {}
   try { orders = await supabase.from('orders').select('id,code,total,status,paid_amount').neq('status','delivered').neq('status','cancelled').limit(20); } catch {}
   try { invoices = await supabase.from('invoices').select('id,code,total,paid_amount,payment_status').neq('payment_status','paid').limit(20); } catch {}
 
   const tasks = results[1].data || [];
   const overdueTasks = tasks.filter(t => t.due_date && new Date(t.due_date) < new Date());
-  const overdueFollowUps = (leads.data || []).filter(l => l.next_follow_up && new Date(l.next_follow_up) < new Date() && !l.stage?.is_won && !l.stage?.is_lost);
   const unpaidInvoices = (invoices.data || []).filter(i => i.payment_status !== 'paid');
   const totalDebt = unpaidInvoices.reduce((s, i) => s + ((i.total||0) - (i.paid_amount||0)), 0);
 
@@ -35,8 +34,6 @@ async function buildContext(userId) {
     overdueTasks: overdueTasks.length,
     overdueTasksList: overdueTasks.slice(0,5).map(t => t.title),
     openLeads: (leads.data||[]).length,
-    overdueFollowUps: overdueFollowUps.length,
-    overdueFollowUpsList: overdueFollowUps.slice(0,5).map(l => l.code+': '+l.title),
     pendingOrders: (orders.data||[]).length,
     unpaidInvoices: unpaidInvoices.length,
     totalDebt,
@@ -479,7 +476,6 @@ r.post('/chat', async (req, res) => {
     if (intent.action === 'suggest') {
       const suggestions = [];
       if (ctx.overdueTasks > 0) suggestions.push({ icon: '🔴', message: `${ctx.overdueTasks} NV quá hạn: ${ctx.overdueTasksList.join(', ')}`, action: '/my-tasks' });
-      if (ctx.overdueFollowUps > 0) suggestions.push({ icon: '📞', message: `${ctx.overdueFollowUps} lead cần follow-up`, action: '/crm' });
       if (ctx.unpaidInvoices > 0) suggestions.push({ icon: '💰', message: `${ctx.unpaidInvoices} HĐ chưa thu (${fmt(ctx.totalDebt)}đ)`, action: '/crm/invoices' });
       if (ctx.myTasks > 0) suggestions.push({ icon: '📋', message: `${ctx.myTasks} NV đang chờ`, action: '/my-tasks' });
       if (ctx.openLeads > 0) suggestions.push({ icon: '🎯', message: `${ctx.openLeads} lead đang mở`, action: '/crm' });
@@ -545,11 +541,7 @@ r.post('/chat', async (req, res) => {
         reply += '\n';
       }
 
-      if (ctx.overdueFollowUps > 0) {
-        reply += `📞 **${ctx.overdueFollowUps} follow-up quá hạn:**\n${ctx.overdueFollowUpsList.join('\n')}\n`;
-      }
-
-      if (!op.length && !ot.length && !ctx.overdueFollowUps) reply = '✅ Không có gì quá hạn! 👏';
+      if (!op.length && !ot.length) reply = '✅ Không có gì quá hạn! 👏';
       return res.json({ reply });
     }
 
@@ -673,7 +665,6 @@ r.get('/suggestions', async (req, res) => {
     const ctx = await buildContext(req.user.userId);
     const suggestions = [];
     if (ctx.overdueTasks) suggestions.push({ priority:'high', icon:'🔴', message:`${ctx.overdueTasks} NV quá hạn`, action:'/my-tasks' });
-    if (ctx.overdueFollowUps) suggestions.push({ priority:'high', icon:'📞', message:`${ctx.overdueFollowUps} follow-up quá hạn`, action:'/crm' });
     if (ctx.unpaidInvoices) suggestions.push({ priority:'medium', icon:'💰', message:`${ctx.unpaidInvoices} HĐ chưa thu (${fmt(ctx.totalDebt)}đ)`, action:'/crm/invoices' });
     if (ctx.myTasks) suggestions.push({ priority:'low', icon:'📋', message:`${ctx.myTasks} NV chờ`, action:'/my-tasks' });
     res.json({ suggestions });

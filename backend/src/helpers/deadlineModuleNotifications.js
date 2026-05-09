@@ -6,6 +6,12 @@
  */
 
 const { getRestrictedDivisionIdsForModule } = require('./ecosystemModuleScope');
+const {
+  isCrmSystemAdminUser,
+  isCrmCompanyAdminUser,
+  isCrmRegionAdminUser,
+} = require('./crmAccessRoles');
+const { normalizeRegionIdList } = require('./crmRegionScope');
 
 /**
  * @param {string|null|undefined} projectStatus - projects.status
@@ -85,6 +91,65 @@ function userRowMatchesCompanyModuleDivision(userRow, companyToDivisions, restri
 }
 
 /**
+ * Người nhận có được TB liên quan lead/deal CRM này không — khớp `user_company_regions` ↔ `crm_leads.region_id`
+ * (tránh lố sang NV khối/khu vực khác dù cùng công ty).
+ */
+function recipientMatchesCrmLeadRegionScope(userRow, rawRegionIdsFromJoinTable, leadRow) {
+  if (!userRow?.id) return false;
+  const ids = normalizeRegionIdList(rawRegionIdsFromJoinTable);
+  const rid = leadRow?.region_id ? String(leadRow.region_id) : null;
+  const u = { role: userRow.role, company_id: userRow.company_id, crm_region_ids: rawRegionIdsFromJoinTable };
+  if (isCrmSystemAdminUser(u) || isCrmCompanyAdminUser(u)) return true;
+  if (isCrmRegionAdminUser(u)) {
+    if (!ids.length) return false;
+    return !!(rid && ids.includes(rid));
+  }
+  if (ids.length) {
+    if (!rid) return false;
+    return ids.includes(rid);
+  }
+  return true;
+}
+
+/**
+ * Lọc user_id — chỉ giữ người cùng công ty lead, có khối đúng module ecosystem (`crm` | `production` | …), và đúng khu vực CRM (nếu có gán).
+ * @param {object} leadRow — tối thiểu { company_id, region_id }
+ * @param {string} [ecosystemModuleKey='crm'] — khớp `ecosystem_module_scopes.module_key`
+ */
+async function filterUserIdsForCrmLeadScopedNotification(supabase, leadRow, userIds, ecosystemModuleKey = 'crm') {
+  const unique = [...new Set((userIds || []).filter(Boolean).map((x) => String(x)))];
+  if (!unique.length || !leadRow?.company_id) return [];
+
+  const restrictedMod = await getRestrictedDivisionIdsForModule(ecosystemModuleKey);
+  const { usersById, companyToDivisions } = await loadDeadlineUserCompanyDivisionContext(supabase, unique);
+
+  const { data: urRows, error: urErr } = await supabase
+    .from('user_company_regions')
+    .select('user_id, region_id')
+    .in('user_id', unique);
+  if (urErr) throw urErr;
+
+  const userRegionMap = new Map();
+  for (const r of urRows || []) {
+    const uid = String(r.user_id);
+    if (!userRegionMap.has(uid)) userRegionMap.set(uid, []);
+    userRegionMap.get(uid).push(r.region_id);
+  }
+
+  const out = [];
+  for (const uid of unique) {
+    const row = usersById.get(uid);
+    if (!row) continue;
+    if (String(row.company_id || '') !== String(leadRow.company_id || '')) continue;
+    if (!userRowMatchesCompanyModuleDivision(row, companyToDivisions, restrictedMod)) continue;
+    const rlist = userRegionMap.get(uid) || [];
+    if (!recipientMatchesCrmLeadRegionScope(row, rlist, leadRow)) continue;
+    out.push(uid);
+  }
+  return out;
+}
+
+/**
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {string[]} userIds
  */
@@ -131,7 +196,7 @@ async function loadDeadlineUserCompanyDivisionContext(supabase, userIds) {
 /**
  * Chọn một người liên quan lead/deal (giao việc → chủ lead → phụ trách) thuộc đúng phạm vi module.
  */
-function pickCrmDeadlineRecipientForTaskWithModule(task, lead, moduleKey, usersById, companyToDivisions, restrictedSet) {
+function pickCrmDeadlineRecipientForTaskWithModule(task, lead, moduleKey, usersById, companyToDivisions, restrictedSet, userRegionMap) {
   const candidates = [task?.assignee_id, lead?.lead_owner_id, lead?.assigned_to].filter(Boolean);
   const seen = new Set();
   for (const uid of candidates) {
@@ -141,6 +206,10 @@ function pickCrmDeadlineRecipientForTaskWithModule(task, lead, moduleKey, usersB
     const row = usersById.get(s);
     if (!row) continue;
     if (!userRowMatchesCompanyModuleDivision(row, companyToDivisions, restrictedSet)) continue;
+    if (userRegionMap && lead && typeof userRegionMap.get === 'function') {
+      const rlist = userRegionMap.get(s) || [];
+      if (!recipientMatchesCrmLeadRegionScope(row, rlist, lead)) continue;
+    }
     return s;
   }
   return null;
@@ -214,6 +283,8 @@ module.exports = {
   pickCrmDeadlineRecipientForTaskWithModule,
   loadDeadlineUserCompanyDivisionContext,
   userRowMatchesCompanyModuleDivision,
+  recipientMatchesCrmLeadRegionScope,
+  filterUserIdsForCrmLeadScopedNotification,
   buildCrmTaskDeadlineMetadata,
   MODULE_LABEL,
   SKIP_PROJECT_STATUSES_FOR_TASK_DEADLINE,

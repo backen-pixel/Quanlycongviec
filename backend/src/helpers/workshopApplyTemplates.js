@@ -172,6 +172,7 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId) {
         workshop_template_id: templateId,
         workshop_template_item_id: s.item.id,
         guessed_stage_slug: s.guessedSlug,
+        workshop_area: tpl.workshop_area,
       },
     });
   }

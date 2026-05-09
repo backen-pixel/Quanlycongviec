@@ -8,7 +8,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
@@ -108,6 +108,10 @@ const CRM_MENU_BOTTOM_GROUPS = [
     emoji: '📈',
     items: [
       { to: '/crm/executive-kpi', icon: BarChart3, label: 'KPI Giám đốc', executiveOnly: true },
+      { to: '/crm/kpi/sales-admin', icon: Activity, label: 'KPI Sales Admin (Tủ bếp)' },
+      { to: '/crm/kpi/deal', icon: Target, label: 'KPI Deal (Tủ bếp)' },
+      { to: '/crm/kpi/scorecard', icon: ClipboardCheck, label: 'Scorecard KPI tháng', executiveOnly: true },
+      { to: '/crm/kpi/settings', icon: Settings, label: 'Cấu hình KPI Tủ bếp', executiveOnly: true },
       { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
     ],
   },
@@ -136,6 +140,9 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/products', icon: Package, label: 'Sản phẩm' },
       { to: '/crm/categories', icon: FolderTree, label: 'Nhóm ngành' },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo', adminOnly: true },
+      { to: '/crm/reports/staff-lead-deal', icon: Users, label: 'BC Lead/Deal theo NV', executiveOnly: true },
+      { to: '/crm/admin/sla-watchlist', icon: Timer, label: 'SLA Lead/Deal (quản trị)', executiveOnly: true },
+      { to: '/crm/settings/deal-stage-report', icon: LayoutGrid, label: 'Phân loại cột BC Deal', executiveOnly: true },
       { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', adminOnly: true },
       { to: '/crm/facebook/link-phone-cleanup', icon: Phone, label: 'Dọn SĐT từ link', adminOnly: true },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline', adminOnly: true },

@@ -26,11 +26,21 @@ const {
   assertRegionBelongsToCompany,
 } = require('../helpers/crmRegionScope');
 const {
+  filterUserIdsForCrmLeadScopedNotification,
+  crmTaskDeadlineModuleKey,
+  ecosystemModuleKeyForCrmDeadline,
+} = require('../helpers/deadlineModuleNotifications');
+const {
   applyDefaultWorkshopTemplatesForNewProject,
   applyWorkshopTemplateToProject,
   applyAllActiveWorkshopTemplatesForArea,
 } = require('../helpers/workshopApplyTemplates');
-const { autoGenCrmTasks, FALLBACK_LEAD_TASKS, FALLBACK_DEAL_TASKS } = require('../helpers/autoGenCrmTasks');
+const {
+  autoGenCrmTasks,
+  FALLBACK_LEAD_TASKS,
+  FALLBACK_DEAL_TASKS,
+  completeConsultingCrmTasksForLead,
+} = require('../helpers/autoGenCrmTasks');
 const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
@@ -54,6 +64,7 @@ const {
   formatVnPhoneLocal0From84,
 } = require('../helpers/zaloOa');
 const { addPhoneToAutoLeadBlocklist } = require('../helpers/crmAutoLeadPhoneBlocklist');
+const { pipeStaffLeadDealSummaryPdf, pipeStaffPipelineDetailPdf } = require('../helpers/staffLeadDealReportPdf');
 
 const ZALO_APP_SETTING_KEY = 'zalo_oa_notify';
 
@@ -541,7 +552,7 @@ async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, d
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, stage_id, estimated_value, probability, type')
+      .select('id, stage_id, estimated_value, probability, type, assigned_to, lead_owner_id, pipeline_id')
       .eq('type', type);
     if (company_id) q = q.eq('company_id', company_id);
     if (req) q = applyCrmLeadRegionFilterToQuery(q, req);
@@ -563,6 +574,1218 @@ async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, d
   }
   return rows;
 }
+
+/** Lead/deal của đúng một user — dùng BC chi tiết theo pipeline (tránh trần 1000 dòng). */
+async function fetchCrmLeadsForUserDetailBatched(userId, type, { company_id, date_from, date_to, req }, pageSize = 1000) {
+  const rows = [];
+  let from = 0;
+  for (;;) {
+    let q = supabase
+      .from('crm_leads')
+      .select('id, pipeline_id, stage_id, estimated_value, type, created_at')
+      .eq('type', type);
+    if (company_id) q = q.eq('company_id', company_id);
+    if (req) q = applyCrmLeadRegionFilterToQuery(q, req);
+    if (type === 'lead') {
+      q = q.or(`assigned_to.eq.${userId},lead_owner_id.eq.${userId}`);
+    } else {
+      q = q.eq('assigned_to', userId);
+    }
+    if (date_from) q = q.gte('created_at', date_from);
+    if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
+    const { data, error } = await q.range(from, from + pageSize - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+  return rows;
+}
+
+/**
+ * Số ms từ epoch của max(updated_at) trong phạm vi lead/deal user được xem (cùng company + khoảng ngày tạo + vùng).
+ * Dùng client poll 1 request nhỏ; khi v thay đổi mới refetch dashboard đầy đủ.
+ */
+async function computeCrmLiveVersionMs(req, effectiveCompanyId, date_from, date_to) {
+  const uid = req.user?.userId;
+  const seesLead = userSeesAllCrmLeadsForScope(req.user);
+  const seesDeal = userSeesAllCrmDealsForScope(req.user);
+
+  const applyCommon = (q) => {
+    let x = q;
+    if (effectiveCompanyId) x = x.eq('company_id', effectiveCompanyId);
+    x = applyCrmLeadRegionFilterToQuery(x, req);
+    if (date_from) x = x.gte('created_at', date_from);
+    if (date_to) x = x.lte('created_at', date_to + 'T23:59:59.999Z');
+    return x;
+  };
+
+  const maxForType = async (type) => {
+    let q = supabase
+      .from('crm_leads')
+      .select('updated_at')
+      .eq('type', type)
+      .order('updated_at', { ascending: false })
+      .limit(1);
+    q = applyCommon(q);
+    if (type === 'lead' && uid && !seesLead) {
+      q = q.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
+    }
+    if (type === 'deal' && uid && !seesDeal) {
+      q = q.eq('assigned_to', uid);
+    }
+    const { data, error } = await q.maybeSingle();
+    if (error) throw error;
+    return data?.updated_at ? new Date(data.updated_at).getTime() : 0;
+  };
+
+  const [a, b] = await Promise.all([maxForType('lead'), maxForType('deal')]);
+  return Math.max(a, b);
+}
+
+/** GET /crm/live-version — poll nhẹ cho dashboard (chỉ số v = ms) */
+r.get('/live-version', async (req, res) => {
+  try {
+    const { date_from, date_to } = req.query;
+    const rawC = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sacDash = scopedAdminCompanyId(req);
+    if (sacDash) {
+      effectiveCompanyId = sacDash;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    }
+
+    const v = await computeCrmLiveVersionMs(req, effectiveCompanyId || null, date_from, date_to);
+    res.json({ v });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** GET /crm/reports/staff-lead-deal — BC nhân viên: số lead/deal & giá trị pipeline (ước tính) / chốt / thua theo người phụ trách */
+const STAFF_LEAD_DEAL_REPORT_ROLES = new Set([
+  'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin',
+]);
+
+const DEFAULT_PIPELINE_STAGE_SLA_DAYS = 7;
+
+function endOfCalendarDayAfterEntered(startIso, slaDays) {
+  const base = startIso ? new Date(startIso) : new Date();
+  const d = new Date(base);
+  d.setDate(d.getDate() + Math.max(1, slaDays));
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+async function fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId, typeFilter) {
+  const rows = [];
+  let from = 0;
+  const pageSize = 800;
+  for (;;) {
+    let q = supabase
+      .from('crm_leads')
+      .select('id, code, title, type, company_id, stage_id, assigned_to, lead_owner_id, stage_entered_at, created_at, region_id')
+      .order('updated_at', { ascending: false });
+    if (typeFilter === 'lead' || typeFilter === 'deal') q = q.eq('type', typeFilter);
+    if (effectiveCompanyId) q = q.eq('company_id', effectiveCompanyId);
+    q = applyCrmLeadRegionFilterToQuery(q, req);
+    const { data, error } = await q.range(from, from + pageSize - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+  return rows;
+}
+
+/** GET /crm/admin/sla-at-risk — Lead/deal đang ở giai đoạn có SLA gần quá hạn (stage_entered_at + sla_days) */
+r.get('/admin/sla-at-risk', async (req, res) => {
+  try {
+    const roleNorm = normalizeCrmUserRole(req.user?.role);
+    if (!STAFF_LEAD_DEAL_REPORT_ROLES.has(roleNorm)) {
+      return res.status(403).json({ error: 'Không có quyền xem danh sách SLA' });
+    }
+
+    const rawC = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sacDash = scopedAdminCompanyId(req);
+    if (sacDash) {
+      effectiveCompanyId = sacDash;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    }
+
+    const typeFilter = String(req.query.type || 'all').toLowerCase();
+    const tf = typeFilter === 'lead' || typeFilter === 'deal' ? typeFilter : 'all';
+    const horizonDays = Math.min(Math.max(parseInt(req.query.horizon_days, 10) || 3, 1), 30);
+    const bucket = String(req.query.bucket || 'all').toLowerCase(); // overdue | due_soon | all
+
+    const leads = await fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId || null, tf);
+    const stageIds = [...new Set(leads.map((l) => l.stage_id).filter(Boolean))];
+    let stageMap = {};
+    if (stageIds.length) {
+      const { data: stages, error: se } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, slug, sla_days, is_won, is_lost')
+        .in('id', stageIds);
+      if (se) throw se;
+      (stages || []).forEach((s) => {
+        stageMap[s.id] = s;
+      });
+    }
+
+    const now = Date.now();
+    const horizonEnd = now + horizonDays * 86400000;
+    const out = [];
+
+    for (const lead of leads) {
+      const st = lead.stage_id ? stageMap[lead.stage_id] : null;
+      if (st?.is_won || st?.is_lost) continue;
+
+      const slaDays = st?.sla_days != null && Number(st.sla_days) >= 1 ? Number(st.sla_days) : DEFAULT_PIPELINE_STAGE_SLA_DAYS;
+      const entered = lead.stage_entered_at || lead.created_at;
+      const dueAt = endOfCalendarDayAfterEntered(entered, slaDays);
+      const dueMs = dueAt.getTime();
+
+      let risk = 'due_soon';
+      if (dueMs < now) risk = 'overdue';
+      else if (dueMs > horizonEnd) continue;
+
+      if (bucket === 'overdue' && risk !== 'overdue') continue;
+      if (bucket === 'due_soon' && risk !== 'due_soon') continue;
+
+      out.push({
+        lead_id: lead.id,
+        code: lead.code,
+        title: lead.title,
+        type: lead.type,
+        company_id: lead.company_id,
+        region_id: lead.region_id,
+        stage_id: lead.stage_id,
+        stage_name: st?.name || null,
+        stage_slug: st?.slug || null,
+        sla_days: slaDays,
+        stage_entered_at: entered,
+        due_at: dueAt.toISOString(),
+        risk,
+        assigned_to: lead.assigned_to,
+        lead_owner_id: lead.lead_owner_id,
+      });
+    }
+
+    const deptFilter = req.query.department_id && String(req.query.department_id).trim();
+    let working = out;
+    if (deptFilter) {
+      const userIdsPre = [...new Set(out.flatMap((r) => [r.assigned_to, r.lead_owner_id].filter(Boolean)))];
+      let deptMap = {};
+      if (userIdsPre.length) {
+        const { data: usersPre } = await supabase
+          .from('users')
+          .select('id, department_id')
+          .in('id', userIdsPre);
+        (usersPre || []).forEach((u) => {
+          deptMap[u.id] = u.department_id;
+        });
+      }
+      working = out.filter((row) => {
+        const a = row.assigned_to ? deptMap[row.assigned_to] : null;
+        const o = row.lead_owner_id ? deptMap[row.lead_owner_id] : null;
+        return String(a) === deptFilter || String(o) === deptFilter;
+      });
+    }
+
+    working.sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime());
+
+    const userIds = [...new Set(working.flatMap((r) => [r.assigned_to, r.lead_owner_id].filter(Boolean)))];
+    let userMap = {};
+    if (userIds.length) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, full_name, email')
+        .in('id', userIds);
+      (users || []).forEach((u) => {
+        userMap[u.id] = u;
+      });
+    }
+
+    const rows = working.map((row) => ({
+      ...row,
+      assigned_to_name: row.assigned_to ? userMap[row.assigned_to]?.full_name || userMap[row.assigned_to]?.email || null : null,
+      lead_owner_name: row.lead_owner_id ? userMap[row.lead_owner_id]?.full_name || userMap[row.lead_owner_id]?.email || null : null,
+    }));
+
+    res.json({
+      horizon_days: horizonDays,
+      bucket: bucket === 'overdue' || bucket === 'due_soon' ? bucket : 'all',
+      rows,
+      meta: { total: rows.length },
+    });
+  } catch (e) {
+    console.error('GET /crm/admin/sla-at-risk:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** POST /crm/admin/sla-remind — Gửi TB nhắc nhở SLA giai đoạn tới NV phụ trách (không gộp vào TB nhắc hạn tự động) */
+r.post('/admin/sla-remind', async (req, res) => {
+  try {
+    const roleNorm = normalizeCrmUserRole(req.user?.role);
+    if (!STAFF_LEAD_DEAL_REPORT_ROLES.has(roleNorm)) {
+      return res.status(403).json({ error: 'Không có quyền gửi nhắc SLA' });
+    }
+
+    const leadIds = Array.isArray(req.body?.lead_ids) ? req.body.lead_ids.map((x) => String(x).trim()).filter(Boolean) : [];
+    if (!leadIds.length) return res.status(400).json({ error: 'Thiếu lead_ids' });
+
+    const rawC = req.body?.company_id && String(req.body.company_id).trim() ? String(req.body.company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sacDash = scopedAdminCompanyId(req);
+    if (sacDash) {
+      effectiveCompanyId = sacDash;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    }
+
+    const { data: leads, error: le } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, type, company_id, region_id, stage_id, assigned_to, lead_owner_id, stage_entered_at, created_at')
+      .in('id', leadIds);
+    if (le) return res.status(500).json({ error: le.message });
+
+    const list = leads || [];
+    const scoped = effectiveCompanyId
+      ? list.filter((l) => String(l.company_id) === String(effectiveCompanyId))
+      : list;
+
+    let sent = 0;
+    const actorName = req.user?.full_name || req.user?.email || 'Quản lý';
+
+    for (const lead of scoped) {
+      const scopeOk = assertLeadReadableByRegionScope(req, lead);
+      if (!scopeOk.ok) continue;
+
+      const { data: st } = await supabase
+        .from('crm_pipeline_stages')
+        .select('name, sla_days')
+        .eq('id', lead.stage_id)
+        .maybeSingle();
+      const slaDays = st?.sla_days != null && Number(st.sla_days) >= 1 ? Number(st.sla_days) : DEFAULT_PIPELINE_STAGE_SLA_DAYS;
+      const dueAt = endOfCalendarDayAfterEntered(lead.stage_entered_at || lead.created_at, slaDays);
+
+      const rawTargets = [...new Set([lead.assigned_to, lead.type === 'lead' ? lead.lead_owner_id : null].filter(Boolean))];
+      const leadScope = { company_id: lead.company_id, region_id: lead.region_id };
+      const targets = await filterUserIdsForCrmLeadScopedNotification(supabase, leadScope, rawTargets);
+      const stageLabel = st?.name || 'giai đoạn';
+      const title = `${lead.type === 'deal' ? 'Deal' : 'Lead'} ${lead.code || ''} — gần hết hạn SLA`.trim();
+      const msg = `${actorName} nhắc xử lý ${stageLabel}. Hạn SLA: ${dueAt.toLocaleString('vi-VN')}.`;
+
+      const meta = {
+        module_key: 'crm',
+        kind: 'sla_stage_admin_reminder',
+        lead_id: lead.id,
+        stage_id: lead.stage_id,
+        due_at: dueAt.toISOString(),
+      };
+
+      for (const uid of targets) {
+        const n = await createNotification(
+          req,
+          uid,
+          'lead_stage_sla_reminder',
+          title,
+          msg,
+          lead.type === 'deal' ? 'crm_deal' : 'crm_lead',
+          lead.id,
+          meta,
+        );
+        if (n) sent += 1;
+      }
+    }
+
+    res.json({ ok: true, sent, processed: scoped.length });
+  } catch (e) {
+    console.error('POST /crm/admin/sla-remind:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+function emptyStaffLeadDealAgg() {
+  return {
+    lead_count: 0,
+    lead_pipeline_value: 0,
+    deal_count: 0,
+    deal_pipeline_value: 0,
+    won_deal_count: 0,
+    won_value: 0,
+    lost_deal_count: 0,
+    lost_value: 0,
+  };
+}
+
+/** Slug mặc định = giai đoạn trước ký HĐ (khi chưa cấu hình deal_report_bucket) */
+const DEAL_PRE_CONTRACT_SLUGS_STAFF = new Set([
+  'designing',
+  'quoted',
+  'negotiating',
+  'waiting_deposit',
+]);
+
+/**
+ * Phân loại cột Deal cho BC Lead/Deal theo NV.
+ * `deal_report_bucket` trên crm_pipeline_stages ghi đè; is_lost luôn ưu tiên thua.
+ * @returns {'lost'|'project_completed'|'implementation'|'pre_contract'}
+ */
+function classifyDealStageForStaffReport(st, slug) {
+  if (!st) return 'pre_contract';
+  const slugStr = slug || null;
+  if (st.is_lost || slugStr === 'lost') return 'lost';
+
+  const bucket = st.deal_report_bucket || null;
+  if (bucket === 'lost') return 'lost';
+  if (bucket === 'completed') return 'project_completed';
+  if (bucket === 'implementation') return 'implementation';
+  if (bucket === 'pre_contract') return 'pre_contract';
+
+  if (slugStr === 'completed') return 'project_completed';
+  if ((slugStr && DEAL_PRE_CONTRACT_SLUGS_STAFF.has(slugStr)) || (!slugStr && !st.is_won)) return 'pre_contract';
+  return 'implementation';
+}
+
+/** Trả về { df, dt, effectiveCompanyId, rows } hoặc null (đã gửi response lỗi). */
+async function computeStaffLeadDealReportData(req, res) {
+  try {
+    const roleNorm = normalizeCrmUserRole(req.user?.role);
+    if (!STAFF_LEAD_DEAL_REPORT_ROLES.has(roleNorm)) {
+      res.status(403).json({ error: 'Không có quyền xem báo cáo này' });
+      return null;
+    }
+
+    const { date_from, date_to, department_id, q } = req.query;
+    const rawC = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sacDash = scopedAdminCompanyId(req);
+    if (sacDash) {
+      effectiveCompanyId = sacDash;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return null;
+      effectiveCompanyId = cid;
+    }
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    const defaultFrom = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+    const endCal = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const defaultTo = `${endCal.getFullYear()}-${pad(endCal.getMonth() + 1)}-${pad(endCal.getDate())}`;
+
+    const isoFrom = (v) => {
+      if (!v || typeof v !== 'string') return null;
+      const m = v.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+      return m ? m[1] : null;
+    };
+    const df = isoFrom(date_from) || defaultFrom;
+    const dt = isoFrom(date_to) || defaultTo;
+
+    const numEst = (x) => {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const dealAssigneeOnly =
+      req.user?.userId && !userSeesAllCrmDealsForScope(req.user) ? req.user.userId : null;
+    const leadAssigneeOnly =
+      req.user?.userId && !userSeesAllCrmLeadsForScope(req.user) ? req.user.userId : null;
+
+    const [leadRows, dealRows] = await Promise.all([
+      fetchCrmLeadsForDashboardBatched('lead', {
+        company_id: effectiveCompanyId || undefined,
+        date_from: df,
+        date_to: dt,
+        assigned_to_only: leadAssigneeOnly,
+        req,
+      }),
+      fetchCrmLeadsForDashboardBatched('deal', {
+        company_id: effectiveCompanyId || undefined,
+        date_from: df,
+        date_to: dt,
+        assigned_to_only: dealAssigneeOnly,
+        req,
+      }),
+    ]);
+
+    const stageIds = [...new Set(
+      [...leadRows, ...dealRows].map((l) => l.stage_id).filter(Boolean),
+    )];
+    let stageMap = {};
+    if (stageIds.length) {
+      const { data: stages } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, is_won, is_lost')
+        .in('id', stageIds);
+      stageMap = Object.fromEntries((stages || []).map((s) => [s.id, s]));
+    }
+
+    const UNASSIGNED = '__unassigned__';
+    const agg = {};
+
+    const ownerId = (row) => String(row.assigned_to || row.lead_owner_id || '').trim() || null;
+
+    const bump = (uid, patch) => {
+      const key = uid || UNASSIGNED;
+      if (!agg[key]) agg[key] = emptyStaffLeadDealAgg();
+      Object.assign(agg[key], patch(agg[key]));
+    };
+
+    for (const l of leadRows) {
+      const uid = ownerId(l);
+      const v = numEst(l.estimated_value);
+      bump(uid, (a) => ({
+        lead_count: a.lead_count + 1,
+        lead_pipeline_value: a.lead_pipeline_value + v,
+      }));
+    }
+
+    for (const l of dealRows) {
+      const uid = ownerId(l);
+      const v = numEst(l.estimated_value);
+      const st = l.stage_id ? stageMap[l.stage_id] : null;
+      bump(uid, (a) => {
+        const n = { ...a };
+        n.deal_count += 1;
+        n.deal_pipeline_value += v;
+        if (st?.is_won) {
+          n.won_deal_count += 1;
+          n.won_value += v;
+        }
+        if (st?.is_lost) {
+          n.lost_deal_count += 1;
+          n.lost_value += v;
+        }
+        return n;
+      });
+    }
+
+    if (department_id && String(department_id).trim()) {
+      const depId = String(department_id).trim();
+      if (effectiveCompanyId) {
+        const { data: dep } = await supabase
+          .from('departments')
+          .select('id, company_id')
+          .eq('id', depId)
+          .maybeSingle();
+        if (!dep || String(dep.company_id) !== String(effectiveCompanyId)) {
+          res.status(400).json({ error: 'Phòng ban không thuộc công ty đang chọn' });
+          return null;
+        }
+      }
+      const { data: deptUsers } = await supabase
+        .from('users')
+        .select('id')
+        .eq('department_id', depId)
+        .neq('is_active', false);
+      for (const u of deptUsers || []) {
+        if (!agg[u.id]) agg[u.id] = emptyStaffLeadDealAgg();
+      }
+      const allowed = new Set((deptUsers || []).map((u) => u.id));
+      for (const k of Object.keys(agg)) {
+        if (k === UNASSIGNED) continue;
+        if (!allowed.has(k)) delete agg[k];
+      }
+      delete agg[UNASSIGNED];
+    }
+
+    const userIds = Object.keys(agg).filter((k) => k !== UNASSIGNED);
+    let userMap = {};
+    if (userIds.length) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, full_name, email, department_id, department:departments!users_department_id_fkey(id, name, company_id)')
+        .in('id', userIds);
+      userMap = Object.fromEntries((users || []).map((u) => [u.id, u]));
+    }
+
+    let rows = Object.entries(agg).map(([uidKey, m]) => {
+      if (uidKey === UNASSIGNED) {
+        return {
+          user_id: null,
+          full_name: 'Chưa gán phụ trách',
+          email: null,
+          department_name: null,
+          ...m,
+        };
+      }
+      const u = userMap[uidKey];
+      return {
+        user_id: uidKey,
+        full_name: u?.full_name || uidKey,
+        email: u?.email || null,
+        department_name: u?.department?.name || null,
+        ...m,
+      };
+    });
+
+    const qTerm = q && String(q).trim().toLowerCase();
+    if (qTerm) {
+      rows = rows.filter((r) => {
+        const name = (r.full_name || '').toLowerCase();
+        const em = (r.email || '').toLowerCase();
+        return name.includes(qTerm) || em.includes(qTerm);
+      });
+    }
+
+    rows.sort((a, b) => (b.won_value || 0) - (a.won_value || 0)
+      || (b.deal_pipeline_value || 0) - (a.deal_pipeline_value || 0));
+
+    return { df, dt, effectiveCompanyId, rows };
+  } catch (e) {
+    console.error('computeStaffLeadDealReportData:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Lỗi' });
+    return null;
+  }
+}
+
+r.get('/reports/staff-lead-deal/export.pdf', async (req, res) => {
+  try {
+    const data = await computeStaffLeadDealReportData(req, res);
+    if (!data) return;
+    let companyName = '';
+    if (data.effectiveCompanyId) {
+      const { data: co } = await supabase
+        .from('companies')
+        .select('name, short_name')
+        .eq('id', data.effectiveCompanyId)
+        .maybeSingle();
+      companyName = co?.short_name || co?.name || '';
+    }
+    const generatedAt = new Date().toLocaleString('vi-VN');
+    pipeStaffLeadDealSummaryPdf(res, {
+      rows: data.rows,
+      dateFrom: data.df,
+      dateTo: data.dt,
+      companyName,
+      generatedAt,
+    });
+  } catch (e) {
+    console.error('GET /reports/staff-lead-deal/export.pdf:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+r.get('/reports/staff-lead-deal', async (req, res) => {
+  try {
+    const data = await computeStaffLeadDealReportData(req, res);
+    if (!data) return;
+    res.json({
+      date_from: data.df,
+      date_to: data.dt,
+      company_id: data.effectiveCompanyId || null,
+      basis: 'created_at',
+      rows: data.rows,
+    });
+  } catch (e) {
+    console.error('GET /crm/reports/staff-lead-deal:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+function isUuidString(s) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(s || '').trim());
+}
+
+/** Chi tiết pipeline theo nhân viên — dùng cho JSON + PDF */
+async function computeStaffPipelineDetailPayload(req, res) {
+  try {
+    const roleNorm = normalizeCrmUserRole(req.user?.role);
+    if (!STAFF_LEAD_DEAL_REPORT_ROLES.has(roleNorm)) {
+      res.status(403).json({ error: 'Không có quyền xem báo cáo này' });
+      return null;
+    }
+
+    const targetId = String(req.params.userId || '').trim();
+    if (!isUuidString(targetId)) {
+      res.status(400).json({ error: 'userId không hợp lệ' });
+      return null;
+    }
+
+    const leadSelfOnly = req.user?.userId && !userSeesAllCrmLeadsForScope(req.user);
+    const dealSelfOnly = req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
+    if (leadSelfOnly && String(targetId) !== String(req.user.userId)) {
+      res.status(403).json({ error: 'Chỉ xem được dữ liệu của chính bạn' });
+      return null;
+    }
+    if (dealSelfOnly && String(targetId) !== String(req.user.userId)) {
+      res.status(403).json({ error: 'Chỉ xem được dữ liệu của chính bạn' });
+      return null;
+    }
+
+    const { date_from, date_to } = req.query;
+    const rawC = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sacDash = scopedAdminCompanyId(req);
+    if (sacDash) {
+      effectiveCompanyId = sacDash;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return null;
+      effectiveCompanyId = cid;
+    }
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    const defaultFrom = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+    const endCal = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const defaultTo = `${endCal.getFullYear()}-${pad(endCal.getMonth() + 1)}-${pad(endCal.getDate())}`;
+
+    const isoFrom = (v) => {
+      if (!v || typeof v !== 'string') return null;
+      const m = v.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+      return m ? m[1] : null;
+    };
+    const df = isoFrom(date_from) || defaultFrom;
+    const dt = isoFrom(date_to) || defaultTo;
+
+    const numEst = (x) => {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const [leadRows, dealRows] = await Promise.all([
+      fetchCrmLeadsForUserDetailBatched(targetId, 'lead', {
+        company_id: effectiveCompanyId || undefined,
+        date_from: df,
+        date_to: dt,
+        req,
+      }),
+      fetchCrmLeadsForUserDetailBatched(targetId, 'deal', {
+        company_id: effectiveCompanyId || undefined,
+        date_from: df,
+        date_to: dt,
+        req,
+      }),
+    ]);
+
+    const allStageIds = [...new Set(
+      [...leadRows, ...dealRows].map((l) => l.stage_id).filter(Boolean),
+    )];
+    let stageMetaById = {};
+    if (allStageIds.length) {
+      const { data: stages } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, order_index, pipeline_id, is_won, is_lost, pipeline_type, canonical_slug, deal_report_bucket')
+        .in('id', allStageIds);
+      stageMetaById = Object.fromEntries((stages || []).map((s) => [s.id, s]));
+    }
+
+    const NONE = '__none__';
+    const byPipe = {};
+
+    const ensure = (pid) => {
+      const key = pid || NONE;
+      if (!byPipe[key]) {
+        byPipe[key] = {
+          pipeline_id: pid || null,
+          lead_count: 0,
+          lead_value: 0,
+          deal_count: 0,
+          deal_value: 0,
+          won_deal_count: 0,
+          won_value: 0,
+          lost_deal_count: 0,
+          lost_value: 0,
+        };
+      }
+      return byPipe[key];
+    };
+
+    for (const l of leadRows) {
+      const b = ensure(l.pipeline_id);
+      const v = numEst(l.estimated_value);
+      b.lead_count += 1;
+      b.lead_value += v;
+    }
+
+    for (const l of dealRows) {
+      const b = ensure(l.pipeline_id);
+      const v = numEst(l.estimated_value);
+      const st = l.stage_id ? stageMetaById[l.stage_id] : null;
+      b.deal_count += 1;
+      b.deal_value += v;
+      if (st?.is_won) {
+        b.won_deal_count += 1;
+        b.won_value += v;
+      }
+      if (st?.is_lost) {
+        b.lost_deal_count += 1;
+        b.lost_value += v;
+      }
+    }
+
+    const pipeIds = [...new Set(
+      Object.keys(byPipe)
+        .filter((k) => k !== NONE)
+        .map((k) => byPipe[k].pipeline_id)
+        .filter(Boolean),
+    )];
+    let nameMap = {};
+    if (pipeIds.length) {
+      const { data: pipes } = await supabase
+        .from('crm_pipelines')
+        .select('id, name')
+        .in('id', pipeIds);
+      nameMap = Object.fromEntries((pipes || []).map((p) => [p.id, p.name]));
+    }
+
+    const pipelines = Object.values(byPipe).map((b) => {
+      const pid = b.pipeline_id;
+      const name = pid ? (nameMap[pid] || 'Pipeline') : 'Chưa gán pipeline';
+      const totalValue = b.lead_value + b.deal_value;
+      const openDealCount = Math.max(0, (b.deal_count || 0) - (b.won_deal_count || 0) - (b.lost_deal_count || 0));
+      let openValue = b.deal_value - (b.won_value || 0) - (b.lost_value || 0);
+      if (!Number.isFinite(openValue) || openValue < 0) openValue = 0;
+      return {
+        ...b,
+        pipeline_name: name,
+        total_value: totalValue,
+        open_deal_count: openDealCount,
+        open_value: openValue,
+      };
+    });
+
+    pipelines.sort((a, b) => (b.total_value || 0) - (a.total_value || 0));
+
+    /** Theo ngày (phần date của ISO) — khớp filter created_at */
+    const dayKey = (row) => {
+      const raw = row.created_at;
+      if (!raw) return null;
+      const m = String(raw).match(/^(\d{4}-\d{2}-\d{2})/);
+      return m ? m[1] : null;
+    };
+    const timelineMap = {};
+    for (const l of leadRows) {
+      const k = dayKey(l);
+      if (!k) continue;
+      if (!timelineMap[k]) {
+        timelineMap[k] = { date: k, lead_count: 0, lead_value: 0, deal_count: 0, deal_value: 0 };
+      }
+      timelineMap[k].lead_count += 1;
+      timelineMap[k].lead_value += numEst(l.estimated_value);
+    }
+    for (const l of dealRows) {
+      const k = dayKey(l);
+      if (!k) continue;
+      if (!timelineMap[k]) {
+        timelineMap[k] = { date: k, lead_count: 0, lead_value: 0, deal_count: 0, deal_value: 0 };
+      }
+      timelineMap[k].deal_count += 1;
+      timelineMap[k].deal_value += numEst(l.estimated_value);
+    }
+
+    const timeline = Object.values(timelineMap).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+    let dealOpenCount = 0;
+    let dealOpenValue = 0;
+    let dealWonCount = 0;
+    let dealWonValue = 0;
+    let dealLostCount = 0;
+    let dealLostValue = 0;
+    let dealProjectCompletedCount = 0;
+    let dealProjectCompletedValue = 0;
+    /** Đã ký HĐ → trước hoàn thành: SX, lắp đặt, ký HĐ… */
+    let dealImplementationCount = 0;
+    let dealImplementationValue = 0;
+    /** Trước ký HĐ */
+    let dealPreContractCount = 0;
+    let dealPreContractValue = 0;
+    for (const l of dealRows) {
+      const v = numEst(l.estimated_value);
+      const st = l.stage_id ? stageMetaById[l.stage_id] : null;
+      const slug = st?.canonical_slug || null;
+      const cls = classifyDealStageForStaffReport(st, slug);
+
+      if (cls === 'lost') {
+        dealLostCount += 1;
+        dealLostValue += v;
+        continue;
+      }
+      if (cls === 'project_completed') {
+        dealProjectCompletedCount += 1;
+        dealProjectCompletedValue += v;
+      } else if (cls === 'pre_contract') {
+        dealPreContractCount += 1;
+        dealPreContractValue += v;
+      } else {
+        dealImplementationCount += 1;
+        dealImplementationValue += v;
+      }
+
+      if (st?.is_won) {
+        dealWonCount += 1;
+        dealWonValue += v;
+      } else {
+        dealOpenCount += 1;
+        dealOpenValue += v;
+      }
+    }
+
+    const leadTot = leadRows.length;
+    const leadValTot = leadRows.reduce((s, l) => s + numEst(l.estimated_value), 0);
+    const dealTot = dealRows.length;
+    const dealValTot = dealRows.reduce((s, l) => s + numEst(l.estimated_value), 0);
+    const closedForRate = dealWonCount + dealLostCount;
+    const totalPipelineVal = leadValTot + dealValTot;
+    const summary = {
+      lead_count: leadTot,
+      lead_value: leadValTot,
+      deal_count: dealTot,
+      deal_value: dealValTot,
+      /** Đã ký HĐ / cờ chốt sale (is_won) — có thể vẫn đang SX, lắp đặt… */
+      won_deal_count: dealWonCount,
+      won_value: dealWonValue,
+      lost_deal_count: dealLostCount,
+      lost_value: dealLostValue,
+      /** Deal chưa cờ won và chưa thua (thường là trước ký HĐ) */
+      open_deal_count: dealOpenCount,
+      open_value: dealOpenValue,
+      /** Hoàn thành: xong HĐ, thu tiền — slug completed */
+      project_completed_count: dealProjectCompletedCount,
+      project_completed_value: dealProjectCompletedValue,
+      /** Đang triển khai: từ ký HĐ về phía hoàn thành (SX, lắp, ký HĐ…) — không gồm giai đoạn chưa chốt */
+      implementation_count: dealImplementationCount,
+      implementation_value: dealImplementationValue,
+      /** Chưa chốt: giai đoạn deal trước ký HĐ (slug designing…waiting_deposit hoặc chưa có slug/is_won) */
+      pre_contract_count: dealPreContractCount,
+      pre_contract_value: dealPreContractValue,
+      /** Còn lại sau khi trừ thua & hoàn thành — = implementation + pre_contract */
+      pending_completion_count: dealImplementationCount + dealPreContractCount,
+      pending_completion_value: dealImplementationValue + dealPreContractValue,
+      total_pipeline_value: totalPipelineVal,
+      /** Giống project_completed_value — tiền trên deal đã qua giai đoạn hoàn thành */
+      completed_value: dealProjectCompletedValue,
+      /** Ròng “chốt sale” − thua (ký HĐ − thua), không phải hoàn thành dự án */
+      net_won_minus_lost_value: dealWonValue - dealLostValue,
+      total_excluding_lost_value: leadValTot + dealValTot - dealLostValue,
+      pipeline_count: pipelines.filter((p) => (p.lead_count || 0) + (p.deal_count || 0) > 0).length,
+      win_rate_closed_pct: closedForRate > 0 ? Math.round((dealWonCount / closedForRate) * 1000) / 10 : null,
+      win_rate_all_deals_pct: dealTot > 0 ? Math.round((dealWonCount / dealTot) * 1000) / 10 : null,
+    };
+
+    /** Gom theo từng giai đoạn (stage) — tiền đang nằm ở cột Kanban nào */
+    const stageAgg = new Map();
+    const bumpStageRow = (row, kind, val) => {
+      const key = row.stage_id ? String(row.stage_id) : '__none__';
+      if (!stageAgg.has(key)) {
+        stageAgg.set(key, {
+          stage_id: row.stage_id || null,
+          lead_count: 0,
+          lead_value: 0,
+          deal_count: 0,
+          deal_value: 0,
+        });
+      }
+      const b = stageAgg.get(key);
+      if (kind === 'lead') {
+        b.lead_count += 1;
+        b.lead_value += val;
+      } else {
+        b.deal_count += 1;
+        b.deal_value += val;
+      }
+    };
+    for (const l of leadRows) bumpStageRow(l, 'lead', numEst(l.estimated_value));
+    for (const l of dealRows) bumpStageRow(l, 'deal', numEst(l.estimated_value));
+
+    const stagePipelineIds = [...new Set(
+      [...stageAgg.values()]
+        .map((a) => (a.stage_id ? stageMetaById[a.stage_id]?.pipeline_id : null))
+        .filter(Boolean),
+    )];
+    let stagePipeNames = {};
+    if (stagePipelineIds.length) {
+      const { data: spipes } = await supabase
+        .from('crm_pipelines')
+        .select('id, name')
+        .in('id', stagePipelineIds);
+      stagePipeNames = Object.fromEntries((spipes || []).map((p) => [p.id, p.name]));
+    }
+
+    const outcomeLabel = (outcome) => {
+      if (outcome === 'lost') return 'Thua';
+      if (outcome === 'project_completed') return 'Hoàn thành';
+      if (outcome === 'implementation') return 'Đang triển khai';
+      if (outcome === 'pre_contract') return 'Chưa chốt';
+      return '';
+    };
+
+    const stage_breakdown = [...stageAgg.values()].map((agg) => {
+      const meta = agg.stage_id ? stageMetaById[agg.stage_id] : null;
+      const pid = meta?.pipeline_id || null;
+      const slug = meta?.canonical_slug || null;
+      let dealOutcome = null;
+      if (agg.deal_count > 0 && meta) {
+        const cls = classifyDealStageForStaffReport(meta, slug);
+        if (cls === 'lost') dealOutcome = 'lost';
+        else if (cls === 'project_completed') dealOutcome = 'project_completed';
+        else if (cls === 'implementation') dealOutcome = 'implementation';
+        else dealOutcome = 'pre_contract';
+      }
+      const stageTotalValue = agg.lead_value + agg.deal_value;
+      const pt = meta?.pipeline_type || null;
+      return {
+        stage_id: agg.stage_id,
+        stage_name: meta?.name || (agg.stage_id ? '—' : 'Chưa xác định giai đoạn'),
+        pipeline_id: pid,
+        pipeline_name: pid ? (stagePipeNames[pid] || 'Pipeline') : null,
+        pipeline_type: pt,
+        kanban_type_label: pt === 'deal' ? 'Deal' : pt === 'lead' ? 'Lead' : '',
+        canonical_slug: slug || null,
+        order_index: meta?.order_index ?? null,
+        deal_outcome: dealOutcome,
+        deal_outcome_label: dealOutcome ? outcomeLabel(dealOutcome) : '',
+        deal_report_bucket: meta?.deal_report_bucket ?? null,
+        lead_count: agg.lead_count,
+        lead_value: agg.lead_value,
+        deal_count: agg.deal_count,
+        deal_value: agg.deal_value,
+        stage_total_value: stageTotalValue,
+      };
+    });
+
+    stage_breakdown.sort((a, b) => {
+      const na = a.stage_id ? 0 : 1;
+      const nb = b.stage_id ? 0 : 1;
+      if (na !== nb) return na - nb;
+      const pa = String(a.pipeline_id || '\uffff');
+      const pb = String(b.pipeline_id || '\uffff');
+      if (pa !== pb) return pa.localeCompare(pb);
+      const oa = a.order_index ?? 999999;
+      const ob = b.order_index ?? 999999;
+      if (oa !== ob) return oa - ob;
+      return String(a.stage_name || '').localeCompare(String(b.stage_name || ''));
+    });
+
+    const { data: uRow } = await supabase
+      .from('users')
+      .select('id, full_name, email, department:departments!users_department_id_fkey(name)')
+      .eq('id', targetId)
+      .maybeSingle();
+
+    return {
+      user_id: targetId,
+      full_name: uRow?.full_name || null,
+      email: uRow?.email || null,
+      department_name: uRow?.department?.name || null,
+      df,
+      dt,
+      effectiveCompanyId,
+      pipelines,
+      summary,
+      timeline,
+      stage_breakdown,
+    };
+  } catch (e) {
+    console.error('computeStaffPipelineDetailPayload:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Lỗi' });
+    return null;
+  }
+}
+
+r.get('/reports/staff-lead-deal/:userId/pipelines/export.pdf', async (req, res) => {
+  try {
+    const p = await computeStaffPipelineDetailPayload(req, res);
+    if (!p) return;
+    let companyName = '';
+    if (p.effectiveCompanyId) {
+      const { data: co } = await supabase
+        .from('companies')
+        .select('name, short_name')
+        .eq('id', p.effectiveCompanyId)
+        .maybeSingle();
+      companyName = co?.short_name || co?.name || '';
+    }
+    pipeStaffPipelineDetailPdf(res, {
+      pipelines: p.pipelines,
+      fullName: p.full_name,
+      departmentName: p.department_name,
+      dateFrom: p.df,
+      dateTo: p.dt,
+      companyName,
+      generatedAt: new Date().toLocaleString('vi-VN'),
+    });
+  } catch (e) {
+    console.error('GET pipelines/export.pdf:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** GET /crm/reports/staff-lead-deal/:userId/pipelines — chi tiết theo từng pipeline (giá trị ước tính) */
+r.get('/reports/staff-lead-deal/:userId/pipelines', async (req, res) => {
+  try {
+    const p = await computeStaffPipelineDetailPayload(req, res);
+    if (!p) return;
+    res.json({
+      user_id: p.user_id,
+      full_name: p.full_name,
+      email: p.email,
+      department_name: p.department_name,
+      date_from: p.df,
+      date_to: p.dt,
+      company_id: p.effectiveCompanyId || null,
+      basis: 'created_at',
+      pipelines: p.pipelines,
+      summary: p.summary,
+      timeline: p.timeline,
+      stage_breakdown: p.stage_breakdown,
+    });
+  } catch (e) {
+    console.error('GET /crm/reports/staff-lead-deal/:userId/pipelines:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+const DEAL_REPORT_BUCKET_VALUES = new Set(['pre_contract', 'implementation', 'completed', 'lost']);
+
+/** GET /crm/settings/deal-stage-report-buckets — cột Deal → nhóm BC Lead/Deal theo NV */
+r.get('/settings/deal-stage-report-buckets', async (req, res) => {
+  try {
+    const roleNorm = normalizeCrmUserRole(req.user?.role);
+    if (!STAFF_LEAD_DEAL_REPORT_ROLES.has(roleNorm)) {
+      res.status(403).json({ error: 'Không có quyền xem cấu hình này' });
+      return;
+    }
+    const rawC = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sacDash = scopedAdminCompanyId(req);
+    if (sacDash) {
+      effectiveCompanyId = sacDash;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    }
+    if (!effectiveCompanyId) {
+      res.status(400).json({ error: 'Cần chọn công ty (company_id)' });
+      return;
+    }
+
+    const { data: pipes, error: pe } = await supabase
+      .from('crm_pipelines')
+      .select('id, name')
+      .eq('company_id', effectiveCompanyId)
+      .eq('is_active', true);
+    if (pe) throw pe;
+
+    const pipeIds = (pipes || []).map((p) => p.id);
+    if (!pipeIds.length) {
+      res.json({ company_id: effectiveCompanyId, stages: [] });
+      return;
+    }
+
+    const { data: stages, error: se } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, name, order_index, pipeline_id, canonical_slug, is_won, is_lost, deal_report_bucket, pipeline_type')
+      .in('pipeline_id', pipeIds)
+      .eq('pipeline_type', 'deal')
+      .eq('is_active', true)
+      .order('order_index');
+    if (se) throw se;
+
+    const nameByPid = Object.fromEntries((pipes || []).map((p) => [p.id, p.name]));
+    const rows = (stages || []).map((s) => ({
+      ...s,
+      pipeline_name: nameByPid[s.pipeline_id] || '',
+    }));
+
+    res.json({ company_id: effectiveCompanyId, stages: rows });
+  } catch (e) {
+    console.error('GET /crm/settings/deal-stage-report-buckets:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** PUT /crm/settings/deal-stage-report-buckets — cập nhật nhóm báo cáo cho từng cột Deal */
+r.put('/settings/deal-stage-report-buckets', async (req, res) => {
+  try {
+    const roleNorm = normalizeCrmUserRole(req.user?.role);
+    if (!STAFF_LEAD_DEAL_REPORT_ROLES.has(roleNorm)) {
+      res.status(403).json({ error: 'Không có quyền chỉnh cấu hình này' });
+      return;
+    }
+
+    const body = req.body || {};
+    const rawC = body.company_id && String(body.company_id).trim() ? String(body.company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sacDash = scopedAdminCompanyId(req);
+    if (sacDash) {
+      effectiveCompanyId = sacDash;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    }
+    if (!effectiveCompanyId) {
+      res.status(400).json({ error: 'Cần company_id' });
+      return;
+    }
+
+    const updates = Array.isArray(body.updates) ? body.updates : [];
+    if (!updates.length) {
+      res.status(400).json({ error: 'updates không được rỗng' });
+      return;
+    }
+
+    const { data: pipes } = await supabase
+      .from('crm_pipelines')
+      .select('id')
+      .eq('company_id', effectiveCompanyId)
+      .eq('is_active', true);
+    const allowedPipe = new Set((pipes || []).map((p) => p.id));
+
+    for (const u of updates) {
+      const sid = u.stage_id && String(u.stage_id).trim();
+      if (!sid || !isUuidString(sid)) {
+        res.status(400).json({ error: 'stage_id không hợp lệ' });
+        return;
+      }
+      let bucket = u.deal_report_bucket;
+      if (bucket === '' || bucket === undefined) bucket = null;
+      if (bucket !== null && !DEAL_REPORT_BUCKET_VALUES.has(String(bucket))) {
+        res.status(400).json({ error: 'deal_report_bucket không hợp lệ' });
+        return;
+      }
+
+      const { data: st, error: ste } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, pipeline_id, pipeline_type')
+        .eq('id', sid)
+        .maybeSingle();
+      if (ste) throw ste;
+      if (!st || st.pipeline_type !== 'deal' || !allowedPipe.has(st.pipeline_id)) {
+        res.status(403).json({ error: 'Giai đoạn không thuộc pipeline Deal của công ty đang chọn' });
+        return;
+      }
+
+      const { error: ue } = await supabase
+        .from('crm_pipeline_stages')
+        .update({ deal_report_bucket: bucket })
+        .eq('id', sid);
+      if (ue) throw ue;
+    }
+
+    res.json({ ok: true, updated: updates.length, company_id: effectiveCompanyId });
+  } catch (e) {
+    console.error('PUT /crm/settings/deal-stage-report-buckets:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
 
 r.get('/dashboard', async (req, res) => {
   try {
@@ -2577,6 +3800,46 @@ function parseCrmLeadsPageRpc(raw) {
   return { total, ids };
 }
 
+/**
+ * Gắn `crm_next_open_task_deadline`: trong các nhiệm vụ CRM đang mở (pending/in_progress)
+ * **có gán deadline** (`deadline` not null), lấy deadline **sớm nhất** — Kanban tô màu chỉ theo giá trị này khi có;
+ * lead/deal không có NV như vậy thì frontend vẫn dùng SLA cột.
+ */
+async function attachCrmNextOpenTaskDeadline(rows) {
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (list.length === 0) return [];
+  const byLeadMinTs = new Map();
+  const chunkSize = 400;
+  for (let i = 0; i < list.length; i += chunkSize) {
+    const chunk = list.slice(i, i + chunkSize).map((r) => String(r.id)).filter(Boolean);
+    if (chunk.length === 0) continue;
+    const { data, error } = await supabase
+      .from('crm_tasks')
+      .select('lead_id, deadline')
+      .in('lead_id', chunk)
+      .in('status', ['pending', 'in_progress'])
+      .not('deadline', 'is', null);
+    if (error) {
+      console.warn('[crm] attachCrmNextOpenTaskDeadline:', error.message);
+      continue;
+    }
+    for (const t of data || []) {
+      const lid = String(t.lead_id);
+      const ts = new Date(t.deadline).getTime();
+      if (Number.isNaN(ts)) continue;
+      const prev = byLeadMinTs.get(lid);
+      if (prev == null || ts < prev) byLeadMinTs.set(lid, ts);
+    }
+  }
+  return list.map((row) => {
+    const ts = byLeadMinTs.get(String(row.id));
+    return {
+      ...row,
+      crm_next_open_task_deadline: ts != null ? new Date(ts).toISOString() : null,
+    };
+  });
+}
+
 async function fetchCrmLeadsByIdsOrdered(ids) {
   const raw = Array.isArray(ids) ? ids : [];
   if (raw.length === 0) return [];
@@ -2758,8 +4021,9 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
 
   const total = result.length;
   const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
+  const pageWithDeadline = await attachCrmNextOpenTaskDeadline(page);
   return {
-    data: attachLeadNewFlagForList(page, viewerUserId),
+    data: attachLeadNewFlagForList(pageWithDeadline, viewerUserId),
     total,
     offset: parsedOffset,
     limit: parsedLimit,
@@ -2861,7 +4125,8 @@ r.get('/leads', async (req, res) => {
 
     if (rpcOk) {
       const { total, ids } = parsedRpc;
-      const rows = await fetchCrmLeadsByIdsOrdered(ids);
+      const hydrated = await fetchCrmLeadsByIdsOrdered(ids);
+      const rows = await attachCrmNextOpenTaskDeadline(hydrated);
       const page = attachLeadNewFlagForList(rows, req.user?.userId);
       // Phân trang theo cửa sổ RPC (ids), không theo page.length — nếu hydrate thiếu dòng,
       // dùng page.length sẽ lệch nextOffset và vòng "Tải tất cả" dừng sớm / bỏ sót.
@@ -3606,6 +4871,14 @@ r.put('/leads/:id', async (req, res) => {
     }
     if (error) throw error;
 
+    if (oldLead?.type === 'lead' && data?.type === 'deal') {
+      try {
+        await completeConsultingCrmTasksForLead(id);
+      } catch (ccErr) {
+        console.warn('[crm PUT /leads/:id] complete consulting tasks after lead→deal:', ccErr.message);
+      }
+    }
+
     try {
       const ownerUpdated = Object.prototype.hasOwnProperty.call(req.body, 'assigned_to')
         || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id');
@@ -3614,10 +4887,14 @@ r.put('/leads/:id', async (req, res) => {
         const prevOwner = oldLead?.assigned_to || oldLead?.lead_owner_id;
         if (newOwner && String(newOwner) !== String(prevOwner || '') && String(newOwner) !== String(req.user.userId)) {
           const label = oldLead?.type === 'deal' ? 'Deal' : 'Lead';
-          await createNotification(req, newOwner, 'lead_assigned',
-            `👤 ${label} được giao cho bạn`,
-            `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
-            oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id);
+          const scopeLead = { company_id: data.company_id, region_id: data.region_id };
+          const okOwners = await filterUserIdsForCrmLeadScopedNotification(supabase, scopeLead, [newOwner]);
+          if (okOwners.some((x) => String(x) === String(newOwner))) {
+            await createNotification(req, newOwner, 'lead_assigned',
+              `👤 ${label} được giao cho bạn`,
+              `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
+              oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id);
+          }
         }
       }
     } catch (_) {}
@@ -4109,10 +5386,14 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     try {
       if (ownerId && String(ownerId) !== String(req.user.userId)) {
-        await createNotification(req, ownerId, 'deal_assigned',
-          '🚀 Deal mới được giao',
-          `Lead "${lead.title}" đã chuyển thành Deal và giao cho bạn phụ trách`,
-          'crm_deal', req.params.id);
+        const scopeLead = { company_id: updatedLead.company_id, region_id: updatedLead.region_id };
+        const okOwners = await filterUserIdsForCrmLeadScopedNotification(supabase, scopeLead, [ownerId]);
+        if (okOwners.some((x) => String(x) === String(ownerId))) {
+          await createNotification(req, ownerId, 'deal_assigned',
+            '🚀 Deal mới được giao',
+            `Lead "${lead.title}" đã chuyển thành Deal và giao cho bạn phụ trách`,
+            'crm_deal', req.params.id);
+        }
       }
     } catch (notifErr) { console.error('Convert notification error:', notifErr.message); }
 
@@ -4172,6 +5453,12 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
         await autoGenCrmTasks(req.params.id, 'deal', req.user.userId);
       }
     } catch (autoErr) { console.error('Auto-create tasks on convert-to-deal error:', autoErr.message); }
+
+    try {
+      await completeConsultingCrmTasksForLead(req.params.id);
+    } catch (ccErr) {
+      console.warn('[convert-to-deal] complete consulting tasks:', ccErr.message);
+    }
 
     // Không bootstrap Đơn 1 — chuyển Lead→Deal giữ một deal duy nhất, task trên deal đó.
 
@@ -7761,13 +9048,26 @@ r.post('/leads/:id/tasks', async (req, res) => {
     }).select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
     if (error) throw error;
 
-    // 🔔 NOTIFICATION: Task CRM mới
+    // 🔔 NOTIFICATION: Task CRM mới (đúng khối CRM/SX + khu vực lead)
     try {
       if (data.assignee_id) {
-        await createNotification(req, data.assignee_id, 'crm_task_assigned',
-          '📌 Nhiệm vụ CRM mới',
-          `Bạn được giao: "${data.title}"`,
-          'crm_task', data.id);
+        const { data: leadSnap } = await supabase.from('crm_leads')
+          .select('company_id, region_id')
+          .eq('id', targetLeadId)
+          .maybeSingle();
+        const eco = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
+        const okAssignees = await filterUserIdsForCrmLeadScopedNotification(
+          supabase,
+          leadSnap || {},
+          [data.assignee_id],
+          eco,
+        );
+        if (okAssignees.some((x) => String(x) === String(data.assignee_id))) {
+          await createNotification(req, data.assignee_id, 'crm_task_assigned',
+            '📌 Nhiệm vụ CRM mới',
+            `Bạn được giao: "${data.title}"`,
+            'crm_task', data.id);
+        }
       }
     } catch (ne) { console.warn('[NOTIFY] crm_task_created:', ne.message); }
 
@@ -7881,25 +9181,54 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       if (b.status === 'completed') {
         // Notify lead owner khi task hoàn thành
         const { data: leadInfo } = await supabase.from('crm_leads')
-          .select('assigned_to, lead_owner_id, title').eq('id', req.params.leadId).single();
+          .select('assigned_to, lead_owner_id, title, company_id, region_id').eq('id', req.params.leadId).single();
         const ownerIds = [leadInfo?.assigned_to, leadInfo?.lead_owner_id].filter(Boolean);
-        if (ownerIds.length) await notifyMultiple(req, ownerIds, 'crm_task_completed',
-          '✅ NV CRM hoàn thành',
-          `"${data.title}" trong deal "${leadInfo?.title}" đã hoàn thành`,
-          'crm_task', data.id);
+        const ecoDone = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
+        const filteredOwners = await filterUserIdsForCrmLeadScopedNotification(
+          supabase,
+          { company_id: leadInfo?.company_id, region_id: leadInfo?.region_id },
+          ownerIds,
+          ecoDone,
+        );
+        if (filteredOwners.length) {
+          await notifyMultiple(req, filteredOwners, 'crm_task_completed',
+            '✅ NV CRM hoàn thành',
+            `"${data.title}" trong deal "${leadInfo?.title}" đã hoàn thành`,
+            'crm_task', data.id);
+        }
       }
       if (b.assignee_id && b.assignee_id !== data.assignee_id) {
-        await createNotification(req, b.assignee_id, 'crm_task_assigned',
-          '📌 Được giao nhiệm vụ CRM',
-          `Bạn được giao: "${data.title}"`,
-          'crm_task', data.id);
+        const { data: leadPut } = await supabase.from('crm_leads')
+          .select('company_id, region_id')
+          .eq('id', req.params.leadId)
+          .maybeSingle();
+        const ecoPut = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
+        const okNew = await filterUserIdsForCrmLeadScopedNotification(
+          supabase,
+          leadPut || {},
+          [b.assignee_id],
+          ecoPut,
+        );
+        if (okNew.some((x) => String(x) === String(b.assignee_id))) {
+          await createNotification(req, b.assignee_id, 'crm_task_assigned',
+            '📌 Được giao nhiệm vụ CRM',
+            `Bạn được giao: "${data.title}"`,
+            'crm_task', data.id);
+        }
       }
-      // 📅 Notify khi set/thay đổi deadline
+      // 📅 Notify khi set/thay đổi deadline (lọc NV đúng khối/khu vực — createNotification có thể chặn loại deadline)
       if (b.deadline !== undefined) {
         const { data: leadInfo2 } = await supabase.from('crm_leads')
-          .select('assigned_to, lead_owner_id, title, code').eq('id', req.params.leadId).single();
+          .select('assigned_to, lead_owner_id, title, code, company_id, region_id').eq('id', req.params.leadId).single();
         const targetIds = [...new Set([data.assignee_id, leadInfo2?.assigned_to, leadInfo2?.lead_owner_id].filter(Boolean))];
-        const filtered = targetIds.filter(id => id !== req.user.userId);
+        const ecoDl = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
+        const scopedDl = await filterUserIdsForCrmLeadScopedNotification(
+          supabase,
+          { company_id: leadInfo2?.company_id, region_id: leadInfo2?.region_id },
+          targetIds,
+          ecoDl,
+        );
+        const filtered = scopedDl.filter((id) => id !== req.user.userId);
         if (filtered.length && b.deadline) {
           await notifyMultiple(req, filtered, 'crm_deadline_set',
             '📅 Đặt ngày hẹn nhiệm vụ',

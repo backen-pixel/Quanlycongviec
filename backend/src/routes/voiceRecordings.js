@@ -92,6 +92,98 @@ function ensureUserDir(userId) {
   return dir;
 }
 
+/**
+ * Trigger sau khi có bản ghi âm mới: quét SĐT trong tên file / ghi chú / nhãn thiết bị (nếu chưa có SĐT),
+ * ghép khách + Lead/Deal — cùng logic nút «Quét SĐT từ tên ghi âm».
+ */
+async function enrichVoiceRecordingFromMetadataById(supabaseClient, recordId, actingUserId, actingRole) {
+  const { data: row, error } = await supabaseClient
+    .from('voice_recordings')
+    .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id')
+    .eq('id', recordId)
+    .single();
+  if (error || !row) return null;
+
+  const uid = row.user_id || actingUserId;
+  const origPhone = row.phone_number != null ? String(row.phone_number).replace(/\s+/g, '').trim() : '';
+
+  if (origPhone) {
+    if (row.customer_id && row.lead_id) return null;
+    const resolved = await resolveCustomerLeadByPhone(supabaseClient, origPhone, uid, actingRole);
+    if (!resolved?.customer_id) return null;
+    if (resolved.customer_id === row.customer_id && resolved.lead_id === row.lead_id) return null;
+    const { data: updated, error: upErr } = await supabaseClient
+      .from('voice_recordings')
+      .update({ customer_id: resolved.customer_id, lead_id: resolved.lead_id })
+      .eq('id', recordId)
+      .select(RECORDING_SELECT)
+      .single();
+    return upErr ? null : attachPlayableUrl(updated);
+  }
+
+  const metaTextBlob = [row.notes, row.file_name, row.device_label].filter(Boolean).join('\n');
+  if (!metaTextBlob.trim()) return null;
+
+  let phoneNum = '';
+  let customer_id = row.customer_id;
+  let lead_id = row.lead_id;
+
+  const candidates = extractPhonesFromText(metaTextBlob);
+  for (const c of candidates) {
+    const resolved0 = await resolveCustomerLeadByPhone(supabaseClient, c, uid, actingRole);
+    if (resolved0?.customer_id) {
+      phoneNum = digitsOnly(c).slice(0, 32);
+      customer_id = resolved0.customer_id;
+      lead_id = resolved0.lead_id;
+      break;
+    }
+  }
+  if (!phoneNum && candidates.length) {
+    phoneNum = digitsOnly(candidates[0]).slice(0, 32);
+  }
+  if (!phoneNum || String(phoneNum).replace(/\D/g, '').length < 9) return null;
+
+  if (customer_id == null && lead_id == null) {
+    const resolved = await resolveCustomerLeadByPhone(supabaseClient, phoneNum, uid, actingRole);
+    if (resolved?.customer_id) {
+      customer_id = resolved.customer_id;
+      lead_id = resolved.lead_id;
+    }
+  }
+
+  const { data: updated, error: upErr } = await supabaseClient
+    .from('voice_recordings')
+    .update({
+      phone_number: phoneNum,
+      customer_id,
+      lead_id,
+    })
+    .eq('id', recordId)
+    .select(RECORDING_SELECT)
+    .single();
+  if (upErr || !updated) return null;
+
+  const pn = updated.phone_number ? String(updated.phone_number).replace(/\s+/g, '').trim() : '';
+  if (pn && (!updated.customer_id || !updated.lead_id)) {
+    try {
+      const resolved2 = await resolveCustomerLeadByPhone(supabaseClient, pn, uid, actingRole);
+      if (resolved2?.customer_id) {
+        const { data: data2, error: e2 } = await supabaseClient
+          .from('voice_recordings')
+          .update({ customer_id: resolved2.customer_id, lead_id: resolved2.lead_id })
+          .eq('id', recordId)
+          .select(RECORDING_SELECT)
+          .single();
+        if (!e2 && data2) return attachPlayableUrl(data2);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return attachPlayableUrl(updated);
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, os.tmpdir()),
   filename: (_req, file, cb) => {
@@ -389,6 +481,85 @@ r.post('/relink-unassigned', async (req, res) => {
   }
 });
 
+/**
+ * POST /voice-recordings/scan-metadata-phones
+ * Quét tên file + ghi chú + nhãn thiết bị để tìm SĐT di động VN, điền phone_number (khi đang trống) và thử ghép CRM.
+ * Query: admin có thể truyền user_id để chỉ quét ghi âm của một nhân viên.
+ */
+r.post('/scan-metadata-phones', async (req, res) => {
+  try {
+    const admin = isVoiceRecordingsAdmin(req.user?.role);
+    const filterUserId = admin && req.query.user_id ? uuidOrNull(req.query.user_id) : null;
+    if (admin && req.query.user_id && filterUserId === false) {
+      return res.status(400).json({ error: 'user_id không hợp lệ' });
+    }
+
+    let q = supabase
+      .from('voice_recordings')
+      .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id')
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    if (!admin) {
+      q = q.eq('user_id', req.user.userId);
+    } else if (filterUserId) {
+      q = q.eq('user_id', filterUserId);
+    }
+
+    const { data: rows, error } = await q;
+    if (error) throw error;
+
+    const noPhone = (r) => {
+      const p = r.phone_number != null ? String(r.phone_number).replace(/\s+/g, '').trim() : '';
+      return !p;
+    };
+
+    const pending = (rows || []).filter(noPhone);
+    const slice = pending.slice(0, 80);
+
+    let filledPhone = 0;
+
+    for (const row of slice) {
+      const metaTextBlob = [row.notes, row.file_name, row.device_label].filter(Boolean).join('\n');
+      if (!metaTextBlob.trim()) continue;
+
+      const candidates = extractPhonesFromText(metaTextBlob);
+      if (!candidates.length) continue;
+
+      const phoneNum = digitsOnly(candidates[0]).slice(0, 32);
+      if (!phoneNum || phoneNum.length < 9) continue;
+
+      let customer_id = row.customer_id;
+      let lead_id = row.lead_id;
+
+      const resolved = await resolveCustomerLeadByPhone(
+        supabase,
+        phoneNum,
+        row.user_id || req.user.userId,
+        req.user.role,
+      );
+      if (resolved?.customer_id) {
+        customer_id = resolved.customer_id;
+        lead_id = resolved.lead_id;
+      }
+
+      const patch = { phone_number: phoneNum, customer_id, lead_id };
+      const { error: upErr } = await supabase.from('voice_recordings').update(patch).eq('id', row.id);
+      if (!upErr) filledPhone += 1;
+    }
+
+    res.json({
+      ok: true,
+      processed: slice.length,
+      queue_without_phone: pending.length,
+      filled_phone: filledPhone,
+    });
+  } catch (e) {
+    console.error('voice-recordings scan-metadata-phones:', e.message);
+    res.status(500).json({ error: e.message || 'Lỗi quét tên/ghi chú' });
+  }
+});
+
 /** POST /voice-recordings — upload một file (multipart field name: `audio`) */
 r.post('/', upload.single('audio'), async (req, res) => {
   let storage_path;
@@ -590,32 +761,16 @@ r.post('/', upload.single('audio'), async (req, res) => {
       console.warn('[voice-recordings] gỡ tombstone block lỗi (bỏ qua):', e.message);
     }
 
-    // Ghép lại một lần nếu vừa insert xong DB đã có thêm lead (race nhỏ)
-    if (phone_number && data?.id && (!data.customer_id || !data.lead_id)) {
-      try {
-        const resolved2 = await resolveCustomerLeadByPhone(
-          supabase,
-          phone_number,
-          req.user.userId,
-          req.user.role,
-        );
-        if (resolved2 && (resolved2.customer_id !== data.customer_id || resolved2.lead_id !== data.lead_id)) {
-          const { data: data2, error: e2 } = await supabase
-            .from('voice_recordings')
-            .update({ customer_id: resolved2.customer_id, lead_id: resolved2.lead_id })
-            .eq('id', data.id)
-            .select(RECORDING_SELECT)
-            .single();
-          if (!e2 && data2) {
-            return res.status(201).json({ recording: attachPlayableUrl(data2) });
-          }
-        }
-      } catch {
-        /* ignore */
-      }
+    /** Mỗi file mới: quét tên/ghi chú → SĐT + CRM (bắt thêm trường hợp insert đã gán SĐT nhưng chưa kịp ghép đủ). */
+    let responseRecording = data;
+    try {
+      const enriched = await enrichVoiceRecordingFromMetadataById(supabase, data.id, req.user.userId, req.user.role);
+      if (enriched) responseRecording = enriched;
+    } catch (enrErr) {
+      console.warn('[voice-recordings] enrich sau insert (bỏ qua):', enrErr.message);
     }
 
-    res.status(201).json({ recording: attachPlayableUrl(data) });
+    res.status(201).json({ recording: attachPlayableUrl(responseRecording) });
   } catch (e) {
     if (storage_path && !storage_path.startsWith('uploads/')) {
       try {
