@@ -34,6 +34,7 @@ const PREFS_FALLBACK = {
   production_deadlines: true,
   crm_lead_deadlines: true,
   logistics_deadlines: true,
+  project_notifications: false,
 };
 
 /** Mỗi dòng: label + mô tả ngắn + ví dụ TB khi BẬT chế độ đó */
@@ -87,6 +88,12 @@ const MODULE_SECTIONS = [
   {
     title: 'Dự án & sản xuất',
     rows: [
+      {
+        key: 'project_notifications',
+        label: 'Thông báo dự án (pipeline DA)',
+        sub: 'Tắt = không nhận TB tạo DA, đổi giai đoạn, cập nhật trạng thái, NV/bình luận trên dự án, duyệt chuyển giai đoạn, nhắc hạn task giai đoạn tư vấn/thiết kế (trước SX), sự cố dự án…',
+        examples: ['Dự án mới & phân công vai trò', 'Chuyển giai đoạn workflow', 'Bình luận / NV trên DA'],
+      },
       {
         key: 'task_assigned',
         label: 'Nhiệm vụ được giao (dự án)',

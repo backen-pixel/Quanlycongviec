@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
@@ -61,7 +61,11 @@ const ICON_MAP = {
   crm_deadline_warning: Clock,
   crm_deadline_overdue: AlertTriangle,
   crm_deadline_set: Calendar,
+  lead_stage_sla_reminder: Clock,
 };
+
+/** Khớp backend `dashboard.js` — chỉ tin nhắn CRM/Messenger, không trộn deadline/task */
+const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 
 const COLOR_MAP = {
   task_assigned: 'bg-blue-100 text-blue-600',
@@ -99,6 +103,7 @@ const COLOR_MAP = {
   crm_deadline_warning: 'bg-amber-100 text-amber-700',
   crm_deadline_overdue: 'bg-red-100 text-red-600',
   crm_deadline_set: 'bg-blue-100 text-blue-600',
+  lead_stage_sla_reminder: 'bg-amber-100 text-amber-800',
 };
 
 const MODULE_FILTER_OPTIONS = [
@@ -113,6 +118,7 @@ function inferNotificationModuleKey(n) {
   const mk = n?.metadata && typeof n.metadata === 'object' ? String(n.metadata.module_key || '').trim() : '';
   if (mk) return mk;
   const ty = String(n?.type || '');
+  if (ty === 'lead_stage_sla_reminder') return 'crm';
   if (ty.startsWith('crm_deadline') || ty === 'invoice_overdue') return 'crm';
   if (ty.includes('production_task_deadline')) return 'production';
   if (ty.includes('logistics_task_deadline')) return 'logistics';
@@ -133,9 +139,13 @@ export default function NotificationCenter({ socket }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadActivity, setUnreadActivity] = useState(0);
+  const [unreadChat, setUnreadChat] = useState(0);
+  const [unreadDeadlines, setUnreadDeadlines] = useState(0);
+  const bellBadgeCount = useMemo(() => unreadActivity + unreadDeadlines, [unreadActivity, unreadDeadlines]);
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useState('activity');
+  const [onlyUnread, setOnlyUnread] = useState(false);
   const [deadlinesModule, setDeadlinesModule] = useState('all');
   const [toastNotification, setToastNotification] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -150,10 +160,11 @@ export default function NotificationCenter({ socket }) {
         });
         setNotifications(data.notifications || []);
       } else {
-        const params = tab === 'unread' ? { unread: 'true' } : {};
+        const channel = tab === 'messages' ? 'messages' : 'activity';
+        const params = { channel, limit: 80 };
+        if (onlyUnread) params.unread = 'true';
         const { data } = await api.get('/dashboard/notifications', { params });
-        const raw = data.notifications || [];
-        setNotifications(raw.filter((n) => !isExpiryDeadlineNotificationType(n.type)));
+        setNotifications(data.notifications || []);
       }
     } catch { }
     setLoading(false);
@@ -162,7 +173,12 @@ export default function NotificationCenter({ socket }) {
   const loadCount = async () => {
     try {
       const { data } = await api.get('/dashboard');
-      setUnreadCount(data.stats?.unread || 0);
+      const a = data.stats?.unread_activity ?? 0;
+      const c = data.stats?.unread_chat ?? 0;
+      const d = data.stats?.unread_deadlines ?? 0;
+      setUnreadActivity(a);
+      setUnreadChat(c);
+      setUnreadDeadlines(d);
     } catch { }
   };
 
@@ -201,6 +217,7 @@ export default function NotificationCenter({ socket }) {
             production_deadlines: true,
             crm_lead_deadlines: true,
             logistics_deadlines: true,
+            project_notifications: false,
           });
         }
       }
@@ -218,8 +235,15 @@ export default function NotificationCenter({ socket }) {
 
       cancelNotificationSpeech();
 
-      setUnreadCount((c) => c + 1);
-      setNotifications((prev) => [notif, ...prev]);
+      const isChat = CHAT_NOTIFICATION_TYPES.includes(notif?.type);
+      if (isChat) {
+        setUnreadChat((c) => c + 1);
+        setNotifications((prev) => (tab === 'messages' ? [notif, ...prev] : prev));
+      } else {
+        setUnreadActivity((c) => c + 1);
+        setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
+      }
+
       setToastNotification(notif);
 
       const p = getNotificationPrefsCache();
@@ -229,11 +253,11 @@ export default function NotificationCenter({ socket }) {
     };
     socket.on('notification', handler);
     return () => socket.off('notification', handler);
-  }, [socket]);
+  }, [socket, tab]);
 
   useEffect(() => {
     if (open) load();
-  }, [open, tab, deadlinesModule]);
+  }, [open, tab, deadlinesModule, onlyUnread]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -245,8 +269,9 @@ export default function NotificationCenter({ socket }) {
 
   const markAllRead = async () => {
     try {
-      await api.put('/dashboard/notifications/read-all');
-      setUnreadCount(0);
+      const channel = tab === 'deadlines' ? 'deadlines' : tab === 'messages' ? 'messages' : 'activity';
+      await api.put('/dashboard/notifications/read-all', {}, { params: { channel } });
+      await loadCount();
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
     } catch { }
   };
@@ -255,7 +280,7 @@ export default function NotificationCenter({ socket }) {
     try {
       await api.put(`/dashboard/notifications/${id}/read`);
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-      setUnreadCount(c => Math.max(0, c - 1));
+      await loadCount();
     } catch { }
   };
 
@@ -276,7 +301,7 @@ export default function NotificationCenter({ socket }) {
       setNotifications(prev => prev.map(n =>
         n.id === notifId ? { ...n, is_read: true, metadata: { ...n.metadata, status: action === 'approve' ? 'approved' : 'rejected' } } : n
       ));
-      setUnreadCount(c => Math.max(0, c - 1));
+      await loadCount();
       setApprovalForm(null);
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
@@ -325,9 +350,9 @@ export default function NotificationCenter({ socket }) {
         className="relative w-9 h-9 rounded-lg hover:bg-[var(--color-sidebar-hover)] flex items-center justify-center text-[var(--color-sidebar-text)] hover:text-white transition-colors cursor-pointer"
       >
         <Bell className="h-[18px] w-[18px]" />
-        {unreadCount > 0 && (
+        {bellBadgeCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 animate-pulse-dot">
-            {unreadCount > 99 ? '99+' : unreadCount}
+            {bellBadgeCount > 99 ? '99+' : bellBadgeCount}
           </span>
         )}
       </button>
@@ -337,7 +362,7 @@ export default function NotificationCenter({ socket }) {
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
             <h3 className="text-sm font-semibold text-gray-900">Thông báo</h3>
             <div className="flex items-center gap-2">
-              {unreadCount > 0 && (
+              {(tab === 'activity' ? unreadActivity : tab === 'messages' ? unreadChat : unreadDeadlines) > 0 && (
                 <button onClick={markAllRead} className="text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer flex items-center gap-1">
                   <CheckCheck className="h-3.5 w-3.5" /> Đọc tất cả
                 </button>
@@ -356,19 +381,33 @@ export default function NotificationCenter({ socket }) {
           </div>
 
           <div className="flex border-b border-gray-100">
-            <button type="button" onClick={() => { setTab('all'); setDeadlinesModule('all'); }}
-              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'all' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
-              Tất cả
+            <button type="button" onClick={() => { setTab('activity'); setDeadlinesModule('all'); }}
+              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'activity' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+              Hoạt động{unreadActivity > 0 ? ` (${unreadActivity})` : ''}
             </button>
-            <button type="button" onClick={() => { setTab('unread'); setDeadlinesModule('all'); }}
-              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'unread' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
-              Chưa đọc {unreadCount > 0 && `(${unreadCount})`}
+            <button type="button" onClick={() => { setTab('messages'); setDeadlinesModule('all'); }}
+              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'messages' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+              Tin nhắn{unreadChat > 0 ? ` (${unreadChat})` : ''}
             </button>
             <button type="button" onClick={() => setTab('deadlines')}
               className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'deadlines' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
-              Nhắc hạn
+              Nhắc hạn{unreadDeadlines > 0 ? ` (${unreadDeadlines})` : ''}
             </button>
           </div>
+
+          {(tab === 'activity' || tab === 'messages') && (
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-50 bg-gray-50/50">
+              <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={onlyUnread}
+                  onChange={(e) => setOnlyUnread(e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                Chỉ chưa đọc
+              </label>
+            </div>
+          )}
 
           {tab === 'deadlines' && (
             <div className="flex flex-wrap gap-1 px-2 py-2 border-b border-gray-50 bg-slate-50/80">
@@ -398,7 +437,15 @@ export default function NotificationCenter({ socket }) {
             ) : notifications.length === 0 ? (
               <div className="text-center py-10">
                 <Bell className="h-8 w-8 mx-auto text-gray-300 mb-2" />
-                <p className="text-sm text-gray-400">{tab === 'unread' ? 'Không có thông báo chưa đọc' : tab === 'deadlines' ? 'Không có thông báo nhắc hạn' : 'Chưa có thông báo'}</p>
+                <p className="text-sm text-gray-400">
+                  {tab === 'messages'
+                    ? 'Không có tin nhắn'
+                    : tab === 'deadlines'
+                      ? 'Không có thông báo nhắc hạn'
+                      : onlyUnread
+                        ? 'Không có thông báo hoạt động chưa đọc'
+                        : 'Chưa có thông báo hoạt động'}
+                </p>
               </div>
             ) : (
               notifications.map(n => {

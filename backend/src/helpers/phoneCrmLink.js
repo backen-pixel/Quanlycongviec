@@ -50,6 +50,14 @@ function extractPhonesFromText(text) {
   const re84 = /\b84(3|5|7|8|9)\d{8}\b/g;
   while ((m = re84.exec(raw)) !== null) pushDigits(m[0]);
 
+  // Tên file / ID thiết bị: ..._0987654321... hoặc ...-0987654321... — ký tự _ không tạo word boundary với \b
+  const reEmbedded = /(?:^|[^\d])(0[35789]\d{8})(?!\d)/g;
+  while ((m = reEmbedded.exec(raw)) !== null) pushDigits(m[1]);
+
+  // Dải số liền (vd. tên_export0912345678hoặc dính chữ không có khoảng)
+  const reContiguous = /\d{10,12}/g;
+  while ((m = reContiguous.exec(raw)) !== null) pushDigits(m[0]);
+
   return out;
 }
 

@@ -1,8 +1,8 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 
-/** Giám đốc / quản lý xem KPI — khớp EXEC_ROLES trong ExecutiveKpiPage */
-const EXEC_ROLES = ['admin', 'manager', 'director', 'supervisor'];
+/** Giám đốc / quản lý / admin KV xem KPI & báo cáo nhân viên — khớp backend CRM report */
+const EXEC_ROLES = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin'];
 
 /**
  * Trang KPI Giám đốc và báo cáo cấp cao

@@ -7,6 +7,10 @@ const {
   postgrestNotInTypesForDeadlines,
 } = require('../helpers/notificationOperationalFilter');
 
+function postgrestInTypesList(types) {
+  return `(${types.map((t) => String(t)).join(',')})`;
+}
+
 const r = Router();
 r.use(auth);
 
@@ -19,7 +23,13 @@ const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 r.get('/', async (req, res) => {
   try {
     const notInDeadlines = postgrestNotInTypesForDeadlines();
-    const [{ count: unread }, { count: unreadChat }] = await Promise.all([
+    const notChat = postgrestInTypesList(CHAT_NOTIFICATION_TYPES);
+    const [
+      { count: unread },
+      { count: unreadChat },
+      { count: unreadActivity },
+      { count: unreadDeadlines },
+    ] = await Promise.all([
       supabase
         .from('notifications')
         .select('*', { count: 'exact', head: true })
@@ -32,12 +42,28 @@ r.get('/', async (req, res) => {
         .eq('user_id', req.user.userId)
         .eq('is_read', false)
         .in('type', CHAT_NOTIFICATION_TYPES),
+      supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', req.user.userId)
+        .eq('is_read', false)
+        .not('type', 'in', notInDeadlines)
+        .not('type', 'in', notChat),
+      supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', req.user.userId)
+        .eq('is_read', false)
+        .in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST),
     ]);
 
     res.json({
       stats: {
+        /** @deprecated dùng unread_activity / unread_deadlines / unread_chat */
         unread: unread || 0,
         unread_chat: unreadChat || 0,
+        unread_activity: unreadActivity || 0,
+        unread_deadlines: unreadDeadlines || 0,
       },
     });
   } catch (e) {
@@ -51,7 +77,7 @@ r.get('/', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/notifications', async (req, res) => {
   try {
-    const { unread, limit = 50 } = req.query;
+    const { unread, limit = 50, channel } = req.query;
     const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
     const fetchCap = Math.min(lim * 10, 500);
     let q = supabase
@@ -66,8 +92,18 @@ r.get('/notifications', async (req, res) => {
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
-    const rows = (data || []).filter((n) => !isExpiryDeadlineNotificationType(n.type)).slice(0, lim);
-    res.json({ notifications: rows });
+    const ch = channel ? String(channel).toLowerCase() : '';
+    let rows = data || [];
+    if (ch === 'activity') {
+      rows = rows.filter(
+        (n) => !isExpiryDeadlineNotificationType(n.type) && !CHAT_NOTIFICATION_TYPES.includes(n.type),
+      );
+    } else if (ch === 'messages') {
+      rows = rows.filter((n) => CHAT_NOTIFICATION_TYPES.includes(n.type));
+    } else {
+      rows = rows.filter((n) => !isExpiryDeadlineNotificationType(n.type));
+    }
+    res.json({ notifications: rows.slice(0, lim) });
   } catch (e) {
     console.error('Dashboard notifications error:', e);
     res.status(500).json({ error: e.message });
@@ -116,12 +152,25 @@ r.get('/notifications/deadlines', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.put('/notifications/read-all', async (req, res) => {
   try {
-    const { error } = await supabase
+    const channel = req.query.channel ? String(req.query.channel).toLowerCase() : '';
+    const notInDeadlines = postgrestNotInTypesForDeadlines();
+    const notChat = postgrestInTypesList(CHAT_NOTIFICATION_TYPES);
+
+    let q = supabase
       .from('notifications')
       .update({ is_read: true })
       .eq('user_id', req.user.userId)
       .eq('is_read', false);
-    
+
+    if (channel === 'activity') {
+      q = q.not('type', 'in', notInDeadlines).not('type', 'in', notChat);
+    } else if (channel === 'messages') {
+      q = q.in('type', CHAT_NOTIFICATION_TYPES);
+    } else if (channel === 'deadlines') {
+      q = q.in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST);
+    }
+
+    const { error } = await q;
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   } catch (e) {

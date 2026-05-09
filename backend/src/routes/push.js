@@ -140,6 +140,7 @@ r.put('/preferences', async (req, res) => {
       'stage_changed', 'deal_won', 'approval_request', 'checklist_completed',
       'lead_assigned', 'order_confirmed', 'invoice_overdue',
       'lead_new', 'deal_new', 'production_deadlines', 'crm_lead_deadlines', 'logistics_deadlines',
+      'project_notifications',
     ];
 
     const update = { updated_at: new Date().toISOString() };

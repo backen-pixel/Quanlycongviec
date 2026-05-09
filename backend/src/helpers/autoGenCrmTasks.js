@@ -136,4 +136,35 @@ async function autoGenCrmTasks(leadId, type, userId) {
   return 0;
 }
 
-module.exports = { autoGenCrmTasks, FALLBACK_LEAD_TASKS, FALLBACK_DEAL_TASKS };
+/** Slugs coi là giai đoạn Tư vấn trên deal (sau khi chuyển từ lead → deal cần tick hoàn thành hết). */
+const CONSULTING_STAGE_SLUGS = ['consulting', 'deal_new'];
+
+/**
+ * Đánh dấu hoàn thành toàn bộ crm_tasks thuộc giai đoạn Tư vấn (sau khi lead đã chuyển sang deal và trigger đã gen task mới).
+ */
+async function completeConsultingCrmTasksForLead(leadId) {
+  if (!leadId) return { ok: false };
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('crm_tasks')
+    .update({
+      status: 'completed',
+      completed_at: now,
+      updated_at: now,
+    })
+    .eq('lead_id', leadId)
+    .in('stage_slug', CONSULTING_STAGE_SLUGS)
+    .neq('status', 'cancelled');
+  if (error) {
+    console.warn('[AUTO-TASK] completeConsultingCrmTasksForLead:', error.message);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
+
+module.exports = {
+  autoGenCrmTasks,
+  FALLBACK_LEAD_TASKS,
+  FALLBACK_DEAL_TASKS,
+  completeConsultingCrmTasksForLead,
+};
