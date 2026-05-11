@@ -7,8 +7,9 @@ import {
   ChevronRight, Activity, Users, Layers, Globe, Send, CheckCircle2,
 } from 'lucide-react';
 
-const BASE_URL = window.location.origin;
-const API_BASE = `${BASE_URL}/api/external`;
+/** Gốc HTTP của backend (giống `src/lib/api.js`). Nếu để trống → dùng origin trình duyệt — Postman phải trỏ đúng URL backend, không phải host frontend tĩnh. */
+const PUBLIC_API_ORIGIN = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') || window.location.origin;
+const API_BASE = `${PUBLIC_API_ORIGIN}/api/external`;
 
 // ── Code example helpers ────────────────────────────────────────────────────
 
@@ -16,16 +17,7 @@ function buildCurl(key) {
   return `curl -X POST ${API_BASE}/leads \\
   -H "Content-Type: application/json" \\
   -H "X-Api-Key: ${key}" \\
-  -d '{
-    "title": "Khách hàng từ website",
-    "full_name": "Nguyễn Văn A",
-    "phone": "0901234567",
-    "email": "khachhang@example.com",
-    "source_name": "Website",
-    "estimated_value": 50000000
-    // "region_id": "uuid…"            (override khu vực mặc định của key)
-    // "source_category_id": "uuid…"   (phân loại nguồn, tùy chọn)
-  }'`;
+  -d '{"title":"Khách hàng từ website","full_name":"Nguyễn Văn A","phone":"0901234567","email":"khachhang@example.com","source_name":"Website","estimated_value":50000000}'`;
 }
 
 function buildJS(key) {
@@ -407,7 +399,13 @@ export default function ApiKeysSettingsPage() {
 
         <p className="text-xs text-blue-700">
           Header bắt buộc: <code className="bg-blue-100 px-1 rounded">X-Api-Key: &lt;key&gt;</code>
+          {' '}— không đặt key trên query string (<code className="bg-blue-100 px-1 rounded">?tbp_=…</code> sẽ bị bỏ qua).
         </p>
+        {PUBLIC_API_ORIGIN === window.location.origin && (
+          <p className="text-[11px] text-orange-800 bg-orange-50 border border-orange-200 rounded-md px-2 py-1.5">
+            Postman / Zapier: gửi tới URL <b>backend</b> (biến build <code className="font-mono">VITE_API_URL</code>), không phải host chỉ chạy frontend tĩnh — nếu sai host thường vẫn <b>200</b> nhưng không tạo lead (trả HTML SPA hoặc proxy sai).
+          </p>
+        )}
         <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
           ⚠️ Mở <code>/ping</code> trực tiếp trong tab mới sẽ trả <b>401 "Thiếu X-Api-Key header"</b> — browser không gửi header.
           Hãy test bằng panel <b>"Test kết nối"</b> bên dưới hoặc Postman / cURL.
