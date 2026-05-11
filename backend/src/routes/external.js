@@ -28,6 +28,7 @@
 const { Router } = require('express');
 const { apiKeyAuth } = require('../middleware/apiKeyAuth');
 const { supabase } = require('../config/supabase');
+const { nextCrmCode } = require('../helpers/crmNextCode');
 const https = require('https');
 const http = require('http');
 // Cùng helper auto-gen task theo template lead type — y hệt POST /crm/leads
@@ -74,12 +75,12 @@ async function tryAuditLog(req, { status, error, created_lead_id } = {}) {
   }
 }
 
-async function nextLeadCode() {
-  const { count } = await supabase
-    .from('crm_leads')
-    .select('id', { count: 'exact', head: true })
-    .eq('type', 'lead');
-  return 'LEAD-' + String((count || 0) + 1).padStart(4, '0');
+/** Trùng mã lead (race / sequence) — PostgREST trả code 23505 hoặc message duplicate */
+function isLeadCodeUniqueViolation(err) {
+  if (!err) return false;
+  const c = String(err.code || '');
+  const m = String(err.message || err.details || '');
+  return c === '23505' || /duplicate key|unique constraint|idx_crm_leads_code_unique/i.test(m);
 }
 
 async function findOrCreateCustomer({ full_name, phone, email, address, company }) {
@@ -379,34 +380,13 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     const customerId = await findOrCreateCustomer({ full_name, phone: nPhone || null, email: nEmail || null, address, company: customerCompany });
     const sourceId = await findOrCreateSource(source_name, resolvedCategoryId, req.apiKey.company_id);
     const resolvedAssignee = assigned_to || req.apiKey.default_assigned_to || null;
-    const code = await nextLeadCode();
 
     // Gộp notes vào description (bảng crm_leads không có cột notes riêng)
     const mergedDescription = [description, notes ? `Ghi chú: ${notes}` : null]
       .filter(Boolean)
       .join('\n\n') || null;
 
-    const { data: lead, error } = await supabase
-      .from('crm_leads')
-      .insert({
-        code,
-        title: String(title).trim(),
-        type: 'lead',
-        customer_id: customerId,
-        source_id: sourceId,
-        pipeline_id: resolvedPipelineId,
-        stage_id: resolvedStageId,
-        lead_type_id: resolvedLeadTypeId,
-        assigned_to: resolvedAssignee,
-        lead_owner_id: resolvedAssignee,
-        company_id: req.apiKey.company_id,
-        region_id: resolvedRegionId,
-        estimated_value: estimated_value ? Number(estimated_value) : null,
-        description: mergedDescription,
-        created_by: resolvedAssignee, // dùng default_assigned_to làm "người tạo" để CRM hiển thị
-        stage_entered_at: new Date().toISOString(),
-      })
-      .select(`
+    const leadSelect = `
         id, code, title, type, estimated_value, description, created_at, stage_entered_at,
         company_id, region_id, pipeline_id, stage_id, lead_type_id, source_id, customer_id,
         assigned_to, lead_owner_id, created_by,
@@ -418,10 +398,48 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
         company:companies!crm_leads_company_id_fkey(id, name, short_name),
         source:crm_sources!crm_leads_source_id_fkey(id, name, category_id),
         assignee:users!crm_leads_assigned_to_fkey(id, full_name, email, phone)
-      `)
-      .single();
+      `;
 
-    if (error) throw error;
+    // Mã LEAD-YYYY-NNN đồng bộ CRM (code_sequences). Retry khi trùng do race song song.
+    let lead = null;
+    let insertErr = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const code = await nextCrmCode('LEAD');
+      const { data: row, error } = await supabase
+        .from('crm_leads')
+        .insert({
+          code,
+          title: String(title).trim(),
+          type: 'lead',
+          customer_id: customerId,
+          source_id: sourceId,
+          pipeline_id: resolvedPipelineId,
+          stage_id: resolvedStageId,
+          lead_type_id: resolvedLeadTypeId,
+          assigned_to: resolvedAssignee,
+          lead_owner_id: resolvedAssignee,
+          company_id: req.apiKey.company_id,
+          region_id: resolvedRegionId,
+          estimated_value: estimated_value ? Number(estimated_value) : null,
+          description: mergedDescription,
+          created_by: resolvedAssignee,
+          stage_entered_at: new Date().toISOString(),
+        })
+        .select(leadSelect.trim())
+        .single();
+
+      if (!error && row) {
+        lead = row;
+        break;
+      }
+      insertErr = error;
+      if (isLeadCodeUniqueViolation(error) && attempt < 7) {
+        console.warn('[External API] Duplicate lead code, retry:', code, attempt + 1);
+        continue;
+      }
+      throw error;
+    }
+    if (!lead) throw insertErr || new Error('Không tạo được lead');
 
     // Auto-gen tasks theo template lead type — cùng luồng với POST /crm/leads
     if (autoGenCrmTasks) {
