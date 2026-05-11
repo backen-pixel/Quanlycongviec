@@ -8,7 +8,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
@@ -149,6 +149,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/sources-settings', icon: Tags, label: 'Nguồn & phân loại', adminOnly: true },
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM', adminOnly: true },
       { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án', adminOnly: true },
+      { to: '/admin/trash', icon: Trash2, label: 'Thùng rác (xóa giả)', adminOnly: true },
       { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice', adminOnly: true },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },

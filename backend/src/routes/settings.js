@@ -180,6 +180,10 @@ r.get('/api-keys', (req, res) => {
       active: k.active !== false,
       default_assigned_to: k.default_assigned_to || null,
       company_id: k.company_id || null,
+      region_id: k.region_id || null,
+      default_source_category_id: k.default_source_category_id || null,
+      default_lead_type_id: k.default_lead_type_id || null,
+      default_pipeline_id: k.default_pipeline_id || null,
       webhook_url: k.webhook_url || null,
       created_at: k.created_at,
     }));
@@ -189,19 +193,52 @@ r.get('/api-keys', (req, res) => {
   }
 });
 
+// Helper: kiểm tra region_id thuộc đúng company_id (chống gán nhầm khu vực
+// của công ty khác).
+async function assertRegionMatchesCompany(region_id, company_id) {
+  if (!region_id || !company_id) return { ok: false, error: 'Thiếu khu vực hoặc công ty' };
+  const { supabase } = require('../config/supabase');
+  const { data, error } = await supabase
+    .from('company_regions')
+    .select('id, company_id, is_active')
+    .eq('id', region_id)
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: 'Khu vực không tồn tại' };
+  if (String(data.company_id) !== String(company_id)) {
+    return { ok: false, error: 'Khu vực không thuộc công ty đã chọn' };
+  }
+  if (data.is_active === false) return { ok: false, error: 'Khu vực đã bị tắt' };
+  return { ok: true };
+}
+
 // POST /api/settings/api-keys — tạo key mới
-r.post('/api-keys', (req, res) => {
+r.post('/api-keys', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới tạo được API key' });
     }
-    const { name, default_assigned_to, webhook_url, company_id } = req.body;
+    const {
+      name,
+      default_assigned_to,
+      webhook_url,
+      company_id,
+      region_id,
+      default_source_category_id,
+      default_lead_type_id,
+      default_pipeline_id,
+    } = req.body;
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'Nhập tên để nhận biết key này (VD: "Website form", "Zap")' });
     }
     if (!company_id) {
       return res.status(400).json({ error: 'Thiếu company_id — mỗi API key phải gắn cố định 1 công ty' });
     }
+    if (!region_id) {
+      return res.status(400).json({ error: 'Thiếu region_id — phải chọn khu vực mặc định cho key' });
+    }
+    const chk = await assertRegionMatchesCompany(region_id, company_id);
+    if (!chk.ok) return res.status(400).json({ error: chk.error });
     const key = 'tbp_' + crypto.randomBytes(24).toString('hex');
     const record = {
       id: crypto.randomUUID(),
@@ -210,6 +247,10 @@ r.post('/api-keys', (req, res) => {
       active: true,
       default_assigned_to: default_assigned_to || null,
       company_id,
+      region_id,
+      default_source_category_id: default_source_category_id || null,
+      default_lead_type_id: default_lead_type_id || null,
+      default_pipeline_id: default_pipeline_id || null,
       webhook_url: webhook_url || null,
       created_by: req.user.userId,
       created_at: new Date().toISOString(),
@@ -217,15 +258,14 @@ r.post('/api-keys', (req, res) => {
     const keys = loadKeys();
     keys.push(record);
     saveKeys(keys);
-    // Trả về key đầy đủ chỉ 1 lần duy nhất khi tạo
     res.status(201).json({ ...record, _note: 'Sao chép key ngay — sẽ không hiển thị lại giá trị đầy đủ.' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// PATCH /api/settings/api-keys/:id — cập nhật tên / assigned_to
-r.patch('/api-keys/:id', (req, res) => {
+// PATCH /api/settings/api-keys/:id — cập nhật tên / assigned_to / region / category
+r.patch('/api-keys/:id', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới sửa được API key' });
@@ -233,12 +273,25 @@ r.patch('/api-keys/:id', (req, res) => {
     const keys = loadKeys();
     const idx = keys.findIndex((k) => k.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy key' });
-    const { name, default_assigned_to, active, webhook_url, company_id } = req.body;
+    const {
+      name, default_assigned_to, active, webhook_url, company_id,
+      region_id, default_source_category_id, default_lead_type_id, default_pipeline_id,
+    } = req.body;
     if (name != null) keys[idx].name = String(name).trim();
     if (default_assigned_to !== undefined) keys[idx].default_assigned_to = default_assigned_to || null;
     if (active !== undefined) keys[idx].active = !!active;
     if (webhook_url !== undefined) keys[idx].webhook_url = webhook_url || null;
     if (company_id !== undefined) keys[idx].company_id = company_id || null;
+    if (region_id !== undefined) keys[idx].region_id = region_id || null;
+    if (default_source_category_id !== undefined) keys[idx].default_source_category_id = default_source_category_id || null;
+    if (default_lead_type_id !== undefined) keys[idx].default_lead_type_id = default_lead_type_id || null;
+    if (default_pipeline_id !== undefined) keys[idx].default_pipeline_id = default_pipeline_id || null;
+
+    // Nếu đổi region hoặc company → kiểm tra khớp
+    if ((region_id !== undefined || company_id !== undefined) && keys[idx].region_id) {
+      const chk = await assertRegionMatchesCompany(keys[idx].region_id, keys[idx].company_id);
+      if (!chk.ok) return res.status(400).json({ error: chk.error });
+    }
     saveKeys(keys);
     res.json({
       id: keys[idx].id,
@@ -246,6 +299,10 @@ r.patch('/api-keys/:id', (req, res) => {
       active: keys[idx].active,
       default_assigned_to: keys[idx].default_assigned_to,
       company_id: keys[idx].company_id || null,
+      region_id: keys[idx].region_id || null,
+      default_source_category_id: keys[idx].default_source_category_id || null,
+      default_lead_type_id: keys[idx].default_lead_type_id || null,
+      default_pipeline_id: keys[idx].default_pipeline_id || null,
       webhook_url: keys[idx].webhook_url || null,
     });
   } catch (e) {

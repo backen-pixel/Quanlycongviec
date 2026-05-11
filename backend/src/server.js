@@ -117,6 +117,7 @@ app.use('/api/crm/executive', require('./routes/executiveKpi'));
 app.use('/api/crm/deal-performance', require('./routes/dealScores'));
 app.use('/api/kpi', require('./routes/kpi'));
 app.use('/api/crm', require('./routes/crm'));
+app.use('/api/trash', require('./routes/trash'));
 app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/release-notes', require('./routes/releaseNotes'));

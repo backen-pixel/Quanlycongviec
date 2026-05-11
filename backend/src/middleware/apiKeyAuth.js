@@ -31,6 +31,10 @@ function apiKeyAuth(req, res, next) {
     created_at: found.created_at,
     default_assigned_to: found.default_assigned_to || null,
     company_id: found.company_id || null,
+    region_id: found.region_id || null,
+    default_source_category_id: found.default_source_category_id || null,
+    default_lead_type_id: found.default_lead_type_id || null,
+    default_pipeline_id: found.default_pipeline_id || null,
     webhook_url: found.webhook_url || null,
   };
   next();

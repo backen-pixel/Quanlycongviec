@@ -138,6 +138,7 @@ import PrivacyPage from './pages/PrivacyPage';
 import VoiceRecordingsPage from './pages/VoiceRecordingsPage';
 import MessengerHubPage from './pages/MessengerHubPage';
 import RequestMonitorPage from './pages/RequestMonitorPage';
+import TrashPage from './pages/TrashPage';
 
 import { Settings } from 'lucide-react';
 
@@ -332,6 +333,7 @@ export default function App() {
             <Route path="/settings/misa" element={<RequireCrmElevated><MisaSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/api-keys" element={<RequireCrmElevated><ApiKeysSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/request-monitor" element={<RequestMonitorPage />} />
+            <Route path="/admin/trash" element={<RequireCrmElevated><TrashPage /></RequireCrmElevated>} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
