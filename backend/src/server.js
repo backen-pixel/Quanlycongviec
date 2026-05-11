@@ -44,6 +44,21 @@ app.use(morgan('dev'));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
+// Friendly JSON parse error — đặc biệt cho /api/external/* (webhook bên thứ 3)
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.parse.failed') {
+    const ct = req.headers['content-type'] || '';
+    return res.status(400).json({
+      error: 'Invalid JSON body',
+      hint: 'Body phải là JSON hợp lệ. Đặt header "Content-Type: application/json" và stringify object trước khi gửi.',
+      received_content_type: ct,
+      example: { phone: '0901234567', customer_name: 'Nguyễn Văn A', note: 'Khách hỏi tủ bếp' },
+      raw_message: err.message,
+    });
+  }
+  return next(err);
+});
+
 // Metrics middleware — đặt trước các route để đếm mọi request /api/*
 const { metricsMiddleware, getSnapshot, resetMetrics } = require('./helpers/requestMetrics');
 app.use(metricsMiddleware);
