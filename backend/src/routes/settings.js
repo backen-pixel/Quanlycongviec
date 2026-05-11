@@ -161,22 +161,25 @@ r.post('/misa/test', async (req, res) => {
   }
 });
 
-// ─── API Keys (External Access) ─────────────────────────────────────────────
-const { loadKeys, KEYS_FILE } = require('../middleware/apiKeyAuth');
+// ─── API Keys (External Access) — lưu trên Supabase (bền vững) ─────────────
+const {
+  listKeys, findKeyById, insertKey, updateKey, deleteKey, migrateLegacyFileOnce,
+} = require('../middleware/apiKeyAuth');
 const crypto = require('crypto');
 
-function saveKeys(keys) {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2), 'utf-8');
+function previewKey(k) {
+  return (k.key || '').slice(0, 8) + '••••••••••••••••';
 }
 
 // GET /api/settings/api-keys — list all keys (ẩn giá trị key thật sau khi tạo)
-r.get('/api-keys', (req, res) => {
+r.get('/api-keys', async (req, res) => {
   try {
-    const keys = loadKeys().map((k) => ({
+    await migrateLegacyFileOnce();
+    const rows = await listKeys();
+    res.json(rows.map((k) => ({
       id: k.id,
       name: k.name,
-      preview: k.key.slice(0, 8) + '••••••••••••••••',
+      preview: previewKey(k),
       active: k.active !== false,
       default_assigned_to: k.default_assigned_to || null,
       company_id: k.company_id || null,
@@ -186,8 +189,7 @@ r.get('/api-keys', (req, res) => {
       default_pipeline_id: k.default_pipeline_id || null,
       webhook_url: k.webhook_url || null,
       created_at: k.created_at,
-    }));
-    res.json(keys);
+    })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -240,8 +242,7 @@ r.post('/api-keys', async (req, res) => {
     const chk = await assertRegionMatchesCompany(region_id, company_id);
     if (!chk.ok) return res.status(400).json({ error: chk.error });
     const key = 'tbp_' + crypto.randomBytes(24).toString('hex');
-    const record = {
-      id: crypto.randomUUID(),
+    const record = await insertKey({
       name: String(name).trim(),
       key,
       active: true,
@@ -253,11 +254,7 @@ r.post('/api-keys', async (req, res) => {
       default_pipeline_id: default_pipeline_id || null,
       webhook_url: webhook_url || null,
       created_by: req.user.userId,
-      created_at: new Date().toISOString(),
-    };
-    const keys = loadKeys();
-    keys.push(record);
-    saveKeys(keys);
+    });
     res.status(201).json({ ...record, _note: 'Sao chép key ngay — sẽ không hiển thị lại giá trị đầy đủ.' });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -270,40 +267,42 @@ r.patch('/api-keys/:id', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới sửa được API key' });
     }
-    const keys = loadKeys();
-    const idx = keys.findIndex((k) => k.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy key' });
+    const cur = await findKeyById(req.params.id);
+    if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
     const {
       name, default_assigned_to, active, webhook_url, company_id,
       region_id, default_source_category_id, default_lead_type_id, default_pipeline_id,
     } = req.body;
-    if (name != null) keys[idx].name = String(name).trim();
-    if (default_assigned_to !== undefined) keys[idx].default_assigned_to = default_assigned_to || null;
-    if (active !== undefined) keys[idx].active = !!active;
-    if (webhook_url !== undefined) keys[idx].webhook_url = webhook_url || null;
-    if (company_id !== undefined) keys[idx].company_id = company_id || null;
-    if (region_id !== undefined) keys[idx].region_id = region_id || null;
-    if (default_source_category_id !== undefined) keys[idx].default_source_category_id = default_source_category_id || null;
-    if (default_lead_type_id !== undefined) keys[idx].default_lead_type_id = default_lead_type_id || null;
-    if (default_pipeline_id !== undefined) keys[idx].default_pipeline_id = default_pipeline_id || null;
+    const patch = {};
+    if (name != null) patch.name = String(name).trim();
+    if (default_assigned_to !== undefined) patch.default_assigned_to = default_assigned_to || null;
+    if (active !== undefined) patch.active = !!active;
+    if (webhook_url !== undefined) patch.webhook_url = webhook_url || null;
+    if (company_id !== undefined) patch.company_id = company_id || null;
+    if (region_id !== undefined) patch.region_id = region_id || null;
+    if (default_source_category_id !== undefined) patch.default_source_category_id = default_source_category_id || null;
+    if (default_lead_type_id !== undefined) patch.default_lead_type_id = default_lead_type_id || null;
+    if (default_pipeline_id !== undefined) patch.default_pipeline_id = default_pipeline_id || null;
 
-    // Nếu đổi region hoặc company → kiểm tra khớp
-    if ((region_id !== undefined || company_id !== undefined) && keys[idx].region_id) {
-      const chk = await assertRegionMatchesCompany(keys[idx].region_id, keys[idx].company_id);
+    // Nếu đổi region hoặc company → kiểm tra khớp (dùng giá trị mới nếu có)
+    const effectiveRegion = patch.region_id !== undefined ? patch.region_id : cur.region_id;
+    const effectiveCompany = patch.company_id !== undefined ? patch.company_id : cur.company_id;
+    if ((patch.region_id !== undefined || patch.company_id !== undefined) && effectiveRegion) {
+      const chk = await assertRegionMatchesCompany(effectiveRegion, effectiveCompany);
       if (!chk.ok) return res.status(400).json({ error: chk.error });
     }
-    saveKeys(keys);
+    const updated = await updateKey(req.params.id, patch);
     res.json({
-      id: keys[idx].id,
-      name: keys[idx].name,
-      active: keys[idx].active,
-      default_assigned_to: keys[idx].default_assigned_to,
-      company_id: keys[idx].company_id || null,
-      region_id: keys[idx].region_id || null,
-      default_source_category_id: keys[idx].default_source_category_id || null,
-      default_lead_type_id: keys[idx].default_lead_type_id || null,
-      default_pipeline_id: keys[idx].default_pipeline_id || null,
-      webhook_url: keys[idx].webhook_url || null,
+      id: updated.id,
+      name: updated.name,
+      active: updated.active,
+      default_assigned_to: updated.default_assigned_to,
+      company_id: updated.company_id || null,
+      region_id: updated.region_id || null,
+      default_source_category_id: updated.default_source_category_id || null,
+      default_lead_type_id: updated.default_lead_type_id || null,
+      default_pipeline_id: updated.default_pipeline_id || null,
+      webhook_url: updated.webhook_url || null,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -311,29 +310,29 @@ r.patch('/api-keys/:id', async (req, res) => {
 });
 
 // POST /api/settings/api-keys/:id/rotate — rotate key (trả giá trị đầy đủ 1 lần)
-r.post('/api-keys/:id/rotate', (req, res) => {
+r.post('/api-keys/:id/rotate', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới rotate được API key' });
     }
-    const keys = loadKeys();
-    const idx = keys.findIndex((k) => k.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy key' });
+    const cur = await findKeyById(req.params.id);
+    if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
     const newKey = 'tbp_' + crypto.randomBytes(24).toString('hex');
-    keys[idx].key = newKey;
-    keys[idx].rotated_at = new Date().toISOString();
-    keys[idx].rotated_by = req.user.userId;
-    saveKeys(keys);
+    const updated = await updateKey(req.params.id, {
+      key: newKey,
+      rotated_at: new Date().toISOString(),
+      rotated_by: req.user.userId,
+    });
     res.json({
-      id: keys[idx].id,
-      name: keys[idx].name,
+      id: updated.id,
+      name: updated.name,
       key: newKey,
       preview: newKey.slice(0, 8) + '••••••••••••••••',
-      active: keys[idx].active !== false,
-      default_assigned_to: keys[idx].default_assigned_to || null,
-      company_id: keys[idx].company_id || null,
-      webhook_url: keys[idx].webhook_url || null,
-      rotated_at: keys[idx].rotated_at,
+      active: updated.active !== false,
+      default_assigned_to: updated.default_assigned_to || null,
+      company_id: updated.company_id || null,
+      webhook_url: updated.webhook_url || null,
+      rotated_at: updated.rotated_at,
       _note: 'Key mới chỉ hiển thị 1 lần. Sao chép và lưu ở nơi an toàn.',
     });
   } catch (e) {
@@ -342,16 +341,14 @@ r.post('/api-keys/:id/rotate', (req, res) => {
 });
 
 // DELETE /api/settings/api-keys/:id — xóa / thu hồi key
-r.delete('/api-keys/:id', (req, res) => {
+r.delete('/api-keys/:id', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới xóa được API key' });
     }
-    const keys = loadKeys();
-    const idx = keys.findIndex((k) => k.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy key' });
-    keys.splice(idx, 1);
-    saveKeys(keys);
+    const cur = await findKeyById(req.params.id);
+    if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
+    await deleteKey(req.params.id);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
