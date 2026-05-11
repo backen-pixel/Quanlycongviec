@@ -412,6 +412,11 @@ export default function ApiKeysSettingsPage() {
           ⚠️ Mở <code>/ping</code> trực tiếp trong tab mới sẽ trả <b>401 "Thiếu X-Api-Key header"</b> — browser không gửi header.
           Hãy test bằng panel <b>"Test kết nối"</b> bên dưới hoặc Postman / cURL.
         </p>
+        <p className="text-[11px] text-purple-700 bg-purple-50 border border-purple-200 rounded-md px-2 py-1.5">
+          🔐 Vì bảo mật, key thật chỉ hiển thị <b>1 lần duy nhất</b> lúc tạo (hoặc sau khi Rotate). Sau đó UI chỉ
+          thấy mask kiểu <code>tbp_xxxx••••••</code>. Lỡ mất key → bấm icon <b>Copy</b> hoặc <b>Rotate key</b> để
+          nhận key mới (key cũ bị vô hiệu ngay).
+        </p>
       </div>
 
       {/* New key banner */}
@@ -657,11 +662,25 @@ export default function ApiKeysSettingsPage() {
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => copyText(keySecrets[k.id] || k.preview, k.id + '_copy')}
-                        title={keySecrets[k.id] ? 'Copy key thật (đã rotate / tạo mới)' : 'Copy preview (mask)'}
-                        className="p-1.5 hover:bg-gray-100 rounded-lg cursor-pointer transition"
+                        onClick={() => {
+                          if (keySecrets[k.id]) {
+                            copyText(keySecrets[k.id], k.id + '_copy');
+                          } else {
+                            if (window.confirm(
+                              `Vì bảo mật, hệ thống KHÔNG lưu key thật — chỉ hiển thị mask "${k.preview}".\n\n` +
+                              `Để lấy key đầy đủ, cần Rotate (tạo key mới và vô hiệu key cũ).\n\n` +
+                              `Rotate ngay bây giờ?`
+                            )) {
+                              rotateKey(k.id);
+                            }
+                          }
+                        }}
+                        title={keySecrets[k.id] ? 'Copy key thật vào clipboard' : 'Không thể copy mask — bấm để Rotate lấy key mới'}
+                        className={`p-1.5 rounded-lg cursor-pointer transition ${keySecrets[k.id] ? 'hover:bg-emerald-50' : 'hover:bg-orange-50'}`}
                       >
-                        {copiedId === k.id + '_copy' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4 text-gray-400" />}
+                        {copiedId === k.id + '_copy'
+                          ? <Check className="h-4 w-4 text-emerald-500" />
+                          : <Copy className={`h-4 w-4 ${keySecrets[k.id] ? 'text-emerald-500' : 'text-gray-300'}`} />}
                       </button>
                       <button
                         onClick={() => toggleActive(k.id, k.active)}

@@ -1250,6 +1250,9 @@ function ContactsTab({ fbCompanyQs = '' }) {
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  /** Nguồn cấu hình từ Page setup (facebook_pages.default_source_id) */
+  const [pageSources, setPageSources] = useState([]);
+  const [sourceFilter, setSourceFilter] = useState('');
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [batchStatus, setBatchStatus] = useState(null); // { type, loading, result }
@@ -1395,6 +1398,11 @@ function ContactsTab({ fbCompanyQs = '' }) {
     if (search) p.set('search', search);
     if (filter === 'has_lead') p.set('has_lead', 'true');
     if (filter === 'no_lead') p.set('has_lead', 'false');
+    if (sourceFilter) {
+      p.set('source_id', sourceFilter);
+      // Lọc theo nguồn chỉ áp dụng cho contact có lead
+      if (filter !== 'has_lead') p.set('has_lead', 'true');
+    }
     p.set('limit', '200');
     p.set('offset', append ? String(meta.nextOffset || 0) : '0');
     if (fbCompanyQs) {
@@ -1420,7 +1428,16 @@ function ContactsTab({ fbCompanyQs = '' }) {
         setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       })
       .catch(() => {});
-  }, [search, filter, meta.nextOffset, sortContacts, fbCompanyQs]);
+  }, [search, filter, sourceFilter, meta.nextOffset, sortContacts, fbCompanyQs]);
+
+  // Load DISTINCT nguồn được cấu hình ở Page setup (facebook_pages.default_source_id)
+  // — chỉ những nguồn này mới có ý nghĩa khi lọc trên danh bạ FB.
+  useEffect(() => {
+    fetch(`${API}/api/facebook/page-sources`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : { sources: [] })
+      .then(data => setPageSources(data?.sources || []))
+      .catch(() => setPageSources([]));
+  }, []);
 
   useEffect(() => { load(false); }, [load]);
 
@@ -2303,6 +2320,34 @@ function ContactsTab({ fbCompanyQs = '' }) {
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition cursor-pointer ${filter === k ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>{l}</button>
           ))}
         </div>
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          className="px-3 py-1.5 text-sm border rounded-lg bg-white text-gray-700 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+          title="Lọc theo nguồn đã cấu hình ở Page setup"
+          disabled={!pageSources.length}
+        >
+          <option value="">
+            {pageSources.length
+              ? '— Nguồn (tất cả Page) —'
+              : '— Chưa có Page nào set nguồn —'}
+          </option>
+          {pageSources.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.category?.icon ? `${s.category.icon} ` : ''}{s.name}
+              {s.category?.name ? ` · ${s.category.name}` : ''}
+            </option>
+          ))}
+        </select>
+        {sourceFilter && (
+          <button
+            onClick={() => setSourceFilter('')}
+            className="px-2 py-1.5 text-xs text-gray-500 hover:text-red-600 cursor-pointer"
+            title="Xóa lọc nguồn"
+          >
+            ✕ Xóa lọc
+          </button>
+        )}
       </div>
       <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
         <table className="w-full text-sm">
@@ -2313,6 +2358,7 @@ function ContactsTab({ fbCompanyQs = '' }) {
               <th className="text-left px-3 py-3 font-semibold text-gray-600">Hoạt động</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">SĐT</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">Lead</th>
+              <th className="text-left px-4 py-3 font-semibold text-gray-600">Phân loại nguồn</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600">Ghi chú</th>
               <th className="text-right px-4 py-3 font-semibold text-gray-600">Thao tác</th>
             </tr>
@@ -2327,6 +2373,7 @@ function ContactsTab({ fbCompanyQs = '' }) {
                     <td className="px-3 py-2 text-xs text-gray-400">—</td>
                     <td className="px-4 py-2"><input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" placeholder="SĐT" /></td>
                     <td className="px-4 py-2">—</td>
+                    <td className="px-4 py-2 text-gray-300 text-xs">—</td>
                     <td className="px-4 py-2"><input value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" placeholder="Ghi chú" /></td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => saveEdit(c.id)} className="text-green-600 hover:text-green-800 p-1 cursor-pointer"><Check size={16} /></button>
@@ -2369,6 +2416,33 @@ function ContactsTab({ fbCompanyQs = '' }) {
                       ) : (
                         <CreateLeadButton contactId={c.id} onCreated={() => load()} />
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {(() => {
+                        const cat = c.lead?.source?.category;
+                        const src = c.lead?.source;
+                        if (!cat && !src) return <span className="text-gray-300 text-xs">—</span>;
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            {cat && (
+                              <span
+                                className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full w-fit"
+                                style={{
+                                  backgroundColor: cat.color ? `${cat.color}1A` : '#f3f4f6',
+                                  color: cat.color || '#374151',
+                                }}
+                                title={cat.name}
+                              >
+                                {cat.icon && <span>{cat.icon}</span>}
+                                <span>{cat.name}</span>
+                              </span>
+                            )}
+                            {src?.name && (
+                              <span className="text-[10px] text-gray-500 truncate max-w-[140px]" title={src.name}>{src.name}</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs max-w-[150px] truncate">{c.notes || ''}</td>
                     <td className="px-4 py-3 text-right">

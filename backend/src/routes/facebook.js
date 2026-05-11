@@ -2533,6 +2533,31 @@ function contactAllowedByFacebookScope(scope, contact) {
   return scope.pageIds.some((p) => String(p) === pid);
 }
 
+// ── GET /api/facebook/page-sources ───────────────────────────────────────
+// Trả về DISTINCT nguồn CRM đang được cấu hình làm default_source_id trên
+// các Page Facebook đã setup (active). Dùng cho ô lọc "Nguồn" trong Danh bạ.
+r.get('/page-sources', authMiddleware, async (req, res) => {
+  try {
+    const { data: pages, error: pgErr } = await supabase
+      .from('facebook_pages')
+      .select('default_source_id, is_active')
+      .not('default_source_id', 'is', null);
+    if (pgErr) throw pgErr;
+    const sourceIds = [...new Set((pages || []).filter(p => p.is_active !== false).map(p => p.default_source_id))];
+    if (!sourceIds.length) return res.json({ sources: [] });
+
+    const { data: sources, error: srcErr } = await supabase
+      .from('crm_sources')
+      .select('id, name, category:crm_source_categories(id, name, icon, color)')
+      .in('id', sourceIds)
+      .order('name');
+    if (srcErr) throw srcErr;
+    res.json({ sources: sources || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Pages config CRUD ────────────────────────────────────────
 
 r.get('/pages', authMiddleware, async (req, res) => {
@@ -2651,7 +2676,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
         hasMore: false, nextOffset: 0,
       });
     }
-    const { page_id, has_lead, search, limit: rawLimit, offset: rawOffset } = req.query;
+    const { page_id, has_lead, search, source_category_id, source_id, limit: rawLimit, offset: rawOffset } = req.query;
     if (page_id && scope.mode === 'filter' && !scope.pageIds.includes(String(page_id))) {
       return res.status(403).json({ error: 'Không có quyền xem Page này' });
     }
@@ -2660,7 +2685,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     const base = () => {
       let q = supabase
         .from('facebook_contacts')
-        .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone)');
+        .select('*, lead:crm_leads(id, title, code, type, source:crm_sources!crm_leads_source_id_fkey(id, name, category:crm_source_categories(id, name, icon, color))), customer:customers(id, full_name, phone)');
       if (scope.mode === 'filter') q = q.in('page_id', scope.pageIds);
       if (page_id) q = q.eq('page_id', page_id);
       if (has_lead === 'true') q = q.not('lead_id', 'is', null);
@@ -2710,6 +2735,17 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       if (bp !== ap) return bp - ap;
       return 0;
     });
+
+    // Lọc theo phân loại nguồn của lead liên kết — chỉ contact có lead, source và category trùng
+    if (source_category_id) {
+      const wantCat = String(source_category_id);
+      result = result.filter((c) => String(c?.lead?.source?.category?.id || '') === wantCat);
+    }
+    // Lọc theo nguồn CRM cụ thể (default_source_id của Page) — chỉ contact có lead, source trùng
+    if (source_id) {
+      const wantSrc = String(source_id);
+      result = result.filter((c) => String(c?.lead?.source?.id || '') === wantSrc);
+    }
 
     const total = result.length;
     const page = result.slice(offset, offset + maxLimit);
