@@ -1,5 +1,7 @@
 # APK debug copy at repo root (tải lên điện thoại; không nên commit)
 TuBep-VoiceSync-debug.apk
+crm-mobile-debug.apk
+*.apk
 
 # Cursor local config
 .cursor/
@@ -8,3 +10,6 @@ TuBep-VoiceSync-debug.apk
 backend/.env
 frontend/.env
 .env
+
+# Local data store cho external API keys (chứa secret) — KHÔNG commit
+backend/data/api-keys.json

@@ -23,6 +23,8 @@ function buildCurl(key) {
     "email": "khachhang@example.com",
     "source_name": "Website",
     "estimated_value": 50000000
+    // "region_id": "uuid…"            (override khu vực mặc định của key)
+    // "source_category_id": "uuid…"   (phân loại nguồn, tùy chọn)
   }'`;
 }
 
@@ -40,6 +42,8 @@ function buildJS(key) {
     email: 'khachhang@example.com',
     source_name: 'Website',
     estimated_value: 50000000,
+    // region_id: 'uuid…',             // (mặc định lấy theo config của key)
+    // source_category_id: 'uuid…',    // tùy chọn
   }),
 });
 const data = await response.json();
@@ -62,6 +66,8 @@ response = requests.post(
         'email': 'khachhang@example.com',
         'source_name': 'Website',
         'estimated_value': 50000000,
+        # 'region_id': 'uuid…',           # mặc định theo config key
+        # 'source_category_id': 'uuid…',  # tùy chọn
     }
 )
 print(response.json())`;
@@ -167,11 +173,16 @@ export default function ApiKeysSettingsPage() {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', default_assigned_to: '', webhook_url: '', company_id: '' });
+  const [form, setForm] = useState({ name: '', default_assigned_to: '', webhook_url: '', company_id: '', region_id: '', default_source_category_id: '', default_lead_type_id: '', default_pipeline_id: '' });
   const [showForm, setShowForm] = useState(false);
   const [newKeyValue, setNewKeyValue] = useState(null);
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [sourceCategories, setSourceCategories] = useState([]);
+  const [leadTypes, setLeadTypes] = useState([]);
+  const [pipelines, setPipelines] = useState([]);
+  const [loadingRegions, setLoadingRegions] = useState(false);
   const [error, setError] = useState('');
   const [copiedId, setCopiedId] = useState(null);
 
@@ -202,9 +213,31 @@ export default function ApiKeysSettingsPage() {
 
   useEffect(() => { load(); }, []);
 
+  // Tải khu vực + phân loại + lead-type + pipeline theo công ty đã chọn
+  useEffect(() => {
+    if (!form.company_id) { setRegions([]); setSourceCategories([]); setLeadTypes([]); setPipelines([]); return; }
+    setLoadingRegions(true);
+    Promise.all([
+      api.get('/crm/company-regions', { params: { company_id: form.company_id } }).catch(() => ({ data: [] })),
+      api.get('/crm/source-categories', { params: { company_id: form.company_id } }).catch(() => ({ data: [] })),
+      api.get('/crm/lead-types', { params: { company_id: form.company_id } }).catch(() => ({ data: [] })),
+      api.get('/crm/pipelines', { params: { company_id: form.company_id } }).catch(() => ({ data: [] })),
+    ]).then(([rRes, cRes, ltRes, plRes]) => {
+      const rs = Array.isArray(rRes.data) ? rRes.data : (rRes.data?.regions || []);
+      const cs = Array.isArray(cRes.data) ? cRes.data : (cRes.data?.categories || []);
+      const lts = Array.isArray(ltRes.data) ? ltRes.data : (ltRes.data?.lead_types || ltRes.data?.items || []);
+      const pls = Array.isArray(plRes.data) ? plRes.data : (plRes.data?.pipelines || plRes.data?.items || []);
+      setRegions(rs.filter((r) => r.is_active !== false));
+      setSourceCategories(cs.filter((c) => c.is_active !== false));
+      setLeadTypes(lts.filter((t) => t.is_active !== false && (!t.applies_to || ['lead', 'both'].includes(t.applies_to))));
+      setPipelines(pls.filter((p) => p.is_active !== false));
+    }).finally(() => setLoadingRegions(false));
+  }, [form.company_id]);
+
   const createKey = async () => {
     if (!form.name.trim()) { setError('Nhập tên để nhận biết key này'); return; }
     if (!form.company_id) { setError('Chọn công ty gắn với key này'); return; }
+    if (!form.region_id) { setError('Chọn khu vực mặc định cho key (bắt buộc)'); return; }
     setCreating(true);
     setError('');
     try {
@@ -213,9 +246,13 @@ export default function ApiKeysSettingsPage() {
         default_assigned_to: form.default_assigned_to || null,
         webhook_url: form.webhook_url.trim() || null,
         company_id: form.company_id,
+        region_id: form.region_id,
+        default_source_category_id: form.default_source_category_id || null,
+        default_lead_type_id: form.default_lead_type_id || null,
+        default_pipeline_id: form.default_pipeline_id || null,
       });
       setNewKeyValue(data.key);
-      setForm({ name: '', default_assigned_to: '', webhook_url: '', company_id: '' });
+      setForm({ name: '', default_assigned_to: '', webhook_url: '', company_id: '', region_id: '', default_source_category_id: '', default_lead_type_id: '', default_pipeline_id: '' });
       setShowForm(false);
       await load();
     } catch (e) {
@@ -328,37 +365,53 @@ export default function ApiKeysSettingsPage() {
 
       {/* Endpoint overview */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-        <div className="flex items-center gap-2 text-blue-800 font-semibold text-sm">
-          <Shield className="h-4 w-4" /> Endpoints tích hợp
+        <div className="flex items-center justify-between gap-2 text-blue-800 font-semibold text-sm">
+          <div className="flex items-center gap-2">
+            <Shield className="h-4 w-4" /> Endpoints tích hợp
+          </div>
+          <code className="hidden md:inline-block text-[11px] font-mono text-blue-700 bg-blue-100 px-2 py-0.5 rounded">
+            Base: {API_BASE}
+          </code>
         </div>
-        <div className="space-y-1.5 text-xs font-mono">
+
+        {/* Bảng endpoint 3 cột: method | path | description — không còn chồng lấn */}
+        <div className="bg-white border border-blue-100 rounded-lg overflow-hidden divide-y divide-blue-50">
+          <div className="grid grid-cols-[56px_minmax(0,1fr)_minmax(0,1.4fr)] gap-2 px-3 py-1.5 bg-blue-100/50 text-[10px] font-semibold text-blue-700 uppercase tracking-wider">
+            <span>Method</span>
+            <span>Path</span>
+            <span>Mô tả</span>
+          </div>
           {[
-            ['POST', '/leads', 'Tạo lead mới'],
+            ['POST', '/leads', 'Tạo lead mới (cùng luồng CRM: pipeline, region, lead type, auto task)'],
+            ['GET', '/regions', 'Danh sách khu vực của công ty (bắt buộc cho lead)'],
+            ['GET', '/lead-types', 'Loại Lead/Deal của công ty'],
+            ['GET', '/pipelines', 'Pipeline CRM của công ty'],
+            ['GET', '/source-categories', 'Danh sách phân loại nguồn'],
             ['GET', '/stages?type=lead', 'Danh sách giai đoạn pipeline'],
             ['GET', '/sources', 'Danh sách nguồn lead'],
             ['GET', '/users', 'Danh sách nhân viên'],
             ['GET', '/ping', 'Kiểm tra key hợp lệ'],
           ].map(([method, path, desc]) => (
-            <div key={path} className="flex items-center gap-2 bg-white border border-blue-100 rounded-lg px-3 py-1.5">
-              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${method === 'POST' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+            <div
+              key={path}
+              className="grid grid-cols-[56px_minmax(0,1fr)_minmax(0,1.4fr)] gap-2 items-center px-3 py-1.5 text-xs font-mono hover:bg-blue-50/40"
+            >
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-center ${method === 'POST' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
                 {method}
               </span>
-              <code className="text-blue-800 flex-1">{API_BASE}{path}</code>
-              <span className="text-gray-400 text-[10px]">{desc}</span>
+              <code className="text-blue-800 truncate" title={`${API_BASE}${path}`}>{path}</code>
+              <span className="text-gray-500 text-[11px] truncate font-sans" title={desc}>{desc}</span>
             </div>
           ))}
         </div>
+
         <p className="text-xs text-blue-700">
           Header bắt buộc: <code className="bg-blue-100 px-1 rounded">X-Api-Key: &lt;key&gt;</code>
         </p>
-        <a
-          href={`${API_BASE}/ping`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-        >
-          <ExternalLink className="h-3.5 w-3.5" /> Mở /ping trong tab mới
-        </a>
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+          ⚠️ Mở <code>/ping</code> trực tiếp trong tab mới sẽ trả <b>401 "Thiếu X-Api-Key header"</b> — browser không gửi header.
+          Hãy test bằng panel <b>"Test kết nối"</b> bên dưới hoặc Postman / cURL.
+        </p>
       </div>
 
       {/* New key banner */}
@@ -436,7 +489,7 @@ export default function ApiKeysSettingsPage() {
               <label className="text-xs font-medium text-gray-600 block mb-1">Công ty gắn với key <span className="text-red-500">*</span></label>
               <select
                 value={form.company_id}
-                onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value }))}
+                onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value, region_id: '', default_source_category_id: '' }))}
                 className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm"
               >
                 <option value="">— Chọn công ty —</option>
@@ -445,6 +498,66 @@ export default function ApiKeysSettingsPage() {
                 ))}
               </select>
               <p className="text-[10px] text-gray-400 mt-1">Mỗi key chỉ được tạo lead cho 1 công ty cố định.</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Khu vực mặc định <span className="text-red-500">*</span></label>
+              <select
+                value={form.region_id}
+                onChange={(e) => setForm((f) => ({ ...f, region_id: e.target.value }))}
+                disabled={!form.company_id || loadingRegions}
+                className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm disabled:bg-gray-100"
+              >
+                <option value="">{!form.company_id ? '— Chọn công ty trước —' : loadingRegions ? 'Đang tải…' : '— Chọn khu vực —'}</option>
+                {regions.map((rg) => (
+                  <option key={rg.id} value={rg.id}>{rg.name}{rg.code ? ` (${rg.code})` : ''}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-400 mt-1">Lead tạo qua key này mặc định thuộc khu vực đã chọn (có thể override trong body).</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Phân loại nguồn mặc định <span className="text-gray-400 font-normal">(tùy chọn)</span></label>
+              <select
+                value={form.default_source_category_id}
+                onChange={(e) => setForm((f) => ({ ...f, default_source_category_id: e.target.value }))}
+                disabled={!form.company_id}
+                className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm disabled:bg-gray-100"
+              >
+                <option value="">— Không gán —</option>
+                {sourceCategories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ''}{c.name}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-400 mt-1">Áp dụng cho nguồn tự tạo từ <code>source_name</code> nếu chưa có category.</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Pipeline mặc định <span className="text-gray-400 font-normal">(tùy chọn — auto chọn pipeline default của công ty nếu trống)</span></label>
+              <select
+                value={form.default_pipeline_id}
+                onChange={(e) => setForm((f) => ({ ...f, default_pipeline_id: e.target.value }))}
+                disabled={!form.company_id}
+                className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm disabled:bg-gray-100"
+              >
+                <option value="">— Tự động (pipeline default) —</option>
+                {pipelines.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}{p.is_default ? ' ★ default' : ''}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-400 mt-1">Lead sẽ vào pipeline này, ở giai đoạn đầu tiên — y hệt khi tạo trong CRM.</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Loại Lead/Deal mặc định <span className="text-gray-400 font-normal">(tùy chọn — quyết định bộ task tự sinh)</span></label>
+              <select
+                value={form.default_lead_type_id}
+                onChange={(e) => setForm((f) => ({ ...f, default_lead_type_id: e.target.value }))}
+                disabled={!form.company_id}
+                className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm disabled:bg-gray-100"
+              >
+                <option value="">— Không gán —</option>
+                {leadTypes.map((t) => (
+                  <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ''}{t.name}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-400 mt-1">Nếu gán, hệ thống tự tạo các nhiệm vụ theo template của loại — giống tạo lead trong CRM.</p>
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Nhân viên phụ trách mặc định</label>
@@ -533,6 +646,12 @@ export default function ApiKeysSettingsPage() {
                         )}
                         {k.company_id && (
                           <span className="ml-2">· Công ty: {companies.find((c) => c.id === k.company_id)?.short_name || companies.find((c) => c.id === k.company_id)?.name || '—'}</span>
+                        )}
+                        {k.region_id && (
+                          <span className="ml-2">· Khu vực: <span className="font-medium text-gray-600">{k.region_id.slice(0, 8)}…</span></span>
+                        )}
+                        {k.default_source_category_id && (
+                          <span className="ml-2">· Phân loại: <span className="font-medium text-gray-600">{k.default_source_category_id.slice(0, 8)}…</span></span>
                         )}
                       </p>
                     </div>
@@ -685,6 +804,10 @@ export default function ApiKeysSettingsPage() {
           <tbody className="divide-y divide-gray-50">
             {[
               ['title', '✅', 'Tên lead hiển thị trong CRM'],
+              ['region_id', '⚠️', 'UUID khu vực — bắt buộc (nếu không gửi sẽ dùng default của key)'],
+              ['pipeline_id', '', 'UUID pipeline — fallback default của key, sau đó default của công ty'],
+              ['lead_type_id', '', 'UUID loại Lead/Deal — quyết định bộ task auto-gen (fallback default key)'],
+              ['source_category_id', '', 'UUID phân loại nguồn (tùy chọn) — fallback default của key'],
               ['full_name', '', 'Tên khách hàng — tìm hoặc tạo mới theo phone/email'],
               ['phone', '', 'SĐT — dùng để tìm khách hàng đã có'],
               ['email', '', 'Email khách hàng'],
@@ -714,20 +837,27 @@ export default function ApiKeysSettingsPage() {
           <Webhook className="h-4 w-4 text-purple-500" /> Webhook Payload
         </h2>
         <p className="text-xs text-gray-500">
-          Khi có lead mới, hệ thống POST JSON sau tới webhook URL (nếu được cấu hình):
+          Khi có lead mới, hệ thống POST JSON sau tới webhook URL (nếu được cấu hình). Cùng JSON này
+          cũng được trả lại trong response của <code className="bg-gray-100 px-1 rounded">POST /leads</code>
+          dưới key <code className="bg-gray-100 px-1 rounded">lead</code>.
+        </p>
+        <p className="text-[11px] text-gray-500 italic">
+          Công ty &amp; khu vực đã gắn cố định trên API key nên không lặp lại trong payload.
         </p>
         <CodeBlock lang="json" code={`{
   "event": "lead.created",
-  "key_name": "Website form",
+  "timestamp": "2026-04-22T10:00:00.123Z",
+  "key": "Website form",
   "lead": {
-    "id": "uuid...",
+    "id": "uuid",
     "code": "LEAD-0001",
     "title": "Khách hàng từ website",
-    "customer": { "id": "...", "full_name": "Nguyễn Văn A", "phone": "090..." },
-    "stage": { "id": "...", "name": "Mới", "color": "#..." },
-    "created_at": "2026-04-22T10:00:00.000Z"
-  },
-  "timestamp": "2026-04-22T10:00:00.123Z"
+    "value": 50000000,
+    "stage": "Mới",
+    "url": "https://crm.example.com/crm/leads/<id>",
+    "created_at": "2026-04-22T10:00:00.000Z",
+    "customer": { "name": "Nguyễn Văn A", "phone": "0901234567", "email": "a@example.com" }
+  }
 }`} />
       </div>
     </div>

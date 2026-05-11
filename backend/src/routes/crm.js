@@ -4912,6 +4912,19 @@ r.delete('/leads/:id', async (req, res) => {
       .eq('id', req.params.id).single();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
 
+    // Snapshot vào Thùng rác trước khi xóa thật, để admin có thể phục hồi.
+    // Nếu permanent=true thì không snapshot (xóa vĩnh viễn).
+    const permanent = req.query.permanent === 'true';
+    if (!permanent) {
+      try {
+        const { snapshotCrmLead } = require('../helpers/trashSnapshot');
+        const snapRes = await snapshotCrmLead(supabase, lead.id, req.user?.userId);
+        if (!snapRes.ok) console.warn('[delete lead] snapshot trash failed:', snapRes.error);
+      } catch (e) {
+        console.warn('[delete lead] trash snapshot error:', e.message);
+      }
+    }
+
     const blockAuto = req.query.block_auto_recreate_phone === 'true';
     if (blockAuto && lead.customer_id) {
       const { data: cust } = await supabase.from('customers').select('phone').eq('id', lead.customer_id).maybeSingle();
@@ -5223,6 +5236,16 @@ r.post('/leads/:id/documents/bulk', async (req, res) => {
 // Delete document + sync xóa crm_task_attachment liên kết
 r.delete('/leads/:id/documents/:docId', async (req, res) => {
   try {
+    // Snapshot vào Thùng rác trước khi xóa thật (trừ khi permanent=true)
+    if (req.query.permanent !== 'true') {
+      try {
+        const { snapshotLeadDocument } = require('../helpers/trashSnapshot');
+        const snapRes = await snapshotLeadDocument(supabase, req.params.docId, req.user?.userId);
+        if (!snapRes.ok) console.warn('[delete lead doc] snapshot trash failed:', snapRes.error);
+      } catch (e) {
+        console.warn('[delete lead doc] trash snapshot error:', e.message);
+      }
+    }
     // Check if this doc was synced FROM a task attachment
     const { data: doc } = await supabase.from('lead_documents')
       .select('source_attachment_id').eq('id', req.params.docId).single();
@@ -9575,6 +9598,16 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
 // DELETE attachment + sync xóa lead_document liên kết
 r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => {
   try {
+    // Snapshot vào Thùng rác trước khi xóa thật (trừ khi permanent=true)
+    if (req.query.permanent !== 'true') {
+      try {
+        const { snapshotTaskAttachment } = require('../helpers/trashSnapshot');
+        const snapRes = await snapshotTaskAttachment(supabase, req.params.attId, req.user?.userId);
+        if (!snapRes.ok) console.warn('[delete task attach] snapshot trash failed:', snapRes.error);
+      } catch (e) {
+        console.warn('[delete task attach] trash snapshot error:', e.message);
+      }
+    }
     // Xóa lead_document liên kết trước (vì có FK ON DELETE SET NULL)
     await supabase.from('lead_documents').delete()
       .eq('source_attachment_id', req.params.attId);
