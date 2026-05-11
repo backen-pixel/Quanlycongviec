@@ -1,5 +1,7 @@
 /**
- * Xác thực qua header X-Api-Key — đọc/ghi vào bảng Supabase `external_api_keys`.
+ * Xác thực qua API key — đọc/ghi vào bảng Supabase `external_api_keys`.
+ * Ưu tiên header `X-Api-Key`; nếu thiếu thì nhận từ query (Postman Params, iframe, …).
+ * Lưu ý: key trên URL dễ lọt access log — nên dùng header khi có thể.
  *
  * Trước đây dùng file `backend/data/api-keys.json`, không bền trên Render
  * (filesystem ephemeral, mỗi lần deploy/restart sẽ mất). Đã chuyển sang DB.
@@ -147,9 +149,35 @@ async function migrateLegacyFileOnce() {
 }
 
 // ── Middleware ──────────────────────────────────────────────────────────────
+
+/** Header trước, sau đó query (?x-api-key= / ?X-Api-Key= / ?api_key=), không phân biệt hoa thường tên param */
+function extractApiKey(req) {
+  const h = req.headers['x-api-key'];
+  if (h) return String(h).trim();
+
+  const q = req.query;
+  if (!q || typeof q !== 'object') return null;
+
+  const single = q['x-api-key'] ?? q['X-Api-Key'] ?? q.api_key ?? q.apiKey;
+  if (single != null && String(single).trim() !== '') return String(single).trim();
+
+  for (const name of Object.keys(q)) {
+    const lower = String(name).toLowerCase();
+    if (lower === 'x-api-key' || lower === 'api_key' || lower === 'apikey') {
+      const v = q[name];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+  }
+  return null;
+}
+
 async function apiKeyAuth(req, res, next) {
-  const key = req.headers['x-api-key'];
-  if (!key) return res.status(401).json({ error: 'Thiếu X-Api-Key header' });
+  const key = extractApiKey(req);
+  if (!key) {
+    return res.status(401).json({
+      error: 'Thiếu API key: thêm header X-Api-Key hoặc query ?api_key=... / ?x-api-key=...',
+    });
+  }
 
   try {
     await migrateLegacyFileOnce();

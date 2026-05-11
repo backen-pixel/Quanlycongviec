@@ -398,8 +398,10 @@ export default function ApiKeysSettingsPage() {
         </div>
 
         <p className="text-xs text-blue-700">
-          Header bắt buộc: <code className="bg-blue-100 px-1 rounded">X-Api-Key: &lt;key&gt;</code>
-          {' '}— không đặt key trên query string (<code className="bg-blue-100 px-1 rounded">?tbp_=…</code> sẽ bị bỏ qua).
+          Xác thực: ưu tiên header <code className="bg-blue-100 px-1 rounded">X-Api-Key: &lt;key&gt;</code>
+          . Hỗ trợ thêm query <code className="bg-blue-100 px-1 rounded">?api_key=</code> hoặc{' '}
+          <code className="bg-blue-100 px-1 rounded">?x-api-key=</code> (Postman Params) — tránh dùng tên tham số{' '}
+          <code className="bg-blue-100 px-1 rounded">?tbp_…=</code> (sai; key phải là <i>giá trị</i>).
         </p>
         {PUBLIC_API_ORIGIN === window.location.origin && (
           <p className="text-[11px] text-orange-800 bg-orange-50 border border-orange-200 rounded-md px-2 py-1.5">
