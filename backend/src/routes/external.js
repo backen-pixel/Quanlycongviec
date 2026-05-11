@@ -381,6 +381,11 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     const resolvedAssignee = assigned_to || req.apiKey.default_assigned_to || null;
     const code = await nextLeadCode();
 
+    // Gộp notes vào description (bảng crm_leads không có cột notes riêng)
+    const mergedDescription = [description, notes ? `Ghi chú: ${notes}` : null]
+      .filter(Boolean)
+      .join('\n\n') || null;
+
     const { data: lead, error } = await supabase
       .from('crm_leads')
       .insert({
@@ -397,19 +402,18 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
         company_id: req.apiKey.company_id,
         region_id: resolvedRegionId,
         estimated_value: estimated_value ? Number(estimated_value) : null,
-        description: description || null,
-        notes: notes || null,
+        description: mergedDescription,
         created_by: resolvedAssignee, // dùng default_assigned_to làm "người tạo" để CRM hiển thị
         stage_entered_at: new Date().toISOString(),
       })
       .select(`
-        id, code, title, type, estimated_value, description, notes, created_at, stage_entered_at,
+        id, code, title, type, estimated_value, description, created_at, stage_entered_at,
         company_id, region_id, pipeline_id, stage_id, lead_type_id, source_id, customer_id,
         assigned_to, lead_owner_id, created_by,
         customer:customers(id, full_name, phone, email, address, company),
         stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, order_index),
         pipeline:crm_pipelines!crm_leads_pipeline_id_fkey(id, name, is_default),
-        lead_type:crm_lead_types!crm_leads_lead_type_id_fkey(id, name, color, icon),
+        lead_type:crm_lead_types!crm_leads_lead_type_id_fkey(id, name),
         region:company_regions!crm_leads_region_id_fkey(id, name, code),
         company:companies!crm_leads_company_id_fkey(id, name, short_name),
         source:crm_sources!crm_leads_source_id_fkey(id, name, category_id),
@@ -435,12 +439,14 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     await tryAuditLog(req, { status: 201, created_lead_id: lead.id });
 
     // Ghi log nguồn gốc vào activity
-    await supabase.from('crm_activities').insert({
-      lead_id: lead.id,
-      type: 'note',
-      title: `Lead được tạo từ API ngoài (key: ${req.apiKey.name})`,
-      activity_date: new Date().toISOString(),
-    }).catch(() => {});
+    try {
+      await supabase.from('crm_activities').insert({
+        lead_id: lead.id,
+        type: 'note',
+        title: `Lead được tạo từ API ngoài (key: ${req.apiKey.name})`,
+        activity_date: new Date().toISOString(),
+      });
+    } catch (_) { /* bảng crm_activities có thể chưa tồn tại — bỏ qua */ }
 
     // Notify người phụ trách
     if (resolvedAssignee) {
@@ -579,7 +585,7 @@ r.get('/lead-types', apiKeyAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('crm_lead_types')
-      .select('id, name, applies_to, is_active, color, icon')
+      .select('id, name, applies_to, is_active')
       .eq('company_id', req.apiKey.company_id)
       .eq('is_active', true)
       .order('order_index', { ascending: true, nullsFirst: false })
