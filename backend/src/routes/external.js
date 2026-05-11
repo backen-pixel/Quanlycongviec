@@ -3,7 +3,7 @@
  * Dùng cho bên ngoài (landing page, zap, webhook, ...) tạo lead vào CRM.
  *
  * POST /api/external/leads
- * Headers: X-Api-Key: <key>
+ * Auth: header X-Api-Key: <key> hoặc query ?api_key= / ?x-api-key= (key trong giá trị, không phải tên param)
  * Body:
  *   title          (bắt buộc) — tên lead
  *   full_name      — tên khách hàng
