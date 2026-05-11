@@ -1375,16 +1375,43 @@ export default function CRMDashboard() {
   const leadActiveCount = useMemo(() => leads.filter(isActiveCrmPipelineItem).length, [leads]);
   const dealNegotiatingCount = useMemo(() => deals.filter(isActiveCrmPipelineItem).length, [deals]);
 
+  /**
+   * KPI "Tổng" dùng `total` từ API khi đủ bản ghi (tránh hiển thị 1000 trong khi DB có 5000).
+   * Khi bật lọc chỉ trên client (tìm nhanh, cột, khu vực, nguồn, tên NV) → hiển thị số sau lọc trên dữ liệu đã tải.
+   */
+  const kpiUsesClientOnlyFilters = useMemo(
+    () =>
+      !!(
+        searchText.trim() ||
+        filterStage ||
+        filterRegion ||
+        filterSource ||
+        filterAssigneeName.trim()
+      ),
+    [searchText, filterStage, filterRegion, filterSource, filterAssigneeName],
+  );
+
+  const leadKpiTotalCount = useMemo(() => {
+    if (kpiUsesClientOnlyFilters) return leads.length;
+    const t = loadMoreState.leadTotal;
+    return typeof t === 'number' ? t : leads.length;
+  }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal]);
+
   /** KPI Deal (Tổng / Thắng / Doanh thu thắng) theo cùng bộ lọc UI như Kanban — không dùng kpis API thuần server. */
   const dealKpisFromFilters = useMemo(() => {
     const won = deals.filter((d) => dealIsWonStage(d, stagesDeal));
     const wonValue = won.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
+    const totalHeadline = kpiUsesClientOnlyFilters
+      ? deals.length
+      : typeof loadMoreState.dealTotal === 'number'
+        ? loadMoreState.dealTotal
+        : deals.length;
     return {
-      total_deals: deals.length,
+      total_deals: totalHeadline,
       won_deals: won.length,
       won_value: wonValue,
     };
-  }, [deals, stagesDeal]);
+  }, [deals, stagesDeal, kpiUsesClientOnlyFilters, loadMoreState.dealTotal]);
 
   // Pipeline view: group leads/deals by stage
   const pipelineLead = useMemo(() => {
@@ -2342,7 +2369,8 @@ export default function CRMDashboard() {
               iconBgColor="bg-blue-100"
               iconColor="text-blue-600"
               label="Tổng Lead"
-              value={leads.length}
+              value={leadKpiTotalCount}
+              sublabel={kpiUsesClientOnlyFilters ? 'Sau lọc (trên bản ghi đã tải)' : undefined}
               trend={null}
             />
             <KPICard
@@ -2381,6 +2409,7 @@ export default function CRMDashboard() {
               iconColor="text-cyan-600"
               label="Tổng Deal"
               value={dealKpisFromFilters.total_deals}
+              sublabel={kpiUsesClientOnlyFilters ? 'Sau lọc (trên bản ghi đã tải)' : undefined}
               trend={null}
             />
             <KPICard
@@ -2827,7 +2856,7 @@ export default function CRMDashboard() {
 }
 
 // KPI — layout ngang, kích thước ~một nửa bản trước (Lead + Deal)
-function KPICard({ icon, iconBgColor, iconColor, label, value, trend, compact }) {
+function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, compact }) {
   return (
     <div
       className={`min-w-0 flex items-center rounded-lg border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow duration-200 ${
@@ -2853,8 +2882,13 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, trend, compact })
             compact ? 'text-xs md:text-sm' : 'text-sm md:text-base'
           }`}
         >
-          {value}
+          {typeof value === 'number' ? value.toLocaleString('vi-VN') : value}
         </p>
+        {sublabel && (
+          <p className="text-[9px] text-amber-700/90 leading-tight truncate" title={sublabel}>
+            {sublabel}
+          </p>
+        )}
         {trend != null && trend !== '' && (
           <p className={`text-emerald-600 leading-none ${compact ? 'text-[9px]' : 'text-[10px]'}`}>↑ {trend}%</p>
         )}
@@ -3323,8 +3357,8 @@ function KanbanStageCard({
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         // Chiều cao viewport trừ vị trí top của container, trừ padding bottom (40px)
-        const available = window.innerHeight - rect.top - 40;
-        setColumnMaxH(`${Math.max(300, available)}px`);
+        const available = window.innerHeight - rect.top - 20;
+        setColumnMaxH(`${Math.max(260, available)}px`);
       }
     };
     measure();
@@ -3373,7 +3407,7 @@ function KanbanStageCard({
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
       className={`flex-shrink-0 rounded-lg overflow-hidden transition-all duration-200 ${
-        compact ? 'w-80' : 'w-96'
+        compact ? 'w-[17rem] max-[380px]:w-[15.5rem]' : 'w-80 max-[420px]:w-[17rem]'
       } ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
     >
       {/* Colored Header Bar */}
@@ -3432,7 +3466,7 @@ function KanbanStageCard({
         className={`bg-gray-50 border border-gray-200 border-t-0 overflow-y-auto transition-all ${
           compact ? 'p-2 space-y-2' : 'p-3 space-y-3'
         } ${isOverColumn ? 'bg-blue-50' : ''}`}
-        style={{ maxHeight: columnMaxH, minHeight: '200px' }}
+        style={{ maxHeight: columnMaxH, minHeight: compact ? '160px' : '180px' }}
       >
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
@@ -3506,7 +3540,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
               openLeadDetail();
             }
       }
-      className={`relative min-h-[7rem] overflow-hidden rounded-lg border transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-lg ${cardSurface} ${
+      className={`relative ${compact ? 'min-h-[5.25rem]' : 'min-h-[7rem]'} overflow-hidden rounded-lg border transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-lg ${cardSurface} ${
         splitPickZones ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
       } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{
@@ -3913,7 +3947,7 @@ function KanbanView({
       />
 
       <div ref={kanbanHScrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
-        <div className={`flex min-w-max ${compact ? 'gap-2.5' : 'gap-4'}`}>
+        <div className={`flex min-w-max ${compact ? 'gap-2' : 'gap-3'}`}>
           {pipeline.map((stage) => (
             <KanbanStageCard
               key={stage.id}
