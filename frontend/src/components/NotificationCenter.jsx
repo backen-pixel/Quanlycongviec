@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2 } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -62,10 +62,14 @@ const ICON_MAP = {
   crm_deadline_overdue: AlertTriangle,
   crm_deadline_set: Calendar,
   lead_stage_sla_reminder: Clock,
+  cskh_followup_reminder: CalendarClock,
+  event_created: Calendar,
+  event_completed: CheckCircle2,
 };
 
 /** Khớp backend `dashboard.js` — chỉ tin nhắn CRM/Messenger, không trộn deadline/task */
 const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
+const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
 
 const COLOR_MAP = {
   task_assigned: 'bg-blue-100 text-blue-600',
@@ -104,6 +108,9 @@ const COLOR_MAP = {
   crm_deadline_overdue: 'bg-red-100 text-red-600',
   crm_deadline_set: 'bg-blue-100 text-blue-600',
   lead_stage_sla_reminder: 'bg-amber-100 text-amber-800',
+  cskh_followup_reminder: 'bg-emerald-100 text-emerald-700',
+  event_created: 'bg-violet-100 text-violet-600',
+  event_completed: 'bg-emerald-100 text-emerald-600',
 };
 
 const MODULE_FILTER_OPTIONS = [
@@ -118,7 +125,7 @@ function inferNotificationModuleKey(n) {
   const mk = n?.metadata && typeof n.metadata === 'object' ? String(n.metadata.module_key || '').trim() : '';
   if (mk) return mk;
   const ty = String(n?.type || '');
-  if (ty === 'lead_stage_sla_reminder') return 'crm';
+  if (ty === 'lead_stage_sla_reminder' || ty === 'cskh_followup_reminder') return 'crm';
   if (ty.startsWith('crm_deadline') || ty === 'invoice_overdue') return 'crm';
   if (ty.includes('production_task_deadline')) return 'production';
   if (ty.includes('logistics_task_deadline')) return 'logistics';
@@ -142,7 +149,12 @@ export default function NotificationCenter({ socket }) {
   const [unreadActivity, setUnreadActivity] = useState(0);
   const [unreadChat, setUnreadChat] = useState(0);
   const [unreadDeadlines, setUnreadDeadlines] = useState(0);
-  const bellBadgeCount = useMemo(() => unreadActivity + unreadDeadlines, [unreadActivity, unreadDeadlines]);
+  const [unreadEvents, setUnreadEvents] = useState(0);
+  const [cskhNotifs, setCskhNotifs] = useState([]);
+  const [cskhCount, setCskhCount] = useState(0);
+  const [cskhLoading, setCskhLoading] = useState(false);
+  const [dismissingKeys, setDismissingKeys] = useState(new Set());
+  const bellBadgeCount = useMemo(() => unreadActivity + unreadDeadlines + unreadEvents + cskhCount, [unreadActivity, unreadDeadlines, unreadEvents, cskhCount]);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('activity');
   const [onlyUnread, setOnlyUnread] = useState(false);
@@ -151,16 +163,67 @@ export default function NotificationCenter({ socket }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const panelRef = useRef(null);
 
+  const loadCskhNotifs = async () => {
+    setCskhLoading(true);
+    try {
+      const { data } = await api.get('/crm/followup-care/notifications');
+      const list = data?.notifications || [];
+      setCskhNotifs(list);
+      setCskhCount(list.length);
+    } catch {
+      setCskhNotifs([]);
+      setCskhCount(0);
+    }
+    setCskhLoading(false);
+  };
+
+  const dismissCskh = async (notif) => {
+    const key = `${notif.pipeline_id}|${notif.stage_id}|${notif.company_id || ''}|${notif.time_bucket}`;
+    setDismissingKeys((prev) => new Set(prev).add(key));
+    try {
+      await api.post('/crm/followup-care/dismiss', {
+        pipeline_id: notif.pipeline_id,
+        stage_id: notif.stage_id,
+        company_id: notif.company_id || null,
+        time_bucket: notif.time_bucket,
+      });
+      setCskhNotifs((prev) => prev.filter((n) =>
+        !(n.pipeline_id === notif.pipeline_id && n.stage_id === notif.stage_id && n.company_id === notif.company_id && n.time_bucket === notif.time_bucket)
+      ));
+      setCskhCount((c) => Math.max(0, c - 1));
+    } catch { }
+    setDismissingKeys((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
+  const navigateToCskh = (notif) => {
+    const params = new URLSearchParams();
+    if (notif.pipeline_id) params.set('pipeline_id', notif.pipeline_id);
+    if (notif.stage_id) params.set('stage_id', notif.stage_id);
+    if (notif.company_id) params.set('company_id', notif.company_id);
+    if (notif.time_bucket) params.set('time', notif.time_bucket);
+    navigate(`/crm/follow-up-care?${params.toString()}`);
+    setOpen(false);
+  };
+
   const load = async () => {
     setLoading(true);
     try {
+      if (tab === 'cskh') {
+        await loadCskhNotifs();
+        setLoading(false);
+        return;
+      }
       if (tab === 'deadlines') {
         const { data } = await api.get('/dashboard/notifications/deadlines', {
           params: { module: deadlinesModule, limit: 80 },
         });
         setNotifications(data.notifications || []);
       } else {
-        const channel = tab === 'messages' ? 'messages' : 'activity';
+        const channel = tab === 'events' ? 'events' : tab === 'messages' ? 'messages' : 'activity';
         const params = { channel, limit: 80 };
         if (onlyUnread) params.unread = 'true';
         const { data } = await api.get('/dashboard/notifications', { params });
@@ -176,16 +239,23 @@ export default function NotificationCenter({ socket }) {
       const a = data.stats?.unread_activity ?? 0;
       const c = data.stats?.unread_chat ?? 0;
       const d = data.stats?.unread_deadlines ?? 0;
+      const ev = data.stats?.unread_events ?? 0;
       setUnreadActivity(a);
       setUnreadChat(c);
       setUnreadDeadlines(d);
+      setUnreadEvents(ev);
+    } catch { }
+    try {
+      const { data: cskhData } = await api.get('/crm/followup-care/notifications');
+      const cnt = cskhData?.total ?? 0;
+      setCskhCount(cnt);
     } catch { }
   };
 
   useEffect(() => {
     loadCount();
     const tick = () => { if (!document.hidden) loadCount(); };
-    const interval = setInterval(tick, 60_000);
+    const interval = setInterval(tick, 120_000);
     document.addEventListener('visibilitychange', tick);
     return () => { clearInterval(interval); document.removeEventListener('visibilitychange', tick); };
   }, []);
@@ -236,9 +306,13 @@ export default function NotificationCenter({ socket }) {
       cancelNotificationSpeech();
 
       const isChat = CHAT_NOTIFICATION_TYPES.includes(notif?.type);
+      const isEvent = EVENT_NOTIFICATION_TYPES.includes(notif?.type);
       if (isChat) {
         setUnreadChat((c) => c + 1);
         setNotifications((prev) => (tab === 'messages' ? [notif, ...prev] : prev));
+      } else if (isEvent) {
+        setUnreadEvents((c) => c + 1);
+        setNotifications((prev) => (tab === 'events' ? [notif, ...prev] : prev));
       } else {
         setUnreadActivity((c) => c + 1);
         setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
@@ -269,7 +343,7 @@ export default function NotificationCenter({ socket }) {
 
   const markAllRead = async () => {
     try {
-      const channel = tab === 'deadlines' ? 'deadlines' : tab === 'messages' ? 'messages' : 'activity';
+      const channel = tab === 'deadlines' ? 'deadlines' : tab === 'events' ? 'events' : tab === 'messages' ? 'messages' : 'activity';
       await api.put('/dashboard/notifications/read-all', {}, { params: { channel } });
       await loadCount();
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
@@ -336,6 +410,8 @@ export default function NotificationCenter({ socket }) {
               navigate(`/crm/events`);
             } else if (notif.entity_type === 'release_note') {
               navigate(`/updates`);
+            } else if (notif.entity_type === 'cskh_followup' && notif.metadata?.nav_url) {
+              navigate(notif.metadata.nav_url);
             }
             setOpen(false);
           }}
@@ -362,7 +438,7 @@ export default function NotificationCenter({ socket }) {
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
             <h3 className="text-sm font-semibold text-gray-900">Thông báo</h3>
             <div className="flex items-center gap-2">
-              {(tab === 'activity' ? unreadActivity : tab === 'messages' ? unreadChat : unreadDeadlines) > 0 && (
+              {(tab === 'activity' ? unreadActivity : tab === 'events' ? unreadEvents : tab === 'messages' ? unreadChat : unreadDeadlines) > 0 && (
                 <button onClick={markAllRead} className="text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer flex items-center gap-1">
                   <CheckCheck className="h-3.5 w-3.5" /> Đọc tất cả
                 </button>
@@ -385,6 +461,10 @@ export default function NotificationCenter({ socket }) {
               className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'activity' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
               Hoạt động{unreadActivity > 0 ? ` (${unreadActivity})` : ''}
             </button>
+            <button type="button" onClick={() => { setTab('events'); setDeadlinesModule('all'); }}
+              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'events' ? 'text-violet-600 border-b-2 border-violet-600' : 'text-gray-500'}`}>
+              Sự kiện{unreadEvents > 0 ? ` (${unreadEvents})` : ''}
+            </button>
             <button type="button" onClick={() => { setTab('messages'); setDeadlinesModule('all'); }}
               className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'messages' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
               Tin nhắn{unreadChat > 0 ? ` (${unreadChat})` : ''}
@@ -393,9 +473,13 @@ export default function NotificationCenter({ socket }) {
               className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'deadlines' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
               Nhắc hạn{unreadDeadlines > 0 ? ` (${unreadDeadlines})` : ''}
             </button>
+            <button type="button" onClick={() => setTab('cskh')}
+              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'cskh' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-500'}`}>
+              CSKH{cskhCount > 0 ? ` (${cskhCount})` : ''}
+            </button>
           </div>
 
-          {(tab === 'activity' || tab === 'messages') && (
+          {(tab === 'activity' || tab === 'events' || tab === 'messages') && (
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-50 bg-gray-50/50">
               <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
                 <input
@@ -427,7 +511,73 @@ export default function NotificationCenter({ socket }) {
           )}
 
           <div className="max-h-[400px] overflow-y-auto">
-            {loading ? (
+            {tab === 'cskh' ? (
+              cskhLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <svg className="animate-spin h-5 w-5 text-emerald-500" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+                  </svg>
+                </div>
+              ) : cskhNotifs.length === 0 ? (
+                <div className="text-center py-10">
+                  <CalendarClock className="h-8 w-8 mx-auto text-gray-300 mb-2" />
+                  <p className="text-sm text-gray-400">Không có lead nào cần nhắc CSKH</p>
+                  <p className="text-xs text-gray-300 mt-1">Các thông báo đã tương tác sẽ ẩn trong 1 tháng</p>
+                </div>
+              ) : (
+                cskhNotifs.map((n) => {
+                  const key = `${n.pipeline_id}|${n.stage_id}|${n.company_id || ''}|${n.time_bucket}`;
+                  const isDismissing = dismissingKeys.has(key);
+                  return (
+                    <div
+                      key={key}
+                      className="px-4 py-3 hover:bg-emerald-50/60 cursor-pointer border-b border-gray-50 transition-colors"
+                    >
+                      <div className="flex gap-3 items-start">
+                        <div
+                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-sm font-bold"
+                          style={{ backgroundColor: `${n.stage_color || '#10B981'}20`, color: n.stage_color || '#10B981' }}
+                        >
+                          {n.stage_icon || <CalendarClock className="h-4 w-4" />}
+                        </div>
+                        <div className="flex-1 min-w-0" onClick={() => navigateToCskh(n)}>
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-semibold text-gray-900">
+                              {n.lead_count} lead cần chăm lại
+                            </p>
+                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 shrink-0">
+                              CSKH
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {n.stage_icon ? `${n.stage_icon} ` : ''}<span className="font-medium">{n.stage_name}</span>
+                            {' · '}{n.pipeline_name}
+                            {n.company_name ? ` · ${n.company_name}` : ''}
+                          </p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            Tuổi lead: {n.time_label}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); dismissCskh(n); }}
+                          disabled={isDismissing}
+                          className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
+                            isDismissing
+                              ? 'bg-gray-100 text-gray-300'
+                              : 'hover:bg-emerald-100 text-gray-400 hover:text-emerald-600'
+                          }`}
+                          title="Đã tương tác — ẩn 1 tháng"
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )
+            ) : loading ? (
               <div className="flex items-center justify-center py-8">
                 <svg className="animate-spin h-5 w-5 text-gray-400" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
@@ -440,11 +590,13 @@ export default function NotificationCenter({ socket }) {
                 <p className="text-sm text-gray-400">
                   {tab === 'messages'
                     ? 'Không có tin nhắn'
-                    : tab === 'deadlines'
-                      ? 'Không có thông báo nhắc hạn'
-                      : onlyUnread
-                        ? 'Không có thông báo hoạt động chưa đọc'
-                        : 'Chưa có thông báo hoạt động'}
+                    : tab === 'events'
+                      ? (onlyUnread ? 'Không có sự kiện chưa đọc' : 'Chưa có thông báo sự kiện')
+                      : tab === 'deadlines'
+                        ? 'Không có thông báo nhắc hạn'
+                        : onlyUnread
+                          ? 'Không có thông báo hoạt động chưa đọc'
+                          : 'Chưa có thông báo hoạt động'}
                 </p>
               </div>
             ) : (
@@ -482,6 +634,8 @@ export default function NotificationCenter({ socket }) {
                         navigate(`/crm/events`);
                       } else if (n.entity_type === 'release_note') {
                         navigate(`/updates`);
+                      } else if (n.entity_type === 'cskh_followup' && n.metadata?.nav_url) {
+                        navigate(n.metadata.nav_url);
                       }
                       setOpen(false);
                     }}

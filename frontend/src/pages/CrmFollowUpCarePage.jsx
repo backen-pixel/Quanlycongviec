@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
@@ -86,14 +86,21 @@ export default function CrmFollowUpCarePage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [urlParamsApplied, setUrlParamsApplied] = useState(false);
 
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => {
     if (typeof window === 'undefined') return '';
+    const qc = new URLSearchParams(window.location.search).get('company_id');
+    if (qc) return qc;
     return getStoredCrmFilterCompanyId() || '';
   });
   const [pipelines, setPipelines] = useState([]);
-  const [pipelineId, setPipelineId] = useState('');
+  const [pipelineId, setPipelineId] = useState(() => {
+    return new URLSearchParams(window.location.search).get('pipeline_id') || '';
+  });
   const [stages, setStages] = useState([]);
   const [pipelineType, setPipelineType] = useState(() => {
     try {
@@ -103,8 +110,13 @@ export default function CrmFollowUpCarePage() {
       return 'lead';
     }
   });
-  const [stageId, setStageId] = useState('');
-  const [timePreset, setTimePreset] = useState('w1');
+  const [stageId, setStageId] = useState(() => {
+    return new URLSearchParams(window.location.search).get('stage_id') || '';
+  });
+  const [timePreset, setTimePreset] = useState(() => {
+    const qt = new URLSearchParams(window.location.search).get('time');
+    return qt || 'w1';
+  });
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [showDateRangePicker, setShowDateRangePicker] = useState(false);
@@ -119,6 +131,20 @@ export default function CrmFollowUpCarePage() {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(null);
+
+  useEffect(() => {
+    if (urlParamsApplied) return;
+    const hasQp = searchParams.has('pipeline_id') || searchParams.has('stage_id') || searchParams.has('company_id') || searchParams.has('time');
+    if (hasQp) {
+      setUrlParamsApplied(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('pipeline_id');
+      next.delete('stage_id');
+      next.delete('company_id');
+      next.delete('time');
+      setSearchParams(next, { replace: true });
+    }
+  }, [urlParamsApplied, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!isAdmin) return;

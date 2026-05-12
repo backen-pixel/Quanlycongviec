@@ -4979,13 +4979,17 @@ r.delete('/leads/:id', async (req, res) => {
       .eq('id', req.params.id).single();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
 
+    const deleteReason = req.body?.delete_reason || req.query.delete_reason || '';
+
     // Snapshot vào Thùng rác trước khi xóa thật, để admin có thể phục hồi.
     // Nếu permanent=true thì không snapshot (xóa vĩnh viễn).
     const permanent = req.query.permanent === 'true';
     if (!permanent) {
       try {
         const { snapshotCrmLead } = require('../helpers/trashSnapshot');
-        const snapRes = await snapshotCrmLead(supabase, lead.id, req.user?.userId);
+        const snapRes = await snapshotCrmLead(supabase, lead.id, req.user?.userId, {
+          delete_reason: deleteReason || null,
+        });
         if (!snapRes.ok) console.warn('[delete lead] snapshot trash failed:', snapRes.error);
       } catch (e) {
         console.warn('[delete lead] trash snapshot error:', e.message);
@@ -10393,6 +10397,231 @@ r.get('/leads/:id/chat/pinned', async (req, res) => {
       .order('created_at', { ascending: false });
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CSKH FOLLOW-UP CARE NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FOLLOWUP_TIME_BUCKETS = [
+  { key: 'w1', label: '7–13 ngày trước', daysFrom: 13, daysTo: 7 },
+  { key: 'w2', label: '14–20 ngày trước', daysFrom: 20, daysTo: 14 },
+  { key: 'w3', label: '21–27 ngày trước', daysFrom: 27, daysTo: 21 },
+  { key: 'w4', label: '28–34 ngày trước', daysFrom: 34, daysTo: 28 },
+];
+
+r.get('/followup-care/notifications', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const isAdminUser = userIsAdmin(req.user?.role);
+    const sacId = scopedAdminCompanyId(req);
+
+    let companyFilter = req.query.company_id || null;
+    if (sacId) companyFilter = sacId;
+    else if (!isAdminUser) {
+      companyFilter = req.user?.company_id || null;
+    }
+
+    let dismissedSet = new Set();
+    try {
+      const { data: dismissals } = await supabase
+        .from('crm_followup_care_dismissals')
+        .select('pipeline_id, stage_id, company_id, time_bucket, expires_at')
+        .eq('user_id', userId)
+        .gt('expires_at', new Date().toISOString());
+      dismissedSet = new Set(
+        (dismissals || []).map((d) => `${d.pipeline_id || ''}|${d.stage_id || ''}|${d.company_id || ''}|${d.time_bucket}`)
+      );
+    } catch { }
+
+    let pipelinesQuery = supabase
+      .from('crm_pipelines')
+      .select('id, name, company_id, company:companies(id, name, short_name)')
+      .eq('is_active', true);
+    if (companyFilter) pipelinesQuery = pipelinesQuery.eq('company_id', companyFilter);
+    const { data: pipelines } = await pipelinesQuery;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const maxDaysBack = Math.max(...FOLLOWUP_TIME_BUCKETS.map((b) => b.daysFrom));
+    const globalDateFrom = new Date(today);
+    globalDateFrom.setDate(globalDateFrom.getDate() - maxDaysBack);
+
+    const allPipelineIds = (pipelines || []).map((p) => p.id);
+    if (!allPipelineIds.length) return res.json({ notifications: [], total: 0 });
+
+    const pipelineMap = Object.fromEntries((pipelines || []).map((p) => [p.id, p]));
+
+    const stagePromises = allPipelineIds.map((pid) =>
+      supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, color, icon, order_index, is_won, is_lost, pipeline_id')
+        .eq('pipeline_id', pid)
+        .eq('is_active', true)
+        .order('order_index')
+    );
+    const stageResults = await Promise.all(stagePromises);
+    const stageMap = {};
+    const openStageIds = [];
+    stageResults.forEach((r) => {
+      (r.data || []).forEach((s) => {
+        stageMap[s.id] = s;
+        if (!s.is_won && !s.is_lost) openStageIds.push(s.id);
+      });
+    });
+
+    if (!openStageIds.length) return res.json({ notifications: [], total: 0 });
+
+    const batchSize = 500;
+    let allLeads = [];
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore) {
+      let q = supabase
+        .from('crm_leads')
+        .select('stage_id, pipeline_id, created_at')
+        .is('parent_lead_id', null)
+        .in('pipeline_id', allPipelineIds)
+        .in('stage_id', openStageIds)
+        .gte('created_at', globalDateFrom.toISOString().split('T')[0])
+        .lte('created_at', `${today.toISOString().split('T')[0]}T23:59:59.999Z`)
+        .range(offset, offset + batchSize - 1);
+
+      if (!isAdminUser && !sacId) {
+        q = q.or(`assigned_to.eq.${userId},lead_owner_id.eq.${userId}`);
+      } else if (companyFilter) {
+        q = q.eq('company_id', companyFilter);
+      }
+
+      const { data: batch } = await q;
+      const rows = batch || [];
+      allLeads = allLeads.concat(rows);
+      hasMore = rows.length === batchSize;
+      offset += batchSize;
+    }
+
+    const countsMap = {};
+    for (const lead of allLeads) {
+      const createdMs = new Date(lead.created_at).getTime();
+      for (const bucket of FOLLOWUP_TIME_BUCKETS) {
+        const from = new Date(today);
+        from.setDate(from.getDate() - bucket.daysFrom);
+        const to = new Date(today);
+        to.setDate(to.getDate() - bucket.daysTo);
+        to.setHours(23, 59, 59, 999);
+        if (createdMs >= from.getTime() && createdMs <= to.getTime()) {
+          const key = `${lead.pipeline_id}|${lead.stage_id}|${bucket.key}`;
+          countsMap[key] = (countsMap[key] || 0) + 1;
+          break;
+        }
+      }
+    }
+
+    const notifications = [];
+    for (const [key, count] of Object.entries(countsMap)) {
+      const [pipelineId, stageId, timeBucket] = key.split('|');
+      const pipeline = pipelineMap[pipelineId];
+      const stage = stageMap[stageId];
+      if (!pipeline || !stage) continue;
+
+      const dismissKey = `${pipelineId}|${stageId}|${pipeline.company_id || ''}|${timeBucket}`;
+      if (dismissedSet.has(dismissKey)) continue;
+
+      const bucketMeta = FOLLOWUP_TIME_BUCKETS.find((b) => b.key === timeBucket);
+      notifications.push({
+        pipeline_id: pipelineId,
+        pipeline_name: pipeline.name,
+        stage_id: stageId,
+        stage_name: stage.name,
+        stage_color: stage.color,
+        stage_icon: stage.icon,
+        company_id: pipeline.company_id,
+        company_name: pipeline.company?.short_name || pipeline.company?.name || null,
+        time_bucket: timeBucket,
+        time_label: bucketMeta?.label || timeBucket,
+        lead_count: count,
+      });
+    }
+
+    notifications.sort((a, b) => b.lead_count - a.lead_count);
+    res.json({ notifications, total: notifications.length });
+  } catch (e) {
+    console.error('GET /crm/followup-care/notifications:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+r.post('/followup-care/dismiss', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { pipeline_id, stage_id, company_id, time_bucket } = req.body;
+    if (!time_bucket) return res.status(400).json({ error: 'Thiếu time_bucket' });
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30);
+
+    const { data, error } = await supabase
+      .from('crm_followup_care_dismissals')
+      .insert({
+        user_id: userId,
+        pipeline_id: pipeline_id || null,
+        stage_id: stage_id || null,
+        company_id: company_id || null,
+        time_bucket,
+        expires_at: expiresAt.toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      const msg = String(error.message || '');
+      if (msg.includes('does not exist') || msg.includes('schema cache')) {
+        return res.status(503).json({
+          error: 'Bảng crm_followup_care_dismissals chưa tạo. Chạy file database/153_crm_followup_care_dismissals.sql trong Supabase SQL Editor.',
+        });
+      }
+      throw error;
+    }
+    res.json({ ok: true, dismissal: data });
+  } catch (e) {
+    console.error('POST /crm/followup-care/dismiss:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+r.delete('/followup-care/dismiss', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { pipeline_id, stage_id, company_id, time_bucket } = req.query;
+    if (!time_bucket) return res.status(400).json({ error: 'Thiếu time_bucket' });
+
+    let q = supabase
+      .from('crm_followup_care_dismissals')
+      .delete()
+      .eq('user_id', userId)
+      .eq('time_bucket', time_bucket);
+
+    if (pipeline_id) q = q.eq('pipeline_id', pipeline_id);
+    else q = q.is('pipeline_id', null);
+    if (stage_id) q = q.eq('stage_id', stage_id);
+    else q = q.is('stage_id', null);
+    if (company_id) q = q.eq('company_id', company_id);
+    else q = q.is('company_id', null);
+
+    const { error } = await q;
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE /crm/followup-care/dismiss:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
 });
 
 module.exports = r;

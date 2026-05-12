@@ -169,6 +169,7 @@ export default function TrashPage() {
               <tr>
                 <th className="text-left px-4 py-3">Loại</th>
                 <th className="text-left px-4 py-3">Tên</th>
+                <th className="text-left px-4 py-3">Lý do xóa</th>
                 <th className="text-left px-4 py-3">Người xóa</th>
                 <th className="text-left px-4 py-3">Xóa lúc</th>
                 <th className="text-left px-4 py-3">Tự động dọn</th>
@@ -188,6 +189,15 @@ export default function TrashPage() {
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900 max-w-xs truncate" title={it.entity_label}>
                       {it.entity_label || '—'}
+                    </td>
+                    <td className="px-4 py-3 max-w-[200px]">
+                      {it.delete_reason ? (
+                        <span className="text-sm text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-0.5 inline-block truncate max-w-full" title={it.delete_reason}>
+                          {it.delete_reason}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 text-xs">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-600">{it.deleter?.full_name || '—'}</td>
                     <td className="px-4 py-3 text-gray-600">{fmtDate(it.deleted_at)}</td>

@@ -280,6 +280,8 @@ export default function CRMDashboard() {
   const [bulkMoving, setBulkMoving] = useState(false);
   const [bulkAssignModalOpen, setBulkAssignModalOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
+  const [bulkDeleteReason, setBulkDeleteReason] = useState('');
   /** Deal pipeline: mở popup chọn giờ rồi POST /events sau PATCH stage (bật theo từng pipeline tại Cài đặt pipeline) */
   const [dealKanbanEventCtx, setDealKanbanEventCtx] = useState(null);
   const [dealKanbanEventBusy, setDealKanbanEventBusy] = useState(false);
@@ -349,25 +351,31 @@ export default function CRMDashboard() {
     });
   }, []);
 
-  const bulkDeleteSelected = useCallback(async () => {
+  const bulkDeleteSelected = useCallback(() => {
     const ids = [...new Set((manualMergeIds || []).map((x) => String(x)).filter(Boolean))];
     if (!ids.length) return;
-    const label = pipelineType === 'deal' ? 'deal' : 'lead';
-    if (!window.confirm(`Xóa ${ids.length} ${label} đã chọn?\n\nLưu ý: thao tác xóa sẽ xóa luôn dữ liệu liên quan (tài liệu / hoạt động / dự án liên kết nếu có).`)) return;
+    setBulkDeleteReason('');
+    setBulkDeleteModalOpen(true);
+  }, [manualMergeIds]);
+
+  const confirmBulkDelete = useCallback(async () => {
+    const ids = [...new Set((manualMergeIds || []).map((x) => String(x)).filter(Boolean))];
+    if (!ids.length) return;
     setBulkDeleting(true);
     try {
       for (const id of ids) {
-        // Backend dùng chung DELETE /crm/leads/:id cho cả lead & deal
-        // (deal con đã bị ẩn khỏi list; checkbox chỉ chọn lead/deal gốc)
-        await api.delete(`/crm/leads/${encodeURIComponent(id)}`);
+        await api.delete(`/crm/leads/${encodeURIComponent(id)}`, {
+          data: { delete_reason: bulkDeleteReason.trim() || null },
+        });
       }
       setManualMergeIds([]);
+      setBulkDeleteModalOpen(false);
       await loadRef.current?.();
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi xóa');
     }
     setBulkDeleting(false);
-  }, [manualMergeIds, pipelineType]);
+  }, [manualMergeIds, bulkDeleteReason]);
 
   useEffect(() => {
     setManualMergeIds([]);
@@ -1819,8 +1827,8 @@ export default function CRMDashboard() {
    * Tab ẩn: chu kỳ dài hơn; tab hiện: ~45s. Focus lại tab có thể chạy một lần ngay.
    */
   useEffect(() => {
-    /** Khi tab đang mở: ~45s một lần ping nhẹ; tab ẩn thì bỏ qua (không gọi API — tiết kiệm băng thông). */
-    const POLL_MS = 45000;
+    /** Cứ 2 phút tự reload ngầm một lần khi tab đang hiện; tab ẩn thì bỏ qua. */
+    const POLL_MS = 120_000;
     let intervalId = null;
     const clearInt = () => {
       if (intervalId) {
@@ -1830,19 +1838,8 @@ export default function CRMDashboard() {
     };
     const runTick = async () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      if (crmLiveVersionRef.current === null) return;
       try {
-        const dateParams = {};
-        if (customDateFrom) dateParams.date_from = customDateFrom;
-        if (customDateTo) dateParams.date_to = customDateTo;
-        const params = { ...dateParams };
-        if (dashboardScopeCompanyId) params.company_id = dashboardScopeCompanyId;
-        const { data } = await api.get('/crm/live-version', { params });
-        const v = data?.v ?? 0;
-        if (v !== crmLiveVersionRef.current) {
-          crmLiveVersionRef.current = v;
-          await loadRef.current?.({ silent: true });
-        }
+        await loadRef.current?.({ silent: true });
       } catch {
         /* ignore */
       }
@@ -1943,7 +1940,14 @@ export default function CRMDashboard() {
             {pipelineType === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}
           </h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/trash')}
+            className={`border border-gray-300 text-gray-600 hover:bg-red-50 hover:text-red-600 hover:border-red-300 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer transition-all duration-200 ${compactLeadUi ? 'h-8 px-2.5 text-xs' : 'h-9 px-3 text-sm'}`}
+            title="Xem lead/deal đã xóa"
+          >
+            <Trash2 className={compactLeadUi ? 'h-3.5 w-3.5' : 'h-4 w-4'} /> Thùng rác
+          </button>
           <button data-tour="add-lead" onClick={() => pipelineType === 'lead' ? setShowNewLead(true) : setShowNewDeal(true)} className={`bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 cursor-pointer transition-all duration-200 ${compactLeadUi ? 'h-8 px-3 text-xs' : 'h-9 px-4 text-sm'}`}>
             <Plus className={compactLeadUi ? 'h-3.5 w-3.5' : 'h-4 w-4'} /> + Thêm {pipelineType === 'lead' ? 'Lead' : 'Deal'}
           </button>
@@ -2183,31 +2187,30 @@ export default function CRMDashboard() {
 
         {/* Advanced filters row */}
         {showAdvSearch && (
-          <div className="flex flex-wrap items-center gap-3 bg-white border border-gray-200 rounded-xl p-3 shadow-sm">
-            <span className="text-xs font-bold text-gray-500 uppercase">Lọc nâng cao:</span>
-
-            {/* NV: tìm trong list + chọn + lọc pipeline theo tên (Lead & Deal) */}
+          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm space-y-3">
+            {/* Row 1: Nhân viên */}
             <div className="flex flex-wrap items-end gap-2">
+              <span className="text-[10px] font-bold text-gray-400 uppercase self-center mr-1">NV</span>
               <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Tìm tên trong danh sách NV</label>
+                <label className="text-[10px] text-gray-500 font-medium">Tìm NV</label>
                 <input
                   type="search"
                   value={assigneeListSearch}
                   onChange={(e) => setAssigneeListSearch(e.target.value)}
                   placeholder="Gõ tên, email…"
-                  className="h-9 w-44 max-w-[min(100vw-2rem,11rem)] px-2.5 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="h-8 w-36 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
               </div>
               <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Chọn NV (API + lọc)</label>
+                <label className="text-[10px] text-gray-500 font-medium">Chọn NV</label>
                 <select
                   value={filterAssignee}
                   onChange={(e) => setFilterAssignee(e.target.value)}
                   disabled={!seesAllCrmDeals && pipelineType === 'deal'}
-                  title={!seesAllCrmDeals && pipelineType === 'deal' ? 'Deal: chỉ hiển thị deal do bạn phụ trách (theo tài khoản đăng nhập).' : undefined}
-                  className={`h-9 min-w-[10rem] px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${!seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
+                  title={!seesAllCrmDeals && pipelineType === 'deal' ? 'Deal: chỉ hiển thị deal do bạn phụ trách.' : undefined}
+                  className={`h-8 w-44 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 ${!seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
                 >
-                  <option value="">👤 Tất cả nhân viên</option>
+                  <option value="">Tất cả nhân viên</option>
                   {companyDepts.length > 0 ? (
                     companyDepts.map((dept) => {
                       const deptUsers = employeeOptionsForSelect.filter((u) => u.department_id === dept.id);
@@ -2226,132 +2229,140 @@ export default function CRMDashboard() {
                 </select>
               </div>
               <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Lọc theo tên NV trên pipeline</label>
+                <label className="text-[10px] text-gray-500 font-medium">Tên NV trên pipeline</label>
                 <input
                   type="search"
                   value={filterAssigneeName}
                   onChange={(e) => setFilterAssigneeName(e.target.value)}
                   disabled={!seesAllCrmDeals && pipelineType === 'deal'}
-                  placeholder="Chỉ tên người phụ trách / chủ lead"
-                  title={!seesAllCrmDeals && pipelineType === 'deal' ? 'Deal: lọc NV đã cố định theo tài khoản của bạn.' : 'Không lọc theo tên khách hàng — tránh trùng với ô tìm nhanh phía trên'}
-                  className={`h-9 w-52 max-w-[min(100vw-2rem,13rem)] px-2.5 bg-amber-50/80 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 ${!seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  placeholder="Tên người phụ trách…"
+                  title={!seesAllCrmDeals && pipelineType === 'deal' ? 'Deal: lọc NV đã cố định theo tài khoản của bạn.' : ''}
+                  className={`h-8 w-44 px-2 bg-amber-50/80 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 ${!seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : ''}`}
                 />
               </div>
-            </div>
-
-            {/* Company */}
-            {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
-              <select
-                value={filterCompany}
-                onChange={e => setFilterCompany(e.target.value)}
-                className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-              >
-                <option value="">🏢 Tất cả công ty</option>
-                {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
-              </select>
-            )}
-            {!isAdmin && userCompanyId && (
-              <span className="h-9 inline-flex items-center px-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
-                🏢 Công ty của bạn
-              </span>
-            )}
-            {isCompanyScopedAdmin && userCompanyId && (
-              <span className="h-9 inline-flex items-center px-3 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-800" title="Tài khoản admin phạm vi một công ty">
-                🏢 {companies.find((c) => String(c.id) === String(userCompanyId))?.short_name
-                  || companies.find((c) => String(c.id) === String(userCompanyId))?.name
-                  || 'Công ty của bạn'}
-              </span>
-            )}
-
-            {/* Source - smart: chỉ nguồn đang dùng, FB → [FB] Tên Page */}
-            {smartSources.length > 0 && (
-              <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
-                className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
-                <option value="">🔗 Tất cả nguồn</option>
-                {smartSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-              </select>
-            )}
-
-            {/* Stage */}
-            <select value={filterStage} onChange={e => setFilterStage(e.target.value)}
-              className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
-              <option value="">📊 Tất cả giai đoạn</option>
-              {(pipelineType === 'lead' ? stagesLead : stagesDeal).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-
-            {/* Khu vực CRM — danh sách theo công ty đang phạm vi dashboard */}
-            <div className="flex flex-col gap-0.5">
-              <label className="text-[10px] text-gray-500 font-medium flex items-center gap-1">
-                <MapPin className="h-3 w-3 shrink-0" /> Khu vực
-              </label>
-              <select
-                value={filterRegion}
-                onChange={(e) => setFilterRegion(e.target.value)}
-                disabled={!dashboardScopeCompanyId}
-                title={
-                  !dashboardScopeCompanyId
-                    ? 'Chọn phạm vi công ty để lọc theo khu vực'
-                    : 'Lọc lead và deal theo khu vực (CRM)'
-                }
-                className={`h-9 min-w-[11rem] px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  dashboardScopeCompanyId ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
-                }`}
-              >
-                <option value="">Tất cả khu vực</option>
-                <option value="__none__">Chưa gán khu vực</option>
-                {companyRegions.map((reg) => (
-                  <option key={reg.id} value={reg.id}>
-                    {reg.is_active === false ? '· ' : ''}
-                    {reg.name}
-                    {reg.code ? ` (${reg.code})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Lead/Deal type (always visible; disabled when chưa cấu hình) */}
-            <div className="flex items-center gap-2">
-              <select
-                value={filterLeadType}
-                onChange={e => setFilterLeadType(e.target.value)}
-                disabled={leadTypes.length === 0}
-                className={`h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${
-                  leadTypes.length === 0 ? 'opacity-70 cursor-not-allowed' : ''
-                }`}
-                title={leadTypes.length === 0 ? 'Chưa có danh mục phân loại (Lead/Deal types) cho công ty' : 'Lọc theo phân loại'}
-              >
-                <option value="">🏷️ {leadTypes.length === 0 ? 'Chưa cấu hình loại' : 'Tất cả loại'}</option>
-                {leadTypes
-                  .filter((t) => t.applies_to === 'both' || t.applies_to === pipelineType)
-                  .map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-              {leadTypes.length === 0 && (
-                <button
-                  onClick={() => navigate('/crm/pipeline-settings')}
-                  className="h-9 px-3 rounded-lg text-xs font-medium bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 cursor-pointer"
-                  title="Mở Pipeline Settings để thêm phân loại"
-                >
-                  Cấu hình
-                </button>
+              {companyDepts.length > 0 && (
+                <span className="text-[10px] text-green-600 bg-green-50 px-2 py-1 rounded-lg border border-green-100 self-end">
+                  {companyEmployees.length} NV
+                </span>
               )}
             </div>
 
-            {/* Phone filter */}
-            <select value={filterPhone} onChange={e => setFilterPhone(e.target.value)}
-              className={`h-9 px-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${
-                filterPhone === 'has_phone' ? 'bg-green-50 border-green-300 text-green-700' :
-                filterPhone === 'no_phone'  ? 'bg-red-50 border-red-300 text-red-700' : 'bg-gray-50 border-gray-200'
-              }`}>
-              <option value="has_phone">✅ Đã có SĐT</option>
-              <option value="no_phone">❌ Chưa có SĐT</option>
-            </select>
+            {/* Row 2: Công ty · Nguồn · Giai đoạn · Khu vực · Loại · SĐT */}
+            <div className="flex flex-wrap items-end gap-2">
+              {/* Company */}
+              {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] text-gray-500 font-medium">Công ty</label>
+                  <select
+                    value={filterCompany}
+                    onChange={e => setFilterCompany(e.target.value)}
+                    className="h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                  >
+                    <option value="">Tất cả công ty</option>
+                    {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+                  </select>
+                </div>
+              )}
+              {!isAdmin && userCompanyId && (
+                <span className="h-8 inline-flex items-center px-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 self-end">
+                  🏢 Công ty của bạn
+                </span>
+              )}
+              {isCompanyScopedAdmin && userCompanyId && (
+                <span className="h-8 inline-flex items-center px-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-800 self-end" title="Admin phạm vi một công ty">
+                  🏢 {companies.find((c) => String(c.id) === String(userCompanyId))?.short_name
+                    || companies.find((c) => String(c.id) === String(userCompanyId))?.name
+                    || 'Công ty của bạn'}
+                </span>
+              )}
 
-            {/* Company employees info badge */}
-            {companyDepts.length > 0 && (
-              <span className="text-[10px] text-green-600 bg-green-50 px-2 py-1 rounded-lg border border-green-200">
-                🏢 {companyEmployees.length} NV kinh doanh
-              </span>
-            )}
+              {/* Source */}
+              {smartSources.length > 0 && (
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] text-gray-500 font-medium">Nguồn</label>
+                  <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
+                    className="h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer">
+                    <option value="">Tất cả nguồn</option>
+                    {smartSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* Stage */}
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">Giai đoạn</label>
+                <select value={filterStage} onChange={e => setFilterStage(e.target.value)}
+                  className="h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer">
+                  <option value="">Tất cả giai đoạn</option>
+                  {(pipelineType === 'lead' ? stagesLead : stagesDeal).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+
+              {/* Region */}
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">Khu vực</label>
+                <select
+                  value={filterRegion}
+                  onChange={(e) => setFilterRegion(e.target.value)}
+                  disabled={!dashboardScopeCompanyId}
+                  title={!dashboardScopeCompanyId ? 'Chọn phạm vi công ty để lọc theo khu vực' : 'Lọc theo khu vực'}
+                  className={`h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                    dashboardScopeCompanyId ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                  }`}
+                >
+                  <option value="">Tất cả khu vực</option>
+                  <option value="__none__">Chưa gán khu vực</option>
+                  {companyRegions.map((reg) => (
+                    <option key={reg.id} value={reg.id}>
+                      {reg.is_active === false ? '· ' : ''}{reg.name}{reg.code ? ` (${reg.code})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Lead/Deal type */}
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">Phân loại</label>
+                <div className="flex items-center gap-1">
+                  <select
+                    value={filterLeadType}
+                    onChange={e => setFilterLeadType(e.target.value)}
+                    disabled={leadTypes.length === 0}
+                    className={`h-8 w-36 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer ${
+                      leadTypes.length === 0 ? 'opacity-70 cursor-not-allowed' : ''
+                    }`}
+                    title={leadTypes.length === 0 ? 'Chưa cấu hình phân loại' : 'Lọc theo phân loại'}
+                  >
+                    <option value="">{leadTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
+                    {leadTypes
+                      .filter((t) => t.applies_to === 'both' || t.applies_to === pipelineType)
+                      .map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  {leadTypes.length === 0 && (
+                    <button
+                      onClick={() => navigate('/crm/pipeline-settings')}
+                      className="h-8 px-2 rounded-lg text-[10px] font-medium bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 cursor-pointer whitespace-nowrap"
+                      title="Mở Pipeline Settings để thêm phân loại"
+                    >
+                      Cấu hình
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Phone filter */}
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">SĐT</label>
+                <select value={filterPhone} onChange={e => setFilterPhone(e.target.value)}
+                  className={`h-8 w-32 px-2 border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer ${
+                    filterPhone === 'has_phone' ? 'bg-green-50 border-green-300 text-green-700' :
+                    filterPhone === 'no_phone'  ? 'bg-red-50 border-red-300 text-red-700' : 'bg-gray-50 border-gray-200'
+                  }`}>
+                  <option value="has_phone">✅ Có SĐT</option>
+                  <option value="no_phone">❌ Chưa có SĐT</option>
+                </select>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -2851,6 +2862,48 @@ export default function CRMDashboard() {
           load();
         }}
       />
+
+      {bulkDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => !bulkDeleting && setBulkDeleteModalOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-900 mb-1">
+              Xóa {manualMergeIds.length} {pipelineType === 'deal' ? 'deal' : 'lead'} đã chọn
+            </h3>
+            <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg p-2.5 mb-4">
+              Thao tác xóa sẽ xóa luôn dữ liệu liên quan (tài liệu / hoạt động / dự án liên kết nếu có). Bạn có thể phục hồi từ Thùng rác.
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Lý do xóa</label>
+              <textarea
+                value={bulkDeleteReason}
+                onChange={(e) => setBulkDeleteReason(e.target.value)}
+                placeholder="Nhập lý do xóa (không bắt buộc)…"
+                className="w-full h-20 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400 resize-none"
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={bulkDeleting}
+                onClick={() => setBulkDeleteModalOpen(false)}
+                className="h-9 px-4 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={bulkDeleting}
+                onClick={confirmBulkDelete}
+                className="h-9 px-4 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {bulkDeleting ? 'Đang xóa…' : 'Xác nhận xóa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3612,7 +3665,12 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
 
       {/* Title */}
       <div className={`flex items-start gap-1.5 min-w-0 ${compact ? 'mb-1' : 'mb-2'}`}>
-        <p className={`font-medium text-gray-900 truncate flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'}`}>{item.title}</p>
+        <div className="flex-1 min-w-0">
+          <p
+            title={splitPickZones ? undefined : item.title}
+            className={`font-medium text-gray-900 truncate ${compact ? 'text-xs' : 'text-sm'}`}
+          >{item.title}</p>
+        </div>
         {item.is_new_for_current_user && (
           <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-white bg-rose-500 px-1.5 py-0.5 rounded leading-tight">Mới</span>
         )}
@@ -4018,8 +4076,12 @@ function NewDealModal({ onClose, onSuccess, leadTypes, companies, defaultCompany
       setModalRegions([]);
       return;
     }
+    const selectedCo = (companies || []).find((c) => String(c.id) === cid);
+    const divId = selectedCo?.division_unit_id || null;
     let cancelled = false;
-    api.get('/crm/company-regions', { params: { company_id: cid } })
+    const params = { company_id: cid };
+    if (divId) params.division_unit_id = divId;
+    api.get('/crm/company-regions', { params })
       .then((r) => {
         if (cancelled) return;
         const list = Array.isArray(r.data) ? r.data : [];
@@ -4027,7 +4089,7 @@ function NewDealModal({ onClose, onSuccess, leadTypes, companies, defaultCompany
       })
       .catch(() => { if (!cancelled) setModalRegions([]); });
     return () => { cancelled = true; };
-  }, [formData.company_id]);
+  }, [formData.company_id, companies]);
 
   useEffect(() => {
     const uidRegions = currentUser?.crm_region_ids;
@@ -4110,174 +4172,234 @@ function NewDealModal({ onClose, onSuccess, leadTypes, companies, defaultCompany
 
   const set = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
 
+  const companyName = companies.find((c) => String(c.id) === String(formData.company_id))?.short_name
+    || companies.find((c) => String(c.id) === String(formData.company_id))?.name || '';
+  const regionName = modalRegions.find((r) => String(r.id) === String(formData.region_id))?.name || '';
+  const sourceName = modalSources.find((s) => String(s.id) === String(formData.source_id))?.name || '';
+  const leadTypeName = visibleLeadTypes.find((t) => String(t.id) === String(formData.lead_type_id))?.name || '';
+
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">🎯 Tạo Deal mới</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Tạo deal trực tiếp - không cần qua Lead</p>
-          </div>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-500" /></button>
-        </div>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]" onClick={e => e.stopPropagation()}>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Tên Deal */}
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">Tên Deal *</label>
-            <input type="text" required value={formData.title} onChange={e => set('title', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              placeholder="VD: Tủ bếp gỗ sồi nhà anh Minh" />
+        {/* ── LEFT: Form ── */}
+        <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">🎯 Tạo Deal mới</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Tạo deal trực tiếp — không cần qua Lead</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
           </div>
 
-          {/* Công ty */}
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty *</label>
-            {isAdmin ? (
-              <select value={formData.company_id} onChange={(e) => setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '' }))} required
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}>
-                <option value="">-- Chọn công ty --</option>
-                {(companies || []).map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
-              </select>
-            ) : (
-              <div className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800">
-                {companies.find((c) => String(c.id) === String(formData.company_id))?.short_name
-                  || companies.find((c) => String(c.id) === String(formData.company_id))?.name
-                  || 'Công ty của bạn'}
+          {/* Scrollable form */}
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            <form id="deal-form" onSubmit={handleSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Tên Deal <span className="text-red-500">*</span></label>
+                <input type="text" required value={formData.title} onChange={e => set('title', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent text-sm"
+                  placeholder="VD: Tủ bếp gỗ sồi nhà anh Minh" autoFocus />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">🏢 Công ty <span className="text-red-500">*</span></label>
+                  {isAdmin ? (
+                    <select value={formData.company_id} onChange={(e) => setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '' }))} required
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-400 text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+                      <option value="">-- Chọn --</option>
+                      {(companies || []).map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+                    </select>
+                  ) : (
+                    <div className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800">{companyName || 'Công ty của bạn'}</div>
+                  )}
+                </div>
+                {modalRegions.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">📍 Khu vực <span className="text-red-500">*</span></label>
+                    <select required value={formData.region_id} onChange={(e) => set('region_id', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm">
+                      <option value="">-- Chọn --</option>
+                      {modalRegions.map((r) => <option key={r.id} value={r.id}>{r.name}{r.division?.short_name ? ` — ${r.division.short_name}` : ''}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-blue-50 rounded-xl p-3.5 space-y-2.5">
+                <p className="text-[11px] font-bold text-blue-700 uppercase tracking-wide">👤 Thông tin khách hàng</p>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Tên khách hàng <span className="text-red-500">*</span></label>
+                  <input type="text" required value={formData.customer_name} onChange={e => set('customer_name', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm bg-white"
+                    placeholder="Nguyễn Văn A" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Số điện thoại <span className="text-red-500">*</span></label>
+                    <input type="text" required value={formData.customer_phone} onChange={e => set('customer_phone', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm bg-white"
+                      placeholder="0901234567" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                    <input type="email" value={formData.customer_email} onChange={e => set('customer_email', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm bg-white"
+                      placeholder="email@example.com" />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">📍 Địa chỉ lắp đặt</label>
+                <input type="text" value={formData.install_address} onChange={e => set('install_address', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm"
+                  placeholder="Số nhà, đường, quận/huyện, TP..." />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Nguồn</label>
+                  <select value={formData.source_id} onChange={e => set('source_id', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm">
+                    <option value="">-- Nguồn --</option>
+                    {modalSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                {visibleLeadTypes.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">🏷️ Loại Deal</label>
+                    <select value={formData.lead_type_id} onChange={e => set('lead_type_id', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm">
+                      <option value="">-- Không bắt buộc --</option>
+                      {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Giá trị (VND)</label>
+                  <input type="number" value={formData.estimated_value} onChange={e => set('estimated_value', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm" placeholder="0" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Xác suất (%)</label>
+                  <input type="number" min="0" max="100" value={formData.probability} onChange={e => set('probability', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Ghi chú</label>
+                <textarea value={formData.description} onChange={e => set('description', e.target.value)} rows={2}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm resize-none"
+                  placeholder="Ghi chú thêm về deal..." />
+              </div>
+            </form>
+          </div>
+
+          {/* Footer buttons */}
+          <div className="px-6 py-4 border-t border-gray-100 flex items-center gap-3 shrink-0 bg-gray-50">
+            {currentUser && (
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <User className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                <span className="text-xs text-gray-500 truncate">Phụ trách: <span className="font-semibold text-gray-700">{currentUser.full_name || currentUser.email}</span></span>
               </div>
             )}
-          </div>
-
-          {modalRegions.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">📍 Khu vực *</label>
-              <select
-                required
-                value={formData.region_id}
-                onChange={(e) => set('region_id', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              >
-                <option value="">-- Chọn khu vực --</option>
-                {modalRegions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                    {r.division?.short_name || r.division?.name ? ` — ${r.division?.short_name || r.division?.name}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Khách hàng */}
-          <div className="bg-blue-50 rounded-lg p-4 space-y-3">
-            <p className="text-xs font-bold text-blue-800 uppercase">👤 Thông tin khách hàng</p>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Tên khách hàng *</label>
-              <input type="text" required value={formData.customer_name} onChange={e => set('customer_name', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                placeholder="Nguyễn Văn A" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Số điện thoại *</label>
-                <input type="text" required value={formData.customer_phone} onChange={e => set('customer_phone', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  placeholder="0901234567" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
-                <input type="email" value={formData.customer_email} onChange={e => set('customer_email', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  placeholder="email@example.com" />
-              </div>
-            </div>
-          </div>
-
-          {/* Địa chỉ lắp đặt */}
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">📍 Địa chỉ lắp đặt</label>
-            <input type="text" value={formData.install_address} onChange={e => set('install_address', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              placeholder="Số nhà, đường, quận/huyện, TP..." />
-          </div>
-
-          {/* Nguồn */}
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">Nguồn</label>
-            <select value={formData.source_id} onChange={e => set('source_id', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
-              <option value="">-- Chọn nguồn --</option>
-              {modalSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-
-          {/* Loại Deal */}
-          {visibleLeadTypes.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">🏷️ Loại Deal</label>
-              <select
-                value={formData.lead_type_id}
-                onChange={e => set('lead_type_id', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              >
-                <option value="">-- Chọn loại (không bắt buộc) --</option>
-                {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-              {formData.lead_type_id && visibleLeadTypes.find((x) => String(x.id) === String(formData.lead_type_id))?.workshop_production_templates && (
-                <p className="mt-2 text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-3 py-2 leading-relaxed">
-                  Loại này được cấu hình để khi tạo Deal sẽ tự sinh nhiệm vụ pipeline Sản xuất (sx_*) theo bộ mẫu xưởng của công ty (áp dụng khi công ty thuộc module SX).
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Giá trị + Xác suất */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">Giá trị (VND)</label>
-              <input type="number" value={formData.estimated_value} onChange={e => set('estimated_value', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                placeholder="0" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">Xác suất (%)</label>
-              <input type="number" min="0" max="100" value={formData.probability} onChange={e => set('probability', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
-            </div>
-          </div>
-
-          {/* Ghi chú */}
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">Ghi chú</label>
-            <textarea value={formData.description} onChange={e => set('description', e.target.value)} rows={2}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm resize-none"
-              placeholder="Ghi chú thêm về deal..." />
-          </div>
-
-          {/* Phụ trách */}
-          {currentUser && (
-            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
-              <User className="h-4 w-4 text-green-600 flex-shrink-0" />
-              <div className="flex-1">
-                <span className="text-xs text-green-700 font-medium">Phụ trách:</span>
-                <span className="text-sm font-semibold text-green-900 ml-1.5">{currentUser.full_name || currentUser.email}</span>
-              </div>
-              <span className="text-[10px] text-green-600 bg-green-100 px-1.5 py-0.5 rounded">Tự động</span>
-            </div>
-          )}
-
-          {/* Buttons */}
-          <div className="flex items-center gap-3 pt-4 border-t">
-            <button type="submit" disabled={saving}
-              className="flex-1 px-4 py-2.5 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-all duration-200 disabled:opacity-50 text-sm cursor-pointer">
-              {saving ? 'Đang tạo...' : '🎯 Tạo Deal'}
-            </button>
             <button type="button" onClick={onClose}
-              className="px-4 py-2.5 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition text-sm cursor-pointer">
+              className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition cursor-pointer shrink-0">
               Hủy
             </button>
+            <button type="submit" form="deal-form" disabled={saving}
+              className="px-5 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold hover:bg-purple-700 transition disabled:opacity-50 cursor-pointer shrink-0">
+              {saving ? 'Đang tạo...' : '🎯 Tạo Deal'}
+            </button>
           </div>
-        </form>
+        </div>
+
+        {/* ── RIGHT: Kanban Card Preview ── */}
+        <div className="w-72 shrink-0 bg-gray-50 flex flex-col">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Xem trước thẻ Deal</p>
+          </div>
+          <div className="flex-1 px-4 py-5 overflow-y-auto">
+            <div className="bg-white rounded-xl border border-purple-200 shadow-sm p-4 space-y-3">
+              {/* Title */}
+              <div>
+                <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wide mb-1">🎯 Deal</p>
+                <p className="text-sm font-bold text-gray-900 leading-snug min-h-[1.5rem]">
+                  {formData.title || <span className="text-gray-300 italic font-normal">Chưa có tên...</span>}
+                </p>
+              </div>
+
+              {/* Customer */}
+              <div className="flex items-start gap-2 bg-blue-50 rounded-lg px-3 py-2.5">
+                <User className="h-3.5 w-3.5 text-blue-500 mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-gray-800 truncate">
+                    {formData.customer_name || <span className="text-gray-300 italic font-normal">Tên khách hàng</span>}
+                  </p>
+                  {formData.customer_phone && <p className="text-[11px] text-gray-500">{formData.customer_phone}</p>}
+                  {formData.customer_email && <p className="text-[11px] text-gray-400 truncate">{formData.customer_email}</p>}
+                </div>
+              </div>
+
+              {/* Meta info */}
+              <div className="space-y-1.5 text-[11px] text-gray-500">
+                {companyName && (
+                  <div className="flex items-center gap-1.5"><span className="text-gray-400">🏢</span><span className="truncate">{companyName}</span></div>
+                )}
+                {regionName && (
+                  <div className="flex items-center gap-1.5"><span className="text-gray-400">📍</span><span className="truncate">{regionName}</span></div>
+                )}
+                {formData.install_address && (
+                  <div className="flex items-center gap-1.5"><span className="text-gray-400">🏠</span><span className="truncate">{formData.install_address}</span></div>
+                )}
+                {sourceName && (
+                  <div className="flex items-center gap-1.5"><span className="text-gray-400">📣</span><span>{sourceName}</span></div>
+                )}
+                {leadTypeName && (
+                  <div className="flex items-center gap-1.5"><span className="text-gray-400">🏷️</span><span>{leadTypeName}</span></div>
+                )}
+              </div>
+
+              {/* Value & probability */}
+              {(Number(formData.estimated_value) > 0 || formData.probability) && (
+                <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+                  {Number(formData.estimated_value) > 0 && (
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      {Number(formData.estimated_value).toLocaleString('vi-VN')}đ
+                    </span>
+                  )}
+                  {formData.probability > 0 && (
+                    <span className="text-xs text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">{formData.probability}%</span>
+                  )}
+                </div>
+              )}
+
+              {/* Assigned */}
+              {currentUser && (
+                <div className="flex items-center gap-1.5 pt-1 border-t border-gray-100">
+                  <div className="h-5 w-5 rounded-full bg-green-200 flex items-center justify-center text-[9px] font-bold text-green-800 shrink-0">
+                    {(currentUser.full_name || currentUser.email || '?')[0].toUpperCase()}
+                  </div>
+                  <span className="text-[11px] text-gray-500 truncate">{currentUser.full_name || currentUser.email}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Pipeline hint */}
+            <div className="mt-4 rounded-xl border border-dashed border-gray-200 bg-white px-4 py-3 text-center">
+              <p className="text-[10px] text-gray-400">📋 Pipeline mặc định</p>
+              <p className="text-xs font-medium text-gray-600 mt-0.5">Giai đoạn đầu tiên</p>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );
@@ -4332,8 +4454,12 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
       setModalRegions([]);
       return;
     }
+    const selectedCo = (companies || []).find((c) => String(c.id) === cid);
+    const divId = selectedCo?.division_unit_id || null;
     let cancelled = false;
-    api.get('/crm/company-regions', { params: { company_id: cid } })
+    const params = { company_id: cid };
+    if (divId) params.division_unit_id = divId;
+    api.get('/crm/company-regions', { params })
       .then((r) => {
         if (cancelled) return;
         const list = Array.isArray(r.data) ? r.data : [];
@@ -4341,7 +4467,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
       })
       .catch(() => { if (!cancelled) setModalRegions([]); });
     return () => { cancelled = true; };
-  }, [formData.company_id]);
+  }, [formData.company_id, companies]);
 
   useEffect(() => {
     const uidRegions = currentUser?.crm_region_ids;
@@ -4430,179 +4556,212 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
     setSaving(false);
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-md w-full p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-gray-900">Thêm Lead mới</h2>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-500" /></button>
-        </div>
+  const companyName = companies.find((c) => String(c.id) === String(formData.company_id))?.short_name
+    || companies.find((c) => String(c.id) === String(formData.company_id))?.name || '';
+  const regionName = modalRegions.find((r) => String(r.id) === String(formData.region_id))?.name || '';
+  const sourceName = modalSources.find((s) => String(s.id) === String(formData.source_id))?.name || '';
+  const leadTypeName = visibleLeadTypes.find((t) => String(t.id) === String(formData.lead_type_id))?.name || '';
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">Tên lead *</label>
-            <input
-              type="text"
-              required
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              placeholder="VD: Tủ bếp gỗ sồi nhà anh A..."
-            />
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]" onClick={e => e.stopPropagation()}>
+
+        {/* ── LEFT: Form ── */}
+        <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">🚀 Thêm Lead mới</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Điền thông tin — chi tiết bổ sung sau ở trang Lead</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">🏢 Công ty *</label>
-            {isAdmin ? (
-              <select
-                value={formData.company_id}
-                onChange={(e) => setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '' }))}
-                required
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}
-              >
-                <option value="">-- Chọn công ty --</option>
-                {(companies || []).map(c => (
-                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                ))}
-              </select>
-            ) : (
-              <div className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800">
-                {companies.find((c) => String(c.id) === String(formData.company_id))?.short_name
-                  || companies.find((c) => String(c.id) === String(formData.company_id))?.name
-                  || 'Công ty của bạn'}
+          {/* Scrollable form */}
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            <form id="lead-form" onSubmit={handleSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Tên lead <span className="text-red-500">*</span></label>
+                <input type="text" required value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-transparent text-sm"
+                  placeholder="VD: Tủ bếp gỗ sồi nhà anh A..." autoFocus />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">🏢 Công ty <span className="text-red-500">*</span></label>
+                  {isAdmin ? (
+                    <select value={formData.company_id}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '' }))}
+                      required
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-400 text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+                      <option value="">-- Chọn --</option>
+                      {(companies || []).map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+                    </select>
+                  ) : (
+                    <div className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800">{companyName || 'Công ty của bạn'}</div>
+                  )}
+                </div>
+                {modalRegions.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">📍 Khu vực <span className="text-red-500">*</span></label>
+                    <select required value={formData.region_id}
+                      onChange={(e) => setFormData({ ...formData, region_id: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm">
+                      <option value="">-- Chọn --</option>
+                      {modalRegions.map((r) => <option key={r.id} value={r.id}>{r.name}{r.division?.short_name ? ` — ${r.division.short_name}` : ''}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-blue-50 rounded-xl p-3.5 space-y-2.5">
+                <p className="text-[11px] font-bold text-blue-700 uppercase tracking-wide">👤 Khách hàng</p>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Tên khách hàng <span className="text-red-500">*</span></label>
+                  <input type="text" required value={formData.customer_name}
+                    onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm bg-white"
+                    placeholder="Nguyễn Văn A" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Số điện thoại</label>
+                  <input type="text" value={formData.customer_phone}
+                    onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm bg-white"
+                    placeholder="0901234567" />
+                </div>
+                <p className="text-[10px] text-blue-500">Thông tin chi tiết sẽ nhập thêm ở trang Lead</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Nguồn</label>
+                  <select value={formData.source_id}
+                    onChange={(e) => setFormData({ ...formData, source_id: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm">
+                    <option value="">-- Nguồn --</option>
+                    {modalSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                {visibleLeadTypes.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">🏷️ Loại Lead</label>
+                    <select value={formData.lead_type_id}
+                      onChange={(e) => setFormData({ ...formData, lead_type_id: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm">
+                      <option value="">-- Không bắt buộc --</option>
+                      {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Giá trị (VND)</label>
+                  <input type="number" value={formData.estimated_value}
+                    onChange={(e) => setFormData({ ...formData, estimated_value: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm"
+                    placeholder="0" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Xác suất (%)</label>
+                  <input type="number" min="0" max="100" value={formData.probability}
+                    onChange={(e) => setFormData({ ...formData, probability: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm" />
+                </div>
+              </div>
+            </form>
+          </div>
+
+          {/* Footer buttons */}
+          <div className="px-6 py-4 border-t border-gray-100 flex items-center gap-3 shrink-0 bg-gray-50">
+            {currentUser && (
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <User className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                <span className="text-xs text-gray-500 truncate">Phụ trách: <span className="font-semibold text-gray-700">{currentUser.full_name || currentUser.email}</span></span>
               </div>
             )}
-            {!formData.company_id && <p className="text-xs text-red-500 mt-1">Bắt buộc chọn công ty</p>}
-          </div>
-
-          {modalRegions.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">📍 Khu vực *</label>
-              <select
-                required
-                value={formData.region_id}
-                onChange={(e) => setFormData({ ...formData, region_id: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              >
-                <option value="">-- Chọn khu vực --</option>
-                {modalRegions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                    {r.division?.short_name || r.division?.name ? ` — ${r.division?.short_name || r.division?.name}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div className="bg-blue-50 rounded-lg p-4 space-y-3">
-            <p className="text-xs font-bold text-blue-800 uppercase">👤 Khách hàng mới</p>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Tên khách hàng *</label>
-              <input
-                type="text"
-                required
-                value={formData.customer_name}
-                onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                placeholder="Nguyễn Văn A"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Số điện thoại</label>
-              <input
-                type="text"
-                value={formData.customer_phone}
-                onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                placeholder="0901234567"
-              />
-            </div>
-            <p className="text-xs text-blue-600">Thông tin chi tiết sẽ nhập thêm ở trang Lead</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-1.5">Nguồn</label>
-            <select
-              value={formData.source_id}
-              onChange={(e) => setFormData({ ...formData, source_id: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-            >
-              <option value="">-- Chọn nguồn --</option>
-              {modalSources.map(s => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Loại Lead */}
-          {visibleLeadTypes.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">🏷️ Loại Lead</label>
-              <select
-                value={formData.lead_type_id}
-                onChange={(e) => setFormData({ ...formData, lead_type_id: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              >
-                <option value="">-- Chọn loại (không bắt buộc) --</option>
-                {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Người phụ trách - auto filled */}
-          {currentUser && (
-            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
-              <User className="h-4 w-4 text-green-600 flex-shrink-0" />
-              <div className="flex-1">
-                <span className="text-xs text-green-700 font-medium">Phụ trách:</span>
-                <span className="text-sm font-semibold text-green-900 ml-1.5">{currentUser.full_name || currentUser.email}</span>
-              </div>
-              <span className="text-[10px] text-green-600 bg-green-100 px-1.5 py-0.5 rounded">Tự động</span>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">Giá trị (VND)</label>
-              <input
-                type="number"
-                value={formData.estimated_value}
-                onChange={(e) => setFormData({ ...formData, estimated_value: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                placeholder="0"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1.5">Xác suất (%)</label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                value={formData.probability}
-                onChange={(e) => setFormData({ ...formData, probability: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 pt-4 border-t">
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-all duration-200 disabled:opacity-50 text-sm cursor-pointer"
-            >
-              {saving ? 'Đang tạo...' : 'Tạo Lead'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-all duration-200 text-sm cursor-pointer"
-            >
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition cursor-pointer shrink-0">
               Hủy
             </button>
+            <button type="submit" form="lead-form" disabled={saving}
+              className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition disabled:opacity-50 cursor-pointer shrink-0">
+              {saving ? 'Đang tạo...' : '🚀 Tạo Lead'}
+            </button>
           </div>
-        </form>
+        </div>
+
+        {/* ── RIGHT: Kanban Card Preview ── */}
+        <div className="w-72 shrink-0 bg-gray-50 flex flex-col">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Xem trước thẻ Lead</p>
+          </div>
+          <div className="flex-1 px-4 py-5 overflow-y-auto">
+            <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-4 space-y-3">
+              {/* Title */}
+              <div>
+                <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wide mb-1">🚀 Lead</p>
+                <p className="text-sm font-bold text-gray-900 leading-snug min-h-[1.5rem]">
+                  {formData.title || <span className="text-gray-300 italic font-normal">Chưa có tên...</span>}
+                </p>
+              </div>
+
+              {/* Customer */}
+              <div className="flex items-start gap-2 bg-blue-50 rounded-lg px-3 py-2.5">
+                <User className="h-3.5 w-3.5 text-blue-500 mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-gray-800 truncate">
+                    {formData.customer_name || <span className="text-gray-300 italic font-normal">Tên khách hàng</span>}
+                  </p>
+                  {formData.customer_phone && <p className="text-[11px] text-gray-500">{formData.customer_phone}</p>}
+                </div>
+              </div>
+
+              {/* Meta */}
+              <div className="space-y-1.5 text-[11px] text-gray-500">
+                {companyName && <div className="flex items-center gap-1.5"><span className="text-gray-400">🏢</span><span className="truncate">{companyName}</span></div>}
+                {regionName && <div className="flex items-center gap-1.5"><span className="text-gray-400">📍</span><span className="truncate">{regionName}</span></div>}
+                {sourceName && <div className="flex items-center gap-1.5"><span className="text-gray-400">📣</span><span>{sourceName}</span></div>}
+                {leadTypeName && <div className="flex items-center gap-1.5"><span className="text-gray-400">🏷️</span><span>{leadTypeName}</span></div>}
+              </div>
+
+              {/* Value & probability */}
+              {(Number(formData.estimated_value) > 0 || formData.probability > 0) && (
+                <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+                  {Number(formData.estimated_value) > 0 && (
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      {Number(formData.estimated_value).toLocaleString('vi-VN')}đ
+                    </span>
+                  )}
+                  {formData.probability > 0 && (
+                    <span className="text-xs text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{formData.probability}%</span>
+                  )}
+                </div>
+              )}
+
+              {/* Assigned */}
+              {currentUser && (
+                <div className="flex items-center gap-1.5 pt-1 border-t border-gray-100">
+                  <div className="h-5 w-5 rounded-full bg-green-200 flex items-center justify-center text-[9px] font-bold text-green-800 shrink-0">
+                    {(currentUser.full_name || currentUser.email || '?')[0].toUpperCase()}
+                  </div>
+                  <span className="text-[11px] text-gray-500 truncate">{currentUser.full_name || currentUser.email}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Pipeline hint */}
+            <div className="mt-4 rounded-xl border border-dashed border-gray-200 bg-white px-4 py-3 text-center">
+              <p className="text-[10px] text-gray-400">📋 Pipeline mặc định</p>
+              <p className="text-xs font-medium text-gray-600 mt-0.5">Giai đoạn đầu tiên</p>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );

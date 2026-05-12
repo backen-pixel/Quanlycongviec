@@ -211,6 +211,9 @@ server.listen(config.port, () => {
   // Cron KPI Tủ bếp: recompute hàng đêm 01:00 (disable bằng KPI_CRON_DISABLED=1)
   try { require('./jobs/kpiNightly').start(); } catch (e) { console.warn('[kpi-cron] Failed to start:', e.message); }
 
+  // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
+  try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }
+
   // ─── DEADLINE CHECKER — every hour (defer 60s to not impact startup) ──
   const checkDeadlines = async () => {
     try {
