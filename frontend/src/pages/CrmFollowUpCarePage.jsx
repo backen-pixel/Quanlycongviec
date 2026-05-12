@@ -187,7 +187,10 @@ export default function CrmFollowUpCarePage() {
     const pid = pipelineId || null;
     (async () => {
       try {
-        const params = pid ? { pipeline_id: pid } : { type: pipelineType };
+        // Lọc theo cả pipeline_id (nếu có) và type — 1 pipeline có thể chứa cả stage lead lẫn deal,
+        // ta chỉ lấy đúng type người dùng chọn.
+        const params = { type: pipelineType };
+        if (pid) params.pipeline_id = pid;
         const { data } = await api.get('/crm/pipeline-stages', { params });
         if (cancel) return;
         const list = Array.isArray(data) ? data : [];
@@ -200,17 +203,13 @@ export default function CrmFollowUpCarePage() {
   }, [pipelineType, pipelineId]);
 
   useEffect(() => {
-    if (!pipelineId || !stages.length) return;
-    const detected = stages[0]?.pipeline_type;
-    if (detected && detected !== pipelineType) setPipelineType(detected);
-  }, [stages, pipelineId]);
-
-  useEffect(() => {
     if (!stageId || !stages.length) return;
+    // Stages chưa load đúng pipeline / type hiện tại → đợi, đừng xóa stageId.
     if (pipelineId && !stages.some((s) => String(s.pipeline_id) === String(pipelineId))) return;
+    if (stages.some((s) => s.pipeline_type && s.pipeline_type !== pipelineType)) return;
     const ok = stages.some((s) => String(s.id) === String(stageId));
     if (!ok) setStageId('');
-  }, [stageId, stages, pipelineId]);
+  }, [stageId, stages, pipelineId, pipelineType]);
 
   useEffect(() => {
     api.get('/users').then((r) => setUsers(r.data?.users || [])).catch(() => setUsers([]));
