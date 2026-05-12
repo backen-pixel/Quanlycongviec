@@ -10484,7 +10484,7 @@ r.get('/followup-care/notifications', async (req, res) => {
     while (hasMore) {
       let q = supabase
         .from('crm_leads')
-        .select('stage_id, pipeline_id, created_at')
+        .select('stage_id, pipeline_id, created_at, type')
         .is('parent_lead_id', null)
         .in('pipeline_id', allPipelineIds)
         .in('stage_id', openStageIds)
@@ -10506,6 +10506,8 @@ r.get('/followup-care/notifications', async (req, res) => {
     }
 
     const countsMap = {};
+    /** Lưu type chính xác của từng (pipeline_id|stage_id) — lấy từ chính lead, đáng tin cậy hơn cột pipeline_type của stage. */
+    const groupTypeMap = {};
     for (const lead of allLeads) {
       const createdMs = new Date(lead.created_at).getTime();
       for (const bucket of FOLLOWUP_TIME_BUCKETS) {
@@ -10517,6 +10519,9 @@ r.get('/followup-care/notifications', async (req, res) => {
         if (createdMs >= from.getTime() && createdMs <= to.getTime()) {
           const key = `${lead.pipeline_id}|${lead.stage_id}|${bucket.key}`;
           countsMap[key] = (countsMap[key] || 0) + 1;
+          if (lead.type === 'lead' || lead.type === 'deal') {
+            groupTypeMap[`${lead.pipeline_id}|${lead.stage_id}`] = lead.type;
+          }
           break;
         }
       }
@@ -10533,10 +10538,15 @@ r.get('/followup-care/notifications', async (req, res) => {
       if (dismissedSet.has(dismissKey)) continue;
 
       const bucketMeta = FOLLOWUP_TIME_BUCKETS.find((b) => b.key === timeBucket);
+      const resolvedType =
+        groupTypeMap[`${pipelineId}|${stageId}`] ||
+        stage.pipeline_type ||
+        pipelineTypeMap[pipelineId] ||
+        'lead';
       notifications.push({
         pipeline_id: pipelineId,
         pipeline_name: pipeline.name,
-        pipeline_type: pipelineTypeMap[pipelineId] || 'lead',
+        pipeline_type: resolvedType,
         stage_id: stageId,
         stage_name: stage.name,
         stage_color: stage.color,

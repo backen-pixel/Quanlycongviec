@@ -101,7 +101,7 @@ async function runOnce(io) {
     while (hasMore) {
       const { data: batch } = await supabase
         .from('crm_leads')
-        .select('id, stage_id, pipeline_id, company_id, assigned_to, lead_owner_id, created_at')
+        .select('id, stage_id, pipeline_id, company_id, assigned_to, lead_owner_id, created_at, type')
         .is('parent_lead_id', null)
         .in('pipeline_id', pipelineIds)
         .in('stage_id', openStageIds)
@@ -120,6 +120,8 @@ async function runOnce(io) {
     }
 
     const countsPerUserKey = {};
+    /** Type của (pipeline|stage) lấy từ chính lead — đáng tin cậy hơn cột pipeline_type của stage. */
+    const groupTypeMap = {};
     for (const lead of allLeads) {
       const createdMs = new Date(lead.created_at).getTime();
       for (const bucket of TIME_BUCKETS) {
@@ -129,6 +131,9 @@ async function runOnce(io) {
         to.setDate(to.getDate() - bucket.daysTo);
         to.setHours(23, 59, 59, 999);
         if (createdMs >= from.getTime() && createdMs <= to.getTime()) {
+          if (lead.type === 'lead' || lead.type === 'deal') {
+            groupTypeMap[`${lead.pipeline_id}|${lead.stage_id}`] = lead.type;
+          }
           const recipients = [lead.assigned_to, lead.lead_owner_id].filter(Boolean);
           const uniqueRecipients = [...new Set(recipients.map(String))];
           for (const uid of uniqueRecipients) {
@@ -219,7 +224,7 @@ async function runOnce(io) {
           time_label: bucketMeta?.label || timeBucket,
           lead_count: count,
           module_key: 'crm',
-          nav_url: `/crm/follow-up-care?pipeline_id=${pipelineId}&stage_id=${stageId}&company_id=${pipeline.company_id || ''}&time=${timeBucket}&type=${pipelineTypeMap[pipelineId] || 'lead'}`,
+          nav_url: `/crm/follow-up-care?pipeline_id=${pipelineId}&stage_id=${stageId}&company_id=${pipeline.company_id || ''}&time=${timeBucket}&type=${groupTypeMap[`${pipelineId}|${stageId}`] || stage.pipeline_type || pipelineTypeMap[pipelineId] || 'lead'}`,
         },
       });
     }
