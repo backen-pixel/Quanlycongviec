@@ -19,24 +19,38 @@ function requireAdmin(req, res, next) {
 }
 
 // GET /api/trash — list các mục đã xóa giả
+const TRASH_SELECT_WITH_REASON =
+  'id, entity_type, entity_id, entity_label, company_id, deleted_by, deleted_at, purge_after, delete_reason, deleter:users!trash_items_deleted_by_fkey(id, full_name)';
+const TRASH_SELECT_NO_REASON =
+  'id, entity_type, entity_id, entity_label, company_id, deleted_by, deleted_at, purge_after, deleter:users!trash_items_deleted_by_fkey(id, full_name)';
+
 r.get('/', requireAdmin, async (req, res) => {
   try {
     const { entity_type, q } = req.query;
-    let query = supabase
-      .from('trash_items')
-      .select('id, entity_type, entity_id, entity_label, company_id, deleted_by, deleted_at, purge_after, delete_reason, deleter:users!trash_items_deleted_by_fkey(id, full_name)')
-      .order('deleted_at', { ascending: false })
-      .limit(500);
-
-    // Admin công ty (không phải super_admin) chỉ thấy thùng rác công ty mình
     const isSuper = req.user?.role === 'superadmin' || req.user?.role === 'super_admin';
-    if (!isSuper && req.user?.company_id) {
-      query = query.or(`company_id.eq.${req.user.company_id},company_id.is.null`);
-    }
-    if (entity_type) query = query.eq('entity_type', entity_type);
-    if (q) query = query.ilike('entity_label', `%${q}%`);
 
-    const { data, error } = await query;
+    const buildQuery = (selectCols) => {
+      let query = supabase
+        .from('trash_items')
+        .select(selectCols)
+        .order('deleted_at', { ascending: false })
+        .limit(500);
+      if (!isSuper && req.user?.company_id) {
+        query = query.or(`company_id.eq.${req.user.company_id},company_id.is.null`);
+      }
+      if (entity_type) query = query.eq('entity_type', entity_type);
+      if (q) query = query.ilike('entity_label', `%${q}%`);
+      return query;
+    };
+
+    let { data, error } = await buildQuery(TRASH_SELECT_WITH_REASON);
+    // Cột delete_reason chưa được migrate (file 156_trash_items_delete_reason.sql)
+    // → fallback select không kèm cột này, không làm hỏng UI.
+    if (error && /delete_reason|column .* does not exist/i.test(String(error.message || ''))) {
+      const fb = await buildQuery(TRASH_SELECT_NO_REASON);
+      data = fb.data;
+      error = fb.error;
+    }
     if (error) throw error;
     res.json({ items: data || [] });
   } catch (e) {
