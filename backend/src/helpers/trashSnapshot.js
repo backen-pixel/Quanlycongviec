@@ -26,7 +26,7 @@ async function insertTrashRow(sb, row) {
   return data?.id;
 }
 
-async function snapshotCrmLead(sb, leadId, deletedBy) {
+async function snapshotCrmLead(sb, leadId, deletedBy, options = {}) {
   const client = getClient(sb);
   try {
     const { data: lead } = await client.from('crm_leads').select('*').eq('id', leadId).maybeSingle();
@@ -37,7 +37,7 @@ async function snapshotCrmLead(sb, leadId, deletedBy) {
     const { data: activities } = await client.from('crm_activities').select('*').eq('lead_id', leadId);
     const { data: tasks } = await client.from('crm_tasks').select('*').eq('lead_id', leadId);
 
-    const trashId = await insertTrashRow(client, {
+    const row = {
       entity_type: 'crm_lead',
       entity_id: leadId,
       entity_label: lead.title || lead.code || `Lead ${String(leadId).slice(0, 8)}`,
@@ -50,7 +50,10 @@ async function snapshotCrmLead(sb, leadId, deletedBy) {
         activities: activities || [],
         tasks: tasks || [],
       },
-    });
+    };
+    if (options.delete_reason) row.delete_reason = options.delete_reason;
+
+    const trashId = await insertTrashRow(client, row);
     return { ok: true, trashId };
   } catch (e) {
     return { ok: false, error: e.message };

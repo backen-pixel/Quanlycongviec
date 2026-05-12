@@ -24,7 +24,7 @@ r.get('/', requireAdmin, async (req, res) => {
     const { entity_type, q } = req.query;
     let query = supabase
       .from('trash_items')
-      .select('id, entity_type, entity_id, entity_label, company_id, deleted_by, deleted_at, purge_after, deleter:users!trash_items_deleted_by_fkey(id, full_name)')
+      .select('id, entity_type, entity_id, entity_label, company_id, deleted_by, deleted_at, purge_after, delete_reason, deleter:users!trash_items_deleted_by_fkey(id, full_name)')
       .order('deleted_at', { ascending: false })
       .limit(500);
 

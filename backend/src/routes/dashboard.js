@@ -20,15 +20,21 @@ r.use(auth);
 /** Chỉ tin nhắn/hội thoại (badge bong bóng chat CRM mobile), không gồm deadline / task / hệ thống… */
 const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 
+/** Sự kiện CRM — tab riêng trong NotificationCenter */
+const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
+
 r.get('/', async (req, res) => {
   try {
     const notInDeadlines = postgrestNotInTypesForDeadlines();
     const notChat = postgrestInTypesList(CHAT_NOTIFICATION_TYPES);
+    const notEvent = postgrestInTypesList(EVENT_NOTIFICATION_TYPES);
+
     const [
       { count: unread },
       { count: unreadChat },
       { count: unreadActivity },
       { count: unreadDeadlines },
+      { count: unreadEvents },
     ] = await Promise.all([
       supabase
         .from('notifications')
@@ -48,13 +54,20 @@ r.get('/', async (req, res) => {
         .eq('user_id', req.user.userId)
         .eq('is_read', false)
         .not('type', 'in', notInDeadlines)
-        .not('type', 'in', notChat),
+        .not('type', 'in', notChat)
+        .not('type', 'in', notEvent),
       supabase
         .from('notifications')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', req.user.userId)
         .eq('is_read', false)
         .in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST),
+      supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', req.user.userId)
+        .eq('is_read', false)
+        .in('type', EVENT_NOTIFICATION_TYPES),
     ]);
 
     res.json({
@@ -64,6 +77,7 @@ r.get('/', async (req, res) => {
         unread_chat: unreadChat || 0,
         unread_activity: unreadActivity || 0,
         unread_deadlines: unreadDeadlines || 0,
+        unread_events: unreadEvents || 0,
       },
     });
   } catch (e) {
@@ -96,10 +110,14 @@ r.get('/notifications', async (req, res) => {
     let rows = data || [];
     if (ch === 'activity') {
       rows = rows.filter(
-        (n) => !isExpiryDeadlineNotificationType(n.type) && !CHAT_NOTIFICATION_TYPES.includes(n.type),
+        (n) => !isExpiryDeadlineNotificationType(n.type)
+          && !CHAT_NOTIFICATION_TYPES.includes(n.type)
+          && !EVENT_NOTIFICATION_TYPES.includes(n.type),
       );
     } else if (ch === 'messages') {
       rows = rows.filter((n) => CHAT_NOTIFICATION_TYPES.includes(n.type));
+    } else if (ch === 'events') {
+      rows = rows.filter((n) => EVENT_NOTIFICATION_TYPES.includes(n.type));
     } else {
       rows = rows.filter((n) => !isExpiryDeadlineNotificationType(n.type));
     }
@@ -162,10 +180,14 @@ r.put('/notifications/read-all', async (req, res) => {
       .eq('user_id', req.user.userId)
       .eq('is_read', false);
 
+    const notEvent = postgrestInTypesList(EVENT_NOTIFICATION_TYPES);
+
     if (channel === 'activity') {
-      q = q.not('type', 'in', notInDeadlines).not('type', 'in', notChat);
+      q = q.not('type', 'in', notInDeadlines).not('type', 'in', notChat).not('type', 'in', notEvent);
     } else if (channel === 'messages') {
       q = q.in('type', CHAT_NOTIFICATION_TYPES);
+    } else if (channel === 'events') {
+      q = q.in('type', EVENT_NOTIFICATION_TYPES);
     } else if (channel === 'deadlines') {
       q = q.in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST);
     }

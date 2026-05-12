@@ -108,6 +108,7 @@ export default function LeadDetail() {
   const [pickProjectCompanyErr, setPickProjectCompanyErr] = useState('');
   const [showDeleteLeadModal, setShowDeleteLeadModal] = useState(false);
   const [blockPhoneOnDeleteLead, setBlockPhoneOnDeleteLead] = useState(true);
+  const [deleteReason, setDeleteReason] = useState('');
   const [deletingLead, setDeletingLead] = useState(false);
   /** Tăng khi cần tab Công việc refetch (ví dụ sau kéo giai đoạn) mà không «tải lại» cả trang. */
   const [crmTasksRefreshKey, setCrmTasksRefreshKey] = useState(0);
@@ -599,6 +600,7 @@ export default function LeadDetail() {
 
   const deleteLead = () => {
     setBlockPhoneOnDeleteLead(!!(customer?.phone && String(customer.phone).trim()));
+    setDeleteReason('');
     setShowDeleteLeadModal(true);
   };
 
@@ -609,7 +611,9 @@ export default function LeadDetail() {
         blockPhoneOnDeleteLead && customer?.phone && String(customer.phone).trim()
           ? '?block_auto_recreate_phone=true'
           : '';
-      await api.delete(`/crm/leads/${id}${q}`);
+      await api.delete(`/crm/leads/${id}${q}`, {
+        data: { delete_reason: deleteReason.trim() || null },
+      });
       setShowDeleteLeadModal(false);
       navigate('/crm');
     } catch (e) {
@@ -1464,6 +1468,15 @@ export default function LeadDetail() {
                 Xóa <strong>{lead.title}</strong> và tài liệu, hoạt động liên quan. Không hoàn tác.
               </p>
             )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Lý do xóa</label>
+              <textarea
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                placeholder="Nhập lý do xóa lead/deal (không bắt buộc)…"
+                className="w-full h-20 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400 resize-none"
+              />
+            </div>
             {customer?.phone && String(customer.phone).trim() && (
               <label className="flex items-start gap-2 text-sm cursor-pointer">
                 <input
