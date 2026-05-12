@@ -10458,7 +10458,7 @@ r.get('/followup-care/notifications', async (req, res) => {
     const stagePromises = allPipelineIds.map((pid) =>
       supabase
         .from('crm_pipeline_stages')
-        .select('id, name, color, icon, order_index, is_won, is_lost, pipeline_id')
+        .select('id, name, color, icon, order_index, is_won, is_lost, pipeline_id, pipeline_type')
         .eq('pipeline_id', pid)
         .eq('is_active', true)
         .order('order_index')
@@ -10466,10 +10466,12 @@ r.get('/followup-care/notifications', async (req, res) => {
     const stageResults = await Promise.all(stagePromises);
     const stageMap = {};
     const openStageIds = [];
+    const pipelineTypeMap = {};
     stageResults.forEach((r) => {
       (r.data || []).forEach((s) => {
         stageMap[s.id] = s;
         if (!s.is_won && !s.is_lost) openStageIds.push(s.id);
+        if (s.pipeline_type && s.pipeline_id) pipelineTypeMap[s.pipeline_id] = s.pipeline_type;
       });
     });
 
@@ -10534,6 +10536,7 @@ r.get('/followup-care/notifications', async (req, res) => {
       notifications.push({
         pipeline_id: pipelineId,
         pipeline_name: pipeline.name,
+        pipeline_type: pipelineTypeMap[pipelineId] || 'lead',
         stage_id: stageId,
         stage_name: stage.name,
         stage_color: stage.color,

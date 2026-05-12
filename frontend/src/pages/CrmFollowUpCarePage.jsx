@@ -88,7 +88,7 @@ export default function CrmFollowUpCarePage() {
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [urlParamsApplied, setUrlParamsApplied] = useState(false);
+  const [navKey, setNavKey] = useState(0);
 
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => {
@@ -103,6 +103,8 @@ export default function CrmFollowUpCarePage() {
   });
   const [stages, setStages] = useState([]);
   const [pipelineType, setPipelineType] = useState(() => {
+    const qt = new URLSearchParams(window.location.search).get('type');
+    if (qt === 'lead' || qt === 'deal') return qt;
     try {
       const t = localStorage.getItem('crm_pinned_tab');
       return t === 'deal' ? 'deal' : 'lead';
@@ -133,18 +135,31 @@ export default function CrmFollowUpCarePage() {
   const [total, setTotal] = useState(null);
 
   useEffect(() => {
-    if (urlParamsApplied) return;
-    const hasQp = searchParams.has('pipeline_id') || searchParams.has('stage_id') || searchParams.has('company_id') || searchParams.has('time');
-    if (hasQp) {
-      setUrlParamsApplied(true);
-      const next = new URLSearchParams(searchParams);
-      next.delete('pipeline_id');
-      next.delete('stage_id');
-      next.delete('company_id');
-      next.delete('time');
-      setSearchParams(next, { replace: true });
-    }
-  }, [urlParamsApplied, searchParams, setSearchParams]);
+    const hasQp = searchParams.has('pipeline_id') || searchParams.has('stage_id') || searchParams.has('company_id') || searchParams.has('time') || searchParams.has('type');
+    if (!hasQp) return;
+
+    const qPipeline = searchParams.get('pipeline_id');
+    const qStage = searchParams.get('stage_id');
+    const qCompany = searchParams.get('company_id');
+    const qTime = searchParams.get('time');
+    const qType = searchParams.get('type');
+
+    if (qType === 'lead' || qType === 'deal') setPipelineType(qType);
+    if (qPipeline) setPipelineId(qPipeline);
+    if (qStage) setStageId(qStage);
+    if (qCompany) setFilterCompany(qCompany);
+    if (qTime) setTimePreset(qTime);
+
+    setNavKey((k) => k + 1);
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('pipeline_id');
+    next.delete('stage_id');
+    next.delete('company_id');
+    next.delete('time');
+    next.delete('type');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -184,11 +199,11 @@ export default function CrmFollowUpCarePage() {
     const pid = pipelineId || null;
     (async () => {
       try {
-        const { data } = await api.get('/crm/pipeline-stages', {
-          params: pid ? { type: pipelineType, pipeline_id: pid } : { type: pipelineType },
-        });
+        const params = pid ? { pipeline_id: pid } : { type: pipelineType };
+        const { data } = await api.get('/crm/pipeline-stages', { params });
         if (cancel) return;
-        setStages(Array.isArray(data) ? data : []);
+        const list = Array.isArray(data) ? data : [];
+        setStages(list);
       } catch {
         if (!cancel) setStages([]);
       }
@@ -197,10 +212,17 @@ export default function CrmFollowUpCarePage() {
   }, [pipelineType, pipelineId]);
 
   useEffect(() => {
-    if (!stageId) return;
+    if (!pipelineId || !stages.length) return;
+    const detected = stages[0]?.pipeline_type;
+    if (detected && detected !== pipelineType) setPipelineType(detected);
+  }, [stages, pipelineId]);
+
+  useEffect(() => {
+    if (!stageId || !stages.length) return;
+    if (pipelineId && !stages.some((s) => String(s.pipeline_id) === String(pipelineId))) return;
     const ok = stages.some((s) => String(s.id) === String(stageId));
     if (!ok) setStageId('');
-  }, [stageId, stages]);
+  }, [stageId, stages, pipelineId]);
 
   useEffect(() => {
     api.get('/users').then((r) => setUsers(r.data?.users || [])).catch(() => setUsers([]));
