@@ -16,11 +16,39 @@ const LAUNCHER_W = 300;
 const Z_BUBBLE = 100;
 const Z_LAUNCHER = 110;
 const Z_DOCK = 120;
+const Z_TOAST = 125;
+const TOAST_W = 280;
+const TOAST_GAP = 10;
+
+function avatarUrl(av) {
+  if (!av) return null;
+  if (typeof av !== 'string') return null;
+  if (av.startsWith('http://') || av.startsWith('https://') || av.startsWith('data:')) return av;
+  if (av.startsWith('/')) return av;
+  return `/uploads/avatars/${av}`;
+}
+
+function initialsOf(name) {
+  if (!name) return '?';
+  const parts = String(name).trim().split(/\s+/);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 export default function MessengerDock() {
   const { user, socket } = useAuth();
-  const { windows, closeWindow, toggleMinimize, unreadByLeadId, unreadByGroupId, openMessengerGroupChat } =
-    useMessengerDock();
+  const {
+    windows,
+    closeWindow,
+    toggleMinimize,
+    unreadByLeadId,
+    unreadByGroupId,
+    openMessengerGroupChat,
+    openLeadChat,
+    chatToasts,
+    dismissChatToast,
+  } = useMessengerDock();
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [groups, setGroups] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
@@ -322,6 +350,75 @@ export default function MessengerDock() {
           </div>
         </div>
       ) : null}
+
+      {/* Toast tin nhắn đến — pop từ phải sang trái, đè cạnh dock */}
+      <div
+        className="fixed flex flex-col gap-2 pointer-events-none"
+        style={{
+          zIndex: Z_TOAST,
+          right: DOCK_W + TOAST_GAP,
+          top: 70,
+          width: TOAST_W,
+        }}
+      >
+        {(chatToasts || []).map((t) => {
+          const av = avatarUrl(t.sender?.avatar);
+          const onOpen = () => {
+            if (t.kind === 'group' && t.groupId) {
+              openMessengerGroupChat({ id: t.groupId, name: t.title });
+            } else if (t.kind === 'lead' && t.leadId) {
+              openLeadChat({ id: t.leadId, title: t.title });
+            }
+            dismissChatToast(t.id);
+          };
+          return (
+            <div
+              key={t.id}
+              role="button"
+              tabIndex={0}
+              onClick={onOpen}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpen(); }}
+              className="pointer-events-auto group relative flex items-start gap-2.5 px-3 py-2.5 rounded-xl border border-slate-200 bg-white shadow-xl hover:shadow-2xl hover:border-sky-300 cursor-pointer transition"
+              title={`${t.sender?.name || ''} • ${t.title || ''}`}
+            >
+              <div className="shrink-0 relative">
+                {av ? (
+                  <img
+                    src={av}
+                    alt={t.sender?.name || ''}
+                    className="w-10 h-10 rounded-full object-cover ring-2 ring-white shadow"
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center text-xs font-bold ring-2 ring-white shadow">
+                    {initialsOf(t.sender?.name)}
+                  </div>
+                )}
+                <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-1">
+                  <p className="text-xs font-semibold text-slate-800 truncate">{t.sender?.name || 'Ai đó'}</p>
+                  <span className="text-[10px] text-slate-400 shrink-0">vừa xong</span>
+                </div>
+                {t.title ? (
+                  <p className="text-[10px] text-slate-500 truncate">{t.kind === 'group' ? 'Nhóm: ' : ''}{t.title}</p>
+                ) : null}
+                <p className="text-xs text-slate-700 line-clamp-2 mt-0.5 break-words">{t.preview || '(tin nhắn mới)'}</p>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); dismissChatToast(t.id); }}
+                className="shrink-0 -mr-1 -mt-1 p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition"
+                title="Đóng"
+                aria-label="Đóng thông báo"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
 
       <div
         ref={dockBarRef}

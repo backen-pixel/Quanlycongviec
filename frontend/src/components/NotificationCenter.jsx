@@ -199,6 +199,17 @@ export default function NotificationCenter({ socket }) {
     });
   };
 
+  const undoCskhDismissals = async () => {
+    try {
+      const { data } = await api.post('/crm/followup-care/dismiss/undo');
+      await loadCskhNotifs();
+      const restored = data?.restored || 0;
+      if (restored > 0) console.log(`[CSKH] Khôi phục ${restored} thông báo`);
+    } catch (e) {
+      console.error('Undo CSKH dismissals failed:', e);
+    }
+  };
+
   const navigateToCskh = (notif) => {
     const params = new URLSearchParams();
     if (notif.pipeline_id) params.set('pipeline_id', notif.pipeline_id);
@@ -524,7 +535,15 @@ export default function NotificationCenter({ socket }) {
                 <div className="text-center py-10">
                   <CalendarClock className="h-8 w-8 mx-auto text-gray-300 mb-2" />
                   <p className="text-sm text-gray-400">Không có lead nào cần nhắc CSKH</p>
-                  <p className="text-xs text-gray-300 mt-1">Các thông báo đã tương tác sẽ ẩn trong 1 tháng</p>
+                  <p className="text-xs text-gray-300 mt-1">Đã tích sẽ ẩn đến hết ngày — sang ngày mới sẽ hiện lại các lead chưa chăm</p>
+                  <button
+                    type="button"
+                    onClick={undoCskhDismissals}
+                    className="mt-3 inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 cursor-pointer"
+                    title="Khôi phục các thông báo lỡ tích nhầm"
+                  >
+                    Hoàn tác (lỡ tích nhầm)
+                  </button>
                 </div>
               ) : (
                 cskhNotifs.map((n) => {

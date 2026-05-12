@@ -23,61 +23,53 @@ const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 /** Sự kiện CRM — tab riêng trong NotificationCenter */
 const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
 
+const { preferenceKeyForNotificationType } = require('../helpers/notificationPrefTypes');
+/** True nếu thông báo thuộc module Quản lý công việc (Dự án) — đã tắt cứng. */
+function isProjectModuleNotification(n) {
+  if (!n) return false;
+  const key = preferenceKeyForNotificationType(n.type, n.entity_type, n.metadata);
+  if (key === 'project_notifications') return true;
+  if (n.entity_type === 'project') return true;
+  if (n.metadata && typeof n.metadata === 'object'
+      && String(n.metadata.ecosystem_module_key || '') === 'projects') return true;
+  return false;
+}
+
 r.get('/', async (req, res) => {
   try {
-    const notInDeadlines = postgrestNotInTypesForDeadlines();
-    const notChat = postgrestInTypesList(CHAT_NOTIFICATION_TYPES);
-    const notEvent = postgrestInTypesList(EVENT_NOTIFICATION_TYPES);
+    // Fetch tất cả TB chưa đọc của user (cap 1000), sau đó loại "module Quản lý công việc"
+    // và đếm phân loại trong memory. Giữ logic count chính xác cho từng tab.
+    const { data: rows, error } = await supabase
+      .from('notifications')
+      .select('type, entity_type, metadata')
+      .eq('user_id', req.user.userId)
+      .eq('is_read', false)
+      .limit(1000);
+    if (error) return res.status(500).json({ error: error.message });
 
-    const [
-      { count: unread },
-      { count: unreadChat },
-      { count: unreadActivity },
-      { count: unreadDeadlines },
-      { count: unreadEvents },
-    ] = await Promise.all([
-      supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', req.user.userId)
-        .eq('is_read', false)
-        .not('type', 'in', notInDeadlines),
-      supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', req.user.userId)
-        .eq('is_read', false)
-        .in('type', CHAT_NOTIFICATION_TYPES),
-      supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', req.user.userId)
-        .eq('is_read', false)
-        .not('type', 'in', notInDeadlines)
-        .not('type', 'in', notChat)
-        .not('type', 'in', notEvent),
-      supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', req.user.userId)
-        .eq('is_read', false)
-        .in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST),
-      supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', req.user.userId)
-        .eq('is_read', false)
-        .in('type', EVENT_NOTIFICATION_TYPES),
-    ]);
+    const filtered = (rows || []).filter((n) => !isProjectModuleNotification(n));
+
+    let unread = 0, unreadChat = 0, unreadActivity = 0, unreadDeadlines = 0, unreadEvents = 0;
+    for (const n of filtered) {
+      const t = n.type;
+      const isExp = isExpiryDeadlineNotificationType(t);
+      const isChat = CHAT_NOTIFICATION_TYPES.includes(t);
+      const isEvt = EVENT_NOTIFICATION_TYPES.includes(t);
+      if (isExp) unreadDeadlines += 1;
+      if (isChat) unreadChat += 1;
+      if (isEvt) unreadEvents += 1;
+      if (!isExp) unread += 1;
+      if (!isExp && !isChat && !isEvt) unreadActivity += 1;
+    }
 
     res.json({
       stats: {
         /** @deprecated dùng unread_activity / unread_deadlines / unread_chat */
-        unread: unread || 0,
-        unread_chat: unreadChat || 0,
-        unread_activity: unreadActivity || 0,
-        unread_deadlines: unreadDeadlines || 0,
-        unread_events: unreadEvents || 0,
+        unread,
+        unread_chat: unreadChat,
+        unread_activity: unreadActivity,
+        unread_deadlines: unreadDeadlines,
+        unread_events: unreadEvents,
       },
     });
   } catch (e) {
@@ -107,7 +99,7 @@ r.get('/notifications', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     const ch = channel ? String(channel).toLowerCase() : '';
-    let rows = data || [];
+    let rows = (data || []).filter((n) => !isProjectModuleNotification(n));
     if (ch === 'activity') {
       rows = rows.filter(
         (n) => !isExpiryDeadlineNotificationType(n.type)
@@ -142,7 +134,7 @@ r.get('/notifications/deadlines', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(fetchCap);
     if (error) return res.status(500).json({ error: error.message });
-    let rows = (data || []).filter((n) => isExpiryDeadlineNotificationType(n.type));
+    let rows = (data || []).filter((n) => isExpiryDeadlineNotificationType(n.type) && !isProjectModuleNotification(n));
     if (mod !== 'all') {
       rows = rows.filter((n) => {
         const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
