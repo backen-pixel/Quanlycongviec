@@ -205,6 +205,7 @@ export default function NotificationCenter({ socket }) {
     if (notif.stage_id) params.set('stage_id', notif.stage_id);
     if (notif.company_id) params.set('company_id', notif.company_id);
     if (notif.time_bucket) params.set('time', notif.time_bucket);
+    if (notif.pipeline_type) params.set('type', notif.pipeline_type);
     navigate(`/crm/follow-up-care?${params.toString()}`);
     setOpen(false);
   };

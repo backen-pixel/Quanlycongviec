@@ -70,15 +70,17 @@ async function runOnce(io) {
 
     const { data: allStages } = await supabase
       .from('crm_pipeline_stages')
-      .select('id, name, color, icon, pipeline_id, is_won, is_lost')
+      .select('id, name, color, icon, pipeline_id, pipeline_type, is_won, is_lost')
       .in('pipeline_id', pipelineIds)
       .eq('is_active', true);
 
     const stageMap = {};
     const openStageIds = [];
+    const pipelineTypeMap = {};
     (allStages || []).forEach((s) => {
       stageMap[s.id] = s;
       if (!s.is_won && !s.is_lost) openStageIds.push(s.id);
+      if (s.pipeline_type && s.pipeline_id) pipelineTypeMap[s.pipeline_id] = s.pipeline_type;
     });
 
     if (!openStageIds.length) {
@@ -217,7 +219,7 @@ async function runOnce(io) {
           time_label: bucketMeta?.label || timeBucket,
           lead_count: count,
           module_key: 'crm',
-          nav_url: `/crm/follow-up-care?pipeline_id=${pipelineId}&stage_id=${stageId}&company_id=${pipeline.company_id || ''}&time=${timeBucket}`,
+          nav_url: `/crm/follow-up-care?pipeline_id=${pipelineId}&stage_id=${stageId}&company_id=${pipeline.company_id || ''}&time=${timeBucket}&type=${pipelineTypeMap[pipelineId] || 'lead'}`,
         },
       });
     }
