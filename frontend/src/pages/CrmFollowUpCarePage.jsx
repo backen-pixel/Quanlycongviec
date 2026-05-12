@@ -88,8 +88,6 @@ export default function CrmFollowUpCarePage() {
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [navKey, setNavKey] = useState(0);
-
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => {
     if (typeof window === 'undefined') return '';
@@ -134,10 +132,10 @@ export default function CrmFollowUpCarePage() {
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(null);
 
+  // Áp filter từ URL search params mỗi khi URL thay đổi (kể cả khi component đã mount sẵn,
+  // ví dụ user bấm thông báo CSKH lần thứ hai). Không xóa params để giữ làm "source of truth"
+  // — refresh hay copy URL vẫn lọc đúng.
   useEffect(() => {
-    const hasQp = searchParams.has('pipeline_id') || searchParams.has('stage_id') || searchParams.has('company_id') || searchParams.has('time') || searchParams.has('type');
-    if (!hasQp) return;
-
     const qPipeline = searchParams.get('pipeline_id');
     const qStage = searchParams.get('stage_id');
     const qCompany = searchParams.get('company_id');
@@ -149,17 +147,7 @@ export default function CrmFollowUpCarePage() {
     if (qStage) setStageId(qStage);
     if (qCompany) setFilterCompany(qCompany);
     if (qTime) setTimePreset(qTime);
-
-    setNavKey((k) => k + 1);
-
-    const next = new URLSearchParams(searchParams);
-    next.delete('pipeline_id');
-    next.delete('stage_id');
-    next.delete('company_id');
-    next.delete('time');
-    next.delete('type');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams]);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!isAdmin) return;
