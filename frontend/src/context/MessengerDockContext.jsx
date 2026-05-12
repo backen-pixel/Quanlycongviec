@@ -20,6 +20,9 @@ export function MessengerDockProvider({ children }) {
   const [hubMessengerGroupIds, setHubMessengerGroupIds] = useState([]);
   const [unreadByLeadId, setUnreadByLeadId] = useState({});
   const [unreadByGroupId, setUnreadByGroupId] = useState({});
+  /** Toast tin nhắn đến (avatar + người gửi + preview) — auto ẩn sau ~7s */
+  const [chatToasts, setChatToasts] = useState([]);
+  const toastTimersRef = useRef(new Map());
   const unreadLeadHydratedRef = useRef(false);
   const unreadGroupHydratedRef = useRef(false);
 
@@ -103,6 +106,33 @@ export function MessengerDockProvider({ children }) {
       /* ignore */
     }
   }, [unreadByGroupId, uid]);
+
+  const dismissChatToast = useCallback((id) => {
+    setChatToasts((prev) => prev.filter((t) => t.id !== id));
+    const tm = toastTimersRef.current.get(id);
+    if (tm) {
+      clearTimeout(tm);
+      toastTimersRef.current.delete(id);
+    }
+  }, []);
+
+  const pushChatToast = useCallback((toast) => {
+    setChatToasts((prev) => {
+      // Gộp toast cùng thread (lead/group) — giữ tối đa 4 toast
+      const sameThread = prev.filter(
+        (t) => !(t.leadId && t.leadId === toast.leadId) && !(t.groupId && t.groupId === toast.groupId),
+      );
+      const next = [toast, ...sameThread].slice(0, 4);
+      return next;
+    });
+    const tm = setTimeout(() => dismissChatToast(toast.id), 7000);
+    toastTimersRef.current.set(toast.id, tm);
+  }, [dismissChatToast]);
+
+  useEffect(() => () => {
+    toastTimersRef.current.forEach((t) => clearTimeout(t));
+    toastTimersRef.current.clear();
+  }, []);
 
   const markLeadRead = useCallback((leadId) => {
     if (!leadId) return;
@@ -281,6 +311,20 @@ export function MessengerDockProvider({ children }) {
         return;
       }
       setUnreadByLeadId((u) => ({ ...u, [leadId]: (u[leadId] || 0) + 1 }));
+      pushChatToast({
+        id: `lead-${leadId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        kind: 'lead',
+        leadId,
+        groupId: null,
+        sender: {
+          id: msg.user?.id || msg.user_id,
+          name: msg.user?.full_name || 'Ai đó',
+          avatar: msg.user?.avatar || null,
+        },
+        title: msg.lead?.title || msg.lead_title || msg.lead_name || 'Lead/Deal',
+        preview: msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : ''),
+        ts: msg.created_at || new Date().toISOString(),
+      });
     };
     const onGroupChat = (msg) => {
       const gid = msg.group_id;
@@ -305,6 +349,20 @@ export function MessengerDockProvider({ children }) {
         return;
       }
       setUnreadByGroupId((u) => ({ ...u, [gid]: (u[gid] || 0) + 1 }));
+      pushChatToast({
+        id: `grp-${gid}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        kind: 'group',
+        leadId: null,
+        groupId: gid,
+        sender: {
+          id: msg.user?.id || msg.user_id,
+          name: msg.user?.full_name || 'Ai đó',
+          avatar: msg.user?.avatar || null,
+        },
+        title: msg.group?.name || msg.group_name || 'Nhóm chat',
+        preview: msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : ''),
+        ts: msg.created_at || new Date().toISOString(),
+      });
     };
     socket.on('lead:chat', onLeadChat);
     socket.on('messenger_group:chat', onGroupChat);
@@ -312,13 +370,15 @@ export function MessengerDockProvider({ children }) {
       socket.off('lead:chat', onLeadChat);
       socket.off('messenger_group:chat', onGroupChat);
     };
-  }, [socket, uid, markLeadRead, markGroupRead]);
+  }, [socket, uid, markLeadRead, markGroupRead, pushChatToast]);
 
   const value = useMemo(
     () => ({
       windows,
       unreadByLeadId,
       unreadByGroupId,
+      chatToasts,
+      dismissChatToast,
       openLeadChat,
       openMessengerGroupChat,
       closeWindow,
@@ -334,6 +394,8 @@ export function MessengerDockProvider({ children }) {
       windows,
       unreadByLeadId,
       unreadByGroupId,
+      chatToasts,
+      dismissChatToast,
       openLeadChat,
       openMessengerGroupChat,
       closeWindow,

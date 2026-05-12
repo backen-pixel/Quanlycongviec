@@ -198,11 +198,44 @@ io.on('connection', (socket) => {
 });
 
 const { isExpiryDeadlineNotificationType: isExpiryNotifType } = require('./helpers/notificationOperationalFilter');
-// Helper: push notification to specific user via Socket.IO (+ không đẩy TB hết hạn)
-app.set('pushNotification', (userId, notification) => {
-  if (isExpiryNotifType(notification?.type)) return;
-  io.to(`user:${userId}`).emit('notification', notification);
+const { preferenceKeyForNotificationType } = require('./helpers/notificationPrefTypes');
+const { isNotificationAllowedForUser } = require('./helpers/notificationPrefsUser');
+
+/** True nếu thông báo thuộc module Quản lý công việc (Dự án) — đã tắt cứng theo yêu cầu. */
+function isProjectModuleNotification(notification) {
+  if (!notification) return false;
+  const key = preferenceKeyForNotificationType(notification.type, notification.entity_type, notification.metadata);
+  if (key === 'project_notifications') return true;
+  if (notification.entity_type === 'project') return true;
+  if (notification.metadata && typeof notification.metadata === 'object'
+      && String(notification.metadata.ecosystem_module_key || '') === 'projects') return true;
+  return false;
+}
+
+// Helper: push notification to specific user via Socket.IO (+ tôn trọng pref + chặn module Dự án)
+app.set('pushNotification', async (userId, notification) => {
+  try {
+    if (isExpiryNotifType(notification?.type)) return;
+    if (isProjectModuleNotification(notification)) return; // tắt cứng module Quản lý công việc
+    const allowed = await isNotificationAllowedForUser(
+      userId,
+      notification?.type,
+      notification?.entity_type,
+      notification?.metadata,
+    );
+    if (!allowed) return;
+    io.to(`user:${userId}`).emit('notification', notification);
+  } catch (e) {
+    // không để lỗi pref làm hỏng push: nếu chỉ chặn được kiểu hết hạn thì vẫn cho qua
+    if (!isExpiryNotifType(notification?.type) && !isProjectModuleNotification(notification)) {
+      io.to(`user:${userId}`).emit('notification', notification);
+    }
+    console.warn('[pushNotification]', e.message || e);
+  }
 });
+
+// Export để các route khác có thể dùng cùng logic (filter list/count)
+app.set('isProjectModuleNotification', isProjectModuleNotification);
 
 server.listen(config.port, () => {
   console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);

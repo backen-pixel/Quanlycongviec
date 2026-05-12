@@ -119,6 +119,19 @@ async function runOnce(io) {
       return;
     }
 
+    // Lấy care marks (lead đã được đánh dấu chăm sóc) theo user — loại khỏi count.
+    const caredByUser = {};
+    try {
+      const { data: marks } = await supabase
+        .from('crm_lead_care_marks')
+        .select('user_id, lead_id')
+        .gt('expires_at', new Date().toISOString());
+      for (const m of (marks || [])) {
+        if (!caredByUser[m.user_id]) caredByUser[m.user_id] = new Set();
+        caredByUser[m.user_id].add(m.lead_id);
+      }
+    } catch { }
+
     const countsPerUserKey = {};
     /** Type của (pipeline|stage) lấy từ chính lead — đáng tin cậy hơn cột pipeline_type của stage. */
     const groupTypeMap = {};
@@ -137,6 +150,7 @@ async function runOnce(io) {
           const recipients = [lead.assigned_to, lead.lead_owner_id].filter(Boolean);
           const uniqueRecipients = [...new Set(recipients.map(String))];
           for (const uid of uniqueRecipients) {
+            if (caredByUser[uid]?.has(lead.id)) continue; // user đã đánh dấu chăm sóc → bỏ qua
             const key = `${uid}|${lead.pipeline_id}|${lead.stage_id}|${bucket.key}`;
             countsPerUserKey[key] = (countsPerUserKey[key] || 0) + 1;
           }
@@ -148,8 +162,10 @@ async function runOnce(io) {
     const adminUsers = (activeUsers || []).filter((u) => u.role === 'admin');
     for (const admin of adminUsers) {
       const cid = admin.company_id || null;
+      const adminCared = caredByUser[admin.id];
       for (const lead of allLeads) {
         if (cid && String(lead.company_id) !== String(cid)) continue;
+        if (adminCared?.has(lead.id)) continue;
         const createdMs = new Date(lead.created_at).getTime();
         for (const bucket of TIME_BUCKETS) {
           const from = new Date(today);

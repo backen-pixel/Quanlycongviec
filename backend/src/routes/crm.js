@@ -10484,7 +10484,7 @@ r.get('/followup-care/notifications', async (req, res) => {
     while (hasMore) {
       let q = supabase
         .from('crm_leads')
-        .select('stage_id, pipeline_id, created_at, type')
+        .select('id, stage_id, pipeline_id, created_at, type')
         .is('parent_lead_id', null)
         .in('pipeline_id', allPipelineIds)
         .in('stage_id', openStageIds)
@@ -10505,10 +10505,22 @@ r.get('/followup-care/notifications', async (req, res) => {
       offset += batchSize;
     }
 
+    // Lấy danh sách lead user đã đánh dấu "đã chăm sóc" (chưa hết hạn) → loại khỏi count.
+    let caredLeadIds = new Set();
+    try {
+      const { data: marks } = await supabase
+        .from('crm_lead_care_marks')
+        .select('lead_id')
+        .eq('user_id', userId)
+        .gt('expires_at', new Date().toISOString());
+      caredLeadIds = new Set((marks || []).map((m) => m.lead_id));
+    } catch { /* bảng chưa migrate — bỏ qua */ }
+
     const countsMap = {};
     /** Lưu type chính xác của từng (pipeline_id|stage_id) — lấy từ chính lead, đáng tin cậy hơn cột pipeline_type của stage. */
     const groupTypeMap = {};
     for (const lead of allLeads) {
+      if (caredLeadIds.has(lead.id)) continue;
       const createdMs = new Date(lead.created_at).getTime();
       for (const bucket of FOLLOWUP_TIME_BUCKETS) {
         const from = new Date(today);
@@ -10575,8 +10587,18 @@ r.post('/followup-care/dismiss', async (req, res) => {
     const { pipeline_id, stage_id, company_id, time_bucket } = req.body;
     if (!time_bucket) return res.status(400).json({ error: 'Thiếu time_bucket' });
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30);
+    // Hết hạn vào 23:59:59 hôm nay (giờ VN, UTC+7) — sang ngày mới sẽ tự động hiện lại.
+    const nowVn = new Date(Date.now() + 7 * 60 * 60 * 1000);
+    const todayUtcMidnight = new Date(Date.UTC(
+      nowVn.getUTCFullYear(),
+      nowVn.getUTCMonth(),
+      nowVn.getUTCDate(),
+      16, 59, 59, 999, // 16:59:59 UTC = 23:59:59 VN
+    ));
+    if (todayUtcMidnight.getTime() < Date.now()) {
+      todayUtcMidnight.setUTCDate(todayUtcMidnight.getUTCDate() + 1);
+    }
+    const expiresAt = todayUtcMidnight;
 
     const { data, error } = await supabase
       .from('crm_followup_care_dismissals')
@@ -10633,6 +10655,32 @@ r.delete('/followup-care/dismiss', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('DELETE /crm/followup-care/dismiss:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// POST /crm/followup-care/dismiss/undo — bỏ tất cả dismissal còn hiệu lực của user (khôi phục thông báo lỡ tích nhầm)
+r.post('/followup-care/dismiss/undo', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { error, count } = await supabase
+      .from('crm_followup_care_dismissals')
+      .delete({ count: 'exact' })
+      .eq('user_id', userId)
+      .gt('expires_at', new Date().toISOString());
+
+    if (error) {
+      const msg = String(error.message || '');
+      if (msg.includes('does not exist') || msg.includes('schema cache')) {
+        return res.json({ ok: true, restored: 0 });
+      }
+      throw error;
+    }
+    res.json({ ok: true, restored: count || 0 });
+  } catch (e) {
+    console.error('POST /crm/followup-care/dismiss/undo:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
   }
 });
