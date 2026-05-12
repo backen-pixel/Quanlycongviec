@@ -58,6 +58,28 @@ r.get('/', requireAdmin, async (req, res) => {
   }
 });
 
+// GET /api/trash/:id — xem chi tiết (snapshot) 1 mục đã xóa
+r.get('/:id', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('trash_items')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const isSuper = req.user?.role === 'superadmin' || req.user?.role === 'super_admin';
+    if (!isSuper && req.user?.company_id && data.company_id && String(data.company_id) !== String(req.user.company_id)) {
+      return res.status(403).json({ error: 'Không có quyền xem mục này' });
+    }
+
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/trash/:id/restore — phục hồi 1 mục
 r.post('/:id/restore', requireAdmin, async (req, res) => {
   const out = await restoreTrashItem(supabase, req.params.id);
