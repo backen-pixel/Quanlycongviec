@@ -849,15 +849,24 @@ export default function LeadDetail() {
                     ? (headerLeadTypes.find((t) => String(t.id) === String(lead.lead_type_id))?.name || '')
                     : '';
                 const showName = !!typeName;
+                /** Có UUID loại nhưng danh mục theo công ty hiện tại không có dòng tương ứng — vẫn phải hiện, tránh "mất nhãn" sau đồng bộ / đổi công ty */
+                const showTypeIdWithoutLabel = !!lead?.lead_type_id && !typeName && headerLeadTypes.length > 0;
                 const showMissing = !lead?.lead_type_id && headerLeadTypes.length > 0;
                 const showNoCatalog = headerLeadTypes.length === 0;
-                if (!showName && !showMissing && !showNoCatalog) return null;
+                if (!showName && !showTypeIdWithoutLabel && !showMissing && !showNoCatalog) return null;
                 return (
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[11px] font-semibold text-gray-500">🏷️ Phân loại:</span>
                     {showName ? (
                       <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
                         {typeName}
+                      </span>
+                    ) : showTypeIdWithoutLabel ? (
+                      <span
+                        className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50/80 text-amber-900 border border-amber-200"
+                        title="Loại vẫn lưu trên deal nhưng không nằm trong danh mục phân loại của công ty đang xem (hoặc loại đã tắt). Có thể chọn lại ở mục Thông tin."
+                      >
+                        Đã gán loại (không có trong danh mục công ty này)
                       </span>
                     ) : showMissing ? (
                       <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-200">
@@ -2388,7 +2397,8 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         value={lead?.lead_type_id || ''}
         displayValue={
           lead?.lead_type_id
-            ? (leadTypes.find(t => t.id === lead.lead_type_id)?.name || null)
+            ? (leadTypes.find(t => t.id === lead.lead_type_id)?.name
+              || <span className="text-sm text-amber-800" title="Có lead_type_id trên deal nhưng không khớp danh mục công ty này (sau chuyển cột / công ty SX / tắt loại).">Đã gán — ngoài danh mục công ty</span>)
             : (leadTypes.length === 0
               ? <span className="text-sm text-amber-600">Chưa cấu hình phân loại (vào Pipeline Settings)</span>
               : null)

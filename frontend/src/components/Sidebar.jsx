@@ -80,69 +80,88 @@ const MENU_GROUPS = [
   }
 ];
 
-/** CRM — chỉ Dashboard, Sự kiện, Ghi âm, Nhóm chat (đầu sidebar) */
+/** CRM — đầu sidebar: lối vào nhanh */
 const CRM_MENU_TOP_GROUP = {
   id: 'crm-overview',
   moduleKey: 'crm',
   title: 'Tổng quan',
   emoji: '📊',
   items: [
-    { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM' },
+    { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM', end: true },
     { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
-    { to: '/tools/voice-recordings', icon: Mic, label: 'Ghi âm' },
     { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
+    { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
   ],
 };
 
-/** CRM — phần còn lại ở cuối sidebar (cuộn riêng)
- *  Nhân viên: chỉ nhóm Bán hàng + 3 mục Khách hàng / Sản phẩm / Nhóm ngành (không có adminOnly).
- *  Chỉ role `admin` thấy nhóm Phân tích, Facebook, báo cáo, cài đặt CRM… (adminOnly / staffHidden).
- */
+/** CRM — các cụm cuộn: bán hàng, tài chính, KPI, dữ liệu, thông báo, quản trị, hỗ trợ */
 const CRM_MENU_BOTTOM_GROUPS = [
-  {
-    id: 'crm-analytics',
-    moduleKey: 'crm',
-    /** Ẩn toàn nhóm với nhân viên — chỉ admin */
-    staffHidden: true,
-    title: 'Phân tích & hành trình',
-    emoji: '📈',
-    items: [
-      { to: '/crm/executive-kpi', icon: BarChart3, label: 'KPI Giám đốc', executiveOnly: true },
-      { to: '/crm/kpi/sales-admin', icon: Activity, label: 'KPI Sales Admin (Tủ bếp)' },
-      { to: '/crm/kpi/deal', icon: Target, label: 'KPI Deal (Tủ bếp)' },
-      { to: '/crm/kpi/scorecard', icon: ClipboardCheck, label: 'Scorecard KPI tháng', executiveOnly: true },
-      { to: '/crm/kpi/settings', icon: Settings, label: 'Cấu hình KPI Tủ bếp', executiveOnly: true },
-      { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
-    ],
-  },
   {
     id: 'crm-sales',
     moduleKey: 'crm',
     title: 'Bán hàng',
-    emoji: '💰',
+    emoji: '🎯',
     items: [
-      { to: '/crm/pipeline', icon: Target, label: 'Pipeline & Leads', end: true },
       { to: '/crm/follow-up-care', icon: CalendarClock, label: 'CSKH theo hạn' },
       { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM' },
-      { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
-      { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
-      { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },
+      { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
     ],
   },
   {
-    id: 'crm-data',
+    id: 'crm-finance',
     moduleKey: 'crm',
-    title: 'Dữ liệu & cài đặt',
-    emoji: '📋',
+    title: 'Tài chính',
+    emoji: '💳',
     items: [
-      { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
-      { to: '/crm/customers', icon: UserCircle, label: 'Khách hàng' },
-      { to: '/crm/products', icon: Package, label: 'Sản phẩm' },
-      { to: '/crm/categories', icon: FolderTree, label: 'Nhóm ngành' },
+      { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
+      { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
+      { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },
+      { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice', adminOnly: true },
+    ],
+  },
+  {
+    id: 'crm-kpi',
+    moduleKey: 'crm',
+    title: 'KPI & báo cáo',
+    emoji: '📈',
+    items: [
+      { to: '/crm/executive-kpi', icon: BarChart3, label: 'KPI Giám đốc', executiveOnly: true },
+      { to: '/crm/kpi/guide', icon: BookOpen, label: 'Hướng dẫn KPI' },
+      { to: '/crm/kpi/sales-admin', icon: Activity, label: 'KPI Sales Admin (Tủ bếp)' },
+      { to: '/crm/kpi/deal', icon: Target, label: 'KPI Deal (Tủ bếp)' },
+      { to: '/crm/kpi/scorecard', icon: ClipboardCheck, label: 'Scorecard KPI tháng', executiveOnly: true },
+      { to: '/crm/kpi/settings', icon: Settings, label: 'Cấu hình KPI Tủ bếp', executiveOnly: true },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo', adminOnly: true },
       { to: '/crm/reports/staff-lead-deal', icon: Users, label: 'BC Lead/Deal theo NV', executiveOnly: true },
       { to: '/crm/admin/sla-watchlist', icon: Timer, label: 'SLA Lead/Deal (quản trị)', executiveOnly: true },
       { to: '/crm/settings/deal-stage-report', icon: LayoutGrid, label: 'Phân loại cột BC Deal', executiveOnly: true },
+    ],
+  },
+  {
+    id: 'crm-master',
+    moduleKey: 'crm',
+    title: 'Dữ liệu',
+    emoji: '🗂️',
+    items: [
+      { to: '/crm/customers', icon: UserCircle, label: 'Khách hàng' },
+      { to: '/crm/products', icon: Package, label: 'Sản phẩm' },
+      { to: '/crm/categories', icon: FolderTree, label: 'Nhóm ngành' },
+    ],
+  },
+  {
+    id: 'crm-notify',
+    moduleKey: 'crm',
+    title: 'Thông báo',
+    emoji: '🔔',
+    items: [{ to: '/updates', icon: Megaphone, label: 'Có gì mới?' }],
+  },
+  {
+    id: 'crm-admin',
+    moduleKey: 'crm',
+    title: 'Quản trị CRM',
+    emoji: '⚙️',
+    adminOnly: true,
+    items: [
       { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', adminOnly: true },
       { to: '/crm/facebook/link-phone-cleanup', icon: Phone, label: 'Dọn SĐT từ link', adminOnly: true },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline', adminOnly: true },
@@ -150,10 +169,17 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM', adminOnly: true },
       { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án', adminOnly: true },
       { to: '/admin/trash', icon: Trash2, label: 'Thùng rác (xóa giả)', adminOnly: true },
-      { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice', adminOnly: true },
-      { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
+    ],
+  },
+  {
+    id: 'crm-support',
+    moduleKey: 'crm',
+    title: 'Hỗ trợ & công cụ',
+    emoji: '🛠️',
+    items: [
+      { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },
-      { to: '/updates', icon: Megaphone, label: 'Có gì mới?', adminOnly: true },
+      { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
     ],
   },
 ];
@@ -507,7 +533,7 @@ export default function Sidebar() {
         <NotificationCenter socket={socket} />
       </div>
 
-      {/* Menu Groups — CRM: tổng quan gọn trên, còn lại cuối sidebar */}
+      {/* Menu Groups — CRM: tổng quan cố định trên; các cụm Bán hàng / Tài chính / KPI / … cuộn bên dưới */}
       <div className={`flex-1 flex flex-col min-h-0 ${isCRM ? '' : 'overflow-y-auto'} py-2`}>
         {isCRM ? (
           <>
@@ -523,7 +549,7 @@ export default function Sidebar() {
             <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
               {CRM_MENU_BOTTOM_GROUPS.map((group) => {
                 if (group.staffHidden && !isCrmMenuAdmin) return null;
-                if (group.adminOnly && !isAdmin) return null;
+                if (group.adminOnly && !isCrmMenuAdmin) return null;
                 return (
                   <MenuGroup
                     key={group.id}

@@ -40,11 +40,14 @@ export default function KpiUserFilter({ value, onChange, showSearch = true, comp
   }, [companyId]);
 
   const update = useCallback((patch) => {
-    const next = { companyId, departmentId, q, ...patch };
-    // Đổi company thì reset department
-    if (Object.hasOwn(patch, 'companyId') && patch.companyId !== companyId) next.departmentId = '';
+    const base = { ...(value || {}) };
+    const next = { ...base, ...patch };
+    if (Object.prototype.hasOwnProperty.call(patch, 'companyId') && patch.companyId !== base.companyId) {
+      next.departmentId = '';
+      next.regionId = '';
+    }
     onChange?.(next);
-  }, [companyId, departmentId, q, onChange]);
+  }, [value, onChange]);
 
   const wrap = compact ? 'flex flex-wrap items-center gap-2' : 'grid grid-cols-1 sm:grid-cols-3 gap-2';
 

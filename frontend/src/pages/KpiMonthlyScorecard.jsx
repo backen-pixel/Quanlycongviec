@@ -1,10 +1,124 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatVND } from '../lib/utils';
 import * as XLSX from 'xlsx';
-import { Download, RefreshCw, AlertTriangle, Trophy } from 'lucide-react';
+import { Download, RefreshCw, AlertTriangle, Trophy, Award, ChevronDown, ChevronUp, CheckCircle2, XCircle } from 'lucide-react';
 import KpiUserFilter from '../components/KpiUserFilter';
+
+const EVENT_LABELS = {
+  task_completed: 'Task hoàn thành',
+  stage_changed: 'Chuyển stage',
+  deal_won: 'Chốt HĐ',
+  deal_lost: 'Deal mất',
+  sla_breach: 'Vi phạm SLA',
+  manual: 'Thủ công',
+};
+const EVENT_COLORS = {
+  task_completed: 'bg-blue-100 text-blue-700',
+  stage_changed: 'bg-indigo-100 text-indigo-700',
+  deal_won: 'bg-emerald-100 text-emerald-700',
+  deal_lost: 'bg-red-100 text-red-700',
+  sla_breach: 'bg-orange-100 text-orange-700',
+  manual: 'bg-gray-100 text-gray-600',
+};
+
+function DealScoreRow({ item }) {
+  const [open, setOpen] = useState(false);
+  const lead = item.lead;
+  const pts = item.total_points;
+  return (
+    <>
+      <tr className="border-b last:border-0 hover:bg-gray-50 cursor-pointer text-sm" onClick={() => setOpen(v => !v)}>
+        <td className="px-3 py-2">
+          {lead ? (
+            <div>
+              <Link to={`/crm/leads/${lead.id}`} className="text-blue-600 hover:underline font-medium" onClick={e => e.stopPropagation()}>
+                {lead.code || lead.title || lead.id.slice(0, 8)}
+              </Link>
+              {lead.title && lead.code && <div className="text-xs text-gray-400 truncate max-w-[160px]">{lead.title}</div>}
+            </div>
+          ) : <span className="text-xs text-gray-400">{item.lead_id.slice(0, 8)}</span>}
+        </td>
+        <td className="px-3 py-2 text-xs">
+          {lead?.stage?.is_won && <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">Đã ký HĐ</span>}
+          {lead?.stage?.is_lost && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full">Mất</span>}
+          {!lead?.stage?.is_won && !lead?.stage?.is_lost && <span className="text-gray-600">{lead?.stage?.name || '—'}</span>}
+        </td>
+        <td className="px-3 py-2 text-xs text-right text-gray-500">{lead?.estimated_value ? formatVND(lead.estimated_value) : '—'}</td>
+        <td className="px-3 py-2 text-right">
+          <span className="text-xs text-emerald-600">+{item.plus_points.toFixed(1)}</span>
+          {item.minus_points < 0 && <span className="text-xs text-red-600 ml-1">{item.minus_points.toFixed(1)}</span>}
+        </td>
+        <td className="px-3 py-2 text-right font-bold">
+          <span className={pts > 0 ? 'text-emerald-700' : pts < 0 ? 'text-red-600' : 'text-gray-500'}>
+            {pts > 0 ? '+' : ''}{pts.toFixed(1)}
+          </span>
+        </td>
+        <td className="px-2 py-2 text-center text-gray-400">{open ? <ChevronUp className="h-3.5 w-3.5 mx-auto" /> : <ChevronDown className="h-3.5 w-3.5 mx-auto" />}</td>
+      </tr>
+      {open && item.events.length > 0 && (
+        <tr className="bg-gray-50"><td colSpan={6} className="px-4 py-2">
+          <div className="space-y-1">
+            {item.events.map((ev, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                {ev.on_time === true && <CheckCircle2 className="h-3 w-3 text-emerald-500 flex-shrink-0" />}
+                {ev.on_time === false && <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />}
+                {ev.on_time === null && <span className="w-3 h-3 flex-shrink-0" />}
+                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${EVENT_COLORS[ev.event_type] || 'bg-gray-100'}`}>{EVENT_LABELS[ev.event_type] || ev.event_type}</span>
+                {ev.kpi_code && <span className="text-gray-500">KPI {ev.kpi_code}</span>}
+                <span className={`font-semibold ml-auto ${Number(ev.points) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {Number(ev.points) > 0 ? '+' : ''}{Number(ev.points).toFixed(1)} điểm
+                </span>
+              </div>
+            ))}
+          </div>
+        </td></tr>
+      )}
+    </>
+  );
+}
+
+function UserDealScorePanel({ userId, periodStart }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    api.get('/kpi/deal-scores', { params: { user_id: userId, period_start: periodStart } })
+      .then(r => setData(r.data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [userId, periodStart]);
+  if (loading) return <div className="py-4 text-center text-xs text-gray-400">Đang tải…</div>;
+  if (!data || !data.deals?.length) return <div className="py-4 text-center text-xs text-gray-400">Chưa có điểm ledger trong kỳ này.</div>;
+  return (
+    <div>
+      <div className="flex items-center gap-4 text-xs mb-2 px-1">
+        <span className="text-emerald-600 font-semibold">+{data.summary.total_plus?.toFixed(1)} điểm</span>
+        {data.summary.total_minus < 0 && <span className="text-red-600 font-semibold">{data.summary.total_minus?.toFixed(1)} điểm</span>}
+        <span className="font-bold text-gray-700 border-l border-gray-200 pl-3">
+          Tổng: <span className={data.summary.total_net >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+            {data.summary.total_net > 0 ? '+' : ''}{data.summary.total_net?.toFixed(1)}
+          </span>
+        </span>
+      </div>
+      <table className="w-full text-xs">
+        <thead className="text-[10px] uppercase text-gray-500 border-b">
+          <tr>
+            <th className="text-left px-3 py-1.5">Deal</th>
+            <th className="text-left px-3 py-1.5">Stage</th>
+            <th className="text-right px-3 py-1.5">Giá trị</th>
+            <th className="text-right px-3 py-1.5">Cộng/Trừ</th>
+            <th className="text-right px-3 py-1.5">Tổng</th>
+            <th className="w-6" />
+          </tr>
+        </thead>
+        <tbody>{data.deals.map(item => <DealScoreRow key={item.lead_id} item={item} />)}</tbody>
+      </table>
+    </div>
+  );
+}
 
 function getDefaultPeriodStart() {
   const d = new Date();
@@ -43,6 +157,8 @@ export default function KpiMonthlyScorecard() {
   const [data, setData] = useState(null);
   const [defs, setDefs] = useState([]);
   const [err, setErr] = useState(null);
+  const [activeTab, setActiveTab] = useState('scorecard'); // 'scorecard' | 'deal-scores'
+  const [expandedUser, setExpandedUser] = useState(null);
 
   const load = async () => {
     if (!isManager) return;
@@ -166,9 +282,26 @@ export default function KpiMonthlyScorecard() {
         </div>
       )}
 
+      {/* ── Tabs ── */}
+      {data && (
+        <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+          {[
+            { id: 'scorecard', label: '15 KPI × Nhân viên' },
+            { id: 'deal-scores', label: 'Điểm từng Deal (Ledger)' },
+          ].map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === t.id ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div className="text-center py-16 text-gray-400">Đang tính KPI cho tất cả nhân viên… (có thể mất 30-60s)</div>
-      ) : data ? (
+      ) : data && activeTab === 'scorecard' ? (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-700 uppercase sticky top-0">
@@ -230,6 +363,46 @@ export default function KpiMonthlyScorecard() {
               )}
             </tbody>
           </table>
+        </div>
+      ) : data && activeTab === 'deal-scores' ? (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 space-y-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Award className="w-4 h-4 text-purple-600" />
+            <h2 className="font-semibold text-gray-900">Điểm từng Deal theo nhân viên (CRM Ledger)</h2>
+          </div>
+          <p className="text-xs text-gray-500">Điểm được ghi tự động từ DB triggers khi task hoàn thành, chuyển stage, chốt / mất deal. Click vào dòng nhân viên để xem chi tiết.</p>
+          <div className="space-y-3">
+            {usersSorted.map((u, idx) => (
+              <div key={u.user?.id || idx} className="border border-gray-200 rounded-xl overflow-hidden">
+                <button
+                  onClick={() => setExpandedUser(expandedUser === (u.user?.id || idx) ? null : (u.user?.id || idx))}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    {idx < 3 && <Trophy className={`w-4 h-4 ${idx === 0 ? 'text-yellow-500' : idx === 1 ? 'text-gray-400' : 'text-amber-700'}`} />}
+                    <span className="font-medium text-gray-900">{u.user?.full_name || '—'}</span>
+                    <span className="text-xs text-gray-500">{u.user?.role}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-500">
+                      KPI 15-chỉ số: <strong className={u.gating_triggered ? 'text-red-600' : 'text-gray-900'}>{u.total_score ?? '—'}đ</strong>
+                    </span>
+                    {expandedUser === (u.user?.id || idx)
+                      ? <ChevronUp className="h-4 w-4 text-gray-400" />
+                      : <ChevronDown className="h-4 w-4 text-gray-400" />}
+                  </div>
+                </button>
+                {expandedUser === (u.user?.id || idx) && u.user?.id && (
+                  <div className="px-4 pb-4 pt-2">
+                    <UserDealScorePanel userId={u.user.id} periodStart={periodStart} />
+                  </div>
+                )}
+              </div>
+            ))}
+            {usersSorted.length === 0 && (
+              <div className="text-center text-gray-400 py-8 text-sm">Không có nhân viên nào.</div>
+            )}
+          </div>
         </div>
       ) : null}
     </div>

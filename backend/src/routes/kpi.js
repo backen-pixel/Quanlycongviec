@@ -526,6 +526,94 @@ r.put('/targets', async (req, res) => {
   }
 });
 
+// ─── GET /api/kpi/deal-scores ────────────────────────────────────────────────
+// Tổng điểm CRM Ledger theo từng deal/lead của user trong kỳ.
+// Query: ?user_id=&period_start=&period_type=
+r.get('/deal-scores', async (req, res) => {
+  try {
+    const userId = req.query.user_id || req.user?.userId;
+    if (!userId) return res.status(400).json({ error: 'Thiếu user_id' });
+    if (userId !== req.user?.userId && !isManager(req)) {
+      return res.status(403).json({ error: 'Chỉ quản lý mới xem được điểm người khác' });
+    }
+    const { periodType, periodStart } = parsePeriod(req.query);
+
+    // 1. Lấy toàn bộ ledger của user trong kỳ
+    const { data: ledger, error: le } = await supabase
+      .from('crm_kpi_ledger')
+      .select('lead_id, task_id, event_type, source_kpi_code, points, on_time, occurred_at, reason, delta_seconds')
+      .eq('user_id', userId)
+      .eq('period_type', periodType)
+      .eq('period_start', periodStart)
+      .order('occurred_at', { ascending: true });
+    if (le) throw le;
+
+    // 2. Gộp theo lead_id
+    const byLead = new Map();
+    let totalPlus = 0, totalMinus = 0;
+    for (const row of ledger || []) {
+      if (!row.lead_id) continue;
+      const cur = byLead.get(row.lead_id) || {
+        lead_id: row.lead_id,
+        total_points: 0,
+        plus_points: 0,
+        minus_points: 0,
+        events: [],
+      };
+      const pts = Number(row.points || 0);
+      cur.total_points += pts;
+      if (pts > 0) { cur.plus_points += pts; totalPlus += pts; }
+      else { cur.minus_points += pts; totalMinus += pts; }
+      cur.events.push({
+        event_type: row.event_type,
+        kpi_code: row.source_kpi_code,
+        points: row.points,
+        on_time: row.on_time,
+        occurred_at: row.occurred_at,
+        reason: row.reason,
+        delta_seconds: row.delta_seconds,
+      });
+      byLead.set(row.lead_id, cur);
+    }
+
+    // 3. Lấy thông tin lead
+    if (byLead.size > 0) {
+      const ids = [...byLead.keys()];
+      const chunks = [];
+      for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
+      for (const chunk of chunks) {
+        const { data: leads } = await supabase
+          .from('crm_leads')
+          .select('id, code, title, type, estimated_value, stage_id, stage:crm_pipeline_stages!stage_id(name, canonical_slug, is_won, is_lost)')
+          .in('id', chunk);
+        for (const lead of leads || []) {
+          const cur = byLead.get(lead.id);
+          if (cur) byLead.set(lead.id, { ...cur, lead });
+        }
+      }
+    }
+
+    const deals = [...byLead.values()]
+      .sort((a, b) => b.total_points - a.total_points);
+
+    res.json({
+      user_id: userId,
+      period_type: periodType,
+      period_start: periodStart,
+      summary: {
+        deal_count: deals.length,
+        total_plus: Math.round(totalPlus * 100) / 100,
+        total_minus: Math.round(totalMinus * 100) / 100,
+        total_net: Math.round((totalPlus + totalMinus) * 100) / 100,
+      },
+      deals,
+    });
+  } catch (e) {
+    console.error('GET /kpi/deal-scores:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── POST /api/kpi/recompute ─────────────────────────────────────────────────
 // Body: { period_type, period_start, user_ids? [], company_id?, department_id?, q? }
 r.post('/recompute', async (req, res) => {

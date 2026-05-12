@@ -823,12 +823,12 @@ export default function ApiKeysSettingsPage() {
           <tbody className="divide-y divide-gray-50">
             {[
               ['title', '✅', 'Tên lead hiển thị trong CRM'],
-              ['region_id', '⚠️', 'UUID khu vực — bắt buộc (nếu không gửi sẽ dùng default của key)'],
+              ['phone', '✅', 'SĐT khách hàng — tìm hoặc tạo mới customer theo số này'],
+              ['region_id', '', 'UUID khu vực — tự chọn khu vực đầu tiên của công ty nếu trống'],
               ['pipeline_id', '', 'UUID pipeline — fallback default của key, sau đó default của công ty'],
               ['lead_type_id', '', 'UUID loại Lead/Deal — quyết định bộ task auto-gen (fallback default key)'],
               ['source_category_id', '', 'UUID phân loại nguồn (tùy chọn) — fallback default của key'],
               ['full_name', '', 'Tên khách hàng — tìm hoặc tạo mới theo phone/email'],
-              ['phone', '', 'SĐT — dùng để tìm khách hàng đã có'],
               ['email', '', 'Email khách hàng'],
               ['address', '', 'Địa chỉ'],
               ['company', '', 'Tên công ty khách hàng'],

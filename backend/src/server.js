@@ -584,7 +584,7 @@ server.listen(config.port, () => {
         }
 
         // IMPORTANT: tạo lead qua API CRM chuẩn để auto-gen tasks + tạo Đơn 1 (fulfillment)
-        const port = process.env.PORT || 3000;
+        const port = config.port;
         const token = jwt.sign(
           { userId: page.data.created_by, role: 'admin', fullName: 'Auto Pipeline' },
           config.jwtSecret,

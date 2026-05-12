@@ -6,8 +6,8 @@
  * Auth: header X-Api-Key: <key> hoặc query ?api_key= / ?x-api-key= (key trong giá trị, không phải tên param)
  * Body:
  *   title          (bắt buộc) — tên lead
+ *   phone          (bắt buộc) — SĐT (dùng để tìm / tạo customer)
  *   full_name      — tên khách hàng
- *   phone          — SĐT (dùng để tìm / tạo customer)
  *   email          — email khách hàng
  *   address        — địa chỉ
  *   company        — tên công ty KH
@@ -86,13 +86,30 @@ function isLeadCodeUniqueViolation(err) {
 async function findOrCreateCustomer({ full_name, phone, email, address, company }) {
   if (!full_name && !phone && !email) return null;
 
+  let existingId = null;
+
   if (phone) {
     const { data } = await supabase.from('customers').select('id').eq('phone', phone).maybeSingle();
-    if (data) return data.id;
+    if (data) existingId = data.id;
   }
-  if (email) {
+  if (!existingId && email) {
     const { data } = await supabase.from('customers').select('id').eq('email', email).maybeSingle();
-    if (data) return data.id;
+    if (data) existingId = data.id;
+  }
+
+  if (existingId) {
+    // Cập nhật các trường được gửi mới (không ghi đè bằng null nếu không có)
+    const patch = {};
+    if (full_name) patch.full_name = full_name;
+    if (phone) patch.phone = phone;
+    if (email) patch.email = email;
+    if (address) patch.address = address;
+    if (company) patch.company = company;
+    if (Object.keys(patch).length) {
+      const { error: updateErr } = await supabase.from('customers').update(patch).eq('id', existingId);
+      if (updateErr) console.warn('[External API] Customer update warning:', updateErr.message);
+    }
+    return existingId;
   }
 
   const { data, error } = await supabase
@@ -221,6 +238,11 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     const nPhone = normalizePhone(phone);
     const nEmail = normalizeEmail(email);
 
+    if (!nPhone) {
+      await tryAuditLog(req, { status: 400, error: 'missing_phone' });
+      return res.status(400).json({ error: 'Trường phone (số điện thoại) là bắt buộc' });
+    }
+
     // assigned_to: nếu gửi lên thì bắt buộc thuộc đúng công ty của API key
     if (assigned_to) {
       const { data: u, error: ue } = await supabase.from('users').select('id, company_id, is_active').eq('id', assigned_to).maybeSingle();
@@ -243,14 +265,21 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       }
     }
 
-    // Khu vực: ưu tiên body, fallback default của key. Bắt buộc phải có.
-    const resolvedRegionId = bodyRegionId || req.apiKey.region_id || null;
+    // Khu vực: ưu tiên body, fallback default của key, fallback khu vực đầu tiên của công ty.
+    let resolvedRegionId = bodyRegionId || req.apiKey.region_id || null;
     if (!resolvedRegionId) {
-      await tryAuditLog(req, { status: 400, error: 'missing_region_id' });
-      return res.status(400).json({ error: 'region_id là bắt buộc (chưa cấu hình khu vực mặc định cho key)' });
+      const { data: firstRegion } = await supabase
+        .from('company_regions')
+        .select('id')
+        .eq('company_id', req.apiKey.company_id)
+        .eq('is_active', true)
+        .order('order_index', { ascending: true, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      resolvedRegionId = firstRegion?.id || null;
     }
-    // Validate region thuộc đúng company của key
-    {
+    // Validate region nếu đã có (do body hoặc key truyền vào)
+    if (resolvedRegionId) {
       const { data: rg } = await supabase
         .from('company_regions')
         .select('id, company_id, is_active')
