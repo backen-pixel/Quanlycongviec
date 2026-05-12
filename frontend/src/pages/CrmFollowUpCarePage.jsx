@@ -21,6 +21,8 @@ import {
   Target,
   Filter,
   Tag,
+  CheckCircle2,
+  Circle,
 } from 'lucide-react';
 
 function startOfDay(d) {
@@ -131,6 +133,9 @@ export default function CrmFollowUpCarePage() {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(null);
+  /** lead_id → mark object ({ marked_at, expires_at }) — đã chăm sóc trong 30 ngày */
+  const [careMarks, setCareMarks] = useState({});
+  const [careBusyId, setCareBusyId] = useState(null);
 
   // Áp filter từ URL search params mỗi khi URL thay đổi (kể cả khi component đã mount sẵn,
   // ví dụ user bấm thông báo CSKH lần thứ hai). Không xóa params để giữ làm "source of truth"
@@ -295,6 +300,56 @@ export default function CrmFollowUpCarePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Sau khi load lead xong, lấy danh sách dấu tích "đã chăm sóc" của user hiện tại cho các lead này.
+  useEffect(() => {
+    if (!leads.length) {
+      setCareMarks({});
+      return;
+    }
+    let cancel = false;
+    const ids = leads.map((l) => l.id).filter(Boolean).join(',');
+    api
+      .get('/crm/lead-care-marks', { params: { lead_ids: ids } })
+      .then((r) => {
+        if (cancel) return;
+        const map = {};
+        (r.data?.marks || []).forEach((m) => {
+          map[m.lead_id] = m;
+        });
+        setCareMarks(map);
+      })
+      .catch(() => {
+        if (!cancel) setCareMarks({});
+      });
+    return () => { cancel = true; };
+  }, [leads]);
+
+  const toggleCareMark = useCallback(async (leadId) => {
+    if (!leadId || careBusyId) return;
+    setCareBusyId(leadId);
+    const isMarked = !!careMarks[leadId];
+    try {
+      if (isMarked) {
+        await api.delete(`/crm/leads/${encodeURIComponent(leadId)}/care-mark`);
+        setCareMarks((prev) => {
+          const next = { ...prev };
+          delete next[leadId];
+          return next;
+        });
+      } else {
+        const { data } = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/care-mark`);
+        setCareMarks((prev) => ({
+          ...prev,
+          [leadId]: data?.mark || { marked_at: new Date().toISOString() },
+        }));
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi cập nhật dấu chăm sóc');
+    } finally {
+      setCareBusyId(null);
+    }
+  }, [careMarks, careBusyId]);
 
   const filtered = useMemo(() => {
     let rows = leads;
@@ -510,6 +565,12 @@ export default function CrmFollowUpCarePage() {
             {overdueCount} quá hạn trong danh sách
           </span>
         )}
+        {filtered.some((l) => careMarks[l.id]) && (
+          <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+            <CheckCircle2 className="h-4 w-4" />
+            {filtered.filter((l) => careMarks[l.id]).length} đã chăm sóc
+          </span>
+        )}
       </div>
 
       {loading ? (
@@ -525,6 +586,7 @@ export default function CrmFollowUpCarePage() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">
               <tr>
+                <th className="px-3 py-2.5 text-center" title="Đã chăm sóc — ẩn nhắc 30 ngày">CSKH</th>
                 <th className="px-3 py-2.5">Lead / Deal</th>
                 <th className="px-3 py-2.5">Khách</th>
                 <th className="px-3 py-2.5">Nguồn</th>
@@ -544,8 +606,30 @@ export default function CrmFollowUpCarePage() {
                 const nfMs = nf ? new Date(nf).getTime() : null;
                 const today0 = startOfDay(new Date()).getTime();
                 const overdue = nfMs != null && nfMs < today0;
+                const mark = careMarks[row.id];
+                const isMarked = !!mark;
+                const busy = careBusyId === row.id;
                 return (
-                  <tr key={row.id} className="hover:bg-emerald-50/40">
+                  <tr key={row.id} className={`hover:bg-emerald-50/40 ${isMarked ? 'bg-emerald-50/60' : ''}`}>
+                    <td className="px-3 py-2 align-middle text-center">
+                      <button
+                        type="button"
+                        onClick={() => toggleCareMark(row.id)}
+                        disabled={busy}
+                        className={`w-7 h-7 rounded-lg inline-flex items-center justify-center transition-colors cursor-pointer ${
+                          isMarked
+                            ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                            : 'text-gray-300 hover:bg-emerald-100 hover:text-emerald-600'
+                        } ${busy ? 'opacity-50 cursor-wait' : ''}`}
+                        title={
+                          isMarked
+                            ? `Đã chăm sóc${mark?.marked_at ? ` lúc ${formatDate(mark.marked_at)}` : ''} — bấm để bỏ`
+                            : 'Đánh dấu đã chăm sóc (ẩn nhắc 30 ngày)'
+                        }
+                      >
+                        {isMarked ? <CheckCircle2 className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
+                      </button>
+                    </td>
                     <td className="px-3 py-2 align-top">
                       <Link
                         to={`/crm/leads/${row.id}`}

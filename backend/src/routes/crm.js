@@ -10637,4 +10637,92 @@ r.delete('/followup-care/dismiss', async (req, res) => {
   }
 });
 
+// ═══ Đã chăm sóc (per-lead) ═══
+// GET /crm/lead-care-marks?lead_ids=a,b,c → trả về danh sách lead_id user đã đánh dấu (chưa hết hạn)
+r.get('/lead-care-marks', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const ids = String(req.query.lead_ids || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    let q = supabase
+      .from('crm_lead_care_marks')
+      .select('lead_id, marked_at, expires_at, note')
+      .eq('user_id', userId)
+      .gt('expires_at', new Date().toISOString());
+    if (ids.length) q = q.in('lead_id', ids);
+
+    const { data, error } = await q;
+    if (error) {
+      // Bảng chưa migrate — trả về rỗng để FE không vỡ
+      if (String(error.message || '').toLowerCase().includes('crm_lead_care_marks')) {
+        return res.json({ marks: [] });
+      }
+      throw error;
+    }
+    res.json({ marks: data || [] });
+  } catch (e) {
+    console.error('GET /crm/lead-care-marks:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// POST /crm/leads/:id/care-mark → đánh dấu đã chăm sóc lead này (30 ngày)
+r.post('/leads/:id/care-mark', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const leadId = req.params.id;
+    const note = req.body?.note ? String(req.body.note).trim() || null : null;
+
+    const row = {
+      lead_id: leadId,
+      user_id: userId,
+      marked_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      note,
+    };
+    const { data, error } = await supabase
+      .from('crm_lead_care_marks')
+      .upsert(row, { onConflict: 'lead_id,user_id' })
+      .select('lead_id, marked_at, expires_at, note')
+      .maybeSingle();
+    if (error) {
+      if (String(error.message || '').toLowerCase().includes('crm_lead_care_marks')) {
+        return res.status(503).json({
+          error: 'Bảng crm_lead_care_marks chưa được tạo. Hãy chạy migration database/157_crm_lead_care_marks.sql.',
+        });
+      }
+      throw error;
+    }
+    res.json({ ok: true, mark: data });
+  } catch (e) {
+    console.error('POST /crm/leads/:id/care-mark:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// DELETE /crm/leads/:id/care-mark → bỏ dấu chăm sóc
+r.delete('/leads/:id/care-mark', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const leadId = req.params.id;
+    const { error } = await supabase
+      .from('crm_lead_care_marks')
+      .delete()
+      .eq('lead_id', leadId)
+      .eq('user_id', userId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE /crm/leads/:id/care-mark:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
 module.exports = r;
