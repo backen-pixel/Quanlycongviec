@@ -88,7 +88,7 @@ export default function EventsFeedPage() {
     } catch { /* ignore */ }
   }, [isSystemAdmin, filterCompanyId]);
 
-  const [view, setView] = useState('feed'); // feed | calendar | types
+  const [view, setView] = useState('calendar'); // feed | calendar | types — mặc định Lịch khi vào trang
   const [events, setEvents] = useState([]);
   const [eventTypes, setEventTypes] = useState([]);
   const [users, setUsers] = useState([]);
@@ -98,6 +98,11 @@ export default function EventsFeedPage() {
   const [filterType, setFilterType] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterUser, setFilterUser] = useState('');
+  const [filterRegionId, setFilterRegionId] = useState('');
+  const [regions, setRegions] = useState([]);
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const [totalEvents, setTotalEvents] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [editEvent, setEditEvent] = useState(null);
   const [calMonth, setCalMonth] = useState(new Date().getMonth() + 1);
@@ -109,6 +114,7 @@ export default function EventsFeedPage() {
 
   useEffect(() => {
     setFilterUser('');
+    setFilterRegionId('');
   }, [effectiveCompanyIdForUsers]);
 
   useEffect(() => {
@@ -118,52 +124,86 @@ export default function EventsFeedPage() {
   useEffect(() => {
     if (!effectiveCompanyIdForUsers) {
       setUsers([]);
+      setRegions([]);
       return;
     }
     api
       .get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
       .then((r) => setUsers(r.data.users || r.data || []))
       .catch(() => setUsers([]));
+    api
+      .get('/crm/company-regions', { params: { company_id: effectiveCompanyIdForUsers } })
+      .then((r) => setRegions(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setRegions([]));
   }, [effectiveCompanyIdForUsers]);
 
+  const monthRangeBounds = useMemo(() => {
+    const y = calYear;
+    const m = calMonth;
+    const pad = (n) => String(n).padStart(2, '0');
+    const last = new Date(y, m, 0).getDate();
+    return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${pad(last)}` };
+  }, [calMonth, calYear]);
+
+  /** Tab Lịch: feed lọc đúng theo tháng đang xem trên lịch */
   useEffect(() => {
-    if (view === 'feed') {
-      loadFeed();
-      loadCalendar();
-    } else if (view === 'calendar') {
-      loadCalendar();
-    }
-  }, [view, filterType, filterStatus, filterUser, calMonth, calYear, listParams]);
+    if (view !== 'calendar') return;
+    setRangeFrom(monthRangeBounds.from);
+    setRangeTo(monthRangeBounds.to);
+  }, [view, monthRangeBounds.from, monthRangeBounds.to]);
+
+  useEffect(() => {
+    if (view !== 'feed' && view !== 'calendar') return;
+    loadFeed();
+    if (view === 'calendar') loadCalendar();
+  }, [view, filterType, filterStatus, filterUser, filterRegionId, calMonth, calYear, listParams, rangeFrom, rangeTo]);
 
   const loadEventTypes = () => api.get('/events/event-types').then(r => setEventTypes(r.data || [])).catch(() => {});
 
   const loadFeed = async () => {
     setLoading(true);
     try {
-      const params = { limit: 100, ...listParams };
+      const params = { limit: 500, ...listParams };
       if (filterType) params.type = filterType;
       if (filterStatus) params.status = filterStatus;
       if (filterUser) params.user_id = filterUser;
+      if (filterRegionId) params.region_id = filterRegionId;
+      if (rangeFrom) params.date_from = rangeFrom;
+      if (rangeTo) params.date_to = rangeTo;
       if (search) params.search = search;
       const { data } = await api.get('/events', { params });
       setEvents(data.events || []);
-    } catch (e) { console.error(e); }
+      setTotalEvents(typeof data.total === 'number' ? data.total : (data.events || []).length);
+    } catch (e) {
+      console.error(e);
+      setEvents([]);
+      setTotalEvents(0);
+    }
     setLoading(false);
   };
 
   const loadCalendar = async () => {
     setCalLoading(true);
     try {
-      const { data } = await api.get('/events/calendar', { params: { month: calMonth, year: calYear, ...listParams } });
+      const params = { month: calMonth, year: calYear, ...listParams };
+      if (filterRegionId) params.region_id = filterRegionId;
+      const { data } = await api.get('/events/calendar', { params });
       setCalEvents(data || []);
     } catch (e) { console.error(e); }
     setCalLoading(false);
   };
 
+  const refreshEventsData = () => {
+    if (view === 'feed' || view === 'calendar') {
+      loadFeed();
+      if (view === 'calendar') loadCalendar();
+    }
+  };
+
   const handleRespond = async (eventId, status) => {
     try {
       await api.put(`/events/${eventId}/respond`, { status });
-      if (view === 'feed') { loadFeed(); loadCalendar(); } else loadCalendar();
+      refreshEventsData();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
@@ -171,16 +211,34 @@ export default function EventsFeedPage() {
     if (!confirm('Xóa sự kiện này?')) return;
     try {
       await api.delete(`/events/${id}`);
-      if (view === 'feed') { loadFeed(); loadCalendar(); } else loadCalendar();
+      refreshEventsData();
     } catch (e) { alert('Lỗi xóa'); }
   };
 
   const handleStatusChange = async (id, status) => {
     try {
       await api.put(`/events/${id}`, { status });
-      if (view === 'feed') { loadFeed(); loadCalendar(); } else loadCalendar();
+      refreshEventsData();
     } catch (e) { alert('Lỗi'); }
   };
+
+  const clearFilters = () => {
+    setSearch('');
+    setFilterType('');
+    setFilterStatus('');
+    setFilterUser('');
+    setFilterRegionId('');
+    if (view === 'calendar') {
+      setRangeFrom(monthRangeBounds.from);
+      setRangeTo(monthRangeBounds.to);
+    } else {
+      setRangeFrom('');
+      setRangeTo('');
+    }
+  };
+
+  const hasActiveFilters = !!(search || filterType || filterStatus || filterUser || filterRegionId
+    || (view === 'feed' && (rangeFrom || rangeTo)));
 
   return (
     <div className="space-y-4">
@@ -190,7 +248,14 @@ export default function EventsFeedPage() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Calendar className="h-6 w-6 text-blue-600" /> Sự kiện
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">{events.length} sự kiện</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {totalEvents > (events || []).length && (events || []).length >= 500
+              ? `Hiển thị ${(events || []).length} / ${totalEvents} sự kiện (giới hạn 500)` 
+              : `${totalEvents || (events || []).length} sự kiện`}
+            {view === 'calendar' && (
+              <span className="text-gray-400"> — khoảng {monthRangeBounds.from} → {monthRangeBounds.to}</span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {isSystemAdmin && (
@@ -211,12 +276,13 @@ export default function EventsFeedPage() {
           )}
           {/* View toggle */}
           <div className="flex bg-gray-100 rounded-lg p-0.5">
+          <button onClick={() => setView('calendar')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'calendar' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+              <Calendar className="h-4 w-4" /> Lịch
+            </button>
             <button onClick={() => setView('feed')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'feed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
               <List className="h-4 w-4" /> Feed
             </button>
-            <button onClick={() => setView('calendar')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'calendar' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
-              <Calendar className="h-4 w-4" /> Lịch
-            </button>
+            
             <button onClick={() => setView('types')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'types' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
               <Settings className="h-4 w-4" /> Loại
             </button>
@@ -228,88 +294,122 @@ export default function EventsFeedPage() {
         </div>
       </div>
 
-      {/* Filters (Feed view) */}
-      {view === 'feed' && (
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadFeed()}
-              placeholder="Tìm sự kiện..." className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm" />
-          </div>
-          <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 border rounded-lg text-sm">
-            <option value="">Tất cả loại</option>
-            {eventTypes.map(t => <option key={t.slug} value={t.slug}>{t.icon} {t.name}</option>)}
-          </select>
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-9 px-3 border rounded-lg text-sm">
-            <option value="">Tất cả trạng thái</option>
-            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
-          <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="h-9 px-3 border rounded-lg text-sm">
-            <option value="">Tất cả người</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-          </select>
-          {(search || filterType || filterStatus || filterUser) && (
-            <button onClick={() => { setSearch(''); setFilterType(''); setFilterStatus(''); setFilterUser(''); }}
-              className="text-xs text-red-500 hover:underline cursor-pointer">Xóa lọc</button>
-          )}
-        </div>
-      )}
-
-      {/* Feed: lịch phía trên, danh sách feed phía dưới */}
-      {view === 'feed' && (
-        <div className="space-y-6">
-          <CalendarView
-            month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
-            loading={calLoading} selectedDay={selectedDay}
-            onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
-            onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
-            onSelectDay={setSelectedDay}
-            onOpenCreateForDay={(day) => {
-              setEditEvent(null);
-              setCreatePresetDay({ year: calYear, month: calMonth, day });
-              setSelectedDay(day);
-              setShowCreate(true);
-            }}
-            onEdit={(ev) => { setEditEvent(ev); setCreatePresetDay(null); setShowCreate(true); }}
-          />
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
-            </h2>
-            <div className="space-y-4">
-              {loading ? (
-                <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
-              ) : events.length === 0 ? (
-                <div className="text-center py-16 text-gray-400">
-                  <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p className="text-sm">Chưa có sự kiện nào</p>
+      {/* Feed: chỉ bộ lọc + danh sách; Lịch: thêm khối lịch tháng phía trên */}
+      {(view === 'feed' || view === 'calendar') && (
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/90 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
+              <Filter className="h-3.5 w-3.5" /> Bộ lọc
+              {view === 'calendar' && (
+                <span className="font-normal normal-case text-gray-500">(tab Lịch: thời gian theo tháng đang chọn)</span>
+              )}
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="relative flex-1 min-w-[180px] max-w-sm">
+                <label className="block text-[10px] text-gray-500 mb-0.5">Tìm kiếm</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadFeed()}
+                    placeholder="Enter để tìm..." className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm" />
                 </div>
-              ) : events.map(ev => (
-                <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
-                  onRespond={handleRespond} onDelete={handleDelete} onStatusChange={handleStatusChange}
-                  onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
-              ))}
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-0.5">Từ ngày</label>
+                <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)}
+                  disabled={view === 'calendar'}
+                  className={`h-9 px-2 border rounded-lg text-sm ${view === 'calendar' ? 'bg-gray-100 text-gray-600' : ''}`}
+                  title={view === 'calendar' ? 'Đổi tháng trên lịch để đổi khoảng ngày' : ''} />
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-0.5">Đến ngày</label>
+                <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)}
+                  disabled={view === 'calendar'}
+                  className={`h-9 px-2 border rounded-lg text-sm ${view === 'calendar' ? 'bg-gray-100 text-gray-600' : ''}`} />
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-0.5">Loại</label>
+                <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[120px]">
+                  <option value="">Tất cả loại</option>
+                  {eventTypes.map(t => <option key={t.slug} value={t.slug}>{t.icon} {t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-0.5">Trạng thái</label>
+                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[130px]">
+                  <option value="">Tất cả</option>
+                  {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-0.5">Nhân viên</label>
+                <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[140px]">
+                  <option value="">Tất cả</option>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-0.5 flex items-center gap-1">
+                  <MapPin className="h-3 w-3" /> Khu vực
+                </label>
+                <select
+                  value={filterRegionId}
+                  onChange={e => setFilterRegionId(e.target.value)}
+                  disabled={!effectiveCompanyIdForUsers}
+                  className="h-9 px-3 border rounded-lg text-sm min-w-[150px] disabled:bg-gray-100"
+                  title={!effectiveCompanyIdForUsers ? 'Chọn công ty (admin) để lọc khu vực' : ''}
+                >
+                  <option value="">Tất cả khu vực</option>
+                  {regions.map((rg) => (
+                    <option key={rg.id} value={rg.id}>{rg.name}{rg.code ? ` (${rg.code})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              {hasActiveFilters && (
+                <button type="button" onClick={clearFilters}
+                  className="h-9 px-3 text-xs text-red-600 hover:underline cursor-pointer self-end">Xóa lọc</button>
+              )}
+            </div>
+          </div>
+
+          <div className={`p-4 ${view === 'calendar' ? 'space-y-6' : ''}`}>
+            {view === 'calendar' && (
+              <CalendarView
+                month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
+                loading={calLoading} selectedDay={selectedDay}
+                onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
+                onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
+                onSelectDay={setSelectedDay}
+                onOpenCreateForDay={(day) => {
+                  setEditEvent(null);
+                  setCreatePresetDay({ year: calYear, month: calMonth, day });
+                  setSelectedDay(day);
+                  setShowCreate(true);
+                }}
+                onEdit={(ev) => { setEditEvent(ev); setCreatePresetDay(null); setShowCreate(true); }}
+              />
+            )}
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
+                <span className="text-xs font-normal text-gray-400">(cùng bộ lọc phía trên)</span>
+              </h2>
+              <div className="space-y-4">
+                {loading ? (
+                  <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
+                ) : events.length === 0 ? (
+                  <div className="text-center py-16 text-gray-400">
+                    <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                    <p className="text-sm">Không có sự kiện phù hợp bộ lọc</p>
+                  </div>
+                ) : events.map(ev => (
+                  <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
+                    onRespond={handleRespond} onDelete={handleDelete} onStatusChange={handleStatusChange}
+                    onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
+                ))}
+              </div>
             </div>
           </div>
         </div>
-      )}
-
-      {/* Calendar View (toàn màn hình lịch) */}
-      {view === 'calendar' && (
-        <CalendarView
-          month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
-          loading={calLoading} selectedDay={selectedDay}
-          onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
-          onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
-          onSelectDay={setSelectedDay}
-          onOpenCreateForDay={(day) => {
-            setEditEvent(null);
-            setCreatePresetDay({ year: calYear, month: calMonth, day });
-            setSelectedDay(day);
-            setShowCreate(true);
-          }}
-          onEdit={(ev) => { setEditEvent(ev); setCreatePresetDay(null); setShowCreate(true); }}
-        />
       )}
 
       {/* Event Types Manager */}
@@ -325,7 +425,7 @@ export default function EventsFeedPage() {
           eventTypes={eventTypes}
           users={users}
           onClose={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); }}
-          onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); if (view === 'feed') { loadFeed(); loadCalendar(); } else loadCalendar(); }}
+          onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); refreshEventsData(); }}
         />
       )}
     </div>

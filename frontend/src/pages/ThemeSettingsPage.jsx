@@ -1,6 +1,9 @@
 import { useState, useRef } from 'react';
 import { useTheme } from '../components/ThemeProvider';
-import { Upload, Check, Palette, Image, SlidersHorizontal, Trash2, Type, Eye } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import {
+  Upload, Check, Palette, Image, SlidersHorizontal, Trash2, Type, Eye, CloudUpload, CloudDownload, Loader2,
+} from 'lucide-react';
 
 const TEXT_PRESETS = [
   { id: 'light', name: '☀️ Sáng (mặc định)', textHeading: '#111827', textBody: '#374151', textMuted: '#6b7280', textCard: '#1f2937' },
@@ -14,9 +17,15 @@ const TEXT_PRESETS = [
 ];
 
 export default function ThemeSettingsPage() {
-  const { theme, changeTheme, setBackgroundImage, setOverlayOpacity, setTextColors, presets } = useTheme();
+  const { user } = useAuth();
+  const {
+    theme, changeTheme, setBackgroundImage, setOverlayOpacity, setTextColors, presets,
+    pushThemeToServer, pullThemeFromServer,
+  } = useTheme();
   const fileRef = useRef();
   const [uploading, setUploading] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const [pulling, setPulling] = useState(false);
   const [customColors, setCustomColors] = useState({
     sidebar: theme.sidebar, pageBg: theme.pageBg, accent: theme.accent,
   });
@@ -54,6 +63,19 @@ export default function ThemeSettingsPage() {
 
   const overlayVal = parseFloat((theme.bgOverlay || '').match(/[\d.]+(?=\))/)?.[0] || 0);
 
+  /** Một lần set theme đầy đủ — tránh gọi changeTheme + setTextColors (hai setTheme; setTextColors merge theo theme cũ → ghi đè sai). */
+  const restoreFactoryDefault = () => {
+    const def = presets.find((p) => p.id === 'default') ?? presets[0];
+    changeTheme(def);
+    setCustomColors({ sidebar: def.sidebar, pageBg: def.pageBg, accent: def.accent });
+    setTextColorState({
+      textHeading: def.textHeading || '#111827',
+      textBody: def.textBody || '#374151',
+      textMuted: def.textMuted || '#6b7280',
+      textCard: def.textCard || '#1f2937',
+    });
+  };
+
   return (
     <div className="max-w-5xl space-y-6">
       <div>
@@ -61,9 +83,61 @@ export default function ThemeSettingsPage() {
           <Palette className="h-6 w-6" /> Giao diện & Hình nền
         </h1>
         <p className="text-sm text-gray-500 mt-1">Tùy chỉnh giao diện, màu sắc, hình nền cho toàn bộ ứng dụng</p>
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+          Thay đổi trên trang này chỉ lưu trên trình duyệt của bạn. Muốn gắn với tài khoản trên máy chủ (mở máy khác vẫn giữ), hãy dùng hai nút đồng bộ bên dưới.
+        </p>
+
+        <div className="flex flex-wrap gap-3 mt-4 items-center">
+          <button
+            type="button"
+            disabled={!user?.userId || pushing}
+            onClick={async () => {
+              setPushing(true);
+              try {
+                await pushThemeToServer();
+                alert('Đã đẩy giao diện hiện tại lên máy chủ cho tài khoản của bạn.');
+              } catch (e) {
+                alert(e.response?.data?.error || e.message || 'Không đẩy được lên máy chủ.');
+              } finally {
+                setPushing(false);
+              }
+            }}
+            className="h-10 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"
+          >
+            {pushing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
+            Đẩy lên máy chủ
+          </button>
+          <button
+            type="button"
+            disabled={!user?.userId || pulling}
+            onClick={async () => {
+              if (!confirm('Tải giao diện đã lưu trên máy chủ sẽ thay thế giao diện đang chỉnh trên máy này. Tiếp tục?')) return;
+              setPulling(true);
+              try {
+                await pullThemeFromServer();
+                alert('Đã tải giao diện từ máy chủ và áp dụng.');
+              } catch (e) {
+                alert(e.response?.data?.error || e.message || 'Không tải được từ máy chủ.');
+              } finally {
+                setPulling(false);
+              }
+            }}
+            className="h-10 px-4 bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none text-gray-800 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"
+          >
+            {pulling ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudDownload className="h-4 w-4" />}
+            Tải từ máy chủ
+          </button>
+          {!user?.userId && (
+            <span className="text-xs text-gray-500">Đăng nhập để đồng bộ giao diện với máy chủ.</span>
+          )}
+        </div>
+
         {theme.id !== 'default' && (
-          <button onClick={() => { changeTheme('default'); setCustomColors({ sidebar: '#1b2a4a', pageBg: '#f0f2f5', accent: '#2563eb' }); const def = TEXT_PRESETS[0]; setTextColorState(def); setTextColors(def); }}
-            className="mt-2 h-9 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer border border-gray-300">
+          <button
+            type="button"
+            onClick={restoreFactoryDefault}
+            className="mt-2 h-9 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer border border-gray-300"
+          >
             🔄 Khôi phục mặc định
           </button>
         )}

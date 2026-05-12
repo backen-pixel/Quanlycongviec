@@ -108,6 +108,7 @@ import KpiSalesAdminDashboard from './pages/KpiSalesAdminDashboard';
 import KpiDealDashboard from './pages/KpiDealDashboard';
 import KpiMonthlyScorecard from './pages/KpiMonthlyScorecard';
 import KpiSettingsPage from './pages/KpiSettingsPage';
+import KpiGuidePage from './pages/KpiGuidePage';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMSourcesSettingsPage from './pages/CRMSourcesSettingsPage';
 import CRMCustomersPage from './pages/CRMCustomersPage';
@@ -152,6 +153,7 @@ import MessengerDock from './components/MessengerDock';
 import { RequireCrmElevated, RequireExecutive } from './components/RequireRole';
 import api from './lib/api';
 import { isCrmOnlyModuleAccess } from './lib/moduleAccess';
+import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
@@ -200,7 +202,8 @@ function ProtectedLayout() {
       /^\/crm(\/|$)/.test(path) ||
       path.startsWith('/tools/voice-recordings') ||
       path.startsWith('/settings/theme') ||
-      path.startsWith('/settings/password');
+      path.startsWith('/settings/password') ||
+      path.startsWith('/updates');
     if (!allowed) {
       return <Navigate to="/crm/dashboard" replace />;
     }
@@ -212,6 +215,7 @@ function ProtectedLayout() {
 
   return (
     <CrmNotesFabProvider>
+        <ReleaseNoteLoginModal />
         <div className="flex h-screen bg-[var(--color-page-bg)] relative">
           {/* Background image layer */}
           <div className="absolute inset-0 pointer-events-none z-0"
@@ -303,6 +307,7 @@ export default function App() {
             <Route path="/crm/executive-kpi" element={<RequireExecutive><ExecutiveKpiPage /></RequireExecutive>} />
             <Route path="/crm/kpi/sales-admin" element={<KpiSalesAdminDashboard />} />
             <Route path="/crm/kpi/deal" element={<KpiDealDashboard />} />
+            <Route path="/crm/kpi/guide" element={<KpiGuidePage />} />
             <Route path="/crm/kpi/scorecard" element={<RequireExecutive><KpiMonthlyScorecard /></RequireExecutive>} />
             <Route path="/crm/kpi/settings" element={<RequireExecutive><KpiSettingsPage /></RequireExecutive>} />
             <Route path="/crm/pipeline" element={<CRMDashboard />} />

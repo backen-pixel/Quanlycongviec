@@ -193,13 +193,27 @@ r.get('/', async (req, res) => {
   try {
     const sc = resolveEventsCompanyScope(req, res);
     if (!sc.ok) return;
-    const { type, status, user_id, lead_id, customer_id, date_from, date_to, search, limit, offset } = req.query;
+    const { type, status, user_id, lead_id, customer_id, date_from, date_to, search, limit, offset, region_id } = req.query;
     let companyLeadIds = [];
     if (sc.companyId) {
       companyLeadIds = await fetchAllLeadIdsForCompany(sc.companyId);
     }
     let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
     q = applyEventsCompanyFilter(q, sc.companyId, companyLeadIds);
+
+    /** Lọc theo khu vực CRM (lead.region_id): chỉ sự kiện gắn lead thuộc khu vực đó */
+    if (region_id && String(region_id).trim()) {
+      let lq = supabase.from('crm_leads').select('id').eq('region_id', String(region_id).trim());
+      if (sc.companyId) lq = lq.eq('company_id', sc.companyId);
+      const { data: lr, error: lRegErr } = await lq;
+      if (lRegErr) throw lRegErr;
+      const lids = (lr || []).map((x) => x.id).filter(Boolean);
+      if (lids.length === 0) {
+        return res.json({ events: [], total: 0 });
+      }
+      const slice = lids.slice(0, EVENTS_COMPANY_OR_MAX_IN);
+      q = q.in('lead_id', slice);
+    }
 
     if (type) q = q.eq('event_type', type);
     if (status) q = q.eq('status', status);
@@ -224,7 +238,7 @@ r.get('/calendar', async (req, res) => {
   try {
     const sc = resolveEventsCompanyScope(req, res);
     if (!sc.ok) return;
-    const { month, year } = req.query; // month: 1-12, year: 2026
+    const { month, year, region_id } = req.query; // month: 1-12, year: 2026
     const m = parseInt(month, 10) || new Date().getMonth() + 1;
     const y = parseInt(year, 10) || new Date().getFullYear();
     const pad = (n) => String(n).padStart(2, '0');
@@ -241,6 +255,18 @@ r.get('/calendar', async (req, res) => {
       .gte('start_time', startDate)
       .lte('start_time', endDate);
     cq = applyEventsCompanyFilter(cq, sc.companyId, companyLeadIds);
+
+    if (region_id && String(region_id).trim()) {
+      let lq = supabase.from('crm_leads').select('id').eq('region_id', String(region_id).trim());
+      if (sc.companyId) lq = lq.eq('company_id', sc.companyId);
+      const { data: lr, error: lRegErr } = await lq;
+      if (lRegErr) throw lRegErr;
+      const lids = (lr || []).map((x) => x.id).filter(Boolean);
+      if (lids.length === 0) {
+        return res.json([]);
+      }
+      cq = cq.in('lead_id', lids.slice(0, EVENTS_COMPANY_OR_MAX_IN));
+    }
     cq = cq.order('start_time');
     const { data, error } = await cq;
     if (error) throw error;

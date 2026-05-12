@@ -1,4 +1,6 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import {
+  createContext, useContext, useState, useEffect, useLayoutEffect, useCallback, useRef,
+} from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 
@@ -83,6 +85,8 @@ const STORAGE_KEY = 'tubep_theme';
 
 export function ThemeProvider({ children }) {
   const { user } = useAuth();
+  /** Bỏ qua 1 lần ghi localStorage sau khi vừa nạp theme theo user (tránh ghi theme user trước vào key user mới). */
+  const skipNextThemePersist = useRef(false);
   const [theme, setTheme] = useState(() => {
     try {
       // Load from localStorage first (fast)
@@ -93,31 +97,32 @@ export function ThemeProvider({ children }) {
     return PRESET_THEMES[0];
   });
 
-  // Load user theme from server on login
-  useEffect(() => {
-    if (!user?.userId) return;
-    const userKey = `${STORAGE_KEY}_${user.userId}`;
-    // Check if we already have user-specific theme
-    const existing = localStorage.getItem(userKey);
-    if (existing) {
-      try { setTheme(JSON.parse(existing)); } catch {}
-      return;
+  /** Khi đăng nhập / đổi tài khoản: áp dụng theme cục bộ của user đó (layout — trước khi persist theme cũ nhầm key). */
+  useLayoutEffect(() => {
+    const uid = user?.userId || 'guest';
+    const userKey = `${STORAGE_KEY}_${uid}`;
+    try {
+      const saved = localStorage.getItem(userKey) || localStorage.getItem(STORAGE_KEY);
+      skipNextThemePersist.current = true;
+      if (saved) setTheme(JSON.parse(saved));
+      else setTheme(PRESET_THEMES[0]);
+    } catch {
+      skipNextThemePersist.current = true;
+      setTheme(PRESET_THEMES[0]);
     }
-    // Try loading from server
-    api.get('/settings/theme').then(r => {
-      if (r.data?.theme) {
-        setTheme(r.data.theme);
-        localStorage.setItem(userKey, JSON.stringify(r.data.theme));
-      }
-    }).catch(() => {});
   }, [user?.userId]);
 
   useEffect(() => {
     applyTheme(theme);
-    // Save to user-specific localStorage
-    const userKey = `${STORAGE_KEY}_${user?.userId || 'guest'}`;
-    localStorage.setItem(userKey, JSON.stringify(theme));
-  }, [theme, user?.userId]);
+    if (skipNextThemePersist.current) {
+      skipNextThemePersist.current = false;
+      return;
+    }
+    try {
+      const userKey = `${STORAGE_KEY}_${user?.userId || 'guest'}`;
+      localStorage.setItem(userKey, JSON.stringify(theme));
+    } catch { /* ignore */ }
+  }, [theme]);
 
   const changeTheme = (themeOrId) => {
     let newTheme;
@@ -128,15 +133,12 @@ export function ThemeProvider({ children }) {
     }
     if (newTheme) {
       setTheme(newTheme);
-      // Save to server (fire and forget)
-      api.put('/settings/theme', { theme: newTheme }).catch(() => {});
     }
   };
 
   const setBackgroundImage = (imageUrl) => {
     const newTheme = { ...theme, id: 'custom', bgImage: imageUrl, bgOverlay: 'rgba(0,0,0,0.03)' };
     setTheme(newTheme);
-    api.put('/settings/theme', { theme: newTheme }).catch(() => {});
   };
 
   const setOverlayOpacity = (opacity) => {
@@ -147,11 +149,44 @@ export function ThemeProvider({ children }) {
   const setTextColors = (colors) => {
     const newTheme = { ...theme, ...colors, id: theme.id === 'custom' ? 'custom' : theme.id };
     setTheme(newTheme);
-    api.put('/settings/theme', { theme: newTheme }).catch(() => {});
   };
 
+  /** Đẩy theme hiện tại (đang lưu cục bộ) lên máy chủ cho tài khoản đăng nhập. */
+  const pushThemeToServer = useCallback(async () => {
+    if (!user?.userId) {
+      const err = new Error('Cần đăng nhập để đồng bộ giao diện lên máy chủ.');
+      throw err;
+    }
+    await api.put('/settings/theme', { theme });
+  }, [theme, user?.userId]);
+
+  /** Tải theme đã lưu trên máy chủ và áp dụng trên máy này (ghi đè local). */
+  const pullThemeFromServer = useCallback(async () => {
+    if (!user?.userId) {
+      const err = new Error('Cần đăng nhập để tải giao diện từ máy chủ.');
+      throw err;
+    }
+    const { data } = await api.get('/settings/theme');
+    if (data?.theme) {
+      setTheme(data.theme);
+      return;
+    }
+    throw new Error('Chưa có giao diện nào được lưu trên máy chủ cho tài khoản này.');
+  }, [user?.userId]);
+
   return (
-    <ThemeContext.Provider value={{ theme, changeTheme, setBackgroundImage, setOverlayOpacity, setTextColors, presets: PRESET_THEMES }}>
+    <ThemeContext.Provider
+      value={{
+        theme,
+        changeTheme,
+        setBackgroundImage,
+        setOverlayOpacity,
+        setTextColors,
+        presets: PRESET_THEMES,
+        pushThemeToServer,
+        pullThemeFromServer,
+      }}
+    >
       {children}
     </ThemeContext.Provider>
   );

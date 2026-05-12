@@ -56,6 +56,30 @@ r.get('/unread-count', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /release-notes/login-banner — chỉ bản cập nhật mới nhất (đã xuất bản); popup nếu user chưa đọc đúng bản đó (không xếp hàng các bản cũ)
+r.get('/login-banner', async (req, res) => {
+  try {
+    const { data: rows, error } = await supabase.from('release_notes')
+      .select(NOTE_SELECT)
+      .eq('is_published', true)
+      .order('is_pinned', { ascending: false })
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    const latest = rows?.[0];
+    if (!latest) return res.json({ note: null });
+
+    const { data: readRows } = await supabase.from('release_note_reads')
+      .select('release_note_id')
+      .eq('user_id', req.user.userId)
+      .eq('release_note_id', latest.id)
+      .limit(1);
+    const note = (readRows || []).length ? null : latest;
+    res.json({ note });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /release-notes/:id
 r.get('/:id', async (req, res) => {
   try {

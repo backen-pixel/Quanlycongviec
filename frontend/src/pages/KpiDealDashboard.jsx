@@ -8,6 +8,11 @@ import {
   AlertTriangle,
   RefreshCw,
   DollarSign,
+  Award,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -53,6 +58,106 @@ function fmtKpiValue(kpi) {
   return Math.round(v * 100) / 100;
 }
 
+const EVENT_LABELS = {
+  task_completed: 'Task hoàn thành',
+  stage_changed: 'Chuyển stage',
+  deal_won: 'Chốt hợp đồng',
+  deal_lost: 'Deal mất',
+  sla_breach: 'Vi phạm SLA',
+  manual: 'Điều chỉnh thủ công',
+};
+
+const EVENT_COLORS = {
+  task_completed: 'bg-blue-100 text-blue-700',
+  stage_changed: 'bg-indigo-100 text-indigo-700',
+  deal_won: 'bg-emerald-100 text-emerald-700',
+  deal_lost: 'bg-red-100 text-red-700',
+  sla_breach: 'bg-orange-100 text-orange-700',
+  manual: 'bg-gray-100 text-gray-600',
+};
+
+function DealScoreRow({ item }) {
+  const [expanded, setExpanded] = useState(false);
+  const lead = item.lead;
+  const pts = item.total_points;
+  const isWon = lead?.stage?.is_won;
+  const isLost = lead?.stage?.is_lost;
+
+  return (
+    <>
+      <tr
+        className="border-b last:border-0 hover:bg-gray-50 cursor-pointer"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <td className="px-3 py-2.5">
+          {lead ? (
+            <div>
+              <Link
+                to={`/crm/leads/${lead.id}`}
+                className="text-blue-600 hover:underline font-medium text-sm"
+                onClick={e => e.stopPropagation()}
+              >
+                {lead.code || lead.title || lead.id.slice(0, 8)}
+              </Link>
+              {lead.title && lead.code && (
+                <div className="text-xs text-gray-500 truncate max-w-[180px]">{lead.title}</div>
+              )}
+            </div>
+          ) : (
+            <span className="text-xs text-gray-400">{item.lead_id.slice(0, 8)}</span>
+          )}
+        </td>
+        <td className="px-3 py-2.5 text-xs text-gray-600">
+          {isWon && <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-medium">Đã ký HĐ</span>}
+          {isLost && <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-medium">Mất</span>}
+          {!isWon && !isLost && <span className="text-gray-600">{lead?.stage?.name || '—'}</span>}
+        </td>
+        <td className="px-3 py-2.5 text-right text-xs text-gray-500">
+          {lead?.estimated_value ? formatVND(lead.estimated_value) : '—'}
+        </td>
+        <td className="px-3 py-2.5 text-right">
+          <span className="text-xs text-emerald-600">+{item.plus_points.toFixed(1)}</span>
+          {item.minus_points < 0 && (
+            <span className="text-xs text-red-600 ml-1">{item.minus_points.toFixed(1)}</span>
+          )}
+        </td>
+        <td className="px-3 py-2.5 text-right">
+          <span className={`font-bold text-sm ${pts > 0 ? 'text-emerald-700' : pts < 0 ? 'text-red-600' : 'text-gray-500'}`}>
+            {pts > 0 ? '+' : ''}{pts.toFixed(1)}
+          </span>
+        </td>
+        <td className="px-3 py-2.5 text-center text-gray-400">
+          {expanded ? <ChevronUp className="h-4 w-4 mx-auto" /> : <ChevronDown className="h-4 w-4 mx-auto" />}
+        </td>
+      </tr>
+      {expanded && item.events.length > 0 && (
+        <tr className="bg-gray-50">
+          <td colSpan={6} className="px-4 py-2">
+            <div className="space-y-1">
+              {item.events.map((ev, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  {ev.on_time === true && <CheckCircle2 className="h-3 w-3 text-emerald-500 flex-shrink-0" />}
+                  {ev.on_time === false && <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />}
+                  {ev.on_time === null && <span className="w-3 h-3 flex-shrink-0" />}
+                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${EVENT_COLORS[ev.event_type] || 'bg-gray-100 text-gray-600'}`}>
+                    {EVENT_LABELS[ev.event_type] || ev.event_type}
+                  </span>
+                  {ev.kpi_code && <span className="text-gray-500">KPI {ev.kpi_code}</span>}
+                  <span className={`font-semibold ml-auto ${Number(ev.points) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {Number(ev.points) > 0 ? '+' : ''}{Number(ev.points).toFixed(1)} điểm
+                  </span>
+                  {ev.reason && <span className="text-gray-400 truncate max-w-[200px]">{ev.reason}</span>}
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+
 function KpiCard({ kpi }) {
   const tone = statusToneByRatio(kpi.actual_value, kpi.target_value, kpi.formula_type);
   return (
@@ -79,6 +184,8 @@ export default function KpiDealDashboard() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [dealScores, setDealScores] = useState(null);
+  const [loadingDeals, setLoadingDeals] = useState(false);
   const [err, setErr] = useState(null);
   const [periodStart, setPeriodStart] = useState(getDefaultPeriodStart());
   const [targetUserId, setTargetUserId] = useState(user?.id || '');
@@ -89,14 +196,18 @@ export default function KpiDealDashboard() {
   const load = async () => {
     setLoading(true);
     setErr(null);
+    const uid = targetUserId || user?.id;
     try {
-      const { data: r } = await api.get('/kpi/dashboard/deal', {
-        params: { user_id: targetUserId || user?.id, period_start: periodStart },
-      });
+      const [{ data: r }, { data: ds }] = await Promise.all([
+        api.get('/kpi/dashboard/deal', { params: { user_id: uid, period_start: periodStart } }),
+        api.get('/kpi/deal-scores', { params: { user_id: uid, period_start: periodStart } }),
+      ]);
       setData(r);
+      setDealScores(ds);
     } catch (e) {
       setErr(e.response?.data?.error || e.message);
       setData(null);
+      setDealScores(null);
     } finally {
       setLoading(false);
     }
@@ -262,6 +373,80 @@ export default function KpiDealDashboard() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* ── Tổng điểm từng Deal (CRM Ledger) ── */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Award className="w-4 h-4 text-purple-600" />
+                <h3 className="font-semibold text-sm text-gray-900">
+                  Tổng điểm từng Deal (CRM Ledger)
+                </h3>
+                {dealScores?.deals?.length > 0 && (
+                  <span className="text-xs text-gray-400">{dealScores.deals.length} deal</span>
+                )}
+              </div>
+              {dealScores?.summary && (
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-emerald-600 font-semibold">+{dealScores.summary.total_plus?.toFixed(1) ?? '0'} điểm</span>
+                  {dealScores.summary.total_minus < 0 && (
+                    <span className="text-red-600 font-semibold">{dealScores.summary.total_minus?.toFixed(1)} điểm</span>
+                  )}
+                  <span className="font-bold text-gray-800 border-l border-gray-200 pl-3">
+                    Tổng: <span className={dealScores.summary.total_net >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+                      {dealScores.summary.total_net > 0 ? '+' : ''}{dealScores.summary.total_net?.toFixed(1) ?? '0'} điểm
+                    </span>
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {!dealScores || dealScores.deals?.length === 0 ? (
+              <div className="py-6 text-center text-sm text-gray-400">
+                Chưa có điểm ledger trong tháng này.
+                <p className="text-xs mt-1 text-gray-300">Điểm được ghi tự động khi hoàn thành task, chuyển stage, chốt / mất deal.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-gray-500 uppercase border-b bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2">Deal</th>
+                      <th className="text-left px-3 py-2">Stage hiện tại</th>
+                      <th className="text-right px-3 py-2">Giá trị</th>
+                      <th className="text-right px-3 py-2">Cộng / Trừ</th>
+                      <th className="text-right px-3 py-2">Tổng điểm</th>
+                      <th className="w-8" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dealScores.deals.map((item) => (
+                      <DealScoreRow key={item.lead_id} item={item} />
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t bg-gray-50 text-xs font-semibold">
+                    <tr>
+                      <td colSpan={3} className="px-3 py-2 text-gray-600">
+                        Tổng ({dealScores.deals.length} deal)
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <span className="text-emerald-600">+{dealScores.summary.total_plus?.toFixed(1)}</span>
+                        {dealScores.summary.total_minus < 0 && (
+                          <span className="text-red-600 ml-1">{dealScores.summary.total_minus?.toFixed(1)}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={dealScores.summary.total_net >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+                          {dealScores.summary.total_net > 0 ? '+' : ''}{dealScores.summary.total_net?.toFixed(1)}
+                        </span>
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
           </div>
         </>
       ) : (

@@ -448,6 +448,7 @@ export default function PipelineSettingsPage() {
       create_event_on_enter: false,
       sync_role: '',
       default_probability: '',
+      sla_days: '',
     });
   };
 
@@ -465,6 +466,7 @@ export default function PipelineSettingsPage() {
       create_event_on_enter: !!stage.create_event_on_enter,
       sync_role: stage.sync_role || '',
       default_probability: stage.default_probability != null && stage.default_probability !== '' ? String(stage.default_probability) : '',
+      sla_days: stage.sla_days != null && stage.sla_days !== '' ? String(stage.sla_days) : '',
     });
   };
 
@@ -474,6 +476,7 @@ export default function PipelineSettingsPage() {
       if (!selectedPipelineId) return alert('Chọn pipeline trước');
       const payload = { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId };
       if (payload.default_probability === '') delete payload.default_probability;
+      if (payload.sla_days === '' || payload.sla_days == null) delete payload.sla_days;
       await api.post('/crm/pipeline-stages', payload);
       setAdding(null);
       load();
@@ -485,6 +488,7 @@ export default function PipelineSettingsPage() {
     try {
       const payload = { ...form };
       if (payload.default_probability === '') payload.default_probability = null;
+      if (payload.sla_days === '' || payload.sla_days == null) payload.sla_days = null;
       await api.put(`/crm/pipeline-stages/${editId}`, payload);
       setEditId(null);
       load();
@@ -1385,6 +1389,27 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
           Khi lead/deal chưa có % riêng (trống), KPI và giá trị có trọng số dùng % này. Để trống nếu không muốn áp dụng.
         </p>
       </div>
+
+      {!form.is_won && !form.is_lost && (
+        <div>
+          <label className="text-[10px] font-medium text-gray-500 block mb-1">
+            SLA giai đoạn (ngày)
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={365}
+            value={form.sla_days ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, sla_days: e.target.value }))}
+            className="w-full max-w-[140px] h-8 px-3 border rounded-lg text-sm"
+            placeholder="Mặc định 7"
+          />
+          <p className="text-[10px] text-gray-400 mt-1 leading-snug">
+            Thời gian tối đa ở cột này, tính từ <code className="text-[9px] bg-gray-100 px-0.5 rounded">stage_entered_at</code>.
+            Ảnh hưởng màu SLA trên Kanban, trang SLA quản trị, KPI A5/A6, sổ điểm KPI. Để trống → hệ thống dùng <strong>7 ngày</strong>.
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-4">
         <label className="flex items-center gap-2 text-xs cursor-pointer">

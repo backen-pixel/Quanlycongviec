@@ -808,6 +808,14 @@ function LeadDealFunnelPanel() {
   const sumLead = useMemo(() => leadStages.reduce((a, s) => a + (s.count || 0), 0), [leadStages]);
   const sumDeal = useMemo(() => dealStages.reduce((a, s) => a + (s.count || 0), 0), [dealStages]);
 
+  /** Tổng NVụ CRM quá hạn trong phạm vi phễu (lead + deal đã lọc). */
+  const overdueTasksTotal = useMemo(() => {
+    const a = kpis?.lead?.overdue_tasks;
+    const b = kpis?.deal?.overdue_tasks;
+    if (a == null && b == null) return null;
+    return (Number(a) || 0) + (Number(b) || 0);
+  }, [kpis]);
+
   const showCompanyPicker = isAdmin && !companyScopedAdmin;
 
   return (
@@ -915,6 +923,32 @@ function LeadDealFunnelPanel() {
               <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, padding: '10px 14px', minWidth: 140 }}>
                 <div style={{ fontSize: 10, fontWeight: 800, color: '#15803d', letterSpacing: '0.04em' }}>TỶ LỆ LEAD→DEAL (CRM)</div>
                 <div style={{ fontSize: 22, fontWeight: 900, color: '#166534' }}>{kpis.lead.conversion_rate}%</div>
+              </div>
+            )}
+            {overdueTasksTotal != null && (
+              <div
+                style={{
+                  background: overdueTasksTotal > 0 ? '#fff7ed' : '#f8fafc',
+                  border: `1px solid ${overdueTasksTotal > 0 ? '#fed7aa' : '#e2e8f0'}`,
+                  borderRadius: 12,
+                  padding: '10px 14px',
+                  minWidth: 140,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    color: overdueTasksTotal > 0 ? '#c2410c' : '#64748b',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  NHIỆM VỤ QUÁ HẠN
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 900, color: overdueTasksTotal > 0 ? '#9a3412' : '#475569' }}>{overdueTasksTotal}</div>
+                <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4, lineHeight: 1.35 }}>
+                  Lead {kpis?.lead?.overdue_tasks ?? '—'} · Deal {kpis?.deal?.overdue_tasks ?? '—'}
+                </div>
               </div>
             )}
           </div>

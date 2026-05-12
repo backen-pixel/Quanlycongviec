@@ -87,7 +87,11 @@ export default function ReleaseNotesPage() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Megaphone className="h-6 w-6 text-blue-600" /> Có gì mới?
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Cập nhật và thay đổi mới nhất</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {isAdmin
+              ? 'Quản lý thông báo cập nhật — popup khi mở web chỉ hiện đúng bản mới nhất cho đến khi nhân viên đã đọc.'
+              : 'Cập nhật và thay đổi mới nhất'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {isAdmin && (

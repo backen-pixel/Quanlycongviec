@@ -545,6 +545,27 @@ async function nextCode(prefix) {
 // CRM DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** Task CRM còn pending/in_progress, có deadline và đã quá hạn — scope theo danh sách lead/deal đang xem. */
+async function countOpenOverdueCrmTasksForLeadIds(leadIds) {
+  if (!leadIds?.length) return 0;
+  const nowISO = new Date().toISOString();
+  let total = 0;
+  const chunkSize = 400;
+  for (let i = 0; i < leadIds.length; i += chunkSize) {
+    const chunk = leadIds.slice(i, i + chunkSize);
+    const { count, error } = await supabase
+      .from('crm_tasks')
+      .select('*', { count: 'exact', head: true })
+      .in('lead_id', chunk)
+      .not('deadline', 'is', null)
+      .lt('deadline', nowISO)
+      .in('status', ['pending', 'in_progress']);
+    if (error) throw error;
+    total += count ?? 0;
+  }
+  return total;
+}
+
 /** PostgREST mặc định ~1000 dòng/truy vấn — gom đủ bản ghi theo filter để KPI / pipeline không bị trần 1000. */
 async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, date_to, assigned_to_only, req }, pageSize = 1000) {
   const rows = [];
@@ -681,7 +702,9 @@ function endOfCalendarDayAfterEntered(startIso, slaDays) {
   return d;
 }
 
-async function fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId, typeFilter) {
+const CRM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId, typeFilter, explicitRegionId = null) {
   const rows = [];
   let from = 0;
   const pageSize = 800;
@@ -692,6 +715,7 @@ async function fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId, typeFilter)
       .order('updated_at', { ascending: false });
     if (typeFilter === 'lead' || typeFilter === 'deal') q = q.eq('type', typeFilter);
     if (effectiveCompanyId) q = q.eq('company_id', effectiveCompanyId);
+    if (explicitRegionId) q = q.eq('region_id', explicitRegionId);
     q = applyCrmLeadRegionFilterToQuery(q, req);
     const { data, error } = await q.range(from, from + pageSize - 1);
     if (error) throw error;
@@ -716,24 +740,50 @@ r.get('/admin/sla-at-risk', async (req, res) => {
     const sacDash = scopedAdminCompanyId(req);
     if (sacDash) {
       effectiveCompanyId = sacDash;
-    } else if (!userIsAdmin(req.user?.role)) {
+    } else if (userIsAdmin(req.user?.role)) {
+      effectiveCompanyId = rawC || null;
+    } else {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
-      effectiveCompanyId = cid;
+      effectiveCompanyId = rawC && String(rawC) === String(cid) ? rawC : cid;
+    }
+
+    const rawRegionQ = req.query.region_id && String(req.query.region_id).trim();
+    let explicitRegionId = rawRegionQ && CRM_UUID_RE.test(rawRegionQ) ? rawRegionQ : null;
+
+    if (explicitRegionId && !effectiveCompanyId) {
+      const { data: regRow, error: regErr } = await supabase
+        .from('company_regions')
+        .select('company_id')
+        .eq('id', explicitRegionId)
+        .maybeSingle();
+      if (regErr) throw regErr;
+      if (!regRow?.company_id) return res.status(400).json({ error: 'Khu vực không tồn tại' });
+      effectiveCompanyId = String(regRow.company_id);
+    }
+
+    if (explicitRegionId && effectiveCompanyId) {
+      const v = await assertRegionBelongsToCompany(supabase, effectiveCompanyId, explicitRegionId);
+      if (!v.ok) return res.status(400).json({ error: v.error });
     }
 
     const typeFilter = String(req.query.type || 'all').toLowerCase();
     const tf = typeFilter === 'lead' || typeFilter === 'deal' ? typeFilter : 'all';
     const horizonDays = Math.min(Math.max(parseInt(req.query.horizon_days, 10) || 3, 1), 30);
     const bucket = String(req.query.bucket || 'all').toLowerCase(); // overdue | due_soon | all
+    /** Mặc định chỉ «rủi ro»: quá hạn hoặc sắp hết trong cửa sổ. true = thêm cả lead đang trong hạn (hạn sau cửa sổ). */
+    const includeOnTrack =
+      req.query.include_on_track === '1'
+      || req.query.include_on_track === 'true'
+      || String(req.query.include_on_track || '').toLowerCase() === 'yes';
 
-    const leads = await fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId || null, tf);
+    const leads = await fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId || null, tf, explicitRegionId);
     const stageIds = [...new Set(leads.map((l) => l.stage_id).filter(Boolean))];
     let stageMap = {};
     if (stageIds.length) {
       const { data: stages, error: se } = await supabase
         .from('crm_pipeline_stages')
-        .select('id, name, slug, sla_days, is_won, is_lost')
+        .select('id, name, canonical_slug, sla_days, is_won, is_lost')
         .in('id', stageIds);
       if (se) throw se;
       (stages || []).forEach((s) => {
@@ -756,7 +806,10 @@ r.get('/admin/sla-at-risk', async (req, res) => {
 
       let risk = 'due_soon';
       if (dueMs < now) risk = 'overdue';
-      else if (dueMs > horizonEnd) continue;
+      else if (dueMs > horizonEnd) {
+        if (!includeOnTrack) continue;
+        risk = 'on_track';
+      }
 
       if (bucket === 'overdue' && risk !== 'overdue') continue;
       if (bucket === 'due_soon' && risk !== 'due_soon') continue;
@@ -770,7 +823,7 @@ r.get('/admin/sla-at-risk', async (req, res) => {
         region_id: lead.region_id,
         stage_id: lead.stage_id,
         stage_name: st?.name || null,
-        stage_slug: st?.slug || null,
+        stage_slug: st?.canonical_slug || null,
         sla_days: slaDays,
         stage_entered_at: entered,
         due_at: dueAt.toISOString(),
@@ -824,8 +877,12 @@ r.get('/admin/sla-at-risk', async (req, res) => {
     res.json({
       horizon_days: horizonDays,
       bucket: bucket === 'overdue' || bucket === 'due_soon' ? bucket : 'all',
+      include_on_track: includeOnTrack,
       rows,
-      meta: { total: rows.length },
+      meta: {
+        total: rows.length,
+        leads_scanned: leads.length,
+      },
     });
   } catch (e) {
     console.error('GET /crm/admin/sla-at-risk:', e);
@@ -1853,6 +1910,14 @@ r.get('/dashboard', async (req, res) => {
       };
     });
 
+    const leadIdsScope = (leads || []).map((l) => l.id).filter(Boolean);
+    let overdue_tasks = 0;
+    try {
+      overdue_tasks = await countOpenOverdueCrmTasksForLeadIds(leadIdsScope);
+    } catch (e) {
+      console.warn('[crm/dashboard] overdue_tasks count:', e.message);
+    }
+
     // KPIs split by type
     const totalItems = (leads || []).length;
     const wonItems = (leads || []).filter(l => {
@@ -1891,6 +1956,7 @@ r.get('/dashboard', async (req, res) => {
         conversion_rate: conversionRate,
         total_value: totalValue,
         conversion_value: wonValue,
+        overdue_tasks,
       };
     } else {
       // Deal KPIs
@@ -1900,6 +1966,7 @@ r.get('/dashboard', async (req, res) => {
         won_rate: totalItems > 0 ? Math.round(wonItems.length / totalItems * 100) : 0,
         total_value: totalValue,
         won_value: wonValue,
+        overdue_tasks,
       };
     }
 
@@ -8958,6 +9025,50 @@ async function resolveCrmTaskWriteLeadId(routeLeadId) {
   return fid ? String(fid) : routeLeadId;
 }
 
+/**
+ * Deal gốc (use_order_tasks): nhiệm vụ SX và một phần luồng đơn được ghi vào lead fulfillment (resolveCrmTaskWriteLeadId).
+ * Luôn gộp task từ các lead con vào response khi xem deal cha — tránh chỉ gộp khi deal cha chưa có task nào
+ * (trường hợp cha có deal_* nhưng sx_* nằm ở con → trước đây tab SX / gen SX tưởng thiếu nhiệm vụ).
+ */
+async function appendFulfillmentChildTasksForMasterDeal(masterLeadId, parentTasks, leadRow) {
+  if (!leadRow?.use_order_tasks || leadRow.parent_lead_id) return parentTasks || [];
+
+  const { data: orderRows, error: oErr } = await supabase
+    .from('orders')
+    .select('id, display_label, code, fulfillment_lead_id')
+    .eq('lead_id', masterLeadId);
+  if (oErr) throw oErr;
+  const fidToOrder = new Map();
+  (orderRows || []).forEach((o) => {
+    if (o.fulfillment_lead_id && !fidToOrder.has(o.fulfillment_lead_id)) {
+      fidToOrder.set(o.fulfillment_lead_id, o);
+    }
+  });
+  const childIds = [...fidToOrder.keys()];
+  if (!childIds.length) return parentTasks || [];
+
+  const { data: merged, error: mErr } = await supabase.from('crm_tasks')
+    .select(CRM_TASK_SELECT)
+    .in('lead_id', childIds)
+    .order('stage_slug')
+    .order('order_index');
+  if (mErr) throw mErr;
+
+  const parentIds = new Set((parentTasks || []).map((t) => t.id).filter(Boolean));
+  const childAnnotated = (merged || [])
+    .filter((t) => t.id && !parentIds.has(t.id))
+    .map((t) => {
+      const ord = fidToOrder.get(t.lead_id);
+      return {
+        ...t,
+        order_id: ord?.id || null,
+        order_label: ord?.display_label || ord?.code || null,
+      };
+    });
+
+  return [...(parentTasks || []), ...childAnnotated];
+}
+
 // GET tasks for a lead/deal
 r.get('/leads/:id/tasks', async (req, res) => {
   try {
@@ -8968,51 +9079,23 @@ r.get('/leads/:id/tasks', async (req, res) => {
       .order('stage_slug').order('order_index');
     if (error) throw error;
 
-    // Auto-gen hoặc gộp nhiệm vụ từ deal con (đơn hàng) khi deal gốc use_order_tasks
-    if (!data?.length) {
-      const { data: lead } = await supabase.from('crm_leads')
-        .select('type, created_by, parent_lead_id, use_order_tasks')
-        .eq('id', req.params.id)
-        .maybeSingle();
-      if (lead?.use_order_tasks && !lead.parent_lead_id) {
-        const { data: orderRows, error: oErr } = await supabase
-          .from('orders')
-          .select('id, display_label, code, fulfillment_lead_id')
-          .eq('lead_id', req.params.id);
-        if (oErr) throw oErr;
-        const fidToOrder = new Map();
-        (orderRows || []).forEach((o) => {
-          if (o.fulfillment_lead_id && !fidToOrder.has(o.fulfillment_lead_id)) {
-            fidToOrder.set(o.fulfillment_lead_id, o);
-          }
-        });
-        const childIds = [...fidToOrder.keys()];
-        if (childIds.length) {
-          const { data: merged, error: mErr } = await supabase.from('crm_tasks')
-            .select(CRM_TASK_SELECT)
-            .in('lead_id', childIds)
-            .order('stage_slug')
-            .order('order_index');
-          if (mErr) throw mErr;
-          data = (merged || []).map((t) => {
-            const ord = fidToOrder.get(t.lead_id);
-            return {
-              ...t,
-              order_id: ord?.id || null,
-              order_label: ord?.display_label || ord?.code || null,
-            };
-          });
-        }
-      } else if (lead) {
-        const type = lead.type || 'lead';
-        const created = await autoGenCrmTasks(req.params.id, type, lead.created_by || req.user.userId);
-        if (created > 0) {
-          const { data: newData } = await supabase.from('crm_tasks')
-            .select(CRM_TASK_SELECT)
-            .eq('lead_id', req.params.id)
-            .order('stage_slug').order('order_index');
-          data = newData || [];
-        }
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('type, created_by, parent_lead_id, use_order_tasks')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, data || [], lead);
+
+    // Auto-gen CRM khi vẫn không có task (sau khi đã gộp deal con)
+    if (!data?.length && lead) {
+      const type = lead.type || 'lead';
+      const created = await autoGenCrmTasks(req.params.id, type, lead.created_by || req.user.userId);
+      if (created > 0) {
+        const { data: newData } = await supabase.from('crm_tasks')
+          .select(CRM_TASK_SELECT)
+          .eq('lead_id', req.params.id)
+          .order('stage_slug').order('order_index');
+        data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, newData || [], lead);
       }
     }
 
