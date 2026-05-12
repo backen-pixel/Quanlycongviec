@@ -17,11 +17,21 @@ function getClient(sb) { return sb || defaultClient; }
 
 async function insertTrashRow(sb, row) {
   // Nếu đã có trash cho entity này (xóa rồi xóa lại?), ghi đè snapshot mới
-  const { data, error } = await sb
+  const tryInsert = async (payload) => sb
     .from('trash_items')
-    .upsert(row, { onConflict: 'entity_type,entity_id' })
+    .upsert(payload, { onConflict: 'entity_type,entity_id' })
     .select('id')
     .maybeSingle();
+
+  let { data, error } = await tryInsert(row);
+  // Cột delete_reason chưa được migrate → bỏ ra rồi thử lại (chạy file 156_trash_items_delete_reason.sql).
+  if (error && /delete_reason|column .* does not exist/i.test(String(error.message || '')) && row && 'delete_reason' in row) {
+    const { delete_reason: _omit, ...rest } = row;
+    void _omit;
+    const retry = await tryInsert(rest);
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw error;
   return data?.id;
 }
