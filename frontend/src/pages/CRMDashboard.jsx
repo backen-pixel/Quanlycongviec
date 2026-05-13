@@ -269,6 +269,9 @@ export default function CRMDashboard() {
   const [wonAssignError, setWonAssignError] = useState('');
   const [pinnedTab, setPinnedTab] = useState(() => P?.pinnedTab ?? (localStorage.getItem('crm_pinned_tab') || ''));
   const [loading, setLoading] = useState(true);
+  /** Trạng thái đồng bộ ngầm (silent refetch): hiển thị "Cập nhật lúc HH:mm" thay vì spinner */
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState(null);
   const [viewMode, setViewMode] = useState(() => {
     const v = P?.viewMode;
     return ['kanban', 'list', 'planner', 'calendar'].includes(v) ? v : 'kanban';
@@ -627,6 +630,30 @@ export default function CRMDashboard() {
 
     socket.on('crm:badge_updated', badgeHandler);
     return () => socket.off('crm:badge_updated', badgeHandler);
+  }, []);
+
+  /**
+   * Realtime: backend emit 'crm:dashboard_changed' khi lead/deal thay đổi
+   * (create/update/stage/convert/bulk/merge/delete). Debounce 800ms để gom burst
+   * (vd bulk-assign 50 lead) chỉ refetch 1 lần.
+   */
+  useEffect(() => {
+    const socket = getSocket() || connectSocket();
+    if (!socket) return;
+    let timer = null;
+    const onChanged = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        loadRef.current?.({ silent: true });
+      }, 800);
+    };
+    socket.on('crm:dashboard_changed', onChanged);
+    return () => {
+      if (timer) clearTimeout(timer);
+      socket.off('crm:dashboard_changed', onChanged);
+    };
   }, []);
 
   /** Khi xưởng/VC đổi cột: refetch badge REST (dự phòng nếu socket chậm hoặc tab CRM mở trước khi sync xong) */
@@ -990,6 +1017,7 @@ export default function CRMDashboard() {
   const load = async (opts) => {
     const silent = !!(opts && opts.silent);
     if (!silent) setLoading(true);
+    if (silent) setSyncing(true);
     try {
       let resolvedCompanyId = filterCompany;
       if (isCompanyScopedAdmin && user?.company_id) {
@@ -1182,6 +1210,8 @@ export default function CRMDashboard() {
       /* ignore */
     }
     if (!silent) setLoading(false);
+    if (silent) setSyncing(false);
+    setLastSyncAt(new Date());
   };
 
   // ── Reload when time filter changes (debounced) ──
@@ -1823,12 +1853,12 @@ export default function CRMDashboard() {
   loadRef.current = load;
 
   /**
-   * Đồng bộ nhẹ: poll GET /crm/live-version (~vài chục byte). Chỉ khi v thay đổi mới gọi load({ silent }).
-   * Tab ẩn: chu kỳ dài hơn; tab hiện: ~45s. Focus lại tab có thể chạy một lần ngay.
+   * Đồng bộ nhẹ: mỗi 15s poll GET /crm/live-version (vài chục byte).
+   * Chỉ khi v đổi mới gọi load({ silent }). Tab ẩn: skip. Tab focus lại: chạy một tick ngay.
+   * Kết hợp socket 'crm:dashboard_changed' (effect riêng phía dưới) để cập nhật < 1s.
    */
   useEffect(() => {
-    /** Cứ 2 phút tự reload ngầm một lần khi tab đang hiện; tab ẩn thì bỏ qua. */
-    const POLL_MS = 120_000;
+    const POLL_MS = 15_000;
     let intervalId = null;
     const clearInt = () => {
       if (intervalId) {
@@ -1836,9 +1866,22 @@ export default function CRMDashboard() {
         intervalId = null;
       }
     };
+    const buildLvParams = () => {
+      const p = {};
+      if (customDateFrom) p.date_from = customDateFrom;
+      if (customDateTo) p.date_to = customDateTo;
+      if (dashboardScopeCompanyId) p.company_id = dashboardScopeCompanyId;
+      return p;
+    };
     const runTick = async () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       try {
+        const { data: lv } = await api.get('/crm/live-version', { params: buildLvParams() });
+        const v = lv?.v;
+        const prev = crmLiveVersionRef.current;
+        if (v == null) return;
+        if (prev != null && Number(v) <= Number(prev)) return;
+        crmLiveVersionRef.current = v;
         await loadRef.current?.({ silent: true });
       } catch {
         /* ignore */
@@ -1939,6 +1982,14 @@ export default function CRMDashboard() {
           <h1 className={`font-bold text-gray-900 ${compactLeadUi ? 'text-xl sm:text-2xl' : 'text-3xl'}`}>
             {pipelineType === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}
           </h1>
+          {lastSyncAt && (
+            <div className={`flex items-center gap-1.5 text-gray-500 ${compactLeadUi ? 'text-[10px] mt-0.5' : 'text-xs mt-1'}`} title="Tự cập nhật realtime qua Socket.IO + đồng bộ ngầm mỗi 15s">
+              <span className={`inline-block rounded-full ${syncing ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'} ${compactLeadUi ? 'h-1.5 w-1.5' : 'h-2 w-2'}`} />
+              <span>
+                {syncing ? 'Đang đồng bộ…' : `Đã cập nhật ${lastSyncAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`}
+              </span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -3420,14 +3471,6 @@ function KanbanStageCard({
   }, []);
 
   const stageColor = stage.color || '#e5e7eb';
-  const columnWeighted = (items || []).reduce((sum, item) => {
-    const ev = item.estimated_value || 0;
-    let p = item.probability;
-    if (p == null || p === '') p = stage.default_probability;
-    const n = Number(p);
-    const pct = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
-    return sum + ev * (pct / 100);
-  }, 0);
   const columnItemIds = (items || []).map((i) => i.id);
   const allInColumnSelected =
     columnItemIds.length > 0 &&
@@ -3508,8 +3551,6 @@ function KanbanStageCard({
         </div>
         <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
           Giá trị: {formatVND(items.reduce((sum, item) => sum + (item.estimated_value || 0), 0))}
-          {' · '}
-          Trọng số: {formatVND(columnWeighted)}
         </p>
       </div>
 

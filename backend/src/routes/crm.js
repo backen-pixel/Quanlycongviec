@@ -72,6 +72,19 @@ function userIsAdmin(role) {
   return normalizeCrmUserRole(role) === 'admin';
 }
 
+/**
+ * Phát socket 'crm:dashboard_changed' để CRMDashboard refetch silent.
+ * Dùng ở mọi handler ghi crm_leads (create/update/stage/convert/bulk/merge/delete).
+ */
+function emitCrmDashboardChanged(req, payload = {}) {
+  try {
+    const io = req.app.get('io');
+    if (io) io.emit('crm:dashboard_changed', payload || {});
+  } catch (e) {
+    /* ignore */
+  }
+}
+
 /** Gán lead/deal, bulk — admin hệ thống/công ty hoặc admin khu vực */
 function userIsCrmCompanyOrRegionAdmin(req) {
   return userIsAdmin(req.user?.role) || isCrmRegionAdminUser(req.user);
@@ -3431,6 +3444,7 @@ r.post('/leads/merge-duplicates', async (req, res) => {
   try {
     const { keep_id, delete_ids } = req.body;
     const result = await executeLeadMerge(keep_id, delete_ids, { mergeCustomers: false });
+    emitCrmDashboardChanged(req, { action: 'merged', keep_id, count: (delete_ids || []).length });
     res.json(result);
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -3449,6 +3463,7 @@ r.post('/leads/merge-selected', async (req, res) => {
       finalTitle: title,
       includeSecondaryData: full,
     });
+    emitCrmDashboardChanged(req, { action: 'merged_selected', keep_id, count: (delete_ids || []).length });
     res.json(result);
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -3571,6 +3586,7 @@ r.post('/leads/bulk-assign', async (req, res) => {
       }
     }
 
+    emitCrmDashboardChanged(req, { type: olds[0].type, action: 'bulk_assigned', count: idList.length });
     res.json({ success: true, updated: idList.length, type: olds[0].type });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -3606,6 +3622,7 @@ r.post('/leads/cleanup-duplicates', async (req, res) => {
       }
     }
 
+    if (deleted > 0) emitCrmDashboardChanged(req, { action: 'cleanup_duplicates', count: deleted });
     res.json({ success: true, deleted });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4506,6 +4523,7 @@ r.post('/leads', async (req, res) => {
 
     // Lead: toàn bộ nhiệm vụ trên chính lead (không Đơn 1 / deal con).
 
+    emitCrmDashboardChanged(req, { type: 'lead', company_id: data.company_id, lead_id: data.id, action: 'created' });
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4653,6 +4671,7 @@ r.post('/deals', async (req, res) => {
 
     // Một deal duy nhất; task CRM trên deal đó — không tự tạo đơn «Đơn 1» hay deal con.
 
+    emitCrmDashboardChanged(req, { type: 'deal', company_id: data.company_id, lead_id: data.id, action: 'created' });
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4966,6 +4985,7 @@ r.put('/leads/:id', async (req, res) => {
       }
     } catch (_) {}
 
+    emitCrmDashboardChanged(req, { type: data?.type || oldLead?.type, company_id: data?.company_id || oldLead?.company_id, lead_id: id, action: 'updated' });
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4975,7 +4995,7 @@ r.put('/leads/:id', async (req, res) => {
 r.delete('/leads/:id', async (req, res) => {
   try {
     const { data: lead } = await supabase.from('crm_leads')
-      .select('id, title, project_id, customer_id')
+      .select('id, title, project_id, customer_id, type, company_id')
       .eq('id', req.params.id).single();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
 
@@ -5074,6 +5094,7 @@ r.delete('/leads/:id', async (req, res) => {
     const { error } = await supabase.from('crm_leads').delete().eq('id', lead.id);
     if (error) throw error;
 
+    emitCrmDashboardChanged(req, { type: lead.type, company_id: lead.company_id, lead_id: lead.id, action: 'deleted' });
     res.json({ success: true, message: `Đã xóa lead "${lead.title}"${lead.project_id ? ' và dự án liên kết' : ''}` });
   } catch (e) {
     console.error('Delete lead error:', e);
@@ -5556,6 +5577,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     // Không bootstrap Đơn 1 — chuyển Lead→Deal giữ một deal duy nhất, task trên deal đó.
 
+    emitCrmDashboardChanged(req, { type: 'deal', company_id: updatedLead?.company_id, lead_id: req.params.id, action: 'converted_to_deal' });
     res.status(200).json({
       lead: updatedLead,
       message: 'Đã chuyển Lead sang Deal thành công.',
@@ -5837,6 +5859,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }).catch((err) => console.error('[Zalo OA] maybeSend:', err.message));
     });
 
+    emitCrmDashboardChanged(req, { type: lead?.type, company_id: lead?.company_id, lead_id: req.params.id, action: 'stage_changed', stage_id });
     res.json({ ...responseLead, deal_won: dealWonData, project_auto_created: projectAutoCreated });
   } catch (e) {
     res.status(500).json({ error: e.message });
