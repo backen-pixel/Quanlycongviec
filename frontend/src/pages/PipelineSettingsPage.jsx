@@ -67,6 +67,8 @@ export default function PipelineSettingsPage() {
   const [sxStages, setSxStages] = useState([]);
   const [vcStages, setVcStages] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [draggingId, setDraggingId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
   const [activeType, setActiveType] = useState('lead');
   const [adding, setAdding] = useState(null);
   const [editId, setEditId] = useState(null);
@@ -526,6 +528,56 @@ export default function PipelineSettingsPage() {
     } catch (e) { alert('Lỗi sắp xếp: ' + (e.response?.data?.error || e.message)); }
   };
 
+  // ─── Kéo thả sắp xếp stage ─────────────────────────────────────────────────
+  const handleDragStart = (e, stage) => {
+    setDraggingId(stage.id);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', stage.id); } catch (_) {}
+  };
+  const handleDragEnd = () => { setDraggingId(null); setDragOverId(null); };
+  const handleDragOver = (e, stage) => {
+    if (!draggingId || draggingId === stage.id) return;
+    const dragging = stages.find((s) => s.id === draggingId);
+    if (!dragging || dragging.pipeline_type !== stage.pipeline_type) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverId !== stage.id) setDragOverId(stage.id);
+  };
+  const handleDrop = async (e, target) => {
+    e.preventDefault();
+    const sourceId = draggingId || e.dataTransfer.getData('text/plain');
+    setDraggingId(null);
+    setDragOverId(null);
+    if (!sourceId || sourceId === target.id) return;
+    const source = stages.find((s) => s.id === sourceId);
+    if (!source || source.pipeline_type !== target.pipeline_type) return;
+
+    const list = stages
+      .filter((s) => s.pipeline_type === target.pipeline_type)
+      .sort((a, b) => a.order_index - b.order_index);
+    const fromIdx = list.findIndex((s) => s.id === source.id);
+    const toIdx   = list.findIndex((s) => s.id === target.id);
+    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+
+    const newList = [...list];
+    const [moved] = newList.splice(fromIdx, 1);
+    newList.splice(toIdx, 0, moved);
+    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+
+    // Optimistic update
+    setStages((prev) => prev.map((s) => {
+      const idx = newList.findIndex((x) => x.id === s.id);
+      return idx >= 0 ? { ...s, order_index: idx + 1 } : s;
+    }));
+    try {
+      await api.put('/crm/pipeline-stages-reorder', { stages: reorder });
+      load();
+    } catch (err) {
+      alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
+      load();
+    }
+  };
+
   /** Cập nhật crm_target_stage_id trên SX hoặc VC stage từ phía CRM */
   const setModuleStageTarget = async (moduleStage, moduleType, targetCrmStageId) => {
     const endpoint = moduleType === 'sx'
@@ -589,11 +641,33 @@ export default function PipelineSettingsPage() {
           const syncRoleLabels = {
             sx_production: '🏭 SX', vc_delivery: '🚚 VC Giao', vc_installation: '🔧 VC Lắp', vc_customer_care: '🤝 VC CSKH',
           };
+          const isDragging = draggingId === s.id;
+          const isDragOver = dragOverId === s.id;
           return (
-          <div key={s.id} className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50 ${!s.is_active ? 'opacity-50' : ''}`}>
-            <div className="flex flex-col gap-0.5">
-              <button type="button" onClick={() => moveStage(s, -1)} disabled={i === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
-              <button type="button" onClick={() => moveStage(s, 1)} disabled={i === list.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
+          <div
+            key={s.id}
+            draggable
+            onDragStart={(e) => handleDragStart(e, s)}
+            onDragEnd={handleDragEnd}
+            onDragOver={(e) => handleDragOver(e, s)}
+            onDragLeave={() => setDragOverId(null)}
+            onDrop={(e) => handleDrop(e, s)}
+            className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 transition-all
+              ${isDragging ? 'opacity-40 bg-blue-50' : 'hover:bg-gray-50'}
+              ${isDragOver ? 'border-t-2 border-t-blue-500 bg-blue-50/50' : ''}
+              ${!s.is_active ? 'opacity-50' : ''}`}
+          >
+            <div className="flex items-center gap-1">
+              <span className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-700 select-none px-0.5"
+                title="Kéo để sắp xếp lại">⋮⋮</span>
+              <div className="flex flex-col gap-0.5">
+                <button type="button" onClick={() => moveStage(s, -1)} disabled={i === 0}
+                  className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]"
+                  title="Lên 1 vị trí">▲</button>
+                <button type="button" onClick={() => moveStage(s, 1)} disabled={i === list.length - 1}
+                  className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]"
+                  title="Xuống 1 vị trí">▼</button>
+              </div>
             </div>
             <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0" style={{ backgroundColor: s.color }}>
               {s.order_index}

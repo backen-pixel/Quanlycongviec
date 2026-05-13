@@ -366,6 +366,7 @@ export default function LeadDetail() {
     setCrmNotesAnchor({
       leadId: id,
       notes: noteActivities,
+      includeVoiceTimeline: true,
       contextLine: lead
         ? `${lead.type === 'deal' ? '🎯 Deal' : '💼 Lead'} ${[lead.code, lead.title].filter(Boolean).join(' — ')}`
         : '',
@@ -1385,6 +1386,7 @@ export default function LeadDetail() {
                   onPosted={() => load({ silent: true })}
                   currentUserId={user?.id || user?.userId}
                   canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
+                  includeVoiceTimeline
                   contextLine={
                     lead
                       ? `${lead.type === 'deal' ? '🎯 Deal' : '💼 Lead'} ${[lead.code, lead.title].filter(Boolean).join(' — ')}`

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   StickyNote,
   Send,
@@ -11,9 +11,11 @@ import {
   Search,
   Paperclip,
   Image as ImageIcon,
+  Mic,
 } from 'lucide-react';
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
+import { formatDateTime } from '../lib/utils';
 
 function sortNotesAsc(notes) {
   return [...(notes || [])].sort((a, b) => {
@@ -21,6 +23,38 @@ function sortNotesAsc(notes) {
     const tb = new Date(b.activity_date || b.created_at || 0).getTime();
     return ta - tb;
   });
+}
+
+function recordingAudioUrl(rec) {
+  if (rec?.audio_url) return rec.audio_url;
+  const storage_path = rec?.storage_path || rec;
+  if (typeof storage_path !== 'string') return '';
+  const path = storage_path.startsWith('/') ? storage_path : `/${storage_path}`;
+  const base = import.meta.env.VITE_API_URL;
+  if (base) return `${String(base).replace(/\/$/, '')}${path}`;
+  return path;
+}
+
+function voiceDirLabel(d) {
+  if (d === 'inbound') return 'Gọi đến';
+  if (d === 'outbound') return 'Gọi đi';
+  if (d === 'unknown') return 'Không rõ';
+  return d || '';
+}
+
+function mergeNotesAndVoiceTimeline(notesAsc, voiceList, includeVoice) {
+  const notes = (notesAsc || []).map((n) => ({
+    kind: 'note',
+    ts: new Date(n.activity_date || n.created_at || 0).getTime(),
+    note: n,
+  }));
+  if (!includeVoice) return notes;
+  const voices = (voiceList || []).map((r) => ({
+    kind: 'voice',
+    ts: new Date(r.created_at || 0).getTime(),
+    rec: r,
+  }));
+  return [...notes, ...voices].sort((a, b) => a.ts - b.ts || (a.kind === b.kind ? 0 : a.kind === 'note' ? -1 : 1));
 }
 
 /**
@@ -39,6 +73,8 @@ export default function CrmChatNotesPanel({
   contextLine = '',
   contextBadge = '',
   variant = 'embedded',
+  /** Gộp ghi âm CRM (voice_recordings theo lead) vào dòng thời gian cùng tab Ghi chú */
+  includeVoiceTimeline = false,
 }) {
   const dockStorageKey =
     variant === 'floating' ? (leadId ? `crm_notes_fab_dock_${leadId}` : 'crm_notes_fab_dock_global') : null;
@@ -68,6 +104,10 @@ export default function CrmChatNotesPanel({
 
   /** Panel nổi + đang gắn trang (không pick): refetch GET activities để thấy ghi chú mới ngay (props anchor có thể trễ). */
   const [floatingActs, setFloatingActs] = useState(null);
+
+  const [voiceList, setVoiceList] = useState([]);
+  const [voiceLoading, setVoiceLoading] = useState(false);
+  const [voiceErr, setVoiceErr] = useState('');
 
   const targetLeadId = pickOverride?.id || leadId;
   const useRemote = variant === 'floating' && pickOverride != null;
@@ -123,6 +163,37 @@ export default function CrmChatNotesPanel({
         (notesForSort || []).filter((a) => String(a.type || '').toLowerCase() === 'note'),
       ),
     [notesForSort],
+  );
+
+  const voiceEnabled = includeVoiceTimeline && !!targetLeadId;
+
+  const loadVoices = useCallback(async () => {
+    if (!voiceEnabled) {
+      setVoiceList([]);
+      setVoiceErr('');
+      setVoiceLoading(false);
+      return;
+    }
+    setVoiceLoading(true);
+    setVoiceErr('');
+    try {
+      const { data } = await api.get('/voice-recordings', { params: { lead_id: targetLeadId } });
+      setVoiceList(Array.isArray(data?.recordings) ? data.recordings : []);
+    } catch (e) {
+      setVoiceErr(e.response?.data?.error || e.message || 'Không tải ghi âm');
+      setVoiceList([]);
+    } finally {
+      setVoiceLoading(false);
+    }
+  }, [voiceEnabled, targetLeadId]);
+
+  useEffect(() => {
+    void loadVoices();
+  }, [loadVoices]);
+
+  const mergedTimeline = useMemo(
+    () => mergeNotesAndVoiceTimeline(sorted, voiceList, voiceEnabled),
+    [sorted, voiceList, voiceEnabled],
   );
 
   const effectiveContextLine = useMemo(() => {
@@ -216,7 +287,7 @@ export default function CrmChatNotesPanel({
     const el = listRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [sorted.length, open, variant]);
+  }, [mergedTimeline.length, open, variant]);
 
   const refreshRemoteActivities = async () => {
     const pid = pickOverride?.id;
@@ -290,6 +361,7 @@ export default function CrmChatNotesPanel({
         await refreshFloatingAnchoredActivities(tid);
       }
       await Promise.resolve(onPosted?.());
+      if (voiceEnabled) await loadVoices();
     } catch (e) {
       alert(e.response?.data?.error || 'Không gửi được ghi chú');
     }
@@ -334,6 +406,7 @@ export default function CrmChatNotesPanel({
         await refreshFloatingAnchoredActivities(tid);
       }
       await Promise.resolve(onPosted?.());
+      if (voiceEnabled) await loadVoices();
     } catch (e) {
       alert(e.response?.data?.error || 'Không lưu được ghi chú');
     } finally {
@@ -342,6 +415,7 @@ export default function CrmChatNotesPanel({
   };
 
   const showRemoteLoading = variant === 'floating' && pickOverride && remoteLoading;
+  const voiceBlockingEmpty = voiceEnabled && voiceLoading && sorted.length === 0;
 
   const bubbleList = (
     <div
@@ -352,15 +426,77 @@ export default function CrmChatNotesPanel({
           : 'space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 py-1'
       }
     >
-      {showRemoteLoading ? (
+      {voiceErr && voiceEnabled && !showRemoteLoading ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-[11px] text-amber-900">
+          {voiceErr}
+        </div>
+      ) : null}
+      {showRemoteLoading || voiceBlockingEmpty ? (
         <div className="flex flex-col items-center justify-center gap-2 py-14 text-violet-600">
           <Loader2 className="h-8 w-8 animate-spin" />
-          <p className="text-xs text-gray-500">Đang tải ghi chú…</p>
+          <p className="text-xs text-gray-500">
+            {showRemoteLoading ? 'Đang tải ghi chú…' : 'Đang tải ghi âm & ghi chú…'}
+          </p>
         </div>
-      ) : sorted.length === 0 ? (
-        <p className="text-center text-sm text-gray-400 py-10">Chưa có ghi chú. Soạn bên dưới và gửi.</p>
+      ) : mergedTimeline.length === 0 ? (
+        <p className="text-center text-sm text-gray-400 py-10">
+          {voiceEnabled
+            ? 'Chưa có ghi chú hay ghi âm gắn cơ hội này. Soạn bên dưới hoặc dùng tab Ghi âm CRM.'
+            : 'Chưa có ghi chú. Soạn bên dưới và gửi.'}
+        </p>
       ) : (
-        sorted.map((n) => {
+        mergedTimeline.map((item) => {
+          if (item.kind === 'voice') {
+            const r = item.rec;
+            const mineV = currentUserId && String(r.user_id) === String(currentUserId);
+            const whenVoice = formatDateTime(r.created_at);
+            const nvVoice = r.uploader?.full_name || 'Thành viên';
+            const metaBits = [
+              r.phone_number ? `Số: ${r.phone_number}` : null,
+              r.direction ? voiceDirLabel(r.direction) : null,
+              r.duration_sec != null ? `${r.duration_sec}s` : null,
+            ].filter(Boolean);
+            return (
+              <div key={`v-${r.id}`} className={`flex ${mineV ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`relative max-w-[92%] rounded-2xl px-3.5 py-2.5 shadow-sm border ${
+                    mineV
+                      ? 'bg-gradient-to-br from-violet-600 to-fuchsia-700 text-white border-violet-500/30 rounded-br-md'
+                      : 'bg-white text-gray-900 border-violet-100 rounded-bl-md'
+                  }`}
+                >
+                  <div className={`flex items-center gap-2 mb-1 ${mineV ? 'text-violet-100' : 'text-violet-700'}`}>
+                    <Mic className={`h-4 w-4 shrink-0 ${mineV ? 'text-white' : ''}`} />
+                    <span className="text-[11px] font-bold uppercase tracking-wide">Ghi âm</span>
+                  </div>
+                  {!mineV && <p className="text-[10px] font-semibold text-violet-600 mb-1">{nvVoice}</p>}
+                  <p className={`text-xs font-medium break-all ${mineV ? 'text-white' : 'text-gray-800'}`}>
+                    {r.file_name || 'File'}
+                  </p>
+                  {metaBits.length > 0 && (
+                    <p className={`text-[10px] mt-0.5 ${mineV ? 'text-violet-100/95' : 'text-gray-500'}`}>
+                      {metaBits.join(' · ')}
+                    </p>
+                  )}
+                  {r.notes ? (
+                    <p className={`text-[11px] mt-1.5 line-clamp-3 ${mineV ? 'text-violet-50' : 'text-gray-600'}`}>
+                      {r.notes}
+                    </p>
+                  ) : null}
+                  <audio
+                    controls
+                    className={`mt-2 w-full max-w-xs h-9 ${mineV ? 'opacity-95' : ''}`}
+                    src={recordingAudioUrl(r)}
+                    preload="none"
+                  />
+                  <p className={`text-[10px] mt-1.5 tabular-nums ${mineV ? 'text-violet-100' : 'text-gray-400'}`}>
+                    {whenVoice}
+                  </p>
+                </div>
+              </div>
+            );
+          }
+          const n = item.note;
           const mine = currentUserId && String(n.created_by) === String(currentUserId);
           const when = new Date(n.activity_date || n.created_at).toLocaleString('vi-VN', {
             day: '2-digit',
@@ -630,7 +766,15 @@ export default function CrmChatNotesPanel({
     return (
       <div className="space-y-1">
         <p className="text-xs text-gray-500 mb-2">
-          Ghi chú gắn với lead/deal này; bấm <strong>bút</strong> để sửa. Trên <strong>bong bóng nổi</strong> có thể tìm và chọn lead/deal khác để xem/ghi chú nhanh. Cũng hiện trong tab <strong>Hoạt động</strong>.
+          Ghi chú gắn với lead/deal này; bấm <strong>bút</strong> để sửa.
+          {includeVoiceTimeline ? (
+            <>
+              {' '}
+              <strong>Ghi âm CRM</strong> đã ghép cơ hội hiện cùng dòng thời gian (bong bóng tím). Chi tiết đầy đủ ở tab{' '}
+              <strong>Ghi âm CRM</strong>.
+            </>
+          ) : null}{' '}
+          Trên <strong>bong bóng nổi</strong> có thể tìm và chọn lead/deal khác để xem/ghi chú nhanh. Cũng hiện trong tab <strong>Hoạt động</strong>.
         </p>
         {contextLine ? (
           <div

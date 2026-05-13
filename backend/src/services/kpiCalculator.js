@@ -15,6 +15,8 @@
 
 const { supabase } = require('../config/supabase');
 const { computeScore, SCORE_CAP_RATIO } = require('./kpiScoreFormula');
+const { responseMinutes, isUserOff } = require('./businessHours');
+const { buildProgressMap, CANONICAL_RANK } = require('./kpiPipelineRank');
 
 function num(v) {
   const n = Number(v);
@@ -97,33 +99,62 @@ async function fetchHistoryForUser({ userId, periodStart, periodEnd }) {
  * A1: Tỷ lệ phản hồi lead đúng SLA 15 phút.
  * Mẫu số: lead user nhận trong kỳ. Tử số: first_touch_time - created_at <= 15p.
  */
-async function calcA1_responseSlaRate({ userId, periodStart, periodEnd }) {
+async function calcA1_responseSlaRate({ userId, periodStart, periodEnd, companyId = null }) {
   const leads = await fetchLeadsByOwner({ userId, periodStart, periodEnd });
-  const total = leads.length;
-  if (total === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0 } };
+  // Loại lead tạo trong ngày NV nghỉ phép full-day (không công bằng nếu tính)
+  const usable = [];
+  let skipped = 0;
+  for (const l of leads) {
+    if (l.created_at && await isUserOff(userId, l.created_at)) { skipped += 1; continue; }
+    usable.push(l);
+  }
 
-  const within = leads.filter((l) => {
-    if (!l.first_touch_time || !l.created_at) return false;
-    const diffMin = (new Date(l.first_touch_time) - new Date(l.created_at)) / 60000;
-    return diffMin <= 15;
-  }).length;
+  const total = usable.length;
+  if (total === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0, skipped_on_leave: skipped } };
+
+  let within = 0;
+  for (const l of usable) {
+    if (!l.first_touch_time || !l.created_at) continue;
+    const diffMin = await responseMinutes(l.created_at, l.first_touch_time, { companyId, userId });
+    if (diffMin <= 15) within += 1;
+  }
 
   return {
     actual: (within / total) * 100,
-    breakdown: { numerator: within, denominator: total },
+    breakdown: { numerator: within, denominator: total, skipped_on_leave: skipped, business_hours: true, sla_minutes: 15 },
   };
 }
 
-/** A2: Thời gian phản hồi lead trung bình (phút). */
-async function calcA2_avgResponseMinutes({ userId, periodStart, periodEnd }) {
+/** A2: Thời gian phản hồi lead trung bình (phút HC, dùng MEDIAN để chống outlier). */
+async function calcA2_avgResponseMinutes({ userId, periodStart, periodEnd, companyId = null }) {
   const leads = await fetchLeadsByOwner({ userId, periodStart, periodEnd });
-  const valid = leads.filter((l) => l.first_touch_time && l.created_at);
-  if (valid.length === 0) return { actual: null, breakdown: { count: 0 } };
+  const usable = [];
+  let skipped = 0;
+  for (const l of leads) {
+    if (!l.first_touch_time || !l.created_at) continue;
+    if (await isUserOff(userId, l.created_at)) { skipped += 1; continue; }
+    usable.push(l);
+  }
+  if (usable.length === 0) return { actual: null, breakdown: { count: 0, skipped_on_leave: skipped } };
 
-  const sumMin = valid.reduce((s, l) => s + (new Date(l.first_touch_time) - new Date(l.created_at)) / 60000, 0);
+  const diffs = [];
+  for (const l of usable) {
+    diffs.push(await responseMinutes(l.created_at, l.first_touch_time, { companyId, userId }));
+  }
+  diffs.sort((a, b) => a - b);
+  const median = diffs[Math.floor(diffs.length / 2)];
+  const mean = diffs.reduce((s, d) => s + d, 0) / diffs.length;
+
   return {
-    actual: sumMin / valid.length,
-    breakdown: { count: valid.length, total_minutes: Math.round(sumMin) },
+    actual: median,
+    breakdown: {
+      count: diffs.length,
+      median: Math.round(median * 10) / 10,
+      mean: Math.round(mean * 10) / 10,
+      p90: Math.round(diffs[Math.floor(diffs.length * 0.9)] * 10) / 10,
+      skipped_on_leave: skipped,
+      business_hours: true,
+    },
   };
 }
 
@@ -236,85 +267,107 @@ async function calcB1_contactSuccessRate({ userId, periodStart, periodEnd }) {
   };
 }
 
-/** B2: Tỷ lệ Lead → Khảo sát = transition tới survey_scheduled OR survey_done. */
+/**
+ * B2: Tỷ lệ Lead → Khảo sát.
+ *   - Mẫu số: lead đã đến rank ≥ 1 (vào pipeline) — kể cả nhảy cóc.
+ *   - Tử số: lead có max_rank ≥ 6 (survey_scheduled trở lên).
+ */
 async function calcB2_leadToSurveyRate({ userId, periodStart, periodEnd }) {
   const history = await fetchHistoryForUser({ userId, periodStart, periodEnd });
-  // Mẫu số: lead vào pipeline lead trong kỳ (transition entered lead_new hoặc lead được tạo)
-  const enteredLead = new Set();
-  const enteredSurvey = new Set();
-  for (const h of history) {
-    if (h.to_canonical_slug === 'lead_new' || h.to_canonical_slug === 'cold' || h.to_canonical_slug === 'warm' || h.to_canonical_slug === 'hot' || h.to_canonical_slug === 'not_contacted') {
-      enteredLead.add(h.lead_id);
-    }
-    if (h.to_canonical_slug === 'survey_scheduled' || h.to_canonical_slug === 'survey_done') {
-      enteredSurvey.add(h.lead_id);
-    }
+  const progress = buildProgressMap(history);
+
+  let denom = 0, numer = 0;
+  for (const p of progress.values()) {
+    if (p.max_rank >= 1) denom += 1;
+    if (p.hasReached(CANONICAL_RANK.survey_scheduled)) numer += 1;
   }
-  // denom = enteredLead ∪ enteredSurvey (lead mà lúc nào đó từng ở stage Lead)
-  const denomSet = new Set([...enteredLead, ...enteredSurvey]);
-  const denom = denomSet.size;
   if (denom === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0 } };
   return {
-    actual: (enteredSurvey.size / denom) * 100,
-    breakdown: { numerator: enteredSurvey.size, denominator: denom },
+    actual: (numer / denom) * 100,
+    breakdown: { numerator: numer, denominator: denom, rule: 'max_rank-based: nhảy cóc và đi lùi đều xử lý đúng' },
   };
 }
 
-/** B3: Tỷ lệ Khảo sát → Báo giá. */
+/**
+ * B3: Tỷ lệ Khảo sát → Báo giá.
+ *   - Mẫu số: max_rank ≥ 7 (survey_done) — nhảy cóc qua survey_done vẫn tính.
+ *   - Tử số: max_rank ≥ 9 (quoted).
+ */
 async function calcB3_surveyToQuoteRate({ userId, periodStart, periodEnd }) {
   const history = await fetchHistoryForUser({ userId, periodStart, periodEnd });
-  const enteredSurvey = new Set();
-  const enteredQuote = new Set();
-  for (const h of history) {
-    if (h.to_canonical_slug === 'survey_done' || h.to_canonical_slug === 'designing') enteredSurvey.add(h.lead_id);
-    if (h.to_canonical_slug === 'quoted' || h.to_canonical_slug === 'negotiating' || h.to_canonical_slug === 'waiting_deposit' || h.to_canonical_slug === 'contract_signed') enteredQuote.add(h.lead_id);
+  const progress = buildProgressMap(history);
+
+  let denom = 0, numer = 0;
+  for (const p of progress.values()) {
+    if (p.hasReached(CANONICAL_RANK.survey_done)) denom += 1;
+    if (p.hasReached(CANONICAL_RANK.quoted)) numer += 1;
   }
-  const denom = enteredSurvey.size;
   if (denom === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0 } };
-  const numer = [...enteredSurvey].filter((id) => enteredQuote.has(id)).length;
-  return { actual: (numer / denom) * 100, breakdown: { numerator: numer, denominator: denom } };
+  return {
+    actual: (numer / denom) * 100,
+    breakdown: { numerator: numer, denominator: denom, rule: 'max_rank-based' },
+  };
 }
 
-/** B4: Tỷ lệ Báo giá → Ký HD. KPI lõi. */
+/**
+ * B4: Tỷ lệ Báo giá → Ký HD. KPI lõi.
+ *   - Mẫu số: max_rank ≥ 9 (quoted).
+ *   - Tử số: max_rank ≥ 12 (contract_signed).
+ */
 async function calcB4_quoteToContractRate({ userId, periodStart, periodEnd }) {
   const history = await fetchHistoryForUser({ userId, periodStart, periodEnd });
-  const enteredQuote = new Set();
-  const enteredSigned = new Set();
-  for (const h of history) {
-    if (h.to_canonical_slug === 'quoted') enteredQuote.add(h.lead_id);
-    if (h.to_canonical_slug === 'contract_signed') enteredSigned.add(h.lead_id);
+  const progress = buildProgressMap(history);
+
+  let denom = 0, numer = 0;
+  for (const p of progress.values()) {
+    if (p.hasReached(CANONICAL_RANK.quoted)) denom += 1;
+    if (p.hasReached(CANONICAL_RANK.contract_signed)) numer += 1;
   }
-  const denom = enteredQuote.size;
   if (denom === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0 } };
-  const numer = [...enteredQuote].filter((id) => enteredSigned.has(id)).length;
-  return { actual: (numer / denom) * 100, breakdown: { numerator: numer, denominator: denom } };
+  return {
+    actual: (numer / denom) * 100,
+    breakdown: { numerator: numer, denominator: denom, rule: 'max_rank-based' },
+  };
 }
 
-/** B5: Thời gian từ khảo sát đến báo giá (số ngày trung bình). */
+/**
+ * B5: Thời gian từ khảo sát đến báo giá (số ngày).
+ *   - Lấy LẦN ĐẦU vào survey_done và LẦN ĐẦU vào quoted.
+ *   - Nếu nhảy cóc (chỉ có quoted, không qua survey_done) → KHÔNG tính (không có 2 mốc).
+ *   - Nếu đi lùi rồi tới lại → vẫn dùng lần ĐẦU TIÊN (tính đúng độ trễ thực).
+ *   - Median chống outlier (xem businessHours.js).
+ */
 async function calcB5_surveyToQuoteDays({ userId, periodStart, periodEnd }) {
   const history = await fetchHistoryForUser({ userId, periodStart, periodEnd });
-  // Group history theo lead, tìm cặp survey_done -> quoted
-  const byLead = new Map();
-  for (const h of history) {
-    if (!byLead.has(h.lead_id)) byLead.set(h.lead_id, []);
-    byLead.get(h.lead_id).push(h);
-  }
+  const progress = buildProgressMap(history);
+
   const durations = [];
-  for (const arr of byLead.values()) {
-    arr.sort((a, b) => new Date(a.entered_at) - new Date(b.entered_at));
-    let surveyAt = null;
-    for (const h of arr) {
-      if (h.to_canonical_slug === 'survey_done' && !surveyAt) surveyAt = new Date(h.entered_at);
-      if (h.to_canonical_slug === 'quoted' && surveyAt) {
-        const days = (new Date(h.entered_at) - surveyAt) / 86400000;
-        if (days >= 0) durations.push(days);
-        surveyAt = null;
-      }
+  let skippedNoSurvey = 0;
+  for (const p of progress.values()) {
+    const surveyAt = p.first_entered.survey_done;
+    const quoteAt  = p.first_entered.quoted;
+    if (!surveyAt || !quoteAt) {
+      if (p.hasReached(CANONICAL_RANK.quoted) && !surveyAt) skippedNoSurvey += 1;
+      continue;
     }
+    const days = (new Date(quoteAt) - new Date(surveyAt)) / 86_400_000;
+    if (days >= 0) durations.push(days);
   }
-  if (durations.length === 0) return { actual: null, breakdown: { count: 0 } };
-  const avg = durations.reduce((s, d) => s + d, 0) / durations.length;
-  return { actual: avg, breakdown: { count: durations.length, avg_days: Math.round(avg * 10) / 10 } };
+  if (durations.length === 0) {
+    return { actual: null, breakdown: { count: 0, skipped_no_survey: skippedNoSurvey } };
+  }
+  durations.sort((a, b) => a - b);
+  const median = durations[Math.floor(durations.length / 2)];
+  const mean   = durations.reduce((s, d) => s + d, 0) / durations.length;
+  return {
+    actual: median,
+    breakdown: {
+      count: durations.length,
+      median: Math.round(median * 10) / 10,
+      mean: Math.round(mean * 10) / 10,
+      skipped_no_survey: skippedNoSurvey,
+    },
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -475,7 +528,7 @@ async function computeAndStoreForUser({ userId, companyId = null, periodType = '
 
     let calc;
     try {
-      calc = await calcFn({ userId, periodStart: start, periodEnd: end });
+      calc = await calcFn({ userId, periodStart: start, periodEnd: end, companyId });
     } catch (err) {
       console.error(`[kpiCalculator] ${def.code} for user ${userId}:`, err.message);
       calc = { actual: null, breakdown: { error: err.message } };

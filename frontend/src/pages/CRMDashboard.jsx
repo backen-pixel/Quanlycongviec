@@ -3339,7 +3339,7 @@ function ManualMergeLeadsModal({ open, onClose, ids, itemsById, pipelineType, on
                   <span>
                     <span className="font-medium text-gray-900">Gộp từ cả hai bản ghi</span>
                     <span className="block text-gray-600 text-xs mt-0.5">
-                      Gộp thông tin khách hàng; chuyển tài liệu, nhiệm vụ CRM, hoạt động, báo giá, đơn hàng, hóa đơn, Facebook… sang bản được giữ; cộng thêm giá trị ước tính từ bản xóa.
+                      Gộp thông tin khách hàng; chuyển tài liệu, nhiệm vụ CRM, hoạt động, báo giá, đơn hàng, hóa đơn, Facebook… sang bản được giữ. Giá trị ước tính: nếu còn báo giá (nháp/đã gửi/chấp nhận/đã chuyển đơn) thì lấy tổng báo giá; không thì cộng giá trị ước tính các bản gộp (tránh nhân đôi khi EV đã trùng với báo giá).
                     </span>
                   </span>
                 </label>
