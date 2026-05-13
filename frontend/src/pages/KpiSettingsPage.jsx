@@ -12,6 +12,16 @@ import {
   Unlock,
   CheckCircle2,
   RefreshCw,
+  Clock,
+  CalendarDays,
+  UserMinus,
+  GitBranch,
+  Wand2,
+  Building2,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 import KpiUserFilter from '../components/KpiUserFilter';
 
@@ -586,6 +596,720 @@ function PeriodsTab() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Tab 4: Lịch làm việc — giờ HC, ngày lễ, ngày phép NV
+// ═════════════════════════════════════════════════════════════════════════════
+const WEEKDAYS = [
+  { v: 1, l: 'T2' }, { v: 2, l: 'T3' }, { v: 3, l: 'T4' }, { v: 4, l: 'T5' },
+  { v: 5, l: 'T6' }, { v: 6, l: 'T7' }, { v: 7, l: 'CN' },
+];
+const LEAVE_TYPES = [
+  { v: 'paid', l: 'Phép có lương' },
+  { v: 'unpaid', l: 'Phép không lương' },
+  { v: 'sick', l: 'Nghỉ ốm' },
+  { v: 'business_trip', l: 'Công tác' },
+  { v: 'remote', l: 'Làm từ xa' },
+  { v: 'other', l: 'Khác' },
+];
+const HALF_DAY = [
+  { v: 'full', l: 'Cả ngày' },
+  { v: 'morning', l: 'Sáng' },
+  { v: 'afternoon', l: 'Chiều' },
+];
+
+function minutesToHHMM(m) {
+  if (m == null) return '';
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+function hhmmToMinutes(s) {
+  if (!s) return null;
+  const [h, m] = String(s).split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+function BusinessHoursPanel() {
+  const [config, setConfig] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/kpi/business-hours');
+      setConfig(data.config || {
+        start_minute: 480, end_minute: 1020,
+        lunch_start_minute: 720, lunch_end_minute: 780,
+        work_days: [1, 2, 3, 4, 5, 6], timezone: 'Asia/Ho_Chi_Minh',
+      });
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const toggleDay = (d) => {
+    setConfig((c) => {
+      const set = new Set(c.work_days || []);
+      if (set.has(d)) set.delete(d); else set.add(d);
+      return { ...c, work_days: [...set].sort((a, b) => a - b) };
+    });
+  };
+
+  const save = async () => {
+    setSaving(true); setErr(null); setMsg(null);
+    try {
+      const { data } = await api.put('/kpi/business-hours', config);
+      setConfig(data.config);
+      setMsg('Đã lưu cấu hình giờ hành chính.');
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+    finally { setSaving(false); }
+  };
+
+  if (loading) return <div className="text-center py-6 text-gray-400">Đang tải…</div>;
+  if (!config) return null;
+
+  return (
+    <div className="bg-white border border-gray-100 rounded-xl p-4 space-y-4 max-w-2xl">
+      <div className="flex items-center gap-2">
+        <Clock className="w-5 h-5 text-blue-600" />
+        <h3 className="font-semibold text-gray-900">Giờ hành chính</h3>
+      </div>
+      {err && <div className="bg-red-50 border border-red-200 rounded px-3 py-2 text-sm text-red-700">{err}</div>}
+      {msg && <div className="bg-emerald-50 border border-emerald-200 rounded px-3 py-2 text-sm text-emerald-700">{msg}</div>}
+
+      <div className="grid grid-cols-2 gap-3">
+        <label className="text-sm">
+          <span className="text-gray-600">Bắt đầu ca</span>
+          <input type="time" value={minutesToHHMM(config.start_minute)}
+            onChange={(e) => setConfig({ ...config, start_minute: hhmmToMinutes(e.target.value) })}
+            className="mt-1 w-full px-2 py-1.5 border rounded" />
+        </label>
+        <label className="text-sm">
+          <span className="text-gray-600">Kết thúc ca</span>
+          <input type="time" value={minutesToHHMM(config.end_minute)}
+            onChange={(e) => setConfig({ ...config, end_minute: hhmmToMinutes(e.target.value) })}
+            className="mt-1 w-full px-2 py-1.5 border rounded" />
+        </label>
+        <label className="text-sm">
+          <span className="text-gray-600">Nghỉ trưa từ <em className="text-gray-400">(để trống = không trừ)</em></span>
+          <input type="time" value={minutesToHHMM(config.lunch_start_minute)}
+            onChange={(e) => setConfig({ ...config, lunch_start_minute: e.target.value ? hhmmToMinutes(e.target.value) : null })}
+            className="mt-1 w-full px-2 py-1.5 border rounded" />
+        </label>
+        <label className="text-sm">
+          <span className="text-gray-600">Nghỉ trưa đến</span>
+          <input type="time" value={minutesToHHMM(config.lunch_end_minute)}
+            onChange={(e) => setConfig({ ...config, lunch_end_minute: e.target.value ? hhmmToMinutes(e.target.value) : null })}
+            className="mt-1 w-full px-2 py-1.5 border rounded" />
+        </label>
+      </div>
+
+      <div>
+        <p className="text-sm text-gray-600 mb-1.5">Ngày làm trong tuần</p>
+        <div className="flex gap-1.5 flex-wrap">
+          {WEEKDAYS.map((d) => {
+            const on = (config.work_days || []).includes(d.v);
+            return (
+              <button key={d.v} onClick={() => toggleDay(d.v)}
+                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${on ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
+                {d.l}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <label className="text-sm block">
+        <span className="text-gray-600">Múi giờ</span>
+        <input type="text" value={config.timezone || ''}
+          onChange={(e) => setConfig({ ...config, timezone: e.target.value })}
+          className="mt-1 w-full px-2 py-1.5 border rounded" placeholder="Asia/Ho_Chi_Minh" />
+      </label>
+
+      <button onClick={save} disabled={saving}
+        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40 flex items-center gap-1.5">
+        <Save className="w-4 h-4" /> {saving ? 'Đang lưu…' : 'Lưu cấu hình'}
+      </button>
+
+      <div className="text-xs text-gray-500 bg-gray-50 rounded p-2">
+        <strong>Áp dụng cho:</strong> KPI A1 (phản hồi lead ≤15p), A2 (thời gian phản hồi TB).
+        Lead tạo ngoài giờ HC sẽ được đẩy mốc bắt đầu sang đầu giờ ngày làm kế tiếp.
+      </div>
+    </div>
+  );
+}
+
+function HolidaysPanel() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [form, setForm] = useState({ holiday_date: '', name: '', repeat_yearly: false, notes: '' });
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/kpi/holidays');
+      setItems(data.holidays || []);
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const add = async () => {
+    if (!form.holiday_date || !form.name) { setErr('Cần điền ngày và tên'); return; }
+    setErr(null);
+    try {
+      await api.post('/kpi/holidays', form);
+      setForm({ holiday_date: '', name: '', repeat_yearly: false, notes: '' });
+      load();
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+  };
+  const del = async (id) => {
+    if (!window.confirm('Xoá ngày lễ này?')) return;
+    try { await api.delete(`/kpi/holidays/${id}`); setItems((a) => a.filter((x) => x.id !== id)); }
+    catch (e) { setErr(e.response?.data?.error || e.message); }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <CalendarDays className="w-5 h-5 text-amber-600" />
+        <h3 className="font-semibold text-gray-900">Ngày lễ / nghỉ chung</h3>
+      </div>
+      {err && <div className="bg-red-50 border border-red-200 rounded px-3 py-2 text-sm text-red-700">{err}</div>}
+
+      <div className="bg-amber-50/40 border border-amber-100 rounded-xl p-3 grid grid-cols-1 md:grid-cols-5 gap-2">
+        <input type="date" value={form.holiday_date}
+          onChange={(e) => setForm({ ...form, holiday_date: e.target.value })}
+          className="px-2 py-1.5 border rounded text-sm" />
+        <input type="text" placeholder="Tên ngày lễ" value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          className="px-2 py-1.5 border rounded text-sm md:col-span-2" />
+        <label className="text-sm flex items-center gap-1.5 px-2">
+          <input type="checkbox" checked={form.repeat_yearly}
+            onChange={(e) => setForm({ ...form, repeat_yearly: e.target.checked })} />
+          Lặp hằng năm
+        </label>
+        <button onClick={add} className="px-3 py-1.5 bg-amber-600 text-white rounded text-sm hover:bg-amber-700 flex items-center justify-center gap-1">
+          <Plus className="w-3.5 h-3.5" /> Thêm
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-6 text-gray-400">Đang tải…</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
+              <tr>
+                <th className="text-left px-3 py-2.5">Ngày</th>
+                <th className="text-left px-3 py-2.5">Tên</th>
+                <th className="text-center px-3 py-2.5">Lặp</th>
+                <th className="text-left px-3 py-2.5">Ghi chú</th>
+                <th className="px-3 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.length === 0 ? (
+                <tr><td colSpan={5} className="text-center text-gray-400 py-6">Chưa có ngày lễ.</td></tr>
+              ) : items.map((h) => (
+                <tr key={h.id} className="border-t hover:bg-gray-50">
+                  <td className="px-3 py-2 font-medium">{h.holiday_date}</td>
+                  <td className="px-3 py-2">{h.name}</td>
+                  <td className="px-3 py-2 text-center">
+                    {h.repeat_yearly ? <span className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">Hằng năm</span> : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-700">{h.notes || '—'}</td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={() => del(h.id)} className="px-2 py-1 text-red-600 hover:bg-red-50 rounded">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LeavesPanel() {
+  const [items, setItems] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '' });
+  const [form, setForm] = useState({
+    user_id: '', start_date: '', end_date: '',
+    leave_type: 'paid', half_day: 'full', reason: '', status: 'approved',
+  });
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/kpi/leaves');
+      setItems(data.leaves || []);
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const params = {
+        ...(filter.companyId ? { company_id: filter.companyId } : {}),
+        ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
+        ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
+      };
+      api.get('/kpi/users', { params }).then((r) => setUsers(r.data?.users || [])).catch(() => setUsers([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [filter.companyId, filter.departmentId, filter.q]);
+
+  const userMap = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
+
+  const add = async () => {
+    if (!form.user_id || !form.start_date || !form.end_date) { setErr('Cần chọn nhân viên & khoảng ngày'); return; }
+    setErr(null);
+    try {
+      await api.post('/kpi/leaves', form);
+      setForm({ ...form, user_id: '', start_date: '', end_date: '', reason: '' });
+      load();
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+  };
+  const updateStatus = async (id, status) => {
+    try { await api.patch(`/kpi/leaves/${id}`, { status }); load(); }
+    catch (e) { setErr(e.response?.data?.error || e.message); }
+  };
+  const del = async (id) => {
+    if (!window.confirm('Xoá đơn nghỉ này?')) return;
+    try { await api.delete(`/kpi/leaves/${id}`); setItems((a) => a.filter((x) => x.id !== id)); }
+    catch (e) { setErr(e.response?.data?.error || e.message); }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <UserMinus className="w-5 h-5 text-purple-600" />
+        <h3 className="font-semibold text-gray-900">Ngày phép nhân viên</h3>
+      </div>
+      {err && <div className="bg-red-50 border border-red-200 rounded px-3 py-2 text-sm text-red-700">{err}</div>}
+
+      <div className="bg-white border border-gray-100 rounded-xl p-3">
+        <p className="text-xs text-gray-500 mb-1">Lọc nhân viên</p>
+        <KpiUserFilter value={filter} onChange={setFilter} />
+        <p className="text-xs text-gray-500 mt-1">{users.length} nhân viên khớp</p>
+      </div>
+
+      <div className="bg-purple-50/40 border border-purple-100 rounded-xl p-3 grid grid-cols-1 md:grid-cols-7 gap-2">
+        <select value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })}
+          className="px-2 py-1.5 border rounded text-sm md:col-span-2">
+          <option value="">— Chọn NV —</option>
+          {users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+        </select>
+        <input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+          className="px-2 py-1.5 border rounded text-sm" />
+        <input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })}
+          className="px-2 py-1.5 border rounded text-sm" />
+        <select value={form.leave_type} onChange={(e) => setForm({ ...form, leave_type: e.target.value })}
+          className="px-2 py-1.5 border rounded text-sm">
+          {LEAVE_TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
+        </select>
+        <select value={form.half_day} onChange={(e) => setForm({ ...form, half_day: e.target.value })}
+          className="px-2 py-1.5 border rounded text-sm">
+          {HALF_DAY.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
+        </select>
+        <button onClick={add} className="px-3 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700 flex items-center justify-center gap-1">
+          <Plus className="w-3.5 h-3.5" /> Thêm
+        </button>
+        <input type="text" placeholder="Lý do (tuỳ chọn)" value={form.reason}
+          onChange={(e) => setForm({ ...form, reason: e.target.value })}
+          className="md:col-span-7 px-2 py-1.5 border rounded text-sm" />
+      </div>
+
+      {loading ? (
+        <div className="text-center py-6 text-gray-400">Đang tải…</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
+              <tr>
+                <th className="text-left px-3 py-2.5">Nhân viên</th>
+                <th className="text-left px-3 py-2.5">Từ</th>
+                <th className="text-left px-3 py-2.5">Đến</th>
+                <th className="text-left px-3 py-2.5">Loại</th>
+                <th className="text-left px-3 py-2.5">Buổi</th>
+                <th className="text-left px-3 py-2.5">Trạng thái</th>
+                <th className="text-left px-3 py-2.5">Lý do</th>
+                <th className="px-3 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.length === 0 ? (
+                <tr><td colSpan={8} className="text-center text-gray-400 py-6">Chưa có đơn nghỉ.</td></tr>
+              ) : items.map((l) => (
+                <tr key={l.id} className="border-t hover:bg-gray-50">
+                  <td className="px-3 py-2">{userMap[l.user_id]?.full_name || userMap[l.user_id]?.email || l.user_id.slice(0, 8)}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{l.start_date}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{l.end_date}</td>
+                  <td className="px-3 py-2 text-xs">{LEAVE_TYPES.find((t) => t.v === l.leave_type)?.l || l.leave_type}</td>
+                  <td className="px-3 py-2 text-xs">{HALF_DAY.find((t) => t.v === l.half_day)?.l || l.half_day}</td>
+                  <td className="px-3 py-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                      l.status === 'approved' ? 'bg-emerald-100 text-emerald-700'
+                      : l.status === 'pending' ? 'bg-amber-100 text-amber-700'
+                      : 'bg-gray-100 text-gray-700'
+                    }`}>{l.status}</span>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-700">{l.reason || '—'}</td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="inline-flex gap-1">
+                      {l.status === 'pending' && (
+                        <button onClick={() => updateStatus(l.id, 'approved')}
+                          className="px-2 py-1 bg-emerald-600 text-white rounded text-xs hover:bg-emerald-700">Duyệt</button>
+                      )}
+                      <button onClick={() => del(l.id)} className="px-2 py-1 text-red-600 hover:bg-red-50 rounded">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalendarTab() {
+  const [section, setSection] = useState('hours');
+  const subTabs = [
+    { id: 'hours', label: 'Giờ hành chính', icon: Clock },
+    { id: 'holidays', label: 'Ngày lễ', icon: CalendarDays },
+    { id: 'leaves', label: 'Ngày phép NV', icon: UserMinus },
+  ];
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-1 flex-wrap">
+        {subTabs.map((t) => {
+          const Ic = t.icon;
+          return (
+            <button key={t.id} onClick={() => setSection(t.id)}
+              className={`px-3 py-1.5 rounded-lg text-sm border flex items-center gap-1.5 ${
+                section === t.id ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+              }`}>
+              <Ic className="w-3.5 h-3.5" /> {t.label}
+            </button>
+          );
+        })}
+      </div>
+      {section === 'hours' && <BusinessHoursPanel />}
+      {section === 'holidays' && <HolidaysPanel />}
+      {section === 'leaves' && <LeavesPanel />}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Tab 5: Pipeline KPI — map từng stage của pipeline → canonical_slug
+// ═════════════════════════════════════════════════════════════════════════════
+function PipelineKpiTab() {
+  const [companies, setCompanies] = useState([]);
+  const [companyId, setCompanyId] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [savingStageId, setSavingStageId] = useState(null);
+  const [autoLoadingId, setAutoLoadingId] = useState(null);
+  const [err, setErr] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [expanded, setExpanded] = useState({});
+
+  useEffect(() => {
+    api.get('/companies')
+      .then((r) => setCompanies(r.data?.companies || r.data || []))
+      .catch(() => setCompanies([]));
+  }, []);
+
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try {
+      const params = companyId ? { company_id: companyId } : {};
+      const { data } = await api.get('/kpi/pipeline-mapping', { params });
+      setData(data);
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [companyId]);
+
+  const updateStage = async (stage, patch) => {
+    setSavingStageId(stage.id); setErr(null); setMsg(null);
+    try {
+      await api.patch(`/kpi/pipeline-mapping/${stage.id}`, patch);
+      setMsg(`Đã cập nhật stage "${stage.name}"`);
+      load();
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+    finally { setSavingStageId(null); }
+  };
+
+  const autoMap = async (pipeline, dryRun = true) => {
+    setAutoLoadingId(pipeline.id); setErr(null); setMsg(null);
+    try {
+      const { data } = await api.post('/kpi/pipeline-mapping/auto', { pipeline_id: pipeline.id, dry_run: dryRun });
+      if (dryRun) {
+        if (data.proposals.length === 0) { setMsg(`Pipeline "${pipeline.name}" đã được map đầy đủ — không có gợi ý mới.`); }
+        else if (window.confirm(
+          `Tìm thấy ${data.proposals.length} stage có thể auto-map:\n\n` +
+          data.proposals.map((p) => `• ${p.stage_name} → ${p.new_slug}${p.old_slug ? ` (cũ: ${p.old_slug})` : ''}`).join('\n') +
+          `\n\nÁp dụng?`
+        )) {
+          await api.post('/kpi/pipeline-mapping/auto', { pipeline_id: pipeline.id, dry_run: false });
+          setMsg(`Đã auto-map ${data.proposals.length} stage cho pipeline "${pipeline.name}"`);
+          load();
+        }
+      }
+    } catch (e) { setErr(e.response?.data?.error || e.message); }
+    finally { setAutoLoadingId(null); }
+  };
+
+  const slugLabel = (slug) => {
+    const labels = {
+      lead_new: 'Lead mới', not_contacted: 'Không liên hệ được',
+      cold: 'Lạnh', warm: 'Ấm', hot: 'Nóng',
+      survey_scheduled: 'Hẹn khảo sát', survey_done: 'Đã khảo sát',
+      designing: 'Thiết kế', quoted: 'Đã báo giá', negotiating: 'Đàm phán',
+      waiting_deposit: 'Chờ cọc', contract_signed: 'Ký HD',
+      producing: 'Sản xuất', installing: 'Lắp đặt', completed: 'Hoàn thành',
+      lost: 'Mất khách',
+    };
+    return labels[slug] || slug;
+  };
+
+  const validSlugsFor = (pipelineType) => data?.canonical_slugs?.[pipelineType] || [];
+
+  const allPipelines = data?.pipelines || [];
+  const totalLeadStages = allPipelines.reduce((s, p) => s + (p.lead?.total_stages || 0), 0);
+  const totalDealStages = allPipelines.reduce((s, p) => s + (p.deal?.total_stages || 0), 0);
+
+  // Render 1 sub-section (Lead hoặc Deal) bên trong 1 pipeline
+  const renderSubSection = (pipeline, type, part) => {
+    if (!part || part.total_stages === 0) return null;
+
+    const status = part.coverage_pct === 100 ? 'ok' : part.coverage_pct > 0 ? 'partial' : 'none';
+    const headerColor = type === 'lead' ? 'bg-blue-50 border-blue-200' : 'bg-purple-50 border-purple-200';
+    const headerText  = type === 'lead' ? 'text-blue-800' : 'text-purple-800';
+    const typeLabel   = type === 'lead' ? 'STAGE LEAD — phễu thu hút khách' : 'STAGE DEAL — phễu chốt đơn';
+    const kpiCoverage = Object.entries(part.kpi_coverage || {});
+
+    return (
+      <div className={`border-2 ${headerColor} rounded-lg overflow-hidden`}>
+        <div className={`px-3 py-2 ${headerText} flex items-center justify-between flex-wrap gap-2`}>
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${type === 'lead' ? 'bg-blue-200 text-blue-900' : 'bg-purple-200 text-purple-900'}`}>
+              {type.toUpperCase()}
+            </span>
+            <span className="font-semibold text-sm">{typeLabel}</span>
+            <span className="text-xs">
+              {part.mapped_stages}/{part.total_stages} stage đã map · {part.total_leads} {type === 'lead' ? 'lead' : 'deal'} đang có
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-bold ${status === 'ok' ? 'text-emerald-700' : status === 'partial' ? 'text-amber-700' : 'text-red-700'}`}>
+              {part.coverage_pct}%
+            </span>
+          </div>
+        </div>
+
+        {kpiCoverage.length > 0 && (
+          <div className="px-3 py-1.5 bg-gray-50/60 border-t flex flex-wrap gap-1">
+            {kpiCoverage.map(([kpi, cov]) => (
+              <span key={kpi} className={`text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${
+                cov.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+              }`} title={cov.ok ? `${kpi} OK` : `${kpi} thiếu: ${cov.missing.join(', ')}`}>
+                {cov.ok ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                {kpi}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <table className="w-full text-sm border-t">
+          <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
+            <tr>
+              <th className="text-left px-3 py-2">Stage</th>
+              <th className="text-left px-3 py-2">Canonical slug</th>
+              <th className="text-right px-3 py-2">SLA (ngày)</th>
+              <th className="text-right px-3 py-2">{type === 'lead' ? 'Lead' : 'Deal'} đang ở</th>
+              <th className="text-center px-3 py-2">Tt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {part.stages.map((s) => (
+              <tr key={s.id} className="border-t hover:bg-blue-50/30">
+                <td className="px-3 py-1.5">
+                  <div className="font-medium">{s.name}</div>
+                  <div className="text-[10px] text-gray-500">vị trí {s.position}{s.is_won ? ' · won' : ''}{s.is_lost ? ' · lost' : ''}</div>
+                </td>
+                <td className="px-3 py-1.5">
+                  <select value={s.canonical_slug || ''}
+                    disabled={savingStageId === s.id}
+                    onChange={(e) => updateStage(s, { canonical_slug: e.target.value || null })}
+                    className={`px-2 py-1 border rounded text-sm min-w-[180px] ${!s.canonical_slug ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}>
+                    <option value="">— Chưa map —</option>
+                    {validSlugsFor(type).map((slug) => (
+                      <option key={slug} value={slug}>{slug} · {slugLabel(slug)}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-3 py-1.5 text-right">
+                  <input type="number" min="0" step="1" defaultValue={s.sla_days ?? ''}
+                    onBlur={(e) => {
+                      const v = e.target.value === '' ? null : Number(e.target.value);
+                      if (v !== s.sla_days) updateStage(s, { sla_days: v });
+                    }}
+                    className="w-14 px-2 py-1 border rounded text-sm text-right" placeholder="—" />
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono text-xs">
+                  {s.lead_count > 0 ? <span className="text-blue-700 font-bold">{s.lead_count}</span> : <span className="text-gray-400">0</span>}
+                </td>
+                <td className="px-3 py-1.5 text-center">
+                  {savingStageId === s.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600 mx-auto" />
+                  ) : s.canonical_slug ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-600 mx-auto" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-500 mx-auto" />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  const renderPipelineCard = (p) => {
+    const isExpanded = expanded[p.id] !== false;
+    const showLead = typeFilter === 'all' || typeFilter === 'lead';
+    const showDeal = typeFilter === 'all' || typeFilter === 'deal';
+    const hasContent = (showLead && p.lead) || (showDeal && p.deal);
+    if (!hasContent) return null;
+
+    return (
+      <div key={p.id} className="bg-white rounded-xl border-2 border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2 cursor-pointer hover:bg-gray-50/50 border-b"
+          onClick={() => setExpanded((e) => ({ ...e, [p.id]: !isExpanded }))}>
+          <div className="flex items-center gap-3">
+            <GitBranch className="w-5 h-5 text-gray-700" />
+            <div>
+              <div className="font-semibold flex items-center gap-2">
+                {p.name}
+                {p.lead && <span className="text-[10px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">{p.lead.total_stages} lead</span>}
+                {p.deal && <span className="text-[10px] px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full">{p.deal.total_stages} deal</span>}
+              </div>
+              <div className="text-xs text-gray-500">
+                Tổng {p.total_stages} stage · {p.total_leads} lead/deal đang có
+              </div>
+            </div>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); autoMap(p); }}
+            disabled={autoLoadingId === p.id}
+            className="px-2.5 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1">
+            {autoLoadingId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+            Auto-map
+          </button>
+        </div>
+
+        {isExpanded && (
+          <div className="p-3 space-y-3">
+            {showLead && renderSubSection(p, 'lead', p.lead)}
+            {showDeal && renderSubSection(p, 'deal', p.deal)}
+            {(!p.lead && showLead && !showDeal) && (
+              <div className="text-center py-3 text-gray-400 text-sm">Pipeline này chưa có stage Lead.</div>
+            )}
+            {(!p.deal && showDeal && !showLead) && (
+              <div className="text-center py-3 text-gray-400 text-sm">Pipeline này chưa có stage Deal.</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-white border border-gray-100 rounded-xl p-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Building2 className="w-4 h-4 text-blue-600" />
+          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}
+            className="px-3 py-1.5 border rounded-lg text-sm min-w-[260px]">
+            <option value="">— Tất cả công ty —</option>
+            {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+
+          <div className="flex gap-1">
+            {[
+              { id: 'all',  label: `Tất cả (${allPipelines.length} pipeline)`, c: 'bg-gray-700' },
+              { id: 'lead', label: `Lead (${totalLeadStages} stage)`,  c: 'bg-blue-600' },
+              { id: 'deal', label: `Deal (${totalDealStages} stage)`,  c: 'bg-purple-600' },
+            ].map((t) => (
+              <button key={t.id} onClick={() => setTypeFilter(t.id)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium ${
+                  typeFilter === t.id ? `${t.c} text-white` : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <button onClick={load} className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50 flex items-center gap-1">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Tải lại
+          </button>
+          <span className="text-xs text-gray-500 ml-auto">
+            Map từng stage → <strong>canonical_slug</strong> để KPI nhóm B (B2/B3/B4/B5) tính đúng cho pipeline này.
+          </span>
+        </div>
+      </div>
+
+      {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
+      {msg && <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-sm text-emerald-700">{msg}</div>}
+
+      {loading && !data ? (
+        <div className="text-center py-6 text-gray-400">Đang tải…</div>
+      ) : !allPipelines.length ? (
+        <div className="text-center py-6 text-gray-400 text-sm">Không có pipeline nào{companyId ? ' cho công ty này' : ''}.</div>
+      ) : (
+        <div className="space-y-3">
+          {allPipelines.map(renderPipelineCard).filter(Boolean)}
+        </div>
+      )}
+
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 space-y-1.5">
+        <p className="font-semibold flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> Quy ước canonical_slug</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1.5">
+          <div>
+            <p className="font-mono font-semibold">Lead pipeline (8 slug):</p>
+            <p className="text-blue-800">lead_new, not_contacted, cold, warm, hot, survey_scheduled, survey_done, lost</p>
+          </div>
+          <div>
+            <p className="font-mono font-semibold">Deal pipeline (9 slug):</p>
+            <p className="text-blue-800">designing, quoted, negotiating, waiting_deposit, contract_signed, producing, installing, completed, lost</p>
+          </div>
+        </div>
+        <p className="mt-1">→ KPI <strong>B2/B3/B4/B5</strong> chỉ tính được khi pipeline đã map đủ slug bắt buộc (dấu ✓ ở trên).</p>
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Page wrapper
 // ═════════════════════════════════════════════════════════════════════════════
 export default function KpiSettingsPage() {
@@ -607,6 +1331,8 @@ export default function KpiSettingsPage() {
     { id: 'definitions', label: 'Thông số KPI', desc: 'Sửa weight, mục tiêu, công thức, gating' },
     { id: 'targets', label: 'Target nhân viên', desc: 'Đặt target riêng theo người / kỳ' },
     { id: 'periods', label: 'Kỳ KPI', desc: 'Khoá / đóng kỳ, recompute' },
+    { id: 'calendar', label: 'Lịch làm việc', desc: 'Giờ hành chính, ngày lễ, ngày phép NV' },
+    { id: 'pipeline', label: 'Pipeline KPI', desc: 'Map stage pipeline → canonical_slug cho KPI nhóm B' },
   ];
 
   return (
@@ -637,6 +1363,8 @@ export default function KpiSettingsPage() {
       {tab === 'definitions' && <DefinitionsTab />}
       {tab === 'targets' && <TargetsTab />}
       {tab === 'periods' && <PeriodsTab />}
+      {tab === 'calendar' && <CalendarTab />}
+      {tab === 'pipeline' && <PipelineKpiTab />}
     </div>
   );
 }

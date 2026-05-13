@@ -1766,6 +1766,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     onPosted={refreshCrmActivities}
                     currentUserId={user?.id || user?.userId}
                     canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
+                    includeVoiceTimeline
                     contextLine={
                       primaryCrmDeal
                         ? `🎯 Deal ${[primaryCrmDeal.code, primaryCrmDeal.title].filter(Boolean).join(' — ')}`

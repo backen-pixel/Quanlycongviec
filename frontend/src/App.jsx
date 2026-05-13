@@ -108,6 +108,8 @@ import KpiSalesAdminDashboard from './pages/KpiSalesAdminDashboard';
 import KpiDealDashboard from './pages/KpiDealDashboard';
 import KpiMonthlyScorecard from './pages/KpiMonthlyScorecard';
 import KpiSettingsPage from './pages/KpiSettingsPage';
+import KpiCompanyDashboard from './pages/KpiCompanyDashboard';
+import KpiBVerifyPage from './pages/KpiBVerifyPage';
 import KpiGuidePage from './pages/KpiGuidePage';
 import PipelineSettingsPage from './pages/PipelineSettingsPage';
 import CRMSourcesSettingsPage from './pages/CRMSourcesSettingsPage';
@@ -309,6 +311,8 @@ export default function App() {
             <Route path="/crm/kpi/deal" element={<KpiDealDashboard />} />
             <Route path="/crm/kpi/guide" element={<KpiGuidePage />} />
             <Route path="/crm/kpi/scorecard" element={<RequireExecutive><KpiMonthlyScorecard /></RequireExecutive>} />
+            <Route path="/crm/kpi/company" element={<RequireExecutive><KpiCompanyDashboard /></RequireExecutive>} />
+            <Route path="/crm/kpi/verify-b" element={<RequireExecutive><KpiBVerifyPage /></RequireExecutive>} />
             <Route path="/crm/kpi/settings" element={<RequireExecutive><KpiSettingsPage /></RequireExecutive>} />
             <Route path="/crm/pipeline" element={<CRMDashboard />} />
             <Route path="/crm/leads/:id" element={<LeadDetail />} />

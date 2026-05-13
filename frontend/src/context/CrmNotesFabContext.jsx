@@ -44,6 +44,7 @@ export function GlobalCrmChatNotesFab() {
       canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
       contextLine={anchor?.contextLine ?? ''}
       contextBadge={anchor?.contextBadge ?? ''}
+      includeVoiceTimeline={anchor?.includeVoiceTimeline === true}
     />
   );
 }

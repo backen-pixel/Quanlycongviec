@@ -3238,7 +3238,10 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
     throw err;
   }
 
-  const { data: delLeads } = await supabase.from('crm_leads').select('id, customer_id, type').in('id', idsToDelete);
+  const { data: delLeads } = await supabase
+    .from('crm_leads')
+    .select('id, customer_id, type, estimated_value')
+    .in('id', idsToDelete);
   if (!delLeads?.length || delLeads.length !== idsToDelete.length) {
     const err = new Error('Một hoặc nhiều bản ghi cần gộp không tồn tại');
     err.status = 404;
@@ -3285,6 +3288,15 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
       .update({ title: String(finalTitle).trim(), updated_at: new Date().toISOString() })
       .eq('id', keepId);
   }
+
+  /** Chuẩn hóa số cho merge (tránh cộng chuỗi / NaN). */
+  const numEstMerge = (x) => {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : 0;
+  };
+  /** EV ban đầu của bản giữ + tổng EV các bản xóa — chỉ dùng khi không có báo giá «đang tính» sau gộp. */
+  const baseKeepEst = numEstMerge(keepLead.estimated_value);
+  const delsEstSum = delLeads.reduce((s, d) => s + numEstMerge(d.estimated_value), 0);
 
   let movedTasks = 0;
   let movedDocs = 0;
@@ -3339,17 +3351,6 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
       await supabase.from('lead_messages').delete().eq('lead_id', delId);
 
       await supabase.from('crm_pipeline_history').update({ lead_id: keepId }).eq('lead_id', delId);
-
-      const { data: delLead } = await supabase.from('crm_leads').select('estimated_value').eq('id', delId).single();
-      if (delLead?.estimated_value > 0) {
-        await supabase
-          .from('crm_leads')
-          .update({
-            estimated_value: (keepLead.estimated_value || 0) + delLead.estimated_value,
-          })
-          .eq('id', keepId);
-        keepLead.estimated_value = (keepLead.estimated_value || 0) + delLead.estimated_value;
-      }
     } else {
       await supabase.from('lead_members').delete().eq('lead_id', delId);
       await supabase.from('lead_messages').delete().eq('lead_id', delId);
@@ -3362,6 +3363,22 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
       console.error('Delete lead error:', delId, delErr);
       throw new Error(`Không xóa được lead/deal ${delId}: ${delErr.message || delErr.details || JSON.stringify(delErr)}`);
     }
+  }
+
+  // Giá trị ước tính sau gộp: nếu đã chuyển báo giá sang deal giữ → dùng TỔNG báo giá (một nguồn sự thật),
+  // tránh cộng dồn EV từng deal (đã đồng bộ từ BG / trùng deal cha–con) làm gấp đôi.
+  if (includeSecondaryData) {
+    const { data: qAfter } = await supabase
+      .from('quotations')
+      .select('total')
+      .eq('lead_id', keepId)
+      .in('status', ['draft', 'sent', 'accepted', 'converted']);
+    const sumQuotes = (qAfter || []).reduce((s, q) => s + numEstMerge(q.total), 0);
+    const finalEst = sumQuotes > 0 ? sumQuotes : baseKeepEst + delsEstSum;
+    await supabase
+      .from('crm_leads')
+      .update({ estimated_value: finalEst, updated_at: new Date().toISOString() })
+      .eq('id', keepId);
   }
 
   return {

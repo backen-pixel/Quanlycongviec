@@ -126,6 +126,8 @@ const CRM_MENU_BOTTOM_GROUPS = [
     emoji: '📈',
     items: [
       { to: '/crm/executive-kpi', icon: BarChart3, label: 'KPI Giám đốc', executiveOnly: true },
+      { to: '/crm/kpi/company', icon: Users, label: 'KPI Nhân viên (Tổng quan)', executiveOnly: true },
+      { to: '/crm/kpi/verify-b', icon: Activity, label: 'Verify KPI nhóm B', executiveOnly: true },
       { to: '/crm/kpi/guide', icon: BookOpen, label: 'Hướng dẫn KPI' },
       { to: '/crm/kpi/sales-admin', icon: Activity, label: 'KPI Sales Admin (Tủ bếp)' },
       { to: '/crm/kpi/deal', icon: Target, label: 'KPI Deal (Tủ bếp)' },
