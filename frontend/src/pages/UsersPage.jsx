@@ -5,8 +5,8 @@ import UserRolesModal from '../components/UserRolesModal';
 import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 
-const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales: 'Kinh doanh', designer: 'Thiết kế', production: 'Sản xuất', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
-const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', staff: 'bg-gray-100 text-gray-600' };
+const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
+const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', staff: 'bg-gray-100 text-gray-600' };
 
 export default function UsersPage() {
   const [users, setUsers] = useState([]);

@@ -35,8 +35,9 @@ const FORMULA_OPTIONS = [
 ];
 
 const APPLIES_TO_OPTIONS = [
-  { v: 'sales', l: 'Sales' },
+  { v: 'sales', l: 'Sales (SAE)' },
   { v: 'sales_admin', l: 'Sales Admin' },
+  { v: 'sales_all', l: 'Sales + Sales Admin' },
   { v: 'deal', l: 'Deal' },
   { v: 'all', l: 'Tất cả' },
 ];
@@ -52,10 +53,35 @@ function getDefaultPeriodStart() {
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), 1)).toISOString().slice(0, 10);
 }
 
+function companyOptionLabel(c) {
+  if (!c) return '';
+  return c.short_name || c.name || String(c.id);
+}
+
+/** Mẫu CRM hiển thị khi lọc công ty: có ít nhất một item không giới hạn công ty hoặc gồm companyId. */
+function crmTemplateVisibleForCompany(tpl, companyId) {
+  if (!companyId) return true;
+  const items = tpl.items || [];
+  if (!items.length) return true;
+  return items.some((it) => {
+    let arr = it.default_allowed_companies;
+    if (arr == null || arr === '') return true;
+    if (typeof arr === 'string') {
+      try {
+        arr = JSON.parse(arr);
+      } catch {
+        return true;
+      }
+    }
+    if (!Array.isArray(arr) || arr.length === 0) return true;
+    return arr.map(String).includes(String(companyId));
+  });
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab 1: Definitions
 // ═════════════════════════════════════════════════════════════════════════════
-function DefinitionsTab() {
+function DefinitionsTab({ companyId }) {
   const [defs, setDefs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
@@ -111,6 +137,12 @@ function DefinitionsTab() {
 
   return (
     <div className="space-y-3">
+      {companyId && (
+        <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+          Đang lọc theo công ty trên thanh phía trên. <strong>Thông số 15 KPI</strong> là cấu hình <em>chung toàn hệ thống</em> (không tách theo công ty);
+          dùng tab Target / Pipeline / Lịch làm việc để cấu hình riêng từng công ty.
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2 text-sm">
           <span className="text-gray-700">
@@ -259,14 +291,18 @@ function DefinitionsTab() {
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab 2: Targets
 // ═════════════════════════════════════════════════════════════════════════════
-function TargetsTab() {
+function TargetsTab({ companyId }) {
   const [periodStart, setPeriodStart] = useState(getDefaultPeriodStart());
   const [defs, setDefs] = useState([]);
   const [users, setUsers] = useState([]);
   const [targets, setTargets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
-  const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '' });
+  const [filter, setFilter] = useState({ companyId: companyId || '', departmentId: '', q: '' });
+
+  useEffect(() => {
+    setFilter((f) => ({ ...f, companyId: companyId || '' }));
+  }, [companyId]);
 
   const [form, setForm] = useState({
     kpi_definition_id: '',
@@ -280,9 +316,11 @@ function TargetsTab() {
     setLoading(true);
     setErr(null);
     try {
+      const targetParams = { period_start: periodStart };
+      if (companyId) targetParams.company_id = companyId;
       const [d1, d3] = await Promise.all([
         api.get('/kpi/definitions'),
-        api.get('/kpi/targets', { params: { period_start: periodStart } }),
+        api.get('/kpi/targets', { params: targetParams }),
       ]);
       setDefs(d1.data.definitions || []);
       setTargets(d3.data.targets || []);
@@ -293,13 +331,14 @@ function TargetsTab() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [periodStart]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [periodStart, companyId]);
 
   // Tải danh sách users theo filter (debounce search)
   useEffect(() => {
     const t = setTimeout(() => {
+      const cid = companyId || filter.companyId;
       const params = {
-        ...(filter.companyId ? { company_id: filter.companyId } : {}),
+        ...(cid ? { company_id: cid } : {}),
         ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
         ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
       };
@@ -308,7 +347,7 @@ function TargetsTab() {
         .catch(() => setUsers([]));
     }, 300);
     return () => clearTimeout(t);
-  }, [filter.companyId, filter.departmentId, filter.q]);
+  }, [companyId, filter.companyId, filter.departmentId, filter.q]);
 
   const handleAdd = async () => {
     if (!form.kpi_definition_id || form.target_value === '') {
@@ -320,6 +359,7 @@ function TargetsTab() {
       await api.put('/kpi/targets', {
         kpi_definition_id: form.kpi_definition_id,
         user_id: form.user_id || null,
+        company_id: companyId || null,
         period_type: 'monthly',
         period_start: periodStart,
         target_value: Number(form.target_value),
@@ -364,7 +404,7 @@ function TargetsTab() {
 
       <div className="bg-white border border-gray-100 rounded-xl p-3 space-y-1">
         <p className="text-xs text-gray-500">Lọc nhân viên trong dropdown bên dưới</p>
-        <KpiUserFilter value={filter} onChange={setFilter} />
+        <KpiUserFilter value={filter} onChange={setFilter} lockCompanyId={companyId || null} />
         <p className="text-xs text-gray-500 mt-1">{users.length} nhân viên khớp bộ lọc</p>
       </div>
 
@@ -473,7 +513,7 @@ function TargetsTab() {
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab 3: Periods
 // ═════════════════════════════════════════════════════════════════════════════
-function PeriodsTab() {
+function PeriodsTab({ companyId }) {
   const [periods, setPeriods] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -507,6 +547,7 @@ function PeriodsTab() {
       const { data } = await api.post('/kpi/recompute', {
         period_type: p.period_type,
         period_start: p.period_start,
+        ...(companyId ? { company_id: companyId } : {}),
       });
       alert(`Đã recompute ${data.count} nhân viên cho ${p.period_start}.`);
     } catch (e) { setErr(e.response?.data?.error || e.message); }
@@ -518,6 +559,11 @@ function PeriodsTab() {
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-600">
           Trạng thái <strong>locked</strong>: chặn recompute. <strong>Closed</strong>: chốt số chính thức.
+          {companyId && (
+            <span className="block mt-1 text-xs text-blue-700">
+              «Tính lại» chỉ chạy cho nhân viên thuộc công ty đã chọn trên thanh lọc.
+            </span>
+          )}
         </p>
         <button onClick={load} className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50 flex items-center gap-1">
           <RefreshCw className="w-3.5 h-3.5" /> Tải lại
@@ -629,7 +675,7 @@ function hhmmToMinutes(s) {
   return h * 60 + (m || 0);
 }
 
-function BusinessHoursPanel() {
+function BusinessHoursPanel({ companyId }) {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -639,16 +685,18 @@ function BusinessHoursPanel() {
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/kpi/business-hours');
+      const params = companyId ? { company_id: companyId } : {};
+      const { data } = await api.get('/kpi/business-hours', { params });
       setConfig(data.config || {
         start_minute: 480, end_minute: 1020,
         lunch_start_minute: 720, lunch_end_minute: 780,
         work_days: [1, 2, 3, 4, 5, 6], timezone: 'Asia/Ho_Chi_Minh',
+        company_id: companyId || null,
       });
     } catch (e) { setErr(e.response?.data?.error || e.message); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [companyId]);
 
   const toggleDay = (d) => {
     setConfig((c) => {
@@ -661,7 +709,7 @@ function BusinessHoursPanel() {
   const save = async () => {
     setSaving(true); setErr(null); setMsg(null);
     try {
-      const { data } = await api.put('/kpi/business-hours', config);
+      const { data } = await api.put('/kpi/business-hours', { ...config, company_id: companyId || null });
       setConfig(data.config);
       setMsg('Đã lưu cấu hình giờ hành chính.');
     } catch (e) { setErr(e.response?.data?.error || e.message); }
@@ -735,6 +783,9 @@ function BusinessHoursPanel() {
       </button>
 
       <div className="text-xs text-gray-500 bg-gray-50 rounded p-2">
+        <strong>Phạm vi:</strong>{' '}
+        {companyId ? 'Cấu hình riêng cho công ty đã chọn (nếu chưa có sẽ tạo bản ghi mới khi Lưu).' : 'Mặc định toàn hệ thống (company_id = null).'}
+        <br />
         <strong>Áp dụng cho:</strong> KPI A1 (phản hồi lead ≤15p), A2 (thời gian phản hồi TB).
         Lead tạo ngoài giờ HC sẽ được đẩy mốc bắt đầu sang đầu giờ ngày làm kế tiếp.
       </div>
@@ -742,7 +793,7 @@ function BusinessHoursPanel() {
   );
 }
 
-function HolidaysPanel() {
+function HolidaysPanel({ companyId }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -751,18 +802,19 @@ function HolidaysPanel() {
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/kpi/holidays');
+      const params = companyId ? { company_id: companyId } : {};
+      const { data } = await api.get('/kpi/holidays', { params });
       setItems(data.holidays || []);
     } catch (e) { setErr(e.response?.data?.error || e.message); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [companyId]);
 
   const add = async () => {
     if (!form.holiday_date || !form.name) { setErr('Cần điền ngày và tên'); return; }
     setErr(null);
     try {
-      await api.post('/kpi/holidays', form);
+      await api.post('/kpi/holidays', { ...form, company_id: companyId || null });
       setForm({ holiday_date: '', name: '', repeat_yearly: false, notes: '' });
       load();
     } catch (e) { setErr(e.response?.data?.error || e.message); }
@@ -778,6 +830,7 @@ function HolidaysPanel() {
       <div className="flex items-center gap-2">
         <CalendarDays className="w-5 h-5 text-amber-600" />
         <h3 className="font-semibold text-gray-900">Ngày lễ / nghỉ chung</h3>
+        {companyId && <span className="text-[10px] text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">+ lễ hệ thống (null)</span>}
       </div>
       {err && <div className="bg-red-50 border border-red-200 rounded px-3 py-2 text-sm text-red-700">{err}</div>}
 
@@ -838,16 +891,20 @@ function HolidaysPanel() {
   );
 }
 
-function LeavesPanel() {
+function LeavesPanel({ companyId }) {
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
-  const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '' });
+  const [filter, setFilter] = useState({ companyId: companyId || '', departmentId: '', q: '' });
   const [form, setForm] = useState({
     user_id: '', start_date: '', end_date: '',
     leave_type: 'paid', half_day: 'full', reason: '', status: 'approved',
   });
+
+  useEffect(() => {
+    setFilter((f) => ({ ...f, companyId: companyId || '' }));
+  }, [companyId]);
 
   const load = async () => {
     setLoading(true);
@@ -861,15 +918,16 @@ function LeavesPanel() {
 
   useEffect(() => {
     const t = setTimeout(() => {
+      const cid = companyId || filter.companyId;
       const params = {
-        ...(filter.companyId ? { company_id: filter.companyId } : {}),
+        ...(cid ? { company_id: cid } : {}),
         ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
         ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
       };
       api.get('/kpi/users', { params }).then((r) => setUsers(r.data?.users || [])).catch(() => setUsers([]));
     }, 300);
     return () => clearTimeout(t);
-  }, [filter.companyId, filter.departmentId, filter.q]);
+  }, [companyId, filter.companyId, filter.departmentId, filter.q]);
 
   const userMap = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
@@ -902,7 +960,7 @@ function LeavesPanel() {
 
       <div className="bg-white border border-gray-100 rounded-xl p-3">
         <p className="text-xs text-gray-500 mb-1">Lọc nhân viên</p>
-        <KpiUserFilter value={filter} onChange={setFilter} />
+        <KpiUserFilter value={filter} onChange={setFilter} lockCompanyId={companyId || null} />
         <p className="text-xs text-gray-500 mt-1">{users.length} nhân viên khớp</p>
       </div>
 
@@ -988,7 +1046,7 @@ function LeavesPanel() {
   );
 }
 
-function CalendarTab() {
+function CalendarTab({ companyId }) {
   const [section, setSection] = useState('hours');
   const subTabs = [
     { id: 'hours', label: 'Giờ hành chính', icon: Clock },
@@ -1010,9 +1068,9 @@ function CalendarTab() {
           );
         })}
       </div>
-      {section === 'hours' && <BusinessHoursPanel />}
-      {section === 'holidays' && <HolidaysPanel />}
-      {section === 'leaves' && <LeavesPanel />}
+      {section === 'hours' && <BusinessHoursPanel companyId={companyId} />}
+      {section === 'holidays' && <HolidaysPanel companyId={companyId} />}
+      {section === 'leaves' && <LeavesPanel companyId={companyId} />}
     </div>
   );
 }
@@ -1020,9 +1078,7 @@ function CalendarTab() {
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab 5: Pipeline KPI — map từng stage của pipeline → canonical_slug
 // ═════════════════════════════════════════════════════════════════════════════
-function PipelineKpiTab() {
-  const [companies, setCompanies] = useState([]);
-  const [companyId, setCompanyId] = useState('');
+function PipelineKpiTab({ companyId, companies }) {
   const [typeFilter, setTypeFilter] = useState('all');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1031,12 +1087,6 @@ function PipelineKpiTab() {
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
   const [expanded, setExpanded] = useState({});
-
-  useEffect(() => {
-    api.get('/companies')
-      .then((r) => setCompanies(r.data?.companies || r.data || []))
-      .catch(() => setCompanies([]));
-  }, []);
 
   const load = async () => {
     setLoading(true); setErr(null);
@@ -1047,7 +1097,7 @@ function PipelineKpiTab() {
     } catch (e) { setErr(e.response?.data?.error || e.message); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [companyId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [companyId]);
 
   const updateStage = async (stage, patch) => {
     setSavingStageId(stage.id); setErr(null); setMsg(null);
@@ -1248,14 +1298,19 @@ function PipelineKpiTab() {
     <div className="space-y-3">
       <div className="bg-white border border-gray-100 rounded-xl p-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <Building2 className="w-4 h-4 text-blue-600" />
-          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}
-            className="px-3 py-1.5 border rounded-lg text-sm min-w-[260px]">
-            <option value="">— Tất cả công ty —</option>
-            {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <Building2 className="w-4 h-4 text-blue-600 shrink-0" />
+          <span className="text-sm text-gray-700">
+            {companyId ? (
+              <>
+                Pipeline theo công ty: <strong>{companyOptionLabel(companies?.find((c) => String(c.id) === String(companyId))) || companyId}</strong>
+                <span className="text-xs text-gray-500 block sm:inline sm:ml-2">(đổi công ty trên thanh lọc phía trên trang)</span>
+              </>
+            ) : (
+              <span className="text-gray-600">Đang xem pipeline <strong>tất cả công ty</strong>. Chọn công ty ở thanh trên để map theo từng đơn vị.</span>
+            )}
+          </span>
 
-          <div className="flex gap-1">
+          <div className="flex gap-1 flex-wrap">
             {[
               { id: 'all',  label: `Tất cả (${allPipelines.length} pipeline)`, c: 'bg-gray-700' },
               { id: 'lead', label: `Lead (${totalLeadStages} stage)`,  c: 'bg-blue-600' },
@@ -1311,13 +1366,14 @@ function PipelineKpiTab() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: Bộ NV CRM — bắt buộc minh chứng (file hoặc ghi chú) khi hoàn thành
+// Tab: Bộ NV CRM — bắt buộc minh chứng (file hoặc ghi chú) khi hoàn thành (tách Lead / Deal / Chung)
 // ═════════════════════════════════════════════════════════════════════════════
-function CrmTaskBundleTab() {
+function CrmTaskBundleTab({ companyId }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [savingKey, setSavingKey] = useState(null);
+  const [savingTplId, setSavingTplId] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -1334,6 +1390,24 @@ function CrmTaskBundleTab() {
   };
 
   useEffect(() => { load(); }, []);
+
+  const { leadTemplates, dealTemplates, sharedTemplates } = useMemo(() => {
+    const arr = (templates || []).filter((t) => crmTemplateVisibleForCompany(t, companyId));
+    const lead = [];
+    const deal = [];
+    const shared = [];
+    for (const t of arr) {
+      const p = String(t.pipeline_type || 'both').toLowerCase().trim();
+      if (p === 'lead') lead.push(t);
+      else if (p === 'deal') deal.push(t);
+      else shared.push(t);
+    }
+    const byTplOrder = (a, b) => (a.order_index || 0) - (b.order_index || 0);
+    lead.sort(byTplOrder);
+    deal.sort(byTplOrder);
+    shared.sort(byTplOrder);
+    return { leadTemplates: lead, dealTemplates: deal, sharedTemplates: shared };
+  }, [templates, companyId]);
 
   const setItemEvidence = async (templateId, itemId, value) => {
     const key = `${templateId}:${itemId}`;
@@ -1357,17 +1431,121 @@ function CrmTaskBundleTab() {
     }
   };
 
+  const updateTemplatePipeline = async (tplId, pipelineType) => {
+    setSavingTplId(tplId);
+    setErr(null);
+    try {
+      await api.put(`/crm/task-templates/${tplId}`, { pipeline_type: pipelineType });
+      setTemplates((prev) => prev.map((t) => (t.id === tplId ? { ...t, pipeline_type: pipelineType } : t)));
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message);
+    } finally {
+      setSavingTplId(null);
+    }
+  };
+
+  const renderTemplateCard = (tpl) => (
+    <div key={tpl.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+      <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-2">
+        <span className="font-semibold text-gray-900">{tpl.name}</span>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-mono">{tpl.stage_slug}</span>
+        <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 ml-auto">
+          <span className="shrink-0">Loại pipeline:</span>
+          <select
+            value={String(tpl.pipeline_type || 'both')}
+            disabled={savingTplId === tpl.id}
+            onChange={(e) => updateTemplatePipeline(tpl.id, e.target.value)}
+            className="border border-gray-300 rounded-md px-2 py-1 text-xs bg-white min-w-[100px]"
+          >
+            <option value="lead">Lead</option>
+            <option value="deal">Deal</option>
+            <option value="both">Chung (Lead &amp; Deal)</option>
+          </select>
+          {savingTplId === tpl.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+        </label>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-gray-500 border-b border-gray-100 bg-white">
+              <th className="px-4 py-2 font-medium">Nhiệm vụ mẫu</th>
+              <th className="px-4 py-2 font-medium w-[240px]">Bắt buộc file hoặc ghi chú khi hoàn thành</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(tpl.items || [])
+              .slice()
+              .sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+              .map((it) => {
+                const busy = savingKey === `${tpl.id}:${it.id}`;
+                const v = !!it.completion_requires_file_or_note;
+                return (
+                  <tr key={it.id} className="border-b border-gray-50 hover:bg-gray-50/80">
+                    <td className="px-4 py-2.5">
+                      <div className="font-medium text-gray-900">{it.title}</div>
+                      {it.description && (
+                        <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{it.description}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={v}
+                          disabled={busy}
+                          onChange={(e) => setItemEvidence(tpl.id, it.id, e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-xs text-gray-600">{v ? 'Đang bật' : 'Tắt'}</span>
+                        {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+                      </label>
+                    </td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
+      {!(tpl.items || []).length && (
+        <div className="px-4 py-3 text-xs text-gray-400">Chưa có mục trong bộ mẫu này.</div>
+      )}
+    </div>
+  );
+
+  const renderSection = (title, subtitle, accentClass, list) => (
+    <section className="space-y-4">
+      <div className={`rounded-lg border px-4 py-3 ${accentClass}`}>
+        <h3 className="text-sm font-bold text-gray-900">{title}</h3>
+        <p className="text-xs text-gray-600 mt-1">{subtitle}</p>
+      </div>
+      {list.length ? (
+        <div className="space-y-4">{list.map(renderTemplateCard)}</div>
+      ) : (
+        <div className="text-sm text-gray-400 border border-dashed border-gray-200 rounded-lg px-4 py-6 text-center">
+          Không có bộ mẫu nào thuộc nhóm này.
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <div className="space-y-4">
       <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-700">
         <p className="font-semibold text-slate-900 flex items-center gap-2">
           <Paperclip className="w-4 h-4 text-slate-500 shrink-0" />
-          Bộ nhiệm vụ CRM (Lead / Deal)
+          Bộ nhiệm vụ CRM — tách theo Lead và Deal
         </p>
         <p className="mt-1 text-slate-600">
-          Cấu hình trên từng <strong>mục trong mẫu CRM</strong> (theo giai đoạn pipeline). Khi bật, nhiệm vụ sinh ra trên
-          lead/deal yêu cầu có <strong>ghi chú trên nhiệm vụ</strong> hoặc <strong>đính kèm</strong> (file hoặc nội dung ghi chú
-          trên đính kèm) trước khi đánh dấu hoàn thành — phù hợp kỷ luật nhiệm vụ liên quan KPI nhóm A.
+          {companyId && (
+            <span className="block mb-1 text-amber-900 bg-amber-50 border border-amber-100 rounded px-2 py-1 text-xs">
+              Đang lọc bộ mẫu áp dụng cho công ty đã chọn (theo <code className="text-[10px] bg-amber-100 px-1 rounded">default_allowed_companies</code> trên từng nhiệm vụ mẫu).
+            </span>
+          )}
+          Danh sách được <strong>phân nhóm theo trường pipeline_type</strong> trên mỗi bộ mẫu CRM (<code className="text-xs bg-slate-200 px-1 rounded">lead</code>,{' '}
+          <code className="text-xs bg-slate-200 px-1 rounded">deal</code>,{' '}
+          <code className="text-xs bg-slate-200 px-1 rounded">both</code>). Khi bật “bắt buộc file/ghi chú”, nhiệm vụ sinh ra
+          từ mẫu đó phải có ghi chú hoặc đính kèm trước khi hoàn thành. Dùng ô <strong>Loại pipeline</strong> trên từng bộ mẫu để
+          xếp vào nhóm Lead, Deal hoặc Chung.
         </p>
       </div>
       {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
@@ -1378,61 +1556,25 @@ function CrmTaskBundleTab() {
       ) : !templates.length ? (
         <div className="text-center py-8 text-gray-500 text-sm">Chưa có bộ mẫu CRM hoặc không có quyền đọc.</div>
       ) : (
-        <div className="space-y-6">
-          {templates.map((tpl) => (
-            <div key={tpl.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
-              <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-2">
-                <span className="font-semibold text-gray-900">{tpl.name}</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-mono">{tpl.stage_slug}</span>
-                <span className="text-xs text-gray-500">{tpl.pipeline_type || 'both'}</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-xs text-gray-500 border-b border-gray-100 bg-white">
-                      <th className="px-4 py-2 font-medium">Nhiệm vụ mẫu</th>
-                      <th className="px-4 py-2 font-medium w-[240px]">Bắt buộc file hoặc ghi chú khi hoàn thành</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(tpl.items || [])
-                      .slice()
-                      .sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
-                      .map((it) => {
-                        const busy = savingKey === `${tpl.id}:${it.id}`;
-                        const v = !!it.completion_requires_file_or_note;
-                        return (
-                          <tr key={it.id} className="border-b border-gray-50 hover:bg-gray-50/80">
-                            <td className="px-4 py-2.5">
-                              <div className="font-medium text-gray-900">{it.title}</div>
-                              {it.description && (
-                                <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{it.description}</div>
-                              )}
-                            </td>
-                            <td className="px-4 py-2.5">
-                              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                                <input
-                                  type="checkbox"
-                                  checked={v}
-                                  disabled={busy}
-                                  onChange={(e) => setItemEvidence(tpl.id, it.id, e.target.checked)}
-                                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="text-xs text-gray-600">{v ? 'Đang bật' : 'Tắt'}</span>
-                                {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
-                              </label>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-              {!(tpl.items || []).length && (
-                <div className="px-4 py-3 text-xs text-gray-400">Chưa có mục trong bộ mẫu này.</div>
-              )}
-            </div>
-          ))}
+        <div className="space-y-10">
+          {renderSection(
+            'Nhiệm vụ Lead',
+            'Các bộ mẫu có pipeline_type = lead — dùng khi auto-gen / tạo từ mẫu trên lead.',
+            'bg-emerald-50/80 border-emerald-200',
+            leadTemplates,
+          )}
+          {renderSection(
+            'Nhiệm vụ Deal',
+            'Các bộ mẫu có pipeline_type = deal — dùng cho deal (giai đoạn KD sau chuyển đổi).',
+            'bg-indigo-50/80 border-indigo-200',
+            dealTemplates,
+          )}
+          {renderSection(
+            'Chung Lead & Deal',
+            'Bộ mẫu pipeline_type = both (hoặc chưa gán) — áp dụng cho cả lead và deal tùy cách gen nhiệm vụ.',
+            'bg-amber-50/80 border-amber-200',
+            sharedTemplates,
+          )}
         </div>
       )}
       <p className="text-xs text-gray-500">
@@ -1453,6 +1595,14 @@ export default function KpiSettingsPage() {
   const { user } = useAuth();
   const isManager = ['admin', 'manager', 'director', 'supervisor', 'superadmin'].includes(String(user?.role || '').toLowerCase());
   const [tab, setTab] = useState('definitions');
+  const [companies, setCompanies] = useState([]);
+  const [settingsCompanyId, setSettingsCompanyId] = useState('');
+
+  useEffect(() => {
+    api.get('/companies')
+      .then((r) => setCompanies(r.data?.companies || r.data || []))
+      .catch(() => setCompanies([]));
+  }, []);
 
   if (!isManager) {
     return (
@@ -1470,7 +1620,7 @@ export default function KpiSettingsPage() {
     { id: 'periods', label: 'Kỳ KPI', desc: 'Khoá / đóng kỳ, recompute' },
     { id: 'calendar', label: 'Lịch làm việc', desc: 'Giờ hành chính, ngày lễ, ngày phép NV' },
     { id: 'pipeline', label: 'Pipeline KPI', desc: 'Map stage pipeline → canonical_slug cho KPI nhóm B' },
-    { id: 'crm_tasks', label: 'Bộ NV CRM', desc: 'Nhiệm vụ mẫu Lead/Deal: bắt buộc file hoặc ghi chú khi hoàn thành' },
+    { id: 'crm_tasks', label: 'Bộ NV CRM', desc: 'Lead / Deal / Chung: bắt buộc file hoặc ghi chú khi hoàn thành' },
   ];
 
   return (
@@ -1481,6 +1631,26 @@ export default function KpiSettingsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Cấu hình KPI Tủ bếp</h1>
           <p className="text-sm text-gray-500">Quản lý thông số 15 KPI, target theo nhân viên, đóng/mở kỳ.</p>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2.5">
+        <Building2 className="w-4 h-4 text-gray-600 shrink-0" />
+        <label className="text-sm text-gray-700 flex flex-wrap items-center gap-2">
+          <span className="font-medium">Lọc theo công ty</span>
+          <select
+            value={settingsCompanyId}
+            onChange={(e) => setSettingsCompanyId(e.target.value)}
+            className="min-w-[220px] max-w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white"
+          >
+            <option value="">— Tất cả / mặc định hệ thống —</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{companyOptionLabel(c)}</option>
+            ))}
+          </select>
+        </label>
+        <span className="text-xs text-gray-500">
+          Áp dụng cho target, tính lại kỳ, lịch làm việc, pipeline CRM và danh sách bộ NV CRM (khi có giới hạn công ty trên mẫu).
+        </span>
       </div>
 
       <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
@@ -1498,12 +1668,12 @@ export default function KpiSettingsPage() {
         ))}
       </div>
 
-      {tab === 'definitions' && <DefinitionsTab />}
-      {tab === 'targets' && <TargetsTab />}
-      {tab === 'periods' && <PeriodsTab />}
-      {tab === 'calendar' && <CalendarTab />}
-      {tab === 'pipeline' && <PipelineKpiTab />}
-      {tab === 'crm_tasks' && <CrmTaskBundleTab />}
+      {tab === 'definitions' && <DefinitionsTab companyId={settingsCompanyId} />}
+      {tab === 'targets' && <TargetsTab companyId={settingsCompanyId} />}
+      {tab === 'periods' && <PeriodsTab companyId={settingsCompanyId} />}
+      {tab === 'calendar' && <CalendarTab companyId={settingsCompanyId} />}
+      {tab === 'pipeline' && <PipelineKpiTab companyId={settingsCompanyId} companies={companies} />}
+      {tab === 'crm_tasks' && <CrmTaskBundleTab companyId={settingsCompanyId} />}
     </div>
   );
 }

@@ -4,7 +4,7 @@
  *   GET    /api/kpi/scores                    - score của 1 user / 1 period
  *   GET    /api/kpi/dashboard/sales-admin     - data dashboard nhóm A + B1
  *   GET    /api/kpi/dashboard/deal            - data dashboard nhóm B + C
- *   GET    /api/kpi/scorecard                 - bảng 15 KPI x nhiều user (cho cuộc họp giao ban)
+ *   GET    /api/kpi/lead-ledger/:leadId        - sổ cái crm_kpi_ledger theo lead/deal trong kỳ
  *   GET    /api/kpi/leaderboard               - ranking nhân viên theo tổng điểm
  *   GET    /api/kpi/targets                   - list target
  *   PUT    /api/kpi/targets                   - upsert target (manager+)
@@ -23,6 +23,24 @@ const ADMIN_ROLES = new Set(['admin', 'superadmin', 'super_admin', 'administrato
 
 function isManager(req) { return MANAGER_ROLES.has(String(req.user?.role || '').toLowerCase()); }
 function isAdmin(req) { return ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase()); }
+
+/** Xem dashboard tổng quan KPI công ty: manager+ hoặc sales_admin có company_id. */
+function canViewCompanyKpiOverview(req) {
+  if (isManager(req)) return true;
+  const r = String(req.user?.role || '').toLowerCase();
+  return r === 'sales_admin' && req.user?.company_id != null && String(req.user.company_id).trim() !== '';
+}
+
+/** Xem sổ cái KPI theo lead: chủ lead / NV được giao / manager+ / sales_admin cùng công ty với lead. */
+function canViewLeadKpiLedger(req, lead) {
+  if (!lead) return false;
+  const uid = req.user?.userId;
+  if (!uid) return false;
+  if (isManager(req)) return true;
+  const r = String(req.user?.role || '').toLowerCase();
+  if (r === 'sales_admin' && lead.company_id && String(lead.company_id) === String(req.user?.company_id || '')) return true;
+  return String(lead.assigned_to || '') === String(uid) || String(lead.lead_owner_id || '') === String(uid);
+}
 
 function defaultPeriodStart(date = new Date()) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).toISOString().slice(0, 10);
@@ -614,6 +632,62 @@ r.get('/deal-scores', async (req, res) => {
   }
 });
 
+// ─── GET /api/kpi/lead-ledger/:leadId ────────────────────────────────────────
+// Sổ cái crm_kpi_ledger theo lead/deal trong kỳ (điểm cộng/trừ theo sự kiện).
+// Query: period_start?, period_type? (mặc định monthly + tháng hiện tại)
+r.get('/lead-ledger/:leadId', async (req, res) => {
+  try {
+    const leadId = req.params.leadId;
+    if (!leadId) return res.status(400).json({ error: 'Thiếu leadId' });
+    const { periodType, periodStart } = parsePeriod(req.query);
+
+    const { data: leadRow, error: leErr } = await supabase
+      .from('crm_leads')
+      .select('id, company_id, lead_owner_id, assigned_to, title, code, type')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (leErr) throw leErr;
+    if (!leadRow) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+    if (!canViewLeadKpiLedger(req, leadRow)) {
+      return res.status(403).json({ error: 'Không có quyền xem sổ cái KPI của lead này' });
+    }
+
+    const { data: entries, error: e2 } = await supabase
+      .from('crm_kpi_ledger')
+      .select('id, user_id, event_type, source_kpi_code, points, on_time, occurred_at, reason, delta_seconds, task_id, period_start, metadata')
+      .eq('lead_id', leadId)
+      .eq('period_type', periodType)
+      .eq('period_start', periodStart)
+      .order('occurred_at', { ascending: false });
+    if (e2) throw e2;
+
+    let totalPlus = 0;
+    let totalMinus = 0;
+    for (const row of entries || []) {
+      const pts = Number(row.points || 0);
+      if (pts > 0) totalPlus += pts;
+      else totalMinus += pts;
+    }
+    const totalNet = totalPlus + totalMinus;
+
+    res.json({
+      lead: leadRow,
+      period_type: periodType,
+      period_start: periodStart,
+      entries: entries || [],
+      summary: {
+        event_count: (entries || []).length,
+        total_plus: Math.round(totalPlus * 100) / 100,
+        total_minus: Math.round(totalMinus * 100) / 100,
+        total_net: Math.round(totalNet * 100) / 100,
+      },
+    });
+  } catch (e) {
+    console.error('GET /kpi/lead-ledger:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── POST /api/kpi/recompute ─────────────────────────────────────────────────
 // Body: { period_type, period_start, user_ids? [], company_id?, department_id?, q? }
 r.post('/recompute', async (req, res) => {
@@ -957,13 +1031,21 @@ r.post('/pipeline-mapping/auto', async (req, res) => {
 // Query: company_id?, department_id?, q?, period_start?, trend_months? (default 6)
 r.get('/company-overview', async (req, res) => {
   try {
-    if (!isManager(req)) return res.status(403).json({ error: 'Chỉ manager+' });
+    if (!canViewCompanyKpiOverview(req)) return res.status(403).json({ error: 'Chỉ quản lý / Sales Admin công ty xem được' });
     const { periodType, periodStart } = parsePeriod(req.query);
     const trendMonths = Math.max(1, Math.min(12, Number(req.query.trend_months) || 6));
 
+    const callerRole = String(req.user?.role || '').toLowerCase();
+    let overviewCompanyId = req.query.company_id || null;
+    let overviewDepartmentId = req.query.department_id || null;
+    if (callerRole === 'sales_admin' && req.user?.company_id) {
+      overviewCompanyId = String(req.user.company_id);
+      overviewDepartmentId = null;
+    }
+
     const usersList = await resolveTargetUsers({
-      companyId: req.query.company_id || null,
-      departmentId: req.query.department_id || null,
+      companyId: overviewCompanyId || null,
+      departmentId: overviewDepartmentId || null,
       q: req.query.q || null,
     });
     const userIds = usersList.map((u) => u.id);

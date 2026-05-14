@@ -17,6 +17,7 @@ const { supabase } = require('../config/supabase');
 const { computeScore, SCORE_CAP_RATIO } = require('./kpiScoreFormula');
 const { responseMinutes, isUserOff } = require('./businessHours');
 const { buildProgressMap, CANONICAL_RANK } = require('./kpiPipelineRank');
+const { loadCrmTaskIdsWithAttachmentEvidence } = require('../helpers/crmTaskCompletionEvidence');
 
 function num(v) {
   const n = Number(v);
@@ -52,6 +53,38 @@ async function fetchLeadsByOwner({ userId, periodStart, periodEnd, type = null }
   const { data, error } = await q;
   if (error) throw error;
   return data || [];
+}
+
+/** Các task CRM trên lead có bật bắt buộc minh chứng khi hoàn thành (ảnh hưởng KPI A3). */
+async function fetchEvidenceRequiredCrmTasksByLeadIds(leadIds) {
+  const map = new Map();
+  if (!leadIds.length) return map;
+  const CHUNK = 150;
+  for (let i = 0; i < leadIds.length; i += CHUNK) {
+    const chunk = leadIds.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from('crm_tasks')
+      .select('id, lead_id, status, notes, completion_requires_file_or_note')
+      .in('lead_id', chunk)
+      .eq('completion_requires_file_or_note', true);
+    if (error) throw error;
+    for (const t of data || []) {
+      if (!map.has(t.lead_id)) map.set(t.lead_id, []);
+      map.get(t.lead_id).push(t);
+    }
+  }
+  return map;
+}
+
+/** Mọi NV “bắt buộc minh chứng” phải completed và có ghi chú task hoặc file đính kèm (khớp API hoàn thành). */
+function leadMeetsA3EvidenceTasks(flaggedTasks, attachEvidenceTaskIds) {
+  if (!flaggedTasks?.length) return true;
+  for (const t of flaggedTasks) {
+    if (t.status !== 'completed') return false;
+    if (t.notes != null && String(t.notes).trim() !== '') continue;
+    if (!attachEvidenceTaskIds.has(t.id)) return false;
+  }
+  return true;
 }
 
 async function fetchStageBySlug(slug) {
@@ -158,13 +191,44 @@ async function calcA2_avgResponseMinutes({ userId, periodStart, periodEnd, compa
   };
 }
 
-/** A3: Tỷ lệ lead đủ thông tin chuẩn (info_complete = true). */
+/** A3: Tỷ lệ lead đủ thông tin chuẩn (info_complete) và đã hoàn thành đủ minh chứng cho mọi NV CRM bật “bắt buộc file/ghi chú”. */
 async function calcA3_infoCompleteRate({ userId, periodStart, periodEnd }) {
   const leads = await fetchLeadsByOwner({ userId, periodStart, periodEnd });
   const total = leads.length;
   if (total === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0 } };
-  const ok = leads.filter((l) => l.info_complete === true).length;
-  return { actual: (ok / total) * 100, breakdown: { numerator: ok, denominator: total } };
+
+  const leadIds = leads.map((l) => l.id);
+  const tasksByLead = await fetchEvidenceRequiredCrmTasksByLeadIds(leadIds);
+
+  const completedNeedingAttachCheck = [];
+  for (const arr of tasksByLead.values()) {
+    for (const t of arr) {
+      if (t.status === 'completed' && (t.notes == null || String(t.notes).trim() === '')) {
+        completedNeedingAttachCheck.push(t.id);
+      }
+    }
+  }
+  const attachEvidenceTaskIds = await loadCrmTaskIdsWithAttachmentEvidence(supabase, completedNeedingAttachCheck);
+
+  let ok = 0;
+  let infoCompleteCount = 0;
+  for (const l of leads) {
+    if (!l.info_complete) continue;
+    infoCompleteCount += 1;
+    const flagged = tasksByLead.get(l.id) || [];
+    if (!leadMeetsA3EvidenceTasks(flagged, attachEvidenceTaskIds)) continue;
+    ok += 1;
+  }
+
+  return {
+    actual: (ok / total) * 100,
+    breakdown: {
+      numerator: ok,
+      denominator: total,
+      info_complete_count: infoCompleteCount,
+      evidence_required_tasks_checked: completedNeedingAttachCheck.length,
+    },
+  };
 }
 
 /** A4: Tỷ lệ follow-up đúng lịch (gating). */

@@ -7,6 +7,7 @@ import {
   CheckCircle2, UserMinus, Activity, Trophy, Target,
 } from 'lucide-react';
 import KpiUserFilter from '../components/KpiUserFilter';
+import { KPI_IMPROVEMENT_HINTS } from '../lib/kpiGroupATestMatrix';
 
 function defaultMonthStart() {
   const d = new Date();
@@ -16,6 +17,36 @@ function defaultMonthStart() {
 function fmt(n, digits = 1) {
   if (n == null || Number.isNaN(n)) return '—';
   return Number(n).toLocaleString('vi-VN', { maximumFractionDigits: digits });
+}
+
+/** Gợi ý một dòng cho cột bảng nhân viên (bổ sung modal chi tiết). */
+function quickHintForRow(r) {
+  if (r.gating) {
+    const code = r.gating_kpi;
+    const hint = code && KPI_IMPROVEMENT_HINTS[code];
+    return hint || KPI_IMPROVEMENT_HINTS.A4;
+  }
+  const A_CODES = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6'];
+  let worstCode = null;
+  let worstRatio = 1.01;
+  for (const code of A_CODES) {
+    const s = r.scores_by_code?.[code];
+    if (!s || s.ratio == null) continue;
+    if (s.ratio < worstRatio) {
+      worstRatio = s.ratio;
+      worstCode = code;
+    }
+  }
+  if (worstCode && worstRatio < 0.95 && KPI_IMPROVEMENT_HINTS[worstCode]) {
+    return `${worstCode}: ${KPI_IMPROVEMENT_HINTS[worstCode]}`;
+  }
+  const slaTotal = (r.leads_over_sla || 0) + (r.tasks_overdue || 0);
+  if (slaTotal > 0) {
+    return `${slaTotal} lead/task quá SLA — ưu tiên xử lý; giảm ảnh hưởng A4–A6.`;
+  }
+  if ((r.total_score || 0) >= 100) return 'Duy trì nhịp; có thể chia sẻ best practice.';
+  if ((r.total_score || 0) <= 0) return 'Chưa có điểm kỳ này — hoàn thành nhiệm vụ/đẩy deal hoặc nhờ quản lý «Tính lại KPI».';
+  return '—';
 }
 
 function StatCard({ icon: Icon, label, value, suffix, hint, color = 'blue', trend }) {
@@ -169,11 +200,14 @@ function UserDetailModal({ user, definitions, onClose }) {
                         <th className="text-right px-3 py-2">Weight</th>
                         <th className="text-right px-3 py-2">Điểm</th>
                         <th className="px-3 py-2">% đạt</th>
+                        <th className="text-left px-3 py-2 min-w-[180px]">Gợi ý</th>
                       </tr>
                     </thead>
                     <tbody>
                       {gDefs.map((d) => {
                         const s = user.scores_by_code[d.code];
+                        const hint = KPI_IMPROVEMENT_HINTS[d.code];
+                        const showHint = hint && (!s || s.ratio == null || Number(s.ratio) < 0.95);
                         return (
                           <tr key={d.code} className="border-t">
                             <td className="px-3 py-1.5 font-mono text-xs">{d.code}</td>
@@ -183,6 +217,9 @@ function UserDetailModal({ user, definitions, onClose }) {
                             <td className="px-3 py-1.5 text-right text-xs text-gray-500">{d.weight}</td>
                             <td className="px-3 py-1.5 text-right font-bold">{s ? fmt(s.capped, 1) : '0'}</td>
                             <td className="px-3 py-1.5"><HeatmapCell ratio={s?.ratio} /></td>
+                            <td className="px-3 py-1.5 text-[10px] text-gray-600 leading-snug">
+                              {showHint ? hint : <span className="text-gray-300">—</span>}
+                            </td>
                           </tr>
                         );
                       })}
@@ -201,7 +238,10 @@ function UserDetailModal({ user, definitions, onClose }) {
 export default function KpiCompanyDashboard() {
   const { user: currentUser } = useAuth();
   const role = String(currentUser?.role || '').toLowerCase();
-  const isManager = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator'].includes(role);
+  const isManagerStrict = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(role);
+  const canViewDashboard =
+    isManagerStrict
+    || (role === 'sales_admin' && currentUser?.company_id != null && String(currentUser.company_id).trim() !== '');
 
   const [periodStart, setPeriodStart] = useState(defaultMonthStart());
   const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '' });
@@ -220,6 +260,9 @@ export default function KpiCompanyDashboard() {
       const params = {
         period_start: periodStart, period_type: 'monthly', trend_months: 6,
         ...(filter.companyId ? { company_id: filter.companyId } : {}),
+        ...(!filter.companyId && role === 'sales_admin' && currentUser?.company_id
+          ? { company_id: String(currentUser.company_id) }
+          : {}),
         ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
         ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
       };
@@ -228,7 +271,7 @@ export default function KpiCompanyDashboard() {
     } catch (e) { setErr(e.response?.data?.error || e.message); }
     finally { setLoading(false); }
   };
-  useEffect(() => { if (isManager) load(); /* eslint-disable-next-line */ }, [periodStart, filter.companyId, filter.departmentId, filter.q]);
+  useEffect(() => { if (canViewDashboard) load(); /* eslint-disable-next-line */ }, [periodStart, filter.companyId, filter.departmentId, filter.q]);
 
   const recompute = async () => {
     setRecomputing(true);
@@ -263,11 +306,11 @@ export default function KpiCompanyDashboard() {
     else { setSortBy(col); setSortDir(col === 'name' || col === 'department' ? 'asc' : 'desc'); }
   };
 
-  if (!isManager) {
+  if (!canViewDashboard) {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          Chỉ admin / manager xem được dashboard này.
+          Chỉ quản lý hoặc Sales Admin (đã gán công ty) xem được dashboard này.
         </div>
       </div>
     );
@@ -294,11 +337,13 @@ export default function KpiCompanyDashboard() {
           <button onClick={load} className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50 flex items-center gap-1">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Tải lại
           </button>
+          {isManagerStrict && (
           <button onClick={recompute} disabled={recomputing}
             className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1">
             {recomputing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
             Tính lại KPI
           </button>
+          )}
         </div>
       </div>
 
@@ -358,12 +403,13 @@ export default function KpiCompanyDashboard() {
                     <th className={`text-right px-3 py-2.5 cursor-pointer hover:bg-gray-100 ${groupColors.C}`}>C</th>
                     <th className="text-right px-3 py-2.5 cursor-pointer hover:bg-gray-100" onClick={() => setSort('leads_over_sla')}>Quá SLA</th>
                     <th className="text-center px-3 py-2.5">Trạng thái</th>
+                    <th className="text-left px-3 py-2.5 min-w-[200px] max-w-[320px]">Gợi ý nhanh</th>
                     <th className="px-3 py-2.5"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {sortedRows.length === 0 ? (
-                    <tr><td colSpan={10} className="text-center text-gray-400 py-8">Không có nhân viên khớp bộ lọc.</td></tr>
+                    <tr><td colSpan={11} className="text-center text-gray-400 py-8">Không có nhân viên khớp bộ lọc.</td></tr>
                   ) : sortedRows.map((r) => {
                     const status = r.gating ? 'gating' : r.total_score >= 100 ? 'elite' : r.total_score >= 80 ? 'good' : r.total_score >= 60 ? 'warning' : r.total_score > 0 ? 'weak' : 'no_data';
                     const statusLabel = {
@@ -401,6 +447,9 @@ export default function KpiCompanyDashboard() {
                         </td>
                         <td className="px-3 py-2 text-center">
                           <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${statusLabel.c}`}>{statusLabel.l}</span>
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-600 align-top max-w-[320px]">
+                          <span className="line-clamp-3" title={quickHintForRow(r)}>{quickHintForRow(r)}</span>
                         </td>
                         <td className="px-3 py-2"><ChevronRight className="w-4 h-4 text-gray-400" /></td>
                       </tr>

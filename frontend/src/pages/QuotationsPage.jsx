@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Plus, Search, FileText, Filter, Calendar, Download, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Search, FileText, Calendar, Download, Trash2, Loader2, Building2, MapPin, User as UserIcon, AlertTriangle, Briefcase } from 'lucide-react';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 
 const STATUS_MAP = { draft: 'Nháp', sent: 'Đã gửi', accepted: 'Chấp nhận', rejected: 'Từ chối', expired: 'Hết hạn', converted: 'Đã chuyển ĐH' };
@@ -14,13 +14,22 @@ export default function QuotationsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('');
+  const [regionFilter, setRegionFilter] = useState('');
+  const [creatorFilter, setCreatorFilter] = useState('');
+  const [orphanFilter, setOrphanFilter] = useState(''); // '' | 'only' | 'exclude'
   const [loading, setLoading] = useState(true);
   const [pdfLoadingId, setPdfLoadingId] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
-  const load = async () => { setLoading(true); const { data } = await api.get('/crm/quotations'); setQuotes(data || []); setLoading(false); };
+  const load = async () => {
+    setLoading(true);
+    const { data } = await api.get('/crm/quotations');
+    setQuotes(data || []);
+    setLoading(false);
+  };
 
   const downloadPdf = async (id, code, e) => {
     e.stopPropagation();
@@ -37,23 +46,60 @@ export default function QuotationsPage() {
     setPdfLoadingId(null);
   };
 
+  // Tổng hợp facet từ data hiện có (để render dropdown filter mà không cần endpoint riêng)
+  const facets = useMemo(() => {
+    const companies = new Map();
+    const regions = new Map();
+    const creators = new Map();
+    quotes.forEach(q => {
+      if (q.company_id && q.company) companies.set(q.company_id, q.company.short_name || q.company.name);
+      if (q.region_id && q.region) regions.set(q.region_id, q.region.name);
+      if (q.created_by && q.creator) creators.set(q.created_by, q.creator.full_name);
+    });
+    return {
+      companies: [...companies.entries()].map(([id, name]) => ({ id, name })),
+      regions: [...regions.entries()].map(([id, name]) => ({ id, name })),
+      creators: [...creators.entries()].map(([id, name]) => ({ id, name })),
+    };
+  }, [quotes]);
+
   const filtered = quotes.filter(q => {
     if (statusFilter && q.status !== statusFilter) return false;
+    if (companyFilter && q.company_id !== companyFilter) return false;
+    if (regionFilter && q.region_id !== regionFilter) return false;
+    if (creatorFilter && q.created_by !== creatorFilter) return false;
+    if (orphanFilter === 'only' && q.lead_id) return false;
+    if (orphanFilter === 'exclude' && !q.lead_id) return false;
     if (dateFrom && q.created_at < dateFrom) return false;
     if (dateTo && q.created_at > dateTo + 'T23:59:59') return false;
-    if (search) { const s = search.toLowerCase(); return (q.code||'').toLowerCase().includes(s) || (q.title||'').toLowerCase().includes(s) || (q.customer_name||'').toLowerCase().includes(s); }
+    if (search) {
+      const s = search.toLowerCase();
+      return (q.code || '').toLowerCase().includes(s)
+        || (q.title || '').toLowerCase().includes(s)
+        || (q.customer_name || '').toLowerCase().includes(s)
+        || (q.lead?.code || '').toLowerCase().includes(s);
+    }
     return true;
   });
 
-  const summary = { total: quotes.length, draft: 0, sent: 0, accepted: 0, rejected: 0, converted: 0, value: 0 };
-  quotes.forEach(q => { summary[q.status] = (summary[q.status] || 0) + 1; summary.value += q.total || 0; });
+  const summary = { total: quotes.length, draft: 0, sent: 0, accepted: 0, rejected: 0, converted: 0, value: 0, orphan: 0 };
+  quotes.forEach(q => {
+    summary[q.status] = (summary[q.status] || 0) + 1;
+    summary.value += q.total || 0;
+    if (!q.lead_id) summary.orphan += 1;
+  });
+
+  const hasAnyFilter = search || statusFilter || dateFrom || dateTo || companyFilter || regionFilter || creatorFilter || orphanFilter;
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" /> Báo giá</h1><p className="text-sm text-gray-500 mt-1">{summary.total} báo giá · {formatVND(summary.value)}</p></div>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" /> Báo giá</h1>
+          <p className="text-sm text-gray-500 mt-1">{summary.total} báo giá · {formatVND(summary.value)}{summary.orphan > 0 ? ` · ${summary.orphan} chưa gắn deal` : ''}</p>
+        </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowExcelImport(true)} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">📥 Import Excel</button>
           <button data-tour="create-quotation" onClick={() => navigate('/crm/quotations/new')} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Plus className="h-4 w-4" /> Tạo báo giá</button>
@@ -66,6 +112,12 @@ export default function QuotationsPage() {
         {Object.entries(STATUS_MAP).map(([k, v]) => summary[k] > 0 && (
           <button key={k} onClick={() => setStatusFilter(statusFilter === k ? '' : k)} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap ${statusFilter === k ? 'bg-blue-600 text-white border-blue-600' : STATUS_COLORS[k]}`}>{v} ({summary[k]})</button>
         ))}
+        {summary.orphan > 0 && (
+          <button onClick={() => setOrphanFilter(orphanFilter === 'only' ? '' : 'only')}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap inline-flex items-center gap-1 ${orphanFilter === 'only' ? 'bg-amber-600 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+            <AlertTriangle className="h-3 w-3" /> Chưa gắn deal ({summary.orphan})
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border p-6">
@@ -73,20 +125,50 @@ export default function QuotationsPage() {
         <div className="flex flex-wrap items-center gap-3 mb-5">
           <div className="relative flex-1 min-w-[200px] max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã, tên, KH..." className="w-full h-10 pl-10 pr-3 border rounded-lg text-sm" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã, tên, KH, mã deal..." className="w-full h-10 pl-10 pr-3 border rounded-lg text-sm" />
           </div>
+          {facets.companies.length > 1 && (
+            <select value={companyFilter} onChange={e => setCompanyFilter(e.target.value)}
+              className="h-10 px-3 border rounded-lg text-sm bg-white" title="Công ty">
+              <option value="">🏢 Tất cả công ty</option>
+              {facets.companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
+          {facets.regions.length > 1 && (
+            <select value={regionFilter} onChange={e => setRegionFilter(e.target.value)}
+              className="h-10 px-3 border rounded-lg text-sm bg-white" title="Khu vực">
+              <option value="">📍 Tất cả khu vực</option>
+              {facets.regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          )}
+          {facets.creators.length > 1 && (
+            <select value={creatorFilter} onChange={e => setCreatorFilter(e.target.value)}
+              className="h-10 px-3 border rounded-lg text-sm bg-white" title="Người tạo">
+              <option value="">👤 Tất cả nhân viên</option>
+              {facets.creators.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          )}
           <div className="flex items-center gap-1 text-xs text-gray-500"><Calendar className="h-3.5 w-3.5" />Từ</div>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-10 px-3 border rounded-lg text-sm" />
           <div className="text-xs text-gray-500">→</div>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-10 px-3 border rounded-lg text-sm" />
-          {(search || statusFilter || dateFrom || dateTo) && <button onClick={() => { setSearch(''); setStatusFilter(''); setDateFrom(''); setDateTo(''); }} className="text-xs text-red-500 hover:underline cursor-pointer">Xóa lọc</button>}
+          {hasAnyFilter && <button onClick={() => { setSearch(''); setStatusFilter(''); setDateFrom(''); setDateTo(''); setCompanyFilter(''); setRegionFilter(''); setCreatorFilter(''); setOrphanFilter(''); }} className="text-xs text-red-500 hover:underline cursor-pointer">Xóa lọc</button>}
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
-              <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-              <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3">Trạng thái</th><th className="py-3 px-3">Người tạo</th><th className="py-3 px-3">Ngày tạo</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3"></th>
+              <th className="py-3 px-3">Mã</th>
+              <th className="py-3 px-3">Tiêu đề</th>
+              <th className="py-3 px-3">Khách hàng</th>
+              <th className="py-3 px-3">Deal liên kết</th>
+              <th className="py-3 px-3">Công ty / Khu vực</th>
+              <th className="py-3 px-3 text-right">Tổng tiền</th>
+              <th className="py-3 px-3">Trạng thái</th>
+              <th className="py-3 px-3">Người tạo</th>
+              <th className="py-3 px-3">Ngày tạo</th>
+              <th className="py-3 px-3 text-center">PDF</th>
+              <th className="py-3 px-3"></th>
             </tr></thead>
             <tbody>
               {filtered.map(q => (
@@ -94,10 +176,29 @@ export default function QuotationsPage() {
                   <td className="py-3 px-3 font-bold text-blue-600">{q.code}</td>
                   <td className="py-3 px-3 font-medium text-gray-900">{q.title || '-'}</td>
                   <td className="py-3 px-3 text-gray-600">{q.customer_name || q.customer?.full_name || '-'}</td>
+                  <td className="py-3 px-3 text-xs">
+                    {q.lead?.code ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">
+                        <Briefcase className="h-3 w-3" />{q.lead.code}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[10px]" title="Báo giá chưa gắn deal/cơ hội">
+                        <AlertTriangle className="h-3 w-3" /> Mồ côi
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-3 px-3 text-[11px] text-gray-700">
+                    {q.company?.short_name || q.company?.name ? (
+                      <span className="inline-flex items-center gap-1"><Building2 className="h-3 w-3 text-gray-400" />{q.company.short_name || q.company.name}</span>
+                    ) : <span className="text-gray-400">—</span>}
+                    {q.region?.name && (
+                      <span className="block mt-0.5 inline-flex items-center gap-1 text-purple-700"><MapPin className="h-3 w-3" />{q.region.name}</span>
+                    )}
+                  </td>
                   <td className="py-3 px-3 text-right font-bold text-gray-900">{formatVND(q.total || 0)}</td>
                   <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_COLORS[q.status] || ''}`}>{STATUS_MAP[q.status] || q.status}</span></td>
                   <td className="py-3 px-3 text-xs">
-                    <span className="text-gray-700 font-medium">{q.creator?.full_name || '—'}</span>
+                    <span className="text-gray-700 font-medium inline-flex items-center gap-1"><UserIcon className="h-3 w-3 text-gray-400" />{q.creator?.full_name || '—'}</span>
                     {q.approver?.full_name && q.approver.full_name !== q.creator?.full_name && (
                       <span className="block text-[10px] text-emerald-600" title="Đã kiểm tra & xác nhận">✓ {q.approver.full_name}</span>
                     )}
@@ -130,5 +231,4 @@ export default function QuotationsPage() {
       )}
     </div>
   );
-
 }

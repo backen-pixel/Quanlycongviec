@@ -105,6 +105,8 @@ function preferenceKeyForNotificationType(type, entityType, metadata = null) {
 
   if (type === 'lead_stage_sla_reminder') return 'crm_lead_deadlines';
 
+  if (type === 'ai_crm_deadline_digest') return 'crm_lead_deadlines';
+
   if (
     type === 'crm_deadline_1h' ||
     type === 'crm_deadline_warning' ||

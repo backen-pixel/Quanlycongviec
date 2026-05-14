@@ -51,6 +51,8 @@ const TYPE_ICON: Record<string, IonName> = {
   project_created: 'folder-outline',
   item_deleted: 'warning-outline',
   system: 'notifications-outline',
+  cskh_followup_reminder: 'calendar-outline',
+  ai_crm_deadline_digest: 'sparkles-outline',
 };
 
 export type NotifTint = { bg: string; fg: string };
@@ -84,6 +86,8 @@ const TYPE_TINT: Record<string, NotifTint> = {
   order_confirmed: { bg: '#FFEDD5', fg: '#EA580C' },
   invoice_overdue: { bg: CrmColors.red50, fg: CrmColors.red500 },
   system: { bg: CrmColors.gray100, fg: CrmColors.gray600 },
+  cskh_followup_reminder: { bg: CrmColors.emerald100, fg: CrmColors.emerald700 },
+  ai_crm_deadline_digest: { bg: '#FAE8FF', fg: '#A21CAF' },
 };
 
 const DEFAULT_TINT: NotifTint = { bg: CrmColors.gray100, fg: CrmColors.gray600 };

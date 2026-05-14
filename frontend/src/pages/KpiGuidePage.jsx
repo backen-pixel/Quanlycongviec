@@ -5,8 +5,11 @@ import {
   BookOpen, AlertTriangle, CheckCircle2, Clock, TrendingUp,
   Users, Target, Award, ChevronDown, ChevronUp, Info,
   Activity, BarChart2, Phone, FileText, Zap, DollarSign,
-  CalendarCheck, UserCheck, ArrowRight, ShieldCheck,
+  CalendarCheck, UserCheck, ArrowRight, ShieldCheck, FlaskConical,
+  Sparkles,
 } from 'lucide-react';
+import { KPI_GROUP_A_TEST_LEADS } from '../lib/kpiGroupATestMatrix';
+import { dispatchKpiExplain } from '../lib/kpiPersonalLedgerHints';
 
 // ── Data ────────────────────────────────────────────────────────────────────
 
@@ -53,7 +56,7 @@ const ROLES = [
   },
 ];
 
-const KPI_DEFS = [
+export const KPI_DEFS = [
   {
     code: 'A1',
     group: 'A',
@@ -107,7 +110,7 @@ const KPI_DEFS = [
     icon: FileText,
     groupColor: 'blue',
     isGating: false,
-    howMeasured: 'Đếm % lead có info_complete = true (cột tự động tính trong DB khi đủ 6 điều kiện).',
+    howMeasured: 'Đếm % lead có info_complete = true (6 trường bắt buộc trong DB) và mọi nhiệm vụ CRM bật “bắt buộc file/ghi chú” trên lead đó đã hoàn thành kèm minh chứng (ghi chú task hoặc đính kèm).',
     infoFields: ['Số điện thoại', 'Khách hàng (customer_id)', 'Khu vực (region_id)', 'Giá trị ước tính > 0', 'Thời gian thi công dự kiến', 'Địa chỉ lắp đặt'],
     actions: [
       'Sau mỗi cuộc gọi, cập nhật ngay thông tin thu thập được vào CRM',
@@ -561,6 +564,18 @@ function KpiDetailCard({ kpi }) {
               </ul>
             </div>
           )}
+
+          {/* AI explainer */}
+          <div className="pt-2 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={() => dispatchKpiExplain(kpi)}
+              className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 px-3 py-2 text-xs font-semibold text-white shadow-sm cursor-pointer"
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Hỏi AI giải thích cách tính KPI {kpi.code}
+            </button>
+            <p className="mt-1 text-[10px] text-center text-gray-400">Cần OPENAI_API_KEY trên server</p>
+          </div>
         </div>
       )}
     </div>
@@ -625,6 +640,14 @@ export default function KpiGuidePage() {
               </p>
             </div>
             <div className="flex gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => dispatchKpiExplain((filteredKpis && filteredKpis[0]) || KPI_DEFS[0])}
+                className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-semibold flex items-center gap-1 shadow-sm cursor-pointer"
+                title="Mở Trợ lý AI để giải thích KPI đầu tiên đang lọc"
+              >
+                <Sparkles className="h-3.5 w-3.5" /> Hỏi AI
+              </button>
               <Link to="/crm/kpi/sales-admin"
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 transition-colors">
                 Dashboard Sales
@@ -662,6 +685,7 @@ export default function KpiGuidePage() {
             { id: 'scoring', label: 'Cách tính điểm', icon: BarChart2 },
             { id: 'checklist', label: 'Checklist thực hiện', icon: CheckCircle2 },
             { id: 'summary', label: 'Bảng tóm tắt', icon: FileText },
+            { id: 'test-a', label: 'Lead test nhóm A', icon: FlaskConical },
           ].map(s => (
             <button
               key={s.id}
@@ -918,6 +942,61 @@ export default function KpiGuidePage() {
 
             <p className="text-xs text-gray-400 text-center">
               Áp dụng từ tháng 5/2026 · Target do quản lý cấu hình trong Cài đặt KPI · Hệ thống tính lại tự động lúc 01:00 mỗi đêm
+            </p>
+          </div>
+        )}
+
+        {/* ── Section: Lead test seed 164 (KPI nhóm A) ─────────────────────── */}
+        {activeSection === 'test-a' && (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <p className="font-semibold mb-1 flex items-center gap-2">
+                <Info className="h-4 w-4 shrink-0" />
+                Điểm KPI Nhóm A không gắn từng lead trong database
+              </p>
+              <p className="text-amber-800/95 leading-relaxed">
+                Hệ thống lưu <strong>kpi_scores</strong> theo <strong>nhân viên + kỳ</strong> (A1…A6: actual, target, điểm = tỷ lệ × trọng số, cap 120% weight).
+                Mỗi lead chỉ làm thay đổi <strong>tử/mẫu số</strong> của các công thức đó. Cột dưới đây mô tả ảnh hưởng lên A1–A6 (ký hiệu: ✓ tử = giúp chỉ số, ✗ = làm xấu hoặc không vào tử, “+1 đếm” = A6 snapshot).
+                Điểm theo từng deal (sổ cái) xem tại <Link to="/crm/kpi/scorecard" className="underline font-medium">Scorecard</Link> nếu có bản ghi <code className="text-xs bg-amber-100 px-1 rounded">crm_kpi_ledger</code>.
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+              <table className="w-full text-xs min-w-[720px]">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-semibold text-gray-700">Mã</th>
+                    <th className="text-left px-3 py-2 font-semibold text-gray-700">Tên hiển thị</th>
+                    <th className="text-center px-1 py-2 font-semibold text-gray-600">A1</th>
+                    <th className="text-center px-1 py-2 font-semibold text-gray-600">A2</th>
+                    <th className="text-center px-1 py-2 font-semibold text-gray-600">A3</th>
+                    <th className="text-center px-1 py-2 font-semibold text-gray-600">A4</th>
+                    <th className="text-center px-1 py-2 font-semibold text-gray-600">A5</th>
+                    <th className="text-center px-1 py-2 font-semibold text-gray-600">A6</th>
+                    <th className="text-left px-3 py-2 font-semibold text-gray-700 min-w-[140px]">Gợi ý cải thiện (lead tương tự)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {KPI_GROUP_A_TEST_LEADS.map((row) => (
+                    <tr key={row.code} className="hover:bg-gray-50 align-top">
+                      <td className="px-3 py-2 font-mono font-semibold text-gray-800 whitespace-nowrap">{row.code}</td>
+                      <td className="px-3 py-2 text-gray-900">{row.title}</td>
+                      <td className="px-1 py-2 text-center text-[11px]">{row.a1}</td>
+                      <td className="px-1 py-2 text-center text-[11px]">{row.a2}</td>
+                      <td className="px-1 py-2 text-center text-[11px]">{row.a3}</td>
+                      <td className="px-1 py-2 text-center text-[11px]">{row.a4}</td>
+                      <td className="px-1 py-2 text-center text-[11px]">{row.a5}</td>
+                      <td className="px-1 py-2 text-center text-[11px]">{row.a6}</td>
+                      <td className="px-3 py-2 text-gray-600 leading-snug">{row.improve}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="text-xs text-gray-500">
+              Seed SQL: <code className="bg-gray-100 px-1 rounded">database/164_seed_kpi_group_a_test_cases.sql</code>
+              · Owner mặc định: <strong>test.kpi@tubep.vn</strong> · Sau seed: <strong>POST /api/kpi/recompute</strong> (hoặc Cài đặt KPI → tính lại) cho tháng chứa dữ liệu.
             </p>
           </div>
         )}

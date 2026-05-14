@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search, X, AlignLeft, Loader2, Check, History } from 'lucide-react';
 import SaveToast from '../components/SaveToast';
 import CustomerSearchPicker from '../components/CustomerSearchPicker';
+import LeadDealPicker from '../components/LeadDealPicker';
 import { QUOTATION_EXCEL_DRAFT_KEY } from '../components/ExcelQuotationImport';
 import { useAuth } from '../lib/auth';
 import { formatDateTime } from '../lib/utils';
@@ -103,6 +104,7 @@ export default function QuotationForm() {
     title: '', customer_id: '', customer_name: '', customer_phone: '', customer_address: '',
     valid_until: todayISO, payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
     delivery_terms: '', notes: '', lead_id: '',
+    company_id: '', region_id: '',
     discount_type: 'percent', discount_value: 0,
     approved_by: '',
     deposit_amount: null,
@@ -111,6 +113,8 @@ export default function QuotationForm() {
     remaining_amount: null,
     remaining_note: '',
   });
+  /** Object deal đã chọn (đầy đủ company/region/sales) — để hiển thị badge và đồng bộ scope */
+  const [selectedDeal, setSelectedDeal] = useState(null);
   const [customPaymentTerms, setCustomPaymentTerms] = useState('');
   const [isCustomPayment, setIsCustomPayment] = useState(false);
   const [items, setItems] = useState([{
@@ -149,25 +153,52 @@ export default function QuotationForm() {
           valid_until: d.valid_until || '', payment_terms: isPreset ? pt : 'Khác', delivery_terms: d.delivery_terms || '',
           notes: d.notes || '', discount_type: d.discount_type || 'percent', discount_value: d.discount_value || 0,
           lead_id: d.lead_id, project_id: d.project_id, approved_by: d.approved_by || '',
+          company_id: d.company_id || '', region_id: d.region_id || '',
           deposit_amount: d.deposit_amount != null && d.deposit_amount !== '' ? Number(d.deposit_amount) : null,
           deposit_received: d.deposit_received === true || d.deposit_received === false ? d.deposit_received : null,
           deposit_label: d.deposit_label || '',
           remaining_amount: d.remaining_amount != null && d.remaining_amount !== '' ? Number(d.remaining_amount) : null,
           remaining_note: d.remaining_note || '',
         });
+        // Snapshot deal info từ payload mới (backend trả về lead, company, region embedded)
+        if (d.lead) {
+          setSelectedDeal({
+            id: d.lead.id,
+            code: d.lead.code,
+            title: d.lead.title,
+            type: d.lead.type,
+            company_id: d.company_id,
+            company_name: d.company?.short_name || d.company?.name || null,
+            region_id: d.region_id,
+            region_name: d.region?.name || null,
+            assignee_name: d.lead.lead_assignee?.full_name || null,
+          });
+        }
         if (!isPreset && pt) { setIsCustomPayment(true); setCustomPaymentTerms(pt); }
         if (d.items?.length) setItems(d.items.map(i => {
           if (i.notes === '__SECTION__') return { row_type: 'section', name: i.name, notes: '__SECTION__' };
+          // ── Khôi phục lock_amount khi reload: nếu stored amount lệch với recompute (qty*price*spec_factor*(1-pct))
+          // → coi như đã khoá theo Excel, giữ nguyên amount.
+          const qty = i.quantity || 1;
+          const price = i.unit_price || 0;
+          const sf = parseFloat(i.spec_factor) || 0;
+          const gross = sf > 0 ? sf * qty * price : qty * price;
+          const recomputed = gross - gross * (i.discount_percent || 0) / 100;
+          const stored = i.amount || 0;
+          const drift = Math.abs(stored - recomputed);
+          const isLocked = stored > 0 && drift > 1;
           return {
             name: i.name, description: i.description || '', product_code: i.product_code || '',
-            unit: i.unit || 'bộ', quantity: i.quantity || 1,
-            unit_price: i.unit_price || 0, discount_percent: i.discount_percent || 0,
+            unit: i.unit || 'bộ', quantity: qty,
+            unit_price: price, discount_percent: i.discount_percent || 0,
             vat_rate: i.vat_rate || 0,
             height: i.height || '', width: i.width || '', length: i.length || '', weight: i.weight || '',
             dimensions: i.dimensions || '', material: i.material || '', color: i.color || '',
             product_id: i.product_id, promo_code: i.promo_code || '', is_promo: i.is_promo || false,
             spec_factor: i.spec_factor || 0, group_name: i.group_name || '',
             standard_area: i.standard_area || 0,
+            lock_amount: isLocked,
+            imported_amount: isLocked ? stored : undefined,
           };
         }));
       });
@@ -223,6 +254,8 @@ export default function QuotationForm() {
                   standard_area: 0,
                   notes: i.notes || '',
                   is_freebie: !!i.is_freebie,
+                  lock_amount: !!i.lock_amount,
+                  imported_amount: typeof i.imported_amount === 'number' ? i.imported_amount : undefined,
                 })),
               );
             }
@@ -258,11 +291,100 @@ export default function QuotationForm() {
             customer_name: lead.customer?.full_name || lead.contact_name || f.customer_name,
             customer_phone: lead.customer?.phone || lead.phone || f.customer_phone,
             customer_address: lead.customer?.address || lead.address || f.customer_address,
+            company_id: lead.company_id || f.company_id,
+            region_id: lead.region_id || f.region_id,
           }));
+          setSelectedDeal({
+            id: lead.id,
+            code: lead.code,
+            title: lead.title,
+            type: lead.type,
+            company_id: lead.company_id,
+            company_name: lead.company?.short_name || lead.company?.name || null,
+            region_id: lead.region_id,
+            region_name: lead.crm_region?.name || lead.region?.name || null,
+            assignee_name: lead.assignee?.full_name || null,
+          });
         }).catch(() => { /* lead not found, ignore */ });
       }
     }
   }, [id, isEdit, navigate, searchParams]);
+
+  /** Đảm bảo selectedDeal luôn đồng bộ với form.lead_id (kể cả khi đến từ Excel import,
+   *  edit báo giá đã có lead_id, hay chuyển trang). Fetch lead detail nếu chưa có. */
+  useEffect(() => {
+    if (!form.lead_id) {
+      setSelectedDeal(null);
+      return;
+    }
+    if (selectedDeal && selectedDeal.id === form.lead_id) return; // đã đồng bộ
+    let cancelled = false;
+    api.get(`/crm/leads/${form.lead_id}/detail`)
+      .then((r) => {
+        if (cancelled) return;
+        const lead = r.data || {};
+        setSelectedDeal({
+          id: lead.id,
+          code: lead.code,
+          title: lead.title,
+          type: lead.type,
+          customer_id: lead.customer_id,
+          customer_name: lead.customer?.full_name || lead.contact_name || '',
+          customer_phone: lead.customer?.phone || lead.phone || '',
+          company_id: lead.company_id,
+          company_name: lead.company?.short_name || lead.company?.name || null,
+          region_id: lead.region_id,
+          region_name: lead.crm_region?.name || lead.region?.name || null,
+          assignee_name: lead.assignee?.full_name || null,
+        });
+        // Nếu form chưa có company_id/region_id (vd. từ Excel chỉ truyền lead_id) → kế thừa
+        setForm((f) => ({
+          ...f,
+          company_id: f.company_id || lead.company_id || '',
+          region_id: f.region_id || lead.region_id || '',
+        }));
+      })
+      .catch(() => { /* lead deleted/inaccessible — vẫn cho lưu, picker hiển thị lead_id thuần */
+        if (cancelled) return;
+        setSelectedDeal({ id: form.lead_id, code: form.lead_id.slice(0, 8), title: '(Không tải được thông tin deal)' });
+      });
+    return () => { cancelled = true; };
+  }, [form.lead_id, selectedDeal]);
+
+  /** Khi user chọn deal từ picker: copy company/region/customer/title nếu form đang trống. */
+  const pickDeal = (deal) => {
+    if (!deal) {
+      setSelectedDeal(null);
+      setForm(f => ({ ...f, lead_id: '' }));
+      return;
+    }
+    setSelectedDeal(deal);
+    setForm(f => ({
+      ...f,
+      lead_id: deal.id,
+      // Đồng bộ scope từ deal (giữ nguyên nếu user đã sửa)
+      company_id: f.company_id || deal.company_id || '',
+      region_id: f.region_id || deal.region_id || '',
+      // Auto-fill customer nếu form đang trống
+      customer_id: f.customer_id || deal.customer_id || '',
+      customer_name: f.customer_name || deal.customer_name || '',
+      customer_phone: f.customer_phone || deal.customer_phone || '',
+      title: f.title || deal.title || '',
+    }));
+  };
+
+  /** Cảnh báo khi region/company của báo giá khác với deal đã chọn (do user chỉnh tay). */
+  const scopeMismatch = useMemo(() => {
+    if (!selectedDeal) return null;
+    const issues = [];
+    if (form.company_id && selectedDeal.company_id && String(form.company_id) !== String(selectedDeal.company_id)) {
+      issues.push('Công ty');
+    }
+    if (form.region_id && selectedDeal.region_id && String(form.region_id) !== String(selectedDeal.region_id)) {
+      issues.push('Khu vực');
+    }
+    return issues.length ? issues : null;
+  }, [form.company_id, form.region_id, selectedDeal]);
 
   useEffect(() => {
     if (!isEdit || !id) return;
@@ -352,8 +474,15 @@ export default function QuotationForm() {
         grossAmount = qty * price;
       }
       
-      const discountAmount = grossAmount * (i.discount_percent || 0) / 100;
-      const amount = grossAmount - discountAmount;
+      // ── Excel fidelity: nếu lock_amount → giữ NGUYÊN imported_amount, tính ngược discount_amount.
+      let amount, discountAmount;
+      if (i.lock_amount && typeof i.imported_amount === 'number' && !i.is_freebie) {
+        amount = i.imported_amount;
+        discountAmount = Math.max(0, grossAmount - amount);
+      } else {
+        discountAmount = grossAmount * (i.discount_percent || 0) / 100;
+        amount = grossAmount - discountAmount;
+      }
       const vatRate = i.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
       const total = amount + vatAmount;
@@ -475,9 +604,48 @@ export default function QuotationForm() {
     setPdfLoading(false);
   };
 
-  const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
+  /** Field khi sửa sẽ tự GỠ lock_amount (vì user chủ động đổi → muốn recompute theo công thức). */
+  const FIELDS_BREAK_LOCK = new Set(['quantity', 'unit_price', 'discount_percent', 'spec_factor', 'standard_area', 'length', 'width', 'height']);
+  const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => {
+    if (i !== idx) return item;
+    const next = { ...item, [field]: val };
+    if (FIELDS_BREAK_LOCK.has(field) && item.lock_amount) {
+      next.lock_amount = false;
+      next.imported_amount = undefined;
+    }
+    return next;
+  }));
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
   const addRow = () => setItems(prev => [...prev, { name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '', spec_factor: 0, group_name: '', standard_area: 0 }]);
+
+  /** Áp CK% cho tất cả items trong cùng nhóm (override per-item discount_percent).
+   *  Bỏ qua dòng freebie / HỖ TRỢ vì các dòng đó luôn = 0. */
+  const updateGroupDiscount = (groupName, percent) => {
+    if (!groupName) return;
+    const pct = Math.max(0, Math.min(100, parseFloat(percent) || 0));
+    setItems(prev => prev.map(it => {
+      if (it.row_type === 'section') return it;
+      if ((it.group_name || '') !== groupName) return it;
+      if (it.is_freebie || it.notes === 'HỖ TRỢ') return it;
+      // Áp CK nhóm → gỡ lock_amount để công thức mới có hiệu lực
+      return { ...it, discount_percent: pct, lock_amount: false, imported_amount: undefined };
+    }));
+  };
+
+  /** Lấy CK% "đại diện" của nhóm: nếu mọi item cùng % → trả về %; nếu lệch → trả về null (mixed). */
+  const getGroupDiscountPercent = (groupName) => {
+    if (!groupName) return 0;
+    const groupItems = items.filter(
+      it => it.row_type !== 'section'
+        && (it.group_name || '') === groupName
+        && !it.is_freebie
+        && it.notes !== 'HỖ TRỢ',
+    );
+    if (!groupItems.length) return 0;
+    const pcts = groupItems.map(it => parseFloat(it.discount_percent) || 0);
+    const first = pcts[0];
+    return pcts.every(p => Math.abs(p - first) < 0.01) ? first : null;
+  };
   const addSection = () => setItems(prev => [...prev, { row_type: 'section', name: 'Phần mới', notes: '__SECTION__' }]);
 
   return (
@@ -557,8 +725,36 @@ export default function QuotationForm() {
 
       {/* Customer Info - MISA style */}
       <div className="bg-white rounded-xl border p-4">
-        <h2 className="text-sm font-bold text-gray-900 mb-3">Thông tin khách hàng</h2>
+        <h2 className="text-sm font-bold text-gray-900 mb-3">Liên kết deal & khách hàng</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="md:col-span-2">
+            <label className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
+              Deal / Cơ hội liên kết
+              <span className="text-[10px] text-gray-400">(báo giá sẽ kế thừa công ty + khu vực từ đây)</span>
+            </label>
+            <div className="mt-1">
+              <LeadDealPicker
+                value={selectedDeal}
+                onChange={pickDeal}
+                type="deal"
+                customerId={form.customer_id || null}
+                placeholder="Tìm deal theo mã / tên / SĐT khách..."
+              />
+            </div>
+            {scopeMismatch && (
+              <div className="mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 flex items-center gap-2">
+                <span>⚠️</span>
+                <span>
+                  {scopeMismatch.join(' & ')} của báo giá khác với deal đã chọn. Backend sẽ ưu tiên giá trị bạn đang đặt — kiểm tra kỹ trước khi lưu.
+                </span>
+              </div>
+            )}
+            {!selectedDeal && (
+              <p className="mt-1 text-[11px] text-amber-700">
+                ⚠️ Chưa gắn deal — báo giá sẽ là <strong>"mồ côi"</strong> và bị đánh dấu trong danh sách. Có thể bỏ qua nếu thật sự không gắn deal nào.
+              </p>
+            )}
+          </div>
           <div>
             <label className="text-xs font-medium text-gray-600">Khách hàng</label>
             <div className="mt-1">
@@ -662,13 +858,52 @@ export default function QuotationForm() {
                 const gd = currentGroupName ? calcs.groupDetails[currentGroupName] : null;
                 return (
                   <React.Fragment key={idx}>
-                  {showGroupHeader && (
-                    <tr className="bg-indigo-50">
-                      <td colSpan={22} className="py-2 px-3">
-                        <span className="font-bold text-indigo-800 text-sm">{currentGroupName}</span>
-                      </td>
-                    </tr>
-                  )}
+                  {showGroupHeader && (() => {
+                    const curGroupCK = getGroupDiscountPercent(currentGroupName);
+                    const isMixed = curGroupCK === null;
+                    return (
+                      <tr className="bg-indigo-50">
+                        <td colSpan={22} className="py-2 px-3">
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <span className="font-bold text-indigo-800 text-sm">{currentGroupName}</span>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-indigo-700 font-medium">CK nhóm:</span>
+                              <NumericInput
+                                value={isMixed ? '' : (curGroupCK || '')}
+                                onChange={(v) => updateGroupDiscount(currentGroupName, v)}
+                                placeholder={isMixed ? 'Lệch' : '0'}
+                                title={isMixed
+                                  ? 'Các dòng trong nhóm đang có CK% khác nhau — nhập 1 giá trị mới sẽ áp đồng loạt'
+                                  : 'Nhập CK% áp cho TẤT CẢ dòng trong nhóm (HỖ TRỢ được bỏ qua)'}
+                                allowEmpty
+                                className={`w-16 h-7 px-2 border rounded text-xs text-right outline-none ${
+                                  isMixed
+                                    ? 'border-amber-300 bg-amber-50 text-amber-700 placeholder-amber-500'
+                                    : (curGroupCK > 0)
+                                      ? 'border-orange-300 bg-orange-50 text-orange-700 font-semibold'
+                                      : 'border-indigo-200 bg-white'
+                                }`}
+                              />
+                              <span className="text-indigo-700">%</span>
+                              {isMixed && (
+                                <span className="text-[10px] text-amber-600 italic">(các dòng đang lệch CK)</span>
+                              )}
+                              {!isMixed && curGroupCK > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateGroupDiscount(currentGroupName, 0)}
+                                  className="text-[10px] text-red-500 hover:text-red-700 underline cursor-pointer"
+                                  title="Xoá CK nhóm"
+                                >
+                                  Xoá CK
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })()}
                   <tr className="border-b hover:bg-blue-50/30">
                     <td className="py-1 px-1 text-gray-400 text-xs">{itemNo}</td>
                     <td className="py-1 px-1"><input value={item.product_code || ''} onChange={e => updateItem(idx, 'product_code', e.target.value)} placeholder="Mã" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent" /></td>
@@ -737,7 +972,30 @@ export default function QuotationForm() {
                     <td className="py-1 px-1"><NumericInput value={item.unit_price} onChange={v => updateItem(idx, 'unit_price', v)} placeholder="0" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs font-medium whitespace-nowrap text-gray-900">{item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-green-600 font-bold">HỖ TRỢ</span> : formatVND(row.gross_amount || 0)}</td>
                     <td className="py-1 px-1"><NumericInput value={item.discount_percent || 0} onChange={v => updateItem(idx, 'discount_percent', v)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs text-orange-600 whitespace-nowrap">{formatVND(row.discount_amount || 0)}</td>
+                    <td className="py-1 px-1">
+                      {item.is_freebie || item.notes === 'HỖ TRỢ' ? (
+                        <span className="block text-right text-xs text-green-600 font-bold">—</span>
+                      ) : (
+                        <NumericInput
+                          value={Math.round(row.discount_amount || 0) || ''}
+                          onChange={(v) => {
+                            const gross = row.gross_amount || 0;
+                            const amt = parseFloat(v) || 0;
+                            if (gross > 0) {
+                              // Tính ngược % CK từ số tiền CK; cap ở [0, 100]
+                              const pct = Math.max(0, Math.min(100, Math.round((amt / gross) * 10000) / 100));
+                              updateItem(idx, 'discount_percent', pct);
+                            } else if (amt === 0) {
+                              updateItem(idx, 'discount_percent', 0);
+                            }
+                          }}
+                          placeholder="0"
+                          allowEmpty
+                          title="Số tiền CK (đ) — gõ vào sẽ tự tính lại % CK theo Thành tiền gốc"
+                          className="w-full px-1.5 py-1 border border-gray-200 hover:border-orange-400 focus:border-orange-500 focus:ring-1 focus:ring-orange-300 rounded text-xs outline-none bg-transparent text-right text-orange-700 font-medium"
+                        />
+                      )}
+                    </td>
                     <td className="py-1 px-1"><NumericInput value={item.vat_rate || 0} onChange={v => updateItem(idx, 'vat_rate', v)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs text-gray-600 whitespace-nowrap">{formatVND(row.tax_amount || 0)}</td>
                     <td className="py-1 px-1 text-right text-xs font-bold whitespace-nowrap text-blue-700">{formatVND(row.total || 0)}</td>
@@ -798,14 +1056,31 @@ export default function QuotationForm() {
             {calcs.groupOrder.length > 0 && <div className="border-t border-gray-200" />}
             <div className="flex justify-between text-sm"><span className="text-gray-500">Tổng tiền hàng:</span><span className="font-medium">{formatVND(calcs.subtotal)}</span></div>
             <div className="flex items-center justify-between text-sm gap-2">
-              <span className="text-gray-500">Chiết khấu:</span>
+              <span className="text-gray-500 font-medium">Tổng chiết khấu:</span>
               <div className="flex items-center gap-1">
-                <select value={form.discount_type} onChange={e => setForm(f => ({ ...f, discount_type: e.target.value }))} className="h-7 px-1 border rounded text-xs">
-                  <option value="percent">%</option><option value="amount">VNĐ</option>
+                <select
+                  value={form.discount_type}
+                  onChange={e => setForm(f => ({ ...f, discount_type: e.target.value }))}
+                  className="h-8 px-1 border rounded text-xs bg-white"
+                  title="Loại chiết khấu áp lên TỔNG báo giá (sau khi đã trừ CK theo dòng/nhóm)"
+                >
+                  <option value="percent">%</option>
+                  <option value="amount">VNĐ</option>
                 </select>
-                <input type="number" value={form.discount_value} onChange={e => setForm(f => ({ ...f, discount_value: parseFloat(e.target.value) || 0 }))} className="w-24 h-7 px-2 border rounded text-sm text-right" />
+                <NumericInput
+                  value={form.discount_value || ''}
+                  onChange={(v) => setForm(f => ({ ...f, discount_value: parseFloat(v) || 0 }))}
+                  placeholder="0"
+                  allowEmpty
+                  title="Chiết khấu tổng — áp lên cộng tiền hàng sau CK dòng"
+                  className={`w-28 h-8 px-2 border rounded text-sm text-right outline-none ${
+                    (form.discount_value || 0) > 0
+                      ? 'border-red-300 bg-red-50 text-red-700 font-semibold'
+                      : 'border-gray-200 bg-white'
+                  }`}
+                />
               </div>
-              <span className="font-medium text-red-600">-{formatVND(calcs.discountAmt)}</span>
+              <span className="font-medium text-red-600 tabular-nums">-{formatVND(calcs.discountAmt)}</span>
             </div>
             <div className="flex justify-between text-sm"><span className="text-gray-500">Cộng sau CK:</span><span className="font-medium">{formatVND(calcs.afterDiscount)}</span></div>
             <div className="flex justify-between text-sm"><span className="text-gray-500">Thuế GTGT:</span><span className="font-medium">{formatVND(calcs.totalVat)}</span></div>
