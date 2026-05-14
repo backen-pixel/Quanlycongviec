@@ -681,6 +681,14 @@ export default function CRMTasksTab({
                   Đơn: {task.order_label}
                 </span>
               )}
+              {task.completion_requires_file_or_note && task.status !== 'completed' && (
+                <span
+                  className="shrink-0 text-[10px] font-medium text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded"
+                  title="Cần ghi chú hoặc đính kèm trước khi hoàn thành (Cấu hình KPI → Bộ NV CRM)"
+                >
+                  📎 Ghi chú / file
+                </span>
+              )}
             </div>
             {!isExpanded && hasNotes && (
               <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1 italic" title={task.notes}>
